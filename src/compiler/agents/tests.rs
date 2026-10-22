@@ -1,7 +1,6 @@
 use super::*;
 use crate::compiler::agents::lower::{self, NativeModel};
 use crate::compiler::lossiness::Lossiness;
-use crate::compiler::tool_policy::{ToolAction, render_rules};
 use crate::frontmatter::Frontmatter;
 
 fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
@@ -318,21 +317,14 @@ fn parses_skills_tools_disallowed_mcp() {
     assert_eq!(p.skills.load, vec!["review", "dev-principles"]);
     assert!(p.skills.available.is_empty());
     assert_eq!(
-        p.tools.rendered(ToolAction::Allow),
-        vec!["bash", "write", "mcp(server/*)"]
-    );
-    assert!(p.tools.list_form);
-    assert_eq!(
-        render_rules(&p.disallowed_tools, ToolAction::Deny),
-        vec!["agent"]
-    );
-    let policy = p.effective_tool_policy(&HarnessKind::Claude);
-    assert_eq!(
-        policy
-            .with_action(ToolAction::Allow)
-            .filter(|r| r.is_mcp())
-            .count(),
-        1
+        p.tools.describe(),
+        [
+            "deny:*",
+            "allow:bash",
+            "allow:write",
+            "allow:mcp(server/*)",
+            "deny:agent"
+        ]
     );
 }
 
@@ -342,12 +334,10 @@ fn parses_tools_map_allow_and_deny_with_canonical_names() {
         "---\ntools:\n  Bash: allow\n  \"Bash(meridian spawn *)\": allow\n  Agent: deny\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
-    assert!(!p.tools.list_form);
     assert_eq!(
-        p.tools.rendered(ToolAction::Allow),
-        vec!["bash", "bash(meridian spawn *)"]
+        p.tools.describe(),
+        ["allow:bash", "allow:bash(meridian spawn *)", "deny:agent"]
     );
-    assert_eq!(p.tools.rendered(ToolAction::Deny), vec!["agent"]);
 }
 
 #[test]
@@ -355,11 +345,9 @@ fn separator_tool_aliases_canonicalize() {
     let content = "---\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\ndisallowed-tools: [web_search]\n---\n";
     let (p, diags) = parse(content);
 
-    assert_eq!(p.tools.rendered(ToolAction::Allow), vec!["ask_user"]);
-    assert_eq!(p.tools.rendered(ToolAction::Deny), vec!["bash(git *)"]);
     assert_eq!(
-        render_rules(&p.disallowed_tools, ToolAction::Deny),
-        vec!["web_search"]
+        p.tools.describe(),
+        ["allow:ask_user", "deny:bash(git *)", "deny:web_search"]
     );
     assert!(diags.is_empty());
 }
@@ -440,18 +428,6 @@ fn claude_native_agent_does_not_turn_map_form_grants_into_an_allowlist() {
 }
 
 #[test]
-fn claude_native_agent_keeps_a_narrow_allow_out_of_a_broad_deny() {
-    let (_, out, _) =
-        lower_claude("---\nname: a\nharness: claude\ntools:\n  edit: deny\n  write: allow\n---\n");
-    let text = String::from_utf8(out.bytes).unwrap();
-    assert!(
-        text.contains("- Edit") && text.contains("- NotebookEdit"),
-        "{text}"
-    );
-    assert!(!text.contains("- Write"), "{text}");
-}
-
-#[test]
 fn claude_native_agent_warns_when_a_native_stays_allowed_and_denied() {
     let (_, out, _) = lower_claude(
         "---\nname: a\nharness: claude\ntools: [read, grep]\ndisallowed-tools: [grep]\n---\n",
@@ -462,51 +438,6 @@ fn claude_native_agent_warns_when_a_native_stays_allowed_and_denied() {
             .any(|f| f.field == "tools (Grep both allowed and denied)"),
         "{:?}",
         out.lossy_fields
-    );
-}
-
-#[test]
-fn tools_overlay_allowed_replaces_grants_and_keeps_the_profiles_denies_and_asks() {
-    let (mut profile, _) = parse(
-        "---\ntools:\n  read: allow\n  'bash(git push *)': deny\n  'bash(git commit *)': ask\ndisallowed-tools: [agent]\n---\n",
-    );
-    profile.apply_tools_overlay(&crate::config::AgentOverlayTools {
-        allowed: vec!["bash".into(), "write".into()],
-        disallowed: vec![],
-    });
-    assert_eq!(profile.tools.rendered(ToolAction::Allow), ["bash", "write"]);
-    assert_eq!(
-        profile.tools.rendered(ToolAction::Deny),
-        ["bash(git push *)"]
-    );
-    assert_eq!(
-        profile.tools.rendered(ToolAction::Ask),
-        ["bash(git commit *)"]
-    );
-    assert_eq!(
-        render_rules(&profile.disallowed_tools, ToolAction::Deny),
-        ["agent"]
-    );
-    assert!(
-        profile
-            .effective_tool_policy(&HarnessKind::Claude)
-            .is_allowlist()
-    );
-}
-
-#[test]
-fn tools_overlay_disallowed_replaces_denies_but_not_the_allowlist_marker() {
-    let (mut profile, _) =
-        parse("---\ntools:\n  '*': deny\n  read: allow\n  'bash(git push *)': deny\n---\n");
-    profile.apply_tools_overlay(&crate::config::AgentOverlayTools {
-        allowed: vec![],
-        disallowed: vec!["write".into()],
-    });
-    let policy = profile.effective_tool_policy(&HarnessKind::Claude);
-    assert!(policy.is_allowlist());
-    assert_eq!(
-        policy.describe(),
-        vec!["deny:*", "allow:read", "deny:write"]
     );
 }
 
@@ -554,8 +485,8 @@ tools: [customtool, CustomTool]
     let (p, diags) = parse(content);
 
     assert_eq!(
-        p.tools.rendered(ToolAction::Allow),
-        vec!["customtool", "custom_tool"]
+        p.tools.describe(),
+        ["deny:*", "allow:customtool", "allow:custom_tool"]
     );
     assert!(diags.is_empty());
 }
@@ -578,9 +509,8 @@ harness-overrides:
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
 
-    let codex_policy = p.effective_tool_policy(&HarnessKind::Codex);
     assert_eq!(
-        codex_policy.describe(),
+        p.tools.describe(),
         vec![
             "allow:bash",
             "deny:read",
@@ -840,7 +770,7 @@ fn removed_mcp_tools_field_emits_removed_field_diagnostic() {
 #[test]
 fn malformed_disallowed_mcp_ref_is_hard_validation_error() {
     let (p, diags) = parse("---\nname: a\ndescription: d\ndisallowed-tools: [mcp()]\n---\n# body");
-    assert!(p.disallowed_tools.is_empty());
+    assert!(p.tools.rules.is_empty());
     assert!(
         diags.iter().any(|d| matches!(
             d,

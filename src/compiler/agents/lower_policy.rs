@@ -18,9 +18,8 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
 /// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
-use crate::compiler::tool_names::NativeStatus;
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
-use crate::compiler::tool_policy::{PolicyProjection, ToolAction, ToolRule};
+use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
 use crate::frontmatter::Frontmatter;
 
 // ---------------------------------------------------------------------------
@@ -31,16 +30,15 @@ use crate::frontmatter::Frontmatter;
 struct Effective<'a> {
     harness: HarnessKind,
     profile: &'a AgentProfile,
-    tools: EffectiveToolPolicy,
+    tools: &'a EffectiveToolPolicy,
 }
 
 impl<'a> Effective<'a> {
     fn new(profile: &'a AgentProfile, harness: HarnessKind) -> Self {
-        let tools = profile.effective_tool_policy(&harness);
         Self {
             harness,
             profile,
-            tools,
+            tools: &profile.tools,
         }
     }
 
@@ -63,22 +61,13 @@ impl<'a> Effective<'a> {
     /// Whether the policy grants or asks about built-in tools, which only an allowlist
     /// or a native `tools:` field can carry.
     fn has_tool_allowance(&self) -> bool {
-        self.tools.is_allowlist() || self.has_tool_grant() || self.has_ask()
-    }
-
-    /// An `allow` on a built-in tool.
-    fn has_tool_grant(&self) -> bool {
-        self.tools
-            .rules
-            .iter()
-            .any(|rule| !rule.is_mcp() && !rule.is_wildcard() && rule.action == ToolAction::Allow)
+        self.tools.is_allowlist()
+            || self.tools.has_rule(ToolAction::Allow, RuleKind::Builtin)
+            || self.has_ask()
     }
 
     fn has_tool_denial(&self) -> bool {
-        self.tools
-            .rules
-            .iter()
-            .any(|rule| !rule.is_mcp() && !rule.is_wildcard() && rule.action == ToolAction::Deny)
+        self.tools.has_rule(ToolAction::Deny, RuleKind::Builtin)
     }
 
     fn has_ask(&self) -> bool {
@@ -86,7 +75,7 @@ impl<'a> Effective<'a> {
     }
 
     fn has_mcp_policy(&self) -> bool {
-        self.tools.rules.iter().any(ToolRule::is_mcp)
+        self.tools.rules.iter().any(|rule| rule.is_mcp())
     }
 
     fn autocompact_pct(&self) -> Option<u8> {
@@ -107,26 +96,14 @@ fn native_tools_for_action(
     target: &str,
     lossy: &mut Vec<LossyField>,
 ) -> Vec<String> {
-    let mut natives: Vec<String> = Vec::new();
-    for (_, projected) in projection.with_action(action) {
-        if projected.status == NativeStatus::Unknown {
-            lossy.push(LossyField {
-                field: field.into(),
-                target: target.into(),
-                classification: Lossiness::Approximate {
-                    note: projected
-                        .note
-                        .unwrap_or("no native name known for this tool on this harness; left out"),
-                },
-            });
-        }
-        for native in &projected.native {
-            if !natives.contains(native) {
-                natives.push(native.clone());
-            }
-        }
+    for note in projection.gaps(action, RuleKind::All) {
+        lossy.push(LossyField {
+            field: field.into(),
+            target: target.into(),
+            classification: Lossiness::Approximate { note },
+        });
     }
-    natives
+    projection.natives(action, RuleKind::All)
 }
 
 fn record_native_mcp_lossiness(

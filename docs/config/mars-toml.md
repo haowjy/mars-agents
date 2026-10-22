@@ -298,7 +298,7 @@ disallowed = ["agent"]
 | `description` | string | Override the skill's description |
 | `model-invocable` | bool | Override model invocability |
 | `user-invocable` | bool | Override user invocability |
-| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays. `allowed` replaces the profile's `tools:` as a list-form allowlist; MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed` |
+| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays, edited the same way as an agent's (above), except that a skill's `tools:` only pre-approves tools, so `allowed` replaces the skill's grants and makes no allowlist. The skill's own deny and `ask` rules, in `tools:` or `disallowed-tools:`, stay; `disallowed` replaces its deny rules. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed` |
 
 ## Curated model display
 

@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
-use crate::compiler::tool_policy::{self, EffectiveToolPolicy, ParsedToolsField, ToolRule};
+use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
 pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 
@@ -276,10 +276,9 @@ pub struct AgentProfile {
     // --- Tool fields ---
     pub skills: SkillsSpec,
     pub subagents: Vec<String>,
-    /// `tools:`: allow rules for a list, allow/deny/ask rules for a map.
-    pub tools: ParsedToolsField,
-    /// `disallowed-tools:` as deny rules.
-    pub disallowed_tools: Vec<ToolRule>,
+    /// `tools:` and `disallowed-tools:` as one rule list. A list-form `tools:` carries the
+    /// `*: deny` that makes it an allowlist.
+    pub tools: EffectiveToolPolicy,
 
     // --- Override tables ---
     pub harness_overrides: HarnessOverrides,
@@ -299,37 +298,6 @@ impl AgentProfile {
         self.harness_overrides
             .get(harness)
             .filter(|map| !map.is_empty())
-    }
-
-    pub fn effective_tool_policy(&self, _harness: &HarnessKind) -> EffectiveToolPolicy {
-        tool_policy::agent_tool_policy(&self.tools, &self.disallowed_tools)
-    }
-
-    /// Apply a `mars.toml` `[agents.<name>.tools]` overlay. The one place overlay tool lists
-    /// meet a profile, read by native agent lowering and the launch bundle alike.
-    ///
-    /// `allowed` replaces what the profile grants and makes it an allowlist; the profile's own
-    /// deny and ask rules stay, because an overlay that widens the grants must not silently
-    /// lift a `git push` deny. `disallowed` replaces the profile's deny rules, except a
-    /// `*: deny` that makes the profile an allowlist, which no tool list stands in for.
-    pub(crate) fn apply_tools_overlay(&mut self, overlay: &crate::config::AgentOverlayTools) {
-        use tool_policy::{ToolAction, overlay_rules};
-
-        if !overlay.allowed.is_empty() {
-            self.tools
-                .rules
-                .retain(|rule| rule.action != ToolAction::Allow);
-            self.tools
-                .rules
-                .extend(overlay_rules(&overlay.allowed, ToolAction::Allow));
-            self.tools.list_form = true;
-        }
-        if !overlay.disallowed.is_empty() {
-            self.disallowed_tools = overlay_rules(&overlay.disallowed, ToolAction::Deny);
-            self.tools
-                .rules
-                .retain(|rule| rule.action != ToolAction::Deny || rule.is_wildcard());
-        }
     }
 }
 // ---------------------------------------------------------------------------
@@ -417,24 +385,6 @@ fn push_agent_tool_invalid(
         value: value.to_string(),
         allowed,
     });
-}
-
-fn yaml_tool_list(field: &str, val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<ToolRule> {
-    let mut push = |field: &str, value: &str, allowed: &'static str| {
-        push_agent_tool_invalid(diags, field, value, allowed);
-    };
-    tool_policy::yaml_tool_list(field, val, &mut push)
-}
-
-fn parse_tools_field(
-    field: &str,
-    val: &Value,
-    diags: &mut Vec<AgentDiagnostic>,
-) -> ParsedToolsField {
-    let mut push = |field: &str, value: &str, allowed: &'static str| {
-        push_agent_tool_invalid(diags, field, value, allowed);
-    };
-    tool_policy::parse_tools_field(field, val, &mut push)
 }
 
 fn parse_native_config_value(
@@ -878,14 +828,17 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .get("subagents")
         .map(tool_policy::yaml_str_list)
         .unwrap_or_default();
-    let tools = fm
-        .get("tools")
-        .map(|value| parse_tools_field("tools", value, diags))
-        .unwrap_or_default();
-    let disallowed_tools = fm
-        .get("disallowed-tools")
-        .map(|value| yaml_tool_list("disallowed-tools", value, diags))
-        .unwrap_or_default();
+    let tools = {
+        let mut invalid = |field: &str, value: &str, allowed: &'static str| {
+            push_agent_tool_invalid(diags, field, value, allowed);
+        };
+        tool_policy::parse_tool_policy(
+            fm.get("tools"),
+            fm.get("disallowed-tools"),
+            true,
+            &mut invalid,
+        )
+    };
 
     // harness-overrides:
     let harness_overrides = fm
@@ -933,7 +886,6 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         skills,
         subagents,
         tools,
-        disallowed_tools,
         harness_overrides,
         model_policies,
         fanout,

@@ -5,8 +5,7 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::tool_names::NativeStatus;
-use crate::compiler::tool_policy::{RuleOrigin, ToolAction, ToolRule};
+use crate::compiler::tool_policy::{NativeStatus, RuleKind, ToolAction, ToolRule};
 use crate::content::ContentRoots;
 use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
@@ -99,7 +98,7 @@ pub fn build_launch_bundle(
         .as_deref()
         .and_then(|agent| effective_project_config.agents.get(agent))
     {
-        profile.apply_tools_overlay(&overlay.tools);
+        profile.tools.apply_overlay(&overlay.tools, true);
     }
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),
@@ -204,7 +203,6 @@ fn empty_agent_profile() -> AgentProfile {
         skills: SkillsSpec::default(),
         subagents: Vec::new(),
         tools: Default::default(),
-        disallowed_tools: Vec::new(),
         harness_overrides: Default::default(),
         model_policies: Vec::new(),
         fanout: Vec::new(),
@@ -231,44 +229,17 @@ fn resolve_bundle_tools(
     let harness_kind = descriptor.kind;
     let harness = descriptor.canonical_id;
 
-    let policy = profile.effective_tool_policy(&harness_kind);
+    let projection = profile.tools.project(harness_kind);
     let mut warnings = Vec::new();
     let mut rules = Vec::new();
-    let mut allowed = Vec::new();
-    let mut mcp = Vec::new();
-    // Built-in tools before MCP refs, as the flat lists have always been ordered.
-    let mut disallowed_builtin = Vec::new();
-    let mut disallowed_mcp = Vec::new();
-
-    let projection = policy.project(harness_kind);
     for (rule, projected) in projection.rules() {
-        if projected.status == NativeStatus::Unknown {
-            warnings.push(unknown_tool_warning(rule, projected.note, harness));
+        if let Some(reason) = projected.gap() {
+            warnings.push(unknown_tool_warning(rule, reason, harness));
         }
-
-        let flat = match (rule.action, rule.is_mcp()) {
-            (ToolAction::Allow, false) => Some(&mut allowed),
-            (ToolAction::Allow, true) => Some(&mut mcp),
-            (ToolAction::Deny, false) => Some(&mut disallowed_builtin),
-            (ToolAction::Deny, true) => Some(&mut disallowed_mcp),
-            // The flat lists have no `ask`; only `rules` carries it.
-            (ToolAction::Ask, _) => None,
-        };
-        if let Some(flat) = flat {
-            for native in &projected.native {
-                if !flat.contains(native) {
-                    flat.push(native.clone());
-                }
-            }
-        }
-
         rules.push(ToolRuleSpec {
-            capability: rule.capability.clone(),
-            pattern: rule.pattern.clone(),
-            action: rule.action.as_str(),
+            rule: (*rule).clone(),
             native: projected.native.clone(),
-            native_status: projected.status.as_str(),
-            origin: rule.origin.map(RuleOrigin::as_str),
+            native_status: projected.status.map(NativeStatus::as_str),
         });
     }
     for native in projection.overlaps() {
@@ -277,19 +248,13 @@ fn resolve_bundle_tools(
         ));
     }
 
-    let mut disallowed = disallowed_builtin;
-    for native in disallowed_mcp {
-        if !disallowed.contains(&native) {
-            disallowed.push(native);
-        }
-    }
-
     Ok((
         ToolsSpec {
             rules,
-            allowed,
-            disallowed,
-            mcp,
+            // The flat lists have no `ask`, `*` or allowlist; only `rules` carries those.
+            allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),
+            disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
+            mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
         },
         warnings,
     ))
@@ -297,19 +262,20 @@ fn resolve_bundle_tools(
 
 /// Why Mars could not name `rule` for `harness`. The rule still ships in `tools.rules` with
 /// `native_status: unknown`.
-fn unknown_tool_warning(rule: &ToolRule, note: Option<&'static str>, harness: &str) -> String {
-    let denied = rule.action == ToolAction::Deny;
+fn unknown_tool_warning(rule: &ToolRule, reason: &str, harness: &str) -> String {
+    let denied = if rule.action == ToolAction::Deny {
+        "disallowed "
+    } else {
+        ""
+    };
     if rule.is_mcp() {
         format!(
-            "{}MCP ref `mcp({})` cannot be represented for {harness}: {}",
-            if denied { "disallowed " } else { "" },
-            rule.pattern.as_deref().unwrap_or_default(),
-            note.unwrap_or("unsupported")
+            "{denied}MCP ref `{}` cannot be represented for {harness}: {reason}",
+            rule.render()
         )
     } else {
         format!(
-            "{}tool '{}' has no known {harness} name; Mars left it out (native_status: unknown)",
-            if denied { "disallowed " } else { "" },
+            "{denied}tool '{}' has no known {harness} name; Mars left it out (native_status: unknown)",
             rule.render()
         )
     }

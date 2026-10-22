@@ -9,8 +9,9 @@ User-facing summary: [docs/config/agent-compilation.md](../../../docs/config/age
 `project_mcp_ref`.
 
 `tool_policy.rs` — turns `tools:` / `disallowed-tools:` into typed [`ToolRule`]s
-(`EffectiveToolPolicy`); an MCP entry is a rule with capability `mcp` and the canonical
-`server/tool` as its pattern. `project_rule` is the one place a rule becomes native names.
+(`EffectiveToolPolicy`); an MCP entry is a rule whose `Capability::Mcp` holds the parsed
+[`McpRef`] (the bundle spells it capability `mcp`, pattern `server/tool`).
+`EffectiveToolPolicy::project` is the one place a rule becomes native names.
 
 ## Canonical grammar
 

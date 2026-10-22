@@ -29,7 +29,6 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
         skills: crate::frontmatter::SkillsSpec::default(),
         subagents: Vec::new(),
         tools: Default::default(),
-        disallowed_tools: Vec::new(),
         harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
         model_policies: Vec::new(),
         fanout: Vec::new(),

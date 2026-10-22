@@ -664,11 +664,11 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 
 | Field | Meaning |
 |---|---|
-| `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
+| `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist; it names no tool, so `native` is empty and `native_status` is omitted), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
 | `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
 | `action` | `allow`, `deny` or `ask` |
 | `native` | The harness's tool names for the rule, one per native tool the capability covers; a pattern is appended as `name(pattern)`. Empty unless `native_status` is `known`. Already resolved: a rule on a narrower capability wins its tools from a broader one (`edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed), so emit `native` as given |
-| `native_status` | `known`: `native` names it. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars has no name for it, a gap to report |
+| `native_status` | `known`: `native` names it. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
 | `origin` | `list-form` on the `*: deny` Mars adds for a list-form `tools: [..]`; omitted otherwise |
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from

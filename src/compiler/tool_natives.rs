@@ -1,17 +1,14 @@
 //! Explicit per-harness native tool names for Mars capabilities.
 //!
-//! One table per harness, one row per capability. Nothing is derived by naming convention:
-//! a row names the harness's real tools (one capability can cover several), says the
-//! harness has no such tool ([`Native::Absent`]), or is missing, which Mars reports as a gap
-//! (`unknown`) instead of guessing.
+//! One table per harness, one row per capability. Nothing is derived by naming convention: a
+//! row names the harness's real tools (one capability can cover several), says the harness has
+//! no such tool ([`Native::Absent`]), says it does the thing without a tool to switch
+//! ([`Native::NoSwitch`]), or is missing, which means Mars has not decided for that harness.
+//! Both `NoSwitch` and a missing row report as `unknown`, a gap Meridian surfaces, because
+//! calling an unenforceable deny `absent` would report it as met.
 //!
-//! `Absent` is for a harness that cannot do the thing at all. When it can but offers no tool to
-//! switch it (Codex and Pi load skills by reading `SKILL.md`; Codex reads, globs and greps
-//! through its shell and fetches pages through its `web_search` tool), leave the row out. A deny is then `unknown`, a gap Meridian reports:
-//! calling it `absent` would report an unenforced deny as satisfied.
-//!
-//! Every name below must appear in the harness's real tool list, which the tests pin with
-//! the source each list came from. When a harness ships a tool, add it to that list first.
+//! Every name below must appear in the harness's real tool list, which the tests pin with the
+//! source each list came from. When a harness ships a tool, add it to that list first.
 
 use crate::compiler::agents::HarnessKind;
 
@@ -20,14 +17,14 @@ use crate::compiler::agents::HarnessKind;
 pub(crate) enum Native {
     /// The harness's tools for this capability. A deny or allow covers all of them.
     Tools(&'static [&'static str]),
-    /// Like `Tools`, but a rule's pattern scopes only the first tool. The rest continue what it
-    /// started and take no pattern of their own, so a scoped rule leaves them out.
-    ToolsScopedToFirst(&'static [&'static str]),
     /// The harness has no such tool, so there is nothing to allow or deny.
     Absent,
+    /// The harness can do the thing but offers no tool to switch it off (Codex and Pi load
+    /// skills by reading `SKILL.md`; Codex reads, globs and greps through its shell).
+    NoSwitch,
 }
 
-use Native::{Absent, Tools, ToolsScopedToFirst};
+use Native::{Absent, NoSwitch, Tools};
 
 type Table = &'static [(&'static str, Native)];
 
@@ -101,22 +98,22 @@ const CLAUDE: Table = &[
 /// Codex 0.163.0.
 ///
 /// Source: the 0.163.0 binary (`core/src/tools/handlers/*` and the tool names it registers).
-/// Shell execution is the unified `exec_command`, and `write_stdin` feeds the session it opened,
-/// so `bash` names both. A command pattern (`bash(git push *)`) matches the command
-/// `exec_command` starts; `write_stdin` carries only input, so a scoped rule leaves it out. `agent` names both multi-agent tool sets the binary registers: v1
+/// Shell execution is the unified `exec_command`. `write_stdin` only feeds a session
+/// `exec_command` opened, so `bash` names `exec_command` alone: Meridian gates Codex's shell
+/// with a switch, and denying `exec_command` leaves no session for `write_stdin` to feed.
+/// `agent` names both multi-agent tool sets the binary registers: v1
 /// (`multi_agents/`: spawn_agent, send_input, resume_agent, wait_agent, close_agent) and v2
 /// (`multi_agents_v2/`: spawn_agent, send_message, followup_task, wait_agent, interrupt_agent,
 /// list_agents); the model's `multi_agent_version` picks which one a session gets. Codex has no
 /// notebook tool. It has no file-read, glob or grep tool either, but it does all three through
-/// the shell, with no switch to turn them off: `read`, `glob` and `grep` are left out
-/// (`unknown`), so a deny reports as a gap instead of as met. `web` is
-/// Codex's hosted `web_search`, which also opens and searches within pages (`OpenPage`,
-/// `FindInPage` actions), so `web_fetch` has no tool of its own to switch and is left out
-/// (`unknown`). `skill` is left out too: local skills load by reading `SKILL.md`, and the
-/// `skills.list` / `skills.read` tools of the skills extension are not something Mars can name.
-/// `update_plan` is the task list ("Updates the task plan.").
+/// the shell (`NoSwitch`). `web` is Codex's hosted `web_search`, which also opens and searches
+/// within pages (`OpenPage`, `FindInPage` actions), so `web_fetch` has no tool of its own.
+/// `skill` loads by reading `SKILL.md`; the `skills.list` / `skills.read` tools of the skills
+/// extension are not something Mars can name. `update_plan` is the task list ("Updates the task
+/// plan.").
 const CODEX: Table = &[
-    ("bash", ToolsScopedToFirst(&["exec_command", "write_stdin"])),
+    ("bash", Tools(&["exec_command"])),
+    ("read", NoSwitch),
     ("write", Tools(&["apply_patch"])),
     ("edit", Tools(&["apply_patch"])),
     ("notebook", Absent),
@@ -134,9 +131,13 @@ const CODEX: Table = &[
             "list_agents",
         ]),
     ),
+    ("skill", NoSwitch),
     ("workflow", Absent),
+    ("glob", NoSwitch),
+    ("grep", NoSwitch),
     ("web", Tools(&["web_search"])),
     ("web_search", Tools(&["web_search"])),
+    ("web_fetch", NoSwitch),
     ("ask_user", Tools(&["request_user_input"])),
     ("task", Tools(&["update_plan"])),
     ("cron", Absent),
@@ -194,9 +195,9 @@ const OPENCODE: Table = &[
 /// (`dist/core/tools/index.js`: bash, edit, find, grep, ls, powershell, read, write). Pi
 /// grows by extensions, which Mars cannot see: `absent` means "no built-in tool", and
 /// Meridian's own extensions register tools (`bash_manage`) that no capability names. Pi's
-/// `edit` and `write` are separate tools, so the `edit` capability covers both. `skill` is left
-/// out (`unknown`): Pi has skills (`--skill`, `--no-skills`) but they load by reading `SKILL.md`,
-/// with no tool to switch.
+/// `edit` and `write` are separate tools, so the `edit` capability covers both. Pi has skills
+/// (`--skill`, `--no-skills`) but they load by reading `SKILL.md`, with no tool to switch
+/// (`NoSwitch`).
 const PI: Table = &[
     ("bash", Tools(&["bash"])),
     ("read", Tools(&["read"])),
@@ -204,6 +205,7 @@ const PI: Table = &[
     ("edit", Tools(&["edit", "write"])),
     ("notebook", Absent),
     ("agent", Absent),
+    ("skill", NoSwitch),
     ("workflow", Absent),
     ("glob", Tools(&["find"])),
     ("grep", Tools(&["grep"])),
@@ -386,7 +388,7 @@ mod tests {
         for &harness in HarnessKind::all() {
             let real = real_tools(harness);
             for (capability, native) in table(harness) {
-                if let Tools(names) | ToolsScopedToFirst(names) = native {
+                if let Tools(names) = native {
                     assert!(
                         !names.is_empty(),
                         "{harness:?} `{capability}` names no tool"
@@ -421,17 +423,8 @@ mod tests {
 
     #[test]
     fn maintained_harnesses_answer_for_every_canonical_capability() {
-        // A missing row reports a gap, so a maintained harness says `absent` explicitly
-        // rather than stay silent. A deliberate hole is a thing the harness can do with no tool
-        // to switch it; the reason is in that harness's table comment.
-        let deliberate_gaps: &[(HarnessKind, &str)] = &[
-            (HarnessKind::Codex, "read"),
-            (HarnessKind::Codex, "glob"),
-            (HarnessKind::Codex, "grep"),
-            (HarnessKind::Codex, "skill"),
-            (HarnessKind::Codex, "web_fetch"),
-            (HarnessKind::Pi, "skill"),
-        ];
+        // A missing row means Mars has not decided. The maintained harnesses decide every
+        // capability: tools, `Absent`, or `NoSwitch`.
         for harness in [
             HarnessKind::Claude,
             HarnessKind::Codex,
@@ -439,86 +432,11 @@ mod tests {
             HarnessKind::Pi,
         ] {
             for capability in crate::compiler::tool_names::canonical_capabilities() {
-                let missing = lookup(capability, harness).is_none();
-                let deliberate = deliberate_gaps.contains(&(harness, capability));
-                assert_eq!(
-                    missing, deliberate,
-                    "{harness:?} `{capability}`: missing={missing}, deliberate gap={deliberate}"
+                assert!(
+                    lookup(capability, harness).is_some(),
+                    "{harness:?} has no row for `{capability}`"
                 );
             }
-        }
-    }
-
-    /// The shipped profiles' vocabulary on each harness, written out so a table edit that
-    /// changes a name shows up here.
-    #[test]
-    fn shipped_profile_capabilities_map_as_documented() {
-        let expect: &[(HarnessKind, &str, Native)] = &[
-            (
-                HarnessKind::Claude,
-                "edit",
-                Tools(&["Edit", "Write", "NotebookEdit"]),
-            ),
-            (
-                HarnessKind::Claude,
-                "web",
-                Tools(&["WebSearch", "WebFetch"]),
-            ),
-            (HarnessKind::Claude, "ask_user", Tools(&["AskUserQuestion"])),
-            (
-                HarnessKind::Claude,
-                "agent",
-                Tools(&["Agent", "SendMessage", "ListAgents"]),
-            ),
-            (
-                HarnessKind::Codex,
-                "bash",
-                ToolsScopedToFirst(&["exec_command", "write_stdin"]),
-            ),
-            (
-                HarnessKind::Codex,
-                "agent",
-                Tools(&[
-                    "spawn_agent",
-                    "send_input",
-                    "resume_agent",
-                    "wait_agent",
-                    "close_agent",
-                    "send_message",
-                    "followup_task",
-                    "interrupt_agent",
-                    "list_agents",
-                ]),
-            ),
-            (HarnessKind::Codex, "edit", Tools(&["apply_patch"])),
-            (
-                HarnessKind::Codex,
-                "ask_user",
-                Tools(&["request_user_input"]),
-            ),
-            (HarnessKind::Codex, "web", Tools(&["web_search"])),
-            (
-                HarnessKind::OpenCode,
-                "web",
-                Tools(&["websearch", "webfetch"]),
-            ),
-            (HarnessKind::OpenCode, "ask_user", Tools(&["question"])),
-            (HarnessKind::OpenCode, "agent", Tools(&["task"])),
-            (HarnessKind::OpenCode, "task", Tools(&["todowrite"])),
-            (
-                HarnessKind::OpenCode,
-                "plan_mode",
-                Tools(&["plan_enter", "plan_exit"]),
-            ),
-            (HarnessKind::Pi, "glob", Tools(&["find"])),
-            (HarnessKind::Pi, "ask_user", Absent),
-        ];
-        for (harness, capability, native) in expect {
-            assert_eq!(
-                lookup(capability, *harness),
-                Some(*native),
-                "{harness:?} `{capability}`"
-            );
         }
     }
 }

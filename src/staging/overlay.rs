@@ -4,8 +4,8 @@ use std::path::Path;
 
 use serde_yaml::Value;
 
-use crate::compiler::tool_policy;
-use crate::config::SkillOverlay;
+use crate::compiler::skills::parse_skill_tool_policy;
+use crate::config::{AgentOverlayTools, SkillOverlay};
 use crate::frontmatter::Frontmatter;
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::RenameMap;
@@ -100,23 +100,24 @@ pub(crate) fn apply_skill_overlay(
         );
     }
 
-    if !overlay.tools.allowed.is_empty() {
-        changed |= set_string_list_field(
-            &mut merged,
-            "tools",
-            &overlay.tools.allowed,
-            &tool_policy::non_canonical_aliases_for("tools"),
-        );
-    }
-    if !overlay.tools.disallowed.is_empty() {
-        changed |= set_string_list_field(
-            &mut merged,
-            "disallowed-tools",
-            &overlay.tools.disallowed,
-            &tool_policy::non_canonical_aliases_for("disallowed-tools"),
-        );
+    if !overlay.tools.is_empty() {
+        changed |= apply_tool_overlay(&mut merged, &overlay.tools);
     }
     (merged, changed)
+}
+
+/// Apply `[skills.<name>.tools]` through the same edit an agent overlay uses, then write the
+/// rules back, since sync lowers skills from this staged text. A skill's `tools:` only grants,
+/// so `allowed` makes no allowlist, and the skill's own deny and ask rules survive it.
+fn apply_tool_overlay(fm: &mut Frontmatter, overlay: &AgentOverlayTools) -> bool {
+    let before = parse_skill_tool_policy(fm, &mut Vec::new());
+    let mut after = before.clone();
+    after.apply_overlay(overlay, false);
+    if after == before {
+        return false;
+    }
+    after.write_skill_frontmatter(fm);
+    true
 }
 
 fn set_string_field(fm: &mut Frontmatter, key: &str, value: &str) -> bool {
@@ -136,49 +137,6 @@ fn set_bool_field(fm: &mut Frontmatter, key: &str, value: bool, aliases: &[&str]
         fm.remove(alias);
     }
     true
-}
-
-fn set_string_list_field(
-    fm: &mut Frontmatter,
-    key: &str,
-    values: &[String],
-    aliases: &[&str],
-) -> bool {
-    if string_list_field(fm, key, aliases) == values {
-        return false;
-    }
-    fm.insert(
-        key,
-        Value::Sequence(
-            values
-                .iter()
-                .map(|value| Value::String(value.clone()))
-                .collect(),
-        ),
-    );
-    for alias in aliases {
-        fm.remove(alias);
-    }
-    true
-}
-
-fn string_list_field(fm: &Frontmatter, key: &str, aliases: &[&str]) -> Vec<String> {
-    fm.get(key)
-        .or_else(|| aliases.iter().find_map(|alias| fm.get(alias)))
-        .map(yaml_string_list)
-        .unwrap_or_default()
-}
-
-fn yaml_string_list(value: &Value) -> Vec<String> {
-    match value {
-        Value::Sequence(seq) => seq
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect(),
-        Value::String(s) => vec![s.clone()],
-        _ => Vec::new(),
-    }
 }
 
 #[cfg(test)]
@@ -214,12 +172,12 @@ mod tests {
         assert_eq!(merged.get("user-invocable"), Some(&Value::Bool(false)));
         assert_eq!(
             merged.get("disallowed-tools"),
-            Some(&Value::Sequence(vec![Value::String("Agent".into())]))
+            Some(&Value::Sequence(vec![Value::String("agent".into())]))
         );
     }
 
     #[test]
-    fn overlay_projects_allowed_tools_to_canonical_tools() {
+    fn overlay_allowed_replaces_grants_and_keeps_the_skills_denies() {
         let overlay = SkillOverlay {
             tools: AgentOverlayTools {
                 allowed: vec!["Bash(git *)".to_string()],
@@ -227,12 +185,23 @@ mod tests {
             },
             ..SkillOverlay::default()
         };
-        let (merged, changed) =
-            apply_skill_overlay(&fm("name: demo\ndescription: base\n"), &overlay);
+        let (merged, changed) = apply_skill_overlay(
+            &fm(
+                "name: demo\ndescription: base\ntools:\n  read: allow\n  'bash(git push *)': deny\n",
+            ),
+            &overlay,
+        );
         assert!(changed);
         assert_eq!(
             merged.get("tools"),
-            Some(&Value::Sequence(vec![Value::String("Bash(git *)".into())]))
+            Some(&Value::Sequence(vec![Value::String("bash(git *)".into())]))
+        );
+        // The map-form deny survives, now in `disallowed-tools`, where a skill reads denies.
+        assert_eq!(
+            merged.get("disallowed-tools"),
+            Some(&Value::Sequence(vec![Value::String(
+                "bash(git push *)".into()
+            )]))
         );
         assert!(merged.get("allowed-tools").is_none());
     }

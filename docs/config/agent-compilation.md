@@ -117,22 +117,25 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 
 Mars owns the native names. A profile's capability (`edit`, `web`, `ask_user`, …) becomes a
 harness's real tool names through one explicit table per harness
-(`src/compiler/tool_natives.rs`); no name is derived by convention. A capability can cover
-several native tools, and the launch bundle reports one of three outcomes per rule:
+(`src/compiler/tool_natives.rs`, which is authoritative; the table below is a reading copy);
+no name is derived by convention. A capability can cover several native tools, and the launch
+bundle reports one of three outcomes per rule:
 
 - `known`: the table names it.
 - `absent`: the harness cannot do this at all, so there is nothing to allow or deny.
-- `unknown`: Mars has no entry for it (including names it does not recognize), or the harness
-  can do the thing but has no tool to switch it. Codex and Pi load skills by reading `SKILL.md`,
-  Codex fetches pages through its `web_search` tool, and Codex reads, globs and greps through its
-  shell, so `skill` (Codex, Pi), `web_fetch` (Codex) and `read` / `glob` / `grep` (Codex) are
-  `unknown`: a deny there is not enforced, and `absent` would report it as met. The
-  tool is left out of native output with a warning, and the bundle rule carries an empty
-  `native`. This is a gap to report, not something to guess around.
+- `unknown`: Mars cannot name it for this harness. Either it has no entry (including names it
+  does not recognize), or the harness can do the thing but has no tool to switch it (Codex
+  reads, globs and greps through its shell; Codex and Pi load skills by reading `SKILL.md`).
+  A deny there is not enforced, and `absent` would report it as met. The tool is left out of
+  native output with a warning, and the bundle rule carries an empty `native`. This is a gap
+  to report, not something to guess around.
+
+The bundle's `*` rule (the `*: deny` of an allowlist) names no tool, so it has an empty
+`native` and no `native_status`.
 
 | Capability | Claude | Codex | OpenCode | Pi |
 |---|---|---|---|---|
-| `bash` | `Bash` | `exec_command`, `write_stdin` | `bash` | `bash` |
+| `bash` | `Bash` | `exec_command` | `bash` | `bash` |
 | `read` | `Read` | unknown | `read` | `read` |
 | `write` | `Write` | `apply_patch` | `edit` | `write` |
 | `edit` | `Edit`, `Write`, `NotebookEdit` | `apply_patch` | `edit` | `edit`, `write` |
@@ -148,7 +151,8 @@ several native tools, and the launch bundle reports one of three outcomes per ru
 The rest of the vocabulary is in `tool_natives.rs`. OpenCode names are the v1 permission
 vocabulary; the consumer that knows the running OpenCode version translates to v2 spellings
 (`bash` → `shell`, `task` → `subagent`). OpenCode has one `edit` permission for `edit`,
-`write` and patch, so `write` and `edit` share a name there. A command pattern on Codex `bash` (`bash(git push *)`) scopes `exec_command` only: `write_stdin` carries input to a session, not a command. Each row is pinned by a test
+`write` and patch, so `write` and `edit` share a name there. Codex `bash` names `exec_command`
+alone: `write_stdin` only feeds a session `exec_command` opened. Each row is pinned by a test
 against the harness's real tool list, with the source (docs, binary, probe) written beside the
 table. Cursor rows are carried over from earlier releases and not re-verified.
 

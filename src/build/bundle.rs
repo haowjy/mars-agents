@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::compiler::tool_policy::ToolRule;
+
 pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,26 +114,20 @@ pub struct ToolsSpec {
     pub mcp: Vec<String>,
 }
 
-/// One tool-policy statement as the resolved harness spells it.
+/// One tool-policy statement as the resolved harness spells it: the rule's own
+/// `{capability, pattern, action, origin?}` (see [`ToolRule`]'s serialization) plus the names.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolRuleSpec {
-    /// Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool", `mcp`
-    /// for MCP refs, or the author's spelling when Mars does not recognize the name.
-    pub capability: String,
-    /// Scope inside `capability(...)`; for `mcp` the `server/tool` reference.
-    pub pattern: Option<String>,
-    /// `allow`, `deny` or `ask`.
-    pub action: &'static str,
+    #[serde(flatten)]
+    pub rule: ToolRule,
     /// The harness's names for this rule: one per native tool the capability covers, with the
     /// pattern appended as `name(pattern)`. Empty unless `native_status` is `known`.
     pub native: Vec<String>,
     /// `known`: `native` names it. `absent`: the harness has no such tool, so there is nothing
-    /// to enforce. `unknown`: Mars cannot name it for this harness, a gap to report.
-    pub native_status: &'static str,
-    /// `list-form` for the `*: deny` Mars adds to a `tools: [..]` list; omitted when the
-    /// author wrote the rule.
+    /// to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted
+    /// for `*`, which names no tool.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub origin: Option<&'static str>,
+    pub native_status: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]

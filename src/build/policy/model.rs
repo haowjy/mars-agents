@@ -151,7 +151,6 @@ mod tests {
             skills: SkillsSpec::default(),
             subagents: Vec::new(),
             tools: Default::default(),
-            disallowed_tools: Vec::new(),
             harness_overrides: HarnessOverrides::default(),
             model_policies: Vec::new(),
             fanout: Vec::new(),

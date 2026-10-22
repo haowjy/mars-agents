@@ -32,11 +32,11 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
   emit, link-materialize. Extracted from `mod.rs` (was 1522 lines). Coexists with `native_agents/tests.rs`.
 - `native_agent_manifest.rs` — lock-then-native-agent-manifest persistence
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
-- `tool_policy.rs` — shared tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into typed `ToolRule`s (`EffectiveToolPolicy`), and `project_rule`, the one place a rule becomes harness-native names. Used by `agents/`, `skills/` and the launch bundle (`build/`).
+- `tool_policy.rs` — tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into one typed `EffectiveToolPolicy` of `ToolRule`s, the `mars.toml` overlay edit, and `EffectiveToolPolicy::project`, the one place a rule becomes harness-native names. Used by `agents/`, `skills/` and the launch bundle (`build/`).
 - `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
 - `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
 - `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
-- `tool_names.rs` — the capability vocabulary (canonical names + aliases) and the `tool(pattern)` grammar; asks `tool_natives.rs` what a harness calls a capability
+- `tool_names.rs` — the capability vocabulary (canonical names + aliases), the `Capability` type and the `tool(pattern)` grammar
 - `tool_natives.rs` — explicit per-harness native tool tables, pinned by a test against each harness's real tool list. Nothing is derived by naming convention.
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts
@@ -96,33 +96,26 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 
 ## Shared Tool Policy (`tool_policy.rs`)
 
-`EffectiveToolPolicy` is the unified tool-gating model used by **agents**, **skills** and the
-**launch bundle**. It is a list of `ToolRule { capability, pattern, action, origin }`:
+`EffectiveToolPolicy` is the one tool-gating model of **agents**, **skills** and the **launch
+bundle**: a list of `ToolRule { capability, pattern, action, origin }`, parsed once into
+`AgentProfile.tools` / `SkillProfile.tools` by `parse_tool_policy`. `capability` is a
+`Capability` (`Any` for `*`, `Mcp(McpRef)`, a vocabulary `Builtin`, or the author's `Unknown`
+spelling), never a string with reserved values.
 
-| Source | Rules |
-|---|---|
-| `tools:` list | `allow` per entry, plus a leading `*: deny` with `origin: list-form` (agents only: an agent list is an allowlist, a skill list only grants) |
-| `tools:` map | `allow` / `deny` / `ask` per entry; `'*'` is a capability, so `'*': deny` makes a map an allowlist |
-| `disallowed-tools:` | `deny` per entry |
-| `mcp(...)` entries | capability `mcp`, pattern = canonical `server/tool` |
+- **Parse.** `tools:` list → `allow` per entry; map → `allow` / `deny` / `ask` per entry;
+  `disallowed-tools:` → `deny`. An agent's list is an allowlist, so parsing adds a leading
+  `*: deny` (`origin: list-form`); a skill's list only grants, so it does not. A `bash`
+  pattern `X:*` becomes `X *`.
+- **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
+  `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
+  lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes
+  the rules back, since sync lowers skills from the staged file.
+- **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
+  names. Native agent lowering, skill lowering and the bundle read its `natives` / `gaps` /
+  `overlaps`; never add a second projection path, or a consumer that re-derives those lists.
+  Resolving a narrow rule over a broad one (`resolve_by_specificity`) happens inside it.
 
-`AgentProfile::effective_tool_policy()` and `SkillProfile::effective_tool_policy()` build it
-(`agent_tool_policy` / `skill_tool_policy`). A `bash` pattern is normalized at parse
-(`X:*` → `X *`); other capabilities keep their colon. A comma-separated scalar `tools:` is the
-list form. A `mars.toml` `[agents.x.tools]` overlay meets the profile in one place,
-`AgentProfile::apply_tools_overlay`, which both the bundle and native lowering call.
-Rules carry no order: precedence between a broad and a scoped rule belongs to the harness.
-
-`EffectiveToolPolicy::project(harness)` returns every rule's native names plus a `NativeStatus`
-(`known` / `absent` / `unknown`), after `resolve_by_specificity`: a rule on a narrower
-capability (`write`) wins over a broader one (`edit`) for the natives they share, so the
-lists handed to Meridian are already resolved. `PolicyProjection::overlaps` names a native that
-an allow and a deny rule still share (a harness that cannot tell two capabilities apart). The
-bundle serializes the projection as `tools.rules`; native agent and skill lowering emit the
-`known` names and record lossiness for what a file cannot hold (`ask`, an
-allowlist with nothing allowed) and for `unknown` rules. Claude's agent-file `tools:` restricts
-the agent, so only an allowlist lowers to it. Never add a second projection path.
-
+What the bundle's `tools.rules` mean and what a status says: `docs/cli/commands.md`.
 MCP grammar and per-harness projection: `.context/CONTEXT.md`.
 
 ## Tool Name Projection
@@ -131,12 +124,10 @@ Mars owns native tool names. `tool_names.rs` recognizes a capability from canoni
 aliases and native spellings (`Bash`, `shell`, `AskUserQuestion` → `bash`, `ask_user`). The
 vocabulary is deliberate: `task` is the task list, `agent` is sub-agents, `web` is
 `web_search` + `web_fetch`. `tool_natives.rs` has one table per harness, one row per
-capability, each one-to-many (Claude `edit` → `Edit`, `Write`, `NotebookEdit`). A row is a list
-of real tools, `Absent` (the harness cannot do the thing), or missing (`unknown`, a reported
-gap). A harness that can do the thing with no tool to switch it (Codex and Pi skills, Codex
-`read` / `glob` / `grep`) is missing, not `Absent`: `Absent` would report an unenforced deny as met. There is no fallback
-that builds a name. Add a tool by adding it to the harness's real-tool list
-in the test first, with its source.
+capability, each one-to-many (Claude `edit` → `Edit`, `Write`, `NotebookEdit`), and says why
+an unknown is unknown (`Absent`, `NoSwitch`, or no row yet). Nothing is derived by naming
+convention. Add a tool by adding it to the harness's real-tool list in the test first, with
+its source.
 
 ## Skill Compilation (`skills/`)
 

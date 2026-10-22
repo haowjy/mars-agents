@@ -6,8 +6,7 @@ use crate::compiler::agents::HarnessKind;
 use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use crate::compiler::skills::SkillProfile;
-use crate::compiler::tool_names::NativeStatus;
-use crate::compiler::tool_policy::{ProjectedRule, ToolAction};
+use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
 
 // ---------------------------------------------------------------------------
 // Policy axes
@@ -228,14 +227,6 @@ fn policy_for(harness: HarnessKind) -> &'static SkillLoweringPolicy {
 // Shared pipeline
 // ---------------------------------------------------------------------------
 
-fn push_unique(into: &mut Vec<String>, natives: Vec<String>) {
-    for native in natives {
-        if !into.contains(&native) {
-            into.push(native);
-        }
-    }
-}
-
 fn yk(s: &str) -> Value {
     Value::String(s.to_string())
 }
@@ -291,9 +282,10 @@ fn render(yaml: Mapping, body: &str) -> Vec<u8> {
 }
 
 struct LoweringCtx<'a> {
-    harness_kind: HarnessKind,
     policy: &'static SkillLoweringPolicy,
     profile: &'a SkillProfile,
+    /// The profile's tool rules spelled for `harness_kind`, resolved once per lowering.
+    tools: PolicyProjection<'a>,
     yaml: Mapping,
     lossy_fields: Vec<LossyField>,
     siblings: Vec<LoweredSibling>,
@@ -306,9 +298,9 @@ impl<'a> LoweringCtx<'a> {
         profile: &'a SkillProfile,
     ) -> Self {
         Self {
-            harness_kind,
             policy,
             profile,
+            tools: profile.tools.project(harness_kind),
             yaml: Mapping::new(),
             lossy_fields: Vec::new(),
             siblings: Vec::new(),
@@ -402,59 +394,27 @@ impl<'a> LoweringCtx<'a> {
         }
     }
 
-    /// Projected `action` rules, split into built-in tools and MCP refs.
-    fn projected_rules(&self, action: ToolAction) -> (Vec<ProjectedRule>, Vec<ProjectedRule>) {
-        let policy = self.profile.effective_tool_policy();
-        let projection = policy.project(self.harness_kind);
-        let (mcp, builtin): (Vec<_>, Vec<_>) = projection
-            .with_action(action)
-            .into_iter()
-            .filter(|(rule, _)| !rule.is_wildcard())
-            .map(|(rule, projected)| (rule.is_mcp(), projected.clone()))
-            .partition(|(is_mcp, _)| *is_mcp);
-        (
-            builtin
-                .into_iter()
-                .map(|(_, projected)| projected)
-                .collect(),
-            mcp.into_iter().map(|(_, projected)| projected).collect(),
-        )
-    }
-
     fn apply_allowed_tools(&mut self) {
         let policy = self.policy;
         // A skill's `allowed-tools` pre-approves tools; it has no way to say "ask".
-        if self
-            .profile
-            .effective_tool_policy()
-            .with_action(ToolAction::Ask)
-            .next()
-            .is_some()
-        {
+        if self.profile.tools.has_rule(ToolAction::Ask, RuleKind::All) {
             self.lossy_fields
                 .push(dropped("tools (ask)", policy.target_name));
         }
-        let (allowed, _) = self.projected_rules(ToolAction::Allow);
         match policy.allowed_tools {
             AllowedToolsPolicy::Emit {
                 track_unknown_tool_lossiness,
             } => {
-                if allowed.is_empty() {
-                    return;
-                }
-                let mut tools: Vec<String> = Vec::new();
-                for projected in allowed {
-                    if track_unknown_tool_lossiness && projected.status == NativeStatus::Unknown {
+                if track_unknown_tool_lossiness {
+                    for note in self.tools.gaps(ToolAction::Allow, RuleKind::Builtin) {
                         self.lossy_fields.push(LossyField {
                             field: "tools".into(),
                             target: policy.target_name.into(),
-                            classification: Lossiness::Approximate {
-                                note: "no native name known for this tool on this harness; left out",
-                            },
+                            classification: Lossiness::Approximate { note },
                         });
                     }
-                    push_unique(&mut tools, projected.native);
                 }
+                let tools = self.tools.natives(ToolAction::Allow, RuleKind::Builtin);
                 if !tools.is_empty() {
                     self.yaml.insert(
                         yk("allowed-tools"),
@@ -463,7 +423,11 @@ impl<'a> LoweringCtx<'a> {
                 }
             }
             AllowedToolsPolicy::DropWhenNonEmpty => {
-                if !allowed.is_empty() {
+                if self
+                    .profile
+                    .tools
+                    .has_rule(ToolAction::Allow, RuleKind::Builtin)
+                {
                     self.lossy_fields.push(dropped("tools", policy.target_name));
                 }
             }
@@ -471,28 +435,20 @@ impl<'a> LoweringCtx<'a> {
     }
 
     fn apply_disallowed_tools(&mut self) {
-        let (builtin, mcp) = self.projected_rules(ToolAction::Deny);
-        if builtin.is_empty() && mcp.is_empty() {
+        if !self.profile.tools.has_rule(ToolAction::Deny, RuleKind::All) {
             return;
         }
         let policy = self.policy;
         match policy.disallowed_tools {
             DisallowedToolsPolicy::Emit => {
-                let mut tools: Vec<String> = Vec::new();
-                for projected in builtin.into_iter().chain(mcp) {
-                    if projected.status == NativeStatus::Unknown {
-                        self.lossy_fields.push(LossyField {
-                            field: "disallowed-tools".into(),
-                            target: policy.target_name.into(),
-                            classification: Lossiness::Approximate {
-                                note: projected.note.unwrap_or(
-                                    "no native name known for this tool on this harness; left out",
-                                ),
-                            },
-                        });
-                    }
-                    push_unique(&mut tools, projected.native);
+                for note in self.tools.gaps(ToolAction::Deny, RuleKind::All) {
+                    self.lossy_fields.push(LossyField {
+                        field: "disallowed-tools".into(),
+                        target: policy.target_name.into(),
+                        classification: Lossiness::Approximate { note },
+                    });
                 }
+                let tools = self.tools.natives(ToolAction::Deny, RuleKind::All);
                 if !tools.is_empty() {
                     self.yaml.insert(
                         yk("disallowed-tools"),
@@ -508,24 +464,24 @@ impl<'a> LoweringCtx<'a> {
     }
 
     fn apply_mcp(&mut self) {
-        let (_, mcp) = self.projected_rules(ToolAction::Allow);
-        if mcp.is_empty() {
+        if !self
+            .profile
+            .tools
+            .has_rule(ToolAction::Allow, RuleKind::Mcp)
+        {
             return;
         }
         let policy = self.policy;
         match policy.mcp {
             McpToolsPolicy::Emit => {
-                let mut mcp_tokens: Vec<String> = Vec::new();
-                for projected in mcp {
-                    if let Some(note) = projected.note {
-                        self.lossy_fields.push(LossyField {
-                            field: "mcp".into(),
-                            target: policy.target_name.into(),
-                            classification: Lossiness::Approximate { note },
-                        });
-                    }
-                    push_unique(&mut mcp_tokens, projected.native);
+                for note in self.tools.gaps(ToolAction::Allow, RuleKind::Mcp) {
+                    self.lossy_fields.push(LossyField {
+                        field: "mcp".into(),
+                        target: policy.target_name.into(),
+                        classification: Lossiness::Approximate { note },
+                    });
                 }
+                let mcp_tokens = self.tools.natives(ToolAction::Allow, RuleKind::Mcp);
                 if mcp_tokens.is_empty() {
                     return;
                 }

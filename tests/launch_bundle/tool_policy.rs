@@ -76,7 +76,7 @@ Review code changes."#;
     let override_bundle: Value = serde_json::from_slice(&override_output.stdout).unwrap();
     assert_eq!(
         override_bundle["tools"]["allowed"],
-        serde_json::json!(["exec_command", "write_stdin"])
+        serde_json::json!(["exec_command"])
     );
     assert_eq!(
         override_bundle["tools"]["disallowed"],
@@ -343,7 +343,7 @@ Review code changes."#;
     let codex_bundle: Value = serde_json::from_slice(&codex_output.stdout).unwrap();
     assert_eq!(
         codex_bundle["tools"]["allowed"],
-        serde_json::json!(["exec_command", "write_stdin", "web_search"])
+        serde_json::json!(["exec_command", "web_search"])
     );
     // Codex has no workflow tool, so that deny is satisfied. It loads skills by reading files, so
     // `skill(init)` has no tool to switch: a reported gap, not a satisfied rule.
@@ -767,7 +767,7 @@ Review code changes."#;
         bundle["tools"]["rules"],
         serde_json::json!([
             {"capability": "*", "pattern": null, "action": "deny",
-             "native": [], "native_status": "known", "origin": "list-form"},
+             "native": [], "origin": "list-form"},
             {"capability": "read", "pattern": null, "action": "allow",
              "native": ["Read"], "native_status": "known"},
             {"capability": "grep", "pattern": null, "action": "allow",
@@ -800,7 +800,8 @@ fn warnings(bundle: &Value) -> String {
 }
 
 #[test]
-fn bundle_lets_a_narrow_allow_win_over_a_broad_deny_where_the_harness_can_tell_them_apart() {
+fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_warns_where_it_cannot() {
+    // Claude and Pi tell `write` from `edit`: the narrow allow wins the shared tool.
     for (harness, allowed, denied) in [("claude", "Write", "Edit"), ("pi", "write", "edit")] {
         let bundle = bundle_for(NO_EDIT_BUT_WRITE_AGENT, harness);
         let allowed_list = bundle["tools"]["allowed"].as_array().unwrap();
@@ -827,11 +828,8 @@ fn bundle_lets_a_narrow_allow_win_over_a_broad_deny_where_the_harness_can_tell_t
         rule(&claude, "edit", None)["native"],
         serde_json::json!(["Edit", "NotebookEdit"])
     );
-}
 
-#[test]
-fn bundle_warns_when_a_harness_cannot_tell_an_allow_from_a_deny() {
-    // Codex edits and writes through `apply_patch` alone.
+    // Codex edits and writes through `apply_patch` alone, so Mars cannot pick.
     let codex = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "codex");
     assert!(
         warnings(&codex).contains("tool 'apply_patch' is both allowed and denied on codex"),

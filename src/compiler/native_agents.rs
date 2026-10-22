@@ -887,7 +887,7 @@ fn effective_native_profile(
         effective.had_user_invocable_field = true;
     }
 
-    effective.apply_tools_overlay(&overlay.tools);
+    effective.tools.apply_overlay(&overlay.tools, true);
     effective
 }
 

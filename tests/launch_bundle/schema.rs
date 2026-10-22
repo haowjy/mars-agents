@@ -83,7 +83,7 @@ Review code changes.
     assert!(bundle["execution_policy"]["codex_rules"].is_null());
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["exec_command", "write_stdin", "apply_patch"])
+        serde_json::json!(["exec_command", "apply_patch"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],

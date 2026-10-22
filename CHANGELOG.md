@@ -9,7 +9,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   statement, `{capability, pattern, action, native, native_status, origin?}`. Consumers read
   meaning from `capability` and emission from `native` instead of re-reading native names as
   capabilities. `native_status` is `known`, `absent` (the harness has no such tool) or
-  `unknown` (Mars cannot name it: a gap to report). `tools.allowed` / `tools.disallowed` /
+  `unknown` (Mars cannot name it: a gap to report). The `*` rule names no tool: empty
+  `native`, no `native_status`. `tools.allowed` / `tools.disallowed` /
   `tools.mcp` stay, derived from the rules, for one release; they cannot carry `ask`, `*`
   or the capability behind a name.
 
@@ -43,7 +44,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `web_fetch`, and Codex `read` / `glob` / `grep`, which it does through the shell) is
   `unknown`, so an unenforced deny is reported instead of counted as met. A name Mars has no row for is
   left out with a warning instead of guessed (the PascalCase / lowercase naming convention
-  is gone). Codex `bash` covers `exec_command` and `write_stdin`; `agent` covers the
+  is gone). Codex `bash` covers `exec_command` alone (`write_stdin` only feeds a session
+  `exec_command` opened); `agent` covers the
   whole sub-agent tool family on Claude (`Agent`, `SendMessage`, `ListAgents`) and Codex
   (both multi-agent versions). Fixes Claude `Websearch` / `Askuser`, and OpenCode
   `browser`, which matched no tool. Cursor rows are carried over unchanged.
@@ -59,16 +61,23 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tools:` inherits every tool, so nothing is lost and no lossiness is recorded.
 - `mars.toml` `[agents.<name>.tools].allowed` replaces the profile's allow rules and keeps
   its deny and `ask` rules; `disallowed` replaces its deny rules. The launch bundle now
-  applies the overlay too, through the same merge as native agent files.
+  applies the overlay too, through the same merge as native agent files. `[skills.<name>.tools]`
+  uses the same edit, so `allowed` no longer drops a map-form deny or `ask` in the skill's
+  `tools:`; a skill's `allowed` only grants and makes no allowlist. The staged skill writes
+  entries in canonical spelling (`agent`, not `Agent`), and denies in `disallowed-tools:`.
 - A scalar `tools: Read, Grep` (Claude's own agent-file spelling) is read as the list
   `[Read, Grep]`; staging splits it before lifting `Task` and `mcp__…` entries.
 - A malformed `tool(...)` entry (unclosed or empty parentheses, `*(x)`) is a validation
-  error instead of passing through verbatim to the harness.
+  error instead of passing through verbatim to the harness. So is a bare `mcp` or `MCP`,
+  which names no server: it was an unknown tool that collided with the bundle's `mcp`
+  capability.
 - `bash` patterns `X:*` normalize to `X *` (`bash(git revert:*)` → `bash(git revert *)`),
   the one spelling OpenCode reads correctly. Other capabilities keep the colon, since it is
   part of a path or host (`read(./secrets:*)`, `web_fetch(domain:*)`).
-- `mars agents show` / `mars skills show` add `tools-ask` (and `tools-list-form` for
-  agents) and render `mcp(server)` as `mcp(server/*)`.
+- **Breaking:** `mars agents show --json` / `mars skills show --json` print the tool policy as
+  one `rules` list, in the launch bundle's rule shape (`{capability, pattern, action,
+  origin?}`), instead of `tools`, `disallowed-tools` and `tools-denied`. `mcp(server)` shows
+  as `mcp(server/*)`. The text view prints one `tool-rules` line.
 
 ## [0.16.0] - 2026-10-14
 

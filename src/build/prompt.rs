@@ -369,9 +369,8 @@ fn compose_system_instruction(
         }
     }
 
-    // Available skills: names only, grouped by type.
-    // NOTE: meridian-cli recomposes this block independently in
-    // `composition.py::_render_available_skills_block`. Keep format in sync.
+    // Available skills: names only, grouped by type. Meridian composes its own
+    // inventory and renders descriptions, so the two formats are independent.
     if !available_skills.is_empty() {
         let mut avail_block = String::from(
             "# Available Skills\n\nNot yet loaded. Load proactively when the task fits.",

@@ -162,6 +162,10 @@ const CLAUDE: Table = &[
     ("schedule_wakeup", Tools(&["ScheduleWakeup"])),
     ("remote_trigger", Tools(&["RemoteTrigger"])),
     ("tool_search", Tools(&["ToolSearch"])),
+    (
+        "image",
+        NoSwitch("claude views images through Read; no switch"),
+    ),
 ];
 
 /// Codex 0.163.0.
@@ -234,6 +238,7 @@ const CODEX: Table = &[
     ("schedule_wakeup", Absent),
     ("remote_trigger", Absent),
     ("tool_search", Tools(&["tool_search"])),
+    ("image", Tools(&["view_image"])),
 ];
 
 /// OpenCode, in the v1.19.3 permission vocabulary. Meridian knows the running version and
@@ -271,6 +276,10 @@ const OPENCODE: Table = &[
     ("schedule_wakeup", Absent),
     ("remote_trigger", Absent),
     ("tool_search", Absent),
+    (
+        "image",
+        NoSwitch("opencode views images through read; no switch"),
+    ),
 ];
 
 /// Pi 1.1.0 / 1.2.0, built-in tools only.
@@ -311,6 +320,7 @@ const PI: Table = &[
     ("schedule_wakeup", Absent),
     ("remote_trigger", Absent),
     ("tool_search", Absent),
+    ("image", NoSwitch("pi views images through read; no switch")),
 ];
 
 /// Cursor. Unmaintained: these rows are carried over unchanged from Mars 0.16's

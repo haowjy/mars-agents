@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `image` tool capability (alias `view_image`): Codex `view_image`; Claude, OpenCode and Pi open images with their read tool, so it has no switch there.
 - Launch bundle `tools.capability_natives` (additive in bundle schema 4), always carrying the
   resolved harness's native names and status for the `agent` and `task` capabilities. Launchers
   can enforce platform rules without keeping a second native-name table; the names come from

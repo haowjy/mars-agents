@@ -246,6 +246,12 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
         name: "tool_search",
         aliases: &["toolsearch"],
     },
+    // Viewing an image file. Only Codex has a tool for it (`view_image`); elsewhere the read
+    // tool opens images.
+    CanonicalTool {
+        name: "image",
+        aliases: &["view_image"],
+    },
 ];
 
 pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolNameParseError> {

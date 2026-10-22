@@ -176,6 +176,7 @@ harness can do it but has no tool to turn off (`native_status: unknown`, with a 
 | `schedule_wakeup` | schedule its own wake-up | `ScheduleWakeup` | absent | absent | absent | unknown |
 | `remote_trigger` | remote triggers | `RemoteTrigger` | absent | absent | absent | unknown |
 | `tool_search` | load deferred tool definitions | `ToolSearch` | `tool_search` | absent | absent | unknown |
+| `image` | view an image file | no switch | `view_image` | no switch | no switch | unknown |
 
 ¹ `TaskOutput` was removed from Claude in 2.1.277, which ignores the name. It stays because
 older builds offer it and Meridian denies it with the task list.

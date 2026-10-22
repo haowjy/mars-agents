@@ -23,6 +23,11 @@ pipeline operates on EffectiveConfig only
 | `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`) |
 | `AgentOverlay` | `[agents.<name>]` overlay — `description`, `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact`, `autocompact_pct`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`), `model_policies` |
 
+`AgentOverlayTools` holds `OverlayToolName`s (`compiler/tool_names.rs`, a leaf grammar module):
+a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the profile grammar as the
+config loads, and a malformed one fails the load. It keeps the author's spelling, so `save`
+does not rewrite it. This is the one place `config` reaches into `compiler`.
+
 ## Layering (`layering.rs`)
 
 - `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.

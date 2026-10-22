@@ -9,8 +9,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   statement, `{capability, pattern, action, native, native_status, origin?}`. Consumers read
   meaning from `capability` and emission from `native` instead of re-reading native names as
   capabilities. `native_status` is `known`, `absent` (the harness has no such tool) or
-  `unknown` (Mars cannot name it: a gap to report). The `*` rule names no tool: empty
-  `native`, no `native_status`. `tools.allowed` / `tools.disallowed` /
+  `unknown` (Mars cannot name it: a gap to report, with the reason in `note`, for example
+  "codex loads skills by reading files; no switch"). The `*` rule names no tool: empty
+  `native`, no `native_status`, no `note`. `tools.allowed` / `tools.disallowed` /
   `tools.mcp` stay, derived from the rules, for one release; they cannot carry `ask`, `*`
   or the capability behind a name.
 
@@ -42,11 +43,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ask_user` is `AskUserQuestion` (OpenCode `question`). A capability a harness cannot do
   is `absent`; one it can do with no tool to switch it (Codex and Pi `skill`, Codex
   `web_fetch`, and Codex `read` / `glob` / `grep`, which it does through the shell) is
-  `unknown`, so an unenforced deny is reported instead of counted as met. A name Mars has no row for is
-  left out with a warning instead of guessed (the PascalCase / lowercase naming convention
-  is gone). Codex `bash` covers `exec_command` alone (`write_stdin` only feeds a session
-  `exec_command` opened); `agent` covers the
-  whole sub-agent tool family on Claude (`Agent`, `SendMessage`, `ListAgents`) and Codex
+  `unknown`, so an unenforced deny is reported instead of counted as met; that gap carries
+  its reason in `note` and draws no launch warning. A name Mars has no row for, or does not
+  recognize, is left out with a warning instead of guessed (the PascalCase / lowercase
+  naming convention is gone). Claude `task` also names `TaskOutput`, which Claude removed in
+  2.1.277 but older builds still offer. Codex `bash` covers `exec_command` alone
+  (`write_stdin` only feeds a session `exec_command` opened); `agent` covers the whole
+  sub-agent tool family on Claude (`Agent`, `SendMessage`, `ListAgents`) and Codex
   (both multi-agent versions). Fixes Claude `Websearch` / `Askuser`, and OpenCode
   `browser`, which matched no tool. Cursor rows are carried over unchanged.
 - A rule on a narrower capability wins over a broader one for the tools they share, so
@@ -74,10 +77,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `bash` patterns `X:*` normalize to `X *` (`bash(git revert:*)` → `bash(git revert *)`),
   the one spelling OpenCode reads correctly. Other capabilities keep the colon, since it is
   part of a path or host (`read(./secrets:*)`, `web_fetch(domain:*)`).
-- **Breaking:** `mars agents show --json` / `mars skills show --json` print the tool policy as
-  one `rules` list, in the launch bundle's rule shape (`{capability, pattern, action,
-  origin?}`), instead of `tools`, `disallowed-tools` and `tools-denied`. `mcp(server)` shows
-  as `mcp(server/*)`. The text view prints one `tool-rules` line.
+- `mars agents show --json` / `mars skills show --json` print the tool policy as one `rules`
+  list, in the launch bundle's rule shape (`{capability, pattern, action, origin?}`).
+  `mcp(server)` shows as `mcp(server/*)`. The text view prints one `tool-rules` line.
+  **Deprecated:** `tools` and `disallowed-tools` stay for one release, derived from `rules`
+  (they cannot carry `ask`, `*` or the capability behind a name); `tools-denied` is folded
+  into `disallowed-tools`.
+- Tool names in `mars.toml` / `mars.local.toml` `[agents.<name>.tools]` and
+  `[skills.<name>.tools]` are checked when the config loads, with the profile grammar: a
+  malformed name (`mcp`, `mcp(`, `*(x)`) fails the load instead of reaching the policy. A skill
+  overlay leaves a skill with a malformed `tools:` / `disallowed-tools:` entry untouched, so
+  sync reports the entry.
 
 ## [0.16.0] - 2026-10-14
 

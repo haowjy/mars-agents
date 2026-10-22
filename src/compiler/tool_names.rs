@@ -5,6 +5,8 @@
 //! normalizes the pattern. What a harness calls a capability lives in
 //! [`crate::compiler::tool_natives`].
 
+use serde::{Deserialize, Serialize};
+
 use crate::compiler::mcp_ref::{MCP_TOOL_NAME_GRAMMAR, McpRef, try_parse_mcp_tool_name};
 
 const TOOL_NAME_ALLOWED: &str =
@@ -22,8 +24,8 @@ pub(crate) enum Capability {
     Mcp(McpRef),
     /// A capability in the vocabulary below.
     Builtin(&'static str),
-    /// The author's spelling when Mars does not know the name, or an `mcp__…` wire token that
-    /// passes through verbatim.
+    /// The author's spelling of a name Mars has no row for, or an `mcp__…` wire token that
+    /// passes through verbatim. Only a name that parsed gets here.
     Unknown(String),
 }
 
@@ -45,6 +47,42 @@ pub(crate) struct ParsedToolName {
     /// Scope inside `capability(...)`; a `bash` command prefix is normalized (`X:*` → `X *`).
     /// `None` for `*` and `mcp`, which carry their scope in the capability.
     pub pattern: Option<String>,
+}
+
+/// A tool name written in `mars.toml` (`[agents.<name>.tools]`, `[skills.<name>.tools]`),
+/// parsed when the config loads: an overlay cannot carry a name a profile would reject.
+/// Keeps the author's spelling, so saving `mars.toml` does not rewrite it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct OverlayToolName {
+    raw: String,
+    parsed: ParsedToolName,
+}
+
+impl OverlayToolName {
+    pub(crate) fn parsed(&self) -> &ParsedToolName {
+        &self.parsed
+    }
+}
+
+impl TryFrom<String> for OverlayToolName {
+    type Error = String;
+
+    fn try_from(raw: String) -> Result<Self, String> {
+        match parse_mars_tool_name(&raw) {
+            Ok(parsed) => Ok(Self { raw, parsed }),
+            Err(err) => Err(format!(
+                "invalid tool name `{raw}`; allowed: {}",
+                err.allowed()
+            )),
+        }
+    }
+}
+
+impl From<OverlayToolName> for String {
+    fn from(name: OverlayToolName) -> Self {
+        name.raw
+    }
 }
 
 pub(crate) fn render_scoped(name: &str, pattern: Option<&str>) -> String {

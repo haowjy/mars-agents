@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
+use crate::compiler::tool_names::OverlayToolName;
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::dialect::Dialect;
 use crate::error::{ConfigError, MarsError};
@@ -196,12 +197,15 @@ pub struct FilterConfig {
 }
 
 /// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed`).
+///
+/// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
+/// fails `mars.toml` instead of reaching the policy.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentOverlayTools {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed: Vec<String>,
+    pub allowed: Vec<OverlayToolName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub disallowed: Vec<String>,
+    pub disallowed: Vec<OverlayToolName>,
 }
 
 impl AgentOverlayTools {
@@ -1878,8 +1882,8 @@ override = { effort = "high" }
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
         assert_eq!(
-            overlay.tools.disallowed,
-            vec!["Bash(rm *)".to_string(), "Write".to_string()]
+            overlay_tool_strings(&overlay.tools.disallowed),
+            ["Bash(rm *)", "Write"]
         );
         assert_eq!(overlay.model_policies.len(), 1);
         assert_eq!(
@@ -1916,13 +1920,17 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
         assert_eq!(
-            overlay.tools.disallowed,
-            vec!["Agent".to_string(), "Write".to_string()]
+            overlay_tool_strings(&overlay.tools.disallowed),
+            ["Agent", "Write"]
         );
         assert_eq!(
-            overlay.tools.allowed,
-            vec!["Bash(git *)".to_string(), "mcp(plugin:demo)".to_string()]
+            overlay_tool_strings(&overlay.tools.allowed),
+            ["Bash(git *)", "mcp(plugin:demo)"]
         );
+    }
+
+    fn overlay_tool_strings(names: &[OverlayToolName]) -> Vec<String> {
+        names.iter().cloned().map(String::from).collect()
     }
 
     #[test]

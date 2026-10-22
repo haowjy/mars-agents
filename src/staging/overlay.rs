@@ -109,8 +109,16 @@ pub(crate) fn apply_skill_overlay(
 /// Apply `[skills.<name>.tools]` through the same edit an agent overlay uses, then write the
 /// rules back, since sync lowers skills from this staged text. A skill's `tools:` only grants,
 /// so `allowed` makes no allowlist, and the skill's own deny and ask rules survive it.
+///
+/// Writing back replaces `tools:` and `disallowed-tools:` with what parsed. If any entry did not,
+/// the frontmatter stays as written: rewriting it would drop that entry, a malformed deny
+/// among them, and hide the error sync's own parse reports for it.
 fn apply_tool_overlay(fm: &mut Frontmatter, overlay: &AgentOverlayTools) -> bool {
-    let before = parse_skill_tool_policy(fm, &mut Vec::new());
+    let mut diags = Vec::new();
+    let before = parse_skill_tool_policy(fm, &mut diags);
+    if !diags.is_empty() {
+        return false;
+    }
     let mut after = before.clone();
     after.apply_overlay(overlay, false);
     if after == before {
@@ -155,7 +163,7 @@ mod tests {
             description: Some("Overridden".to_string()),
             user_invocable: Some(false),
             tools: AgentOverlayTools {
-                disallowed: vec!["Agent".to_string()],
+                disallowed: vec!["Agent".to_string().try_into().unwrap()],
                 ..AgentOverlayTools::default()
             },
             ..SkillOverlay::default()
@@ -180,7 +188,7 @@ mod tests {
     fn overlay_allowed_replaces_grants_and_keeps_the_skills_denies() {
         let overlay = SkillOverlay {
             tools: AgentOverlayTools {
-                allowed: vec!["Bash(git *)".to_string()],
+                allowed: vec!["Bash(git *)".to_string().try_into().unwrap()],
                 ..AgentOverlayTools::default()
             },
             ..SkillOverlay::default()

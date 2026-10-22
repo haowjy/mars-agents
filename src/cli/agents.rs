@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::compiler::agents::{parse_agent_content, parse_agent_profile};
+use crate::compiler::tool_policy::ToolAction;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter;
@@ -238,6 +239,9 @@ fn run_show(
                 "sandbox": sandbox_str,
                 "effort": effort_str,
                 "rules": profile.tools.rules,
+                // Deprecated: derived from `rules`; cannot carry `ask`, `*` or the capability.
+                "tools": profile.tools.rendered(ToolAction::Allow),
+                "disallowed-tools": profile.tools.rendered(ToolAction::Deny),
                 "scope": scope,
                 "source_path": disk_path,
             }));

@@ -3,9 +3,11 @@
 //! One table per harness, one row per capability. Nothing is derived by naming convention: a
 //! row names the harness's real tools (one capability can cover several), says the harness has
 //! no such tool ([`Native::Absent`]), says it does the thing without a tool to switch
-//! ([`Native::NoSwitch`]), or is missing, which means Mars has not decided for that harness.
-//! Both `NoSwitch` and a missing row report as `unknown`, a gap Meridian surfaces, because
-//! calling an unenforceable deny `absent` would report it as met.
+//! ([`Native::NoSwitch`], with the reason), or is missing, which means Mars has not decided for
+//! that harness. Both `NoSwitch` and a missing row report as `unknown`, a gap Meridian
+//! surfaces, because calling an unenforceable deny `absent` would report it as met. A
+//! `NoSwitch` row is a settled fact and carries its reason in the bundle's `note`; a missing
+//! row, like an unrecognized name, draws a warning.
 //!
 //! Every name below must appear in the harness's real tool list, which the tests pin with the
 //! source each list came from. When a harness ships a tool, add it to that list first.
@@ -20,8 +22,9 @@ pub(crate) enum Native {
     /// The harness has no such tool, so there is nothing to allow or deny.
     Absent,
     /// The harness can do the thing but offers no tool to switch it off (Codex and Pi load
-    /// skills by reading `SKILL.md`; Codex reads, globs and greps through its shell).
-    NoSwitch,
+    /// skills by reading `SKILL.md`; Codex reads, globs and greps through its shell). The
+    /// string says why, for the bundle's `note`.
+    NoSwitch(&'static str),
 }
 
 use Native::{Absent, NoSwitch, Tools};
@@ -71,13 +74,16 @@ const CLAUDE: Table = &[
     ("web_fetch", Tools(&["WebFetch"])),
     ("ask_user", Tools(&["AskUserQuestion"])),
     // `TaskStop` stops background tasks; Meridian has always grouped it with the task list.
-    // `TaskOutput` is gone since 2.1.277, and naming a removed tool only draws a warning.
+    // `TaskOutput` was removed in 2.1.277: 2.1.307 lists it only among retired tool names and
+    // offers no such tool, and `--disallowedTools TaskOutput` there is silently ignored. It stays
+    // because older Claude builds still offer it and Meridian's platform rule denies it.
     (
         "task",
         Tools(&[
             "TaskCreate",
             "TaskGet",
             "TaskList",
+            "TaskOutput",
             "TaskUpdate",
             "TaskStop",
             "TodoWrite",
@@ -113,7 +119,10 @@ const CLAUDE: Table = &[
 /// plan.").
 const CODEX: Table = &[
     ("bash", Tools(&["exec_command"])),
-    ("read", NoSwitch),
+    (
+        "read",
+        NoSwitch("codex reads files through its shell; no switch"),
+    ),
     ("write", Tools(&["apply_patch"])),
     ("edit", Tools(&["apply_patch"])),
     ("notebook", Absent),
@@ -131,13 +140,25 @@ const CODEX: Table = &[
             "list_agents",
         ]),
     ),
-    ("skill", NoSwitch),
+    (
+        "skill",
+        NoSwitch("codex loads skills by reading files; no switch"),
+    ),
     ("workflow", Absent),
-    ("glob", NoSwitch),
-    ("grep", NoSwitch),
+    (
+        "glob",
+        NoSwitch("codex finds files through its shell; no switch"),
+    ),
+    (
+        "grep",
+        NoSwitch("codex searches files through its shell; no switch"),
+    ),
     ("web", Tools(&["web_search"])),
     ("web_search", Tools(&["web_search"])),
-    ("web_fetch", NoSwitch),
+    (
+        "web_fetch",
+        NoSwitch("codex opens pages through hosted web_search; no separate switch"),
+    ),
     ("ask_user", Tools(&["request_user_input"])),
     ("task", Tools(&["update_plan"])),
     ("cron", Absent),
@@ -205,7 +226,10 @@ const PI: Table = &[
     ("edit", Tools(&["edit", "write"])),
     ("notebook", Absent),
     ("agent", Absent),
-    ("skill", NoSwitch),
+    (
+        "skill",
+        NoSwitch("pi loads skills by reading files; no switch"),
+    ),
     ("workflow", Absent),
     ("glob", Tools(&["find"])),
     ("grep", Tools(&["grep"])),
@@ -256,7 +280,8 @@ mod tests {
     /// that is not here is a guess.
     fn real_tools(harness: HarnessKind) -> &'static [&'static str] {
         match harness {
-            // Tools reference + 2.1.307 binary. Excludes `TaskOutput` (removed 2.1.277).
+            // Tools reference + 2.1.307 binary, plus `TaskOutput`: removed in 2.1.277, so 2.1.307
+            // no longer offers it, but older builds do (see the `task` row).
             HarnessKind::Claude => &[
                 "Agent",
                 "Artifact",
@@ -295,6 +320,7 @@ mod tests {
                 "TaskCreate",
                 "TaskGet",
                 "TaskList",
+                "TaskOutput",
                 "TaskStop",
                 "TaskUpdate",
                 "TodoWrite",

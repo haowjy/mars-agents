@@ -669,6 +669,7 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `action` | `allow`, `deny` or `ask` |
 | `native` | The harness's tool names for the rule, one per native tool the capability covers; a pattern is appended as `name(pattern)`. Empty unless `native_status` is `known`. Already resolved: a rule on a narrower capability wins its tools from a broader one (`edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed), so emit `native` as given |
 | `native_status` | `known`: `native` names it. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
+| `note` | Why Mars could not name the rule, present exactly when `native_status` is `unknown` (`"codex loads skills by reading files; no switch"`). Show it in a gap report. A harness with no switch for the tool adds no entry to `warnings[]`; a name Mars does not recognize does |
 | `origin` | `list-form` on the `*: deny` Mars adds for a list-form `tools: [..]`; omitted otherwise |
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from

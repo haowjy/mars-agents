@@ -109,10 +109,17 @@ spelling), never a string with reserved values.
 - **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
   `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
   lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes
-  the rules back, since sync lowers skills from the staged file.
+  the rules back, since sync lowers skills from the staged file. Overlay names are
+  `OverlayToolName`s: parsed with the profile grammar as `mars.toml` loads, so `apply_overlay`
+  never meets a name a profile would reject. Staging writes a skill back only when its own
+  `tools:` / `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would
+  drop the bad entry, a malformed deny among them, and hide the error sync reports for it.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
   names. Native agent lowering, skill lowering and the bundle read its `natives` / `gaps` /
   `overlaps`; never add a second projection path, or a consumer that re-derives those lists.
+  A rule's `NativeStatus` says why a name is `unknown`: `NoSwitch` (the harness has no switch
+  for it; report-only, no launch warning) or `Unknown` (Mars does not recognize it; warns).
+  The bundle prints both as `unknown`, with the reason as `note`.
   Resolving a narrow rule over a broad one (`resolve_by_specificity`) happens inside it.
 
 What the bundle's `tools.rules` mean and what a status says: `docs/cli/commands.md`.

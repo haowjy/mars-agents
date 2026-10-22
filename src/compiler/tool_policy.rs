@@ -17,7 +17,8 @@ use serde_yaml::Value;
 use crate::compiler::agents::HarnessKind;
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use crate::compiler::tool_names::{
-    Capability, ParsedToolName, is_mcp_wire_token, parse_mars_tool_name, render_scoped,
+    Capability, OverlayToolName, ParsedToolName, is_mcp_wire_token, parse_mars_tool_name,
+    render_scoped,
 };
 use crate::compiler::tool_natives::{self, Native};
 use crate::config::AgentOverlayTools;
@@ -148,17 +149,30 @@ pub(crate) enum NativeStatus {
     Known,
     /// The harness has no such tool, so there is nothing to allow or deny.
     Absent,
-    /// Mars cannot name it for this harness, for the reason given. A reported gap, never a
-    /// guess.
+    /// The harness does the thing but offers no tool to switch it, for the reason given. A
+    /// known gap Mars reports without a warning, since it is not the author's mistake.
+    NoSwitch(&'static str),
+    /// Mars has no name for it on this harness, for the reason given: a name it does not
+    /// recognize, a typo among them. Reported with a warning.
     Unknown(&'static str),
 }
 
 impl NativeStatus {
+    /// The bundle's `native_status`. `NoSwitch` and `Unknown` are both `unknown`: neither names a
+    /// tool, so a consumer treats an unenforceable rule alike and reads `note` for the reason.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Known => "known",
             Self::Absent => "absent",
-            Self::Unknown(_) => "unknown",
+            Self::NoSwitch(_) | Self::Unknown(_) => "unknown",
+        }
+    }
+
+    /// Why Mars could not name the rule, for the statuses that are `unknown`.
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            Self::NoSwitch(note) | Self::Unknown(note) => Some(note),
+            Self::Known | Self::Absent => None,
         }
     }
 }
@@ -192,6 +206,12 @@ impl ProjectedRule {
 
     /// Why Mars could not name this rule on the harness, when it could not.
     pub fn gap(&self) -> Option<&'static str> {
+        self.status.and_then(NativeStatus::note)
+    }
+
+    /// The gap, only when Mars does not recognize the rule: worth a warning, unlike a
+    /// harness that simply has no switch.
+    pub fn unrecognized(&self) -> Option<&'static str> {
         match self.status {
             Some(NativeStatus::Unknown(reason)) => Some(reason),
             _ => None,
@@ -222,9 +242,10 @@ fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
                 ProjectedRule::known(names.iter().map(|name| scoped(name)).collect())
             }
             Some(Native::Absent) => ProjectedRule::with_status(NativeStatus::Absent),
-            Some(Native::NoSwitch) | None => {
-                ProjectedRule::with_status(NativeStatus::Unknown(NO_NATIVE_NAME))
+            Some(Native::NoSwitch(note)) => {
+                ProjectedRule::with_status(NativeStatus::NoSwitch(note))
             }
+            None => ProjectedRule::with_status(NativeStatus::Unknown(NO_NATIVE_NAME)),
         },
     }
 }
@@ -257,6 +278,15 @@ impl EffectiveToolPolicy {
         self.rules
             .iter()
             .map(|rule| format!("{}:{}", rule.action.as_str(), rule.render()))
+            .collect()
+    }
+
+    /// The `action` rules as `capability(pattern)` spellings, without the `*` allowlist marker.
+    /// Feeds the deprecated `tools` and `disallowed-tools` keys of `show --json`.
+    pub fn rendered(&self, action: ToolAction) -> Vec<String> {
+        self.with_action(action)
+            .filter(|rule| !rule.is_wildcard())
+            .map(ToolRule::render)
             .collect()
     }
 
@@ -471,21 +501,11 @@ fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)]) {
 }
 
 /// Rules for the tool names in a `mars.toml` overlay (`[agents.x.tools]`, `[skills.x.tools]`).
-///
-/// A name Mars cannot parse is kept as an unknown capability rather than dropped: losing a
-/// `disallowed` entry would widen the agent.
-fn overlay_rules(names: &[String], action: ToolAction) -> Vec<ToolRule> {
+/// The names parsed when the config loaded, so there is nothing left to reject here.
+fn overlay_rules(names: &[OverlayToolName], action: ToolAction) -> Vec<ToolRule> {
     names
         .iter()
-        .map(|name| match parse_mars_tool_name(name) {
-            Ok(parsed) => ToolRule::from_parsed(parsed, action),
-            Err(_) => ToolRule {
-                capability: Capability::Unknown(name.trim().to_string()),
-                pattern: None,
-                action,
-                origin: None,
-            },
-        })
+        .map(|name| ToolRule::from_parsed(name.parsed().clone(), action))
         .collect()
 }
 
@@ -1023,7 +1043,7 @@ mod tests {
             natives("edit", "claude"),
             known(&["Edit", "Write", "NotebookEdit"])
         );
-        assert_eq!(natives("todowrite", "claude").0.len(), 6);
+        assert_eq!(natives("todowrite", "claude").0.len(), 7);
     }
 
     #[test]
@@ -1162,8 +1182,8 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
     #[test]
     fn the_overlay_edits_agent_and_skill_policies_alike() {
         let overlay = AgentOverlayTools {
-            allowed: vec!["bash".to_string()],
-            disallowed: vec!["agent".to_string()],
+            allowed: vec!["bash".to_string().try_into().unwrap()],
+            disallowed: vec!["agent".to_string().try_into().unwrap()],
         };
         let yaml = "tools:
   'bash(git push *)': deny

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::compiler::skills::{parse_skill_content, parse_skill_profile};
+use crate::compiler::tool_policy::ToolAction;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
 use crate::frontmatter;
@@ -220,6 +221,9 @@ fn run_show(
                 "model-invocable": profile.model_invocable,
                 "user-invocable": profile.user_invocable,
                 "rules": profile.tools.rules,
+                // Deprecated: derived from `rules`; cannot carry `ask`, `*` or the capability.
+                "tools": profile.tools.rendered(ToolAction::Allow),
+                "disallowed-tools": profile.tools.rendered(ToolAction::Deny),
                 "scope": scope,
                 "source_path": skill_md,
             }));

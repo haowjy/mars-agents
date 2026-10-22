@@ -346,7 +346,8 @@ Review code changes."#;
         serde_json::json!(["exec_command", "web_search"])
     );
     // Codex has no workflow tool, so that deny is satisfied. It loads skills by reading files, so
-    // `skill(init)` has no tool to switch: a reported gap, not a satisfied rule.
+    // `skill(init)` has no tool to switch: a reported gap with its reason in `note`, not a
+    // satisfied rule and not a launch warning.
     assert_eq!(codex_bundle["tools"]["disallowed"], serde_json::json!([]));
     let codex_warnings = codex_bundle["warnings"]
         .as_array()
@@ -355,10 +356,11 @@ Review code changes."#;
         let text = warning.as_str().unwrap_or_default();
         text.contains("workflow") || text.contains("'web'")
     }));
-    assert!(codex_warnings.iter().any(|warning| {
-        let text = warning.as_str().unwrap_or_default();
-        text.contains("skill(init)") && text.contains("no known codex name")
-    }));
+    assert!(
+        !codex_warnings
+            .iter()
+            .any(|warning| { warning.as_str().unwrap_or_default().contains("skill(init)") })
+    );
     let skill_rule = codex_bundle["tools"]["rules"]
         .as_array()
         .expect("rules")
@@ -366,6 +368,10 @@ Review code changes."#;
         .find(|rule| rule["capability"] == "skill")
         .expect("skill rule");
     assert_eq!(skill_rule["native_status"], "unknown");
+    assert_eq!(
+        skill_rule["note"],
+        "codex loads skills by reading files; no switch"
+    );
     assert!(codex_warnings.iter().any(|warning| {
         warning
             .as_str()
@@ -660,6 +666,7 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
             "TaskCreate",
             "TaskGet",
             "TaskList",
+            "TaskOutput",
             "TaskUpdate",
             "TaskStop",
             "TodoWrite"
@@ -672,12 +679,13 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
             "native": ["mcp__github__delete_repo"], "native_status": "known"
         })
     );
-    // A name Mars cannot map is a reported gap, never a guess.
+    // A name Mars cannot map is a reported gap, never a guess, and it still draws a warning.
     assert_eq!(
         *rule(&bundle, "mystery_tool", None),
         serde_json::json!({
             "capability": "mystery_tool", "pattern": null, "action": "deny",
-            "native": [], "native_status": "unknown"
+            "native": [], "native_status": "unknown",
+            "note": "no native name known for this tool on this harness; left out"
         })
     );
 }

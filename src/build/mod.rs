@@ -233,13 +233,14 @@ fn resolve_bundle_tools(
     let mut warnings = Vec::new();
     let mut rules = Vec::new();
     for (rule, projected) in projection.rules() {
-        if let Some(reason) = projected.gap() {
+        if let Some(reason) = projected.unrecognized() {
             warnings.push(unknown_tool_warning(rule, reason, harness));
         }
         rules.push(ToolRuleSpec {
             rule: (*rule).clone(),
             native: projected.native.clone(),
             native_status: projected.status.map(NativeStatus::as_str),
+            note: projected.gap(),
         });
     }
     for native in projection.overlaps() {
@@ -260,8 +261,9 @@ fn resolve_bundle_tools(
     ))
 }
 
-/// Why Mars could not name `rule` for `harness`. The rule still ships in `tools.rules` with
-/// `native_status: unknown`.
+/// Why Mars does not recognize `rule` for `harness`. The rule still ships in `tools.rules` with
+/// `native_status: unknown`. A harness with no switch for a tool (`NoSwitch`) draws no warning:
+/// the rule's `note` carries that reason for a gap report.
 fn unknown_tool_warning(rule: &ToolRule, reason: &str, harness: &str) -> String {
     let denied = if rule.action == ToolAction::Deny {
         "disallowed "

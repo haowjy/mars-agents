@@ -123,12 +123,16 @@ bundle reports one of three outcomes per rule:
 
 - `known`: the table names it.
 - `absent`: the harness cannot do this at all, so there is nothing to allow or deny.
-- `unknown`: Mars cannot name it for this harness. Either it has no entry (including names it
-  does not recognize), or the harness can do the thing but has no tool to switch it (Codex
-  reads, globs and greps through its shell; Codex and Pi load skills by reading `SKILL.md`).
-  A deny there is not enforced, and `absent` would report it as met. The tool is left out of
-  native output with a warning, and the bundle rule carries an empty `native`. This is a gap
-  to report, not something to guess around.
+- `unknown`: Mars cannot name it for this harness. A deny there is not enforced, and `absent`
+  would report it as met. The tool is left out of native output, the bundle rule carries an
+  empty `native` and a `note` with the reason, and Meridian reports the gap rather than
+  guessing around it. Two causes, told apart by the launch warning:
+  - The harness can do the thing but has no tool to switch it (Codex reads, globs and greps
+    through its shell; Codex and Pi load skills by reading `SKILL.md`). A known fact, not the
+    author's mistake: no warning, only the `note` ("codex loads skills by reading files; no
+    switch").
+  - Mars has no entry, or does not recognize the name (a typo, most likely). The bundle adds a
+    warning.
 
 The bundle's `*` rule (the `*: deny` of an allowlist) names no tool, so it has an empty
 `native` and no `native_status`.
@@ -141,12 +145,15 @@ The bundle's `*` rule (the `*: deny` of an allowlist) names no tool, so it has a
 | `edit` | `Edit`, `Write`, `NotebookEdit` | `apply_patch` | `edit` | `edit`, `write` |
 | `notebook` | `NotebookEdit` | absent | absent | absent |
 | `agent` | `Agent`, `SendMessage`, `ListAgents` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent |
-| `task` | `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent |
+| `task` | `TaskCreate`, `TaskGet`, `TaskList`, `TaskOutput`¹, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent |
 | `skill` | `Skill` | unknown | `skill` | unknown |
 | `glob` / `grep` | `Glob` / `Grep` | unknown | `glob` / `grep` | `find` / `grep` |
 | `web` | `WebSearch`, `WebFetch` | `web_search` (`web_fetch` alone: unknown) | `websearch`, `webfetch` | absent |
 | `ask_user` | `AskUserQuestion` | `request_user_input` | `question` | absent |
 | `plan_mode` | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent |
+
+¹ `TaskOutput` was removed from Claude in 2.1.277, which ignores the name. It stays because
+older builds offer it and Meridian denies it with the task list.
 
 The rest of the vocabulary is in `tool_natives.rs`. OpenCode names are the v1 permission
 vocabulary; the consumer that knows the running OpenCode version translates to v2 spellings

@@ -83,7 +83,6 @@ Review code changes.
     assert!(bundle["provenance"]["selection_kind"].is_string());
     assert!(bundle["provenance"]["match_evidence"].is_string());
     assert!(bundle["provenance"]["candidates_tried"].is_string());
-    assert!(bundle["execution_policy"]["codex_rules"].is_null());
     assert_eq!(
         bundle["tools"]["allowed"],
         serde_json::json!(["exec_command", "apply_patch"])

@@ -613,7 +613,6 @@ pub fn resolve_policy(
             autocompact_pct: execution_resolution.autocompact_pct.value,
             timeout: None,
             native_config: execution_resolution.native_config,
-            codex_rules: None,
         },
         provenance,
         warnings,

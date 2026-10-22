@@ -445,11 +445,11 @@ harness-overrides:
     customClaudeKey: true
     tools: [ask_user, askuser]  # preserved exactly in passthrough
   codex:
-    sandbox_workspace_write:
+    sandbox_workspace_write:  # Codex config keys, carried as written
       network_access: true
-    native-config:            # preserved as a target-native key, not parsed by Mars
-      sandbox_workspace_write.network_access: true
 ```
+
+The selected block reaches the launch bundle as `execution_policy.native_config`; the launcher decides how to apply it. For Meridian, Codex applies it as `-c` overrides.
 
 Use top-level fields for Mars semantics. Use `harness-overrides` for harness-specific config Mars should carry without interpreting.
 

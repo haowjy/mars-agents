@@ -43,12 +43,6 @@ pub struct Routing {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct CodexRule {
-    pub name: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct ExecutionPolicy {
     pub effort: Option<String>,
     pub approval: Option<String>,
@@ -58,8 +52,6 @@ pub struct ExecutionPolicy {
     pub timeout: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_config: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub codex_rules: Option<Vec<CodexRule>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

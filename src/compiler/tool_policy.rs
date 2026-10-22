@@ -5,7 +5,8 @@
 //! those lists. [`parse_tool_policy`] reads them once into an [`EffectiveToolPolicy`]: one list
 //! of [`ToolRule`]s that the profile stores, a `mars.toml` overlay edits, and
 //! [`EffectiveToolPolicy::project`] spells for a harness. Native agent lowering, skill lowering
-//! and the launch bundle all read that projection; nothing else turns a rule into native names.
+//! and the launch bundle all read that projection; nothing else turns a rule into native
+//! permission names or unscoped harness tool names.
 //!
 //! [`NON_CANONICAL_TOOL_FIELD_ALIASES`] is the single source for foreign spellings that
 //! must not appear in canonical/MarsNative profiles. Staging strips alias keys; the skill
@@ -177,13 +178,40 @@ impl NativeStatus {
 
 const NO_NATIVE_NAME: &str = "no native name known for this tool on this harness; left out";
 
+/// One permission spelling and the unscoped harness tool names the canonical rule concerns.
+///
+/// Keeping the relationship intact lets conflict resolution remove availability tools with
+/// the permission they belong to. Claude scoped rules are the non-trivial case: one
+/// `Edit(path)` permission can concern `Edit`, `Write` and `NotebookEdit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeBinding {
+    native: String,
+    native_tools: Vec<String>,
+}
+
+impl NativeBinding {
+    fn direct(name: &str, pattern: Option<&str>) -> Self {
+        Self {
+            native: render_scoped(name, pattern),
+            native_tools: vec![name.to_string()],
+        }
+    }
+
+    fn scoped(name: &str, pattern: &str, native_tools: &[&str]) -> Self {
+        Self {
+            native: render_scoped(name, Some(pattern)),
+            native_tools: native_tools
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        }
+    }
+}
+
 /// A rule as one harness spells it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectedRule {
-    /// Native names, one per native tool the capability covers (`edit` → `Edit`, `Write`, …),
-    /// with the pattern appended when the rule is scoped. Empty when projection resolution gave
-    /// the shared permission to another rule.
-    pub native: Vec<String>,
+    bindings: Vec<NativeBinding>,
     /// `None` for `*`, which names no tool.
     pub status: Option<NativeStatus>,
     /// A harness-specific consequence of this projection that callers must surface even when
@@ -192,9 +220,9 @@ pub(crate) struct ProjectedRule {
 }
 
 impl ProjectedRule {
-    fn known(native: Vec<String>, note: Option<&'static str>) -> Self {
+    fn known(bindings: Vec<NativeBinding>, note: Option<&'static str>) -> Self {
         Self {
-            native,
+            bindings,
             status: Some(NativeStatus::Known),
             note,
         }
@@ -202,10 +230,39 @@ impl ProjectedRule {
 
     fn with_status(status: NativeStatus) -> Self {
         Self {
-            native: Vec::new(),
+            bindings: Vec::new(),
             status: Some(status),
             note: None,
         }
+    }
+
+    /// Permission-rule spellings after conflict resolution.
+    pub fn native(&self) -> Vec<String> {
+        self.bindings
+            .iter()
+            .map(|binding| binding.native.clone())
+            .collect()
+    }
+
+    /// Unscoped harness tool names concerned by the surviving permission rules, each once.
+    pub fn native_tools(&self) -> Vec<String> {
+        let mut tools = Vec::new();
+        for binding in &self.bindings {
+            for tool in &binding.native_tools {
+                if !tools.contains(tool) {
+                    tools.push(tool.clone());
+                }
+            }
+        }
+        tools
+    }
+
+    fn native_names(&self) -> impl Iterator<Item = &String> {
+        self.bindings.iter().map(|binding| &binding.native)
+    }
+
+    fn retain_native(&mut self, mut keep: impl FnMut(&String) -> bool) {
+        self.bindings.retain(|binding| keep(&binding.native));
     }
 
     /// Why Mars could not name this rule on the harness, when it could not.
@@ -219,24 +276,27 @@ impl ProjectedRule {
     }
 }
 
-/// Project `rule` onto `harness`. The one place a capability becomes native names.
+/// Project `rule` onto `harness`. The one place a capability becomes native permission names
+/// and unscoped harness tool names.
 fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
-    let scoped = |name: &str| render_scoped(name, rule.pattern.as_deref());
     match &rule.capability {
         Capability::Any => ProjectedRule {
-            native: Vec::new(),
+            bindings: Vec::new(),
             status: None,
             note: None,
         },
         Capability::Mcp(mcp_ref) => match project_mcp_ref(mcp_ref, harness) {
-            McpProjection::Token(token) => ProjectedRule::known(vec![token], None),
+            McpProjection::Token(token) => {
+                ProjectedRule::known(vec![NativeBinding::direct(&token, None)], None)
+            }
             McpProjection::Unsupported(reason) => {
                 ProjectedRule::with_status(NativeStatus::Unknown(reason.message()))
             }
         },
-        Capability::Unknown(name) if is_mcp_wire_token(name) => {
-            ProjectedRule::known(vec![scoped(name)], None)
-        }
+        Capability::Unknown(name) if is_mcp_wire_token(name) => ProjectedRule::known(
+            vec![NativeBinding::direct(name, rule.pattern.as_deref())],
+            None,
+        ),
         Capability::Unknown(_) => ProjectedRule::with_status(NativeStatus::Unknown(NO_NATIVE_NAME)),
         Capability::Builtin(name) => {
             project_builtin_capability(name, rule.pattern.as_deref(), harness)
@@ -259,21 +319,38 @@ fn project_builtin_capability(
     pattern: Option<&str>,
     harness: HarnessKind,
 ) -> ProjectedRule {
-    let scoped = |name: &str| render_scoped(name, pattern);
     match tool_natives::lookup(capability, harness) {
-        Some(Native::Tools(names)) => {
-            ProjectedRule::known(names.iter().map(|name| scoped(name)).collect(), None)
-        }
-        Some(Native::ScopedTools {
-            unscoped,
-            scoped: scoped_names,
-            note,
-        }) => {
-            let (names, note) = match pattern {
-                Some(_) => (scoped_names, Some(note)),
-                None => (unscoped, None),
+        Some(Native::Tools(names)) => ProjectedRule::known(
+            names
+                .iter()
+                .map(|name| NativeBinding::direct(name, pattern))
+                .collect(),
+            None,
+        ),
+        Some(
+            native @ Native::ScopedTools {
+                unscoped,
+                scoped: scoped_names,
+                note,
+            },
+        ) => {
+            let (bindings, note) = match pattern {
+                Some(pattern) => (
+                    scoped_names
+                        .iter()
+                        .map(|name| NativeBinding::scoped(name, pattern, native.native_tools()))
+                        .collect(),
+                    Some(note),
+                ),
+                None => (
+                    unscoped
+                        .iter()
+                        .map(|name| NativeBinding::direct(name, None))
+                        .collect(),
+                    None,
+                ),
             };
-            ProjectedRule::known(names.iter().map(|name| scoped(name)).collect(), note)
+            ProjectedRule::known(bindings, note)
         }
         Some(Native::Absent) => ProjectedRule::with_status(NativeStatus::Absent),
         Some(Native::NoSwitch(note)) => ProjectedRule::with_status(NativeStatus::Unknown(note)),
@@ -464,7 +541,7 @@ impl<'a> PolicyProjection<'a> {
     pub fn natives(&self, action: ToolAction, kind: RuleKind) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         for projected in self.select(action, kind) {
-            for native in &projected.native {
+            for native in projected.native_names() {
                 if !names.contains(native) {
                     names.push(native.clone());
                 }
@@ -490,7 +567,7 @@ impl<'a> PolicyProjection<'a> {
             self.rules
                 .iter()
                 .filter(|(rule, _)| rule.action == action)
-                .flat_map(|(_, projected)| &projected.native)
+                .flat_map(|(_, projected)| projected.native_names())
                 .collect()
         };
         let allowed = named(ToolAction::Allow);
@@ -520,8 +597,8 @@ fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: Har
     let narrower: Vec<Option<(ToolAction, Vec<String>)>> = rules
         .iter()
         .map(|(rule, projected)| {
-            (takes_part(rule) && !projected.native.is_empty())
-                .then(|| (rule.action, projected.native.clone()))
+            (takes_part(rule) && !projected.bindings.is_empty())
+                .then(|| (rule.action, projected.native()))
         })
         .collect();
 
@@ -529,8 +606,8 @@ fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: Har
         if !takes_part(rule) {
             continue;
         }
-        let broad = projected.native.clone();
-        projected.native.retain(|native| {
+        let broad = projected.native();
+        projected.retain_native(|native| {
             !narrower.iter().flatten().any(|(action, natives)| {
                 *action != rule.action
                     && natives.len() < broad.len()
@@ -547,27 +624,21 @@ fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: Har
     if harness == HarnessKind::Claude {
         let scoped: Vec<(ToolAction, bool, Vec<String>)> = rules
             .iter()
-            .map(|(rule, projected)| {
-                (
-                    rule.action,
-                    rule.pattern.is_some(),
-                    projected.native.clone(),
-                )
-            })
+            .map(|(rule, projected)| (rule.action, rule.pattern.is_some(), projected.native()))
             .collect();
         for (rule, projected) in rules.iter_mut() {
             if rule.pattern.is_none() {
                 continue;
             }
-            let before = projected.native.len();
-            projected.native.retain(|native| {
+            let before = projected.bindings.len();
+            projected.retain_native(|native| {
                 !scoped.iter().any(|(action, is_scoped, names)| {
                     *is_scoped
                         && action_strictness(*action) > action_strictness(rule.action)
                         && names.contains(native)
                 })
             });
-            if projected.native.len() != before {
+            if projected.bindings.len() != before {
                 projected.note = Some(CLAUDE_SCOPED_PRECEDENCE_NOTE);
             }
         }
@@ -854,7 +925,7 @@ mod tests {
         let parsed = parse_mars_tool_name(raw).unwrap();
         let projected = project_rule(&ToolRule::from_parsed(parsed, ToolAction::Deny), kind);
         (
-            projected.native,
+            projected.native(),
             projected.status.map_or("none", NativeStatus::as_str),
         )
     }
@@ -1054,8 +1125,10 @@ mod tests {
             "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n  notebook: deny\n---\n",
         );
         let claude = policy.project(HarnessKind::Claude);
-        assert_eq!(claude.rules()[0].1.native, ["Edit", "NotebookEdit"]);
-        assert_eq!(claude.rules()[1].1.native, ["Write"]);
+        assert_eq!(claude.rules()[0].1.native(), ["Edit", "NotebookEdit"]);
+        assert_eq!(claude.rules()[0].1.native_tools(), ["Edit", "NotebookEdit"]);
+        assert_eq!(claude.rules()[1].1.native(), ["Write"]);
+        assert_eq!(claude.rules()[1].1.native_tools(), ["Write"]);
         assert!(policy.project(HarnessKind::Claude).overlaps().is_empty());
         // Pi names `edit` and `write` as separate tools too.
         assert!(policy.project(HarnessKind::Pi).overlaps().is_empty());
@@ -1079,8 +1152,8 @@ mod tests {
             "---\nname: a\ndescription: d\ntools:\n  bash: allow\n  'bash(git push *)': deny\n---\n",
         );
         let projection = policy.project(HarnessKind::Claude);
-        assert_eq!(projection.rules()[0].1.native, ["Bash"]);
-        assert_eq!(projection.rules()[1].1.native, ["Bash(git push *)"]);
+        assert_eq!(projection.rules()[0].1.native(), ["Bash"]);
+        assert_eq!(projection.rules()[1].1.native(), ["Bash(git push *)"]);
         assert!(projection.overlaps().is_empty());
     }
 
@@ -1129,24 +1202,35 @@ mod tests {
     }
 
     #[test]
-    fn claude_scoped_file_rules_use_permission_category_names() {
+    fn claude_scoped_file_rules_separate_permissions_from_callable_tools() {
         assert_eq!(
             natives("bash(git push *)", "codex"),
             known(&["exec_command(git push *)"])
         );
-        for (rule, native) in [
-            ("read(src/**)", "Read(src/**)"),
-            ("write(src/**)", "Edit(src/**)"),
-            ("edit(src/**)", "Edit(src/**)"),
-            ("notebook(src/**)", "Edit(src/**)"),
-            ("glob(src/**)", "Read(src/**)"),
-            ("grep(src/**)", "Read(src/**)"),
+        for (rule, native, native_tools) in [
+            ("read(src/**)", "Read(src/**)", &["Read"][..]),
+            ("write(src/**)", "Edit(src/**)", &["Write"][..]),
+            (
+                "edit(src/**)",
+                "Edit(src/**)",
+                &["Edit", "Write", "NotebookEdit"][..],
+            ),
+            ("notebook(src/**)", "Edit(src/**)", &["NotebookEdit"][..]),
+            ("glob(src/**)", "Read(src/**)", &["Glob"][..]),
+            ("grep(src/**)", "Read(src/**)", &["Grep"][..]),
             (
                 "web_fetch(domain:example.com)",
                 "WebFetch(domain:example.com)",
+                &["WebFetch"][..],
             ),
         ] {
             assert_eq!(natives(rule, "claude"), known(&[native]), "{rule}");
+            let parsed = parse_mars_tool_name(rule).unwrap();
+            let projected = project_rule(
+                &ToolRule::from_parsed(parsed, ToolAction::Deny),
+                HarnessKind::Claude,
+            );
+            assert_eq!(projected.native_tools(), native_tools, "{rule}");
         }
 
         let write = project_rule(
@@ -1171,9 +1255,15 @@ mod tests {
             "---\nname: a\ndescription: d\ntools:\n  'write(src/**)': allow\n  'edit(src/**)': ask\n  'notebook(src/**)': deny\n---\n",
         );
         let projection = policy.project(HarnessKind::Claude);
-        assert!(projection.rules()[0].1.native.is_empty(), "allow loses");
-        assert!(projection.rules()[1].1.native.is_empty(), "ask loses");
-        assert_eq!(projection.rules()[2].1.native, ["Edit(src/**)"]);
+        assert!(projection.rules()[0].1.native().is_empty(), "allow loses");
+        assert!(
+            projection.rules()[0].1.native_tools().is_empty(),
+            "shadowed rules name no availability tools"
+        );
+        assert!(projection.rules()[1].1.native().is_empty(), "ask loses");
+        assert!(projection.rules()[1].1.native_tools().is_empty());
+        assert_eq!(projection.rules()[2].1.native(), ["Edit(src/**)"]);
+        assert_eq!(projection.rules()[2].1.native_tools(), ["NotebookEdit"]);
         assert_eq!(
             projection.natives(ToolAction::Deny, RuleKind::Builtin),
             ["Edit(src/**)"]
@@ -1239,6 +1329,15 @@ mod tests {
         ] {
             for harness in ["claude", "codex", "opencode", "pi", "cursor"] {
                 assert_eq!(natives(raw, harness), known(&[raw]), "{raw} on {harness}");
+                let kind =
+                    crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
+                        .expect("test harness exists")
+                        .kind;
+                let projected = project_rule(
+                    &ToolRule::from_parsed(parse_mars_tool_name(raw).unwrap(), ToolAction::Deny),
+                    kind,
+                );
+                assert_eq!(projected.native_tools(), [raw], "{raw} on {harness}");
             }
         }
     }

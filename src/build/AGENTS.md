@@ -50,6 +50,11 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 - `harness_model_source: "passthrough"` — expected behavior
 - `harness_model_confidence: "unknown"` — correct answer for passthrough harnesses
 
+Each profile `tools.rules[]` entry keeps permission emission (`native`) separate from callable
+tool availability (`native_tools`). Both come from `EffectiveToolPolicy::project`; build code
+must not strip patterns or otherwise re-derive one from the other. Under a `*: deny` allowlist,
+a launcher derives availability from known `allow` and `ask` rules, never `deny` rules.
+
 Policy resolution emits warnings for model fallback. Model/harness conflicts never
 clear the requested model. Route facts go to `routing.harness_model_source` and
 `routing.harness_model_confidence`.

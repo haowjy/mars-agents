@@ -8,6 +8,8 @@
 //! surfaces, because calling an unenforceable deny `absent` would report it as met. A
 //! `NoSwitch` row is a settled fact and carries its reason in the bundle's `note`; a missing
 //! row says Mars has not decided.
+//! [`Native::native_tools`] always returns the unscoped harness tool set. It stays distinct
+//! from a scoped permission spelling such as Claude `Edit(path)` for the `Write` tool.
 //!
 //! Every name below must appear in the harness's real tool list, which the tests pin with the
 //! source each list came from. When a harness ships a tool, add it to that list first.
@@ -33,6 +35,20 @@ pub(crate) enum Native {
     /// skills by reading `SKILL.md`; Codex reads, globs and greps through its shell). The
     /// string says why, for the bundle's `note`.
     NoSwitch(&'static str),
+}
+
+impl Native {
+    /// The unscoped harness tool names this permission row concerns. Scoped permission names can
+    /// differ from these tools, but availability controls always use the unscoped tool set.
+    pub(crate) fn native_tools(self) -> &'static [&'static str] {
+        match self {
+            Self::Tools(names)
+            | Self::ScopedTools {
+                unscoped: names, ..
+            } => names,
+            Self::Absent | Self::NoSwitch(_) => &[],
+        }
+    }
 }
 
 use Native::{Absent, NoSwitch, ScopedTools, Tools};
@@ -457,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn every_native_name_is_a_real_tool_of_its_harness() {
+    fn every_native_name_and_native_tool_is_a_real_tool_of_its_harness() {
         for &harness in HarnessKind::all() {
             let real = real_tools(harness);
             for (capability, native) in table(harness) {
@@ -480,12 +496,16 @@ mod tests {
                         );
                     }
                 }
+                assert!(
+                    native.native_tools().iter().all(|name| real.contains(name)),
+                    "{harness:?} `{capability}` has a native tool outside its real tool list"
+                );
             }
         }
     }
 
     #[test]
-    fn claude_scoped_file_rules_use_permission_category_names() {
+    fn claude_scoped_file_rules_separate_permission_names_from_native_tools() {
         for (capability, unscoped, scoped) in [
             ("write", &["Write"][..], &["Edit"][..]),
             (
@@ -507,6 +527,13 @@ mod tests {
             };
             assert_eq!(actual_unscoped, unscoped, "{capability} bare rule");
             assert_eq!(actual_scoped, scoped, "{capability} scoped rule");
+            assert_eq!(
+                lookup(capability, HarnessKind::Claude)
+                    .expect("row")
+                    .native_tools(),
+                unscoped,
+                "{capability} availability tools"
+            );
             assert!(
                 !note.is_empty(),
                 "{capability} must explain the wider category"

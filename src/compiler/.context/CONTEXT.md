@@ -11,7 +11,9 @@ User-facing summary: [docs/config/agent-compilation.md](../../../docs/config/age
 `tool_policy.rs` — turns `tools:` / `disallowed-tools:` into typed [`ToolRule`]s
 (`EffectiveToolPolicy`); an MCP entry is a rule whose `Capability::Mcp` holds the parsed
 [`McpRef`] (the bundle spells it capability `mcp`, pattern `server/tool`).
-`EffectiveToolPolicy::project` is the one place a rule becomes native names.
+`EffectiveToolPolicy::project` is the one place a rule becomes native permission names and
+unscoped harness tool names. It retains permission→tool bindings through conflict
+resolution; bundle consumers read `native` and `native_tools` instead of deriving either.
 
 ## Canonical grammar
 

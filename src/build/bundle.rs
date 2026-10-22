@@ -103,7 +103,8 @@ pub struct SupplementalDoc {
 /// The agent's tool policy for the resolved harness.
 ///
 /// `rules` is the contract: one entry per policy statement, carrying the canonical
-/// capability for meaning and the harness-native names for emission. `allowed`,
+/// capability for meaning, the harness-native permission names for emission and the unscoped
+/// harness tool names for availability projection. `allowed`,
 /// `disallowed` and `mcp` are flat native-name lists derived from `rules` for consumers that
 /// predate it; they cannot express `ask`, `*`, or which capability a name came from.
 /// `capability_natives` is independent of the profile and always names the capabilities a
@@ -137,6 +138,11 @@ pub struct ToolRuleSpec {
     /// pattern appended as `name(pattern)`. Empty unless `native_status` is `known`, and
     /// possibly empty for a known rule shadowed by a stricter or more specific rule.
     pub native: Vec<String>,
+    /// The unscoped harness tool names this rule concerns. Permission engines can
+    /// name a scoped category rather than the tool being made available (for example Claude
+    /// `write(path)` uses `Edit(path)` but concerns the `Write` tool). Empty whenever `native`
+    /// is empty, with the same `native_status` applying to both fields.
+    pub native_tools: Vec<String>,
     /// `known`: `native` names it. `absent`: the harness has no such tool, so there is nothing
     /// to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted
     /// for `*`, which names no tool.

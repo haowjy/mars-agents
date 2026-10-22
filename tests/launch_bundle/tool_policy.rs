@@ -560,14 +560,17 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
         *rule(&bundle, "edit", None),
         serde_json::json!({
             "capability": "edit", "pattern": null, "action": "deny",
-            "native": ["Edit", "Write", "NotebookEdit"], "native_status": "known"
+            "native": ["Edit", "Write", "NotebookEdit"],
+            "native_tools": ["Edit", "Write", "NotebookEdit"],
+            "native_status": "known"
         })
     );
     assert_eq!(
         *rule(&bundle, "bash", Some("rg *")),
         serde_json::json!({
             "capability": "bash", "pattern": "rg *", "action": "allow",
-            "native": ["Bash(rg *)"], "native_status": "known"
+            "native": ["Bash(rg *)"], "native_tools": ["Bash"],
+            "native_status": "known"
         })
     );
     assert_eq!(
@@ -599,7 +602,8 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
         *rule(&bundle, "mcp", Some("github/delete_repo")),
         serde_json::json!({
             "capability": "mcp", "pattern": "github/delete_repo", "action": "deny",
-            "native": ["mcp__github__delete_repo"], "native_status": "known"
+            "native": ["mcp__github__delete_repo"],
+            "native_tools": ["mcp__github__delete_repo"], "native_status": "known"
         })
     );
     // A name Mars cannot map is a reported gap, never a guess, and it still draws a warning.
@@ -607,7 +611,7 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
         *rule(&bundle, "mystery_tool", None),
         serde_json::json!({
             "capability": "mystery_tool", "pattern": null, "action": "deny",
-            "native": [], "native_status": "unknown",
+            "native": [], "native_tools": [], "native_status": "unknown",
             "note": "no native name known for this tool on this harness; left out"
         })
     );
@@ -638,6 +642,7 @@ Review code changes."#;
     let bundle = bundle_for(agent, "claude");
     let scoped_write = rule(&bundle, "write", Some("src/**"));
     assert_eq!(scoped_write["native"], serde_json::json!(["Edit(src/**)"]));
+    assert_eq!(scoped_write["native_tools"], serde_json::json!(["Write"]));
     assert_eq!(scoped_write["native_status"], "known");
     let note = scoped_write["note"].as_str().unwrap_or_default();
     assert!(
@@ -680,9 +685,14 @@ fn bundle_marks_tools_a_harness_lacks_as_absent() {
         let absent = rule(&codex, capability, None);
         assert_eq!(absent["native_status"], "absent", "{capability}");
         assert_eq!(absent["native"], serde_json::json!([]));
+        assert_eq!(absent["native_tools"], serde_json::json!([]));
     }
     assert_eq!(
         rule(&codex, "edit", None)["native"],
+        serde_json::json!(["apply_patch"])
+    );
+    assert_eq!(
+        rule(&codex, "edit", None)["native_tools"],
         serde_json::json!(["apply_patch"])
     );
     assert_eq!(
@@ -697,6 +707,10 @@ fn bundle_marks_tools_a_harness_lacks_as_absent() {
     let opencode = bundle_for(TYPED_RULES_AGENT, "opencode");
     assert_eq!(
         rule(&opencode, "ask_user", None)["native"],
+        serde_json::json!(["question"])
+    );
+    assert_eq!(
+        rule(&opencode, "ask_user", None)["native_tools"],
         serde_json::json!(["question"])
     );
     assert_eq!(
@@ -726,11 +740,11 @@ Review code changes."#;
         bundle["tools"]["rules"],
         serde_json::json!([
             {"capability": "*", "pattern": null, "action": "deny",
-             "native": [], "origin": "list-form"},
+             "native": [], "native_tools": [], "origin": "list-form"},
             {"capability": "read", "pattern": null, "action": "allow",
-             "native": ["Read"], "native_status": "known"},
+             "native": ["Read"], "native_tools": ["Read"], "native_status": "known"},
             {"capability": "grep", "pattern": null, "action": "allow",
-             "native": ["Grep"], "native_status": "known"},
+             "native": ["Grep"], "native_tools": ["Grep"], "native_status": "known"},
         ])
     );
     // The flat lists never carried an allowlist, and still do not.
@@ -775,10 +789,19 @@ fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_notes_where_it_cannot() {
         );
         assert!(rule(&bundle, "write", None)["note"].is_null(), "{harness}");
         assert!(rule(&bundle, "edit", None)["note"].is_null(), "{harness}");
+        assert_eq!(
+            rule(&bundle, "write", None)["native_tools"],
+            serde_json::json!([allowed]),
+            "{harness}"
+        );
     }
     let claude = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "claude");
     assert_eq!(
         rule(&claude, "edit", None)["native"],
+        serde_json::json!(["Edit", "NotebookEdit"])
+    );
+    assert_eq!(
+        rule(&claude, "edit", None)["native_tools"],
         serde_json::json!(["Edit", "NotebookEdit"])
     );
 
@@ -788,6 +811,10 @@ fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_notes_where_it_cannot() {
     for capability in ["write", "edit"] {
         let overlapping = rule(&codex, capability, None);
         assert_eq!(overlapping["native_status"], "known");
+        assert_eq!(
+            overlapping["native_tools"],
+            serde_json::json!(["apply_patch"])
+        );
         assert!(
             overlapping["note"]
                 .as_str()

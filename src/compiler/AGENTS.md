@@ -115,8 +115,10 @@ spelling), never a string with reserved values.
   `tools:` / `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would
   drop the bad entry, a malformed deny among them, and hide the error sync reports for it.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
-  names. Native agent lowering, skill lowering and the bundle read its `natives` / `gaps` /
-  `overlaps`; never add a second projection path, or a consumer that re-derives those lists.
+  permission names and unscoped harness tool names. Native agent lowering, skill lowering and the
+  bundle read its `natives` / `gaps` / `overlaps`; never add a second projection path, or a
+  consumer that re-derives either fact. A projected rule keeps permission→tool bindings so
+  conflict resolution removes `native_tools` with the `native` permission it removes.
   The bundle's profile-independent `agent` / `task` capability metadata calls
   `project_platform_capability`, which shares the builtin row translation with rule projection
   rather than interpreting `tool_natives` itself.
@@ -141,10 +143,11 @@ vocabulary is deliberate: `task` is the task list, `agent` is sub-agents, `web` 
 `web_search` + `web_fetch`. `tool_natives.rs` has one table per harness, one row per
 capability, each one-to-many (Claude bare `edit` → `Edit`, `Write`, `NotebookEdit`) with an
 explicit scoped spelling where the permission engine differs (Claude scoped file edits use
-`Edit(path)`, reads use `Read(path)`), and says why
-an unknown is unknown (`Absent`, `NoSwitch`, or no row yet). Nothing is derived by naming
-convention. Add a tool by adding it to the harness's real-tool list in the test first, with
-its source.
+`Edit(path)`, reads use `Read(path)`). The unscoped set is also the authoritative
+`native_tools` availability list, even when a scoped permission uses a category name. Each row
+also says why an unknown is unknown (`Absent`, `NoSwitch`, or no row yet). Nothing is derived
+by naming convention. Add a tool by adding it to the harness's real-tool list in the test
+first, with its source.
 
 ## Skill Compilation (`skills/`)
 

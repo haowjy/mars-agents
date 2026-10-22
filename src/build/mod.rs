@@ -238,13 +238,12 @@ fn resolve_bundle_tools(
         .rules()
         .iter()
         .map(|(rule, projected)| {
-            let shares_a_tool = projected
-                .native
-                .iter()
-                .any(|native| overlaps.contains(native));
+            let native = projected.native();
+            let shares_a_tool = native.iter().any(|native| overlaps.contains(native));
             ToolRuleSpec {
                 rule: (*rule).clone(),
-                native: projected.native.clone(),
+                native,
+                native_tools: projected.native_tools(),
                 native_status: projected.status.map(NativeStatus::as_str),
                 note: projected.note().or(shares_a_tool.then_some(OVERLAP_NOTE)),
             }
@@ -261,7 +260,7 @@ fn resolve_bundle_tools(
             (
                 capability.to_string(),
                 CapabilityNativeSpec {
-                    native: projected.native,
+                    native: projected.native(),
                     native_status: status.as_str(),
                     note: status.note(),
                 },

@@ -10,12 +10,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   can enforce platform rules without keeping a second native-name table; the names come from
   the same projection as `tools.rules[]` and retain older-build names such as `TaskOutput`.
 - Launch bundle `tools.rules[]` (additive in bundle schema 4): one entry per profile
-  statement, `{capability, pattern, action, native, native_status, origin?}`. Consumers read
-  meaning from `capability` and emission from `native` instead of re-reading native names as
-  capabilities. `native_status` is `known`, `absent` (the harness has no such tool) or
+  statement, `{capability, pattern, action, native, native_tools, native_status, origin?}`.
+  `native` carries permission-rule spellings; `native_tools` carries the unscoped harness tool
+  names the rule concerns. Consumers no longer have to infer either fact from the other.
+  `native_status` is `known`, `absent` (the harness has no such tool) or
   `unknown` (Mars cannot name it: a gap to report, with the reason in `note`, for example
   "codex loads skills by reading files; no switch"). The `*` rule names no tool: empty
-  `native`, no `native_status`, no `note`. `tools.allowed` / `tools.disallowed` /
+  `native` and `native_tools`, no `native_status`, no `note`. `tools.allowed` / `tools.disallowed` /
   `tools.mcp` stay, derived from the rules, for one release; they cannot carry `ask`, `*`
   or the capability behind a name.
 
@@ -61,8 +62,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Claude scoped file rules now use the permission categories Claude actually consults:
   `write(path)`, `edit(path)` and `notebook(path)` emit `Edit(path)`, while `read(path)`,
   `glob(path)` and `grep(path)` emit `Read(path)`. Bare rules keep their tool names, and
-  `WebFetch(domain:...)` was already correct. Known scoped rules carry a `note` when the
-  category covers sibling tools; when two scoped capabilities collapse to one permission,
+  `WebFetch(domain:...)` was already correct. Their `native_tools` still name the actual
+  callable tools (`write(path)` → `Write`, `grep(path)` → `Grep`), so an allowlist does not
+  remove the tool while adding its scoped permission. Known scoped rules carry a `note` when
+  the category covers sibling tools; when two scoped capabilities collapse to one permission,
   `deny` beats `ask`, which beats `allow`.
 - A rule on a narrower capability wins over a broader one for the tools they share, so
   `edit: deny` with `write: allow` leaves Claude's `Write` allowed (the `edit` deny covers

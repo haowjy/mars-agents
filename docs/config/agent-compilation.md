@@ -115,11 +115,12 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 
 ### Tool name projection
 
-Mars owns the native names. A profile's capability (`edit`, `web`, `ask_user`, …) becomes a
-harness's real tool names through one explicit table per harness
+Mars owns both permission-rule names and unscoped harness tool names. A profile's capability
+(`edit`, `web`, `ask_user`, …) becomes both facts through one explicit table per harness
 (`src/compiler/tool_natives.rs`, which is authoritative; the table below is a reading copy);
-no name is derived by convention. A capability can cover several native tools, and the launch
-bundle reports one of three outcomes per rule:
+no name is derived by convention. The launch bundle puts permission spellings (including
+patterns) in `native` and unscoped availability names in `native_tools`. A capability can cover
+several native tools, and the launch bundle reports one of three outcomes per rule:
 
 - `known`: the table names it.
 - `absent`: the harness cannot do this at all, so there is nothing to allow or deny.
@@ -134,8 +135,11 @@ bundle reports one of three outcomes per rule:
   launch, so a permission gap travels in `native_status` and `note` alone, and `mars sync`
   is where an author hears about a typo.
 
-The bundle's `*` rule (the `*: deny` of an allowlist) names no tool, so it has an empty
-`native` and no `native_status`.
+The bundle's `*` rule (the `*: deny` of an allowlist) names no tool, so it has empty `native`
+and `native_tools` lists and no `native_status`. Absent, unknown and fully shadowed rules also
+have an empty `native_tools`; it follows the same `native_status` semantics as `native`.
+For a `*: deny` allowlist, consumers build the availability set from known `allow` and `ask`
+rules' `native_tools`; `deny` rules name what they concern but grant no availability.
 
 | Capability | Claude | Codex | OpenCode | Pi |
 |---|---|---|---|---|
@@ -167,9 +171,11 @@ The table shows bare Claude tool rules. Claude uses permission categories for sc
 rules instead: `write(path)`, `edit(path)` and `notebook(path)` project to `Edit(path)`;
 `read(path)`, `glob(path)` and `grep(path)` project to `Read(path)`. Claude accepts
 `Write(path)`, `NotebookEdit(path)`, `Glob(path)` and `Grep(path)` spellings but does not
-consult them. The bundle adds a `note` to a scoped rule when the valid category spelling also
-covers sibling built-in tools. Bare rules keep the table's names. `WebFetch(domain:...)` is
-already Claude's valid scoped spelling and stays unchanged.
+consult them. The separate `native_tools` list still names the callable tools: scoped `write`
+names `Write`, scoped `edit` names `Edit`, `Write` and `NotebookEdit`, and scoped `grep` names
+`Grep`. The bundle adds a `note` to a scoped rule when the valid category spelling also covers
+sibling built-in tools. Bare rules keep the table's names. `WebFetch(domain:...)` is already
+Claude's valid scoped spelling and stays unchanged.
 
 MCP refs keep their own projection (below), and `mcp__…` wire tokens pass through verbatim.
 
@@ -178,14 +184,15 @@ fine". On Claude `edit` covers `Write`, so projecting both rules as written woul
 the allow and the deny list, and a deny beats an allow. Mars resolves this per native name,
 before anything is emitted: when two rules with different actions name the same unscoped tool,
 the rule whose capability covers fewer tools wins it. Claude's `edit` deny becomes
-`Edit` + `NotebookEdit` and `Write` stays allowed. The bundle's `native` lists, the flat lists
-and Claude agent files all carry the resolved names. A harness that cannot tell two
-capabilities apart (Codex and OpenCode name one tool for both `write` and `edit`) stays in
-conflict: the agent file records a lossiness entry naming the tool that is both allowed and
-denied, and the bundle gives each of the two rules a `note` saying the harness decides.
+`Edit` + `NotebookEdit` and `Write` stays allowed. The bundle's `native` and `native_tools`
+lists, the flat lists and Claude agent files all carry the resolved names. A harness that
+cannot tell two capabilities apart (Codex and OpenCode name one tool for both `write` and
+`edit`) stays in conflict: the agent file records a lossiness entry naming the tool that is
+both allowed and denied, and the bundle gives each of the two rules a `note` saying the harness
+decides.
 Scoped Claude rules that collapse to the exact same category permission are resolved by
 Claude's documented action order instead: `deny` beats `ask`, which beats `allow`; the losing
-rule has no surviving native name and its `note` says why.
+rule has empty `native` and `native_tools` lists, and its `note` says why.
 
 **Native agent files cannot hold everything.** An `ask` rule has no field in an agent file,
 and neither does an allowlist with nothing allowed (an omitted `tools:` inherits every tool).

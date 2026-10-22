@@ -109,8 +109,10 @@ spelling), never a string with reserved values.
 - **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
   `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
   lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes
-  the rules back, since sync lowers skills from the staged file. Overlay names are
-  `OverlayToolName`s: parsed with the profile grammar as `mars.toml` loads, so `apply_overlay`
+  the rules back, since sync lowers skills from the staged file. `tools.allowed` replaces grant
+  rules without making an allowlist; an explicit `'*': deny` in the profile map is the
+  allowlist marker and survives the overlay. Overlay names are `OverlayToolName`s: parsed with
+  the profile grammar as `mars.toml` loads, so `apply_overlay`
   never meets a name a profile would reject. Staging writes a skill back only when its own
   `tools:` / `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would
   drop the bad entry, a malformed deny among them, and hide the error sync reports for it.

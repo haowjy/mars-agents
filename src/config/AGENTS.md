@@ -27,6 +27,9 @@ pipeline operates on EffectiveConfig only
 a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the profile grammar as the
 config loads, and a malformed one fails the load. It keeps the author's spelling, so `save`
 does not rewrite it. This is the one place `config` reaches into `compiler`.
+`tools.allowed` replaces profile grants without creating an allowlist; an explicit `'*': deny`
+in the profile map is the allowlist marker and survives the overlay. Profile list-form
+`tools: [...]` is deprecated and only grants its named tools.
 
 ## Layering (`layering.rs`)
 

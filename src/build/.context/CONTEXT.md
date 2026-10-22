@@ -32,7 +32,8 @@ they are expected route metadata, not problems a user can fix.
 
 Route facts are recorded in `routing.harness_model_source` and
 `routing.harness_model_confidence`. Build policy owns warnings for selected model
-fallbacks; tool normalization warns about unknown tool names. Exhausted routing
+fallbacks. Tool permission gaps are never warnings: they ride `tools.rules[].native_status`
+and `note`. Exhausted routing
 is an error, never a warning followed by an unassessed replacement route.
 
 Examples that are NOT warnings (they go to routing/provenance fields):
@@ -69,7 +70,6 @@ ancestor directory.
 parse_diags           ← frontmatter parse warnings (agent mode only)
 policy.warnings       ← catalog refresh issues, selected model fallback
 prompt.warnings       ← missing skills
-tool_warnings         ← unknown tool names on first-class harnesses
 ```
 
 All warning vectors are `extend()`-ed into a single `LaunchBundle.warnings` field.

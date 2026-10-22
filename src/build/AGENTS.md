@@ -40,9 +40,12 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 
 **REAL warnings** (user can act on them):
 - Linked harness constraints blocked auto-routing
-- Unknown tool name on first-class harness
 
-**NOT warnings** (go to routing/provenance fields):
+**NOT warnings** (go to routing/provenance fields, or to a `tools.rules[].note`):
+- Permission gaps: a tool name Mars does not recognize, a harness with no switch for a tool,
+  an MCP ref a harness cannot represent, an allow/deny overlap. Meridian prints `warnings[]`
+  at every launch; `native_status: unknown` plus `note` is the only channel, and `mars sync`
+  tells the author about a typo.
 - `harness_model_source: "passthrough"` — expected behavior
 - `harness_model_confidence: "unknown"` — correct answer for passthrough harnesses
 

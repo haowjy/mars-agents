@@ -149,29 +149,26 @@ pub(crate) enum NativeStatus {
     Known,
     /// The harness has no such tool, so there is nothing to allow or deny.
     Absent,
-    /// The harness does the thing but offers no tool to switch it, for the reason given. A
-    /// known gap Mars reports without a warning, since it is not the author's mistake.
-    NoSwitch(&'static str),
-    /// Mars has no name for it on this harness, for the reason given: a name it does not
-    /// recognize, a typo among them. Reported with a warning.
+    /// Mars cannot name it on this harness, for the reason given: the harness has no switch
+    /// for it, Mars has no row for it, or the name is not one Mars recognizes (a typo). The
+    /// launch bundle reports the reason in `note` and nowhere else.
     Unknown(&'static str),
 }
 
 impl NativeStatus {
-    /// The bundle's `native_status`. `NoSwitch` and `Unknown` are both `unknown`: neither names a
-    /// tool, so a consumer treats an unenforceable rule alike and reads `note` for the reason.
+    /// The bundle's `native_status`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Known => "known",
             Self::Absent => "absent",
-            Self::NoSwitch(_) | Self::Unknown(_) => "unknown",
+            Self::Unknown(_) => "unknown",
         }
     }
 
-    /// Why Mars could not name the rule, for the statuses that are `unknown`.
+    /// Why Mars could not name the rule, for `unknown`.
     pub fn note(self) -> Option<&'static str> {
         match self {
-            Self::NoSwitch(note) | Self::Unknown(note) => Some(note),
+            Self::Unknown(note) => Some(note),
             Self::Known | Self::Absent => None,
         }
     }
@@ -208,15 +205,6 @@ impl ProjectedRule {
     pub fn gap(&self) -> Option<&'static str> {
         self.status.and_then(NativeStatus::note)
     }
-
-    /// The gap, only when Mars does not recognize the rule: worth a warning, unlike a
-    /// harness that simply has no switch.
-    pub fn unrecognized(&self) -> Option<&'static str> {
-        match self.status {
-            Some(NativeStatus::Unknown(reason)) => Some(reason),
-            _ => None,
-        }
-    }
 }
 
 /// Project `rule` onto `harness`. The one place a capability becomes native names.
@@ -242,9 +230,7 @@ fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
                 ProjectedRule::known(names.iter().map(|name| scoped(name)).collect())
             }
             Some(Native::Absent) => ProjectedRule::with_status(NativeStatus::Absent),
-            Some(Native::NoSwitch(note)) => {
-                ProjectedRule::with_status(NativeStatus::NoSwitch(note))
-            }
+            Some(Native::NoSwitch(note)) => ProjectedRule::with_status(NativeStatus::Unknown(note)),
             None => ProjectedRule::with_status(NativeStatus::Unknown(NO_NATIVE_NAME)),
         },
     }
@@ -401,6 +387,11 @@ impl RuleKind {
     }
 }
 
+/// The bundle `note` on a rule whose native tool another rule, of the opposite action, also
+/// names (see [`PolicyProjection::overlaps`]).
+pub(crate) const OVERLAP_NOTE: &str =
+    "another rule allows or denies the same native tool; the harness decides which wins";
+
 /// A policy's rules spelled for one harness, in profile order.
 pub(crate) struct PolicyProjection<'a> {
     rules: Vec<(&'a ToolRule, ProjectedRule)>,
@@ -446,6 +437,7 @@ impl<'a> PolicyProjection<'a> {
     /// Native names that an allow rule and a deny rule both still name after
     /// [`resolve_by_specificity`]: two capabilities one harness tool cannot tell apart
     /// (`write` and `edit` on Codex). The harness decides which wins; a deny usually does.
+    /// [`OVERLAP_NOTE`] is the bundle's word for it.
     pub fn overlaps(&self) -> Vec<String> {
         let named = |action| -> Vec<&String> {
             self.rules

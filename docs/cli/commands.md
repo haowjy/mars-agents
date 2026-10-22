@@ -669,14 +669,14 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `action` | `allow`, `deny` or `ask` |
 | `native` | The harness's tool names for the rule, one per native tool the capability covers; a pattern is appended as `name(pattern)`. Empty unless `native_status` is `known`. Already resolved: a rule on a narrower capability wins its tools from a broader one (`edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed), so emit `native` as given |
 | `native_status` | `known`: `native` names it. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
-| `note` | Why Mars could not name the rule, present exactly when `native_status` is `unknown` (`"codex loads skills by reading files; no switch"`). Show it in a gap report. A harness with no switch for the tool adds no entry to `warnings[]`; a name Mars does not recognize does |
+| `note` | Why a consumer cannot rely on the rule alone. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, that another rule of the opposite action names the same native tool and the harness decides which wins. Show it in a gap report. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
 | `origin` | `list-form` on the `*: deny` Mars adds for a list-form `tools: [..]`; omitted otherwise |
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
 `rules` for consumers that predate it. They cannot express `ask`, `*`, or the capability behind
 a name; `allowed` never reflects an allowlist. Prefer `rules`. A tool that an allow and a deny
-rule both still name (`write: allow` with `edit: deny` on Codex, whose `apply_patch` is both) is
-reported in `warnings[]`.
+rule both still name (`write: allow` with `edit: deny` on Codex, whose `apply_patch` is both)
+puts a `note` on both rules.
 
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: enabled-target constraints exhausting auto-routing candidates.
 

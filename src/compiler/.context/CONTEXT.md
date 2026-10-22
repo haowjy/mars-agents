@@ -42,7 +42,7 @@ return `McpProjection::Unsupported` — callers omit the token and record lossin
 | Pi | — | all refs → `HarnessDropsMcp` |
 
 An unsupported ref projects to no native token and `native_status: unknown`; callers record
-the reason as lossiness or a bundle warning and never broaden permissions.
+the reason as lossiness or a bundle rule `note` and never broaden permissions.
 
 ## Emission call sites
 

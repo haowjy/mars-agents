@@ -126,13 +126,13 @@ bundle reports one of three outcomes per rule:
 - `unknown`: Mars cannot name it for this harness. A deny there is not enforced, and `absent`
   would report it as met. The tool is left out of native output, the bundle rule carries an
   empty `native` and a `note` with the reason, and Meridian reports the gap rather than
-  guessing around it. Two causes, told apart by the launch warning:
-  - The harness can do the thing but has no tool to switch it (Codex reads, globs and greps
-    through its shell; Codex and Pi load skills by reading `SKILL.md`). A known fact, not the
-    author's mistake: no warning, only the `note` ("codex loads skills by reading files; no
-    switch").
-  - Mars has no entry, or does not recognize the name (a typo, most likely). The bundle adds a
-    warning.
+  guessing around it. The `note` says which of three it is: the harness can do the thing but
+  has no tool to switch it (Codex reads, globs and greps through its shell; Codex and Pi load
+  skills by reading `SKILL.md`; "codex loads skills by reading files; no switch"), Mars has no
+  entry for the tool on this harness, or Mars does not recognize the name (a typo, most
+  likely). The bundle adds no warning for any of them: Meridian prints `warnings[]` at every
+  launch, so a permission gap travels in `native_status` and `note` alone, and `mars sync`
+  is where an author hears about a typo.
 
 The bundle's `*` rule (the `*: deny` of an allowlist) names no tool, so it has an empty
 `native` and no `native_status`.
@@ -173,8 +173,8 @@ the rule whose capability covers fewer tools wins it. Claude's `edit` deny becom
 `Edit` + `NotebookEdit` and `Write` stays allowed. The bundle's `native` lists, the flat lists
 and Claude agent files all carry the resolved names. A harness that cannot tell two
 capabilities apart (Codex and OpenCode name one tool for both `write` and `edit`) stays in
-conflict: the bundle adds a warning, and the agent file a lossiness entry, naming the tool
-that is both allowed and denied.
+conflict: the agent file records a lossiness entry naming the tool that is both allowed and
+denied, and the bundle gives each of the two rules a `note` saying the harness decides.
 
 **Native agent files cannot hold everything.** An `ask` rule has no field in an agent file,
 and neither does an allowlist with nothing allowed (an omitted `tools:` inherits every tool).

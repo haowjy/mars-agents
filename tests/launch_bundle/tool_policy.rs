@@ -94,16 +94,11 @@ Review code changes."#;
         ])
     );
     assert_eq!(override_bundle["tools"]["mcp"], serde_json::json!([]));
-    assert!(
-        override_bundle["warnings"]
-            .as_array()
-            .expect("warnings")
-            .iter()
-            .any(|warning| warning
-                .as_str()
-                .unwrap_or_default()
-                .contains("MCP ref `mcp(plugin:root/*)` cannot be represented for codex"))
-    );
+    // An MCP ref Codex cannot represent is a gap in the rule, never a launch warning.
+    let mcp_rule = rule(&override_bundle, "mcp", Some("plugin:root/*"));
+    assert_eq!(mcp_rule["native_status"], "unknown");
+    assert!(mcp_rule["note"].is_string(), "{mcp_rule}");
+    assert_eq!(override_bundle["warnings"], serde_json::json!([]));
     assert_eq!(
         override_bundle["execution_policy"]["native_config"]["mcp-tools"],
         serde_json::json!(["plugin:override"])
@@ -191,26 +186,14 @@ Review code changes."#;
         bundle["tools"]["mcp"],
         serde_json::json!(["mcp__plugin:context7:context7__*"])
     );
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("tool 'custom_tool' has no known claude name")
-    }));
-    assert!(
-        !warnings
-            .iter()
-            .any(|warning| { warning.as_str().unwrap_or_default().contains("plan_mode") })
-    );
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("disallowed tool 'custom_deny' has no known claude name")
-    }));
+    for (name, action) in [("custom_tool", "allow"), ("custom_deny", "deny")] {
+        let unknown = rule(&bundle, name, None);
+        assert_eq!(unknown["action"], action);
+        assert_eq!(unknown["native_status"], "unknown");
+        assert_eq!(unknown["native"], serde_json::json!([]));
+        assert!(unknown["note"].is_string(), "{unknown}");
+    }
+    assert_eq!(bundle["warnings"], serde_json::json!([]));
 }
 
 #[test]
@@ -258,20 +241,11 @@ Review code changes."#;
         serde_json::json!(["edit", "task", "plan_enter", "plan_exit"])
     );
 
-    let warnings = bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("tool 'custom_tool' has no known opencode name")
-    }));
-    assert!(
-        !warnings
-            .iter()
-            .any(|warning| { warning.as_str().unwrap_or_default().contains("plan_mode") })
+    assert_eq!(
+        rule(&bundle, "custom_tool", None)["native_status"],
+        "unknown"
     );
+    assert_eq!(bundle["warnings"], serde_json::json!([]));
 }
 
 #[test]
@@ -313,19 +287,10 @@ Review code changes."#;
         claude_bundle["tools"]["disallowed"],
         serde_json::json!(["Skill(init)", "Workflow"])
     );
-    let claude_warnings = claude_bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(!claude_warnings.iter().any(|warning| {
-        let text = warning.as_str().unwrap_or_default();
-        text.contains("skill(init)") || text.contains("workflow") || text.contains("'web'")
-    }));
-    assert!(claude_warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("disallowed tool 'definitely-not-a-tool' has no known claude name")
-    }));
+    let unknown = rule(&claude_bundle, "definitely-not-a-tool", None);
+    assert_eq!(unknown["native_status"], "unknown");
+    assert!(unknown["note"].is_string(), "{unknown}");
+    assert_eq!(claude_bundle["warnings"], serde_json::json!([]));
 
     let mut codex_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     codex_cmd.args([
@@ -349,18 +314,6 @@ Review code changes."#;
     // `skill(init)` has no tool to switch: a reported gap with its reason in `note`, not a
     // satisfied rule and not a launch warning.
     assert_eq!(codex_bundle["tools"]["disallowed"], serde_json::json!([]));
-    let codex_warnings = codex_bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(!codex_warnings.iter().any(|warning| {
-        let text = warning.as_str().unwrap_or_default();
-        text.contains("workflow") || text.contains("'web'")
-    }));
-    assert!(
-        !codex_warnings
-            .iter()
-            .any(|warning| { warning.as_str().unwrap_or_default().contains("skill(init)") })
-    );
     let skill_rule = codex_bundle["tools"]["rules"]
         .as_array()
         .expect("rules")
@@ -372,16 +325,15 @@ Review code changes."#;
         skill_rule["note"],
         "codex loads skills by reading files; no switch"
     );
-    assert!(codex_warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("disallowed tool 'definitely-not-a-tool' has no known codex name")
-    }));
+    assert_eq!(
+        rule(&codex_bundle, "definitely-not-a-tool", None)["native_status"],
+        "unknown"
+    );
+    assert_eq!(codex_bundle["warnings"], serde_json::json!([]));
 }
 
 #[test]
-fn build_launch_bundle_cursor_and_pi_unknown_tools_warn_and_are_left_out() {
+fn build_launch_bundle_cursor_and_pi_unknown_tools_are_left_out_with_a_note() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "pi"]);
     let agent_content = r#"---
@@ -408,15 +360,10 @@ Review code changes."#;
     let cursor_output = cursor_cmd.assert().success().get_output().clone();
     let cursor_bundle: Value = serde_json::from_slice(&cursor_output.stdout).unwrap();
     assert_eq!(cursor_bundle["tools"]["allowed"], serde_json::json!([]));
-    let cursor_warnings = cursor_bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(cursor_warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("tool 'custom_tool' has no known cursor name")
-    }));
+    let cursor_rule = rule(&cursor_bundle, "custom_tool", None);
+    assert_eq!(cursor_rule["native_status"], "unknown");
+    assert!(cursor_rule["note"].is_string(), "{cursor_rule}");
+    assert_eq!(cursor_bundle["warnings"], serde_json::json!([]));
 
     let mut pi_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     pi_cmd.args([
@@ -431,15 +378,10 @@ Review code changes."#;
     let pi_output = pi_cmd.assert().success().get_output().clone();
     let pi_bundle: Value = serde_json::from_slice(&pi_output.stdout).unwrap();
     assert_eq!(pi_bundle["tools"]["allowed"], serde_json::json!([]));
-    let pi_warnings = pi_bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(pi_warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("tool 'custom_tool' has no known pi name")
-    }));
+    let pi_rule = rule(&pi_bundle, "custom_tool", None);
+    assert_eq!(pi_rule["native_status"], "unknown");
+    assert!(pi_rule["note"].is_string(), "{pi_rule}");
+    assert_eq!(pi_bundle["warnings"], serde_json::json!([]));
 }
 
 #[test]
@@ -472,15 +414,11 @@ Review code changes."#;
         claude_bundle["tools"]["mcp"],
         serde_json::json!(["mcp__github__create_issue"])
     );
-    let claude_warnings = claude_bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(!claude_warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("MCP ref `mcp(github/create_issue)` cannot be represented")
-    }));
+    assert_eq!(
+        rule(&claude_bundle, "mcp", Some("github/create_issue"))["native_status"],
+        "known"
+    );
+    assert_eq!(claude_bundle["warnings"], serde_json::json!([]));
 
     let mut codex_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     codex_cmd.args([
@@ -497,15 +435,11 @@ Review code changes."#;
     let codex_output = codex_cmd.assert().success().get_output().clone();
     let codex_bundle: Value = serde_json::from_slice(&codex_output.stdout).unwrap();
     assert_eq!(codex_bundle["tools"]["mcp"], serde_json::json!([]));
-    let codex_warnings = codex_bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(codex_warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("MCP ref `mcp(github/create_issue)` cannot be represented")
-    }));
+    // A ref Codex cannot represent is a gap in the rule, not a launch warning.
+    let codex_rule = rule(&codex_bundle, "mcp", Some("github/create_issue"));
+    assert_eq!(codex_rule["native_status"], "unknown");
+    assert!(codex_rule["note"].is_string(), "{codex_rule}");
+    assert_eq!(codex_bundle["warnings"], serde_json::json!([]));
 }
 
 #[test]
@@ -539,15 +473,7 @@ Review code changes."#;
         cursor_bundle["tools"]["disallowed"],
         serde_json::json!(["Mcp(github:delete_repo)"])
     );
-    let cursor_warnings = cursor_bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(!cursor_warnings.iter().any(|warning| {
-        warning
-            .as_str()
-            .unwrap_or_default()
-            .contains("disallowed MCP ref")
-    }));
+    assert_eq!(cursor_bundle["warnings"], serde_json::json!([]));
 
     let mut codex_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     codex_cmd.args([
@@ -565,14 +491,11 @@ Review code changes."#;
     let codex_bundle: Value = serde_json::from_slice(&codex_output.stdout).unwrap();
     assert_eq!(codex_bundle["tools"]["mcp"], serde_json::json!([]));
     assert_eq!(codex_bundle["tools"]["disallowed"], serde_json::json!([]));
-    let codex_warnings = codex_bundle["warnings"]
-        .as_array()
-        .expect("warnings should be an array");
-    assert!(codex_warnings.iter().any(|warning| {
-        warning.as_str().unwrap_or_default().contains(
-            "disallowed MCP ref `mcp(github/delete_repo)` cannot be represented for codex",
-        )
-    }));
+    let codex_rule = rule(&codex_bundle, "mcp", Some("github/delete_repo"));
+    assert_eq!(codex_rule["action"], "deny");
+    assert_eq!(codex_rule["native_status"], "unknown");
+    assert!(codex_rule["note"].is_string(), "{codex_rule}");
+    assert_eq!(codex_bundle["warnings"], serde_json::json!([]));
 }
 
 /// Launch bundle for `agent_content` on `harness`.
@@ -803,12 +726,8 @@ tools:
 ---
 Test prompts."#;
 
-fn warnings(bundle: &Value) -> String {
-    bundle["warnings"].to_string()
-}
-
 #[test]
-fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_warns_where_it_cannot() {
+fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_notes_where_it_cannot() {
     // Claude and Pi tell `write` from `edit`: the narrow allow wins the shared tool.
     for (harness, allowed, denied) in [("claude", "Write", "Edit"), ("pi", "write", "edit")] {
         let bundle = bundle_for(NO_EDIT_BUT_WRITE_AGENT, harness);
@@ -826,10 +745,8 @@ fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_warns_where_it_cannot() {
             disallowed_list.contains(&serde_json::json!(denied)),
             "{harness}"
         );
-        assert!(
-            !warnings(&bundle).contains("both allowed and denied"),
-            "{harness}"
-        );
+        assert!(rule(&bundle, "write", None)["note"].is_null(), "{harness}");
+        assert!(rule(&bundle, "edit", None)["note"].is_null(), "{harness}");
     }
     let claude = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "claude");
     assert_eq!(
@@ -837,13 +754,20 @@ fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_warns_where_it_cannot() {
         serde_json::json!(["Edit", "NotebookEdit"])
     );
 
-    // Codex edits and writes through `apply_patch` alone, so Mars cannot pick.
+    // Codex edits and writes through `apply_patch` alone, so Mars cannot pick: both rules say the
+    // harness decides, and the launch gets no warning.
     let codex = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "codex");
-    assert!(
-        warnings(&codex).contains("tool 'apply_patch' is both allowed and denied on codex"),
-        "{}",
-        warnings(&codex)
-    );
+    for capability in ["write", "edit"] {
+        let overlapping = rule(&codex, capability, None);
+        assert_eq!(overlapping["native_status"], "known");
+        assert!(
+            overlapping["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("the harness decides")),
+            "{overlapping}"
+        );
+    }
+    assert_eq!(codex["warnings"], serde_json::json!([]));
 }
 
 #[test]

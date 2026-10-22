@@ -44,9 +44,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is `absent`; one it can do with no tool to switch it (Codex and Pi `skill`, Codex
   `web_fetch`, and Codex `read` / `glob` / `grep`, which it does through the shell) is
   `unknown`, so an unenforced deny is reported instead of counted as met; that gap carries
-  its reason in `note` and draws no launch warning. A name Mars has no row for, or does not
-  recognize, is left out with a warning instead of guessed (the PascalCase / lowercase
-  naming convention is gone). Claude `task` also names `TaskOutput`, which Claude removed in
+  its reason in `note`. A name Mars has no row for, or does not recognize, is left out
+  instead of guessed, with its reason in `note` and, at `mars sync`, a warning (the
+  PascalCase / lowercase naming convention is gone). The launch bundle adds no
+  `warnings[]` entry for any permission gap: `native_status` and `note` are the only
+  channel. Claude `task` also names `TaskOutput`, which Claude removed in
   2.1.277 but older builds still offer. Codex `bash` covers `exec_command` alone
   (`write_stdin` only feeds a session `exec_command` opened); `agent` covers the whole
   sub-agent tool family on Claude (`Agent`, `SendMessage`, `ListAgents`) and Codex
@@ -57,7 +59,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Edit` and `NotebookEdit`) instead of denying it. The bundle's `native` lists, the flat
   lists and native agent files carry the resolved names. A tool that stays both allowed
   and denied because the harness has one tool for both capabilities (Codex and OpenCode
-  `write` / `edit`) is reported as a bundle warning and as agent-file lossiness.
+  `write` / `edit`) is reported as agent-file lossiness and as a `note` on both bundle
+  rules, with no bundle warning.
 - A Claude agent file gets `tools:` only from an allowlist (list-form `tools:` or
   `'*': deny`), because Claude reads that field as "only these tools". Map-form `allow`
   entries are grants, not an allowlist, so they no longer turn into `tools:`. Omitting

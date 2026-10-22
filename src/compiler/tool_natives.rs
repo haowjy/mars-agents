@@ -7,7 +7,7 @@
 //! that harness. Both `NoSwitch` and a missing row report as `unknown`, a gap Meridian
 //! surfaces, because calling an unenforceable deny `absent` would report it as met. A
 //! `NoSwitch` row is a settled fact and carries its reason in the bundle's `note`; a missing
-//! row, like an unrecognized name, draws a warning.
+//! row says Mars has not decided.
 //!
 //! Every name below must appear in the harness's real tool list, which the tests pin with the
 //! source each list came from. When a harness ships a tool, add it to that list first.

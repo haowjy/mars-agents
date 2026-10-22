@@ -128,9 +128,11 @@ pub struct ToolRuleSpec {
     /// for `*`, which names no tool.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_status: Option<&'static str>,
-    /// Why Mars could not name the rule, present exactly when `native_status` is `unknown`
-    /// (for example "codex loads skills by reading files; no switch"). The reason to show in a
-    /// gap report; it is also the reason Mars warns about a name it does not recognize.
+    /// Why a consumer cannot rely on this rule alone, and the only channel for a permission
+    /// gap: Mars adds nothing to `warnings[]`. Present when `native_status` is `unknown` (the
+    /// reason Mars could not name the rule, for example "codex loads skills by reading files;
+    /// no switch") and on a `known` rule that shares a native tool with a rule of the opposite
+    /// action, where the harness decides which wins.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<&'static str>,
 }

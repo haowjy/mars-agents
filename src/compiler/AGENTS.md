@@ -117,9 +117,11 @@ spelling), never a string with reserved values.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
   names. Native agent lowering, skill lowering and the bundle read its `natives` / `gaps` /
   `overlaps`; never add a second projection path, or a consumer that re-derives those lists.
-  A rule's `NativeStatus` says why a name is `unknown`: `NoSwitch` (the harness has no switch
-  for it; report-only, no launch warning) or `Unknown` (Mars does not recognize it; warns).
-  The bundle prints both as `unknown`, with the reason as `note`.
+  A rule's `NativeStatus::Unknown(reason)` covers every permission gap: a harness with no
+  switch for the tool (a `Native::NoSwitch` row), no row at all, an unrecognized name, an MCP
+  ref the harness cannot represent. The bundle prints it as `unknown` with the reason as
+  `note` and adds no `warnings[]` entry: Meridian prints those at every launch, so a gap is
+  report-only there. `mars sync` is where an author hears about a typo or an MCP ref.
   Resolving a narrow rule over a broad one (`resolve_by_specificity`) happens inside it.
 
 What the bundle's `tools.rules` mean and what a status says: `docs/cli/commands.md`.

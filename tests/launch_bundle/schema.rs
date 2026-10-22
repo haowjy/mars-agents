@@ -100,16 +100,15 @@ Review code changes.
         ])
     );
     assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
+    // The MCP ref Codex cannot represent is a gap in its rule, not a launch warning.
     assert!(
-        bundle["warnings"]
+        bundle["tools"]["rules"]
             .as_array()
-            .expect("warnings")
+            .expect("rules")
             .iter()
-            .any(|warning| warning
-                .as_str()
-                .unwrap_or_default()
-                .contains("cannot be represented for codex"))
+            .any(|rule| rule["capability"] == "mcp" && rule["native_status"] == "unknown")
     );
+    assert_eq!(bundle["warnings"], serde_json::json!([]));
     assert!(bundle["provenance"]["harness_stability"].is_null());
 
     for slot in [

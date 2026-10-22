@@ -5,7 +5,7 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::tool_policy::{NativeStatus, RuleKind, ToolAction, ToolRule};
+use crate::compiler::tool_policy::{NativeStatus, OVERLAP_NOTE, RuleKind, ToolAction};
 use crate::content::ContentRoots;
 use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
@@ -156,9 +156,8 @@ pub fn build_launch_bundle(
     .map_err(with_selection_report)?;
 
     warnings.extend(prompt.warnings);
-    let (resolved_tools, tool_warnings) =
+    let resolved_tools =
         resolve_bundle_tools(&profile, &policy.routing.harness).map_err(with_selection_report)?;
-    warnings.extend(tool_warnings);
 
     Ok(LaunchBundle {
         version: LAUNCH_BUNDLE_VERSION,
@@ -221,66 +220,42 @@ fn load_effective_project_config_or_default(
     }
 }
 
+/// The agent's tool rules for `harness`. A permission gap is never a warning: Meridian prints
+/// `warnings[]` at every launch, so a rule Mars cannot name or enforce goes out with
+/// `native_status: unknown` and a `note`, and the consumer reports it. `mars sync` is where an
+/// author hears about a typo.
 fn resolve_bundle_tools(
     profile: &crate::compiler::agents::AgentProfile,
     harness: &str,
-) -> Result<(ToolsSpec, Vec<String>), MarsError> {
+) -> Result<ToolsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;
-    let harness_kind = descriptor.kind;
-    let harness = descriptor.canonical_id;
+    let projection = profile.tools.project(descriptor.kind);
+    let overlaps = projection.overlaps();
 
-    let projection = profile.tools.project(harness_kind);
-    let mut warnings = Vec::new();
-    let mut rules = Vec::new();
-    for (rule, projected) in projection.rules() {
-        if let Some(reason) = projected.unrecognized() {
-            warnings.push(unknown_tool_warning(rule, reason, harness));
-        }
-        rules.push(ToolRuleSpec {
-            rule: (*rule).clone(),
-            native: projected.native.clone(),
-            native_status: projected.status.map(NativeStatus::as_str),
-            note: projected.gap(),
-        });
-    }
-    for native in projection.overlaps() {
-        warnings.push(format!(
-            "tool '{native}' is both allowed and denied on {harness}; the harness decides which wins"
-        ));
-    }
+    let rules = projection
+        .rules()
+        .iter()
+        .map(|(rule, projected)| {
+            let shares_a_tool = projected
+                .native
+                .iter()
+                .any(|native| overlaps.contains(native));
+            ToolRuleSpec {
+                rule: (*rule).clone(),
+                native: projected.native.clone(),
+                native_status: projected.status.map(NativeStatus::as_str),
+                note: projected.gap().or(shares_a_tool.then_some(OVERLAP_NOTE)),
+            }
+        })
+        .collect();
 
-    Ok((
-        ToolsSpec {
-            rules,
-            // The flat lists have no `ask`, `*` or allowlist; only `rules` carries those.
-            allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),
-            disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
-            mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
-        },
-        warnings,
-    ))
-}
-
-/// Why Mars does not recognize `rule` for `harness`. The rule still ships in `tools.rules` with
-/// `native_status: unknown`. A harness with no switch for a tool (`NoSwitch`) draws no warning:
-/// the rule's `note` carries that reason for a gap report.
-fn unknown_tool_warning(rule: &ToolRule, reason: &str, harness: &str) -> String {
-    let denied = if rule.action == ToolAction::Deny {
-        "disallowed "
-    } else {
-        ""
-    };
-    if rule.is_mcp() {
-        format!(
-            "{denied}MCP ref `{}` cannot be represented for {harness}: {reason}",
-            rule.render()
-        )
-    } else {
-        format!(
-            "{denied}tool '{}' has no known {harness} name; Mars left it out (native_status: unknown)",
-            rule.render()
-        )
-    }
+    Ok(ToolsSpec {
+        rules,
+        // The flat lists have no `ask`, `*` or allowlist; only `rules` carries those.
+        allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),
+        disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
+        mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
+    })
 }
 
 fn resolve_effective_skills(

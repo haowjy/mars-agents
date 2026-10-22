@@ -63,6 +63,38 @@ fn split_scalar_tool_list(fm: &mut Frontmatter, key: &str) -> bool {
     true
 }
 
+/// Rewrite a foreign scalar/list of tool names as canonical policy entries. Foreign formats use
+/// list-shaped fields for two different meanings: Claude agent `tools:` restricts the agent to
+/// the list, while skill `allowed-tools` and the other skill dialects only grant their entries.
+/// Map-form input is already a canonical policy and must keep its authored actions.
+fn lift_tool_list_to_policy_map(fm: &mut Frontmatter, restricts: bool) -> bool {
+    let Some(value) = fm.get("tools") else {
+        return false;
+    };
+    let entries = match value {
+        Value::String(_) => tool_policy::tool_entries(value),
+        Value::Sequence(entries) if entries.iter().all(|entry| entry.as_str().is_some()) => {
+            tool_policy::yaml_str_list(value)
+        }
+        Value::Sequence(_)
+        | Value::Mapping(_)
+        | Value::Null
+        | Value::Bool(_)
+        | Value::Number(_)
+        | Value::Tagged(_) => return false,
+    };
+
+    let mut policy = serde_yaml::Mapping::new();
+    if restricts {
+        policy.insert(Value::String("*".into()), Value::String("deny".into()));
+    }
+    for entry in entries {
+        policy.insert(Value::String(entry), Value::String("allow".into()));
+    }
+    fm.insert("tools", Value::Mapping(policy));
+    true
+}
+
 fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Dialect) -> bool {
     rewrite_tool_entries(fm, key, |raw| {
         parse_foreign_mcp_token(raw, dialect).map(|mcp_ref| mcp_ref.to_canonical())
@@ -80,13 +112,15 @@ fn lift_claude_task_entries(fm: &mut Frontmatter, key: &str) -> bool {
     rewrite_tool_entries(fm, key, claude_task_to_agent)
 }
 
-fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool {
+fn lift_foreign_tools(fm: &mut Frontmatter, dialect: Dialect, native_tools_restrict: bool) -> bool {
     let mut changed = false;
+    let mut came_from_native_tools = fm.get("tools").is_some();
     if fm.get("tools").is_none() {
-        for key in ["allowed-tools", "allowed_tools", "tools"] {
+        for key in ["allowed-tools", "allowed_tools"] {
             if let Some(value) = fm.remove(key) {
                 fm.insert("tools", value);
                 changed = true;
+                came_from_native_tools = false;
                 break;
             }
         }
@@ -97,7 +131,7 @@ fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool 
             }
         }
     }
-    changed |= split_scalar_tool_list(fm, "tools");
+    changed |= lift_tool_list_to_policy_map(fm, native_tools_restrict && came_from_native_tools);
     changed |= lift_foreign_mcp_tokens_in_field(fm, "tools", dialect);
     if dialect == Dialect::Claude {
         changed |= lift_claude_task_entries(fm, "tools");
@@ -172,7 +206,7 @@ fn lift_claude_skill(fm: &mut Frontmatter) -> bool {
             changed = true;
         }
     }
-    changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
+    changed |= lift_foreign_tools(fm, Dialect::Claude, false);
     changed
 }
 
@@ -185,7 +219,7 @@ fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
         changed = true;
     }
 
-    changed |= lift_foreign_tools_allowlist(fm, Dialect::Claude);
+    changed |= lift_foreign_tools(fm, Dialect::Claude, true);
 
     if let Some(mcp) = fm.remove("mcpServers") {
         changed |=
@@ -214,7 +248,7 @@ fn lift_codex(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
                     "user_invocable",
                 ],
             );
-            changed |= lift_foreign_tools_allowlist(fm, Dialect::Codex);
+            changed |= lift_foreign_tools(fm, Dialect::Codex, false);
         }
         ItemKind::Agent => {
             changed |= strip_foreign_keys(
@@ -268,7 +302,7 @@ fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     if fm.remove("globs").is_some() {
         changed = true;
     }
-    changed |= lift_foreign_tools_allowlist(fm, Dialect::Cursor);
+    changed |= lift_foreign_tools(fm, Dialect::Cursor, false);
     changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Cursor);
     changed
 }
@@ -279,7 +313,7 @@ fn lift_opencode(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
         ItemKind::Skill | ItemKind::BootstrapDoc => {
             let mut changed = false;
             changed |= strip_foreign_keys(fm, &["mode"]);
-            changed |= lift_foreign_tools_allowlist(fm, Dialect::OpenCode);
+            changed |= lift_foreign_tools(fm, Dialect::OpenCode, false);
             if let Some(tools) = fm.remove("disallowedTools") {
                 if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
                     fm.insert("disallowed-tools", tools);
@@ -316,6 +350,7 @@ fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
 mod tests {
     use super::*;
     use crate::compiler::agents::AgentDiagnostic;
+    use crate::compiler::agents::lower::{NativeModel, lower_to_claude};
     use crate::compiler::agents::parse_agent_content;
     use crate::compiler::lossiness::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
@@ -328,6 +363,20 @@ mod tests {
 
     fn lift(dialect: Dialect, item_kind: ItemKind, frontmatter: &Frontmatter) -> Frontmatter {
         lift_frontmatter_with_change(dialect, item_kind, frontmatter).0
+    }
+
+    fn tool_map(entries: &[(&str, &str)]) -> Value {
+        Value::Mapping(
+            entries
+                .iter()
+                .map(|(name, action)| {
+                    (
+                        Value::String((*name).into()),
+                        Value::String((*action).into()),
+                    )
+                })
+                .collect(),
+        )
     }
 
     #[test]
@@ -365,9 +414,10 @@ mod tests {
         assert!(lifted.get("disallowedTools").is_none());
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("mcp(server)".into()),
-                Value::String("mcp(other)".into())
+            Some(&tool_map(&[
+                ("*", "deny"),
+                ("mcp(server)", "allow"),
+                ("mcp(other)", "allow"),
             ]))
         );
         assert!(lifted.get("mcpServers").is_none());
@@ -593,7 +643,7 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![Value::String("Bash(git *)".into())]))
+            Some(&tool_map(&[("Bash(git *)", "allow")]))
         );
         assert!(lifted.get("allowed-tools").is_none());
 
@@ -601,6 +651,31 @@ when_to_use: Use when git history matters
         let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(profile.tools.describe(), ["allow:bash(git *)"]);
+    }
+
+    #[test]
+    fn codex_tool_fields_follow_the_existing_skill_and_agent_meanings() {
+        let skill = lift(
+            Dialect::Codex,
+            ItemKind::Skill,
+            &fm("name: s\ndescription: d\nallowed-tools: [Read]\n"),
+        );
+        assert_eq!(skill.get("tools"), Some(&tool_map(&[("Read", "allow")])));
+        let mut diags = Vec::new();
+        let (profile, _) = parse_skill_content(&skill.render(), &mut diags).unwrap();
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(profile.tools.describe(), ["allow:read"]);
+        assert!(!profile.tools.is_allowlist());
+
+        let agent = lift(
+            Dialect::Codex,
+            ItemKind::Agent,
+            &fm("name: a\ndescription: d\ntools: [Read]\n"),
+        );
+        assert!(
+            agent.get("tools").is_none(),
+            "Codex native agents have no tool-policy field"
+        );
     }
 
     #[test]
@@ -631,10 +706,10 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("Read".into()),
-                Value::String("mcp(github/create_issue)".into()),
-                Value::String("mcp(context7/*)".into()),
+            Some(&tool_map(&[
+                ("Read", "allow"),
+                ("mcp(github/create_issue)", "allow"),
+                ("mcp(context7/*)", "allow"),
             ]))
         );
         assert_eq!(
@@ -660,7 +735,6 @@ when_to_use: Use when git history matters
         assert_eq!(
             profile.tools.describe(),
             [
-                "deny:*",
                 "allow:read",
                 "allow:mcp(github/create_issue)",
                 "allow:mcp(context7/*)",
@@ -680,10 +754,11 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("Read".into()),
-                Value::String("agent".into()),
-                Value::String("agent(Explore)".into()),
+            Some(&tool_map(&[
+                ("*", "deny"),
+                ("Read", "allow"),
+                ("agent", "allow"),
+                ("agent(Explore)", "allow"),
             ]))
         );
         assert_eq!(
@@ -701,10 +776,11 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             scalar.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("Read".into()),
-                Value::String("agent".into()),
-                Value::String("mcp(github/get_issue)".into()),
+            Some(&tool_map(&[
+                ("*", "deny"),
+                ("Read", "allow"),
+                ("agent", "allow"),
+                ("mcp(github/get_issue)", "allow"),
             ]))
         );
         assert_eq!(
@@ -712,6 +788,43 @@ when_to_use: Use when git history matters
             Some(&Value::Sequence(vec![
                 Value::String("agent".into()),
                 Value::String("Edit".into()),
+            ]))
+        );
+    }
+
+    #[test]
+    fn claude_agent_tool_list_round_trips_as_a_restriction_without_deprecation() {
+        let lifted = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm("name: a\ndescription: d\ntools: Read, Grep\n"),
+        );
+        assert_eq!(
+            lifted.get("tools"),
+            Some(&tool_map(&[
+                ("*", "deny"),
+                ("Read", "allow"),
+                ("Grep", "allow"),
+            ]))
+        );
+
+        let mut diags = Vec::new();
+        let (profile, canonical) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
+        assert!(diags.is_empty(), "{diags:?}");
+
+        let output = lower_to_claude(
+            &profile,
+            &canonical,
+            canonical.body(),
+            &NativeModel::Inherit,
+        );
+        assert!(output.lossy_fields.is_empty(), "{:?}", output.lossy_fields);
+        let lowered = Frontmatter::parse(&String::from_utf8(output.bytes).unwrap()).unwrap();
+        assert_eq!(
+            lowered.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("Read".into()),
+                Value::String("Grep".into()),
             ]))
         );
     }
@@ -725,9 +838,9 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("mcp(*/*)".into()),
-                Value::String("mcp(github/*)".into()),
+            Some(&tool_map(&[
+                ("mcp(*/*)", "allow"),
+                ("mcp(github/*)", "allow"),
             ]))
         );
     }
@@ -743,9 +856,9 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("mcp(GitHub/CreateIssue)".into()),
-                Value::String("mcp(context7/*)".into()),
+            Some(&tool_map(&[
+                ("mcp(GitHub/CreateIssue)", "allow"),
+                ("mcp(context7/*)", "allow"),
             ]))
         );
         assert!(lifted.get("allowed-tools").is_none());
@@ -803,9 +916,9 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("mcp(github/create_issue)".into()),
-                Value::String("Read".into()),
+            Some(&tool_map(&[
+                ("mcp(github/create_issue)", "allow"),
+                ("Read", "allow"),
             ]))
         );
     }
@@ -819,8 +932,9 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![Value::String(
-                "mcp(plugin:context7:context7/create_issue)".into()
+            Some(&tool_map(&[(
+                "mcp(plugin:context7:context7/create_issue)",
+                "allow",
             )]))
         );
     }
@@ -834,7 +948,7 @@ when_to_use: Use when git history matters
         );
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::String("mcp(github/create_issue)".into()))
+            Some(&tool_map(&[("mcp(github/create_issue)", "allow")]))
         );
     }
 
@@ -864,11 +978,11 @@ when_to_use: Use when git history matters
         assert!(lifted.get("mcpServers").is_none());
         assert_eq!(
             lifted.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("Read".into()),
-                Value::String("Bash(git *)".into()),
-                Value::String("mcp(context7)".into()),
-                Value::String("mcp(github)".into()),
+            Some(&tool_map(&[
+                ("Read", "allow"),
+                ("Bash(git *)", "allow"),
+                ("mcp(context7)", "allow"),
+                ("mcp(github)", "allow"),
             ]))
         );
 
@@ -878,7 +992,6 @@ when_to_use: Use when git history matters
         assert_eq!(
             profile.tools.describe(),
             [
-                "deny:*",
                 "allow:read",
                 "allow:bash(git *)",
                 "allow:mcp(context7/*)",

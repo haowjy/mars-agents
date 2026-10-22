@@ -311,7 +311,7 @@ fn autocompact_pct_string_produces_diagnostic() {
 
 #[test]
 fn parses_skills_tools_disallowed_mcp() {
-    let content = "---\nskills: [review, dev-principles]\ntools: [Bash, Write, mcp(server)]\ndisallowed-tools: [Agent]\n---\n";
+    let content = "---\nskills: [review, dev-principles]\ntools:\n  Bash: allow\n  Write: allow\n  mcp(server): allow\ndisallowed-tools: [Agent]\n---\n";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
     assert_eq!(p.skills.load, vec!["review", "dev-principles"]);
@@ -319,7 +319,6 @@ fn parses_skills_tools_disallowed_mcp() {
     assert_eq!(
         p.tools.describe(),
         [
-            "deny:*",
             "allow:bash",
             "allow:write",
             "allow:mcp(server/*)",
@@ -392,15 +391,18 @@ fn claude_native_agent_records_ask_rules_as_dropped_not_silently_lost() {
 }
 
 #[test]
-fn claude_native_agent_lowers_list_form_to_its_native_allowlist() {
-    let (_, out, _) = lower_claude("---\nname: a\nharness: claude\ntools: [read, grep]\n---\n");
+fn claude_native_agent_lowers_explicit_allowlist_to_native_tools() {
+    let (_, out, diags) = lower_claude(
+        "---\nname: a\nharness: claude\ntools:\n  '*': deny\n  read: allow\n  grep: allow\n---\n",
+    );
+    assert!(diags.is_empty(), "{diags:?}");
     let text = String::from_utf8(out.bytes).unwrap();
     assert!(text.contains("tools:") && text.contains("- Read") && text.contains("- Grep"));
     assert!(
         !out.lossy_fields
             .iter()
             .any(|f| f.field.starts_with("tools")),
-        "a list-form allowlist is exactly Claude's `tools:`: {:?}",
+        "an explicit allowlist is exactly Claude's `tools:`: {:?}",
         out.lossy_fields
     );
 }
@@ -430,7 +432,7 @@ fn claude_native_agent_does_not_turn_map_form_grants_into_an_allowlist() {
 #[test]
 fn claude_native_agent_warns_when_a_native_stays_allowed_and_denied() {
     let (_, out, _) = lower_claude(
-        "---\nname: a\nharness: claude\ntools: [read, grep]\ndisallowed-tools: [grep]\n---\n",
+        "---\nname: a\nharness: claude\ntools:\n  '*': deny\n  read: allow\n  grep: allow\ndisallowed-tools: [grep]\n---\n",
     );
     assert!(
         out.lossy_fields
@@ -479,14 +481,16 @@ fn non_claude_native_agents_drop_ask_and_allowlists_with_lossiness() {
 #[test]
 fn unknown_pascal_case_tool_names_convert_to_snake_case() {
     let content = "---
-tools: [customtool, CustomTool]
+tools:
+  customtool: allow
+  CustomTool: allow
 ---
 ";
     let (p, diags) = parse(content);
 
     assert_eq!(
         p.tools.describe(),
-        ["deny:*", "allow:customtool", "allow:custom_tool"]
+        ["allow:customtool", "allow:custom_tool"]
     );
     assert!(diags.is_empty());
 }

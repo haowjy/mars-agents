@@ -120,7 +120,7 @@ fn apply_tool_overlay(fm: &mut Frontmatter, overlay: &AgentOverlayTools) -> bool
         return false;
     }
     let mut after = before.clone();
-    after.apply_overlay(overlay, false);
+    after.apply_overlay(overlay);
     if after == before {
         return false;
     }

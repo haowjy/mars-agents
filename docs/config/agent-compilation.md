@@ -98,7 +98,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
 | `skills` | `skills:` | exact |
-| `tools` | `tools:` (+ projected `mcp__…` MCP tokens), only for an allowlist | A list-form `tools:` (or a map with `'*': deny`) lowers exactly: Claude's `tools:` restricts the agent to what it lists. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost); `ask` rules and an allowlist with nothing allowed have no field, and Mars records each as dropped lossiness |
+| `tools` | `tools:` (+ projected `mcp__…` MCP tokens), only for a map-form `'*': deny` allowlist | Claude's `tools:` restricts the agent to what it lists. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost); `ask` rules and an allowlist with nothing allowed have no field, and Mars records each as dropped lossiness |
 | `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
@@ -433,7 +433,7 @@ warning[agent-field-approximate]: agent `reviewer`: field `mode` approximately m
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
-Under `mars validate --strict`, dropped fields with non-default values promote to errors. This lets CI catch cases like `tools: [bash, write]` targeting Codex, which cannot honor the allowlist.
+Under `mars validate --strict`, dropped fields with non-default values promote to errors. This lets CI catch cases like a `tools:` map with `'*': deny`, `bash: allow`, and `write: allow` targeting Codex, which cannot honor the allowlist.
 
 ## Lossiness Matrix
 

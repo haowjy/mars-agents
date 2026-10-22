@@ -62,7 +62,7 @@ mod tests {
 
     fn profile() -> SkillProfile {
         parse_profile(
-            "---\nname: skill\ndescription: desc\nmodel-invocable: false\ntools: [Bash(git *)]\nlicense: MIT\nmetadata:\n  owner: team\nextra: stripped\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\nmodel-invocable: false\ntools:\n  Bash(git *): allow\nlicense: MIT\nmetadata:\n  owner: team\nextra: stripped\n---\nBody\n",
         )
     }
 
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn claude_projects_canonical_allowed_tools() {
         let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools: [AskUser, Bash(git *)]\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\ntools:\n  AskUser: allow\n  Bash(git *): allow\n---\nBody\n",
         );
         let lowered = lower_skill_to_claude(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn claude_omits_unrecognized_tools_and_preserves_mcp_wire_identifiers() {
         let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools: [my_custom_tool, mcp__server__Tool]\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\ntools:\n  my_custom_tool: allow\n  mcp__server__Tool: allow\n---\nBody\n",
         );
         let lowered = lower_skill_to_claude(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn claude_emits_mcp() {
         let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools: [mcp(plugin:demo)]\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\ntools:\n  mcp(plugin:demo): allow\n---\nBody\n",
         );
         let lowered = lower_skill_to_claude(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
@@ -715,7 +715,7 @@ mod tests {
     #[test]
     fn codex_warns_mcp() {
         let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools: [mcp(plugin:demo)]\n---\nBody\n",
+            "---\nname: skill\ndescription: desc\ntools:\n  mcp(plugin:demo): allow\n---\nBody\n",
         );
         let lowered = lower_skill_to_codex(&profile, "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();

@@ -11,7 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   can enforce platform rules without keeping a second native-name table; the names come from
   the same projection as `tools.rules[]` and retain older-build names such as `TaskOutput`.
 - Launch bundle `tools.rules[]` (additive in bundle schema 4): one entry per profile
-  statement, `{capability, pattern, action, native, native_tools, native_status, origin?}`.
+  statement, `{capability, pattern, action, native, native_tools, native_status}`.
   `native` carries permission-rule spellings; `native_tools` carries the unscoped harness tool
   names the rule concerns. Consumers no longer have to infer either fact from the other.
   `native_status` is `known`, `absent` (the harness has no such tool) or
@@ -34,11 +34,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `dialect = "mars-native"` on the dependency whose `Task` means the task list.
 - `tools: allow` / `tools: deny` (scalar) is a validation error instead of being read as
   a tool named `allow`/`deny`.
-- List-form `tools: [read, grep]` is now an allowlist: exactly the listed tools, as an
-  explicit `*: deny` plus the allows. Map-form `tools:` entries stay grants. An empty
-  list stays "no policy". Packages that relied on a list only pre-approving tools must
-  switch to the map form. Staging a Claude agent's `mcpServers` into a missing `tools:`
-  now writes the map form, so it keeps inheriting every tool.
 - `tools:` maps accept `ask` as an action next to `allow` and `deny`, and `'*'` as a
   capability (`'*': deny` plus allows is an explicit allowlist). Native agent files
   cannot hold `ask`, or an allowlist with nothing allowed; both are reported as
@@ -75,15 +70,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and denied because the harness has one tool for both capabilities (Codex and OpenCode
   `write` / `edit`) is reported as agent-file lossiness and as a `note` on both bundle
   rules, with no bundle warning.
-- A Claude agent file gets `tools:` only from an allowlist (list-form `tools:` or
-  `'*': deny`), because Claude reads that field as "only these tools". Map-form `allow`
+- A Claude agent file gets `tools:` only from a map-form `'*': deny` allowlist, because
+  Claude reads that field as "only these tools". Map-form `allow`
   entries are grants, not an allowlist, so they no longer turn into `tools:`. Omitting
   `tools:` inherits every tool, so nothing is lost and no lossiness is recorded.
 - `mars.toml` `[agents.<name>.tools].allowed` replaces the profile's allow rules and keeps
   its deny and `ask` rules; `disallowed` replaces its deny rules. The launch bundle now
   applies the overlay too, through the same merge as native agent files. `[skills.<name>.tools]`
   uses the same edit, so `allowed` no longer drops a map-form deny or `ask` in the skill's
-  `tools:`; a skill's `allowed` only grants and makes no allowlist. The staged skill writes
+  `tools:`; `allowed` only grants and makes no allowlist. The staged skill writes
   entries in canonical spelling (`agent`, not `Agent`), and denies in `disallowed-tools:`.
 - A scalar `tools: Read, Grep` (Claude's own agent-file spelling) is read as the list
   `[Read, Grep]`; staging splits it before lifting `Task` and `mcp__…` entries.
@@ -95,7 +90,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the one spelling OpenCode reads correctly. Other capabilities keep the colon, since it is
   part of a path or host (`read(./secrets:*)`, `web_fetch(domain:*)`).
 - `mars agents show --json` / `mars skills show --json` print the tool policy as one `rules`
-  list, in the launch bundle's rule shape (`{capability, pattern, action, origin?}`).
+  list, in the launch bundle's rule shape (`{capability, pattern, action}`).
   `mcp(server)` shows as `mcp(server/*)`. The text view prints one `tool-rules` line.
   **Deprecated:** `tools` and `disallowed-tools` stay for one release, derived from `rules`
   (they cannot carry `ask`, `*` or the capability behind a name); `tools-denied` is folded
@@ -105,6 +100,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   malformed name (`mcp`, `mcp(`, `*(x)`) fails the load instead of reaching the policy. A skill
   overlay leaves a skill with a malformed `tools:` / `disallowed-tools:` entry untouched, so
   sync reports the entry.
+
+### Deprecated
+- List-form `tools:`. Still only grants. Warns. Use map form; add `'*': deny` for only
+  those tools.
 
 ## [0.16.0] - 2026-10-14
 

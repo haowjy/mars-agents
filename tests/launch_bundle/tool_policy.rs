@@ -391,7 +391,8 @@ fn build_launch_bundle_projects_mcp_refs_per_harness() {
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
-tools: [mcp(github/create_issue)]
+tools:
+  mcp(github/create_issue): allow
 ---
 Review code changes."#;
 
@@ -728,11 +729,14 @@ fn bundle_marks_tools_a_harness_lacks_as_absent() {
 }
 
 #[test]
-fn bundle_list_form_tools_is_an_allowlist_with_an_explicit_wildcard_deny() {
+fn bundle_explicit_allowlist_carries_the_wildcard_deny() {
     let agent = r#"---
 name: reviewer
 model: claude-opus-4-6
-tools: [read, grep]
+tools:
+  '*': deny
+  read: allow
+  grep: allow
 ---
 Review code changes."#;
     let bundle = bundle_for(agent, "claude");
@@ -740,7 +744,7 @@ Review code changes."#;
         bundle["tools"]["rules"],
         serde_json::json!([
             {"capability": "*", "pattern": null, "action": "deny",
-             "native": [], "native_tools": [], "origin": "list-form"},
+             "native": [], "native_tools": []},
             {"capability": "read", "pattern": null, "action": "allow",
              "native": ["Read"], "native_tools": ["Read"], "native_status": "known"},
             {"capability": "grep", "pattern": null, "action": "allow",
@@ -867,9 +871,13 @@ Review code changes."#;
         disallowed.contains("Bash(git push *)") && disallowed.contains("Agent"),
         "{disallowed}"
     );
-    let wildcard = rule(&bundle, "*", None);
-    assert_eq!(
-        wildcard["origin"], "list-form",
-        "an overlay allowlist is list-form"
+    assert!(
+        bundle["tools"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|rule| rule["capability"] != "*"),
+        "an allowed overlay only grants: {}",
+        bundle["tools"]
     );
 }

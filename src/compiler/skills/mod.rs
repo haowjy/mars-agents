@@ -53,6 +53,8 @@ pub enum SkillDiagnostic {
         field: String,
         canonical: &'static str,
     },
+    /// Deprecated list-form `tools: [..]`; it only grants.
+    DeprecatedListFormTools,
     MalformedFrontmatter {
         message: String,
     },
@@ -97,6 +99,7 @@ impl SkillDiagnostic {
             Self::NonCanonicalField { field, canonical } => {
                 format!("skill field `{field}` is not canonical; use `{canonical}` instead")
             }
+            Self::DeprecatedListFormTools => "skill `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string(),
             Self::MalformedFrontmatter { message } => {
                 format!("skill frontmatter is malformed; raw fallback used: {message}")
             }
@@ -179,7 +182,6 @@ pub(crate) fn parse_skill_tool_policy(
         fm.get("tools"),
         fm.get("disallowed-tools")
             .or_else(|| fm.get("disallowed_tools")),
-        false,
         &mut invalid,
     )
 }
@@ -246,6 +248,9 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     consumed_keys.push("tools".to_string());
     consumed_keys.push("disallowed-tools".to_string());
     consumed_keys.push("disallowed_tools".to_string());
+    if tool_policy::is_list_form(fm.get("tools")) {
+        diags.push(SkillDiagnostic::DeprecatedListFormTools);
+    }
     let tools = parse_skill_tool_policy(fm, diags);
     consumed_keys.push("license".to_string());
     let license_raw = fm.get("license");
@@ -584,8 +589,9 @@ body",
 
     #[test]
     fn warns_for_filtered_non_string_fields() {
-        let (_, d, _) =
-            parse("---\nname: a\ndescription: b\ntools: [Bash(git *)]\nlicense: false\n---\nbody");
+        let (_, d, _) = parse(
+            "---\nname: a\ndescription: b\ntools:\n  Bash(git *): allow\nlicense: false\n---\nbody",
+        );
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::InvalidFieldType { field, .. } if field == "license"
@@ -594,8 +600,9 @@ body",
 
     #[test]
     fn separator_tool_aliases_canonicalize() {
-        let (p, d, _) =
-            parse("---\nname: a\ndescription: b\ntools: [ask_user, bash(git *)]\n---\nbody");
+        let (p, d, _) = parse(
+            "---\nname: a\ndescription: b\ntools:\n  ask_user: allow\n  bash(git *): allow\n---\nbody",
+        );
 
         assert_eq!(p.tools.describe(), ["allow:ask_user", "allow:bash(git *)"]);
         assert!(d.is_empty());
@@ -619,7 +626,9 @@ body",
             "---
 name: a
 description: b
-tools: [customtool, CustomTool]
+tools:
+  customtool: allow
+  CustomTool: allow
 ---
 body",
         );

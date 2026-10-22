@@ -171,7 +171,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     skill.create_dir_all().unwrap();
     skill
         .child("SKILL.md")
-        .write_str("---\nname: demo\ndescription: d\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Body\n")
+        .write_str("---\nname: demo\ndescription: d\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Body\n")
         .unwrap();
     source
         .child("mars.toml")

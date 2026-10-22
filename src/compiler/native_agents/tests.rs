@@ -1184,7 +1184,7 @@ fn emit_all_empty_overlay_leaves_lowered_output_unchanged() {
     );
 
     let agent = parse_mars_agent(
-        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools: [Bash]\n---\n# Worker\n",
+        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools:\n  '*': deny\n  Bash: allow\n---\n# Worker\n",
         "worker",
     );
     compile_emit_all_with_overlays(
@@ -1226,7 +1226,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
     );
 
     let agent = parse_mars_agent(
-        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools: [Bash]\n---\n# Worker\n",
+        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools:\n  '*': deny\n  Bash: allow\n---\n# Worker\n",
         "worker",
     );
     let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();

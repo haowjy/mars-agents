@@ -11,7 +11,11 @@ All skill fields below are optional. A skill with no frontmatter is valid and is
 name: my-skill
 description: What this skill does
 model-invocable: false
-tools: [bash(git *), read, write, mcp(plugin:demo)]
+tools:
+  bash(git *): allow
+  read: allow
+  write: allow
+  mcp(plugin:demo): allow
 disallowed-tools: [agent]
 license: MIT
 metadata:
@@ -113,18 +117,21 @@ user-invocable: false   # user cannot trigger via /name
 
 | | |
 |---|---|
-| Type | string[] **or** map of `tool-pattern: allow\|deny` |
+| Type | deprecated string[] **or** map of `tool-pattern: allow\|deny\|ask` |
 | Default | empty |
 
 Tools this skill pre-approves while it runs, and inline denials — the same rule grammar as agent profiles (see [agent-profiles.md](agent-profiles.md#tools)): Mars capability names (`bash`, `ask_user`, `web_search`), scoped patterns, readable aliases and native spellings such as `Bash`, `shell`, and `askuser`.
 
-Unlike an agent, a skill's `tools:` never restricts anything. A list or a map both grant, and
-`ask` has no skill field, so it is reported as dropped lossiness.
+A skill's grants never restrict anything. `ask` has no skill field, so it is reported as
+dropped lossiness.
 
-List form grants the listed tools:
+List form is deprecated. It still grants the listed tools, restricts nothing, and emits a
+warning. Write grants in map form instead:
 
 ```yaml
-tools: [bash(git *), read]
+tools:
+  bash(git *): allow
+  read: allow
 ```
 
 Map form mixes allow and deny entries; denials merge with `disallowed-tools`:
@@ -174,7 +181,9 @@ or approximate MCP from native skill artifacts; the launch bundle carries the re
 per-harness projection. See [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 
 ```yaml
-tools: [bash(git *), mcp(plugin:context7)]
+tools:
+  bash(git *): allow
+  mcp(plugin:context7): allow
 ```
 
 ---
@@ -301,7 +310,7 @@ Source tree:
 
 ```
 skills/my-skill/
-  SKILL.md          # base: model-invocable: false, tools: [bash(git *)]
+  SKILL.md          # base: model-invocable: false, tools: {bash(git *): allow}
   variants/
     claude/
       SKILL.md      # Claude-specific instructions

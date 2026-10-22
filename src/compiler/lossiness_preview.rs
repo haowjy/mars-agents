@@ -410,7 +410,7 @@ mod tests {
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(
             skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Body\n",
+            "---\nname: demo\ndescription: d\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Body\n",
         )
         .unwrap();
         std::fs::write(
@@ -499,7 +499,7 @@ mod tests {
         std::fs::create_dir_all(&flat_pkg).unwrap();
         std::fs::write(
             flat_pkg.join("SKILL.md"),
-            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\ntools: [Bash(git *)]\n---\n# Flat\n",
+            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Flat\n",
         )
         .unwrap();
         std::fs::write(

@@ -14,7 +14,11 @@ effort: high
 autocompact: 200000
 autocompact_pct: 80
 skills: [dev-principles, shared-workspace]
-tools: [bash, write, edit, read]
+tools:
+  bash: allow
+  write: allow
+  edit: allow
+  read: allow
 disallowed-tools: [agent, bash(git revert:*)]
 harness-overrides:
   codex:
@@ -55,7 +59,10 @@ description: Implementation agent for code changes
 model: gpt55
 harness: claude
 skills: [dev-principles, shared-workspace]
-tools: [bash, write, edit]
+tools:
+  bash: allow
+  write: allow
+  edit: allow
 ---
 
 # Coder
@@ -325,9 +332,9 @@ a harness spelling.
 
 Two forms:
 
-- **List form is an allowlist.** `tools: [read, grep]` means exactly those tools. Mars
-  compiles it to an explicit `*: deny` (marked `origin: list-form`) plus the allows. An empty
-  list names no tools and stays "no policy".
+- **List form is deprecated.** `tools: [read, grep]` still only grants those entries and
+  restricts nothing. A non-empty list emits a deprecation warning. An empty list names no tools
+  and stays "no policy".
 - **Map form states rules.** `tools: {read: allow, edit: deny}` grants and denies those
   entries and leaves everything else to the harness. Add `'*': deny` to make a map an
   allowlist too. A capability that has only scoped allows (`bash(rg *)`) then runs only those
@@ -341,15 +348,15 @@ A scope written with the legacy prefix suffix, `bash(git revert:*)`, is normaliz
 `bash(git revert *)`, the one spelling every harness reads.
 
 ```yaml
-tools: [bash, write, edit]               # allowlist: exactly these
-tools: [bash(git status *), write, read] # scoped pattern
-tools: [mcp(context7), mcp(plugin:demo/query-docs)]   # MCP grants — see below
-tools:                                   # map form: rules, not an allowlist
+tools:                                   # grants and denials
   bash: allow
   "bash(meridian spawn *)": allow
   "bash(git push *)": ask
   agent: deny
   edit: deny
+  "bash(git status *)": allow           # scoped pattern
+  mcp(context7): allow                   # MCP grants — see below
+  mcp(plugin:demo/query-docs): allow
 tools:                                   # explicit allowlist in map form
   "*": deny
   "bash(rg *)": allow
@@ -360,7 +367,8 @@ Readable aliases and native spellings (`Bash`, `shell`, `exec_command`, `AskUser
 written and reported as `unknown` in the launch bundle; Mars never guesses a native spelling
 for it. `tools: allow` / `tools: deny` (a scalar) is a validation error. Any other scalar is
 Claude's own comma-separated spelling, `tools: Read, Grep`, and reads as the list
-`[Read, Grep]` (commas inside a scope, `bash(rg a,b)`, stay with their entry).
+`[Read, Grep]`, granting both entries (commas inside a scope, `bash(rg a,b)`, stay with their
+entry).
 
 **Capabilities.** One name per kind of tool. Where a capability covers several native tools,
 a rule covers all of them.
@@ -395,12 +403,14 @@ server/tool access. Server and tool segments are preserved **verbatim** (case-se
 | `mcp(*/*)` | All MCP tools |
 
 ```yaml
-tools: [mcp(context7), mcp(memory-bank/store)]
+tools:
+  mcp(context7): allow
+  mcp(memory-bank/store): allow
 disallowed-tools: [mcp(github/delete_repo)]
 ```
 
 The legacy `mcp-tools:` / `mcp_tools` frontmatter field is **removed** — use
-`tools: [mcp(server)]` instead. Per-harness projection and lossiness are documented in
+`tools: {mcp(server): allow}` instead. Per-harness projection and lossiness are documented in
 [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 
 ---

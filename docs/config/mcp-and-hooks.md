@@ -23,7 +23,7 @@ Two lanes work together but serve different purposes:
 | Lane | Authoring | What it does |
 |---|---|---|
 | **Server definitions** | `mcp/<name>/mcp.toml` in a package | Registers how to launch an MCP server in target config (`.mcp.json`, etc.) |
-| **Tool-policy refs** | `tools: [mcp(server/tool)]` on agents/skills | Grants or denies MCP tool access in the agent/skill tool policy |
+| **Tool-policy refs** | `tools: {mcp(server/tool): allow}` on agents/skills | Grants or denies MCP tool access in the agent/skill tool policy |
 
 Whole-server **enablement** on Codex is governed by the server-definition lane (and
 `mcp_servers.enabled_tools` in harness config), not by per-tool entries in `tools:`.

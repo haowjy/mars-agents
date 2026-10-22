@@ -100,7 +100,7 @@ pub fn build_launch_bundle(
         .as_deref()
         .and_then(|agent| effective_project_config.agents.get(agent))
     {
-        profile.tools.apply_overlay(&overlay.tools, true);
+        profile.tools.apply_overlay(&overlay.tools);
     }
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),

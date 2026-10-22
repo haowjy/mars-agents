@@ -276,8 +276,8 @@ pub struct AgentProfile {
     // --- Tool fields ---
     pub skills: SkillsSpec,
     pub subagents: Vec<String>,
-    /// `tools:` and `disallowed-tools:` as one rule list. A list-form `tools:` carries the
-    /// `*: deny` that makes it an allowlist.
+    /// `tools:` and `disallowed-tools:` as one rule list. An allowlist has an explicit
+    /// `'*': deny`; deprecated list form only grants its entries.
     pub tools: EffectiveToolPolicy,
 
     // --- Override tables ---
@@ -315,6 +315,9 @@ pub enum AgentDiagnostic {
     },
     /// Deprecated `models:` field was found (use `model-overrides:` instead).
     LegacyModelsField,
+    /// Deprecated list-form `tools: [read, grep]`: it grants the listed tools and restricts
+    /// nothing, which readers often take for "only these tools".
+    DeprecatedListFormTools,
     /// Deprecated `approval: yolo` was found (use `approval: never` instead).
     DeprecatedApprovalYolo,
     /// Unknown top-level harness name — not one of claude/codex/opencode/cursor/pi.
@@ -335,6 +338,7 @@ impl AgentDiagnostic {
             AgentDiagnostic::RemovedField { .. } => true,
             AgentDiagnostic::LegacyModelsField
             | AgentDiagnostic::DeprecatedApprovalYolo
+            | AgentDiagnostic::DeprecatedListFormTools
             | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
         }
     }
@@ -350,6 +354,9 @@ impl AgentDiagnostic {
             }
             AgentDiagnostic::LegacyModelsField => {
                 "agent uses deprecated `models:` field; rename to `model-overrides:`".to_string()
+            }
+            AgentDiagnostic::DeprecatedListFormTools => {
+                "agent `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string()
             }
             AgentDiagnostic::DeprecatedApprovalYolo => {
                 "agent uses deprecated `approval: yolo`; use `approval: never` instead".to_string()
@@ -828,16 +835,14 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .get("subagents")
         .map(tool_policy::yaml_str_list)
         .unwrap_or_default();
+    if tool_policy::is_list_form(fm.get("tools")) {
+        diags.push(AgentDiagnostic::DeprecatedListFormTools);
+    }
     let tools = {
         let mut invalid = |field: &str, value: &str, allowed: &'static str| {
             push_agent_tool_invalid(diags, field, value, allowed);
         };
-        tool_policy::parse_tool_policy(
-            fm.get("tools"),
-            fm.get("disallowed-tools"),
-            true,
-            &mut invalid,
-        )
+        tool_policy::parse_tool_policy(fm.get("tools"), fm.get("disallowed-tools"), &mut invalid)
     };
 
     // harness-overrides:

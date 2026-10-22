@@ -97,15 +97,15 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 ## Shared Tool Policy (`tool_policy.rs`)
 
 `EffectiveToolPolicy` is the one tool-gating model of **agents**, **skills** and the **launch
-bundle**: a list of `ToolRule { capability, pattern, action, origin }`, parsed once into
+bundle**: a list of `ToolRule { capability, pattern, action }`, parsed once into
 `AgentProfile.tools` / `SkillProfile.tools` by `parse_tool_policy`. `capability` is a
 `Capability` (`Any` for `*`, `Mcp(McpRef)`, a vocabulary `Builtin`, or the author's `Unknown`
 spelling), never a string with reserved values.
 
-- **Parse.** `tools:` list → `allow` per entry; map → `allow` / `deny` / `ask` per entry;
-  `disallowed-tools:` → `deny`. An agent's list is an allowlist, so parsing adds a leading
-  `*: deny` (`origin: list-form`); a skill's list only grants, so it does not. A `bash`
-  pattern `X:*` becomes `X *`.
+- **Parse.** Deprecated `tools:` list → `allow` per entry and a warning; map → `allow` /
+  `deny` / `ask` per entry; `disallowed-tools:` → `deny`. Lists only grant for agents and
+  skills. An allowlist is a map with an explicit `'*': deny`. A `bash` pattern `X:*` becomes
+  `X *`.
 - **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
   `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
   lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes

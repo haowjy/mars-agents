@@ -21,7 +21,10 @@ fn build_launch_bundle_outputs_schema_and_slot_placeholders() {
 name: reviewer
 model: claude-opus-4-6
 skills: [planning]
-tools: [Bash, Write, mcp(plugin:context7:context7)]
+tools:
+  Bash: allow
+  Write: allow
+  mcp(plugin:context7:context7): allow
 disallowed-tools: [Agent]
 ---
 
@@ -144,7 +147,9 @@ fn build_launch_bundle_supports_ad_hoc_mode_with_model_override() {
 name: reviewer
 model: claude-opus-4-6
 skills: [planning]
-tools: [Bash, Write]
+tools:
+  Bash: allow
+  Write: allow
 ---
 Review code changes."#;
     let skill_content =

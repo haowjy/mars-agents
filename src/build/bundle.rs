@@ -129,7 +129,7 @@ pub struct CapabilityNativeSpec {
 }
 
 /// One tool-policy statement as the resolved harness spells it: the rule's own
-/// `{capability, pattern, action, origin?}` (see [`ToolRule`]'s serialization) plus the names.
+/// `{capability, pattern, action}` (see [`ToolRule`]'s serialization) plus the names.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolRuleSpec {
     #[serde(flatten)]

@@ -52,22 +52,6 @@ impl ToolAction {
     }
 }
 
-/// Why a rule exists when the author did not write it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuleOrigin {
-    /// The `*: deny` Mars adds for a list-form `tools: [read, grep]`, which means
-    /// "exactly these tools".
-    ListForm,
-}
-
-impl RuleOrigin {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ListForm => "list-form",
-        }
-    }
-}
-
 /// One tool-policy statement: `action` for `capability`, optionally narrowed by `pattern`.
 ///
 /// Rules are kept in profile order, which carries no precedence: a broad rule against a scoped
@@ -79,7 +63,6 @@ pub struct ToolRule {
     /// Scope inside `capability(...)`. `None` for `*` and `mcp`, whose scope is the capability.
     pub pattern: Option<String>,
     pub action: ToolAction,
-    pub origin: Option<RuleOrigin>,
 }
 
 impl ToolRule {
@@ -88,17 +71,6 @@ impl ToolRule {
             capability: parsed.capability,
             pattern: parsed.pattern,
             action,
-            origin: None,
-        }
-    }
-
-    /// The `*: deny` that turns a list into an allowlist.
-    fn list_form_allowlist() -> Self {
-        Self {
-            capability: Capability::Any,
-            pattern: None,
-            action: ToolAction::Deny,
-            origin: Some(RuleOrigin::ListForm),
         }
     }
 
@@ -128,7 +100,7 @@ impl ToolRule {
 }
 
 /// The rule's wire shape, shared by the launch bundle's `tools.rules` and `agents show --json`:
-/// `{capability, pattern, action, origin?}`. `capability` is `*` for "every other tool" and
+/// `{capability, pattern, action}`. `capability` is `*` for "every other tool" and
 /// `mcp` for an MCP ref, whose `pattern` is its `server/tool`.
 impl Serialize for ToolRule {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -136,9 +108,6 @@ impl Serialize for ToolRule {
         map.serialize_entry("capability", self.capability.name())?;
         map.serialize_entry("pattern", &self.wire_pattern())?;
         map.serialize_entry("action", self.action.as_str())?;
-        if let Some(origin) = self.origin {
-            map.serialize_entry("origin", origin.as_str())?;
-        }
         map.end()
     }
 }
@@ -426,22 +395,14 @@ impl EffectiveToolPolicy {
     /// place overlay tool lists meet a policy, for agents and skills alike.
     ///
     /// `allowed` replaces what the policy grants; the existing deny and ask rules stay, because
-    /// an overlay that widens the grants must not silently lift a `git push` deny. When
-    /// `allowed_is_allowlist` (an agent: a list means "exactly these tools") the policy becomes
-    /// an allowlist. `disallowed` replaces the deny rules, except a `*: deny` that makes the
-    /// policy an allowlist, which no tool list stands in for.
-    pub(crate) fn apply_overlay(
-        &mut self,
-        overlay: &AgentOverlayTools,
-        allowed_is_allowlist: bool,
-    ) {
+    /// an overlay that widens the grants must not silently lift a `git push` deny.
+    /// `disallowed` replaces the deny rules, except a `*: deny` that makes the policy an
+    /// allowlist, which no tool list stands in for.
+    pub(crate) fn apply_overlay(&mut self, overlay: &AgentOverlayTools) {
         if !overlay.allowed.is_empty() {
             self.rules.retain(|rule| rule.action != ToolAction::Allow);
             for rule in overlay_rules(&overlay.allowed, ToolAction::Allow) {
                 self.push_unique(rule);
-            }
-            if allowed_is_allowlist && !self.is_allowlist() {
-                self.rules.insert(0, ToolRule::list_form_allowlist());
             }
         }
         if !overlay.disallowed.is_empty() {
@@ -764,26 +725,26 @@ pub(crate) fn yaml_str_list(val: &Value) -> Vec<String> {
 
 type OnInvalid<'a> = &'a mut dyn FnMut(&str, &str, &'static str);
 
+/// Whether a profile's `tools:` is the deprecated list form (`tools: [read, grep]`), which
+/// grants the listed tools and restricts nothing. Callers raise the deprecation warning.
+pub(crate) fn is_list_form(tools: Option<&Value>) -> bool {
+    matches!(tools, Some(Value::Sequence(items)) if !items.is_empty())
+}
+
 /// Read a profile's `tools:` and `disallowed-tools:` into one policy.
 ///
-/// A list-form `tools:` is an allowlist when `list_is_allowlist` (an agent): Mars adds the
-/// `*: deny` the author implied. A skill's list only grants. An empty list names no tools, so it
-/// stays "no policy" rather than "deny everything". `on_invalid` gets `(field, value, allowed)`
-/// for each entry Mars rejects.
+/// A list-form `tools:` only grants (see [`is_list_form`]); an allowlist is spelled with
+/// `'*': deny`. An empty list names no tools, so it stays "no policy" rather than "deny
+/// everything". `on_invalid` gets `(field, value, allowed)` for each entry Mars rejects.
 pub(crate) fn parse_tool_policy(
     tools: Option<&Value>,
     disallowed: Option<&Value>,
-    list_is_allowlist: bool,
     on_invalid: OnInvalid<'_>,
 ) -> EffectiveToolPolicy {
     let mut policy = EffectiveToolPolicy::default();
     if let Some(value) = tools {
         for rule in parse_tools_field("tools", value, on_invalid) {
             policy.push_unique(rule);
-        }
-        let is_list = !matches!(value, Value::Mapping(_));
-        if list_is_allowlist && is_list && !policy.rules.is_empty() {
-            policy.rules.insert(0, ToolRule::list_form_allowlist());
         }
     }
     if let Some(value) = disallowed {
@@ -899,8 +860,8 @@ pub const NON_CANONICAL_TOOL_FIELD_ALIASES: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{HarnessKind, parse_agent_content};
-    use crate::compiler::skills::parse_skill_content;
+    use crate::compiler::agents::{AgentDiagnostic, HarnessKind, parse_agent_content};
+    use crate::compiler::skills::{SkillDiagnostic, parse_skill_content};
     use crate::frontmatter::Frontmatter;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
@@ -936,17 +897,15 @@ mod tests {
 
     #[test]
     fn tools_mcp_entry_grants_whole_server() {
-        let policy = agent_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\n");
-        assert_eq!(
-            policy.describe(),
-            vec!["deny:*".to_string(), "allow:mcp(context7/*)".to_string()]
-        );
+        let policy =
+            agent_policy("---\nname: a\ndescription: d\ntools:\n  mcp(context7): allow\n---\n");
+        assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
     }
 
     #[test]
     fn skill_tools_mcp_entry_grants_whole_server() {
         let policy =
-            skill_policy("---\nname: a\ndescription: d\ntools: [mcp(context7)]\n---\nbody");
+            skill_policy("---\nname: a\ndescription: d\ntools:\n  mcp(context7): allow\n---\nbody");
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
     }
 
@@ -1019,7 +978,7 @@ mod tests {
     #[test]
     fn plugin_colon_server_names_preserve_verbatim_in_mcp_refs() {
         let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools: [mcp(plugin:context7:context7)]\n---\n",
+            "---\nname: a\ndescription: d\ntools:\n  mcp(plugin:context7:context7): allow\n---\n",
         );
         let mcp = policy.with_action(ToolAction::Allow).next().unwrap();
         assert_eq!(
@@ -1031,15 +990,18 @@ mod tests {
     }
 
     #[test]
-    fn list_form_is_an_allowlist() {
-        let policy = agent_policy("---\nname: a\ndescription: d\ntools: [read, grep]\n---\n");
-        assert_eq!(
-            policy.describe(),
-            vec!["deny:*", "allow:read", "allow:grep"]
-        );
-        assert!(policy.is_allowlist());
-        assert_eq!(policy.rules[0].origin, Some(RuleOrigin::ListForm));
-        assert_eq!(policy.rules[1].origin, None);
+    fn list_form_only_grants_and_is_flagged_deprecated() {
+        let yaml = "---\nname: a\ndescription: d\ntools: [read, grep]\n---\n";
+        let mut diags = Vec::new();
+        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
+        assert_eq!(profile.tools.describe(), vec!["allow:read", "allow:grep"]);
+        assert!(!profile.tools.is_allowlist());
+        assert_eq!(diags, [AgentDiagnostic::DeprecatedListFormTools]);
+        assert!(is_list_form(Some(&Value::Sequence(vec![Value::String(
+            "read".into()
+        )]))));
+        assert!(!is_list_form(Some(&Value::Sequence(vec![]))));
+        assert!(!is_list_form(None));
     }
 
     #[test]
@@ -1058,7 +1020,6 @@ mod tests {
         );
         assert_eq!(policy.describe(), vec!["deny:*", "allow:bash(rg *)"]);
         assert!(policy.is_allowlist());
-        assert_eq!(policy.rules[0].origin, None, "authored, not list-form");
     }
 
     #[test]
@@ -1107,12 +1068,12 @@ mod tests {
     }
 
     #[test]
-    fn scalar_tools_split_on_commas_into_the_list_form() {
+    fn scalar_tools_split_on_commas_into_grants() {
         let policy =
             agent_policy("---\nname: a\ndescription: d\ntools: Read, Grep, bash(rg a,b)\n---\n");
         assert_eq!(
             policy.describe(),
-            vec!["deny:*", "allow:read", "allow:grep", "allow:bash(rg a,b)"]
+            vec!["allow:read", "allow:grep", "allow:bash(rg a,b)"]
         );
         let policy =
             agent_policy("---\nname: a\ndescription: d\ndisallowed-tools: Edit, Write\n---\n");
@@ -1159,9 +1120,15 @@ mod tests {
 
     #[test]
     fn skill_list_form_grants_and_never_restricts() {
-        let policy = skill_policy("---\nname: a\ndescription: d\ntools: [read]\n---\nbody");
-        assert_eq!(policy.describe(), vec!["allow:read"]);
-        assert!(!policy.is_allowlist());
+        let mut diags = Vec::new();
+        let (profile, _) = parse_skill_content(
+            "---\nname: a\ndescription: d\ntools: [read]\n---\nbody",
+            &mut diags,
+        )
+        .unwrap();
+        assert_eq!(profile.tools.describe(), vec!["allow:read"]);
+        assert!(!profile.tools.is_allowlist());
+        assert_eq!(diags, [SkillDiagnostic::DeprecatedListFormTools]);
     }
 
     #[test]
@@ -1385,7 +1352,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
         let mut push = |field: &str, value: &str, _: &'static str| {
             diags.push((field.to_string(), value.to_string()));
         };
-        let policy = parse_tool_policy(None, Some(&value), true, &mut push);
+        let policy = parse_tool_policy(None, Some(&value), &mut push);
         assert!(policy.rules.is_empty());
         assert_eq!(
             diags,
@@ -1401,7 +1368,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
             let mut push = |field: &str, value: &str, _: &'static str| {
                 diags.push((field.to_string(), value.to_string()));
             };
-            let policy = parse_tool_policy(Some(&value), None, true, &mut push);
+            let policy = parse_tool_policy(Some(&value), None, &mut push);
             assert!(policy.rules.is_empty(), "{raw}");
             assert_eq!(diags.len(), 1, "{raw}");
         }
@@ -1419,22 +1386,17 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
   read: allow
 ";
 
-        // An agent: `allowed` replaces the grants, keeps deny and ask, and becomes an allowlist.
+        // An agent: `allowed` replaces the grants and keeps deny and ask.
         let mut agent = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
-        agent.apply_overlay(&overlay, true);
+        agent.apply_overlay(&overlay);
         assert_eq!(
             agent.describe(),
-            [
-                "deny:*",
-                "ask:bash(git commit *)",
-                "allow:bash",
-                "deny:agent"
-            ]
+            ["ask:bash(git commit *)", "allow:bash", "deny:agent"]
         );
 
-        // A skill: the same edit, but a skill list only grants, so there is no `*: deny`.
+        // A skill gets the same policy edit.
         let mut skill = skill_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\nbody"));
-        skill.apply_overlay(&overlay, false);
+        skill.apply_overlay(&overlay);
         assert_eq!(
             skill.describe(),
             ["ask:bash(git commit *)", "allow:bash", "deny:agent"]

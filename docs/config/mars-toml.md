@@ -265,7 +265,7 @@ disallowed = ["agent"]
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
 | `user-invocable` | bool | Whether the user can `/name` this agent |
-| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays. `allowed` replaces the profile's allow rules and makes the agent a list-form allowlist; the profile's own deny and `ask` rules stay. `disallowed` replaces the profile's deny rules (a `'*': deny` allowlist marker stays). MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
+| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays. `allowed` replaces the profile's allow rules and only grants its entries; the profile's own deny and `ask` rules stay. It does not add `'*': deny`, though an existing wildcard deny stays. `disallowed` replaces the profile's deny rules (an existing `'*': deny` allowlist marker stays). MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
 | `model-policies` | table[] | Model routing policy rules |
 
 The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
@@ -298,7 +298,7 @@ disallowed = ["agent"]
 | `description` | string | Override the skill's description |
 | `model-invocable` | bool | Override model invocability |
 | `user-invocable` | bool | Override user invocability |
-| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays, edited the same way as an agent's (above), except that a skill's `tools:` only pre-approves tools, so `allowed` replaces the skill's grants and makes no allowlist. The skill's own deny and `ask` rules, in `tools:` or `disallowed-tools:`, stay; `disallowed` replaces its deny rules. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Names are checked at load like an agent's |
+| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays, edited the same way as an agent's (above). `allowed` replaces the skill's grants and makes no allowlist. The skill's own deny and `ask` rules, in `tools:` or `disallowed-tools:`, stay; `disallowed` replaces its deny rules. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Names are checked at load like an agent's |
 
 ## Curated model display
 

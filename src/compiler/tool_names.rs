@@ -18,7 +18,7 @@ const WILDCARD_ALLOWED: &str = "`*` stands alone; it takes no pattern";
 /// What a tool-policy rule is about.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Capability {
-    /// `*`: every tool not otherwise named. A list-form `tools:` denies it.
+    /// `*`: every tool not otherwise named. An explicit `'*': deny` makes an allowlist.
     Any,
     /// `mcp(server/tool)`.
     Mcp(McpRef),

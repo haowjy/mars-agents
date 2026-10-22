@@ -605,7 +605,7 @@ mod tests {
         std::fs::create_dir_all(source.join("variants/codex")).unwrap();
         std::fs::write(
             source.join("SKILL.md"),
-            "---\nname: planning\ndescription: Base desc\nmodel-invocable: false\ntools: [Bash(git *)]\n---\nBase body\n",
+            "---\nname: planning\ndescription: Base desc\nmodel-invocable: false\ntools:\n  Bash(git *): allow\n---\nBase body\n",
         )
         .unwrap();
         std::fs::write(

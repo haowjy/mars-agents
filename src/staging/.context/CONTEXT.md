@@ -43,7 +43,7 @@ The canonical store (`.mars/`) is installed from the **staged** tree, not raw
 fetched bytes. For inferred/default dialects with identity lift, content matches
 the source. With explicit non-`mars-native` dialect, foreign frontmatter is lifted to
 canonical mars fields per `staging/lift.rs`. Default/inferred `Claude` lift is
-idempotent on already-canonical packages.
+idempotent on already-canonical map-form tool policies.
 
 ## Non-canonical allowed-tools handling (MarsNative skills only)
 
@@ -62,6 +62,13 @@ pub fn lift_frontmatter(
 ```
 
 For `Dialect::MarsNative`, lift is limited to stripping non-canonical tool aliases. All other dialects apply their own key mapping (Claude, Codex, Cursor, OpenCode).
+
+Foreign scalar/list tool fields become canonical maps so imports never author deprecated
+list-form `tools:`. Claude agent `tools:` is restrictive, so it becomes `'*': deny` plus an
+`allow` entry per tool. Skill tool fields and `allowed-tools` / `allowed_tools` are grants, so
+they become `allow` entries without the wildcard. Existing map actions stay intact. Codex
+agent tool fields are dropped because the Codex native agent format has no such policy field;
+Codex skill tool grants follow the skill rule.
 
 C-skills applies `[skills.<name>]` overrides after lift in the same staging hook
 (`staging/overlay.rs`). Tool overlays project into canonical `tools:` /
@@ -83,7 +90,7 @@ Foreign MCP permission tokens in `tools:` / `disallowed-tools:` (and skill
 | `mcpServers` | Claude | Appends `mcp(server)` entries to `tools:` (whole-server grant) |
 
 The removed `mcp-tools:` / `mcp_tools` field is rejected at parse time (`RemovedField`).
-Use `tools: [mcp(server)]` instead. Projection to harness-native tokens:
+Use a `tools:` map with `mcp(server): allow` instead. Projection to harness-native tokens:
 [`src/compiler/mcp_ref.rs`](../../compiler/mcp_ref.rs) — documented in
 [agent-compilation.md](../../../docs/config/agent-compilation.md#mcp-tool-policy-references).
 

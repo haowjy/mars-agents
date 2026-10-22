@@ -55,8 +55,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `write` / `edit`) is reported as a bundle warning and as agent-file lossiness.
 - A Claude agent file gets `tools:` only from an allowlist (list-form `tools:` or
   `'*': deny`), because Claude reads that field as "only these tools". Map-form `allow`
-  entries are grants, not an allowlist, so they no longer turn into `tools:`; they are
-  recorded as dropped lossiness (`tools (grants)`) instead.
+  entries are grants, not an allowlist, so they no longer turn into `tools:`. Omitting
+  `tools:` inherits every tool, so nothing is lost and no lossiness is recorded.
 - `mars.toml` `[agents.<name>.tools].allowed` replaces the profile's allow rules and keeps
   its deny and `ask` rules; `disallowed` replaces its deny rules. The launch bundle now
   applies the overlay too, through the same merge as native agent files.

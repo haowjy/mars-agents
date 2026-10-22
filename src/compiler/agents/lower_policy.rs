@@ -445,21 +445,14 @@ impl<'a> AgentLoweringCtx<'a> {
             );
         }
 
-        // What the file cannot hold: `ask`, grants outside an allowlist, and a deny-all
-        // allowlist with nothing allowed (an omitted `tools:` inherits every tool).
+        // What the file cannot hold: `ask`, and a deny-all allowlist with nothing allowed (an
+        // omitted `tools:` inherits every tool). A map-form grant is not lossy: omitting
+        // `tools:` already leaves the granted tool available.
         if self.eff.has_ask() {
             self.record_if_present("tools (ask)", true, Lossiness::Dropped);
         }
-        if allowlist {
-            if allowed.is_empty() {
-                self.record_if_present("tools (allowlist)", true, Lossiness::Dropped);
-            }
-        } else {
-            self.record_if_present(
-                "tools (grants)",
-                self.eff.has_tool_grant(),
-                Lossiness::Dropped,
-            );
+        if allowlist && allowed.is_empty() {
+            self.record_if_present("tools (allowlist)", true, Lossiness::Dropped);
         }
         if !overlaps.is_empty() {
             self.lossy.push(LossyField {

@@ -429,10 +429,11 @@ fn claude_native_agent_does_not_turn_map_form_grants_into_an_allowlist() {
         text.contains("disallowed-tools:") && text.contains("- Agent"),
         "{text}"
     );
+    // Omitting `tools:` inherits every tool, so a map-form grant loses nothing.
     assert!(
-        out.lossy_fields
+        !out.lossy_fields
             .iter()
-            .any(|f| f.field == "tools (grants)" && matches!(f.classification, Lossiness::Dropped)),
+            .any(|f| f.field.starts_with("tools")),
         "{:?}",
         out.lossy_fields
     );

@@ -98,7 +98,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
 | `skills` | `skills:` | exact |
-| `tools` | `tools:` (+ projected `mcp__…` MCP tokens), only for an allowlist | A list-form `tools:` (or a map with `'*': deny`) lowers exactly: Claude's `tools:` restricts the agent to what it lists. Map-form grants have no field (an omitted `tools:` inherits every tool), as do `ask` rules and an allowlist with nothing allowed; Mars records each as dropped lossiness |
+| `tools` | `tools:` (+ projected `mcp__…` MCP tokens), only for an allowlist | A list-form `tools:` (or a map with `'*': deny`) lowers exactly: Claude's `tools:` restricts the agent to what it lists. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost); `ask` rules and an allowlist with nothing allowed have no field, and Mars records each as dropped lossiness |
 | `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
@@ -167,10 +167,11 @@ that is both allowed and denied.
 
 **Native agent files cannot hold everything.** An `ask` rule has no field in an agent file,
 and neither does an allowlist with nothing allowed (an omitted `tools:` inherits every tool).
-A map-form `allow` is a grant, not an allowlist, so it has no `tools:` field either: Claude
-would read `tools: [Bash]` as "only Bash".
-Mars records both as dropped lossiness and never drops them silently; Meridian enforces them
-from the launch bundle. Other harnesses' agent files carry no tool list at all, so any
+A map-form `allow` is a grant, not an allowlist, so it writes no `tools:` field: Claude
+would read `tools: [Bash]` as "only Bash". Omitting `tools:` inherits every tool, so the
+grant loses nothing and Mars records no lossiness for it.
+Mars records an `ask` rule and an empty allowlist as dropped lossiness and never drops them
+silently; Meridian enforces them from the launch bundle. Other harnesses' agent files carry no tool list at all, so any
 allow, ask or deny rule is recorded as dropped there too.
 
 ### `.codex/agents/<name>.toml`

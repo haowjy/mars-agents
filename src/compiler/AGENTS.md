@@ -119,7 +119,7 @@ capability (`write`) wins over a broader one (`edit`) for the natives they share
 lists handed to Meridian are already resolved. `PolicyProjection::overlaps` names a native that
 an allow and a deny rule still share (a harness that cannot tell two capabilities apart). The
 bundle serializes the projection as `tools.rules`; native agent and skill lowering emit the
-`known` names and record lossiness for what a file cannot hold (`ask`, map-form grants, an
+`known` names and record lossiness for what a file cannot hold (`ask`, an
 allowlist with nothing allowed) and for `unknown` rules. Claude's agent-file `tools:` restricts
 the agent, so only an allowlist lowers to it. Never add a second projection path.
 

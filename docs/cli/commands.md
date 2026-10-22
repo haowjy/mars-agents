@@ -629,6 +629,10 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
   "execution_policy": { "..." },
   "prompt_surface": { "..." },
   "tools": {
+    "capability_natives": {
+      "agent": { "native": ["Agent", "SendMessage", "ListAgents"], "native_status": "known" },
+      "task": { "native": ["TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskUpdate", "TaskStop", "TodoWrite"], "native_status": "known" }
+    },
     "rules": [
       { "capability": "edit", "pattern": null, "action": "deny",
         "native": ["Edit", "Write", "NotebookEdit"], "native_status": "known" },
@@ -657,6 +661,14 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
+
+**`tools.capability_natives`** is always present, independent of the profile's tool policy. It
+maps the `agent` (sub-agent) and `task` (task-list) capabilities to the resolved harness's
+native tools so a launcher can enforce platform rules without maintaining its own name table.
+Each entry has `native` and `native_status` with the same meaning and projection source as a
+`tools.rules[]` entry, plus `note` when the status is `unknown`. `absent` means the harness has
+no such tool. The native list deliberately includes names retained for supported older harness
+builds, such as Claude's `TaskOutput`.
 
 **`tools.rules`** is the tool-policy contract: one entry per statement in the profile, in
 profile order, for the resolved harness. Read meaning from `capability` and emission from

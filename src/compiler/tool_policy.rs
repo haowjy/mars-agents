@@ -225,14 +225,35 @@ fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
             ProjectedRule::known(vec![scoped(name)])
         }
         Capability::Unknown(_) => ProjectedRule::with_status(NativeStatus::Unknown(NO_NATIVE_NAME)),
-        Capability::Builtin(name) => match tool_natives::lookup(name, harness) {
-            Some(Native::Tools(names)) => {
-                ProjectedRule::known(names.iter().map(|name| scoped(name)).collect())
-            }
-            Some(Native::Absent) => ProjectedRule::with_status(NativeStatus::Absent),
-            Some(Native::NoSwitch(note)) => ProjectedRule::with_status(NativeStatus::Unknown(note)),
-            None => ProjectedRule::with_status(NativeStatus::Unknown(NO_NATIVE_NAME)),
-        },
+        Capability::Builtin(name) => {
+            project_builtin_capability(name, rule.pattern.as_deref(), harness)
+        }
+    }
+}
+
+/// Project one canonical builtin capability through the same table and status semantics as a
+/// profile rule. Launch-bundle platform rules use this without inventing a second native-name
+/// projection path.
+pub(crate) fn project_platform_capability(
+    capability: &'static str,
+    harness: HarnessKind,
+) -> ProjectedRule {
+    project_builtin_capability(capability, None, harness)
+}
+
+fn project_builtin_capability(
+    capability: &str,
+    pattern: Option<&str>,
+    harness: HarnessKind,
+) -> ProjectedRule {
+    let scoped = |name: &str| render_scoped(name, pattern);
+    match tool_natives::lookup(capability, harness) {
+        Some(Native::Tools(names)) => {
+            ProjectedRule::known(names.iter().map(|name| scoped(name)).collect())
+        }
+        Some(Native::Absent) => ProjectedRule::with_status(NativeStatus::Absent),
+        Some(Native::NoSwitch(note)) => ProjectedRule::with_status(NativeStatus::Unknown(note)),
+        None => ProjectedRule::with_status(NativeStatus::Unknown(NO_NATIVE_NAME)),
     }
 }
 

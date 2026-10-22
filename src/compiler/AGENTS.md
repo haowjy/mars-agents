@@ -117,6 +117,9 @@ spelling), never a string with reserved values.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
   names. Native agent lowering, skill lowering and the bundle read its `natives` / `gaps` /
   `overlaps`; never add a second projection path, or a consumer that re-derives those lists.
+  The bundle's profile-independent `agent` / `task` capability metadata calls
+  `project_platform_capability`, which shares the builtin row translation with rule projection
+  rather than interpreting `tool_natives` itself.
   A rule's `NativeStatus::Unknown(reason)` covers every permission gap: a harness with no
   switch for the tool (a `Native::NoSwitch` row), no row at all, an unrecognized name, an MCP
   ref the harness cannot represent. The bundle prints it as `unknown` with the reason as

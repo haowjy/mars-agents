@@ -24,7 +24,8 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 - `--model` is optional; when omitted, the selected harness receives an empty
   model field and uses its own default model
 - `can_run_without_project()` in `src/cli/mod.rs` supplies synthetic `MarsContext`
-- No skills loaded, no tools resolved (empty sets)
+- No skills loaded and no profile tools resolved (empty rules and flat lists). The target's
+  `agent` / `task` entries in `tools.capability_natives` are still present for platform rules.
 
 ### Agent/Profile Mode (`--agent <name>`)
 - Reads `.mars/agents/<name>.md` from `ctx.project_root` first

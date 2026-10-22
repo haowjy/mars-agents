@@ -100,6 +100,19 @@ Review code changes.
         ])
     );
     assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
+    assert_eq!(
+        bundle["tools"]["capability_natives"],
+        serde_json::json!({
+            "agent": {
+                "native": [
+                    "spawn_agent", "send_input", "resume_agent", "wait_agent", "close_agent",
+                    "send_message", "followup_task", "interrupt_agent", "list_agents"
+                ],
+                "native_status": "known"
+            },
+            "task": { "native": ["update_plan"], "native_status": "known" }
+        })
+    );
     // The MCP ref Codex cannot represent is a gap in its rule, not a launch warning.
     assert!(
         bundle["tools"]["rules"]
@@ -205,6 +218,13 @@ fn build_launch_bundle_ad_hoc_without_mars_toml() {
         Some("cached-probe")
     );
     assert_eq!(bundle["warnings"], serde_json::json!([]));
+    assert_eq!(
+        bundle["tools"]["capability_natives"],
+        serde_json::json!({
+            "agent": { "native": [], "native_status": "absent" },
+            "task": { "native": [], "native_status": "absent" }
+        })
+    );
 }
 
 #[test]

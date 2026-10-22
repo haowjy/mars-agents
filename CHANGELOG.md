@@ -5,6 +5,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Launch bundle `tools.capability_natives` (additive in bundle schema 4), always carrying the
+  resolved harness's native names and status for the `agent` and `task` capabilities. Launchers
+  can enforce platform rules without keeping a second native-name table; the names come from
+  the same projection as `tools.rules[]` and retain older-build names such as `TaskOutput`.
 - Launch bundle `tools.rules[]` (additive in bundle schema 4): one entry per profile
   statement, `{capability, pattern, action, native, native_status, origin?}`. Consumers read
   meaning from `capability` and emission from `native` instead of re-reading native names as

@@ -5,9 +5,11 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::tool_policy::{NativeStatus, OVERLAP_NOTE, RuleKind, ToolAction};
+use crate::compiler::tool_policy::{
+    NativeStatus, OVERLAP_NOTE, RuleKind, ToolAction, project_platform_capability,
+};
 use crate::content::ContentRoots;
-use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
+use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
@@ -249,8 +251,27 @@ fn resolve_bundle_tools(
         })
         .collect();
 
+    let capability_natives = ["agent", "task"]
+        .into_iter()
+        .map(|capability| {
+            let projected = project_platform_capability(capability, descriptor.kind);
+            let status = projected
+                .status
+                .expect("a builtin capability always has a native status");
+            (
+                capability.to_string(),
+                CapabilityNativeSpec {
+                    native: projected.native,
+                    native_status: status.as_str(),
+                    note: status.note(),
+                },
+            )
+        })
+        .collect();
+
     Ok(ToolsSpec {
         rules,
+        capability_natives,
         // The flat lists have no `ask`, `*` or allowlist; only `rules` carries those.
         allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),
         disallowed: projection.natives(ToolAction::Deny, RuleKind::All),

@@ -14,8 +14,10 @@ launch an agent with resolved routing, execution policy, tools, and prompt surfa
    - Works from a plain directory with **no `mars.toml`** — `can_run_without_project()`
      in `src/cli/mod.rs:248` supplies a synthetic `MarsContext` when project
      discovery fails and the exact ad-hoc condition is met
-   - `empty_agent_profile()` is used (no agent file read, no skills, no tools)
-   - Skills loading skipped (no `.mars/` store needed); tool resolution yields empty sets
+   - `empty_agent_profile()` is used (no agent file read, no skills, no profile tool rules)
+   - Skills loading skipped (no `.mars/` store needed); profile tool resolution yields empty
+     rules and flat lists, while `tools.capability_natives` still names the target harness's
+     `agent` and `task` tools for platform rules
 
 2. **Agent/profile mode** (`--agent <name>`):
    - Reads `.mars/agents/<name>.md` from `ctx.project_root`
@@ -162,7 +164,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_ski
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)
        ├─ compile_prompt_surface()    (system instruction + supplemental docs + inventory)
-       └─ resolve_bundle_tools()      (tool normalization per harness)
+       └─ resolve_bundle_tools()      (profile rules + platform capability natives per harness)
            │
            └─ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata, provenance, warnings}
 ```

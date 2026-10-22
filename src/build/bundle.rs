@@ -106,12 +106,25 @@ pub struct SupplementalDoc {
 /// capability for meaning and the harness-native names for emission. `allowed`,
 /// `disallowed` and `mcp` are flat native-name lists derived from `rules` for consumers that
 /// predate it; they cannot express `ask`, `*`, or which capability a name came from.
+/// `capability_natives` is independent of the profile and always names the capabilities a
+/// launcher may deny as platform policy.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolsSpec {
     pub rules: Vec<ToolRuleSpec>,
+    pub capability_natives: BTreeMap<String, CapabilityNativeSpec>,
     pub allowed: Vec<String>,
     pub disallowed: Vec<String>,
     pub mcp: Vec<String>,
+}
+
+/// How the resolved harness spells one capability that a launcher may gate independently of
+/// the profile's tool rules.
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilityNativeSpec {
+    pub native: Vec<String>,
+    pub native_status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<&'static str>,
 }
 
 /// One tool-policy statement as the resolved harness spells it: the rule's own

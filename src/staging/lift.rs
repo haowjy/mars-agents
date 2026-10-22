@@ -63,6 +63,23 @@ fn lift_foreign_mcp_tokens_in_value(value: &Value, dialect: Dialect) -> (Value, 
     }
 }
 
+/// A comma-separated scalar (`tools: Read, Task`, Claude's own agent-file spelling) is a list.
+/// Split it first so the per-entry lifts below see each entry, not one string.
+fn split_scalar_tool_list(fm: &mut Frontmatter, key: &str) -> bool {
+    let Some(value @ Value::String(_)) = fm.get(key) else {
+        return false;
+    };
+    let entries = tool_policy::tool_entries(value);
+    if entries.len() < 2 {
+        return false;
+    }
+    fm.insert(
+        key,
+        Value::Sequence(entries.into_iter().map(Value::String).collect()),
+    );
+    true
+}
+
 fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Dialect) -> bool {
     let Some(value) = fm.get(key).cloned() else {
         return false;
@@ -150,6 +167,7 @@ fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool 
             }
         }
     }
+    changed |= split_scalar_tool_list(fm, "tools");
     changed |= lift_foreign_mcp_tokens_in_field(fm, "tools", dialect);
     if dialect == Dialect::Claude {
         changed |= lift_claude_task_entries(fm, "tools");
@@ -244,6 +262,7 @@ fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
             tool_policy::append_mcp_server_entries_to_tools(fm, &tool_policy::yaml_str_list(&mcp));
     }
 
+    changed |= split_scalar_tool_list(fm, "disallowed-tools");
     changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Claude);
     changed |= lift_claude_task_entries(fm, "disallowed-tools");
     changed
@@ -749,6 +768,30 @@ when_to_use: Use when git history matters
         assert_eq!(
             lifted.get("disallowed-tools"),
             Some(&Value::Sequence(vec![Value::String("agent".into())]))
+        );
+
+        // Claude's own agent files spell lists as one comma-separated scalar.
+        let scalar = lift(
+            Dialect::Claude,
+            ItemKind::Agent,
+            &fm(
+                "name: a\ndescription: d\ntools: Read, Task, mcp__github__get_issue\ndisallowedTools: Task, Edit\n",
+            ),
+        );
+        assert_eq!(
+            scalar.get("tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("Read".into()),
+                Value::String("agent".into()),
+                Value::String("mcp(github/get_issue)".into()),
+            ]))
+        );
+        assert_eq!(
+            scalar.get("disallowed-tools"),
+            Some(&Value::Sequence(vec![
+                Value::String("agent".into()),
+                Value::String("Edit".into()),
+            ]))
         );
     }
 

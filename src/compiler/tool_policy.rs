@@ -187,20 +187,16 @@ impl EffectiveToolPolicy {
         self.rules.iter().filter(move |rule| rule.action == action)
     }
 
-    /// Rules with `action` and their spelling on `harness`: built-in tools first, then
-    /// MCP refs. This is the one projection both lowerers and the launch bundle use.
-    pub(crate) fn projected(
-        &self,
-        action: ToolAction,
-        harness: HarnessKind,
-    ) -> Vec<(&ToolRule, ProjectedRule)> {
-        let (mcp, builtin): (Vec<&ToolRule>, Vec<&ToolRule>) =
-            self.with_action(action).partition(|rule| rule.is_mcp());
-        builtin
-            .into_iter()
-            .chain(mcp)
+    /// Every rule spelled for `harness`. The one projection both lowerers and the launch
+    /// bundle use.
+    pub(crate) fn project(&self, harness: HarnessKind) -> PolicyProjection<'_> {
+        let mut rules: Vec<(&ToolRule, ProjectedRule)> = self
+            .rules
+            .iter()
             .map(|rule| (rule, project_rule(rule, harness)))
-            .collect()
+            .collect();
+        resolve_by_specificity(&mut rules);
+        PolicyProjection { rules }
     }
 
     /// Compact `action:capability(pattern)` spellings, for assertions.
@@ -217,6 +213,83 @@ impl EffectiveToolPolicy {
         self.rules
             .iter()
             .any(|rule| rule.is_wildcard() && rule.action == ToolAction::Deny)
+    }
+}
+
+/// A policy's rules spelled for one harness, in profile order.
+pub(crate) struct PolicyProjection<'a> {
+    rules: Vec<(&'a ToolRule, ProjectedRule)>,
+}
+
+impl<'a> PolicyProjection<'a> {
+    pub fn rules(&self) -> &[(&'a ToolRule, ProjectedRule)] {
+        &self.rules
+    }
+
+    /// Rules with `action`: built-in tools first, then MCP refs.
+    pub fn with_action(&self, action: ToolAction) -> Vec<(&'a ToolRule, &ProjectedRule)> {
+        let (mcp, builtin): (Vec<_>, Vec<_>) = self
+            .rules
+            .iter()
+            .filter(|(rule, _)| rule.action == action)
+            .map(|(rule, projected)| (*rule, projected))
+            .partition(|(rule, _)| rule.is_mcp());
+        builtin.into_iter().chain(mcp).collect()
+    }
+
+    /// Native names that an allow rule and a deny rule both still name after
+    /// [`resolve_by_specificity`]: two capabilities one harness tool cannot tell apart
+    /// (`write` and `edit` on Codex). The harness decides which wins; a deny usually does.
+    pub fn overlaps(&self) -> Vec<String> {
+        let named = |action| -> Vec<&String> {
+            self.rules
+                .iter()
+                .filter(|(rule, _)| rule.action == action)
+                .flat_map(|(_, projected)| &projected.native)
+                .collect()
+        };
+        let allowed = named(ToolAction::Allow);
+        let mut overlaps: Vec<String> = Vec::new();
+        for native in named(ToolAction::Deny) {
+            if allowed.contains(&native) && !overlaps.contains(native) {
+                overlaps.push(native.clone());
+            }
+        }
+        overlaps
+    }
+}
+
+/// Let a rule on a narrower capability win over a broader one for the natives they share.
+///
+/// `edit: deny` with `write: allow` means "no edits, but writing is fine". On Claude `edit`
+/// covers `Edit`, `Write` and `NotebookEdit`, so projecting both rules as written would put
+/// `Write` in the allow and the deny list, where the deny wins. A capability is narrower when
+/// the natives it names are a strict subset of the other's, and the rules disagree on the
+/// action. Capabilities a harness cannot tell apart (equal sets) stay in conflict: see
+/// [`PolicyProjection::overlaps`]. Scoped rules compare by their rendered `name(pattern)`,
+/// so a scope never narrows an unscoped rule and the harness's own pattern precedence applies.
+fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)]) {
+    let narrower: Vec<Option<(ToolAction, Vec<String>)>> = rules
+        .iter()
+        .map(|(rule, projected)| {
+            let plain = !rule.is_wildcard() && !rule.is_mcp() && !projected.native.is_empty();
+            plain.then(|| (rule.action, projected.native.clone()))
+        })
+        .collect();
+
+    for (rule, projected) in rules.iter_mut() {
+        if rule.is_wildcard() || rule.is_mcp() {
+            continue;
+        }
+        let broad = projected.native.clone();
+        projected.native.retain(|native| {
+            !narrower.iter().flatten().any(|(action, natives)| {
+                *action != rule.action
+                    && natives.len() < broad.len()
+                    && natives.iter().all(|name| broad.contains(name))
+                    && natives.contains(native)
+            })
+        });
     }
 }
 
@@ -340,7 +413,7 @@ pub(crate) fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: 
             changed
         }
         other => {
-            let mut tools = yaml_str_list(&other);
+            let mut tools = tool_entries(&other);
             let mut changed = false;
             for entry in entries {
                 if !tools.iter().any(|existing| existing == &entry) {
@@ -357,6 +430,36 @@ pub(crate) fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: 
             changed
         }
     }
+}
+
+/// The tool names in a `tools:` / `disallowed-tools:` value. A scalar is Claude's own
+/// agent-file spelling, `tools: Read, Grep`: a comma-separated list. Commas inside a scope
+/// (`bash(rg a,b)`) belong to the entry.
+pub(crate) fn tool_entries(val: &Value) -> Vec<String> {
+    let Value::String(raw) = val else {
+        return yaml_str_list(val);
+    };
+    let mut entries = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, ch) in raw.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                entries.push(&raw[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    entries.push(&raw[start..]);
+    entries
+        .into_iter()
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 pub(crate) fn yaml_str_list(val: &Value) -> Vec<String> {
@@ -392,7 +495,7 @@ pub(crate) fn yaml_tool_list(
     val: &Value,
     on_invalid: &mut dyn FnMut(&str, &str, &'static str),
 ) -> Vec<ToolRule> {
-    yaml_str_list(val)
+    tool_entries(val)
         .iter()
         .enumerate()
         .filter_map(|(idx, tool)| {
@@ -453,7 +556,7 @@ pub(crate) fn parse_tools_field(
             ParsedToolsField::default()
         }
         _ => ParsedToolsField {
-            rules: yaml_str_list(val)
+            rules: tool_entries(val)
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, tool)| {
@@ -514,7 +617,7 @@ pub(crate) fn non_canonical_aliases_for(canonical_key: &str) -> Vec<&'static str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::parse_agent_content;
+    use crate::compiler::agents::{HarnessKind, parse_agent_content};
     use crate::compiler::skills::parse_skill_content;
     use crate::frontmatter::Frontmatter;
 
@@ -702,6 +805,70 @@ mod tests {
                 "deny:bash(git clean *)",
             ]
         );
+    }
+
+    #[test]
+    fn colon_star_normalizes_only_for_bash() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ndisallowed-tools: ['read(./secrets:*)', 'web_fetch(domain:*)', 'bash(rm:*)']\n---\n",
+        );
+        assert_eq!(
+            policy.describe(),
+            vec![
+                "deny:read(./secrets:*)",
+                "deny:web_fetch(domain:*)",
+                "deny:bash(rm *)"
+            ]
+        );
+    }
+
+    #[test]
+    fn scalar_tools_split_on_commas_into_the_list_form() {
+        let policy =
+            agent_policy("---\nname: a\ndescription: d\ntools: Read, Grep, bash(rg a,b)\n---\n");
+        assert_eq!(
+            policy.describe(),
+            vec!["deny:*", "allow:read", "allow:grep", "allow:bash(rg a,b)"]
+        );
+        let policy =
+            agent_policy("---\nname: a\ndescription: d\ndisallowed-tools: Edit, Write\n---\n");
+        assert_eq!(policy.describe(), vec!["deny:edit", "deny:write"]);
+    }
+
+    #[test]
+    fn narrower_capability_wins_over_broader_for_the_natives_they_share() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n  notebook: deny\n---\n",
+        );
+        let claude = policy.project(HarnessKind::Claude);
+        assert_eq!(claude.rules()[0].1.native, ["Edit", "NotebookEdit"]);
+        assert_eq!(claude.rules()[1].1.native, ["Write"]);
+        assert!(policy.project(HarnessKind::Claude).overlaps().is_empty());
+        // Pi names `edit` and `write` as separate tools too.
+        assert!(policy.project(HarnessKind::Pi).overlaps().is_empty());
+    }
+
+    #[test]
+    fn capabilities_a_harness_cannot_tell_apart_stay_in_conflict() {
+        // Codex edits files through `apply_patch` alone, so `write` and `edit` share it exactly.
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n---\n",
+        );
+        assert_eq!(
+            policy.project(HarnessKind::Codex).overlaps(),
+            ["apply_patch"]
+        );
+    }
+
+    #[test]
+    fn a_scoped_rule_does_not_narrow_an_unscoped_one() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  bash: allow\n  'bash(git push *)': deny\n---\n",
+        );
+        let projection = policy.project(HarnessKind::Claude);
+        assert_eq!(projection.rules()[0].1.native, ["Bash"]);
+        assert_eq!(projection.rules()[1].1.native, ["Bash(git push *)"]);
+        assert!(projection.overlaps().is_empty());
     }
 
     #[test]

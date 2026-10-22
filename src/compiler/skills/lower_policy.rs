@@ -7,7 +7,7 @@ use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use crate::compiler::skills::SkillProfile;
 use crate::compiler::tool_names::NativeStatus;
-use crate::compiler::tool_policy::{ProjectedRule, ToolAction, ToolRule};
+use crate::compiler::tool_policy::{ProjectedRule, ToolAction};
 
 // ---------------------------------------------------------------------------
 // Policy axes
@@ -405,11 +405,12 @@ impl<'a> LoweringCtx<'a> {
     /// Projected `action` rules, split into built-in tools and MCP refs.
     fn projected_rules(&self, action: ToolAction) -> (Vec<ProjectedRule>, Vec<ProjectedRule>) {
         let policy = self.profile.effective_tool_policy();
-        let (mcp, builtin): (Vec<_>, Vec<_>) = policy
-            .projected(action, self.harness_kind)
+        let projection = policy.project(self.harness_kind);
+        let (mcp, builtin): (Vec<_>, Vec<_>) = projection
+            .with_action(action)
             .into_iter()
             .filter(|(rule, _)| !rule.is_wildcard())
-            .map(|(rule, projected): (&ToolRule, ProjectedRule)| (rule.is_mcp(), projected))
+            .map(|(rule, projected)| (rule.is_mcp(), projected.clone()))
             .partition(|(is_mcp, _)| *is_mcp);
         (
             builtin

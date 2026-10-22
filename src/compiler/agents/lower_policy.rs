@@ -20,7 +20,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_names::NativeStatus;
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
-use crate::compiler::tool_policy::{ToolAction, ToolRule};
+use crate::compiler::tool_policy::{PolicyProjection, ToolAction, ToolRule};
 use crate::frontmatter::Frontmatter;
 
 // ---------------------------------------------------------------------------
@@ -63,12 +63,15 @@ impl<'a> Effective<'a> {
     /// Whether the policy grants or asks about built-in tools, which only an allowlist
     /// or a native `tools:` field can carry.
     fn has_tool_allowance(&self) -> bool {
-        self.tools.is_allowlist()
-            || self.tools.rules.iter().any(|rule| {
-                !rule.is_mcp()
-                    && !rule.is_wildcard()
-                    && matches!(rule.action, ToolAction::Allow | ToolAction::Ask)
-            })
+        self.tools.is_allowlist() || self.has_tool_grant() || self.has_ask()
+    }
+
+    /// An `allow` on a built-in tool.
+    fn has_tool_grant(&self) -> bool {
+        self.tools
+            .rules
+            .iter()
+            .any(|rule| !rule.is_mcp() && !rule.is_wildcard() && rule.action == ToolAction::Allow)
     }
 
     fn has_tool_denial(&self) -> bool {
@@ -98,15 +101,14 @@ impl<'a> Effective<'a> {
 /// Native spellings of every `action` rule, recording a lossiness entry for each rule the
 /// harness cannot name.
 fn native_tools_for_action(
-    policy: &EffectiveToolPolicy,
+    projection: &PolicyProjection<'_>,
     action: ToolAction,
-    harness: HarnessKind,
     field: &'static str,
     target: &str,
     lossy: &mut Vec<LossyField>,
 ) -> Vec<String> {
     let mut natives: Vec<String> = Vec::new();
-    for (_, projected) in policy.projected(action, harness) {
+    for (_, projected) in projection.with_action(action) {
         if projected.status == NativeStatus::Unknown {
             lossy.push(LossyField {
                 field: field.into(),
@@ -118,9 +120,9 @@ fn native_tools_for_action(
                 },
             });
         }
-        for native in projected.native {
-            if !natives.contains(&native) {
-                natives.push(native);
+        for native in &projected.native {
+            if !natives.contains(native) {
+                natives.push(native.clone());
             }
         }
     }
@@ -408,29 +410,34 @@ impl<'a> AgentLoweringCtx<'a> {
 
     fn insert_claude_tools(&mut self) {
         let target = self.policy.target_name;
-        let tools = native_tools_for_action(
-            &self.eff.tools,
+        let projection = self.eff.tools.project(self.harness);
+        let allowed = native_tools_for_action(
+            &projection,
             ToolAction::Allow,
-            self.harness,
             "tools",
             target,
             &mut self.lossy,
         );
-        if !tools.is_empty() {
-            self.yaml.insert(
-                yk("tools"),
-                serde_yaml::Value::Sequence(tools.iter().map(|tool| yv(tool)).collect()),
-            );
-        }
-
         let disallowed = native_tools_for_action(
-            &self.eff.tools,
+            &projection,
             ToolAction::Deny,
-            self.harness,
             "disallowed-tools",
             target,
             &mut self.lossy,
         );
+        let overlaps = projection.overlaps();
+
+        // An agent file's `tools:` restricts the agent to the tools it lists, and leaving it out
+        // inherits every tool. So only an allowlist can lower to it: a map-form grant
+        // (`tools: {bash: allow}`) says "allow this", not "only this", and emitting it would
+        // strip the agent of every tool the map did not name.
+        let allowlist = self.eff.tools.is_allowlist();
+        if allowlist && !allowed.is_empty() {
+            self.yaml.insert(
+                yk("tools"),
+                serde_yaml::Value::Sequence(allowed.iter().map(|tool| yv(tool)).collect()),
+            );
+        }
         if !disallowed.is_empty() {
             self.yaml.insert(
                 yk("disallowed-tools"),
@@ -438,14 +445,30 @@ impl<'a> AgentLoweringCtx<'a> {
             );
         }
 
-        // The agent file's `tools:` is itself Claude's allowlist, so a list-form profile lowers
-        // exactly. What the file cannot hold is `ask`, and a deny-all allowlist with nothing
-        // allowed (an omitted `tools:` inherits every tool).
+        // What the file cannot hold: `ask`, grants outside an allowlist, and a deny-all
+        // allowlist with nothing allowed (an omitted `tools:` inherits every tool).
         if self.eff.has_ask() {
             self.record_if_present("tools (ask)", true, Lossiness::Dropped);
         }
-        if self.eff.tools.is_allowlist() && tools.is_empty() {
-            self.record_if_present("tools (allowlist)", true, Lossiness::Dropped);
+        if allowlist {
+            if allowed.is_empty() {
+                self.record_if_present("tools (allowlist)", true, Lossiness::Dropped);
+            }
+        } else {
+            self.record_if_present(
+                "tools (grants)",
+                self.eff.has_tool_grant(),
+                Lossiness::Dropped,
+            );
+        }
+        if !overlaps.is_empty() {
+            self.lossy.push(LossyField {
+                field: format!("tools ({} both allowed and denied)", overlaps.join(", ")),
+                target: target.into(),
+                classification: Lossiness::Approximate {
+                    note: "Claude applies the deny",
+                },
+            });
         }
     }
 

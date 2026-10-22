@@ -6,7 +6,7 @@ pub mod prompt;
 use std::path::PathBuf;
 
 use crate::compiler::tool_names::NativeStatus;
-use crate::compiler::tool_policy::{RuleOrigin, ToolAction, ToolRule, project_rule};
+use crate::compiler::tool_policy::{RuleOrigin, ToolAction, ToolRule};
 use crate::content::ContentRoots;
 use bundle::{LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use policy::{PolicyInput, resolve_policy};
@@ -44,7 +44,7 @@ pub fn build_launch_bundle(
         .excluded_harnesses
         .retain(|harness| seen.insert(*harness));
     let mut warnings: Vec<String> = Vec::new();
-    let profile: AgentProfile;
+    let mut profile: AgentProfile;
     let agent_body: Option<String>;
     let agent_source_path: Option<PathBuf>;
     let content_roots = ContentRoots::new(&ctx.project_root, request.fallback_root.as_deref());
@@ -94,6 +94,13 @@ pub fn build_launch_bundle(
     }
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+    if let Some(overlay) = request
+        .agent
+        .as_deref()
+        .and_then(|agent| effective_project_config.agents.get(agent))
+    {
+        profile.apply_tools_overlay(&overlay.tools);
+    }
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),
     ) {
@@ -233,8 +240,8 @@ fn resolve_bundle_tools(
     let mut disallowed_builtin = Vec::new();
     let mut disallowed_mcp = Vec::new();
 
-    for rule in &policy.rules {
-        let projected = project_rule(rule, harness_kind);
+    let projection = policy.project(harness_kind);
+    for (rule, projected) in projection.rules() {
         if projected.status == NativeStatus::Unknown {
             warnings.push(unknown_tool_warning(rule, projected.note, harness));
         }
@@ -259,10 +266,15 @@ fn resolve_bundle_tools(
             capability: rule.capability.clone(),
             pattern: rule.pattern.clone(),
             action: rule.action.as_str(),
-            native: projected.native,
+            native: projected.native.clone(),
             native_status: projected.status.as_str(),
             origin: rule.origin.map(RuleOrigin::as_str),
         });
+    }
+    for native in projection.overlaps() {
+        warnings.push(format!(
+            "tool '{native}' is both allowed and denied on {harness}; the harness decides which wins"
+        ));
     }
 
     let mut disallowed = disallowed_builtin;

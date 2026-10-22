@@ -107,13 +107,21 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 | `mcp(...)` entries | capability `mcp`, pattern = canonical `server/tool` |
 
 `AgentProfile::effective_tool_policy()` and `SkillProfile::effective_tool_policy()` build it
-(`agent_tool_policy` / `skill_tool_policy`). Patterns are normalized at parse (`X:*` → `X *`).
+(`agent_tool_policy` / `skill_tool_policy`). A `bash` pattern is normalized at parse
+(`X:*` → `X *`); other capabilities keep their colon. A comma-separated scalar `tools:` is the
+list form. A `mars.toml` `[agents.x.tools]` overlay meets the profile in one place,
+`AgentProfile::apply_tools_overlay`, which both the bundle and native lowering call.
 Rules carry no order: precedence between a broad and a scoped rule belongs to the harness.
 
-`project_rule(rule, harness)` returns the native names plus a `NativeStatus`
-(`known` / `absent` / `unknown`). The bundle serializes it as `tools.rules`; native agent and
-skill lowering emit the `known` names and record lossiness for what a file cannot hold (`ask`,
-an allowlist with nothing allowed) and for `unknown` rules. Never add a second projection path.
+`EffectiveToolPolicy::project(harness)` returns every rule's native names plus a `NativeStatus`
+(`known` / `absent` / `unknown`), after `resolve_by_specificity`: a rule on a narrower
+capability (`write`) wins over a broader one (`edit`) for the natives they share, so the
+lists handed to Meridian are already resolved. `PolicyProjection::overlaps` names a native that
+an allow and a deny rule still share (a harness that cannot tell two capabilities apart). The
+bundle serializes the projection as `tools.rules`; native agent and skill lowering emit the
+`known` names and record lossiness for what a file cannot hold (`ask`, map-form grants, an
+allowlist with nothing allowed) and for `unknown` rules. Claude's agent-file `tools:` restricts
+the agent, so only an allowlist lowers to it. Never add a second projection path.
 
 MCP grammar and per-harness projection: `.context/CONTEXT.md`.
 
@@ -125,8 +133,8 @@ vocabulary is deliberate: `task` is the task list, `agent` is sub-agents, `web` 
 `web_search` + `web_fetch`. `tool_natives.rs` has one table per harness, one row per
 capability, each one-to-many (Claude `edit` → `Edit`, `Write`, `NotebookEdit`). A row is a list
 of real tools, `Absent` (the harness cannot do the thing), or missing (`unknown`, a reported
-gap). A harness that can do the thing with no tool to switch it (Codex and Pi skills) is
-missing, not `Absent`: `Absent` would report an unenforced deny as met. There is no fallback
+gap). A harness that can do the thing with no tool to switch it (Codex and Pi skills, Codex
+`read` / `glob` / `grep`) is missing, not `Absent`: `Absent` would report an unenforced deny as met. There is no fallback
 that builds a name. Add a tool by adding it to the harness's real-tool list
 in the test first, with its source.
 

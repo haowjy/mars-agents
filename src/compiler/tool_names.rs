@@ -22,7 +22,7 @@ pub(crate) const MCP_CAPABILITY: &str = "mcp";
 pub(crate) struct ParsedToolName {
     /// Canonical snake_case capability, `*`, `mcp`, or the author's spelling when unknown.
     pub capability: String,
-    /// Scope inside `capability(...)`, already normalized (`X:*` → `X *`).
+    /// Scope inside `capability(...)`; a `bash` command prefix is normalized (`X:*` → `X *`).
     pub pattern: Option<String>,
     pub known: bool,
 }
@@ -264,6 +264,10 @@ pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolName
     }
 
     let canonical = canonicalize_head(head);
+    let pattern = pattern.map(|pattern| match canonical.name.as_str() {
+        "bash" => normalize_bash_pattern(&pattern),
+        _ => pattern,
+    });
     Ok(ParsedToolName {
         capability: canonical.name,
         pattern,
@@ -284,12 +288,14 @@ fn parse_pattern(payload: &str) -> Result<Option<String>, ToolNameParseError> {
     if inner.is_empty() {
         return Err(ToolNameParseError::EmptyPattern);
     }
-    Ok(Some(normalize_pattern(inner)))
+    Ok(Some(inner.to_string()))
 }
 
-/// Claude's legacy prefix form `git revert:*` and the current `git revert *` mean the same
-/// thing, but OpenCode reads `:` literally. Mars writes only the space form.
-fn normalize_pattern(pattern: &str) -> String {
+/// Claude's legacy command-prefix form `git revert:*` and the current `git revert *` mean
+/// the same thing, but OpenCode reads `:` literally. Mars writes only the space form. Only a
+/// shell command has a prefix form: `read(./secrets:*)` and `web_fetch(domain:*)` keep the
+/// colon, which is part of the path or the host.
+fn normalize_bash_pattern(pattern: &str) -> String {
     match pattern.strip_suffix(":*") {
         Some(prefix) => format!("{prefix} *"),
         None => pattern.to_string(),
@@ -580,7 +586,7 @@ mod tests {
 
     #[test]
     fn a_tool_the_harness_lacks_is_absent_not_guessed() {
-        assert_eq!(natives("read", "codex"), (vec![], NativeStatus::Absent));
+        assert_eq!(natives("notebook", "codex"), (vec![], NativeStatus::Absent));
         assert_eq!(natives("ask_user", "pi"), (vec![], NativeStatus::Absent));
     }
 
@@ -600,8 +606,16 @@ mod tests {
 
     #[test]
     fn a_thing_the_harness_can_do_without_a_tool_to_switch_is_unknown_not_absent() {
-        // Codex fetches pages through `web_search`; Codex and Pi load skills by reading files.
-        for (capability, harness) in [("web_fetch", "codex"), ("skill", "codex"), ("skill", "pi")] {
+        // Codex fetches pages through `web_search` and reads, globs and greps through its shell;
+        // Codex and Pi load skills by reading files.
+        for (capability, harness) in [
+            ("web_fetch", "codex"),
+            ("skill", "codex"),
+            ("skill", "pi"),
+            ("read", "codex"),
+            ("glob", "codex"),
+            ("grep", "codex"),
+        ] {
             assert_eq!(
                 natives(capability, harness),
                 (vec![], NativeStatus::Unknown),

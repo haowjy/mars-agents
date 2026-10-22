@@ -265,7 +265,7 @@ disallowed = ["agent"]
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
 | `user-invocable` | bool | Whether the user can `/name` this agent |
-| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays. `allowed` replaces the profile's `tools:` as a list-form allowlist; MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed` |
+| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays. `allowed` replaces the profile's allow rules and makes the agent a list-form allowlist; the profile's own deny and `ask` rules stay. `disallowed` replaces the profile's deny rules (a `'*': deny` allowlist marker stays). MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules |
 | `model-policies` | table[] | Model routing policy rules |
 
 The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in

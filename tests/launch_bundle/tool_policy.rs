@@ -46,7 +46,14 @@ Review code changes."#;
     assert_eq!(root_bundle["tools"]["allowed"], serde_json::json!(["Bash"]));
     assert_eq!(
         root_bundle["tools"]["disallowed"],
-        serde_json::json!(["Agent", "Edit", "Write", "NotebookEdit"])
+        serde_json::json!([
+            "Agent",
+            "SendMessage",
+            "ListAgents",
+            "Edit",
+            "Write",
+            "NotebookEdit"
+        ])
     );
     assert_eq!(
         root_bundle["tools"]["mcp"],
@@ -645,7 +652,7 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
     // `task` (task list) and `agent` (sub-agents) stay two rules.
     assert_eq!(
         rule(&bundle, "agent", None)["native"],
-        serde_json::json!(["Agent"])
+        serde_json::json!(["Agent", "SendMessage", "ListAgents"])
     );
     assert_eq!(
         rule(&bundle, "task", None)["native"],
@@ -773,4 +780,111 @@ Review code changes."#;
         serde_json::json!(["Read", "Grep"])
     );
     assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
+}
+
+/// The shape of the shipped `prompt-tester`: no editing, but writing files is fine.
+const NO_EDIT_BUT_WRITE_AGENT: &str = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools:
+  bash: allow
+  read: allow
+  write: allow
+  edit: deny
+  notebook: deny
+---
+Test prompts."#;
+
+fn warnings(bundle: &Value) -> String {
+    bundle["warnings"].to_string()
+}
+
+#[test]
+fn bundle_lets_a_narrow_allow_win_over_a_broad_deny_where_the_harness_can_tell_them_apart() {
+    for (harness, allowed, denied) in [("claude", "Write", "Edit"), ("pi", "write", "edit")] {
+        let bundle = bundle_for(NO_EDIT_BUT_WRITE_AGENT, harness);
+        let allowed_list = bundle["tools"]["allowed"].as_array().unwrap();
+        let disallowed_list = bundle["tools"]["disallowed"].as_array().unwrap();
+        assert!(
+            allowed_list.contains(&serde_json::json!(allowed)),
+            "{harness}"
+        );
+        assert!(
+            !disallowed_list.contains(&serde_json::json!(allowed)),
+            "{harness}"
+        );
+        assert!(
+            disallowed_list.contains(&serde_json::json!(denied)),
+            "{harness}"
+        );
+        assert!(
+            !warnings(&bundle).contains("both allowed and denied"),
+            "{harness}"
+        );
+    }
+    let claude = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "claude");
+    assert_eq!(
+        rule(&claude, "edit", None)["native"],
+        serde_json::json!(["Edit", "NotebookEdit"])
+    );
+}
+
+#[test]
+fn bundle_warns_when_a_harness_cannot_tell_an_allow_from_a_deny() {
+    // Codex edits and writes through `apply_patch` alone.
+    let codex = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "codex");
+    assert!(
+        warnings(&codex).contains("tool 'apply_patch' is both allowed and denied on codex"),
+        "{}",
+        warnings(&codex)
+    );
+}
+
+#[test]
+fn bundle_applies_the_tools_overlay_and_keeps_the_profiles_denies() {
+    let agent = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools:
+  read: allow
+  'bash(git push *)': deny
+disallowed-tools: [agent]
+---
+Review code changes."#;
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent,
+        &[],
+        "[agents.reviewer.tools]\nallowed = [\"bash\", \"write\"]",
+    );
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["tools"]["allowed"],
+        serde_json::json!(["Bash", "Write"])
+    );
+    let disallowed = bundle["tools"]["disallowed"].to_string();
+    assert!(
+        disallowed.contains("Bash(git push *)") && disallowed.contains("Agent"),
+        "{disallowed}"
+    );
+    let wildcard = rule(&bundle, "*", None);
+    assert_eq!(
+        wildcard["origin"], "list-form",
+        "an overlay allowlist is list-form"
+    );
 }

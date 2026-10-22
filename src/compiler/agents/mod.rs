@@ -304,6 +304,33 @@ impl AgentProfile {
     pub fn effective_tool_policy(&self, _harness: &HarnessKind) -> EffectiveToolPolicy {
         tool_policy::agent_tool_policy(&self.tools, &self.disallowed_tools)
     }
+
+    /// Apply a `mars.toml` `[agents.<name>.tools]` overlay. The one place overlay tool lists
+    /// meet a profile, read by native agent lowering and the launch bundle alike.
+    ///
+    /// `allowed` replaces what the profile grants and makes it an allowlist; the profile's own
+    /// deny and ask rules stay, because an overlay that widens the grants must not silently
+    /// lift a `git push` deny. `disallowed` replaces the profile's deny rules, except a
+    /// `*: deny` that makes the profile an allowlist, which no tool list stands in for.
+    pub(crate) fn apply_tools_overlay(&mut self, overlay: &crate::config::AgentOverlayTools) {
+        use tool_policy::{ToolAction, overlay_rules};
+
+        if !overlay.allowed.is_empty() {
+            self.tools
+                .rules
+                .retain(|rule| rule.action != ToolAction::Allow);
+            self.tools
+                .rules
+                .extend(overlay_rules(&overlay.allowed, ToolAction::Allow));
+            self.tools.list_form = true;
+        }
+        if !overlay.disallowed.is_empty() {
+            self.disallowed_tools = overlay_rules(&overlay.disallowed, ToolAction::Deny);
+            self.tools
+                .rules
+                .retain(|rule| rule.action != ToolAction::Deny || rule.is_wildcard());
+        }
+    }
 }
 // ---------------------------------------------------------------------------
 // Validation warnings/errors

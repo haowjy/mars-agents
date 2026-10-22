@@ -358,7 +358,9 @@ tools:                                   # explicit allowlist in map form
 Readable aliases and native spellings (`Bash`, `shell`, `exec_command`, `AskUserQuestion`,
 `websearch`) resolve to the same capability. A name Mars does not recognize is kept as
 written and reported as `unknown` in the launch bundle; Mars never guesses a native spelling
-for it. `tools: allow` / `tools: deny` (a scalar) is a validation error.
+for it. `tools: allow` / `tools: deny` (a scalar) is a validation error. Any other scalar is
+Claude's own comma-separated spelling, `tools: Read, Grep`, and reads as the list
+`[Read, Grep]` (commas inside a scope, `bash(rg a,b)`, stay with their entry).
 
 **Capabilities.** One name per kind of tool. Where a capability covers several native tools,
 a rule covers all of them.
@@ -369,8 +371,8 @@ a rule covers all of them.
 | `read`, `write`, `edit` | Read files; create files; modify files (`edit` covers writes and notebook edits on harnesses where they are separate tools) |
 | `notebook` | Jupyter notebook editing |
 | `glob`, `grep` | File and content search |
-| `agent` | Sub-agents (Claude `Agent`, OpenCode `task`) |
-| `task` | The task list (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`, Codex `update_plan`). Not sub-agents. |
+| `agent` | Sub-agents (Claude `Agent` with `SendMessage` and `ListAgents`, OpenCode `task`) |
+| `task` | The task list (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`, Codex `update_plan`). Not sub-agents. Names are case-insensitive here, so `Task` is the task list in a `dialect = "mars-native"` package; in any other package staging reads `Task` as Claude's old sub-agent tool and lifts it to `agent` |
 | `skill`, `workflow` | Loading a skill; running a workflow |
 | `web` | `web_search` and `web_fetch` together |
 | `web_search`, `web_fetch` | One of the two |

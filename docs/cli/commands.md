@@ -665,15 +665,17 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | Field | Meaning |
 |---|---|
 | `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
-| `pattern` | Scope inside `capability(...)`, or `null`. Normalized: `X:*` is `X *`. For `mcp`, the `server/tool` reference |
+| `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
 | `action` | `allow`, `deny` or `ask` |
-| `native` | The harness's tool names for the rule, one per native tool the capability covers; a pattern is appended as `name(pattern)`. Empty unless `native_status` is `known` |
+| `native` | The harness's tool names for the rule, one per native tool the capability covers; a pattern is appended as `name(pattern)`. Empty unless `native_status` is `known`. Already resolved: a rule on a narrower capability wins its tools from a broader one (`edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed), so emit `native` as given |
 | `native_status` | `known`: `native` names it. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars has no name for it, a gap to report |
 | `origin` | `list-form` on the `*: deny` Mars adds for a list-form `tools: [..]`; omitted otherwise |
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
 `rules` for consumers that predate it. They cannot express `ask`, `*`, or the capability behind
-a name; `allowed` never reflects an allowlist. Prefer `rules`.
+a name; `allowed` never reflects an allowlist. Prefer `rules`. A tool that an allow and a deny
+rule both still name (`write: allow` with `edit: deny` on Codex, whose `apply_patch` is both) is
+reported in `warnings[]`.
 
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: enabled-target constraints exhausting auto-routing candidates.
 

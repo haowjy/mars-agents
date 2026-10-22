@@ -6,8 +6,8 @@
 //! (`unknown`) instead of guessing.
 //!
 //! `Absent` is for a harness that cannot do the thing at all. When it can but offers no tool to
-//! switch it (Codex and Pi load skills by reading `SKILL.md`; Codex fetches pages through its
-//! `web_search` tool), leave the row out. A deny is then `unknown`, a gap Meridian reports:
+//! switch it (Codex and Pi load skills by reading `SKILL.md`; Codex reads, globs and greps
+//! through its shell and fetches pages through its `web_search` tool), leave the row out. A deny is then `unknown`, a gap Meridian reports:
 //! calling it `absent` would report an unenforced deny as satisfied.
 //!
 //! Every name below must appear in the harness's real tool list, which the tests pin with
@@ -55,13 +55,16 @@ fn table(harness: HarnessKind) -> Table {
 /// binary. Probed live with `claude -p --disallowedTools`: `Agent` and `Task` both remove the
 /// sub-agent tool, `Edit` alone leaves `Write` and `NotebookEdit` available, and a misspelled
 /// name (`Websearch`) is silently ignored. So `edit` names all three file-editing tools.
+/// `agent` is the sub-agent family, as it is on Codex: `Agent` spawns, `SendMessage` and
+/// `ListAgents` reach the agents it spawned, and an `agent: deny` that left them available would
+/// still let the agent steer sub-agents.
 const CLAUDE: Table = &[
     ("bash", Tools(&["Bash"])),
     ("read", Tools(&["Read"])),
     ("write", Tools(&["Write"])),
     ("edit", Tools(&["Edit", "Write", "NotebookEdit"])),
     ("notebook", Tools(&["NotebookEdit"])),
-    ("agent", Tools(&["Agent"])),
+    ("agent", Tools(&["Agent", "SendMessage", "ListAgents"])),
     ("skill", Tools(&["Skill"])),
     ("workflow", Tools(&["Workflow"])),
     ("glob", Tools(&["Glob"])),
@@ -104,7 +107,9 @@ const CLAUDE: Table = &[
 /// (`multi_agents/`: spawn_agent, send_input, resume_agent, wait_agent, close_agent) and v2
 /// (`multi_agents_v2/`: spawn_agent, send_message, followup_task, wait_agent, interrupt_agent,
 /// list_agents); the model's `multi_agent_version` picks which one a session gets. Codex has no
-/// file-read, glob, grep or notebook tool: the model reads files through the shell. `web` is
+/// notebook tool. It has no file-read, glob or grep tool either, but it does all three through
+/// the shell, with no switch to turn them off: `read`, `glob` and `grep` are left out
+/// (`unknown`), so a deny reports as a gap instead of as met. `web` is
 /// Codex's hosted `web_search`, which also opens and searches within pages (`OpenPage`,
 /// `FindInPage` actions), so `web_fetch` has no tool of its own to switch and is left out
 /// (`unknown`). `skill` is left out too: local skills load by reading `SKILL.md`, and the
@@ -112,7 +117,6 @@ const CLAUDE: Table = &[
 /// `update_plan` is the task list ("Updates the task plan.").
 const CODEX: Table = &[
     ("bash", ToolsScopedToFirst(&["exec_command", "write_stdin"])),
-    ("read", Absent),
     ("write", Tools(&["apply_patch"])),
     ("edit", Tools(&["apply_patch"])),
     ("notebook", Absent),
@@ -131,8 +135,6 @@ const CODEX: Table = &[
         ]),
     ),
     ("workflow", Absent),
-    ("glob", Absent),
-    ("grep", Absent),
     ("web", Tools(&["web_search"])),
     ("web_search", Tools(&["web_search"])),
     ("ask_user", Tools(&["request_user_input"])),
@@ -423,6 +425,9 @@ mod tests {
         // rather than stay silent. A deliberate hole is a thing the harness can do with no tool
         // to switch it; the reason is in that harness's table comment.
         let deliberate_gaps: &[(HarnessKind, &str)] = &[
+            (HarnessKind::Codex, "read"),
+            (HarnessKind::Codex, "glob"),
+            (HarnessKind::Codex, "grep"),
             (HarnessKind::Codex, "skill"),
             (HarnessKind::Codex, "web_fetch"),
             (HarnessKind::Pi, "skill"),
@@ -460,7 +465,11 @@ mod tests {
                 Tools(&["WebSearch", "WebFetch"]),
             ),
             (HarnessKind::Claude, "ask_user", Tools(&["AskUserQuestion"])),
-            (HarnessKind::Claude, "agent", Tools(&["Agent"])),
+            (
+                HarnessKind::Claude,
+                "agent",
+                Tools(&["Agent", "SendMessage", "ListAgents"]),
+            ),
             (
                 HarnessKind::Codex,
                 "bash",
@@ -481,7 +490,6 @@ mod tests {
                     "list_agents",
                 ]),
             ),
-            (HarnessKind::Codex, "read", Absent),
             (HarnessKind::Codex, "edit", Tools(&["apply_patch"])),
             (
                 HarnessKind::Codex,

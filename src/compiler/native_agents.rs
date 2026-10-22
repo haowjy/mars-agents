@@ -887,26 +887,7 @@ fn effective_native_profile(
         effective.had_user_invocable_field = true;
     }
 
-    if !overlay.tools.allowed.is_empty() {
-        effective.tools = crate::compiler::tool_policy::ParsedToolsField {
-            rules: crate::compiler::tool_policy::overlay_rules(
-                &overlay.tools.allowed,
-                crate::compiler::tool_policy::ToolAction::Allow,
-            ),
-            list_form: true,
-        };
-    }
-    if !overlay.tools.disallowed.is_empty() {
-        effective.disallowed_tools = crate::compiler::tool_policy::overlay_rules(
-            &overlay.tools.disallowed,
-            crate::compiler::tool_policy::ToolAction::Deny,
-        );
-        // The overlay's denylist replaces map-form denials the profile wrote itself.
-        effective
-            .tools
-            .rules
-            .retain(|rule| rule.action != crate::compiler::tool_policy::ToolAction::Deny);
-    }
+    effective.apply_tools_overlay(&overlay.tools);
     effective
 }
 

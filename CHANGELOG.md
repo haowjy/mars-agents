@@ -19,7 +19,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   OpenCode `todowrite`, Codex `update_plan`), no longer an alias of `agent`
   (sub-agents). `web` is its own capability (`web_search` + `web_fetch`), no longer an
   alias of `web_search`. `todo_read`/`todo_write` fold into `task`. Claude-dialect
-  packages keep working: staging renames Claude's `Task` tool to `agent`.
+  packages keep working: staging renames Claude's `Task` tool to `agent`. That lift runs
+  for every package not declared `dialect = "mars-native"`, in list and map form, and only
+  for the exact spelling `Task`; every other name is case-insensitive. So `Task` means
+  sub-agents in a lifted package and the task list in a mars-native one: set
+  `dialect = "mars-native"` on the dependency whose `Task` means the task list.
 - `tools: allow` / `tools: deny` (scalar) is a validation error instead of being read as
   a tool named `allow`/`deny`.
 - List-form `tools: [read, grep]` is now an allowlist: exactly the listed tools, as an
@@ -34,18 +38,35 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Native tool names come from explicit per-harness tables (`compiler/tool_natives.rs`),
   one capability to one or more real tools: Claude `edit` is `Edit`, `Write` and
   `NotebookEdit`; `web` is `WebSearch` + `WebFetch` (OpenCode `websearch` + `webfetch`);
-  `ask_user` is `AskUserQuestion` (OpenCode `question`); Codex `read` is absent rather
-  than an alias of the shell. A capability a harness cannot do is `absent`; one it can do
-  with no tool to switch it (Codex and Pi `skill`, Codex `web_fetch`) is `unknown`, so an
-  unenforced deny is reported instead of counted as met. A name Mars has no row for is
+  `ask_user` is `AskUserQuestion` (OpenCode `question`). A capability a harness cannot do
+  is `absent`; one it can do with no tool to switch it (Codex and Pi `skill`, Codex
+  `web_fetch`, and Codex `read` / `glob` / `grep`, which it does through the shell) is
+  `unknown`, so an unenforced deny is reported instead of counted as met. A name Mars has no row for is
   left out with a warning instead of guessed (the PascalCase / lowercase naming convention
-  is gone). Codex `bash` covers `exec_command` and `write_stdin`; Codex `agent` covers the
-  whole sub-agent tool family of both multi-agent versions. Fixes Claude `Websearch` / `Askuser`, and OpenCode
+  is gone). Codex `bash` covers `exec_command` and `write_stdin`; `agent` covers the
+  whole sub-agent tool family on Claude (`Agent`, `SendMessage`, `ListAgents`) and Codex
+  (both multi-agent versions). Fixes Claude `Websearch` / `Askuser`, and OpenCode
   `browser`, which matched no tool. Cursor rows are carried over unchanged.
+- A rule on a narrower capability wins over a broader one for the tools they share, so
+  `edit: deny` with `write: allow` leaves Claude's `Write` allowed (the `edit` deny covers
+  `Edit` and `NotebookEdit`) instead of denying it. The bundle's `native` lists, the flat
+  lists and native agent files carry the resolved names. A tool that stays both allowed
+  and denied because the harness has one tool for both capabilities (Codex and OpenCode
+  `write` / `edit`) is reported as a bundle warning and as agent-file lossiness.
+- A Claude agent file gets `tools:` only from an allowlist (list-form `tools:` or
+  `'*': deny`), because Claude reads that field as "only these tools". Map-form `allow`
+  entries are grants, not an allowlist, so they no longer turn into `tools:`; they are
+  recorded as dropped lossiness (`tools (grants)`) instead.
+- `mars.toml` `[agents.<name>.tools].allowed` replaces the profile's allow rules and keeps
+  its deny and `ask` rules; `disallowed` replaces its deny rules. The launch bundle now
+  applies the overlay too, through the same merge as native agent files.
+- A scalar `tools: Read, Grep` (Claude's own agent-file spelling) is read as the list
+  `[Read, Grep]`; staging splits it before lifting `Task` and `mcp__…` entries.
 - A malformed `tool(...)` entry (unclosed or empty parentheses, `*(x)`) is a validation
   error instead of passing through verbatim to the harness.
-- `X:*` patterns normalize to `X *` (`bash(git revert:*)` → `bash(git revert *)`), the
-  one spelling OpenCode reads correctly.
+- `bash` patterns `X:*` normalize to `X *` (`bash(git revert:*)` → `bash(git revert *)`),
+  the one spelling OpenCode reads correctly. Other capabilities keep the colon, since it is
+  part of a path or host (`read(./secrets:*)`, `web_fetch(domain:*)`).
 - `mars agents show` / `mars skills show` add `tools-ask` (and `tools-list-form` for
   agents) and render `mcp(server)` as `mcp(server/*)`.
 

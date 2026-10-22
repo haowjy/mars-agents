@@ -418,6 +418,98 @@ fn claude_native_agent_lowers_list_form_to_its_native_allowlist() {
 }
 
 #[test]
+fn claude_native_agent_does_not_turn_map_form_grants_into_an_allowlist() {
+    // `tools:` in an agent file restricts the agent to what it lists; a grant does not.
+    let (_, out, _) = lower_claude(
+        "---\nname: a\nharness: claude\ntools:\n  bash: allow\n  write: allow\n  agent: deny\n---\n",
+    );
+    let text = String::from_utf8(out.bytes).unwrap();
+    assert!(!text.contains("\ntools:"), "{text}");
+    assert!(
+        text.contains("disallowed-tools:") && text.contains("- Agent"),
+        "{text}"
+    );
+    assert!(
+        out.lossy_fields
+            .iter()
+            .any(|f| f.field == "tools (grants)" && matches!(f.classification, Lossiness::Dropped)),
+        "{:?}",
+        out.lossy_fields
+    );
+}
+
+#[test]
+fn claude_native_agent_keeps_a_narrow_allow_out_of_a_broad_deny() {
+    let (_, out, _) =
+        lower_claude("---\nname: a\nharness: claude\ntools:\n  edit: deny\n  write: allow\n---\n");
+    let text = String::from_utf8(out.bytes).unwrap();
+    assert!(
+        text.contains("- Edit") && text.contains("- NotebookEdit"),
+        "{text}"
+    );
+    assert!(!text.contains("- Write"), "{text}");
+}
+
+#[test]
+fn claude_native_agent_warns_when_a_native_stays_allowed_and_denied() {
+    let (_, out, _) = lower_claude(
+        "---\nname: a\nharness: claude\ntools: [read, grep]\ndisallowed-tools: [grep]\n---\n",
+    );
+    assert!(
+        out.lossy_fields
+            .iter()
+            .any(|f| f.field == "tools (Grep both allowed and denied)"),
+        "{:?}",
+        out.lossy_fields
+    );
+}
+
+#[test]
+fn tools_overlay_allowed_replaces_grants_and_keeps_the_profiles_denies_and_asks() {
+    let (mut profile, _) = parse(
+        "---\ntools:\n  read: allow\n  'bash(git push *)': deny\n  'bash(git commit *)': ask\ndisallowed-tools: [agent]\n---\n",
+    );
+    profile.apply_tools_overlay(&crate::config::AgentOverlayTools {
+        allowed: vec!["bash".into(), "write".into()],
+        disallowed: vec![],
+    });
+    assert_eq!(profile.tools.rendered(ToolAction::Allow), ["bash", "write"]);
+    assert_eq!(
+        profile.tools.rendered(ToolAction::Deny),
+        ["bash(git push *)"]
+    );
+    assert_eq!(
+        profile.tools.rendered(ToolAction::Ask),
+        ["bash(git commit *)"]
+    );
+    assert_eq!(
+        render_rules(&profile.disallowed_tools, ToolAction::Deny),
+        ["agent"]
+    );
+    assert!(
+        profile
+            .effective_tool_policy(&HarnessKind::Claude)
+            .is_allowlist()
+    );
+}
+
+#[test]
+fn tools_overlay_disallowed_replaces_denies_but_not_the_allowlist_marker() {
+    let (mut profile, _) =
+        parse("---\ntools:\n  '*': deny\n  read: allow\n  'bash(git push *)': deny\n---\n");
+    profile.apply_tools_overlay(&crate::config::AgentOverlayTools {
+        allowed: vec![],
+        disallowed: vec!["write".into()],
+    });
+    let policy = profile.effective_tool_policy(&HarnessKind::Claude);
+    assert!(policy.is_allowlist());
+    assert_eq!(
+        policy.describe(),
+        vec!["deny:*", "allow:read", "deny:write"]
+    );
+}
+
+#[test]
 fn claude_native_agent_cannot_hold_an_allowlist_with_nothing_allowed() {
     // An omitted `tools:` inherits every tool, so deny-all has no frontmatter spelling.
     let (_, out, _) = lower_claude("---\nname: a\nharness: claude\ntools:\n  '*': deny\n---\n");

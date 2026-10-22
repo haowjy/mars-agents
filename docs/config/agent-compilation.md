@@ -98,7 +98,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
 | `skills` | `skills:` | exact |
-| `tools` | `tools:` (+ projected `mcp__…` MCP tokens) | allow rules projected to Claude's tool names; `ask` rules and an allowlist with nothing allowed are dropped |
+| `tools` | `tools:` (+ projected `mcp__…` MCP tokens), only for an allowlist | A list-form `tools:` (or a map with `'*': deny`) lowers exactly: Claude's `tools:` restricts the agent to what it lists. Map-form grants have no field (an omitted `tools:` inherits every tool), as do `ask` rules and an allowlist with nothing allowed; Mars records each as dropped lossiness |
 | `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
@@ -124,22 +124,23 @@ several native tools, and the launch bundle reports one of three outcomes per ru
 - `absent`: the harness cannot do this at all, so there is nothing to allow or deny.
 - `unknown`: Mars has no entry for it (including names it does not recognize), or the harness
   can do the thing but has no tool to switch it. Codex and Pi load skills by reading `SKILL.md`,
-  and Codex fetches pages through its `web_search` tool, so `skill` (Codex, Pi) and `web_fetch`
-  (Codex) are `unknown`: a deny there is not enforced, and `absent` would report it as met. The
+  Codex fetches pages through its `web_search` tool, and Codex reads, globs and greps through its
+  shell, so `skill` (Codex, Pi), `web_fetch` (Codex) and `read` / `glob` / `grep` (Codex) are
+  `unknown`: a deny there is not enforced, and `absent` would report it as met. The
   tool is left out of native output with a warning, and the bundle rule carries an empty
   `native`. This is a gap to report, not something to guess around.
 
 | Capability | Claude | Codex | OpenCode | Pi |
 |---|---|---|---|---|
 | `bash` | `Bash` | `exec_command`, `write_stdin` | `bash` | `bash` |
-| `read` | `Read` | absent | `read` | `read` |
+| `read` | `Read` | unknown | `read` | `read` |
 | `write` | `Write` | `apply_patch` | `edit` | `write` |
 | `edit` | `Edit`, `Write`, `NotebookEdit` | `apply_patch` | `edit` | `edit`, `write` |
 | `notebook` | `NotebookEdit` | absent | absent | absent |
-| `agent` | `Agent` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent |
+| `agent` | `Agent`, `SendMessage`, `ListAgents` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent |
 | `task` | `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent |
 | `skill` | `Skill` | unknown | `skill` | unknown |
-| `glob` / `grep` | `Glob` / `Grep` | absent | `glob` / `grep` | `find` / `grep` |
+| `glob` / `grep` | `Glob` / `Grep` | unknown | `glob` / `grep` | `find` / `grep` |
 | `web` | `WebSearch`, `WebFetch` | `web_search` (`web_fetch` alone: unknown) | `websearch`, `webfetch` | absent |
 | `ask_user` | `AskUserQuestion` | `request_user_input` | `question` | absent |
 | `plan_mode` | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent |
@@ -153,8 +154,21 @@ table. Cursor rows are carried over from earlier releases and not re-verified.
 
 MCP refs keep their own projection (below), and `mcp__…` wire tokens pass through verbatim.
 
+**A narrower capability wins.** `edit: deny` with `write: allow` means "no edits, but writing is
+fine". On Claude `edit` covers `Write`, so projecting both rules as written would put `Write` in
+the allow and the deny list, and a deny beats an allow. Mars resolves this per native name,
+before anything is emitted: when two rules with different actions name the same unscoped tool,
+the rule whose capability covers fewer tools wins it. Claude's `edit` deny becomes
+`Edit` + `NotebookEdit` and `Write` stays allowed. The bundle's `native` lists, the flat lists
+and Claude agent files all carry the resolved names. A harness that cannot tell two
+capabilities apart (Codex and OpenCode name one tool for both `write` and `edit`) stays in
+conflict: the bundle adds a warning, and the agent file a lossiness entry, naming the tool
+that is both allowed and denied.
+
 **Native agent files cannot hold everything.** An `ask` rule has no field in an agent file,
 and neither does an allowlist with nothing allowed (an omitted `tools:` inherits every tool).
+A map-form `allow` is a grant, not an allowlist, so it has no `tools:` field either: Claude
+would read `tools: [Bash]` as "only Bash".
 Mars records both as dropped lossiness and never drops them silently; Meridian enforces them
 from the launch bundle. Other harnesses' agent files carry no tool list at all, so any
 allow, ask or deny rule is recorded as dropped there too.

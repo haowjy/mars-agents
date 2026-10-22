@@ -4,63 +4,46 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::find_invocability_field;
 use crate::compiler::mcp_ref::parse_foreign_mcp_token;
+use crate::compiler::tool_names::split_tool_name;
 use crate::compiler::tool_policy;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::lock::ItemKind;
 
-fn lift_foreign_mcp_tokens_in_value(value: &Value, dialect: Dialect) -> (Value, bool) {
-    match value {
-        Value::String(raw) => {
-            let Some(mcp_ref) = parse_foreign_mcp_token(raw, dialect) else {
-                return (value.clone(), false);
-            };
-            (Value::String(mcp_ref.to_canonical()), true)
+/// Rewrite the tool names in `fm[key]` with `rewrite`, which returns the new spelling of a name
+/// it changes. The field is a scalar, a list, or a map keyed by tool name (`tools: {mcp__s__t:
+/// deny}` carries the name in the KEY, so a rewrite that skipped keys would leak foreign names
+/// into canonical `.mars/` unchanged). Map values and key order are preserved.
+fn rewrite_tool_entries(
+    fm: &mut Frontmatter,
+    key: &str,
+    rewrite: impl Fn(&str) -> Option<String>,
+) -> bool {
+    let Some(value) = fm.get(key) else {
+        return false;
+    };
+    let mut changed = false;
+    let mut swap = |entry: &Value| match entry.as_str().and_then(&rewrite) {
+        Some(renamed) => {
+            changed = true;
+            Value::String(renamed)
         }
-        Value::Sequence(seq) => {
-            let mut changed = false;
-            let lifted: Vec<Value> = seq
-                .iter()
-                .map(|entry| {
-                    let Some(raw) = entry.as_str() else {
-                        return entry.clone();
-                    };
-                    let Some(mcp_ref) = parse_foreign_mcp_token(raw, dialect) else {
-                        return entry.clone();
-                    };
-                    changed = true;
-                    Value::String(mcp_ref.to_canonical())
-                })
-                .collect();
-            (Value::Sequence(lifted), changed)
-        }
-        Value::Mapping(map) => {
-            // Map-form `tools:` (e.g. `{ mcp__server__tool: deny }`) carries the
-            // MCP token in the mapping KEY, not the value, so the String/Sequence
-            // arms above never see it. Rewrite MCP-shaped keys through the same
-            // foreign-token parser; preserve each entry's allow/deny value and the
-            // original key order. Without this, foreign wire tokens leak into
-            // canonical `.mars/` unchanged (or get reparsed as whole-server refs),
-            // silently changing per-tool allow/deny semantics.
-            let mut changed = false;
-            let mut lifted = serde_yaml::Mapping::new();
-            for (key, entry) in map {
-                let new_key = match key
-                    .as_str()
-                    .and_then(|raw| parse_foreign_mcp_token(raw, dialect))
-                {
-                    Some(mcp_ref) => {
-                        changed = true;
-                        Value::String(mcp_ref.to_canonical())
-                    }
-                    None => key.clone(),
-                };
-                lifted.insert(new_key, entry.clone());
-            }
-            (Value::Mapping(lifted), changed)
-        }
-        other => (other.clone(), false),
+        None => entry.clone(),
+    };
+    let lifted = match value {
+        Value::String(_) => swap(value),
+        Value::Sequence(seq) => Value::Sequence(seq.iter().map(&mut swap).collect()),
+        Value::Mapping(map) => Value::Mapping(
+            map.iter()
+                .map(|(name, entry)| (swap(name), entry.clone()))
+                .collect(),
+        ),
+        _ => return false,
+    };
+    if changed {
+        fm.insert(key, lifted);
     }
+    changed
 }
 
 /// A comma-separated scalar (`tools: Read, Task`, Claude's own agent-file spelling) is a list.
@@ -81,73 +64,20 @@ fn split_scalar_tool_list(fm: &mut Frontmatter, key: &str) -> bool {
 }
 
 fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Dialect) -> bool {
-    let Some(value) = fm.get(key).cloned() else {
-        return false;
-    };
-    let (lifted, changed) = lift_foreign_mcp_tokens_in_value(&value, dialect);
-    if changed {
-        fm.insert(key, lifted);
-    }
-    changed
+    rewrite_tool_entries(fm, key, |raw| {
+        parse_foreign_mcp_token(raw, dialect).map(|mcp_ref| mcp_ref.to_canonical())
+    })
 }
 
 /// Claude's pre-`Agent` name for the sub-agent tool. In canonical Mars `task` means the
 /// task-list tools, so a Claude-dialect `Task` entry must be renamed on the way in.
 fn claude_task_to_agent(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    let (head, payload) = match trimmed.find('(') {
-        Some(index) => trimmed.split_at(index),
-        None => (trimmed, ""),
-    };
+    let (head, payload) = split_tool_name(raw.trim());
     (head.trim() == "Task").then(|| format!("agent{payload}"))
 }
 
 fn lift_claude_task_entries(fm: &mut Frontmatter, key: &str) -> bool {
-    let Some(value) = fm.get(key).cloned() else {
-        return false;
-    };
-    let lifted = match &value {
-        Value::String(raw) => claude_task_to_agent(raw).map(Value::String),
-        Value::Sequence(seq) => {
-            let mut changed = false;
-            let entries: Vec<Value> = seq
-                .iter()
-                .map(
-                    |entry| match entry.as_str().and_then(claude_task_to_agent) {
-                        Some(renamed) => {
-                            changed = true;
-                            Value::String(renamed)
-                        }
-                        None => entry.clone(),
-                    },
-                )
-                .collect();
-            changed.then_some(Value::Sequence(entries))
-        }
-        Value::Mapping(map) => {
-            let mut changed = false;
-            let mut entries = serde_yaml::Mapping::new();
-            for (name, entry) in map {
-                let name = match name.as_str().and_then(claude_task_to_agent) {
-                    Some(renamed) => {
-                        changed = true;
-                        Value::String(renamed)
-                    }
-                    None => name.clone(),
-                };
-                entries.insert(name, entry.clone());
-            }
-            changed.then_some(Value::Mapping(entries))
-        }
-        _ => None,
-    };
-    match lifted {
-        Some(lifted) => {
-            fm.insert(key, lifted);
-            true
-        }
-        None => false,
-    }
+    rewrite_tool_entries(fm, key, claude_task_to_agent)
 }
 
 fn lift_foreign_tools_allowlist(fm: &mut Frontmatter, dialect: Dialect) -> bool {

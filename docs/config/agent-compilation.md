@@ -141,25 +141,46 @@ have an empty `native_tools`; it follows the same `native_status` semantics as `
 For a `*: deny` allowlist, consumers build the availability set from known `allow` and `ask`
 rules' `native_tools`; `deny` rules name what they concern but grant no availability.
 
-| Capability | Claude | Codex | OpenCode | Pi |
-|---|---|---|---|---|
-| `bash` | `Bash` | `exec_command` | `bash` | `bash` |
-| `read` | `Read` | unknown | `read` | `read` |
-| `write` | `Write` | `apply_patch` | `edit` | `write` |
-| `edit` | `Edit`, `Write`, `NotebookEdit` | `apply_patch` | `edit` | `edit`, `write` |
-| `notebook` | `NotebookEdit` | absent | absent | absent |
-| `agent` | `Agent`, `SendMessage`, `ListAgents` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent |
-| `task` | `TaskCreate`, `TaskGet`, `TaskList`, `TaskOutput`¹, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent |
-| `skill` | `Skill` | unknown | `skill` | unknown |
-| `glob` / `grep` | `Glob` / `Grep` | unknown | `glob` / `grep` | `find` / `grep` |
-| `web` | `WebSearch`, `WebFetch` | `web_search` (`web_fetch` alone: unknown) | `websearch`, `webfetch` | absent |
-| `ask_user` | `AskUserQuestion` | `request_user_input` | `question` | absent |
-| `plan_mode` | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent |
+These are all the capabilities a profile can name, besides `*` (every tool no other rule
+names) and `mcp(server)` / `mcp(server/tool)` (MCP tools, below). Each cell is what the
+bundle's `native` carries for a bare rule; "(scoped: ...)" is the spelling once the rule has
+a pattern. *absent*: the harness has no such tool, so a deny is already met. *no switch*: the
+harness can do it but has no tool to turn off (`native_status: unknown`, with a `note`).
+*unknown*: Mars has no entry for that harness. The table follows
+`src/compiler/tool_natives.rs`, which is the source of truth; change both together.
+
+| Capability | Covers | Claude | Codex | OpenCode | Pi | Cursor |
+|---|---|---|---|---|---|---|
+| `bash` | shell commands | `Bash` | `exec_command` | `bash` | `bash` | `Shell` |
+| `read` | read a file | `Read` | no switch | `read` | `read` | `Read` |
+| `write` | create or overwrite a file | `Write` (scoped: `Edit(path)`) | `apply_patch` | `edit` | `write` | `Write` |
+| `edit` | change a file (on Claude and Pi this also covers writing) | `Edit`, `Write`, `NotebookEdit` (scoped: `Edit(path)`) | `apply_patch` | `edit` | `edit`, `write` | `StrReplace` |
+| `agent` | start or message sub-agents | `Agent`, `SendMessage`, `ListAgents` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent | `Task` |
+| `task` | the task list (todo tools) | `TaskCreate`, `TaskGet`, `TaskList`, `TaskOutput`¹, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent | `TodoWrite` |
+| `skill` | load a skill on demand | `Skill` | no switch | `skill` | no switch | `Skill` |
+| `workflow` | Claude's multi-agent workflow tool | `Workflow` | absent | absent | absent | unknown |
+| `glob` | find files by name | `Glob` (scoped: `Read(path)`) | no switch | `glob` | `find` | `Glob` |
+| `grep` | search file contents | `Grep` (scoped: `Read(path)`) | no switch | `grep` | `grep` | `Grep` |
+| `notebook` | edit a Jupyter notebook | `NotebookEdit` (scoped: `Edit(path)`) | absent | absent | absent | `EditNotebook` |
+| `web` | `web_search` and `web_fetch` together | `WebSearch`, `WebFetch` | `web_search` | `websearch`, `webfetch` | absent | `WebSearch`, `WebFetch` |
+| `web_search` | search the web | `WebSearch` | `web_search` | `websearch` | absent | `WebSearch` |
+| `web_fetch` | fetch a URL | `WebFetch` | no switch | `webfetch` | absent | `WebFetch` |
+| `ask_user` | ask the human a question | `AskUserQuestion` | `request_user_input` | `question` | absent | `AskQuestion` |
+| `cron` | scheduled jobs | `CronCreate`, `CronDelete`, `CronList` | absent | absent | absent | unknown |
+| `notifications` | push notifications | `PushNotification` | absent | absent | absent | unknown |
+| `plan_mode` | enter or leave plan mode | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent | `SwitchMode` |
+| `worktree` | enter or leave a git worktree | `EnterWorktree`, `ExitWorktree` | absent | absent | absent | unknown |
+| `lsp` | language-server queries | `LSP` | absent | `lsp` | absent | unknown |
+| `monitor` | watch a background process | `Monitor` | absent | absent | absent | unknown |
+| `send_user_file` | send the user a file | `SendUserFile` | absent | absent | absent | unknown |
+| `schedule_wakeup` | schedule its own wake-up | `ScheduleWakeup` | absent | absent | absent | unknown |
+| `remote_trigger` | remote triggers | `RemoteTrigger` | absent | absent | absent | unknown |
+| `tool_search` | load deferred tool definitions | `ToolSearch` | `tool_search` | absent | absent | unknown |
 
 ¹ `TaskOutput` was removed from Claude in 2.1.277, which ignores the name. It stays because
 older builds offer it and Meridian denies it with the task list.
 
-The rest of the vocabulary is in `tool_natives.rs`. OpenCode names are the v1 permission
+OpenCode names are the v1 permission
 vocabulary; the consumer that knows the running OpenCode version translates to v2 spellings
 (`bash` → `shell`, `task` → `subagent`). OpenCode has one `edit` permission for `edit`,
 `write` and patch, so `write` and `edit` share a name there. Codex `bash` names `exec_command`

@@ -383,9 +383,10 @@ or projection. `*` is the only wildcard. Five canonical forms:
 ### Per-harness projection
 
 Mars projects canonical `mcp(...)` refs to harness-native permission tokens during native
-lowering (Claude agents/skills) and in the **launch bundle** (`ToolsSpec.mcp` carries the
-projected tokens for every harness). Unsupported refs are **omitted** from native output
-(never broaden permissions) and recorded as approximate lossiness.
+lowering (Claude agents/skills) and in the **launch bundle** (`tools.rules[].native` is the
+contract; `ToolsSpec.mcp` duplicates allowed names for older consumers). Neither field
+contains MCP server definitions. Unsupported refs are **omitted** from native output (never
+broaden permissions) and recorded as approximate lossiness.
 
 | Canonical example | Claude | Cursor | OpenCode | Codex | Pi |
 |---|---|---|---|---|---|
@@ -408,7 +409,7 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 | Claude agent native | Projected `mcp__…` tokens merged into `tools:` / `disallowed-tools:` (no `mcp-tools:` field) |
 | Claude skill native | Allowed MCP projected into `allowed-tools:` (grant semantics; approximate lossiness) |
 | Codex / OpenCode / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
-| Launch bundle | `ToolsSpec.mcp` = per-harness projected tokens for all harnesses |
+| Launch bundle | `tools.rules[].native` carries permission tokens; legacy `ToolsSpec.mcp` duplicates allowed names. Neither carries server definitions |
 
 Implementation: [`src/compiler/mcp_ref.rs`](../../src/compiler/mcp_ref.rs) (`parse_mcp_ref`,
 `project_mcp_ref`). Inbound lift: [`src/staging/.context/CONTEXT.md`](../../src/staging/.context/CONTEXT.md).

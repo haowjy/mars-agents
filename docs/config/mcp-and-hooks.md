@@ -32,8 +32,9 @@ MCP gating there is server-config based, not a tool-list form.
 
 Claude agents emit projected `mcp__…` tokens in `tools:` / `disallowed-tools:`; Claude
 skills grant allowed MCP into `allowed-tools:`. Non-Claude native agent files do not
-emit tool lists today — the launch bundle (`ToolsSpec.mcp`) carries the real per-harness
-projection at spawn time.
+emit tool lists today. Launchers gate MCP tools from launch-bundle `tools.rules`; its
+legacy flat `tools.mcp` list contains permission names only, never the server definitions
+installed by this sync lane.
 
 ## Declaring MCP Servers in a Package
 

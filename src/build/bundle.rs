@@ -99,6 +99,7 @@ pub struct SupplementalDoc {
 /// harness tool names for availability projection. `allowed`,
 /// `disallowed` and `mcp` are flat native-name lists derived from `rules` for consumers that
 /// predate it; they cannot express `ask`, `*`, or which capability a name came from.
+/// In particular, `mcp` contains permission names, never MCP server definitions or commands.
 /// `capability_natives` is independent of the profile and always names the capabilities a
 /// launcher may deny as platform policy.
 #[derive(Debug, Clone, Serialize)]

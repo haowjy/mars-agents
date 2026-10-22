@@ -22,6 +22,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   or the capability behind a name.
 
 ### Changed
+- Clarify bundle MCP permissions and document Meridian's compaction and skill-description use.
 - `.cursor` target unmaintained. Support stays; no longer tested or extended.
 - Tool vocabulary: `task` now means the task-list tools (Claude `TaskCreate`…,
   OpenCode `todowrite`, Codex `update_plan`), no longer an alias of `agent`

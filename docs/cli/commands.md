@@ -687,7 +687,8 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
 `rules` for consumers that predate it. They cannot express `ask`, `*`, or the capability behind
-a name; `allowed` never reflects an allowlist. Prefer `rules`. A tool that an allow and a deny
+a name; `allowed` never reflects an allowlist, and `mcp` never contains server definitions or
+commands. Prefer `rules`. A tool that an allow and a deny
 rule both still name (`write: allow` with `edit: deny` on Codex, whose `apply_patch` is both)
 puts a `note` on both rules.
 

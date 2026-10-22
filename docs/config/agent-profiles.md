@@ -244,7 +244,9 @@ effort: high
 | Range | 0–4294967295 |
 | Default | none |
 
-Context window compaction threshold in tokens. Consumed by Meridian's session manager — no harness-native equivalent. Compact when conversation context exceeds this many tokens.
+Context window compaction threshold in tokens. It is preserved in the launch bundle rather
+than native agent files. Meridian maps it to Claude's token-window flag and Codex's token
+limit; harnesses without a matching control report it unsupported.
 
 ```yaml
 autocompact: 200000
@@ -261,7 +263,10 @@ autocompact: 200000
 | Range | 1–100 |
 | Default | none |
 
-Context window compaction threshold as a percentage of the context window. Consumed by Meridian's session manager — no harness-native equivalent. Compact when conversation context exceeds this percentage of the available window.
+Context window compaction threshold as a percentage of the context window. It is preserved
+in the launch bundle rather than native agent files. Meridian maps it to Claude's percentage
+environment variable and Codex's percentage config; harnesses without a matching control
+report it unsupported.
 
 ```yaml
 autocompact_pct: 80
@@ -280,7 +285,9 @@ autocompact_pct: 80
 Skills this agent gets. A flat list means every skill is loaded. The mapping form separates:
 
 - `load`: the [launch bundle](../cli/commands.md#mars-build-launch-bundle) carries the skill's full body in `skills.loaded`, and Meridian composes it into the agent's system prompt.
-- `available`: the bundle lists the skill in `skills.available` (name, type, description) for the agent to load itself through its harness's skill list.
+- `available`: the bundle lists the skill in `skills.available` (name, type, description).
+  Meridian includes the name and description in its composed available-skill inventory;
+  the harness's own skill mechanism performs the eventual load.
 
 A name in both lists counts as loaded. `--skill` on `mars build launch-bundle` adds to `load`. Neither list is filtered by the skill's `model-invocable`: a non-invocable skill under `load` still arrives in full, which is how one agent gets a skill no model finds by itself. See [`model-invocable`](skill-compilation.md#model-invocable).
 
@@ -412,6 +419,8 @@ disallowed-tools: [mcp(github/delete_repo)]
 The legacy `mcp-tools:` / `mcp_tools` frontmatter field is **removed** — use
 `tools: {mcp(server): allow}` instead. Per-harness projection and lossiness are documented in
 [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
+These entries govern tool permissions, not server registration. Server definitions come
+from package `mcp/<name>/mcp.toml` files and are installed by `mars sync`.
 
 ---
 

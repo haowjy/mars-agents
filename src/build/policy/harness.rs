@@ -43,7 +43,7 @@ where
         .and_then(|entry| entry.harness.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let policy_harness = matched_policy_string_override(matched_policy, "harness");
+    let policy_harness = matched_policy_string_override(matched_policy, "harness")?;
     let mut preference = resolve_harness_preference(
         input,
         overlay_harness,

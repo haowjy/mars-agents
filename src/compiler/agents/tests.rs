@@ -145,6 +145,49 @@ fn invalid_mode_produces_diagnostic() {
 }
 
 #[test]
+fn enum_fields_reject_present_non_string_values() {
+    for field in [
+        "harness", "mode", "approval", "sandbox", "network", "effort",
+    ] {
+        let content = format!("---\n{field}: false\n---\n");
+        let (_, diags) = parse(&content);
+        assert!(
+            matches!(
+                diags.as_slice(),
+                [AgentDiagnostic::InvalidFieldValue {
+                    field: actual_field,
+                    value,
+                    ..
+                }] if actual_field == field && value == "false"
+            ),
+            "unexpected diagnostic for {field}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn model_policy_execution_enums_reject_present_non_string_values() {
+    for field in ["harness", "effort", "approval", "sandbox", "network"] {
+        let content = format!(
+            "---\nmodel-policies:\n  - match:\n      alias: opus\n    override:\n      {field}: false\n---\n"
+        );
+        let (profile, diags) = parse(&content);
+        assert!(profile.model_policies.is_empty());
+        assert!(
+            matches!(
+                diags.as_slice(),
+                [AgentDiagnostic::InvalidFieldValue {
+                    field: actual_field,
+                    value,
+                    ..
+                }] if actual_field == &format!("model-policies[1].override.{field}") && value == "false"
+            ),
+            "unexpected diagnostic for {field}: {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn parses_harness_claude() {
     let (p, diags) = parse("---\nharness: claude\n---\n");
     assert!(diags.is_empty());

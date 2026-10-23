@@ -214,6 +214,66 @@ impl AgentOverlayTools {
     }
 }
 
+/// Sandbox mode used by profiles and per-agent overlays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SandboxMode {
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl SandboxMode {
+    pub const ALLOWED: &'static str = "default, read-only, workspace-write, danger-full-access";
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "default" => Some(Self::Default),
+            "read-only" => Some(Self::ReadOnly),
+            "workspace-write" => Some(Self::WorkspaceWrite),
+            "danger-full-access" => Some(Self::DangerFullAccess),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+            Self::DangerFullAccess => "danger-full-access",
+        }
+    }
+}
+
+/// Shell network access mode used by profiles and per-agent overlays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkMode {
+    Allow,
+    Deny,
+}
+
+impl NetworkMode {
+    pub const ALLOWED: &'static str = "allow, deny";
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "allow" => Some(Self::Allow),
+            "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+}
+
 /// Per-agent launch-bundle overlay policy in mars.toml `[agents.<name>]`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentOverlay {
@@ -228,9 +288,9 @@ pub struct AgentOverlay {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox: Option<String>,
+    pub sandbox: Option<SandboxMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub network: Option<String>,
+    pub network: Option<NetworkMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autocompact: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -307,16 +367,40 @@ pub struct ModelPolicyRule {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelPolicyRuleParseError {
-    RuleMustBeMapping { found: String },
+    RuleMustBeMapping {
+        found: String,
+    },
     MatchMissing,
-    MatchMustBeMapping { found: String },
-    MatchMustContainExactlyOne { found: String },
-    MatchKeyMustBeString { found: String },
-    UnknownMatchKey { key: String },
-    MatchValueMustBeString { key: String, found: String },
-    MatchValueEmpty { key: String },
-    OverrideMustBeMapping { found: String },
-    NoFallbackMustBeBoolean { found: String },
+    MatchMustBeMapping {
+        found: String,
+    },
+    MatchMustContainExactlyOne {
+        found: String,
+    },
+    MatchKeyMustBeString {
+        found: String,
+    },
+    UnknownMatchKey {
+        key: String,
+    },
+    MatchValueMustBeString {
+        key: String,
+        found: String,
+    },
+    MatchValueEmpty {
+        key: String,
+    },
+    OverrideMustBeMapping {
+        found: String,
+    },
+    OverrideEnumInvalid {
+        key: String,
+        found: String,
+        allowed: &'static str,
+    },
+    NoFallbackMustBeBoolean {
+        found: String,
+    },
 }
 
 impl ModelPolicyRuleParseError {
@@ -345,12 +429,47 @@ impl ModelPolicyRuleParseError {
             Self::OverrideMustBeMapping { .. } => {
                 "model policy `override` must be a mapping".to_string()
             }
+            Self::OverrideEnumInvalid {
+                key,
+                found,
+                allowed,
+            } => {
+                format!(
+                    "model policy override `{key}` has invalid value `{found}`; allowed: {allowed}"
+                )
+            }
             Self::NoFallbackMustBeBoolean { .. } => {
                 "model policy `no-fallback` must be a boolean".to_string()
             }
             Self::RuleMustBeMapping { .. } => "model policy rule must be a mapping".to_string(),
         }
     }
+}
+
+fn validate_model_policy_enum_override(
+    overrides: &serde_yaml::Mapping,
+    key: &str,
+    allowed: &'static str,
+    is_valid: impl FnOnce(&str) -> bool,
+) -> Result<(), ModelPolicyRuleParseError> {
+    let Some(value) = overrides.get(serde_yaml::Value::String(key.to_string())) else {
+        return Ok(());
+    };
+    let Some(value_string) = value.as_str() else {
+        return Err(ModelPolicyRuleParseError::OverrideEnumInvalid {
+            key: key.to_string(),
+            found: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
+            allowed,
+        });
+    };
+    if !is_valid(value_string) {
+        return Err(ModelPolicyRuleParseError::OverrideEnumInvalid {
+            key: key.to_string(),
+            found: value_string.to_string(),
+            allowed,
+        });
+    }
+    Ok(())
 }
 
 pub fn parse_model_policy_rule_value(
@@ -425,6 +544,30 @@ pub fn parse_model_policy_rule_value(
             }
         })?,
     };
+    validate_model_policy_enum_override(
+        &overrides,
+        "harness",
+        "claude, codex, opencode, cursor, pi",
+        |value| crate::harness::registry::parse(value).is_some(),
+    )?;
+    validate_model_policy_enum_override(
+        &overrides,
+        "effort",
+        "low, medium, high, xhigh, max, none",
+        |value| matches!(value, "low" | "medium" | "high" | "xhigh" | "max" | "none"),
+    )?;
+    validate_model_policy_enum_override(
+        &overrides,
+        "approval",
+        "default, auto, confirm, never, yolo",
+        |value| matches!(value, "default" | "auto" | "confirm" | "never" | "yolo"),
+    )?;
+    validate_model_policy_enum_override(&overrides, "sandbox", SandboxMode::ALLOWED, |value| {
+        SandboxMode::from_str(value).is_some()
+    })?;
+    validate_model_policy_enum_override(&overrides, "network", NetworkMode::ALLOWED, |value| {
+        NetworkMode::from_str(value).is_some()
+    })?;
 
     let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {
         None | Some(serde_yaml::Value::Null) => false,
@@ -1880,7 +2023,10 @@ override = { effort = "high" }
         assert_eq!(overlay.description.as_deref(), Some("Tech lead overlay"));
         assert_eq!(overlay.model.as_deref(), Some("gpt55"));
         assert_eq!(overlay.harness.as_deref(), Some("codex"));
-        assert_eq!(overlay.network.as_deref(), Some("deny"));
+        assert_eq!(
+            overlay.network.as_ref().map(NetworkMode::as_str),
+            Some("deny")
+        );
         assert_eq!(overlay.autocompact, Some(1200));
         assert_eq!(overlay.autocompact_pct, Some(80));
         assert_eq!(overlay.user_invocable, Some(false));
@@ -1903,6 +2049,36 @@ override = { effort = "high" }
             ModelPolicyMatchType::ModelGlob
         );
         assert_eq!(config.settings.model_policies[0].match_value, "gpt-*");
+    }
+
+    #[test]
+    fn agent_overlay_execution_enums_reject_typos_during_deserialization() {
+        for (field, value, expected) in [
+            ("network", "default", "allow"),
+            ("sandbox", "readonly", "read-only"),
+        ] {
+            let source = format!("[agents.reviewer]\n{field} = \"{value}\"\n");
+            let error = toml::from_str::<Config>(&source).unwrap_err().to_string();
+            assert!(
+                error.contains(value) && error.contains(expected),
+                "missing enum context for {field}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_policy_execution_enums_reject_non_strings_during_deserialization() {
+        for field in ["harness", "effort", "approval", "sandbox", "network"] {
+            let source = format!(
+                "[settings]\n[[settings.model-policies]]\nmatch = {{ alias = \"opus\" }}\noverride = {{ {field} = false }}\n"
+            );
+            let error = toml::from_str::<Config>(&source).unwrap_err().to_string();
+            assert!(
+                error.contains(&format!("override `{field}`"))
+                    && error.contains("invalid value `false`"),
+                "missing model-policy context for {field}: {error}"
+            );
+        }
     }
 
     #[test]

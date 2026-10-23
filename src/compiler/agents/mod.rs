@@ -13,7 +13,7 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
 use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
-pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
+pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkMode, SandboxMode};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 
 // ---------------------------------------------------------------------------
@@ -129,60 +129,6 @@ impl ApprovalMode {
             Self::Auto => "auto",
             Self::Confirm => "confirm",
             Self::Never => "never",
-        }
-    }
-}
-
-/// Sandbox mode field.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SandboxMode {
-    Default,
-    ReadOnly,
-    WorkspaceWrite,
-    DangerFullAccess,
-}
-
-impl SandboxMode {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "default" => Some(Self::Default),
-            "read-only" => Some(Self::ReadOnly),
-            "workspace-write" => Some(Self::WorkspaceWrite),
-            "danger-full-access" => Some(Self::DangerFullAccess),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Default => "default",
-            Self::ReadOnly => "read-only",
-            Self::WorkspaceWrite => "workspace-write",
-            Self::DangerFullAccess => "danger-full-access",
-        }
-    }
-}
-
-/// Shell network access mode field.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NetworkMode {
-    Allow,
-    Deny,
-}
-
-impl NetworkMode {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "allow" => Some(Self::Allow),
-            "deny" => Some(Self::Deny),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Allow => "allow",
-            Self::Deny => "deny",
         }
     }
 }
@@ -639,6 +585,18 @@ fn push_model_policy_parse_error(
         crate::config::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.override"), found, "mapping");
         }
+        crate::config::ModelPolicyRuleParseError::OverrideEnumInvalid {
+            key,
+            found,
+            allowed,
+        } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.override.{key}"),
+                found,
+                allowed,
+            );
+        }
         crate::config::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.no-fallback"), found, "boolean");
         }
@@ -690,6 +648,26 @@ fn parse_fanout(val: &Value) -> Vec<FanoutEntry> {
     }
 }
 
+fn enum_string_field<'a>(
+    fm: &'a Frontmatter,
+    field: &str,
+    allowed: &'static str,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> Option<&'a str> {
+    let value = fm.get(field)?;
+    match value.as_str() {
+        Some(value) => Some(value),
+        None => {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: field.to_string(),
+                value: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
+                allowed,
+            });
+            None
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -707,36 +685,34 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .map(str::to_owned);
 
     // harness:
-    let harness = fm.get("harness").and_then(Value::as_str).and_then(|s| {
-        if let Some(h) = HarnessKind::from_str(s) {
-            Some(h)
-        } else {
-            diags.push(AgentDiagnostic::UnknownHarness {
-                value: s.to_string(),
-            });
-            None
-        }
-    });
+    let harness = enum_string_field(fm, "harness", "claude, codex, opencode, cursor, pi", diags)
+        .and_then(|s| {
+            if let Some(h) = HarnessKind::from_str(s) {
+                Some(h)
+            } else {
+                diags.push(AgentDiagnostic::UnknownHarness {
+                    value: s.to_string(),
+                });
+                None
+            }
+        });
 
     // model:
     let model = fm.get("model").and_then(Value::as_str).map(str::to_owned);
 
     // mode:
-    let mode = fm
-        .get("mode")
-        .and_then(Value::as_str)
-        .and_then(|s| match s {
-            "primary" => Some(AgentMode::Primary),
-            "subagent" => Some(AgentMode::Subagent),
-            other => {
-                diags.push(AgentDiagnostic::InvalidFieldValue {
-                    field: "mode".to_string(),
-                    value: other.to_string(),
-                    allowed: "primary, subagent",
-                });
-                None
-            }
-        });
+    let mode = enum_string_field(fm, "mode", "primary, subagent", diags).and_then(|s| match s {
+        "primary" => Some(AgentMode::Primary),
+        "subagent" => Some(AgentMode::Subagent),
+        other => {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "mode".to_string(),
+                value: other.to_string(),
+                allowed: "primary, subagent",
+            });
+            None
+        }
+    });
 
     // model-invocable / user-invocable:
     let model_invocability = find_invocability_field(fm, "model-invocable");
@@ -753,67 +729,69 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     );
 
     // approval:
-    let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
-        if let Some(a) = ApprovalMode::from_str(s) {
-            if s == "yolo" {
-                diags.push(AgentDiagnostic::DeprecatedApprovalYolo);
+    let approval = enum_string_field(fm, "approval", "default, auto, confirm, never", diags)
+        .and_then(|s| {
+            if let Some(a) = ApprovalMode::from_str(s) {
+                if s == "yolo" {
+                    diags.push(AgentDiagnostic::DeprecatedApprovalYolo);
+                }
+                Some(a)
+            } else {
+                diags.push(AgentDiagnostic::InvalidFieldValue {
+                    field: "approval".to_string(),
+                    value: s.to_string(),
+                    allowed: "default, auto, confirm, never",
+                });
+                None
             }
-            Some(a)
-        } else {
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: "approval".to_string(),
-                value: s.to_string(),
-                allowed: "default, auto, confirm, never",
-            });
-            None
-        }
-    });
+        });
 
     // sandbox:
-    let sandbox = fm.get("sandbox").and_then(Value::as_str).and_then(|s| {
+    let sandbox = enum_string_field(fm, "sandbox", SandboxMode::ALLOWED, diags).and_then(|s| {
         if let Some(sb) = SandboxMode::from_str(s) {
             Some(sb)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {
                 field: "sandbox".to_string(),
                 value: s.to_string(),
-                allowed: "default, read-only, workspace-write, danger-full-access",
+                allowed: SandboxMode::ALLOWED,
             });
             None
         }
     });
 
     // network:
-    let network = fm.get("network").and_then(Value::as_str).and_then(|s| {
+    let network = enum_string_field(fm, "network", NetworkMode::ALLOWED, diags).and_then(|s| {
         if let Some(network) = NetworkMode::from_str(s) {
             Some(network)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {
                 field: "network".to_string(),
                 value: s.to_string(),
-                allowed: "allow, deny",
+                allowed: NetworkMode::ALLOWED,
             });
             None
         }
     });
 
     // effort:
-    let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
-        if s == "none" {
-            // "none" is a valid sentinel meaning "no effort level" (same as omitting the field)
-            return None;
-        }
-        if let Some(e) = EffortLevel::from_str(s) {
-            Some(e)
-        } else {
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: "effort".to_string(),
-                value: s.to_string(),
-                allowed: "low, medium, high, xhigh, none",
-            });
-            None
-        }
-    });
+    let effort = enum_string_field(fm, "effort", "low, medium, high, xhigh, max, none", diags)
+        .and_then(|s| {
+            if s == "none" {
+                // "none" is a valid sentinel meaning "no effort level" (same as omitting the field)
+                return None;
+            }
+            if let Some(e) = EffortLevel::from_str(s) {
+                Some(e)
+            } else {
+                diags.push(AgentDiagnostic::InvalidFieldValue {
+                    field: "effort".to_string(),
+                    value: s.to_string(),
+                    allowed: "low, medium, high, xhigh, max, none",
+                });
+                None
+            }
+        });
 
     // autocompact:
     let autocompact = match fm.get("autocompact") {

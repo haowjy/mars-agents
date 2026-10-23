@@ -227,7 +227,7 @@ pub enum SandboxMode {
 impl SandboxMode {
     pub const ALLOWED: &'static str = "default, read-only, workspace-write, danger-full-access";
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "default" => Some(Self::Default),
             "read-only" => Some(Self::ReadOnly),
@@ -258,7 +258,7 @@ pub enum NetworkMode {
 impl NetworkMode {
     pub const ALLOWED: &'static str = "allow, deny";
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "allow" => Some(Self::Allow),
             "deny" => Some(Self::Deny),
@@ -563,10 +563,10 @@ pub fn parse_model_policy_rule_value(
         |value| matches!(value, "default" | "auto" | "confirm" | "never" | "yolo"),
     )?;
     validate_model_policy_enum_override(&overrides, "sandbox", SandboxMode::ALLOWED, |value| {
-        SandboxMode::from_str(value).is_some()
+        SandboxMode::parse(value).is_some()
     })?;
     validate_model_policy_enum_override(&overrides, "network", NetworkMode::ALLOWED, |value| {
-        NetworkMode::from_str(value).is_some()
+        NetworkMode::parse(value).is_some()
     })?;
 
     let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {

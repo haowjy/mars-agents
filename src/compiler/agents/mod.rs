@@ -748,7 +748,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
 
     // sandbox:
     let sandbox = enum_string_field(fm, "sandbox", SandboxMode::ALLOWED, diags).and_then(|s| {
-        if let Some(sb) = SandboxMode::from_str(s) {
+        if let Some(sb) = SandboxMode::parse(s) {
             Some(sb)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {
@@ -762,7 +762,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
 
     // network:
     let network = enum_string_field(fm, "network", NetworkMode::ALLOWED, diags).and_then(|s| {
-        if let Some(network) = NetworkMode::from_str(s) {
+        if let Some(network) = NetworkMode::parse(s) {
             Some(network)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {

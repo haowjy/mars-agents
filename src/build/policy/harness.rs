@@ -244,6 +244,7 @@ mod tests {
             had_user_invocable_field: false,
             approval: None,
             sandbox: None,
+            network: None,
             effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -288,6 +289,7 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
+            network_override: None,
             models_refresh: crate::models::ModelsRefreshControl::background(),
         }
     }

@@ -242,6 +242,38 @@ fn parses_sandbox_all_values() {
 }
 
 #[test]
+fn parses_network_all_values() {
+    for (value, expected) in [
+        ("default", NetworkMode::Default),
+        ("allow", NetworkMode::Allow),
+        ("deny", NetworkMode::Deny),
+    ] {
+        let content = format!("---\nnetwork: {value}\n---\n");
+        let (profile, diags) = parse(&content);
+        assert!(
+            diags.is_empty(),
+            "unexpected diagnostics for network={value}: {diags:?}"
+        );
+        assert_eq!(profile.network, Some(expected));
+    }
+}
+
+#[test]
+fn invalid_network_lists_allowed_values() {
+    let (profile, diags) = parse("---\nnetwork: sometimes\n---\n");
+    assert_eq!(profile.network, None);
+    assert!(matches!(
+        diags.as_slice(),
+        [AgentDiagnostic::InvalidFieldValue {
+            field,
+            value,
+            allowed: "default, allow, deny",
+        }] if field == "network" && value == "sometimes"
+    ));
+    assert!(diags[0].is_error());
+}
+
+#[test]
 fn parses_autocompact() {
     let (p, diags) = parse("---\nautocompact: 50\n---\n");
     assert!(diags.is_empty());

@@ -163,6 +163,33 @@ impl SandboxMode {
     }
 }
 
+/// Shell network access mode field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkMode {
+    Default,
+    Allow,
+    Deny,
+}
+
+impl NetworkMode {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "default" => Some(Self::Default),
+            "allow" => Some(Self::Allow),
+            "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+}
+
 /// Effort level field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EffortLevel {
@@ -269,6 +296,7 @@ pub struct AgentProfile {
     pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
+    pub network: Option<NetworkMode>,
     pub effort: Option<EffortLevel>,
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
@@ -758,6 +786,20 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         }
     });
 
+    // network:
+    let network = fm.get("network").and_then(Value::as_str).and_then(|s| {
+        if let Some(network) = NetworkMode::from_str(s) {
+            Some(network)
+        } else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "network".to_string(),
+                value: s.to_string(),
+                allowed: "default, allow, deny",
+            });
+            None
+        }
+    });
+
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
         if s == "none" {
@@ -885,6 +927,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         had_user_invocable_field,
         approval,
         sandbox,
+        network,
         effort,
         autocompact,
         autocompact_pct,

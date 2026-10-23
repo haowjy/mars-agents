@@ -54,6 +54,7 @@ pub struct PolicyInput<'a> {
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
+    pub network_override: Option<&'a str>,
     pub models_refresh: models::ModelsRefreshControl,
 }
 
@@ -487,6 +488,10 @@ pub fn resolve_policy(
         execution_resolution.sandbox.source.label().to_string(),
     );
     provenance.insert(
+        "network_source".to_string(),
+        execution_resolution.network.source.label().to_string(),
+    );
+    provenance.insert(
         "autocompact_source".to_string(),
         execution_resolution.autocompact.source.label().to_string(),
     );
@@ -510,6 +515,7 @@ pub fn resolve_policy(
         .or(execution_resolution.effort.matched_rule)
         .or(execution_resolution.approval.matched_rule)
         .or(execution_resolution.sandbox.matched_rule)
+        .or(execution_resolution.network.matched_rule)
         .or(execution_resolution.autocompact.matched_rule)
         .or(execution_resolution.autocompact_pct.matched_rule)
         .or_else(|| {
@@ -603,12 +609,22 @@ pub fn resolve_policy(
         }
     }
 
+    if execution_resolution.network.value.as_deref() == Some("deny")
+        && execution_resolution.sandbox.value.as_deref() == Some("danger-full-access")
+    {
+        warnings.push(
+            "`network: deny` cannot be enforced with resolved `sandbox: danger-full-access`; no harness can enforce network isolation without a sandbox"
+                .to_string(),
+        );
+    }
+
     Ok(ResolvedPolicy {
         routing: routing_resolution.routing,
         execution_policy: ExecutionPolicy {
             effort,
             approval: execution_resolution.approval.value,
             sandbox: execution_resolution.sandbox.value,
+            network: execution_resolution.network.value,
             autocompact: execution_resolution.autocompact.value,
             autocompact_pct: execution_resolution.autocompact_pct.value,
             timeout: None,

@@ -103,6 +103,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
+| `network` | dropped | meridian-only |
 | `mode` | dropped | dropped |
 | `autocompact` | dropped | meridian-only |
 | `autocompact_pct` | dropped | meridian-only |
@@ -111,7 +112,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `fanout` | dropped | meridian-only |
 | `harness` | dropped | dropped |
 
-`approval` and `sandbox` policy fields are applied at launch time by Meridian through its harness projection layer, not stored in the agent file.
+`approval`, `sandbox`, and `network` policy fields are applied at launch time by
+Meridian through its harness projection layer, not stored in the agent file.
 
 ### Tool name projection
 
@@ -237,6 +239,7 @@ TOML format. Codex reads this for native agent invocation.
 | `effort` | `model_reasoning_effort` | exact |
 | `sandbox` | `sandbox_mode` | exact |
 | `approval` | `approval_policy` | exact |
+| `network` | dropped | meridian-only |
 | body | `developer_instructions` | exact |
 | `skills` | dropped | dropped |
 | `tools` | dropped | dropped |
@@ -287,6 +290,7 @@ YAML frontmatter + markdown body.
 | `skills` | dropped | dropped |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
+| `network` | dropped | meridian-only |
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
 | `effort` | dropped from frontmatter | approximate |
@@ -314,6 +318,7 @@ YAML frontmatter + markdown body.
 | body | body | exact |
 | `approval` | runtime-only (meridian projects `--force`/`--yolo`) | approximate |
 | `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | approximate |
+| `network` | dropped | meridian-only |
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
 | `effort` | dropped from frontmatter | approximate |
@@ -341,7 +346,9 @@ YAML frontmatter + markdown body.
 | `workspace-write` | `--sandbox disabled` |
 | `danger-full-access` | `--sandbox disabled` |
 
-`approval` and `sandbox` are not stored in the Cursor native agent artifact — Cursor IDE doesn't read them from frontmatter. Meridian applies these as runtime CLI flags through its harness projection layer.
+`approval`, `sandbox`, and `network` are not stored in the Cursor native agent
+artifact — Cursor IDE doesn't read them from frontmatter. Meridian applies these
+at runtime through its harness projection layer.
 
 Cursor requires a one-line frontmatter description for stable native parsing. Mars normalizes multiline/block descriptions by trimming and collapsing all whitespace to single spaces before emitting `.cursor/agents/*.md`.
 
@@ -360,6 +367,7 @@ YAML frontmatter + markdown body.
 | body | body | exact |
 | `effort` | dropped | approximate |
 | `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness) | approximate |
+| `network` | dropped | meridian-only |
 | All other policy fields | dropped | dropped |
 | `autocompact`, `autocompact_pct`, `model-policies`, `fanout` | dropped | meridian-only |
 
@@ -449,6 +457,7 @@ Compact per-field, per-target classification:
 | `mode` | preserved | dropped | dropped | approximate | approximate | approximate |
 | `approval` | preserved | dropped | exact | dropped | approximate | dropped |
 | `sandbox` | preserved | dropped | exact | dropped | approximate | dropped |
+| `network` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
 | `disallowed-tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
 | `mcp(...)` in `tools` / `disallowed-tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate |

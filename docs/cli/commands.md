@@ -596,7 +596,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 **Agent/profile mode** (`--agent <name>`):
 - Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
 - Requires a project with `mars sync` already run
-- Inherits all profile fields (model, harness, effort, approval, skills, tools)
+- Inherits all profile fields (model, harness, effort, approval, sandbox, network, skills, tools)
 - Model precedence is `--model` > profile model > `settings.default_model`.
 
 | Flag | Description |
@@ -607,6 +607,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 | `--effort <level>` | Override effort: `low`, `medium`, `high`, `xhigh`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `yolo`. |
 | `--sandbox <mode>` | Override sandbox: `default`, `read-only`, `workspace-write`, `danger-full-access`. |
+| `--network <mode>` | Override shell network access: `default`, `allow`, `deny`. Built-in web tools remain controlled by `tools: web`. |
 | `--skill <name>` | Add extra skills by name. Repeatable; also accepts `--skill a,b`. |
 
 **Output JSON structure:**
@@ -626,7 +627,15 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
     "harness_model_confidence": "confirmed|likely|unknown",
     "route_trace": { "version": 3, "model_attempts": [{ "selected_by_preference": false }], "..." }
   },
-  "execution_policy": { "..." },
+  "execution_policy": {
+    "effort": "high",
+    "approval": "auto",
+    "sandbox": "workspace-write",
+    "network": "allow",
+    "autocompact": null,
+    "autocompact_pct": null,
+    "timeout": null
+  },
   "prompt_surface": { "..." },
   "tools": {
     "capability_natives": {
@@ -662,6 +671,9 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
+- `execution_policy.network` is `"default"`, `"allow"`, `"deny"`, or `null` when
+  unset. Mars does not resolve the default. It governs shell connections only;
+  `tools: web` separately governs built-in web tools.
 
 **`tools.capability_natives`** is always present, independent of the profile's tool policy. It
 maps the `agent` (sub-agent) and `task` (task-list) capabilities to the resolved harness's

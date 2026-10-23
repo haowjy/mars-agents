@@ -47,6 +47,7 @@ pub struct ExecutionPolicy {
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
+    pub network: Option<String>,
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
     pub timeout: Option<u32>,

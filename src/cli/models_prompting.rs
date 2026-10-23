@@ -258,6 +258,7 @@ fn prompt_target_for_agent(
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
+            network_override: None,
             models_refresh: refresh,
         },
     )?;

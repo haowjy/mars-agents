@@ -32,6 +32,7 @@ pub struct LaunchBundleRequest {
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
+    pub network: Option<String>,
     pub extra_skills: Vec<String>,
     pub models_refresh: crate::models::ModelsRefreshControl,
 }
@@ -127,6 +128,7 @@ pub fn build_launch_bundle(
             effort_override: request.effort.as_deref(),
             approval_override: request.approval.as_deref(),
             sandbox_override: request.sandbox.as_deref(),
+            network_override: request.network.as_deref(),
             models_refresh: request.models_refresh,
         },
     )?;
@@ -198,6 +200,7 @@ fn empty_agent_profile() -> AgentProfile {
         had_user_invocable_field: false,
         approval: None,
         sandbox: None,
+        network: None,
         effort: None,
         autocompact: None,
         autocompact_pct: None,

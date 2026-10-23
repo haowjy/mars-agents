@@ -230,6 +230,8 @@ pub struct AgentOverlay {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autocompact: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autocompact_pct: Option<i64>,
@@ -1853,6 +1855,7 @@ harness = "codex"
 effort = "medium"
 approval = "default"
 sandbox = "default"
+network = "deny"
 autocompact = 1200
 autocompact_pct = 80
 user_invocable = false
@@ -1877,6 +1880,7 @@ override = { effort = "high" }
         assert_eq!(overlay.description.as_deref(), Some("Tech lead overlay"));
         assert_eq!(overlay.model.as_deref(), Some("gpt55"));
         assert_eq!(overlay.harness.as_deref(), Some("codex"));
+        assert_eq!(overlay.network.as_deref(), Some("deny"));
         assert_eq!(overlay.autocompact, Some(1200));
         assert_eq!(overlay.autocompact_pct, Some(80));
         assert_eq!(overlay.user_invocable, Some(false));

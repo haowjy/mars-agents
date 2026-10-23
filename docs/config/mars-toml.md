@@ -244,6 +244,7 @@ harness = "claude"
 effort = "high"
 approval = "confirm"
 sandbox = "read-only"
+network = "deny"
 model-invocable = false
 user-invocable = true
 model-policies = [{ match = { model-glob = "gpt-5*" }, no-fallback = true }]
@@ -261,6 +262,7 @@ disallowed = ["agent"]
 | `effort` | string | Effort level: `low`, `medium`, `high`, `xhigh` |
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `yolo` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
+| `network` | string | Shell network access: `default`, `allow`, `deny`; does not affect built-in web tools |
 | `autocompact` | integer | Token threshold for context compaction (0–4294967295) |
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
@@ -278,6 +280,10 @@ rules supply conditional settings. Profile rules also declare launch backups:
 all concrete, unflagged entries participate in declaration order, independently of
 the primary's active settings match. `no-fallback` excludes only its entry; it never
 vetoes the rest of the chain. See [model policies](agent-profiles.md#model-policies).
+
+Execution-policy overrides may set `effort`, `approval`, `sandbox`, `network`,
+`autocompact`, or `autocompact_pct`. `network` follows the same overlay → profile →
+settings model-policy precedence as `sandbox`.
 
 ### `[skills.<name>]` (overlay)
 

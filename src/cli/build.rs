@@ -86,6 +86,23 @@ impl SandboxArg {
     }
 }
 
+#[derive(Debug, Clone, ValueEnum)]
+enum NetworkArg {
+    Default,
+    Allow,
+    Deny,
+}
+
+impl NetworkArg {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+}
+
 #[derive(Debug, clap::Args)]
 pub struct LaunchBundleArgs {
     /// Agent name from `.mars/agents/<name>.md`.
@@ -125,6 +142,10 @@ pub struct LaunchBundleArgs {
     #[arg(long, value_enum)]
     sandbox: Option<SandboxArg>,
 
+    /// Override shell network access.
+    #[arg(long, value_enum)]
+    network: Option<NetworkArg>,
+
     /// Add extra skills by name. Supports `--skill a --skill b` and `--skill a,b`.
     #[arg(long = "skill", value_delimiter = ',', action = ArgAction::Append)]
     pub extra_skills: Vec<String>,
@@ -159,6 +180,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             effort: args.effort.as_ref().map(|e| e.as_str().to_string()),
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
+            network: args.network.as_ref().map(|n| n.as_str().to_string()),
             extra_skills: args.extra_skills.clone(),
             models_refresh,
         },

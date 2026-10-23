@@ -10,6 +10,8 @@ model: opus
 harness: claude
 mode: subagent
 approval: auto
+sandbox: workspace-write
+network: allow
 effort: high
 autocompact: 200000
 autocompact_pct: 80
@@ -214,6 +216,41 @@ Omitting `sandbox` leaves it unset. `default` is an accepted explicit value, but
 
 ```yaml
 sandbox: workspace-write
+```
+
+---
+
+### `network`
+
+| | |
+|---|---|
+| Type | string |
+| Required | no |
+| Allowed values | `default`, `allow`, `deny` |
+| Default | none (unset; launcher decides) |
+
+Controls whether the agent's shell commands may open connections, including the
+public internet, host services, and local sockets. It does not control built-in
+web tools; grant or deny those with `tools: web`.
+
+| Value | Behavior |
+|---|---|
+| `default` | Explicitly requests launcher-default shell network behavior |
+| `allow` | Allow shell commands to open connections |
+| `deny` | Deny shell commands from opening connections |
+
+Mars preserves the distinction between an omitted field and explicit `default`
+in the launch bundle (`null` versus `"default"`); it does not choose a network
+default. Meridian currently resolves both to `allow`. `network: deny` with
+resolved `sandbox: danger-full-access` produces a warning because no harness can
+enforce network isolation without a sandbox.
+
+At launch, the field resolves in this order: CLI `--network`, agent overlay,
+matching overlay model policy, profile, matching profile model policy, then
+matching settings model policy.
+
+```yaml
+network: deny
 ```
 
 ---
@@ -494,6 +531,8 @@ model-policies:
       alias: opus
     override:
       effort: high
+      sandbox: workspace-write
+      network: deny
   - match:
       model: gpt-5.5
     override:
@@ -506,7 +545,11 @@ Native agent materialization has separate `include_fanout` semantics: flagged ru
 and expanded globs can still participate. Launch fallback filtering does not change
 native emission or reconciliation.
 
-Mars parses the `match`/`override` structure during `mars check` and before `mars version`, reporting malformed shape. `override` may be omitted or empty. Runtime consumers own the meaning and spelling of override keys.
+Mars parses the `match`/`override` structure during `mars check` and before
+`mars version`, reporting malformed shape. `override` may be omitted or empty.
+Launch-bundle execution overrides include `effort`, `approval`, `sandbox`,
+`network`, `autocompact`, and `autocompact_pct`; `network` uses the same policy
+layer and precedence as `sandbox`.
 
 ---
 

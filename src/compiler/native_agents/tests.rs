@@ -23,6 +23,7 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
         had_user_invocable_field: false,
         approval: None,
         sandbox: None,
+        network: None,
         effort: None,
         autocompact: None,
         autocompact_pct: None,

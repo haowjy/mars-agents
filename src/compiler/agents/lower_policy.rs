@@ -13,7 +13,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 ///
-/// Launch-time fields (approval, sandbox, mode where not emitted, autocompact, …) are
+/// Launch-time fields (approval, sandbox, network, mode where not emitted, autocompact, …) are
 /// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
 /// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
 /// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly.
@@ -52,6 +52,10 @@ impl<'a> Effective<'a> {
 
     fn sandbox(&self) -> Option<&crate::compiler::agents::SandboxMode> {
         self.profile.sandbox.as_ref()
+    }
+
+    fn network(&self) -> Option<&crate::compiler::agents::NetworkMode> {
+        self.profile.network.as_ref()
     }
 
     fn skills(&self) -> Vec<String> {
@@ -155,7 +159,7 @@ fn record_agent_invocation_lossiness(
 ///
 /// Per agent-compilation-mapping.md V0 §10:
 /// - Preserved: name, description, model, skills, tools, disallowed-tools, body
-/// - Dropped (launch-time): approval, sandbox, mode, harness, autocompact, autocompact_pct,
+/// - Dropped (launch-time): approval, sandbox, network, mode, harness, autocompact, autocompact_pct,
 ///   model-policies, harness-overrides,
 ///   fanout, legacy-models
 ///
@@ -561,6 +565,11 @@ impl<'a> AgentLoweringCtx<'a> {
 
     fn record_meridian_only_fields(&mut self) {
         self.record_if_present(
+            "network",
+            self.eff.network().is_some(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
             "autocompact",
             self.profile.autocompact.is_some(),
             Lossiness::MeridianOnly,
@@ -660,7 +669,7 @@ pub fn lower_to_claude(
 ///   sandbox (as sandbox_mode), approval (as approval_policy), body
 ///   (as developer_instructions)
 /// - Dropped: skills (no native field), tools (no allowlist), disallowed-tools,
-///   mcp (approximate), mode, autocompact, model-policies, fanout
+///   mcp (approximate), network (meridian-only), mode, autocompact, model-policies, fanout
 /// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
 pub fn lower_to_codex(
     profile: &AgentProfile,
@@ -727,6 +736,13 @@ pub fn lower_to_codex(
     if profile.autocompact.is_some() {
         lossy.push(LossyField {
             field: "autocompact".into(),
+            target: target.into(),
+            classification: Lossiness::MeridianOnly,
+        });
+    }
+    if eff.network().is_some() {
+        lossy.push(LossyField {
+            field: "network".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });

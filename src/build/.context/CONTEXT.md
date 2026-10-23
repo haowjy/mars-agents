@@ -34,8 +34,9 @@ they are expected route metadata, not problems a user can fix.
 
 Route facts are recorded in `routing.harness_model_source` and
 `routing.harness_model_confidence`. Build policy owns warnings for selected model
-fallbacks. Tool permission gaps are never warnings: they ride `tools.rules[].native_status`
-and `note`. Exhausted routing
+fallbacks and execution-policy combinations that no harness can enforce, such as
+`network: deny` with `sandbox: danger-full-access`. Tool permission gaps are never
+warnings: they ride `tools.rules[].native_status` and `note`. Exhausted routing
 is an error, never a warning followed by an unassessed replacement route.
 
 Examples that are NOT warnings (they go to routing/provenance fields):
@@ -70,7 +71,7 @@ ancestor directory.
 
 ```
 parse_diags           ← frontmatter parse warnings (agent mode only)
-policy.warnings       ← catalog refresh issues, selected model fallback
+policy.warnings       ← catalog refresh issues, model fallback, unenforceable execution policy
 prompt.warnings       ← missing skills
 ```
 
@@ -146,7 +147,7 @@ marks effort consumed (cleared from execution policy output).
 `build_launch_bundle()` resolves project config once, then passes it into policy resolution.
 
 ```
-LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_skills}
+LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, extra_skills}
     │
     ├─ [agent mode] read + parse .mars/agents/<name>.md → AgentProfile + body
     ├─ [ad-hoc mode] empty_agent_profile() + "" body
@@ -159,7 +160,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_ski
            ├─ models::ensure_fresh()                   (catalog for native slug + probes)
            ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)
-           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, autocompact)
+           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, network, autocompact)
            └─ runnable::resolve_routing()              (populate Routing with aggregate report)
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)

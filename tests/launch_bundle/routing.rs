@@ -3209,7 +3209,7 @@ model = "gpt-5"
 
 [[settings.model-policies]]
 match = { alias = "gpt55" }
-override = { harness = "opencode", effort = "medium" }"#;
+override = { harness = "opencode", effort = "medium", network = "deny" }"#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
@@ -3226,6 +3226,7 @@ override = { harness = "opencode", effort = "medium" }"#;
         bundle["execution_policy"]["effort"].as_str(),
         Some("medium")
     );
+    assert_eq!(bundle["execution_policy"]["network"], "deny");
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
         Some("settings-model-policy")
@@ -3233,6 +3234,10 @@ override = { harness = "opencode", effort = "medium" }"#;
     assert_eq!(
         bundle["provenance"]["effort_source"].as_str(),
         Some("settings-model-policy")
+    );
+    assert_eq!(
+        bundle["provenance"]["network_source"],
+        "settings-model-policy"
     );
     assert_eq!(
         bundle["provenance"]["matched_policy_rule"].as_str(),

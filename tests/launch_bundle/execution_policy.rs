@@ -13,6 +13,7 @@ model: claude-opus-4-6
 effort: low
 approval: confirm
 sandbox: read-only
+network: deny
 ---
 Review code changes."#;
 
@@ -31,6 +32,8 @@ Review code changes."#;
         "never",
         "--sandbox",
         "danger-full-access",
+        "--network",
+        "allow",
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
@@ -47,12 +50,14 @@ Review code changes."#;
         bundle["execution_policy"]["sandbox"].as_str(),
         Some("danger-full-access")
     );
+    assert_eq!(bundle["execution_policy"]["network"], "allow");
     assert_eq!(bundle["provenance"]["effort_source"].as_str(), Some("cli"));
     assert_eq!(
         bundle["provenance"]["approval_source"].as_str(),
         Some("cli")
     );
     assert_eq!(bundle["provenance"]["sandbox_source"].as_str(), Some("cli"));
+    assert_eq!(bundle["provenance"]["network_source"], "cli");
 }
 
 #[test]
@@ -65,6 +70,7 @@ model: modelalias
 effort: low
 approval: confirm
 sandbox: read-only
+network: deny
 autocompact: 1200
 autocompact_pct: 40
 harness-overrides:
@@ -72,6 +78,7 @@ harness-overrides:
     effort: high
     approval: auto
     sandbox: workspace-write
+    network: allow
     autocompact: 2400
     autocompact_pct: 70
     native-config:
@@ -114,6 +121,7 @@ autocompact_pct = 55"#;
         bundle["execution_policy"]["sandbox"].as_str(),
         Some("read-only")
     );
+    assert_eq!(bundle["execution_policy"]["network"], "deny");
     assert_eq!(
         bundle["execution_policy"]["autocompact"].as_u64(),
         Some(1200)
@@ -134,6 +142,7 @@ autocompact_pct = 55"#;
         bundle["provenance"]["sandbox_source"].as_str(),
         Some("profile")
     );
+    assert_eq!(bundle["provenance"]["network_source"], "profile");
     assert_eq!(
         bundle["provenance"]["autocompact_source"].as_str(),
         Some("profile")
@@ -168,6 +177,7 @@ model: claude-opus-4-6
 effort: xhigh
 approval: auto
 sandbox: workspace-write
+network: allow
 ---
 Review code changes."#;
 
@@ -191,6 +201,7 @@ Review code changes."#;
         bundle["execution_policy"]["sandbox"].as_str(),
         Some("workspace-write")
     );
+    assert_eq!(bundle["execution_policy"]["network"], "allow");
     assert_eq!(
         bundle["provenance"]["effort_source"].as_str(),
         Some("profile")
@@ -202,5 +213,41 @@ Review code changes."#;
     assert_eq!(
         bundle["provenance"]["sandbox_source"].as_str(),
         Some("profile")
+    );
+    assert_eq!(bundle["provenance"]["network_source"], "profile");
+}
+
+#[test]
+fn build_launch_bundle_warns_when_network_deny_cannot_be_enforced() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+sandbox: danger-full-access
+network: deny
+---
+Review code changes."#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(
+        bundle["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning.as_str().is_some_and(|message| {
+                    message.contains("no harness can enforce network isolation")
+                })
+            })
     );
 }

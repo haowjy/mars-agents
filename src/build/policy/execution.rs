@@ -6,7 +6,7 @@ use crate::build::policy::{
     MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
     matched_policy_u8_override, matched_policy_u32_override,
 };
-use crate::compiler::agents::{ApprovalMode, EffortLevel, SandboxMode};
+use crate::compiler::agents::{ApprovalMode, EffortLevel, NetworkMode, SandboxMode};
 use crate::config::AgentOverlay;
 use crate::models::ModelAlias;
 
@@ -14,6 +14,7 @@ pub(super) struct ExecutionResolution {
     pub(super) effort: ResolvedField<Option<String>>,
     pub(super) approval: ResolvedField<Option<String>>,
     pub(super) sandbox: ResolvedField<Option<String>>,
+    pub(super) network: ResolvedField<Option<String>>,
     pub(super) autocompact: ResolvedField<Option<u32>>,
     pub(super) autocompact_pct: ResolvedField<Option<u8>>,
     pub(super) native_config: Option<serde_json::Map<String, serde_json::Value>>,
@@ -29,6 +30,7 @@ pub(super) fn resolve_execution_policy(
     let effort = resolve_effort(input, alias, overlay, matched_policy);
     let approval = resolve_approval(input, overlay, matched_policy);
     let sandbox = resolve_sandbox(input, overlay, matched_policy);
+    let network = resolve_network(input, overlay, matched_policy);
     let autocompact = resolve_autocompact(input, alias, overlay, matched_policy);
     let autocompact_pct = resolve_autocompact_pct(input, alias, overlay, matched_policy);
 
@@ -36,6 +38,7 @@ pub(super) fn resolve_execution_policy(
         effort,
         approval,
         sandbox,
+        network,
         autocompact,
         autocompact_pct,
         native_config,
@@ -200,6 +203,31 @@ fn resolve_sandbox(
     )
 }
 
+fn resolve_network(
+    input: &PolicyInput<'_>,
+    overlay: Option<&AgentOverlay>,
+    matched_policy: Option<&MatchedModelPolicy>,
+) -> ResolvedField<Option<String>> {
+    resolve_policy_field(
+        "network",
+        matched_policy,
+        policy_string_override_by_source,
+        PolicyFieldLayers {
+            cli: input.network_override.map(str::to_string),
+            overlay: overlay
+                .and_then(|entry| entry.network.as_deref())
+                .map(str::to_string),
+            profile: input
+                .profile
+                .network
+                .as_ref()
+                .map(network_mode_to_str)
+                .map(str::to_string),
+            alias: None,
+        },
+    )
+}
+
 fn resolve_autocompact(
     input: &PolicyInput<'_>,
     alias: Option<&ModelAlias>,
@@ -267,5 +295,13 @@ fn sandbox_mode_to_str(mode: &SandboxMode) -> &'static str {
         SandboxMode::ReadOnly => "read-only",
         SandboxMode::WorkspaceWrite => "workspace-write",
         SandboxMode::DangerFullAccess => "danger-full-access",
+    }
+}
+
+fn network_mode_to_str(mode: &NetworkMode) -> &'static str {
+    match mode {
+        NetworkMode::Default => "default",
+        NetworkMode::Allow => "allow",
+        NetworkMode::Deny => "deny",
     }
 }

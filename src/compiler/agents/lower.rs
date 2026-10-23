@@ -335,7 +335,7 @@ mod tests {
         );
         assert!(!text.contains("network"), "network leaked: {text}");
         assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "network" && matches!(field.classification, Lossiness::MeridianOnly)
+            field.field == "network" && matches!(field.classification, Lossiness::Dropped)
         }));
         assert!(
             text.contains("developer_instructions ="),

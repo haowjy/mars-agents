@@ -243,6 +243,8 @@ a network default. Meridian resolves unset to `allow`. There is no explicit
 `default` value because a higher-precedence value must not reopen a lower-layer
 `deny`. `network: deny` with resolved `sandbox: danger-full-access` produces a
 warning because no harness can enforce network isolation without a sandbox.
+Enforcement depends on running a Meridian version that projects `network` into
+the selected harness.
 
 At launch, the field resolves in this order: CLI `--network`, agent overlay,
 matching overlay model policy, profile, matching profile model policy, then

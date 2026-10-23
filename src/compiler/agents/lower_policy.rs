@@ -669,7 +669,7 @@ pub fn lower_to_claude(
 ///   sandbox (as sandbox_mode), approval (as approval_policy), body
 ///   (as developer_instructions)
 /// - Dropped: skills (no native field), tools (no allowlist), disallowed-tools,
-///   mcp (approximate), network (meridian-only), mode, autocompact, model-policies, fanout
+///   mcp (approximate), network, mode, autocompact, model-policies, fanout
 /// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
 pub fn lower_to_codex(
     profile: &AgentProfile,
@@ -744,7 +744,7 @@ pub fn lower_to_codex(
         lossy.push(LossyField {
             field: "network".into(),
             target: target.into(),
-            classification: Lossiness::MeridianOnly,
+            classification: Lossiness::Dropped,
         });
     }
     if eff.autocompact_pct().is_some() {

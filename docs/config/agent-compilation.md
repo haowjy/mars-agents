@@ -239,7 +239,7 @@ TOML format. Codex reads this for native agent invocation.
 | `effort` | `model_reasoning_effort` | exact |
 | `sandbox` | `sandbox_mode` | exact |
 | `approval` | `approval_policy` | exact |
-| `network` | dropped | meridian-only |
+| `network` | dropped | dropped |
 | body | `developer_instructions` | exact |
 | `skills` | dropped | dropped |
 | `tools` | dropped | dropped |
@@ -250,6 +250,10 @@ TOML format. Codex reads this for native agent invocation.
 | `autocompact_pct` | dropped | meridian-only |
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
+
+Mars does not write `network_access` into Codex native TOML. Native Codex
+therefore keeps its own network default (off for `workspace-write`) rather than
+honoring the profile's `network` value.
 
 **Approval value mapping:**
 
@@ -457,7 +461,7 @@ Compact per-field, per-target classification:
 | `mode` | preserved | dropped | dropped | approximate | approximate | approximate |
 | `approval` | preserved | dropped | exact | dropped | approximate | dropped |
 | `sandbox` | preserved | dropped | exact | dropped | approximate | dropped |
-| `network` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| `network` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
 | `tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
 | `disallowed-tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
 | `mcp(...)` in `tools` / `disallowed-tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate |

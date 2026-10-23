@@ -112,21 +112,11 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    if let Ok(config) = crate::config::load(base) {
-        warnings.extend(
-            crate::config::execution_policy_deprecation_diagnostics(
-                &config,
-                &crate::config::LocalConfig::default(),
-                base,
-            )
-            .into_iter()
-            .map(|diagnostic| diagnostic.message),
-        );
-        if let Some(package) = config.package.as_ref()
-            && let Err(error) = crate::resolve::validate_package_requirement_syntax(package)
-        {
-            errors.push(error.to_string());
-        }
+    if let Ok(config) = crate::config::load(base)
+        && let Some(package) = config.package.as_ref()
+        && let Err(error) = crate::resolve::validate_package_requirement_syntax(package)
+    {
+        errors.push(error.to_string());
     }
 
     let discovered = discover::discover_resolved_source(base, None)?;
@@ -170,11 +160,7 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
                             let _profile =
                                 crate::compiler::agents::parse_agent_profile(&fm, &mut agent_diags);
                             for diagnostic in agent_diags {
-                                let message = format!(
-                                    "{}: agent `{name}`: {}",
-                                    path.display(),
-                                    diagnostic.message()
-                                );
+                                let message = format!("agent `{name}`: {}", diagnostic.message());
                                 if diagnostic.is_error() {
                                     errors.push(message);
                                 } else {

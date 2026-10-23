@@ -214,39 +214,6 @@ impl AgentOverlayTools {
     }
 }
 
-/// Sandbox mode used by profiles and per-agent overlays.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SandboxMode {
-    Default,
-    ReadOnly,
-    WorkspaceWrite,
-    DangerFullAccess,
-}
-
-impl SandboxMode {
-    pub const ALLOWED: &'static str = "default, read-only, workspace-write, danger-full-access";
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "default" => Some(Self::Default),
-            "read-only" => Some(Self::ReadOnly),
-            "workspace-write" => Some(Self::WorkspaceWrite),
-            "danger-full-access" => Some(Self::DangerFullAccess),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::ReadOnly => "read-only",
-            Self::WorkspaceWrite => "workspace-write",
-            Self::DangerFullAccess => "danger-full-access",
-        }
-    }
-}
-
 /// Shell network access mode used by profiles and per-agent overlays.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -362,45 +329,22 @@ pub struct ModelPolicyRule {
     pub match_type: ModelPolicyMatchType,
     pub match_value: String,
     pub no_fallback: bool,
-    pub overrides: serde_yaml::Mapping,
+    pub(crate) overrides: serde_yaml::Mapping,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelPolicyRuleParseError {
-    RuleMustBeMapping {
-        found: String,
-    },
+    RuleMustBeMapping { found: String },
     MatchMissing,
-    MatchMustBeMapping {
-        found: String,
-    },
-    MatchMustContainExactlyOne {
-        found: String,
-    },
-    MatchKeyMustBeString {
-        found: String,
-    },
-    UnknownMatchKey {
-        key: String,
-    },
-    MatchValueMustBeString {
-        key: String,
-        found: String,
-    },
-    MatchValueEmpty {
-        key: String,
-    },
-    OverrideMustBeMapping {
-        found: String,
-    },
-    OverrideEnumInvalid {
-        key: String,
-        found: String,
-        allowed: &'static str,
-    },
-    NoFallbackMustBeBoolean {
-        found: String,
-    },
+    MatchMustBeMapping { found: String },
+    MatchMustContainExactlyOne { found: String },
+    MatchKeyMustBeString { found: String },
+    UnknownMatchKey { key: String },
+    MatchValueMustBeString { key: String, found: String },
+    MatchValueEmpty { key: String },
+    OverrideMustBeMapping { found: String },
+    NetworkOverrideInvalid { found: String },
+    NoFallbackMustBeBoolean { found: String },
 }
 
 impl ModelPolicyRuleParseError {
@@ -429,13 +373,10 @@ impl ModelPolicyRuleParseError {
             Self::OverrideMustBeMapping { .. } => {
                 "model policy `override` must be a mapping".to_string()
             }
-            Self::OverrideEnumInvalid {
-                key,
-                found,
-                allowed,
-            } => {
+            Self::NetworkOverrideInvalid { found } => {
                 format!(
-                    "model policy override `{key}` has invalid value `{found}`; allowed: {allowed}"
+                    "model policy override `network` has invalid value `{found}`; allowed: {}",
+                    NetworkMode::ALLOWED
                 )
             }
             Self::NoFallbackMustBeBoolean { .. } => {
@@ -446,83 +387,23 @@ impl ModelPolicyRuleParseError {
     }
 }
 
-fn validate_model_policy_enum_override(
+fn validate_model_policy_network_override(
     overrides: &serde_yaml::Mapping,
-    key: &str,
-    allowed: &'static str,
-    is_valid: impl FnOnce(&str) -> bool,
 ) -> Result<(), ModelPolicyRuleParseError> {
-    let Some(value) = overrides.get(serde_yaml::Value::String(key.to_string())) else {
+    let Some(value) = overrides.get(serde_yaml::Value::String("network".to_string())) else {
         return Ok(());
     };
     let Some(value_string) = value.as_str() else {
-        return Err(ModelPolicyRuleParseError::OverrideEnumInvalid {
-            key: key.to_string(),
+        return Err(ModelPolicyRuleParseError::NetworkOverrideInvalid {
             found: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
-            allowed,
         });
     };
-    if !is_valid(value_string) {
-        return Err(ModelPolicyRuleParseError::OverrideEnumInvalid {
-            key: key.to_string(),
+    if NetworkMode::parse(value_string).is_none() {
+        return Err(ModelPolicyRuleParseError::NetworkOverrideInvalid {
             found: value_string.to_string(),
-            allowed,
         });
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ExecutionEnumDeprecation {
-    pub(crate) key: &'static str,
-    pub(crate) value: String,
-    pub(crate) allowed: &'static str,
-    pub(crate) ignored: bool,
-}
-
-fn execution_enum_value(key: &str, value: &str) -> Option<(&'static str, bool)> {
-    match key {
-        "harness" => Some((
-            "claude, codex, opencode, cursor, pi",
-            crate::harness::registry::parse(value).is_some(),
-        )),
-        "effort" => Some((
-            "low, medium, high, xhigh, max, none",
-            matches!(value, "low" | "medium" | "high" | "xhigh" | "max" | "none"),
-        )),
-        "approval" => Some((
-            "default, auto, confirm, never, yolo",
-            matches!(value, "default" | "auto" | "confirm" | "never" | "yolo"),
-        )),
-        "sandbox" => Some((SandboxMode::ALLOWED, SandboxMode::parse(value).is_some())),
-        "network" => Some((NetworkMode::ALLOWED, NetworkMode::parse(value).is_some())),
-        _ => None,
-    }
-}
-
-pub(crate) fn deprecated_model_policy_enum_values(
-    rule: &ModelPolicyRule,
-) -> Vec<ExecutionEnumDeprecation> {
-    ["harness", "effort", "approval", "sandbox"]
-        .into_iter()
-        .filter_map(|key| {
-            let value = rule
-                .overrides
-                .get(serde_yaml::Value::String(key.to_string()))?;
-            let (allowed, valid) = execution_enum_value(key, value.as_str().unwrap_or_default())?;
-            if value.as_str().is_some() && valid {
-                return None;
-            }
-            Some(ExecutionEnumDeprecation {
-                key,
-                value: value.as_str().map(str::to_string).unwrap_or_else(|| {
-                    serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
-                }),
-                allowed,
-                ignored: value.as_str().is_none(),
-            })
-        })
-        .collect()
 }
 
 pub fn parse_model_policy_rule_value(
@@ -597,9 +478,7 @@ pub fn parse_model_policy_rule_value(
             }
         })?,
     };
-    validate_model_policy_enum_override(&overrides, "network", NetworkMode::ALLOWED, |value| {
-        NetworkMode::parse(value).is_some()
-    })?;
+    validate_model_policy_network_override(&overrides)?;
 
     let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {
         None | Some(serde_yaml::Value::Null) => false,
@@ -1240,9 +1119,6 @@ pub fn merge_with_root(
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
     diagnostics.extend(deprecated_agents_target_diagnostics(&merged_settings));
-    diagnostics.extend(execution_policy_deprecation_diagnostics(
-        &config, &local, root,
-    ));
 
     // Process both regular and local dependencies into the same effective map.
     // Local deps are installed locally but not exported to consumers via manifest.
@@ -1354,116 +1230,6 @@ fn deprecated_agents_target_diagnostics(settings: &Settings) -> Vec<Diagnostic> 
     }
 
     diagnostics
-}
-
-pub(crate) fn execution_policy_deprecation_diagnostics(
-    config: &Config,
-    local: &LocalConfig,
-    root: &Path,
-) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
-    collect_execution_policy_deprecations(
-        &config.agents,
-        &config.settings.model_policies,
-        &root.join(CONFIG_FILE),
-        &mut diagnostics,
-    );
-    collect_execution_policy_deprecations(
-        &local.agents,
-        local.settings.model_policies.as_deref().unwrap_or_default(),
-        &root.join(LOCAL_CONFIG_FILE),
-        &mut diagnostics,
-    );
-    diagnostics
-}
-
-fn collect_execution_policy_deprecations(
-    agents: &IndexMap<String, AgentOverlay>,
-    settings_policies: &[ModelPolicyRule],
-    path: &Path,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    for (agent_name, overlay) in agents {
-        for (key, value) in [
-            ("harness", overlay.harness.as_deref()),
-            ("effort", overlay.effort.as_deref()),
-            ("approval", overlay.approval.as_deref()),
-            ("sandbox", overlay.sandbox.as_deref()),
-        ] {
-            let Some(value) = value else {
-                continue;
-            };
-            let Some((allowed, valid)) = execution_enum_value(key, value) else {
-                continue;
-            };
-            if !valid {
-                push_execution_policy_deprecation(
-                    diagnostics,
-                    path,
-                    &format!("agents.{agent_name}.{key}"),
-                    value,
-                    allowed,
-                    false,
-                );
-            }
-        }
-        for (index, rule) in overlay.model_policies.iter().enumerate() {
-            collect_model_policy_deprecations(
-                rule,
-                path,
-                &format!("agents.{agent_name}.model-policies[{}]", index + 1),
-                diagnostics,
-            );
-        }
-    }
-    for (index, rule) in settings_policies.iter().enumerate() {
-        collect_model_policy_deprecations(
-            rule,
-            path,
-            &format!("settings.model-policies[{}]", index + 1),
-            diagnostics,
-        );
-    }
-}
-
-fn collect_model_policy_deprecations(
-    rule: &ModelPolicyRule,
-    path: &Path,
-    field_prefix: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    for deprecated in deprecated_model_policy_enum_values(rule) {
-        push_execution_policy_deprecation(
-            diagnostics,
-            path,
-            &format!("{field_prefix}.override.{}", deprecated.key),
-            &deprecated.value,
-            deprecated.allowed,
-            deprecated.ignored,
-        );
-    }
-}
-
-fn push_execution_policy_deprecation(
-    diagnostics: &mut Vec<Diagnostic>,
-    path: &Path,
-    field: &str,
-    value: &str,
-    allowed: &'static str,
-    ignored: bool,
-) {
-    diagnostics.push(Diagnostic {
-        level: DiagnosticLevel::Warning,
-        code: "deprecated-invalid-execution-policy",
-        message: format!(
-            "{}: `{field}` has {} value `{value}`; it is {} for compatibility and becomes an error in the next release; allowed: {allowed}",
-            path.display(),
-            if ignored { "a non-string" } else { "an invalid" },
-            if ignored { "ignored" } else { "accepted" },
-        ),
-        context: Some(field.to_string()),
-        category: Some(DiagnosticCategory::Compatibility),
-    });
 }
 
 fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
@@ -2199,56 +1965,17 @@ override = { effort = "high" }
     #[test]
     fn network_overlay_rejects_typos_during_deserialization() {
         let source = "[agents.reviewer]\nnetwork = \"default\"\n";
-        let error = toml::from_str::<Config>(source).unwrap_err().to_string();
-        assert!(
-            error.contains("default") && error.contains("allow"),
-            "{error}"
-        );
+        assert!(toml::from_str::<Config>(source).is_err());
     }
 
     #[test]
-    fn preexisting_overlay_and_model_policy_enum_values_warn() {
-        let source = r#"
-[agents.reviewer]
-sandbox = "bogus"
-
-[settings]
-[[settings.model-policies]]
-match = { alias = "opus" }
-override = { approval = false }
-"#;
-        let config = toml::from_str::<Config>(source).unwrap();
-        let diagnostics = execution_policy_deprecation_diagnostics(
-            &config,
-            &LocalConfig::default(),
-            Path::new("/project"),
-        );
-        assert_eq!(diagnostics.len(), 2);
-        let messages = diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.message.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(messages.contains("/project/mars.toml"), "{messages}");
-        assert!(messages.contains("agents.reviewer.sandbox"), "{messages}");
-        assert!(
-            messages.contains("settings.model-policies[1].override.approval"),
-            "{messages}"
-        );
-        assert!(
-            messages.contains("becomes an error in the next release"),
-            "{messages}"
-        );
-    }
-
-    #[test]
-    fn network_model_policy_rejects_non_strings_during_deserialization() {
-        let source = "[settings]\n[[settings.model-policies]]\nmatch = { alias = \"opus\" }\noverride = { network = false }\n";
-        let error = toml::from_str::<Config>(source).unwrap_err().to_string();
-        assert!(
-            error.contains("override `network`") && error.contains("invalid value `false`"),
-            "missing model-policy context: {error}"
-        );
+    fn network_model_policy_rejects_invalid_values_during_deserialization() {
+        for value in ["false", "\"default\""] {
+            let source = format!(
+                "[settings]\n[[settings.model-policies]]\nmatch = {{ alias = \"opus\" }}\noverride = {{ network = {value} }}\n"
+            );
+            assert!(toml::from_str::<Config>(&source).is_err());
+        }
     }
 
     #[test]

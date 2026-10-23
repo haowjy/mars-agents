@@ -13,7 +13,7 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
 use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
-pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkMode, SandboxMode};
+pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkMode};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 
 // ---------------------------------------------------------------------------
@@ -129,6 +129,36 @@ impl ApprovalMode {
             Self::Auto => "auto",
             Self::Confirm => "confirm",
             Self::Never => "never",
+        }
+    }
+}
+
+/// Sandbox mode field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxMode {
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl SandboxMode {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "default" => Some(Self::Default),
+            "read-only" => Some(Self::ReadOnly),
+            "workspace-write" => Some(Self::WorkspaceWrite),
+            "danger-full-access" => Some(Self::DangerFullAccess),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+            Self::DangerFullAccess => "danger-full-access",
         }
     }
 }
@@ -284,13 +314,6 @@ pub enum AgentDiagnostic {
         value: String,
         allowed: &'static str,
     },
-    /// A pre-existing enum value accepted for one compatibility release.
-    DeprecatedInvalidEnumValue {
-        field: String,
-        value: String,
-        allowed: &'static str,
-        ignored: bool,
-    },
     /// Deprecated `models:` field was found (use `model-overrides:` instead).
     LegacyModelsField,
     /// Deprecated list-form `tools: [read, grep]`: it grants the listed tools and restricts
@@ -312,7 +335,6 @@ impl AgentDiagnostic {
             AgentDiagnostic::InvalidFieldValue { field, .. } => {
                 !field.starts_with("harness-overrides")
             }
-            AgentDiagnostic::DeprecatedInvalidEnumValue { .. } => false,
             AgentDiagnostic::UnknownHarness { .. } => true,
             AgentDiagnostic::RemovedField { .. } => true,
             AgentDiagnostic::LegacyModelsField
@@ -331,16 +353,6 @@ impl AgentDiagnostic {
             } => {
                 format!("agent field `{field}` has invalid value `{value}`; allowed: {allowed}")
             }
-            AgentDiagnostic::DeprecatedInvalidEnumValue {
-                field,
-                value,
-                allowed,
-                ignored,
-            } => format!(
-                "agent field `{field}` has {} value `{value}`; it is {} for compatibility and becomes an error in the next release; allowed: {allowed}",
-                if *ignored { "a non-string" } else { "an invalid" },
-                if *ignored { "ignored" } else { "accepted" },
-            ),
             AgentDiagnostic::LegacyModelsField => {
                 "agent uses deprecated `models:` field; rename to `model-overrides:`".to_string()
             }
@@ -603,16 +615,12 @@ fn push_model_policy_parse_error(
         crate::config::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.override"), found, "mapping");
         }
-        crate::config::ModelPolicyRuleParseError::OverrideEnumInvalid {
-            key,
-            found,
-            allowed,
-        } => {
+        crate::config::ModelPolicyRuleParseError::NetworkOverrideInvalid { found } => {
             push_model_policy_invalid(
                 diags,
-                format!("{rule_field}.override.{key}"),
+                format!("{rule_field}.override.network"),
                 found,
-                allowed,
+                NetworkMode::ALLOWED,
             );
         }
         crate::config::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
@@ -636,17 +644,7 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
     for (index, entry) in seq.iter().enumerate() {
         let position = index + 1;
         match crate::config::parse_model_policy_rule_value(entry) {
-            Ok(rule) => {
-                for deprecated in crate::config::deprecated_model_policy_enum_values(&rule) {
-                    diags.push(AgentDiagnostic::DeprecatedInvalidEnumValue {
-                        field: format!("model-policies[{position}].override.{}", deprecated.key),
-                        value: deprecated.value,
-                        allowed: deprecated.allowed,
-                        ignored: deprecated.ignored,
-                    });
-                }
-                out.push(rule);
-            }
+            Ok(rule) => out.push(rule),
             Err(error) => push_model_policy_parse_error(diags, position, error),
         }
     }
@@ -676,37 +674,6 @@ fn parse_fanout(val: &Value) -> Vec<FanoutEntry> {
     }
 }
 
-fn enum_string_field<'a>(
-    fm: &'a Frontmatter,
-    field: &str,
-    allowed: &'static str,
-    strict: bool,
-    diags: &mut Vec<AgentDiagnostic>,
-) -> Option<&'a str> {
-    let value = fm.get(field)?;
-    match value.as_str() {
-        Some(value) => Some(value),
-        None => {
-            let value = serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"));
-            if strict {
-                diags.push(AgentDiagnostic::InvalidFieldValue {
-                    field: field.to_string(),
-                    value,
-                    allowed,
-                });
-            } else {
-                diags.push(AgentDiagnostic::DeprecatedInvalidEnumValue {
-                    field: field.to_string(),
-                    value,
-                    allowed,
-                    ignored: true,
-                });
-            }
-            None
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -724,14 +691,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         .map(str::to_owned);
 
     // harness:
-    let harness = enum_string_field(
-        fm,
-        "harness",
-        "claude, codex, opencode, cursor, pi",
-        false,
-        diags,
-    )
-    .and_then(|s| {
+    let harness = fm.get("harness").and_then(Value::as_str).and_then(|s| {
         if let Some(h) = HarnessKind::from_str(s) {
             Some(h)
         } else {
@@ -746,8 +706,10 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     let model = fm.get("model").and_then(Value::as_str).map(str::to_owned);
 
     // mode:
-    let mode =
-        enum_string_field(fm, "mode", "primary, subagent", false, diags).and_then(|s| match s {
+    let mode = fm
+        .get("mode")
+        .and_then(Value::as_str)
+        .and_then(|s| match s {
             "primary" => Some(AgentMode::Primary),
             "subagent" => Some(AgentMode::Subagent),
             other => {
@@ -775,14 +737,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     );
 
     // approval:
-    let approval = enum_string_field(
-        fm,
-        "approval",
-        "default, auto, confirm, never",
-        false,
-        diags,
-    )
-    .and_then(|s| {
+    let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
         if let Some(a) = ApprovalMode::from_str(s) {
             if s == "yolo" {
                 diags.push(AgentDiagnostic::DeprecatedApprovalYolo);
@@ -799,44 +754,44 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
     });
 
     // sandbox:
-    let sandbox =
-        enum_string_field(fm, "sandbox", SandboxMode::ALLOWED, false, diags).and_then(|s| {
-            if let Some(sb) = SandboxMode::parse(s) {
-                Some(sb)
-            } else {
-                diags.push(AgentDiagnostic::InvalidFieldValue {
-                    field: "sandbox".to_string(),
-                    value: s.to_string(),
-                    allowed: SandboxMode::ALLOWED,
-                });
-                None
-            }
-        });
+    let sandbox = fm.get("sandbox").and_then(Value::as_str).and_then(|s| {
+        if let Some(sb) = SandboxMode::from_str(s) {
+            Some(sb)
+        } else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "sandbox".to_string(),
+                value: s.to_string(),
+                allowed: "default, read-only, workspace-write, danger-full-access",
+            });
+            None
+        }
+    });
 
     // network:
-    let network =
-        enum_string_field(fm, "network", NetworkMode::ALLOWED, true, diags).and_then(|s| {
-            if let Some(network) = NetworkMode::parse(s) {
-                Some(network)
-            } else {
+    let network = fm.get("network").and_then(|value| {
+        let Some(value) = value.as_str() else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "network".to_string(),
+                value: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
+                allowed: NetworkMode::ALLOWED,
+            });
+            return None;
+        };
+        match NetworkMode::parse(value) {
+            Some(network) => Some(network),
+            None => {
                 diags.push(AgentDiagnostic::InvalidFieldValue {
                     field: "network".to_string(),
-                    value: s.to_string(),
+                    value: value.to_string(),
                     allowed: NetworkMode::ALLOWED,
                 });
                 None
             }
-        });
+        }
+    });
 
     // effort:
-    let effort = enum_string_field(
-        fm,
-        "effort",
-        "low, medium, high, xhigh, max, none",
-        false,
-        diags,
-    )
-    .and_then(|s| {
+    let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
         if s == "none" {
             // "none" is a valid sentinel meaning "no effort level" (same as omitting the field)
             return None;
@@ -847,7 +802,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             diags.push(AgentDiagnostic::InvalidFieldValue {
                 field: "effort".to_string(),
                 value: s.to_string(),
-                allowed: "low, medium, high, xhigh, max, none",
+                allowed: "low, medium, high, xhigh, none",
             });
             None
         }

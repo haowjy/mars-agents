@@ -81,13 +81,11 @@ pub fn build_launch_bundle(
             }));
         }
 
-        warnings.extend(parse_diags.iter().map(|diag| {
-            format!(
-                "{}: agent `{agent}`: {}",
-                agent_path.display(),
-                diag.message()
-            )
-        }));
+        warnings.extend(
+            parse_diags
+                .iter()
+                .map(|diag| format!("agent `{agent}`: {}", diag.message())),
+        );
         agent_body = Some(frontmatter.body().to_string());
         agent_source_path = Some(agent_path);
         profile = parsed_profile;
@@ -97,9 +95,7 @@ pub fn build_launch_bundle(
         agent_source_path = None;
     }
 
-    let (effective_project_config, config_warnings) =
-        load_effective_project_config_or_default(&ctx.project_root)?;
-    warnings.extend(config_warnings);
+    let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
     if let Some(overlay) = request
         .agent
         .as_deref()
@@ -219,21 +215,11 @@ fn empty_agent_profile() -> AgentProfile {
 
 fn load_effective_project_config_or_default(
     project_root: &std::path::Path,
-) -> Result<(EffectiveProjectConfig, Vec<String>), MarsError> {
-    match crate::config::load_project_config_layers(project_root) {
-        Ok(layers) => {
-            let warnings = crate::config::execution_policy_deprecation_diagnostics(
-                &layers.config,
-                &layers.local,
-                project_root,
-            )
-            .into_iter()
-            .map(|diagnostic| diagnostic.message)
-            .collect();
-            Ok((layers.effective, warnings))
-        }
+) -> Result<EffectiveProjectConfig, MarsError> {
+    match crate::config::load_effective_project_config(project_root) {
+        Ok(config) => Ok(config),
         Err(MarsError::Config(ConfigError::NotFound { .. })) => {
-            Ok((EffectiveProjectConfig::default(), Vec::new()))
+            Ok(EffectiveProjectConfig::default())
         }
         Err(err) => Err(err),
     }

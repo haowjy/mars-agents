@@ -159,9 +159,9 @@ fn record_agent_invocation_lossiness(
 ///
 /// Per agent-compilation-mapping.md V0 §10:
 /// - Preserved: name, description, model, skills, tools, disallowed-tools, body
-/// - Dropped (launch-time): approval, sandbox, network, mode, harness, autocompact, autocompact_pct,
-///   model-policies, harness-overrides,
-///   fanout, legacy-models
+/// - Meridian-only (launch-time): approval, sandbox, network, mode, autocompact,
+///   autocompact_pct, model-policies, fanout
+/// - Dropped: harness, harness-overrides, legacy-models
 ///
 /// What model field a lowered native agent should carry. The native compiler is the
 /// sole caller; this replaces a bare `Option<&str>` so "emit no model" is expressible

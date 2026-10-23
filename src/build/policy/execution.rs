@@ -26,15 +26,15 @@ pub(super) fn resolve_execution_policy(
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
     native_config: Option<serde_json::Map<String, serde_json::Value>>,
-) -> Result<ExecutionResolution, crate::error::MarsError> {
-    let effort = resolve_effort(input, alias, overlay, matched_policy)?;
-    let approval = resolve_approval(input, overlay, matched_policy)?;
-    let sandbox = resolve_sandbox(input, overlay, matched_policy)?;
-    let network = resolve_network(input, overlay, matched_policy)?;
-    let autocompact = resolve_autocompact(input, alias, overlay, matched_policy)?;
-    let autocompact_pct = resolve_autocompact_pct(input, alias, overlay, matched_policy)?;
+) -> ExecutionResolution {
+    let effort = resolve_effort(input, alias, overlay, matched_policy);
+    let approval = resolve_approval(input, overlay, matched_policy);
+    let sandbox = resolve_sandbox(input, overlay, matched_policy);
+    let network = resolve_network(input, overlay, matched_policy);
+    let autocompact = resolve_autocompact(input, alias, overlay, matched_policy);
+    let autocompact_pct = resolve_autocompact_pct(input, alias, overlay, matched_policy);
 
-    Ok(ExecutionResolution {
+    ExecutionResolution {
         effort,
         approval,
         sandbox,
@@ -42,7 +42,7 @@ pub(super) fn resolve_execution_policy(
         autocompact,
         autocompact_pct,
         native_config,
-    })
+    }
 }
 
 fn resolved_field<T>(value: Option<T>, source: PolicySource) -> ResolvedField<Option<T>> {
@@ -71,25 +71,22 @@ fn resolve_policy_field<T>(
         Option<&MatchedModelPolicy>,
         &str,
         PolicySource,
-    ) -> Result<
-        Option<ResolvedField<Option<T>>>,
-        crate::error::MarsError,
-    >,
+    ) -> Option<ResolvedField<Option<T>>>,
     layers: PolicyFieldLayers<T>,
-) -> Result<ResolvedField<Option<T>>, crate::error::MarsError> {
-    Ok([
+) -> ResolvedField<Option<T>> {
+    [
         field_layer(Cli, layers.cli),
         field_layer(Overlay, layers.overlay),
-        policy_override_by_source(matched_policy, key, OverlayModelPolicy)?,
+        policy_override_by_source(matched_policy, key, OverlayModelPolicy),
         field_layer(Profile, layers.profile),
-        policy_override_by_source(matched_policy, key, ProfileModelPolicy)?,
-        policy_override_by_source(matched_policy, key, SettingsModelPolicy)?,
+        policy_override_by_source(matched_policy, key, ProfileModelPolicy),
+        policy_override_by_source(matched_policy, key, SettingsModelPolicy),
         field_layer(Alias, layers.alias),
     ]
     .into_iter()
     .flatten()
     .next()
-    .unwrap_or_else(|| resolved_field(None, Unset)))
+    .unwrap_or_else(|| resolved_field(None, Unset))
 }
 
 fn resolved_policy_field<T>(decision: ResolvedField<T>) -> ResolvedField<Option<T>> {
@@ -104,30 +101,30 @@ fn policy_string_override_by_source(
     matched_policy: Option<&MatchedModelPolicy>,
     key: &str,
     source: PolicySource,
-) -> Result<Option<ResolvedField<Option<String>>>, crate::error::MarsError> {
-    Ok(matched_policy_string_override(matched_policy, key)?
+) -> Option<ResolvedField<Option<String>>> {
+    matched_policy_string_override(matched_policy, key)
         .filter(|decision| decision.source == source)
-        .map(resolved_policy_field))
+        .map(resolved_policy_field)
 }
 
 fn policy_u32_override_by_source(
     matched_policy: Option<&MatchedModelPolicy>,
     key: &str,
     source: PolicySource,
-) -> Result<Option<ResolvedField<Option<u32>>>, crate::error::MarsError> {
-    Ok(matched_policy_u32_override(matched_policy, key)
+) -> Option<ResolvedField<Option<u32>>> {
+    matched_policy_u32_override(matched_policy, key)
         .filter(|decision| decision.source == source)
-        .map(resolved_policy_field))
+        .map(resolved_policy_field)
 }
 
 fn policy_u8_override_by_source(
     matched_policy: Option<&MatchedModelPolicy>,
     key: &str,
     source: PolicySource,
-) -> Result<Option<ResolvedField<Option<u8>>>, crate::error::MarsError> {
-    Ok(matched_policy_u8_override(matched_policy, key)
+) -> Option<ResolvedField<Option<u8>>> {
+    matched_policy_u8_override(matched_policy, key)
         .filter(|decision| decision.source == source)
-        .map(resolved_policy_field))
+        .map(resolved_policy_field)
 }
 
 fn resolve_effort(
@@ -135,7 +132,7 @@ fn resolve_effort(
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-) -> Result<ResolvedField<Option<String>>, crate::error::MarsError> {
+) -> ResolvedField<Option<String>> {
     resolve_policy_field(
         "effort",
         matched_policy,
@@ -160,7 +157,7 @@ fn resolve_approval(
     input: &PolicyInput<'_>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-) -> Result<ResolvedField<Option<String>>, crate::error::MarsError> {
+) -> ResolvedField<Option<String>> {
     resolve_policy_field(
         "approval",
         matched_policy,
@@ -185,7 +182,7 @@ fn resolve_sandbox(
     input: &PolicyInput<'_>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-) -> Result<ResolvedField<Option<String>>, crate::error::MarsError> {
+) -> ResolvedField<Option<String>> {
     resolve_policy_field(
         "sandbox",
         matched_policy,
@@ -210,7 +207,7 @@ fn resolve_network(
     input: &PolicyInput<'_>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-) -> Result<ResolvedField<Option<String>>, crate::error::MarsError> {
+) -> ResolvedField<Option<String>> {
     resolve_policy_field(
         "network",
         matched_policy,
@@ -224,7 +221,7 @@ fn resolve_network(
                 .profile
                 .network
                 .as_ref()
-                .map(network_mode_to_str)
+                .map(NetworkMode::as_str)
                 .map(str::to_string),
             alias: None,
         },
@@ -236,7 +233,7 @@ fn resolve_autocompact(
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-) -> Result<ResolvedField<Option<u32>>, crate::error::MarsError> {
+) -> ResolvedField<Option<u32>> {
     resolve_policy_field(
         "autocompact",
         matched_policy,
@@ -257,7 +254,7 @@ fn resolve_autocompact_pct(
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-) -> Result<ResolvedField<Option<u8>>, crate::error::MarsError> {
+) -> ResolvedField<Option<u8>> {
     resolve_policy_field(
         "autocompact_pct",
         matched_policy,
@@ -298,12 +295,5 @@ fn sandbox_mode_to_str(mode: &SandboxMode) -> &'static str {
         SandboxMode::ReadOnly => "read-only",
         SandboxMode::WorkspaceWrite => "workspace-write",
         SandboxMode::DangerFullAccess => "danger-full-access",
-    }
-}
-
-fn network_mode_to_str(mode: &NetworkMode) -> &'static str {
-    match mode {
-        NetworkMode::Allow => "allow",
-        NetworkMode::Deny => "deny",
     }
 }

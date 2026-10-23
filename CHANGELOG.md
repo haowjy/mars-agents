@@ -9,6 +9,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   overlay, model-policy, `--network`, launch-bundle, provenance, and unenforceable
   `deny` diagnostics. Built-in web tools remain governed by `tools: web`.
 
+### Changed
+- Invalid values for pre-existing execution-policy enums now warn and retain
+  their previous behavior for one compatibility release; they become errors in
+  the next release. Invalid `network` values remain errors because the field is
+  new in this release.
+
 ## [0.17.0] - 2026-10-22
 
 ### Added

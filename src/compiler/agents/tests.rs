@@ -145,20 +145,19 @@ fn invalid_mode_produces_diagnostic() {
 }
 
 #[test]
-fn enum_fields_reject_present_non_string_values() {
-    for field in [
-        "harness", "mode", "approval", "sandbox", "network", "effort",
-    ] {
+fn preexisting_enum_fields_warn_for_present_non_string_values() {
+    for field in ["harness", "mode", "approval", "sandbox", "effort"] {
         let content = format!("---\n{field}: false\n---\n");
         let (_, diags) = parse(&content);
         assert!(
             matches!(
                 diags.as_slice(),
-                [AgentDiagnostic::InvalidFieldValue {
+                [AgentDiagnostic::DeprecatedInvalidEnumValue {
                     field: actual_field,
                     value,
+                    ignored: true,
                     ..
-                }] if actual_field == field && value == "false"
+                }] if actual_field == field && value == "false" && !diags[0].is_error()
             ),
             "unexpected diagnostic for {field}: {diags:?}"
         );
@@ -166,25 +165,48 @@ fn enum_fields_reject_present_non_string_values() {
 }
 
 #[test]
-fn model_policy_execution_enums_reject_present_non_string_values() {
-    for field in ["harness", "effort", "approval", "sandbox", "network"] {
+fn network_rejects_present_non_string_value() {
+    let (_, diags) = parse("---\nnetwork: false\n---\n");
+    assert!(matches!(
+        diags.as_slice(),
+        [AgentDiagnostic::InvalidFieldValue { field, value, .. }]
+            if field == "network" && value == "false" && diags[0].is_error()
+    ));
+}
+
+#[test]
+fn preexisting_model_policy_enums_warn_for_present_non_string_values() {
+    for field in ["harness", "effort", "approval", "sandbox"] {
         let content = format!(
             "---\nmodel-policies:\n  - match:\n      alias: opus\n    override:\n      {field}: false\n---\n"
         );
         let (profile, diags) = parse(&content);
-        assert!(profile.model_policies.is_empty());
+        assert_eq!(profile.model_policies.len(), 1);
         assert!(
             matches!(
                 diags.as_slice(),
-                [AgentDiagnostic::InvalidFieldValue {
+                [AgentDiagnostic::DeprecatedInvalidEnumValue {
                     field: actual_field,
                     value,
+                    ignored: true,
                     ..
-                }] if actual_field == &format!("model-policies[1].override.{field}") && value == "false"
+                }] if actual_field == &format!("model-policies[1].override.{field}") && value == "false" && !diags[0].is_error()
             ),
             "unexpected diagnostic for {field}: {diags:?}"
         );
     }
+}
+
+#[test]
+fn network_model_policy_rejects_present_non_string_value() {
+    let content = "---\nmodel-policies:\n  - match:\n      alias: opus\n    override:\n      network: false\n---\n";
+    let (profile, diags) = parse(content);
+    assert!(profile.model_policies.is_empty());
+    assert!(matches!(
+        diags.as_slice(),
+        [AgentDiagnostic::InvalidFieldValue { field, value, .. }]
+            if field == "model-policies[1].override.network" && value == "false"
+    ));
 }
 
 #[test]

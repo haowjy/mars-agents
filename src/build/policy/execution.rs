@@ -193,8 +193,8 @@ fn resolve_sandbox(
         PolicyFieldLayers {
             cli: input.sandbox_override.map(str::to_string),
             overlay: overlay
-                .and_then(|entry| entry.sandbox.as_ref())
-                .map(|value| value.as_str().to_string()),
+                .and_then(|entry| entry.sandbox.as_deref())
+                .map(str::to_string),
             profile: input
                 .profile
                 .sandbox

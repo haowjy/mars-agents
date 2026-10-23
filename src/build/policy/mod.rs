@@ -474,6 +474,16 @@ pub fn resolve_policy(
         matched_policy.as_ref(),
         native_config,
     )?;
+    if let Some(network) = execution_resolution.network.value.as_deref()
+        && crate::config::NetworkMode::parse(network).is_none()
+    {
+        return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!(
+                "network execution policy has invalid value `{network}`; allowed: {}",
+                crate::config::NetworkMode::ALLOWED
+            ),
+        }));
+    }
 
     provenance.insert(
         "effort_source".to_string(),
@@ -645,14 +655,17 @@ pub(super) fn policy_override_string(
     else {
         return Ok(None);
     };
-    let value = value.as_str().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!(
-                "model policy override `{key}` must be a string; found {}",
-                serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
-            ),
-        })
-    })?;
+    let Some(value) = value.as_str() else {
+        if key == "network" {
+            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                message: format!(
+                    "model policy override `{key}` must be a string; found {}",
+                    serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
+                ),
+            }));
+        }
+        return Ok(None);
+    };
     let trimmed = value.trim();
     Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
 }

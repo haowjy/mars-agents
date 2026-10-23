@@ -243,11 +243,7 @@ fn parses_sandbox_all_values() {
 
 #[test]
 fn parses_network_all_values() {
-    for (value, expected) in [
-        ("default", NetworkMode::Default),
-        ("allow", NetworkMode::Allow),
-        ("deny", NetworkMode::Deny),
-    ] {
+    for (value, expected) in [("allow", NetworkMode::Allow), ("deny", NetworkMode::Deny)] {
         let content = format!("---\nnetwork: {value}\n---\n");
         let (profile, diags) = parse(&content);
         assert!(
@@ -259,16 +255,16 @@ fn parses_network_all_values() {
 }
 
 #[test]
-fn invalid_network_lists_allowed_values() {
-    let (profile, diags) = parse("---\nnetwork: sometimes\n---\n");
+fn network_default_is_invalid_and_lists_allowed_values() {
+    let (profile, diags) = parse("---\nnetwork: default\n---\n");
     assert_eq!(profile.network, None);
     assert!(matches!(
         diags.as_slice(),
         [AgentDiagnostic::InvalidFieldValue {
             field,
             value,
-            allowed: "default, allow, deny",
-        }] if field == "network" && value == "sometimes"
+            allowed: "allow, deny",
+        }] if field == "network" && value == "default"
     ));
     assert!(diags[0].is_error());
 }

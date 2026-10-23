@@ -166,7 +166,6 @@ impl SandboxMode {
 /// Shell network access mode field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkMode {
-    Default,
     Allow,
     Deny,
 }
@@ -174,7 +173,6 @@ pub enum NetworkMode {
 impl NetworkMode {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "default" => Some(Self::Default),
             "allow" => Some(Self::Allow),
             "deny" => Some(Self::Deny),
             _ => None,
@@ -183,7 +181,6 @@ impl NetworkMode {
 
     pub fn as_str(&self) -> &str {
         match self {
-            Self::Default => "default",
             Self::Allow => "allow",
             Self::Deny => "deny",
         }
@@ -794,7 +791,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             diags.push(AgentDiagnostic::InvalidFieldValue {
                 field: "network".to_string(),
                 value: s.to_string(),
-                allowed: "default, allow, deny",
+                allowed: "allow, deny",
             });
             None
         }

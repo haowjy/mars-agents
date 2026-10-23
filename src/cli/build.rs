@@ -88,7 +88,6 @@ impl SandboxArg {
 
 #[derive(Debug, Clone, ValueEnum)]
 enum NetworkArg {
-    Default,
     Allow,
     Deny,
 }
@@ -96,7 +95,6 @@ enum NetworkArg {
 impl NetworkArg {
     fn as_str(&self) -> &'static str {
         match self {
-            Self::Default => "default",
             Self::Allow => "allow",
             Self::Deny => "deny",
         }

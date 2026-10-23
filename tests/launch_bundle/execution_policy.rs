@@ -251,3 +251,32 @@ Review code changes."#;
             })
     );
 }
+
+#[test]
+fn build_launch_bundle_rejects_network_default_from_overlay() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+network: deny
+---
+Review code changes."#;
+    let extra_toml = r#"[agents.reviewer]
+network = "default""#;
+
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+
+    cmd.assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "network execution policy has invalid value `default`",
+        ))
+        .stderr(predicates::str::contains("allowed: allow, deny"));
+}

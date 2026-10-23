@@ -226,8 +226,8 @@ sandbox: workspace-write
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `default`, `allow`, `deny` |
-| Default | none (unset; launcher decides) |
+| Allowed values | `allow`, `deny` |
+| Default | none (unset; Meridian resolves to `allow`) |
 
 Controls whether the agent's shell commands may open connections, including the
 public internet, host services, and local sockets. It does not control built-in
@@ -235,15 +235,14 @@ web tools; grant or deny those with `tools: web`.
 
 | Value | Behavior |
 |---|---|
-| `default` | Explicitly requests launcher-default shell network behavior |
 | `allow` | Allow shell commands to open connections |
 | `deny` | Deny shell commands from opening connections |
 
-Mars preserves the distinction between an omitted field and explicit `default`
-in the launch bundle (`null` versus `"default"`); it does not choose a network
-default. Meridian currently resolves both to `allow`. `network: deny` with
-resolved `sandbox: danger-full-access` produces a warning because no harness can
-enforce network isolation without a sandbox.
+Mars carries an omitted field as `null` in the launch bundle; it does not choose
+a network default. Meridian resolves unset to `allow`. There is no explicit
+`default` value because a higher-precedence value must not reopen a lower-layer
+`deny`. `network: deny` with resolved `sandbox: danger-full-access` produces a
+warning because no harness can enforce network isolation without a sandbox.
 
 At launch, the field resolves in this order: CLI `--network`, agent overlay,
 matching overlay model policy, profile, matching profile model policy, then

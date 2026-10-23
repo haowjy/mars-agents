@@ -300,7 +300,6 @@ fn sandbox_mode_to_str(mode: &SandboxMode) -> &'static str {
 
 fn network_mode_to_str(mode: &NetworkMode) -> &'static str {
     match mode {
-        NetworkMode::Default => "default",
         NetworkMode::Allow => "allow",
         NetworkMode::Deny => "deny",
     }

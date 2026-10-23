@@ -474,6 +474,17 @@ pub fn resolve_policy(
         matched_policy.as_ref(),
         native_config,
     );
+    if let Some(network) = execution_resolution.network.value.as_deref()
+        && crate::compiler::agents::NetworkMode::from_str(network).is_none()
+    {
+        return Err(MarsError::Selection {
+            code: "invalid_execution_policy",
+            message: format!(
+                "network execution policy has invalid value `{network}`; allowed: allow, deny"
+            ),
+            report: Box::new(report),
+        });
+    }
 
     provenance.insert(
         "effort_source".to_string(),

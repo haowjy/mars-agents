@@ -262,7 +262,7 @@ disallowed = ["agent"]
 | `effort` | string | Effort level: `low`, `medium`, `high`, `xhigh` |
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `yolo` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
-| `network` | string | Shell network access: `default`, `allow`, `deny`; does not affect built-in web tools |
+| `network` | string | Shell network access: `allow`, `deny`; unset is resolved to `allow` by Meridian and does not affect built-in web tools |
 | `autocompact` | integer | Token threshold for context compaction (0–4294967295) |
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |

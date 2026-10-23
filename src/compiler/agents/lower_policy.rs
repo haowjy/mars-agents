@@ -16,7 +16,9 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Launch-time fields (approval, sandbox, network, mode where not emitted, autocompact, …) are
 /// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
 /// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
-/// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly.
+/// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly. One exception:
+/// Codex lowers `network` as [`Lossiness::Dropped`], because its native artifact carries
+/// `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};

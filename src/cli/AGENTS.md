@@ -103,6 +103,6 @@ let ctx = find_agents_root(cli.root.as_deref())?;
 
 ## See Also
 
-- `.context/` — none (too thin for deep context)
+- `.context/TODO` — required follow-ups
 - `src/config/AGENTS.md` — config schema the CLI manipulates
 - `src/sync/AGENTS.md` — what `mars sync` actually does

@@ -24,6 +24,9 @@ network/tool permission sets are the deliberate exception: they compose through
 project scalars still fall back to the profile as they did in 0.17. Unknown project settings and
 agent-overlay keys remain tolerated for forward compatibility, but network-looking unknowns are
 retained long enough to warn rather than silently failing open. Local settings stay strict.
+A project permission set therefore survives a matching local block that omits it, while project
+scalars do not: a local agent block that adds only `network-deny` must repeat any project
+`model`, `harness`, `description`, or model policies it intends to retain.
 
 ### `config::targets` — link normalization
 

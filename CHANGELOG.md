@@ -26,16 +26,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - **Upgrade:** if a plain `[agents.<name>.tools]` or `[skills.<name>.tools]` `allowed` /
   `disallowed` list was intended to narrow the profile, change it to `{ replace = [...] }`.
-  Non-empty plain lists now add; authored empty lists were already no-ops and need no change.
-  Mars warns for one release, naming the source file, only when the resolved result differs from
-  0.17. Package profiles cannot use replacement tables. Existing `ask` rules and a
-  `'*': deny` allowlist marker survive either overlay form. The launch bundle, native
-  agent files, and staged skills all use the same merge.
+  These are the only existing permission sets whose behavior changes; the network sets below
+  are new. Non-empty plain tool lists now add, while an empty plain list remains a no-op. A
+  replacement drops every lower rule for that action, including `'*': allow`; existing `ask`
+  rules and the `'*': deny` allowlist marker survive. Mars warns for one release, naming the
+  source file, only when the resolved result differs from 0.17. A project tool list also now
+  applies when a matching local block omits that list; add a local `{ replace = [...] }` list or
+  remove the project list to retain the old result. Package profiles cannot use replacement
+  tables. The launch bundle, native agent files, and staged skills all use the same merge.
 - **Upgrade:** matching `mars.toml` / `mars.local.toml` agent and skill blocks still use 0.17's
-  whole-entry replacement for scalars, options, model policies, and unknown keys, but their four
-  permission sets now compose: `network-allow`, `network-deny`, `tools.allowed`, and
-  `tools.disallowed`. Use `{ replace = [...] }` where a local set should discard the project set
-  and lower profile entries. `[models.*]` retains whole-entry replacement.
+  whole-entry replacement for scalars, options, model policies, and unknown keys. The two new
+  network sets (`network-allow`, `network-deny`) and the two changed tool sets (`tools.allowed`,
+  `tools.disallowed`) instead compose. Use `{ replace = [...] }` where a local set should discard
+  the project set and lower profile entries. Adding only `network-deny` to a local agent block
+  still drops the project block's `model`, `harness`, `description`, and model policies; repeat
+  the needed project scalars and model policies in the local block. `[models.*]` retains
+  whole-entry replacement.
 
 ## [0.17.0] - 2026-10-22
 

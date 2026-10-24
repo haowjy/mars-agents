@@ -30,11 +30,11 @@ leaf grammar module): a tool name in `[agents.x.tools]` / `[skills.x.tools]` par
 profile grammar as the config loads, and a malformed one fails the load. It keeps the author's
 spelling, so `save` does not rewrite it. This is the one place `config` reaches into `compiler`.
 Plain `tools.allowed` / `tools.disallowed` lists add to profile rules; a
-`{ replace = [...] }` table clears that action's lower rules first. Existing asks and the
-`'*': deny` allowlist marker survive. Profile list-form `tools: [...]` is deprecated and only
-grants its named tools; package profiles cannot replace deny sets. The optional fields preserve
-absent versus authored-empty lists for the one-release 0.17 comparison; empty lists were and
-remain no-ops, so they do not warn.
+`{ replace = [...] }` table clears that action's lower rules, including `'*': allow`. Plain lists
+preserve wildcard rules; existing asks and the `'*': deny` allowlist marker survive both forms.
+Profile list-form `tools: [...]` is deprecated and only grants its named tools; package profiles
+cannot replace deny sets. The optional fields preserve absent versus authored-empty lists for the
+one-release 0.17 comparison; empty plain lists remain no-ops.
 
 ## Layering (`layering.rs`)
 
@@ -43,6 +43,9 @@ remain no-ops, so they do not warn.
   lists retain replacement semantics.
 - Model aliases are **replace-by-key**. Agent and skill overlays also replace the whole keyed
   entry, except their four network/tool permission sets compose across project and local entries.
+- Composition means a project tool list survives a matching local block that omits the list. A
+  local block that adds only a network set still replaces project scalars; repeat any project
+  scalar the local entry must retain.
 - Unknown project settings and agent-overlay keys remain forward-compatible. Network-looking
   unknowns are retained and warned because silently dropping a deny would fail open.
   `mars.local.toml [settings]` remains strict and rejects unknown keys.

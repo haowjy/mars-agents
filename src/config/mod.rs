@@ -245,26 +245,28 @@ impl Eq for AgentOverlayTools {}
 pub(crate) enum ToolOverlaySource {
     Project,
     Local,
+    ProjectSurvivesLocal { local_omits_set: bool },
 }
 
 impl ToolOverlaySource {
     pub(crate) fn file_name(self) -> &'static str {
         match self {
-            Self::Project => "mars.toml",
+            Self::Project | Self::ProjectSurvivesLocal { .. } => "mars.toml",
             Self::Local => "mars.local.toml",
         }
     }
 }
 
-/// The 0.17 tool overlay and the authored plain lists that can change its result.
+/// The raw overlay entry that won under 0.17's whole-entry project/local layering, plus the
+/// authored plain lists that can change its result.
 ///
 /// This metadata exists only on project/local-composed overlays. Keeping it beside the
 /// effective tool sets lets every consumer compare the same old and new policies without
 /// reloading configuration or reimplementing project/local precedence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ToolOverlayMigration {
-    pub(crate) previous_allowed: Option<PermissionSet<OverlayToolName>>,
-    pub(crate) previous_disallowed: Option<PermissionSet<OverlayToolName>>,
+    pub(crate) legacy_allowed: Option<PermissionSet<OverlayToolName>>,
+    pub(crate) legacy_disallowed: Option<PermissionSet<OverlayToolName>>,
     pub(crate) allowed_source: Option<ToolOverlaySource>,
     pub(crate) disallowed_source: Option<ToolOverlaySource>,
 }

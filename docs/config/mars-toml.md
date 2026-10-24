@@ -309,7 +309,7 @@ disallowed = ["agent"]
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
 | `user-invocable` | bool | Whether the user can `/name` this agent |
-| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile; `{ replace = [...] }` clears that action's lower rules first. During the compatibility release, Mars compares the complete resolved policy with 0.17 and warns only when it differs; authored empty lists remain no-ops and do not warn. Profile `ask` rules and a `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
+| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile and preserve wildcard rules; `{ replace = [...] }` clears that action's lower rules, including `'*': allow`. During the compatibility release, Mars compares the complete resolved policy with 0.17 and warns only when it differs; an empty plain list remains a no-op. Profile `ask` rules and the `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
 | `model-policies` | table[] | Model routing policy rules |
 
 The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
@@ -347,7 +347,7 @@ disallowed = ["agent"]
 | `description` | string | Override the skill's description |
 | `model-invocable` | bool | Override model invocability |
 | `user-invocable` | bool | Override user invocability |
-| `tools` | table | Tool permission sets, layered like an agent's (above). Plain arrays add; `{ replace = [...] }` clears lower entries for that action first. The skill's `ask` rules and `'*': deny` allowlist marker stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Names are checked at load like an agent's |
+| `tools` | table | Tool permission sets, layered like an agent's (above). Plain arrays add and preserve wildcard rules; `{ replace = [...] }` clears lower entries for that action, including `'*': allow`. The skill's `ask` rules and `'*': deny` allowlist marker stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Names are checked at load like an agent's |
 
 ## Curated model display
 
@@ -535,6 +535,11 @@ For local overlay semantics:
   model policies, and unknown keys.
 - `network-allow`, `network-deny`, `tools.allowed`, and `tools.disallowed` are the exception:
   they compose across the matching project/local blocks with the permission-set add/replace rule.
+- A project tool list therefore still applies when the matching local block omits that list. To
+  discard it, add the corresponding local `{ replace = [...] }` list or remove the project list.
+- Other fields still follow whole-entry replacement. For example, adding only `network-deny` to
+  a local agent block drops the project block's `model`, `harness`, `description`, and
+  `model-policies`; repeat the needed project scalars and model policies in the local block.
 - Other arrays replace by value when authored locally.
 
 Unknown agent-overlay keys remain tolerated for forward compatibility. An ignored key beginning

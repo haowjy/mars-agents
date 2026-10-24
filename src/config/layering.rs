@@ -121,15 +121,17 @@ fn add_tool_migration(
         .or(project)
         .expect("an effective overlay has a source");
     effective.migration = Some(ToolOverlayMigration {
-        previous_allowed: previous.allowed.clone(),
-        previous_disallowed: previous.disallowed.clone(),
+        legacy_allowed: previous.allowed.clone(),
+        legacy_disallowed: previous.disallowed.clone(),
         allowed_source: plain_list_source(
             project.and_then(|tools| tools.allowed.as_ref()),
             local.and_then(|tools| tools.allowed.as_ref()),
+            local.is_some(),
         ),
         disallowed_source: plain_list_source(
             project.and_then(|tools| tools.disallowed.as_ref()),
             local.and_then(|tools| tools.disallowed.as_ref()),
+            local.is_some(),
         ),
     });
 }
@@ -137,11 +139,20 @@ fn add_tool_migration(
 fn plain_list_source<T>(
     project: Option<&PermissionSet<T>>,
     local: Option<&PermissionSet<T>>,
+    has_local_overlay: bool,
 ) -> Option<ToolOverlaySource> {
     if local.is_some_and(is_nonempty_plain_list) {
         Some(ToolOverlaySource::Local)
+    } else if local.is_some_and(PermissionSet::replaces) {
+        None
     } else if project.is_some_and(is_nonempty_plain_list) {
-        Some(ToolOverlaySource::Project)
+        if has_local_overlay {
+            Some(ToolOverlaySource::ProjectSurvivesLocal {
+                local_omits_set: local.is_none(),
+            })
+        } else {
+            Some(ToolOverlaySource::Project)
+        }
     } else {
         None
     }

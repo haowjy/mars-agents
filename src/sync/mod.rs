@@ -3,7 +3,6 @@ pub mod diff;
 pub mod filter;
 pub mod mutation;
 pub mod plan;
-pub mod provider;
 mod recovery;
 pub mod rewrite;
 pub mod target;
@@ -428,7 +427,7 @@ pub(crate) fn resolve_graph(
     validate_targets(&request.resolution, &loaded.effective)?;
 
     let cache = GlobalCache::new()?;
-    let source_provider = provider::RealSourceProvider::new(&cache, &ctx.project_root);
+    let source_provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
     let source_overrides = loaded
         .local
         .overrides

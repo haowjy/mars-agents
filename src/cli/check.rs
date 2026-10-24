@@ -437,24 +437,7 @@ fn has_package_dependencies(base: &Path) -> Result<bool, MarsError> {
 /// and ignores mars.local.toml overrides (local dev paths). This matches what consumers
 /// see when they depend on this package.
 fn resolve_available_skills(base: &Path) -> Result<HashMap<String, (String, String)>, MarsError> {
-    use crate::resolve::{ResolveOptions, resolve};
-    use crate::source::GlobalCache;
-    use crate::sync::provider::RealSourceProvider;
-
-    let config = crate::config::load(base)?;
-    // Publish gate: use only mars.toml [dependencies].
-    // Strip [local-dependencies] (dev-only, not exported to consumers) and skip
-    // mars.local.toml (local dev path overrides that don't exist on consumers).
-    let mut publish_config = config.clone();
-    publish_config.local_dependencies.clear();
-    let effective = crate::config::merge(publish_config, crate::config::LocalConfig::default())?;
-
-    let cache = GlobalCache::new()?;
-    let provider = RealSourceProvider::new(&cache, base);
-    let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let options = ResolveOptions::default(); // no lock, not frozen, not maximizing
-
-    let graph = resolve(&effective, &provider, None, &options, &mut diag)?;
+    let graph = crate::resolve::resolve_publish_graph(base)?;
 
     let mut skills: HashMap<String, (String, String)> = HashMap::new();
     for (source_name, node) in &graph.nodes {

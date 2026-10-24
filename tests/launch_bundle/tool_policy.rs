@@ -895,7 +895,7 @@ Review code changes."#;
 }
 
 #[test]
-fn bundle_warning_compares_project_local_tools_with_mars_017() {
+fn bundle_warns_for_each_project_local_plain_tool_list() {
     let agent = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -935,10 +935,20 @@ Review code changes."#;
         bundle["tools"]["allowed"],
         serde_json::json!(["Bash", "Read"])
     );
+    let warnings = bundle["warnings"].as_array().unwrap();
     assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.as_str().is_some_and(|message| {
+                message.contains("mars.toml [agents.reviewer.tools].allowed")
+                    && message.contains("mars.local.toml")
+                    && message.contains("allowed = { replace = [...] }")
+            })),
+        "{}",
         bundle["warnings"]
-            .as_array()
-            .unwrap()
+    );
+    assert!(
+        warnings
             .iter()
             .any(|warning| warning.as_str().is_some_and(|message| {
                 message.contains("mars.local.toml [agents.reviewer.tools].allowed")

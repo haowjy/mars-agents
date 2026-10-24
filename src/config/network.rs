@@ -3,6 +3,12 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use serde_yaml::Value;
+
+use crate::frontmatter::Frontmatter;
+use crate::permission_set::PermissionSet;
+
+use super::looks_like_network_key;
 
 /// Shell network mode authored on profiles, overlays, settings, policies, and the CLI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -166,4 +172,124 @@ fn invalid_host(raw: &str) -> String {
         "invalid network host `{raw}`; expected {}",
         NetworkHost::ALLOWED
     )
+}
+
+pub(crate) struct AgentNetworkFields {
+    pub(crate) policy: Option<NetworkPolicy>,
+    pub(crate) allow: PermissionSet<NetworkHost>,
+    pub(crate) deny: PermissionSet<NetworkHost>,
+}
+
+pub(crate) enum AgentNetworkDiagnostic {
+    InvalidFieldValue {
+        field: String,
+        value: String,
+        allowed: &'static str,
+    },
+    DuplicateField {
+        field: String,
+        alias: String,
+    },
+    UnknownField {
+        field: String,
+    },
+}
+
+pub(crate) fn parse_agent_network(
+    fm: &Frontmatter,
+) -> (AgentNetworkFields, Vec<AgentNetworkDiagnostic>) {
+    let mut diags = Vec::new();
+    let policy = fm.get("network").and_then(|value| {
+        let Some(value) = value.as_str() else {
+            diags.push(AgentNetworkDiagnostic::InvalidFieldValue {
+                field: "network".to_string(),
+                value: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
+                allowed: NetworkPolicy::ALLOWED,
+            });
+            return None;
+        };
+        match value.parse::<NetworkPolicy>() {
+            Ok(network) => Some(network),
+            Err(_) => {
+                diags.push(AgentNetworkDiagnostic::InvalidFieldValue {
+                    field: "network".to_string(),
+                    value: value.to_string(),
+                    allowed: NetworkPolicy::ALLOWED,
+                });
+                None
+            }
+        }
+    });
+    let allow_value = find_aliased_network_field(fm, "network-allow", "network_allow", &mut diags);
+    let allow = parse_network_hosts("network-allow", allow_value, true, &mut diags);
+    let deny_value = find_aliased_network_field(fm, "network-deny", "network_deny", &mut diags);
+    let deny = parse_network_hosts("network-deny", deny_value, false, &mut diags);
+
+    for field in fm.keys().into_iter().filter(|field| {
+        looks_like_network_key(field)
+            && !matches!(
+                field.as_str(),
+                "network" | "network-allow" | "network_allow" | "network-deny" | "network_deny"
+            )
+    }) {
+        diags.push(AgentNetworkDiagnostic::UnknownField { field });
+    }
+
+    (
+        AgentNetworkFields {
+            policy,
+            allow,
+            deny,
+        },
+        diags,
+    )
+}
+
+fn find_aliased_network_field<'a>(
+    fm: &'a Frontmatter,
+    field: &str,
+    alias: &str,
+    diags: &mut Vec<AgentNetworkDiagnostic>,
+) -> Option<&'a Value> {
+    let value = fm.get(field);
+    let alias_value = fm.get(alias);
+    if value.is_some() && alias_value.is_some() {
+        diags.push(AgentNetworkDiagnostic::DuplicateField {
+            field: field.to_string(),
+            alias: alias.to_string(),
+        });
+    }
+    value.or(alias_value)
+}
+
+fn parse_network_hosts(
+    field: &str,
+    value: Option<&Value>,
+    allow_replace: bool,
+    diags: &mut Vec<AgentNetworkDiagnostic>,
+) -> PermissionSet<NetworkHost> {
+    let Some(value) = value else {
+        return PermissionSet::default();
+    };
+    let parsed = match serde_yaml::from_value::<PermissionSet<NetworkHost>>(value.clone()) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            let value = serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"));
+            diags.push(AgentNetworkDiagnostic::InvalidFieldValue {
+                field: field.to_string(),
+                value: format!("{value} ({error})"),
+                allowed: "list of exact hosts, IPs, *.example.com, or **.example.com; or {replace: [...]} for an allow set",
+            });
+            return PermissionSet::default();
+        }
+    };
+    if !allow_replace && parsed.replaces() {
+        diags.push(AgentNetworkDiagnostic::InvalidFieldValue {
+            field: field.to_string(),
+            value: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
+            allowed: "plain list; package profiles cannot replace a deny set",
+        });
+        return PermissionSet::default();
+    }
+    parsed
 }

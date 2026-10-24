@@ -102,13 +102,7 @@ pub fn build_launch_bundle(
     if let Some(agent) = request.agent.as_deref()
         && let Some(overlay) = effective_project_config.agents.get(agent)
     {
-        for (action, source) in profile.tools.apply_overlay(&overlay.tools) {
-            warnings.push(crate::compiler::tool_policy::overlay_list_upgrade_warning(
-                &format!("[agents.{agent}.tools]"),
-                action,
-                source,
-            ));
-        }
+        profile.tools.apply_overlay(&overlay.tools);
     }
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),

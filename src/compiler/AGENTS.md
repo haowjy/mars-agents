@@ -118,12 +118,11 @@ spelling), never a string with reserved values.
   preserve wildcard rules; ask rules and an explicit `'*': deny` allowlist marker survive either
   form. Overlay names are `OverlayToolName`s: parsed
   with the profile grammar as `mars.toml` loads, so `apply_overlay`
-  never meets a name a profile would reject. Project/local layering carries the selected 0.17
-  overlay beside the effective sets; an independent literal port of 0.17's retain-then-push edit
-  compares that raw winner with the new result, so the one-release warning fires only for a real
-  result change and names the authored file. Staging writes a skill back only when its own
-  `tools:` / `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would
-  drop the bad entry, a malformed deny among them, and hide the error sync reports for it.
+  never meets a name a profile would reject. Compatibility warnings are derived once from the
+  authored project/local constructs in `config::project_config_warnings`; policy consumers do not
+  model legacy resolution. Staging writes a skill back only when its own `tools:` /
+  `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would drop the bad
+  entry, a malformed deny among them, and hide the error sync reports for it.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
   permission names and unscoped harness tool names. Native agent lowering, skill lowering and the
   bundle read its `natives` / `gaps` / `overlaps`; never add a second projection path, or a

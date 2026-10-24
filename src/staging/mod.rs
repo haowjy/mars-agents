@@ -364,21 +364,10 @@ fn process_markdown_file(
 
         let (mut fm, mut changed) = lift_frontmatter_with_change(ctx.dialect, kind, &parsed);
 
-        if let Some((skill_name, overlay)) = skill_overlay
+        if let Some((_skill_name, overlay)) = skill_overlay
             && !overlay.is_empty()
         {
-            let (overlaid, overlay_changed, changed_from_legacy) =
-                apply_skill_overlay(&fm, overlay);
-            for (action, source) in changed_from_legacy {
-                ctx.diag.warn(
-                    "tool-overlay-additive",
-                    crate::compiler::tool_policy::overlay_list_upgrade_warning(
-                        &format!("[skills.{skill_name}.tools]"),
-                        action,
-                        source,
-                    ),
-                );
-            }
+            let (overlaid, overlay_changed) = apply_skill_overlay(&fm, overlay);
             fm = overlaid;
             changed |= overlay_changed;
         }

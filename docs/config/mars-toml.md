@@ -309,7 +309,7 @@ disallowed = ["agent"]
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
 | `user-invocable` | bool | Whether the user can `/name` this agent |
-| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile and preserve wildcard rules; `{ replace = [...] }` clears that action's lower rules, including `'*': allow`. During the compatibility release, Mars compares the complete resolved policy with 0.17 and warns only when it differs; an empty plain list remains a no-op. Profile `ask` rules and the `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
+| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile and preserve wildcard rules; `{ replace = [...] }` clears that action's lower rules, including `'*': allow`. During the compatibility release, Mars warns once for each non-empty plain list and names its file; empty lists and replacement tables do not warn. Profile `ask` rules and the `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
 | `model-policies` | table[] | Model routing policy rules |
 
 The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
@@ -537,6 +537,8 @@ For local overlay semantics:
   they compose across the matching project/local blocks with the permission-set add/replace rule.
 - A project tool list therefore still applies when the matching local block omits that list. To
   discard it, add the corresponding local `{ replace = [...] }` list or remove the project list.
+  During the compatibility release, a non-empty plain project list warns and names both files
+  when a matching local block does not replace it.
 - Other fields still follow whole-entry replacement. For example, adding only `network-deny` to
   a local agent block drops the project block's `model`, `harness`, `description`, and
   `model-policies`; repeat the needed project scalars and model policies in the local block.

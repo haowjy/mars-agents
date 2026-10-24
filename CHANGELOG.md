@@ -29,11 +29,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   These are the only existing permission sets whose behavior changes; the network sets below
   are new. Non-empty plain tool lists now add, while an empty plain list remains a no-op. A
   replacement drops every lower rule for that action, including `'*': allow`; existing `ask`
-  rules and the `'*': deny` allowlist marker survive. Mars warns for one release, naming the
-  source file, only when the resolved result differs from 0.17. A project tool list also now
-  applies when a matching local block omits that list; add a local `{ replace = [...] }` list or
-  remove the project list to retain the old result. Package profiles cannot use replacement
-  tables. The launch bundle, native agent files, and staged skills all use the same merge.
+  rules and the `'*': deny` allowlist marker survive. For one release, Mars warns once for each
+  non-empty plain tool list and names its source file; empty lists and `{ replace = [...] }` do
+  not warn. A project tool list also now applies when a matching local block omits that list; the
+  warning names both files and recommends a local `{ replace = [...] }` list or removing the
+  project list. Package profiles cannot use replacement tables. The launch bundle, native agent
+  files, and staged skills all use the same merge.
 - **Upgrade:** matching `mars.toml` / `mars.local.toml` agent and skill blocks still use 0.17's
   whole-entry replacement for scalars, options, model policies, and unknown keys. The two new
   network sets (`network-allow`, `network-deny`) and the two changed tool sets (`tools.allowed`,

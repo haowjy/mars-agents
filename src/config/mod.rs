@@ -215,60 +215,18 @@ pub struct FilterConfig {
 ///
 /// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
 /// fails `mars.toml` instead of reaching the policy.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentOverlayTools {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<PermissionSet<OverlayToolName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disallowed: Option<PermissionSet<OverlayToolName>>,
-    #[serde(skip)]
-    pub(crate) migration: Option<ToolOverlayMigration>,
 }
 
 impl AgentOverlayTools {
     pub fn is_empty(&self) -> bool {
         self.allowed.is_none() && self.disallowed.is_none()
     }
-}
-
-// Migration metadata affects only a one-release warning, not the overlay's serialized value or
-// resolved permissions.
-impl PartialEq for AgentOverlayTools {
-    fn eq(&self, other: &Self) -> bool {
-        self.allowed == other.allowed && self.disallowed == other.disallowed
-    }
-}
-
-impl Eq for AgentOverlayTools {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ToolOverlaySource {
-    Project,
-    Local,
-    ProjectSurvivesLocal { local_omits_set: bool },
-}
-
-impl ToolOverlaySource {
-    pub(crate) fn file_name(self) -> &'static str {
-        match self {
-            Self::Project | Self::ProjectSurvivesLocal { .. } => "mars.toml",
-            Self::Local => "mars.local.toml",
-        }
-    }
-}
-
-/// The raw overlay entry that won under 0.17's whole-entry project/local layering, plus the
-/// authored plain lists that can change its result.
-///
-/// This metadata exists only on project/local-composed overlays. Keeping it beside the
-/// effective tool sets lets every consumer compare the same old and new policies without
-/// reloading configuration or reimplementing project/local precedence.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ToolOverlayMigration {
-    pub(crate) legacy_allowed: Option<PermissionSet<OverlayToolName>>,
-    pub(crate) legacy_disallowed: Option<PermissionSet<OverlayToolName>>,
-    pub(crate) allowed_source: Option<ToolOverlaySource>,
-    pub(crate) disallowed_source: Option<ToolOverlaySource>,
 }
 
 /// Per-agent launch-bundle overlay policy in mars.toml `[agents.<name>]`.
@@ -1205,31 +1163,129 @@ fn effective_project_config(
         target_source,
         models: overlay_models_replace_by_key(&config.models, local),
         agents: overlay_agent_overlays(&config.agents, local),
-        warnings: project_config_warnings(config, local),
+        warnings: project_config_warnings(config, local)
+            .into_iter()
+            .map(|warning| warning.message)
+            .collect(),
     }
 }
 
-fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<String> {
+struct ProjectConfigWarning {
+    code: &'static str,
+    message: String,
+}
+
+fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectConfigWarning> {
     let mut warnings = network_key_warnings(
         "mars.toml [settings]",
         &config.settings.unknown,
         NETWORK_SETTINGS_KEYS,
-    );
+    )
+    .into_iter()
+    .map(|message| ProjectConfigWarning {
+        code: "unknown-network-key",
+        message,
+    })
+    .collect::<Vec<_>>();
     for (name, overlay) in &config.agents {
-        warnings.extend(network_key_warnings(
-            &format!("mars.toml [agents.{name}]"),
-            &overlay.unknown,
-            NETWORK_OVERLAY_KEYS,
+        warnings.extend(
+            network_key_warnings(
+                &format!("mars.toml [agents.{name}]"),
+                &overlay.unknown,
+                NETWORK_OVERLAY_KEYS,
+            )
+            .into_iter()
+            .map(|message| ProjectConfigWarning {
+                code: "unknown-network-key",
+                message,
+            }),
+        );
+        warnings.extend(tool_overlay_warnings(
+            "mars.toml",
+            &format!("[agents.{name}.tools]"),
+            &overlay.tools,
+            local.agents.get(name).map(|local| &local.tools),
         ));
     }
     for (name, overlay) in &local.agents {
-        warnings.extend(network_key_warnings(
-            &format!("mars.local.toml [agents.{name}]"),
-            &overlay.unknown,
-            NETWORK_OVERLAY_KEYS,
+        warnings.extend(
+            network_key_warnings(
+                &format!("mars.local.toml [agents.{name}]"),
+                &overlay.unknown,
+                NETWORK_OVERLAY_KEYS,
+            )
+            .into_iter()
+            .map(|message| ProjectConfigWarning {
+                code: "unknown-network-key",
+                message,
+            }),
+        );
+        warnings.extend(tool_overlay_warnings(
+            "mars.local.toml",
+            &format!("[agents.{name}.tools]"),
+            &overlay.tools,
+            None,
+        ));
+    }
+    for (name, overlay) in &config.skills {
+        warnings.extend(tool_overlay_warnings(
+            "mars.toml",
+            &format!("[skills.{name}.tools]"),
+            &overlay.tools,
+            local.skills.get(name).map(|local| &local.tools),
+        ));
+    }
+    for (name, overlay) in &local.skills {
+        warnings.extend(tool_overlay_warnings(
+            "mars.local.toml",
+            &format!("[skills.{name}.tools]"),
+            &overlay.tools,
+            None,
         ));
     }
     warnings
+}
+
+fn tool_overlay_warnings(
+    file: &'static str,
+    surface: &str,
+    tools: &AgentOverlayTools,
+    matching_local: Option<&AgentOverlayTools>,
+) -> Vec<ProjectConfigWarning> {
+    [
+        (
+            "allowed",
+            tools.allowed.as_ref(),
+            matching_local.and_then(|tools| tools.allowed.as_ref()),
+        ),
+        (
+            "disallowed",
+            tools.disallowed.as_ref(),
+            matching_local.and_then(|tools| tools.disallowed.as_ref()),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(field, set, local_set)| {
+        let set = set?;
+        if !matches!(set, PermissionSet::Add(entries) if !entries.is_empty()) {
+            return None;
+        }
+        let local_replaces = local_set.is_some_and(PermissionSet::replaces);
+        let message = if matching_local.is_some() && !local_replaces {
+            format!(
+                "{file} {surface}.{field} is a non-empty plain list that now adds to lower rules and survives the matching mars.local.toml block; add `{field} = {{ replace = [...] }}` to mars.local.toml or remove the project list to preserve Mars 0.17 behavior"
+            )
+        } else {
+            format!(
+                "{file} {surface}.{field} is a non-empty plain list that now adds to lower rules instead of replacing them; use `{field} = {{ replace = [...] }}` in {file} when this list should preserve Mars 0.17 replacement behavior"
+            )
+        };
+        Some(ProjectConfigWarning {
+            code: "tool-overlay-additive",
+            message,
+        })
+    })
+    .collect()
 }
 
 fn network_key_warnings(
@@ -1289,10 +1345,10 @@ pub fn merge_with_root(
     let mut dependencies = IndexMap::new();
     let mut diagnostics = project_config_warnings(&config, &local)
         .into_iter()
-        .map(|message| Diagnostic {
+        .map(|warning| Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: "unknown-network-key",
-            message,
+            code: warning.code,
+            message: warning.message,
             context: None,
             category: Some(DiagnosticCategory::Validation),
         })
@@ -2321,7 +2377,6 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                 tools: AgentOverlayTools {
                     allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
                     disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
-                    ..AgentOverlayTools::default()
                 },
                 model_policies: Some(vec![ModelPolicyRule {
                     match_type: ModelPolicyMatchType::Alias,
@@ -2355,7 +2410,6 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                     disallowed: Some(PermissionSet::Replace {
                         replace: vec!["Agent".to_string().try_into().unwrap()],
                     }),
-                    ..AgentOverlayTools::default()
                 },
                 unknown: BTreeMap::from([("local_future".to_string(), toml::Value::Boolean(true))]),
                 ..AgentOverlay::default()
@@ -2673,6 +2727,79 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                 .all(|warning| !warning.contains("future_")),
             "forward-compatible keys should remain quiet: {:?}",
             effective.warnings
+        );
+    }
+
+    #[test]
+    fn tool_overlay_warnings_follow_authored_plain_lists() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[agents.coder.tools]
+allowed = ["Read"]
+disallowed = []
+
+[agents.quiet.tools]
+allowed = { replace = ["Read"] }
+
+[skills.review.tools]
+disallowed = ["Write"]
+
+[skills.empty.tools]
+allowed = []
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("mars.local.toml"),
+            r#"
+[agents.coder]
+effort = "high"
+
+[agents.local.tools]
+allowed = ["Bash"]
+
+[skills.review]
+user-invocable = false
+
+[skills.local.tools]
+allowed = { replace = ["Bash"] }
+"#,
+        )
+        .unwrap();
+
+        let effective = load_effective_project_config(dir.path()).unwrap();
+        let warnings = effective
+            .warnings
+            .iter()
+            .filter(|warning| warning.contains(".tools]"))
+            .collect::<Vec<_>>();
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| warning.contains("{ replace = [...] }"))
+        );
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("mars.toml [agents.coder.tools].allowed")
+                && warning.contains("mars.local.toml")
+        }));
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("mars.toml [skills.review.tools].disallowed")
+                && warning.contains("mars.local.toml")
+        }));
+        assert!(
+            warnings.iter().any(|warning| {
+                warning.contains("mars.local.toml [agents.local.tools].allowed")
+            })
+        );
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| !warning.contains("[agents.quiet")
+                    && !warning.contains("[skills.empty")
+                    && !warning.contains("[skills.local"))
         );
     }
 

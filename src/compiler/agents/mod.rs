@@ -398,6 +398,28 @@ impl AgentDiagnostic {
     }
 }
 
+impl From<crate::config::network::AgentNetworkDiagnostic> for AgentDiagnostic {
+    fn from(diagnostic: crate::config::network::AgentNetworkDiagnostic) -> Self {
+        use crate::config::network::AgentNetworkDiagnostic;
+
+        match diagnostic {
+            AgentNetworkDiagnostic::InvalidFieldValue {
+                field,
+                value,
+                allowed,
+            } => Self::InvalidFieldValue {
+                field,
+                value,
+                allowed,
+            },
+            AgentNetworkDiagnostic::DuplicateField { field, alias } => {
+                Self::DuplicateField { field, alias }
+            }
+            AgentNetworkDiagnostic::UnknownField { field } => Self::UnknownNetworkField { field },
+        }
+    }
+}
+
 fn push_agent_tool_invalid(
     diags: &mut Vec<AgentDiagnostic>,
     field: &str,
@@ -675,55 +697,6 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
     out
 }
 
-fn find_aliased_network_field<'a>(
-    fm: &'a Frontmatter,
-    field: &str,
-    alias: &str,
-    diags: &mut Vec<AgentDiagnostic>,
-) -> Option<&'a Value> {
-    let value = fm.get(field);
-    let alias_value = fm.get(alias);
-    if value.is_some() && alias_value.is_some() {
-        diags.push(AgentDiagnostic::DuplicateField {
-            field: field.to_string(),
-            alias: alias.to_string(),
-        });
-    }
-    value.or(alias_value)
-}
-
-fn parse_network_hosts(
-    field: &str,
-    value: Option<&Value>,
-    allow_replace: bool,
-    diags: &mut Vec<AgentDiagnostic>,
-) -> PermissionSet<NetworkHost> {
-    let Some(value) = value else {
-        return PermissionSet::default();
-    };
-    let parsed = match serde_yaml::from_value::<PermissionSet<NetworkHost>>(value.clone()) {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            let value = serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"));
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: field.to_string(),
-                value: format!("{value} ({error})"),
-                allowed: "list of exact hosts, IPs, *.example.com, or **.example.com; or {replace: [...]} for an allow set",
-            });
-            return PermissionSet::default();
-        }
-    };
-    if !allow_replace && parsed.replaces() {
-        diags.push(AgentDiagnostic::InvalidFieldValue {
-            field: field.to_string(),
-            value: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
-            allowed: "plain list; package profiles cannot replace a deny set",
-        });
-        return PermissionSet::default();
-    }
-    parsed
-}
-
 fn parse_invocability_field(
     field: &str,
     raw: Option<&Value>,
@@ -840,33 +813,11 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         }
     });
 
-    // network:
-    let network = fm.get("network").and_then(|value| {
-        let Some(value) = value.as_str() else {
-            diags.push(AgentDiagnostic::InvalidFieldValue {
-                field: "network".to_string(),
-                value: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
-                allowed: NetworkPolicy::ALLOWED,
-            });
-            return None;
-        };
-        match value.parse::<NetworkPolicy>() {
-            Ok(network) => Some(network),
-            Err(_) => {
-                diags.push(AgentDiagnostic::InvalidFieldValue {
-                    field: "network".to_string(),
-                    value: value.to_string(),
-                    allowed: NetworkPolicy::ALLOWED,
-                });
-                None
-            }
-        }
-    });
-    let network_allow_value =
-        find_aliased_network_field(fm, "network-allow", "network_allow", diags);
-    let network_allow = parse_network_hosts("network-allow", network_allow_value, true, diags);
-    let network_deny_value = find_aliased_network_field(fm, "network-deny", "network_deny", diags);
-    let network_deny = parse_network_hosts("network-deny", network_deny_value, false, diags);
+    let (network_fields, network_diags) = crate::config::network::parse_agent_network(fm);
+    diags.extend(network_diags.into_iter().map(AgentDiagnostic::from));
+    let network = network_fields.policy;
+    let network_allow = network_fields.allow;
+    let network_deny = network_fields.deny;
 
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
@@ -981,16 +932,6 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
                 field: field.to_string(),
             });
         }
-    }
-
-    for field in fm.keys().into_iter().filter(|field| {
-        crate::config::looks_like_network_key(field)
-            && !matches!(
-                field.as_str(),
-                "network" | "network-allow" | "network_allow" | "network-deny" | "network_deny"
-            )
-    }) {
-        diags.push(AgentDiagnostic::UnknownNetworkField { field });
     }
 
     AgentProfile {

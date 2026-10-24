@@ -22,7 +22,7 @@ use crate::compiler::tool_names::{
     render_scoped,
 };
 use crate::compiler::tool_natives::{self, Native};
-use crate::config::{AgentOverlayTools, ToolOverlaySource};
+use crate::config::AgentOverlayTools;
 use crate::frontmatter::Frontmatter;
 use crate::permission_set::{PermissionSet, merge_permission_set};
 
@@ -51,32 +51,6 @@ impl ToolAction {
             _ => None,
         }
     }
-}
-
-pub(crate) fn overlay_list_upgrade_warning(
-    surface: &str,
-    action: ToolAction,
-    source: ToolOverlaySource,
-) -> String {
-    let field = match action {
-        ToolAction::Allow => "allowed",
-        ToolAction::Deny => "disallowed",
-        ToolAction::Ask => unreachable!("tool overlays do not have an ask permission set"),
-    };
-    if let ToolOverlaySource::ProjectSurvivesLocal { local_omits_set } = source {
-        let local_state = if local_omits_set {
-            format!("omits `{field}`")
-        } else {
-            format!("does not replace `{field}`")
-        };
-        return format!(
-            "mars.toml {surface}.{field} uses a plain list that now applies alongside the mars.local.toml {surface} block, which {local_state}; add a local `{field} = {{ replace = [...] }}` list or remove the project list to preserve Mars 0.17 behavior"
-        );
-    }
-    format!(
-        "{} {surface}.{field} uses a plain list whose resolved policy differs from Mars 0.17's replacement behavior; use `{field} = {{ replace = [...] }}` when this list should replace lower rules",
-        source.file_name()
-    )
 }
 
 /// One tool-policy statement: `action` for `capability`, optionally narrowed by `pattern`.
@@ -424,37 +398,13 @@ impl EffectiveToolPolicy {
     /// Plain overlay lists add and keep wildcard rules. `{ replace = [...] }` clears that
     /// action's lower-layer rules, including its wildcard; the `*: deny` allowlist marker is the
     /// sole exception. Ask rules are not members of either set.
-    pub(crate) fn apply_overlay(
-        &mut self,
-        overlay: &AgentOverlayTools,
-    ) -> Vec<(ToolAction, ToolOverlaySource)> {
-        let previous = overlay.migration.as_ref().map(|migration| {
-            let mut previous = self.clone();
-            previous.apply_legacy_overlay(migration);
-            previous
-        });
-
+    pub(crate) fn apply_overlay(&mut self, overlay: &AgentOverlayTools) {
         if let Some(layer) = &overlay.allowed {
             self.apply_permission_set(layer, ToolAction::Allow);
         }
         if let Some(layer) = &overlay.disallowed {
             self.apply_permission_set(layer, ToolAction::Deny);
         }
-
-        let Some((previous, migration)) = previous.zip(overlay.migration.as_ref()) else {
-            return Vec::new();
-        };
-        [
-            (ToolAction::Allow, migration.allowed_source),
-            (ToolAction::Deny, migration.disallowed_source),
-        ]
-        .into_iter()
-        .filter_map(|(action, source)| {
-            source
-                .filter(|_| !self.has_same_action_rules(&previous, action))
-                .map(|source| (action, source))
-        })
-        .collect()
     }
 
     fn apply_permission_set(&mut self, layer: &PermissionSet<OverlayToolName>, action: ToolAction) {
@@ -480,53 +430,6 @@ impl EffectiveToolPolicy {
         for rule in merged {
             self.push_unique(rule);
         }
-    }
-
-    /// Literal port of 0.17's retain-then-push edit, applied to the raw project/local winner.
-    /// Keep this independent from the live permission-set path: it exists to detect when that
-    /// path changes the result.
-    fn apply_legacy_overlay(&mut self, migration: &crate::config::ToolOverlayMigration) {
-        if let Some(allowed) = migration.legacy_allowed.as_ref()
-            && !allowed.entries().is_empty()
-        {
-            self.rules.retain(|rule| rule.action != ToolAction::Allow);
-            for name in allowed.entries() {
-                let parsed = name.parsed();
-                let rule = ToolRule {
-                    capability: parsed.capability.clone(),
-                    pattern: parsed.pattern.clone(),
-                    action: ToolAction::Allow,
-                };
-                let seen = self.rules.iter().any(|existing| existing == &rule);
-                if !seen {
-                    self.rules.push(rule);
-                }
-            }
-        }
-        if let Some(disallowed) = migration.legacy_disallowed.as_ref()
-            && !disallowed.entries().is_empty()
-        {
-            self.rules
-                .retain(|rule| rule.action != ToolAction::Deny || rule.is_wildcard());
-            for name in disallowed.entries() {
-                let parsed = name.parsed();
-                let rule = ToolRule {
-                    capability: parsed.capability.clone(),
-                    pattern: parsed.pattern.clone(),
-                    action: ToolAction::Deny,
-                };
-                let seen = self.rules.iter().any(|existing| existing == &rule);
-                if !seen {
-                    self.rules.push(rule);
-                }
-            }
-        }
-    }
-
-    fn has_same_action_rules(&self, other: &Self, action: ToolAction) -> bool {
-        let rules = self.with_action(action).collect::<Vec<_>>();
-        let other_rules = other.with_action(action).collect::<Vec<_>>();
-        rules.len() == other_rules.len() && rules.iter().all(|rule| other_rules.contains(rule))
     }
 
     /// Write the policy back as a skill's `tools:` / `disallowed-tools:`, replacing what is
@@ -1517,7 +1420,6 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
         let overlay = AgentOverlayTools {
             allowed: Some(vec!["bash".to_string().try_into().unwrap()].into()),
             disallowed: Some(vec!["agent".to_string().try_into().unwrap()].into()),
-            ..AgentOverlayTools::default()
         };
         let yaml = "tools:
   'bash(git push *)': deny
@@ -1527,7 +1429,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
 
         // Plain lists add grants and denies while keeping asks.
         let mut agent = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
-        assert!(agent.apply_overlay(&overlay).is_empty());
+        agent.apply_overlay(&overlay);
         assert_eq!(
             agent.describe(),
             [
@@ -1541,7 +1443,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
 
         // A skill gets the same additive edit.
         let mut skill = skill_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\nbody"));
-        assert!(skill.apply_overlay(&overlay).is_empty());
+        skill.apply_overlay(&overlay);
         assert_eq!(skill, agent);
 
         // Explicit replacement gives the previous overlay behavior.
@@ -1552,10 +1454,9 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
             disallowed: Some(PermissionSet::Replace {
                 replace: vec!["agent".to_string().try_into().unwrap()],
             }),
-            ..AgentOverlayTools::default()
         };
         let mut replaced = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
-        assert!(replaced.apply_overlay(&replacing).is_empty());
+        replaced.apply_overlay(&replacing);
         assert_eq!(
             replaced.describe(),
             ["ask:bash(git commit *)", "allow:bash", "deny:agent"]
@@ -1565,15 +1466,9 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
         let empty_lists = AgentOverlayTools {
             allowed: Some(Vec::new().into()),
             disallowed: Some(Vec::new().into()),
-            migration: Some(crate::config::ToolOverlayMigration {
-                legacy_allowed: Some(Vec::new().into()),
-                legacy_disallowed: Some(Vec::new().into()),
-                allowed_source: None,
-                disallowed_source: None,
-            }),
         };
         let mut unchanged = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
-        assert!(unchanged.apply_overlay(&empty_lists).is_empty());
+        unchanged.apply_overlay(&empty_lists);
         assert_eq!(
             unchanged.describe(),
             [
@@ -1583,24 +1478,15 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
             ]
         );
 
-        // A plain list adds alongside a wildcard grant and warns because 0.17 replaced it.
-        // An explicit replacement drops that wildcard grant and reproduces the old result.
+        // A plain list adds alongside a wildcard grant. An explicit replacement drops that
+        // wildcard grant, while preserving the deny rules.
         let wildcard_profile = "---\nname: a\ntools: { '*': allow, write: deny }\n---\n";
         let additive = AgentOverlayTools {
             allowed: Some(vec!["read".to_string().try_into().unwrap()].into()),
             disallowed: None,
-            migration: Some(crate::config::ToolOverlayMigration {
-                legacy_allowed: Some(vec!["read".to_string().try_into().unwrap()].into()),
-                legacy_disallowed: None,
-                allowed_source: Some(crate::config::ToolOverlaySource::Project),
-                disallowed_source: None,
-            }),
         };
         let mut widened = agent_policy(wildcard_profile);
-        assert_eq!(
-            widened.apply_overlay(&additive),
-            [(ToolAction::Allow, crate::config::ToolOverlaySource::Project)]
-        );
+        widened.apply_overlay(&additive);
         assert_eq!(widened.describe(), ["allow:*", "deny:write", "allow:read"]);
 
         let replacing = AgentOverlayTools {
@@ -1610,31 +1496,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
             ..AgentOverlayTools::default()
         };
         let mut narrowed = agent_policy(wildcard_profile);
-        assert!(narrowed.apply_overlay(&replacing).is_empty());
+        narrowed.apply_overlay(&replacing);
         assert_eq!(narrowed.describe(), ["deny:write", "allow:read"]);
-
-        // The compatibility warning compares the complete 0.17 result. Here the local
-        // list replaced the profile and project grants in 0.17, while both lists add now.
-        let composed = AgentOverlayTools {
-            allowed: Some(
-                vec![
-                    "bash".to_string().try_into().unwrap(),
-                    "agent".to_string().try_into().unwrap(),
-                ]
-                .into(),
-            ),
-            migration: Some(crate::config::ToolOverlayMigration {
-                legacy_allowed: Some(vec!["agent".to_string().try_into().unwrap()].into()),
-                legacy_disallowed: None,
-                allowed_source: Some(crate::config::ToolOverlaySource::Local),
-                disallowed_source: None,
-            }),
-            ..AgentOverlayTools::default()
-        };
-        let mut changed = agent_policy("---\nname: a\ntools: { read: allow }\n---\n");
-        assert_eq!(
-            changed.apply_overlay(&composed),
-            [(ToolAction::Allow, crate::config::ToolOverlaySource::Local)]
-        );
     }
 }

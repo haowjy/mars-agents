@@ -7,7 +7,7 @@ Config loading, schema, and routing config boundaries.
 | File | Responsibility |
 |---|---|
 | `mod.rs` | `mars.toml` schema (`Settings`, `Config`), load/save, `EffectiveConfig` |
-| `network.rs` | Typed network mode and canonical host grammar shared by all surfaces |
+| `network.rs` | Typed network mode, canonical host grammar, and agent-frontmatter network parsing |
 | `user.rs` | Restricted user `config.toml` network tier and ignored-key warnings |
 | `layering.rs` | Project/local replacement plus permission-set composition |
 | `targets.rs` | Link normalization — raw target strings → typed `NormalizedLink` / `EffectiveLinks` |

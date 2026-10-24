@@ -856,7 +856,7 @@ fn compile_emit_all_with_overlays(
         fanout_agents: &[],
     };
     // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
-    let resolved = resolve_native_agent_profiles(agents, overlays, &mut diag);
+    let resolved = resolve_native_agent_profiles(agents, overlays);
     let mut router = test_router(aliases, &models_cache);
     compile_native_agents(
         &ctx,
@@ -1304,8 +1304,7 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
         },
         fanout_agents: &[],
     };
-    let resolved =
-        resolve_native_agent_profiles(std::slice::from_ref(&agent), &overlays, &mut diag);
+    let resolved = resolve_native_agent_profiles(std::slice::from_ref(&agent), &overlays);
     let mut router = test_router(&aliases, &models_cache);
     let records = compile_native_agents(
         &ctx,

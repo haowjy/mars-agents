@@ -33,8 +33,9 @@ Plain `tools.allowed` / `tools.disallowed` lists add to profile rules; a
 `{ replace = [...] }` table clears that action's lower rules, including `'*': allow`. Plain lists
 preserve wildcard rules; existing asks and the `'*': deny` allowlist marker survive both forms.
 Profile list-form `tools: [...]` is deprecated and only grants its named tools; package profiles
-cannot replace deny sets. The optional fields preserve absent versus authored-empty lists for the
-one-release 0.17 comparison; empty plain lists remain no-ops.
+cannot replace deny sets. The optional fields preserve absent versus authored-empty lists. During
+the compatibility release, `project_config_warnings` warns once for each non-empty plain tool
+list from the raw project/local config; empty lists and replacement tables are silent.
 
 ## Layering (`layering.rs`)
 

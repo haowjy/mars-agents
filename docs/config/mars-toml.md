@@ -34,9 +34,9 @@ Default merge semantics:
 For keyed overlay tables:
 
 - `[models]` overlays are **replace-by-key** per alias entry (no recursive field merge inside one alias block).
-- `[agents]` and `[skills]` entries merge field by field across `mars.toml` and
-  `mars.local.toml`: a local scalar wins when present, while network and tool permission sets
-  compose with their add/replace rule.
+- `[agents]` and `[skills]` are also **replace-by-key** for scalars, options, model policies,
+  and unknown keys. Their network and tool permission sets are the exception: those compose
+  across matching project/local entries with the add/replace rule.
 
 ## `mars.toml`
 
@@ -272,7 +272,7 @@ Qualifying agents have a matching `harness:`, a `model:` alias that resolves to 
 
 ### `[agents.<name>]` (overlay)
 
-Overlay policy applied to an agent during the staging seam. Applied on top of the agent's frontmatter — no forking or patching of the source. Available in both `mars.toml` and `mars.local.toml`; `mars.local.toml` wins when keys collide.
+Overlay policy applied to an agent during the staging seam. Applied on top of the agent's frontmatter — no forking or patching of the source. Available in both `mars.toml` and `mars.local.toml`; a matching local block replaces the project block except for the four composing permission sets.
 
 ```toml
 [agents.reviewer]
@@ -309,7 +309,7 @@ disallowed = ["agent"]
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
 | `user-invocable` | bool | Whether the user can `/name` this agent |
-| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile; `{ replace = [...] }` clears that action's lower rules first. During the compatibility release, Mars warns when a plain list retains lower rules that the old replacement behavior removed. Profile `ask` rules and a `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
+| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile; `{ replace = [...] }` clears that action's lower rules first. During the compatibility release, Mars compares the complete resolved policy with 0.17 and warns only when it differs; authored empty lists remain no-ops and do not warn. Profile `ask` rules and a `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
 | `model-policies` | table[] | Model routing policy rules |
 
 The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
@@ -531,14 +531,15 @@ Local overlays can target:
 For local overlay semantics:
 
 - `[models.<alias>]` replaces the full keyed block when the same alias appears locally.
-- `[agents.<name>]` and `[skills.<name>]` merge field by field. Local scalar/options replace
-  only when present; an unrelated local field does not erase project policy.
-- `network-allow`, `network-deny`, `tools.allowed`, and `tools.disallowed` compose with the
-  permission-set add/replace rule.
+- `[agents.<name>]` and `[skills.<name>]` replace the full keyed block for scalars, options,
+  model policies, and unknown keys.
+- `network-allow`, `network-deny`, `tools.allowed`, and `tools.disallowed` are the exception:
+  they compose across the matching project/local blocks with the permission-set add/replace rule.
 - Other arrays replace by value when authored locally.
 
-Unknown policy keys remain tolerated for forward compatibility. An ignored key beginning with
-`network` or `default_network` / `default-network` produces a warning with the accepted keys.
+Unknown agent-overlay keys remain tolerated for forward compatibility. An ignored key beginning
+with `network` produces a warning with the accepted keys. Unknown keys under local `[settings]`
+are rejected.
 
 `mars models list` / `mars models resolve` now return local-config parse/validation errors instead of silently falling back to defaults. Fallback-to-default only happens when `mars.toml` is absent.
 

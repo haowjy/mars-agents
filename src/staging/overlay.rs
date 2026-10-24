@@ -73,7 +73,10 @@ pub(crate) fn apply_skill_overlay(
 ) -> (
     Frontmatter,
     bool,
-    Vec<crate::compiler::tool_policy::ToolAction>,
+    Vec<(
+        crate::compiler::tool_policy::ToolAction,
+        crate::config::ToolOverlaySource,
+    )>,
 ) {
     if overlay.is_empty() {
         return (frontmatter.clone(), false, Vec::new());
@@ -124,7 +127,13 @@ pub(crate) fn apply_skill_overlay(
 fn apply_tool_overlay(
     fm: &mut Frontmatter,
     overlay: &AgentOverlayTools,
-) -> (bool, Vec<crate::compiler::tool_policy::ToolAction>) {
+) -> (
+    bool,
+    Vec<(
+        crate::compiler::tool_policy::ToolAction,
+        crate::config::ToolOverlaySource,
+    )>,
+) {
     let mut diags = Vec::new();
     let before = parse_skill_tool_policy(fm, &mut diags);
     if !diags.is_empty() {

@@ -2,20 +2,19 @@ use indexmap::IndexMap;
 
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
-use super::{AgentOverlay, LocalConfig, LocalSettings, Settings, SkillOverlay};
+use super::{
+    AgentOverlay, AgentOverlayTools, LocalConfig, LocalSettings, Settings, SkillOverlay,
+    ToolOverlayMigration, ToolOverlaySource,
+};
 use crate::permission_set::{PermissionSet, compose_permission_sets};
 
-fn overlay_map_by_key<V: Clone>(
+fn overlay_map_replace_by_key<V: Clone>(
     base: &IndexMap<String, V>,
     overlay: &IndexMap<String, V>,
-    merge: impl Fn(&V, &V) -> V,
 ) -> IndexMap<String, V> {
     let mut merged = base.clone();
     for (key, value) in overlay {
-        let value = merged
-            .get(key)
-            .map_or_else(|| value.clone(), |lower| merge(lower, value));
-        merged.insert(key.clone(), value);
+        merged.insert(key.clone(), value.clone());
     }
     merged
 }
@@ -24,80 +23,132 @@ pub fn overlay_models_replace_by_key(
     base: &IndexMap<String, crate::models::ModelAlias>,
     local: &LocalConfig,
 ) -> IndexMap<String, crate::models::ModelAlias> {
-    overlay_map_by_key(base, &local.models, |_, higher| higher.clone())
+    overlay_map_replace_by_key(base, &local.models)
 }
 
-pub fn overlay_agent_overlays_by_field(
+pub fn overlay_agent_overlays(
     base: &IndexMap<String, AgentOverlay>,
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
-    overlay_map_by_key(base, &local.agents, compose_agent_overlay)
+    let mut merged = base
+        .iter()
+        .map(|(name, overlay)| {
+            let mut overlay = overlay.clone();
+            let project_tools = overlay.tools.clone();
+            add_tool_migration(&mut overlay.tools, Some(&project_tools), None);
+            (name.clone(), overlay)
+        })
+        .collect::<IndexMap<_, _>>();
+    for (name, higher) in &local.agents {
+        let overlay = match base.get(name) {
+            Some(lower) => compose_agent_overlay(lower, higher),
+            None => {
+                let mut overlay = higher.clone();
+                let local_tools = overlay.tools.clone();
+                add_tool_migration(&mut overlay.tools, None, Some(&local_tools));
+                overlay
+            }
+        };
+        merged.insert(name.clone(), overlay);
+    }
+    merged
 }
 
-pub fn overlay_skill_overlays_by_field(
+pub fn overlay_skill_overlays(
     base: &IndexMap<String, SkillOverlay>,
     local: &IndexMap<String, SkillOverlay>,
 ) -> IndexMap<String, SkillOverlay> {
-    overlay_map_by_key(base, local, compose_skill_overlay)
+    let mut merged = base
+        .iter()
+        .map(|(name, overlay)| {
+            let mut overlay = overlay.clone();
+            let project_tools = overlay.tools.clone();
+            add_tool_migration(&mut overlay.tools, Some(&project_tools), None);
+            (name.clone(), overlay)
+        })
+        .collect::<IndexMap<_, _>>();
+    for (name, higher) in local {
+        let overlay = match base.get(name) {
+            Some(lower) => compose_skill_overlay(lower, higher),
+            None => {
+                let mut overlay = higher.clone();
+                let local_tools = overlay.tools.clone();
+                add_tool_migration(&mut overlay.tools, None, Some(&local_tools));
+                overlay
+            }
+        };
+        merged.insert(name.clone(), overlay);
+    }
+    merged
 }
 
 fn compose_agent_overlay(lower: &AgentOverlay, higher: &AgentOverlay) -> AgentOverlay {
-    let mut unknown = lower.unknown.clone();
-    unknown.extend(higher.unknown.clone());
-    AgentOverlay {
-        description: higher
-            .description
-            .clone()
-            .or_else(|| lower.description.clone()),
-        model: higher.model.clone().or_else(|| lower.model.clone()),
-        harness: higher.harness.clone().or_else(|| lower.harness.clone()),
-        effort: higher.effort.clone().or_else(|| lower.effort.clone()),
-        approval: higher.approval.clone().or_else(|| lower.approval.clone()),
-        sandbox: higher.sandbox.clone().or_else(|| lower.sandbox.clone()),
-        network: higher.network.clone().or_else(|| lower.network.clone()),
-        network_allow: compose_permission_sets(&lower.network_allow, &higher.network_allow),
-        network_deny: compose_permission_sets(&lower.network_deny, &higher.network_deny),
-        autocompact: higher.autocompact.or(lower.autocompact),
-        autocompact_pct: higher.autocompact_pct.or(lower.autocompact_pct),
-        model_invocable: higher.model_invocable.or(lower.model_invocable),
-        user_invocable: higher.user_invocable.or(lower.user_invocable),
-        tools: super::AgentOverlayTools {
-            allowed: compose_optional_permission_sets(
-                lower.tools.allowed.as_ref(),
-                higher.tools.allowed.as_ref(),
-            ),
-            disallowed: compose_optional_permission_sets(
-                lower.tools.disallowed.as_ref(),
-                higher.tools.disallowed.as_ref(),
-            ),
-        },
-        model_policies: higher
-            .model_policies
-            .clone()
-            .or_else(|| lower.model_policies.clone()),
-        unknown,
-    }
+    let mut merged = higher.clone();
+    merged.network_allow = compose_permission_sets(&lower.network_allow, &higher.network_allow);
+    merged.network_deny = compose_permission_sets(&lower.network_deny, &higher.network_deny);
+    merged.tools = compose_tool_permission_sets(&lower.tools, &higher.tools);
+    add_tool_migration(&mut merged.tools, Some(&lower.tools), Some(&higher.tools));
+    merged
 }
 
 fn compose_skill_overlay(lower: &SkillOverlay, higher: &SkillOverlay) -> SkillOverlay {
-    SkillOverlay {
-        description: higher
-            .description
-            .clone()
-            .or_else(|| lower.description.clone()),
-        model_invocable: higher.model_invocable.or(lower.model_invocable),
-        user_invocable: higher.user_invocable.or(lower.user_invocable),
-        tools: super::AgentOverlayTools {
-            allowed: compose_optional_permission_sets(
-                lower.tools.allowed.as_ref(),
-                higher.tools.allowed.as_ref(),
-            ),
-            disallowed: compose_optional_permission_sets(
-                lower.tools.disallowed.as_ref(),
-                higher.tools.disallowed.as_ref(),
-            ),
-        },
+    let mut merged = higher.clone();
+    merged.tools = compose_tool_permission_sets(&lower.tools, &higher.tools);
+    add_tool_migration(&mut merged.tools, Some(&lower.tools), Some(&higher.tools));
+    merged
+}
+
+fn compose_tool_permission_sets(
+    lower: &AgentOverlayTools,
+    higher: &AgentOverlayTools,
+) -> AgentOverlayTools {
+    AgentOverlayTools {
+        allowed: compose_optional_permission_sets(lower.allowed.as_ref(), higher.allowed.as_ref()),
+        disallowed: compose_optional_permission_sets(
+            lower.disallowed.as_ref(),
+            higher.disallowed.as_ref(),
+        ),
+        migration: None,
     }
+}
+
+fn add_tool_migration(
+    effective: &mut AgentOverlayTools,
+    project: Option<&AgentOverlayTools>,
+    local: Option<&AgentOverlayTools>,
+) {
+    let previous = local
+        .or(project)
+        .expect("an effective overlay has a source");
+    effective.migration = Some(ToolOverlayMigration {
+        previous_allowed: previous.allowed.clone(),
+        previous_disallowed: previous.disallowed.clone(),
+        allowed_source: plain_list_source(
+            project.and_then(|tools| tools.allowed.as_ref()),
+            local.and_then(|tools| tools.allowed.as_ref()),
+        ),
+        disallowed_source: plain_list_source(
+            project.and_then(|tools| tools.disallowed.as_ref()),
+            local.and_then(|tools| tools.disallowed.as_ref()),
+        ),
+    });
+}
+
+fn plain_list_source<T>(
+    project: Option<&PermissionSet<T>>,
+    local: Option<&PermissionSet<T>>,
+) -> Option<ToolOverlaySource> {
+    if local.is_some_and(is_nonempty_plain_list) {
+        Some(ToolOverlaySource::Local)
+    } else if project.is_some_and(is_nonempty_plain_list) {
+        Some(ToolOverlaySource::Project)
+    } else {
+        None
+    }
+}
+
+fn is_nonempty_plain_list<T>(set: &PermissionSet<T>) -> bool {
+    matches!(set, PermissionSet::Add(entries) if !entries.is_empty())
 }
 
 fn compose_optional_permission_sets<T: Clone + Eq>(
@@ -132,7 +183,6 @@ impl LocalSettings {
             && self.agent_emission.is_none()
             && self.meridian.is_empty()
             && self.model_policies.is_none()
-            && self.unknown.is_empty()
     }
 
     pub(crate) fn overlay_settings(&self, base: &Settings) -> (Settings, TargetSource) {

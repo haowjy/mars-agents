@@ -102,10 +102,11 @@ pub fn build_launch_bundle(
     if let Some(agent) = request.agent.as_deref()
         && let Some(overlay) = effective_project_config.agents.get(agent)
     {
-        for action in profile.tools.apply_overlay(&overlay.tools) {
+        for (action, source) in profile.tools.apply_overlay(&overlay.tools) {
             warnings.push(crate::compiler::tool_policy::overlay_list_upgrade_warning(
                 &format!("[agents.{agent}.tools]"),
                 action,
+                source,
             ));
         }
     }

@@ -886,9 +886,116 @@ Review code changes."#;
             .unwrap()
             .iter()
             .any(|warning| warning.as_str().is_some_and(|message| {
-                message.contains("[agents.reviewer.tools].allowed")
+                message.contains("mars.toml [agents.reviewer.tools].allowed")
                     && message.contains("allowed = { replace = [...] }")
             })),
+        "{}",
+        bundle["warnings"]
+    );
+}
+
+#[test]
+fn bundle_warning_compares_project_local_tools_with_mars_017() {
+    let agent = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools:
+  '*': deny
+---
+Review code changes."#;
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent,
+        &[],
+        "[agents.reviewer.tools]\nallowed = [\"Bash\"]",
+    );
+    std::fs::write(
+        project_root.join("mars.local.toml"),
+        "[agents.reviewer.tools]\nallowed = [\"Read\"]\n",
+    )
+    .unwrap();
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["tools"]["allowed"],
+        serde_json::json!(["Bash", "Read"])
+    );
+    assert!(
+        bundle["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().is_some_and(|message| {
+                message.contains("mars.local.toml [agents.reviewer.tools].allowed")
+                    && message.contains("Mars 0.17")
+            })),
+        "{}",
+        bundle["warnings"]
+    );
+}
+
+#[test]
+fn authored_empty_overlay_list_keeps_the_017_result_without_warning() {
+    let agent = r#"---
+name: reviewer
+model: claude-opus-4-6
+tools:
+  Read: allow
+  Grep: allow
+  Write: deny
+---
+Review code changes."#;
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent,
+        &[],
+        "[agents.reviewer.tools]\nallowed = []",
+    );
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--harness",
+        "claude",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["tools"]["allowed"],
+        serde_json::json!(["Read", "Grep"])
+    );
+    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!(["Write"]));
+    assert!(
+        bundle["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|warning| !warning
+                .as_str()
+                .is_some_and(|message| message.contains("tools].allowed"))),
         "{}",
         bundle["warnings"]
     );

@@ -33,18 +33,19 @@ Plain `tools.allowed` / `tools.disallowed` lists add to profile rules; a
 `{ replace = [...] }` table clears that action's lower rules first. Existing asks and the
 `'*': deny` allowlist marker survive. Profile list-form `tools: [...]` is deprecated and only
 grants its named tools; package profiles cannot replace deny sets. The optional fields preserve
-absent versus authored-empty lists so the one-release replacement-semantics warning remains
-accurate for `allowed = []` / `disallowed = []` too.
+absent versus authored-empty lists for the one-release 0.17 comparison; empty lists were and
+remain no-ops, so they do not warn.
 
 ## Layering (`layering.rs`)
 
 - `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
 - Network host permission sets compose across user, project, and local settings; other settings
   lists retain replacement semantics.
-- Model aliases are **replace-by-key**. Agent and skill overlays compose field by field: local
-  scalars win when present and the four network/tool permission sets compose.
-- Unknown policy keys remain forward-compatible. Network-looking unknowns are retained and
-  warned because silently dropping a deny would fail open.
+- Model aliases are **replace-by-key**. Agent and skill overlays also replace the whole keyed
+  entry, except their four network/tool permission sets compose across project and local entries.
+- Unknown project settings and agent-overlay keys remain forward-compatible. Network-looking
+  unknowns are retained and warned because silently dropping a deny would fail open.
+  `mars.local.toml [settings]` remains strict and rejects unknown keys.
 - Removed `[settings.model_visibility]` is an error only for the consumer's
   project `mars.toml` and `mars.local.toml`. `load_manifest` parses only
   exported package sections, ignoring an upstream package's consumer settings.

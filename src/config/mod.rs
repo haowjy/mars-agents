@@ -37,8 +37,7 @@ pub(crate) fn looks_like_network_key(key: &str) -> bool {
 }
 
 pub use layering::{
-    merged_settings, overlay_agent_overlays_by_field, overlay_models_replace_by_key,
-    overlay_skill_overlays_by_field,
+    merged_settings, overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays,
 };
 
 /// Top-level mars.toml configuration.
@@ -216,18 +215,58 @@ pub struct FilterConfig {
 ///
 /// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
 /// fails `mars.toml` instead of reaching the policy.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentOverlayTools {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<PermissionSet<OverlayToolName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disallowed: Option<PermissionSet<OverlayToolName>>,
+    #[serde(skip)]
+    pub(crate) migration: Option<ToolOverlayMigration>,
 }
 
 impl AgentOverlayTools {
     pub fn is_empty(&self) -> bool {
         self.allowed.is_none() && self.disallowed.is_none()
     }
+}
+
+// Migration metadata affects only a one-release warning, not the overlay's serialized value or
+// resolved permissions.
+impl PartialEq for AgentOverlayTools {
+    fn eq(&self, other: &Self) -> bool {
+        self.allowed == other.allowed && self.disallowed == other.disallowed
+    }
+}
+
+impl Eq for AgentOverlayTools {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolOverlaySource {
+    Project,
+    Local,
+}
+
+impl ToolOverlaySource {
+    pub(crate) fn file_name(self) -> &'static str {
+        match self {
+            Self::Project => "mars.toml",
+            Self::Local => "mars.local.toml",
+        }
+    }
+}
+
+/// The 0.17 tool overlay and the authored plain lists that can change its result.
+///
+/// This metadata exists only on project/local-composed overlays. Keeping it beside the
+/// effective tool sets lets every consumer compare the same old and new policies without
+/// reloading configuration or reimplementing project/local precedence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ToolOverlayMigration {
+    pub(crate) previous_allowed: Option<PermissionSet<OverlayToolName>>,
+    pub(crate) previous_disallowed: Option<PermissionSet<OverlayToolName>>,
+    pub(crate) allowed_source: Option<ToolOverlaySource>,
+    pub(crate) disallowed_source: Option<ToolOverlaySource>,
 }
 
 /// Per-agent launch-bundle overlay policy in mars.toml `[agents.<name>]`.
@@ -578,6 +617,7 @@ pub struct LocalConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct LocalSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
@@ -623,8 +663,6 @@ pub struct LocalSettings {
     pub meridian: MeridianSettings,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -1095,12 +1133,12 @@ pub fn merged_models(
     overlay_models_replace_by_key(base, local)
 }
 
-/// Compose mars.local.toml agent overlays field by field over project entries.
+/// Replace project/local agent overlay entries while composing their permission sets.
 pub fn merged_agent_overlays(
     base: &IndexMap<String, AgentOverlay>,
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
-    overlay_agent_overlays_by_field(base, local)
+    overlay_agent_overlays(base, local)
 }
 
 /// Base model precedence for the overlay+profile layer shared by native emission
@@ -1164,7 +1202,7 @@ fn effective_project_config(
         settings,
         target_source,
         models: overlay_models_replace_by_key(&config.models, local),
-        agents: overlay_agent_overlays_by_field(&config.agents, local),
+        agents: overlay_agent_overlays(&config.agents, local),
         warnings: project_config_warnings(config, local),
     }
 }
@@ -1182,11 +1220,6 @@ fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<String> 
             NETWORK_OVERLAY_KEYS,
         ));
     }
-    warnings.extend(network_key_warnings(
-        "mars.local.toml [settings]",
-        &local.settings.unknown,
-        NETWORK_SETTINGS_KEYS,
-    ));
     for (name, overlay) in &local.agents {
         warnings.extend(network_key_warnings(
             &format!("mars.local.toml [agents.{name}]"),
@@ -1348,7 +1381,7 @@ pub fn merge_with_root(
         );
     }
 
-    let skills = overlay_skill_overlays_by_field(&config.skills, &local.skills);
+    let skills = overlay_skill_overlays(&config.skills, &local.skills);
 
     Ok((
         EffectiveConfig {
@@ -2195,7 +2228,7 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
     }
 
     #[test]
-    fn merged_skill_overlays_local_compose_fields() {
+    fn merged_skill_overlays_replace_fields_and_compose_permissions() {
         let mut base_skills = IndexMap::new();
         base_skills.insert(
             "planning".to_string(),
@@ -2228,10 +2261,10 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
             ..LocalConfig::default()
         };
 
-        let merged = overlay_skill_overlays_by_field(&base_skills, &local.skills);
+        let merged = overlay_skill_overlays(&base_skills, &local.skills);
         let composed = merged.get("planning").expect("planning overlay");
         assert_eq!(composed.description.as_deref(), Some("Local description"));
-        assert_eq!(composed.model_invocable, Some(true));
+        assert_eq!(composed.model_invocable, None);
         assert_eq!(composed.user_invocable, Some(false));
         assert_eq!(
             overlay_tool_strings(composed.tools.allowed.as_ref().unwrap().entries()),
@@ -2272,18 +2305,21 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
     }
 
     #[test]
-    fn merged_agent_overlays_compose_by_agent_name() {
+    fn merged_agent_overlays_replace_fields_and_compose_permissions() {
         let mut base_agents = IndexMap::new();
         base_agents.insert(
             "tech-lead".to_string(),
             AgentOverlay {
+                description: Some("project description".to_string()),
                 model: Some("gpt55".to_string()),
                 harness: Some("codex".to_string()),
                 effort: Some("high".to_string()),
+                network: Some(NetworkPolicy::Deny),
                 network_deny: vec!["project.example".parse().unwrap()].into(),
                 tools: AgentOverlayTools {
                     allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
                     disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
+                    ..AgentOverlayTools::default()
                 },
                 model_policies: Some(vec![ModelPolicyRule {
                     match_type: ModelPolicyMatchType::Alias,
@@ -2291,6 +2327,10 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                     no_fallback: false,
                     overrides: serde_yaml::Mapping::new(),
                 }]),
+                unknown: BTreeMap::from([(
+                    "project_future".to_string(),
+                    toml::Value::Boolean(true),
+                )]),
                 ..AgentOverlay::default()
             },
         );
@@ -2313,7 +2353,9 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                     disallowed: Some(PermissionSet::Replace {
                         replace: vec!["Agent".to_string().try_into().unwrap()],
                     }),
+                    ..AgentOverlayTools::default()
                 },
+                unknown: BTreeMap::from([("local_future".to_string(), toml::Value::Boolean(true))]),
                 ..AgentOverlay::default()
             },
         );
@@ -2324,9 +2366,11 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
 
         let merged = merged_agent_overlays(&base_agents, &local);
         let replaced = merged.get("tech-lead").expect("tech-lead should exist");
+        assert_eq!(replaced.description, None);
         assert_eq!(replaced.model.as_deref(), Some("gptmini"));
-        assert_eq!(replaced.harness.as_deref(), Some("codex"));
-        assert_eq!(replaced.effort.as_deref(), Some("high"));
+        assert_eq!(replaced.harness, None);
+        assert_eq!(replaced.effort, None);
+        assert_eq!(replaced.network, None);
         assert_eq!(
             replaced
                 .network_deny
@@ -2345,9 +2389,11 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
             overlay_tool_strings(replaced.tools.disallowed.as_ref().unwrap().entries()),
             ["Agent"]
         );
+        assert_eq!(replaced.model_policies, None);
+        assert!(!replaced.unknown.contains_key("project_future"));
         assert_eq!(
-            replaced.model_policies.as_ref().unwrap()[0].match_value,
-            "project-policy"
+            replaced.unknown.get("local_future"),
+            Some(&toml::Value::Boolean(true))
         );
         assert_eq!(
             merged
@@ -2365,6 +2411,20 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                 .is_empty(),
             "an authored empty local list should replace the project list"
         );
+    }
+
+    #[test]
+    fn load_local_rejects_unknown_local_settings_fields() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.local.toml"),
+            "[settings]\nnot_supported = true\n",
+        )
+        .unwrap();
+
+        let err = load_local(dir.path()).unwrap_err().to_string();
+        assert!(err.contains("unknown field"), "unexpected error: {err}");
+        assert!(err.contains("not_supported"), "unexpected error: {err}");
     }
 
     #[test]
@@ -2582,16 +2642,15 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
         .unwrap();
         std::fs::write(
             dir.path().join("mars.local.toml"),
-            "[settings]\nnetwork-policy = 'deny'\nfuture_local_key = true\n[agents.coder]\ndefault-network-mode = 'deny'\nfuture_local_agent_key = true\n",
+            "[agents.coder]\ndefault-network-mode = 'deny'\nfuture_local_agent_key = true\n",
         )
         .unwrap();
 
         let effective = load_effective_project_config(dir.path()).unwrap();
-        assert_eq!(effective.warnings.len(), 4, "{:?}", effective.warnings);
+        assert_eq!(effective.warnings.len(), 3, "{:?}", effective.warnings);
         for key in [
             "network_access",
             "default_network_mode",
-            "network-policy",
             "default-network-mode",
         ] {
             assert!(

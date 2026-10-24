@@ -860,7 +860,10 @@ fn effective_native_profile(
     overlay: Option<&crate::config::AgentOverlay>,
 ) -> (
     crate::compiler::agents::AgentProfile,
-    Vec<crate::compiler::tool_policy::ToolAction>,
+    Vec<(
+        crate::compiler::tool_policy::ToolAction,
+        crate::config::ToolOverlaySource,
+    )>,
 ) {
     let Some(overlay) = overlay else {
         return (profile.clone(), Vec::new());
@@ -1221,12 +1224,13 @@ fn resolve_native_agent_profiles(
         .map(|agent| {
             let (profile, changed_from_legacy) =
                 effective_native_profile(&agent.profile, agent_overlays.get(&agent.agent_name));
-            for action in changed_from_legacy {
+            for (action, source) in changed_from_legacy {
                 diag.warn(
                     "tool-overlay-additive",
                     crate::compiler::tool_policy::overlay_list_upgrade_warning(
                         &format!("[agents.{}.tools]", agent.agent_name),
                         action,
+                        source,
                     ),
                 );
             }

@@ -9,35 +9,33 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `network-deny` host sets. Modes resolve by policy precedence; host sets merge across user
   config, project/local settings, profile, overlay, and repeatable CLI flags. Hosts accept
   exact names, IPs, `*.x` (subdomains), and `**.x` (apex plus subdomains). The launch bundle
-  emits one `{mode, allow, deny}` object and fails an empty allowlist closed to `deny` with a
-  warning. Built-in web tools remain governed by `tools: web`; harness launchers report
-  enforcement limits.
+  adds `execution_policy.network` as one `{mode, allow, deny}` object plus
+  `provenance.network_source`, and fails an empty allowlist closed to `deny` with a warning.
+  Both `_` / `-` separator spellings are accepted, duplicate spellings are errors, and other
+  network-looking keys warn instead of silently losing a deny. Host validation rejects ambiguous
+  numeric and hex-style endings and top-level wildcards, canonicalizes IPv4-mapped IPv6, and
+  points Unicode users to punycode. Built-in web tools remain governed by `tools: web`; harness
+  launchers report enforcement limits.
 - User network defaults in `$MARS_CONFIG_DIR/config.toml` (or the platform Mars config
-  directory): `[settings] default_network`, `network-allow`, and `network-deny`.
+  directory): `[settings] default_network`, `network-allow`, and `network-deny`. An empty
+  `MARS_CONFIG_DIR` is treated as unset.
+- `--network allow|deny|allowlist` plus repeatable `--network-allow` / `--network-deny`.
+  Package profiles reject deny-host replacement and tool replacement tables; those replacement
+  forms belong to consumer overlays.
 
 ### Changed
-- `execution_policy.network` changed from a nullable mode string to the resolved
-  `{mode, allow, deny}` object. Inert hosts are omitted: `deny` clears both sets and `allow`
-  clears its allow set. `provenance.network_source` remains compatible and settings defaults
-  use `config`.
 - **Upgrade:** if a plain `[agents.<name>.tools]` or `[skills.<name>.tools]` `allowed` /
-  `disallowed` list was intended to narrow the profile, change it to
-  `{ replace = [...] }`. Plain lists now add; Mars warns for one release when that produces a
-  different result from the previous replacement rule. Package profiles cannot use replacement
-  tables. Existing `ask` rules and a
+  `disallowed` list was intended to narrow the profile, change it to `{ replace = [...] }`.
+  Non-empty plain lists now add; authored empty lists were already no-ops and need no change.
+  Mars warns for one release, naming the source file, only when the resolved result differs from
+  0.17. Package profiles cannot use replacement tables. Existing `ask` rules and a
   `'*': deny` allowlist marker survive either overlay form. The launch bundle, native
   agent files, and staged skills all use the same merge.
-- **Upgrade:** `mars.local.toml` agent and skill overlays now merge field by field with their
-  `mars.toml` entry instead of replacing the whole keyed block. Local scalars still win;
-  network and tool permission sets compose. `[models.*]` retains whole-entry replacement.
-
-### Fixed
-- Accept `_` / `-` separator aliases for every network policy surface and warn on other ignored
-  network-looking keys instead of silently losing a deny. Network hosts now reject ambiguous
-  numeric and hex-style endings and top-level wildcards, canonicalize IPv4-mapped IPv6, and
-  name punycode in validation errors.
-- Treat an empty `MARS_CONFIG_DIR` as unset, list every `--network` value in CLI help, and reject
-  profile `tools: { replace = [...] }` as invalid.
+- **Upgrade:** matching `mars.toml` / `mars.local.toml` agent and skill blocks still use 0.17's
+  whole-entry replacement for scalars, options, model policies, and unknown keys, but their four
+  permission sets now compose: `network-allow`, `network-deny`, `tools.allowed`, and
+  `tools.disallowed`. Use `{ replace = [...] }` where a local set should discard the project set
+  and lower profile entries. `[models.*]` retains whole-entry replacement.
 
 ## [0.17.0] - 2026-10-22
 

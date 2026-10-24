@@ -117,7 +117,10 @@ spelling), never a string with reserved values.
   `{ replace = [...] }` clears lower rules for that action first. Ask rules and an explicit
   `'*': deny` allowlist marker survive either form. Overlay names are `OverlayToolName`s: parsed
   with the profile grammar as `mars.toml` loads, so `apply_overlay`
-  never meets a name a profile would reject. Staging writes a skill back only when its own
+  never meets a name a profile would reject. Project/local layering carries the selected 0.17
+  overlay beside the effective sets; `apply_overlay` compares the complete old and new policies
+  so the one-release warning fires only for a real result change (empty lists remain no-ops) and
+  names the authored file. Staging writes a skill back only when its own
   `tools:` / `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would
   drop the bad entry, a malformed deny among them, and hide the error sync reports for it.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native

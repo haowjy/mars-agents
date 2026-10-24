@@ -317,6 +317,8 @@ pub enum AgentDiagnostic {
         value: String,
         allowed: &'static str,
     },
+    /// Both separator spellings of one field were authored.
+    DuplicateField { field: String, alias: String },
     /// Deprecated `models:` field was found (use `model-overrides:` instead).
     LegacyModelsField,
     /// Deprecated list-form `tools: [read, grep]`: it grants the listed tools and restricts
@@ -340,6 +342,7 @@ impl AgentDiagnostic {
             AgentDiagnostic::InvalidFieldValue { field, .. } => {
                 !field.starts_with("harness-overrides")
             }
+            AgentDiagnostic::DuplicateField { .. } => true,
             AgentDiagnostic::UnknownHarness { .. } => true,
             AgentDiagnostic::RemovedField { .. } => true,
             AgentDiagnostic::LegacyModelsField
@@ -358,6 +361,9 @@ impl AgentDiagnostic {
                 allowed,
             } => {
                 format!("agent field `{field}` has invalid value `{value}`; allowed: {allowed}")
+            }
+            AgentDiagnostic::DuplicateField { field, alias } => {
+                format!("agent fields `{field}` and `{alias}` are duplicate spellings; use only `{field}`")
             }
             AgentDiagnostic::LegacyModelsField => {
                 "agent uses deprecated `models:` field; rename to `model-overrides:`".to_string()
@@ -669,6 +675,23 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
     out
 }
 
+fn find_aliased_network_field<'a>(
+    fm: &'a Frontmatter,
+    field: &str,
+    alias: &str,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> Option<&'a Value> {
+    let value = fm.get(field);
+    let alias_value = fm.get(alias);
+    if value.is_some() && alias_value.is_some() {
+        diags.push(AgentDiagnostic::DuplicateField {
+            field: field.to_string(),
+            alias: alias.to_string(),
+        });
+    }
+    value.or(alias_value)
+}
+
 fn parse_network_hosts(
     field: &str,
     value: Option<&Value>,
@@ -839,18 +862,11 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             }
         }
     });
-    let network_allow = parse_network_hosts(
-        "network-allow",
-        fm.get("network-allow").or_else(|| fm.get("network_allow")),
-        true,
-        diags,
-    );
-    let network_deny = parse_network_hosts(
-        "network-deny",
-        fm.get("network-deny").or_else(|| fm.get("network_deny")),
-        false,
-        diags,
-    );
+    let network_allow_value =
+        find_aliased_network_field(fm, "network-allow", "network_allow", diags);
+    let network_allow = parse_network_hosts("network-allow", network_allow_value, true, diags);
+    let network_deny_value = find_aliased_network_field(fm, "network-deny", "network_deny", diags);
+    let network_deny = parse_network_hosts("network-deny", network_deny_value, false, diags);
 
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {

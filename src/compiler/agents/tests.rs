@@ -342,6 +342,28 @@ fn parses_network_all_values() {
 }
 
 #[test]
+fn duplicate_network_separator_spellings_are_errors() {
+    for (field, alias) in [
+        ("network-allow", "network_allow"),
+        ("network-deny", "network_deny"),
+    ] {
+        let (_, diags) = parse(&format!(
+            "---\n{field}: [a.example]\n{alias}: [b.example]\n---\n"
+        ));
+        assert!(
+            diags.iter().any(|diagnostic| matches!(
+                diagnostic,
+                AgentDiagnostic::DuplicateField {
+                    field: found_field,
+                    alias: found_alias,
+                } if found_field == field && found_alias == alias
+            ) && diagnostic.is_error()),
+            "{field}/{alias}: {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn invalid_network_string_names_the_field() {
     let (profile, diags) = parse("---\nnetwork: default\n---\n");
     assert_eq!(profile.network, None);

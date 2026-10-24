@@ -369,12 +369,13 @@ fn process_markdown_file(
         {
             let (overlaid, overlay_changed, changed_from_legacy) =
                 apply_skill_overlay(&fm, overlay);
-            for action in changed_from_legacy {
+            for (action, source) in changed_from_legacy {
                 ctx.diag.warn(
                     "tool-overlay-additive",
                     crate::compiler::tool_policy::overlay_list_upgrade_warning(
                         &format!("[skills.{skill_name}.tools]"),
                         action,
+                        source,
                     ),
                 );
             }

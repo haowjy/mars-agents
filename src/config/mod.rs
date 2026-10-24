@@ -1273,11 +1273,11 @@ fn tool_overlay_warnings(
         let local_replaces = local_set.is_some_and(PermissionSet::replaces);
         let message = if matching_local.is_some() && !local_replaces {
             format!(
-                "{file} {surface}.{field} is a non-empty plain list that now adds to lower rules and survives the matching mars.local.toml block; add `{field} = {{ replace = [...] }}` to mars.local.toml or remove the project list to preserve Mars 0.17 behavior"
+                "{file} {surface}.{field} is a non-empty plain list that now adds to lower rules and survives the matching mars.local.toml block; add `{field} = {{ replace = [...] }}` to mars.local.toml or remove the project list to preserve Mars 0.17 behavior (see docs/config/mars-toml.md, \"Adding to or replacing a permission list\")"
             )
         } else {
             format!(
-                "{file} {surface}.{field} is a non-empty plain list that now adds to lower rules instead of replacing them; use `{field} = {{ replace = [...] }}` in {file} when this list should preserve Mars 0.17 replacement behavior"
+                "{file} {surface}.{field} is a non-empty plain list that now adds to lower rules instead of replacing them; use `{field} = {{ replace = [...] }}` in {file} when this list should preserve Mars 0.17 replacement behavior (see docs/config/mars-toml.md, \"Adding to or replacing a permission list\")"
             )
         };
         Some(ProjectConfigWarning {

@@ -255,7 +255,8 @@ network-deny: [uploads.example]
 ```
 
 `network-allow` and `network-deny` are permission sets. Plain lists add across user,
-project, local, profile, overlay, and CLI surfaces. `{replace: [...]}` clears lower entries;
+project, local, profile, overlay, and CLI surfaces. `{replace: [...]}` clears lower entries
+([how lists combine](mars-toml.md#adding-to-or-replacing-a-permission-list));
 a package profile may replace its allow set but may not replace its deny set. Each entry is
 an exact host, an IP address, `*.x` (subdomains only), or `**.x` (apex plus subdomains).
 Wildcards require at least two DNS labels. Mars lowercases hosts, removes a trailing dot,
@@ -398,7 +399,7 @@ Two forms:
 
 `tools: {replace: [...]}` is invalid in a package profile. Replacement tables belong to
 consumer `[agents.<name>.tools]` and `[skills.<name>.tools]` overlays; a profile has no lower
-package policy to replace.
+package policy to replace. See [Adding to or replacing a permission list](mars-toml.md#adding-to-or-replacing-a-permission-list).
 
 `ask` asks before the call. Native agent files (`.claude/agents/`) have no field for it, or
 for an allowlist with nothing allowed; Mars reports both as dropped lossiness. Meridian

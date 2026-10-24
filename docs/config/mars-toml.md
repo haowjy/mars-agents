@@ -29,7 +29,8 @@ Default merge semantics:
 - **Arrays/lists:** higher layer replaces the full list (including explicit `[]`), except the
   permission sets below.
 - **Permission sets:** plain lists add; `{ replace = [...] }` clears lower entries first. This
-  applies only to network allow/deny hosts and tool grants/denies.
+  applies only to network allow/deny hosts and tool grants/denies. See
+  [Adding to or replacing a permission list](#adding-to-or-replacing-a-permission-list).
 
 For keyed overlay tables:
 
@@ -37,6 +38,49 @@ For keyed overlay tables:
 - `[agents]` and `[skills]` are also **replace-by-key** for scalars, options, model policies,
   and unknown keys. Their network and tool permission sets are the exception: those compose
   across matching project/local entries with the add/replace rule.
+
+### Adding to or replacing a permission list
+
+Four lists are permission lists:
+- `network-allow`
+- `network-deny`
+- `tools.allowed`
+- `tools.disallowed`
+
+When more than one place sets one of these lists, Mars combines them. The places, from lowest
+to highest:
+
+user config < `mars.toml` `[settings]` < `mars.local.toml` `[settings]` < agent profile < `[agents.<name>]` / `[skills.<name>]` overlay < CLI flags
+
+A plain list **adds** its entries to what lower places gave:
+
+```toml
+# mars.toml
+[settings]
+network-allow = ["github.com"]
+
+# mars.local.toml
+[settings]
+network-allow = ["pypi.org"]   # result: github.com, pypi.org
+```
+
+To **discard** what lower places gave and use only your entries, write the list inside a
+`replace` table. Places above this one still add on top:
+
+```toml
+[agents.coder]
+network-allow = { replace = ["github.com"] }   # ignores user/project/profile hosts
+tools.allowed = { replace = ["Read", "Grep"] }
+```
+
+The same in profile YAML frontmatter is `network-allow: {replace: [github.com]}`.
+
+Limits:
+- A package's agent profile can't replace a **deny** list (`network-deny`,
+  `disallowed-tools`), and can't use `replace` for tools at all; both are errors. Profiles sit above your `[settings]`, so a package
+  could otherwise erase your denies. Your own config files and overlays can replace anything.
+- CLI flags (`--network-allow`, `--network-deny`) only add.
+- An empty plain list (`[]`) adds nothing. `{ replace = [] }` clears the lower entries.
 
 ## `mars.toml`
 
@@ -217,8 +261,8 @@ include_fanout = false
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
 | `default_network` | string | unset | Project-wide network mode (`allow`, `deny`, `allowlist`) when no higher policy layer sets one. |
-| `network-allow` | string[] or replace table | `[]` | Allowed host permission set. Plain lists add across user/project/local/profile/overlay/CLI; `{ replace = [...] }` clears lower entries. |
-| `network-deny` | string[] or replace table | `[]` | Denied host permission set, with the same merge rule. Denies win at enforcement. |
+| `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Allowed host permission set. Plain lists add across user/project/local/profile/overlay/CLI; `{ replace = [...] }` clears lower entries. |
+| `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Denied host permission set, with the same merge rule. Denies win at enforcement. |
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
 
@@ -303,8 +347,8 @@ disallowed = ["agent"]
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `yolo` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
 | `network` | string | Shell network mode: `allow`, `deny`, `allowlist`; unset follows the sandbox in Meridian and does not affect built-in web tools |
-| `network-allow` | string[] or replace table | Allowed host set. Plain lists add; `{ replace = [...] }` clears settings/profile hosts first. |
-| `network-deny` | string[] or replace table | Denied host set. Plain lists add; `{ replace = [...] }` clears lower hosts first. |
+| `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | Allowed host set. Plain lists add; `{ replace = [...] }` clears settings/profile hosts first. |
+| `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | Denied host set. Plain lists add; `{ replace = [...] }` clears lower hosts first. |
 | `autocompact` | integer | Token threshold for context compaction (0–4294967295) |
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |

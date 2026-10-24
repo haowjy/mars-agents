@@ -25,7 +25,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - **Upgrade:** if a plain `[agents.<name>.tools]` or `[skills.<name>.tools]` `allowed` /
-  `disallowed` list was intended to narrow the profile, change it to `{ replace = [...] }`.
+  `disallowed` list was intended to narrow the profile, change it to `{ replace = [...] }`
+  ([how lists combine](docs/config/mars-toml.md#adding-to-or-replacing-a-permission-list)).
   These are the only existing permission sets whose behavior changes; the network sets below
   are new. Non-empty plain tool lists now add, while an empty plain list remains a no-op. A
   replacement drops every lower rule for that action, including `'*': allow`; existing `ask`

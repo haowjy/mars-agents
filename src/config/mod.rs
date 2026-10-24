@@ -2207,7 +2207,6 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                     allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
                     ..AgentOverlayTools::default()
                 },
-                ..SkillOverlay::default()
             },
         );
 

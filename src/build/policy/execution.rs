@@ -3,10 +3,10 @@ use crate::build::policy::PolicySource::{
     Unset,
 };
 use crate::build::policy::{
-    MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
-    matched_policy_u8_override, matched_policy_u32_override,
+    MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_network_override,
+    matched_policy_string_override, matched_policy_u8_override, matched_policy_u32_override,
 };
-use crate::compiler::agents::{ApprovalMode, EffortLevel, NetworkMode, SandboxMode};
+use crate::compiler::agents::{ApprovalMode, EffortLevel, NetworkPolicy, SandboxMode};
 use crate::config::AgentOverlay;
 use crate::models::ModelAlias;
 
@@ -14,7 +14,7 @@ pub(super) struct ExecutionResolution {
     pub(super) effort: ResolvedField<Option<String>>,
     pub(super) approval: ResolvedField<Option<String>>,
     pub(super) sandbox: ResolvedField<Option<String>>,
-    pub(super) network: ResolvedField<Option<String>>,
+    pub(super) network: ResolvedField<Option<NetworkPolicy>>,
     pub(super) autocompact: ResolvedField<Option<u32>>,
     pub(super) autocompact_pct: ResolvedField<Option<u8>>,
     pub(super) native_config: Option<serde_json::Map<String, serde_json::Value>>,
@@ -103,6 +103,16 @@ fn policy_string_override_by_source(
     source: PolicySource,
 ) -> Option<ResolvedField<Option<String>>> {
     matched_policy_string_override(matched_policy, key)
+        .filter(|decision| decision.source == source)
+        .map(resolved_policy_field)
+}
+
+fn policy_network_override_by_source(
+    matched_policy: Option<&MatchedModelPolicy>,
+    key: &str,
+    source: PolicySource,
+) -> Option<ResolvedField<Option<NetworkPolicy>>> {
+    matched_policy_network_override(matched_policy, key)
         .filter(|decision| decision.source == source)
         .map(resolved_policy_field)
 }
@@ -207,22 +217,15 @@ fn resolve_network(
     input: &PolicyInput<'_>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-) -> ResolvedField<Option<String>> {
+) -> ResolvedField<Option<NetworkPolicy>> {
     resolve_policy_field(
         "network",
         matched_policy,
-        policy_string_override_by_source,
+        policy_network_override_by_source,
         PolicyFieldLayers {
-            cli: input.network_override.map(str::to_string),
-            overlay: overlay
-                .and_then(|entry| entry.network.as_ref())
-                .map(|value| value.as_str().to_string()),
-            profile: input
-                .profile
-                .network
-                .as_ref()
-                .map(NetworkMode::as_str)
-                .map(str::to_string),
+            cli: input.network_override.cloned(),
+            overlay: overlay.and_then(|entry| entry.network.clone()),
+            profile: input.profile.network.clone(),
             alias: None,
         },
     )

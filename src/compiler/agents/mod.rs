@@ -13,7 +13,7 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
 use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
-pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkMode};
+pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkPolicy};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 
 // ---------------------------------------------------------------------------
@@ -269,7 +269,7 @@ pub struct AgentProfile {
     pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
-    pub network: Option<NetworkMode>,
+    pub network: Option<NetworkPolicy>,
     pub effort: Option<EffortLevel>,
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
@@ -620,7 +620,7 @@ fn push_model_policy_parse_error(
                 diags,
                 format!("{rule_field}.override.network"),
                 found,
-                NetworkMode::ALLOWED,
+                NetworkPolicy::ALLOWED,
             );
         }
         crate::config::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
@@ -773,17 +773,17 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             diags.push(AgentDiagnostic::InvalidFieldValue {
                 field: "network".to_string(),
                 value: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
-                allowed: NetworkMode::ALLOWED,
+                allowed: NetworkPolicy::ALLOWED,
             });
             return None;
         };
-        match NetworkMode::parse(value) {
-            Some(network) => Some(network),
-            None => {
+        match value.parse::<NetworkPolicy>() {
+            Ok(network) => Some(network),
+            Err(_) => {
                 diags.push(AgentDiagnostic::InvalidFieldValue {
                     field: "network".to_string(),
                     value: value.to_string(),
-                    allowed: NetworkMode::ALLOWED,
+                    allowed: NetworkPolicy::ALLOWED,
                 });
                 None
             }

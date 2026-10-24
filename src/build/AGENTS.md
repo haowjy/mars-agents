@@ -41,7 +41,6 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 
 **REAL warnings** (user can act on them):
 - Linked harness constraints blocked auto-routing
-- `network: deny` resolved with `sandbox: danger-full-access`, which no harness can enforce
 
 **NOT warnings** (go to routing/provenance fields, or to a `tools.rules[].note`):
 - Permission gaps: a tool name Mars does not recognize, a harness with no switch for a tool,

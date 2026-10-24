@@ -218,7 +218,7 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_warns_when_network_deny_cannot_be_enforced() {
+fn build_launch_bundle_leaves_network_enforcement_reporting_to_the_consumer() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
@@ -239,15 +239,5 @@ Review code changes."#;
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
-    assert!(
-        bundle["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| {
-                warning.as_str().is_some_and(|message| {
-                    message.contains("no harness can enforce network isolation")
-                })
-            })
-    );
+    assert_eq!(bundle["warnings"], serde_json::json!([]));
 }

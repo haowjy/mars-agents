@@ -5,7 +5,9 @@ use indexmap::IndexMap;
 
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
-use crate::config::{AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule};
+use crate::config::{
+    AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule, NetworkPolicy,
+};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
@@ -54,7 +56,7 @@ pub struct PolicyInput<'a> {
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
-    pub network_override: Option<&'a str>,
+    pub network_override: Option<&'a NetworkPolicy>,
     pub models_refresh: models::ModelsRefreshControl,
 }
 
@@ -609,15 +611,6 @@ pub fn resolve_policy(
         }
     }
 
-    if execution_resolution.network.value.as_deref() == Some("deny")
-        && execution_resolution.sandbox.value.as_deref() == Some("danger-full-access")
-    {
-        warnings.push(
-            "`network: deny` cannot be enforced with resolved `sandbox: danger-full-access`; no harness can enforce network isolation without a sandbox"
-                .to_string(),
-        );
-    }
-
     Ok(ResolvedPolicy {
         routing: routing_resolution.routing,
         execution_policy: ExecutionPolicy {
@@ -642,6 +635,14 @@ pub(super) fn policy_override_string(rule: &ModelPolicyRule, key: &str) -> Optio
         .as_str()?;
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+pub(super) fn policy_override_network(rule: &ModelPolicyRule, key: &str) -> Option<NetworkPolicy> {
+    let value = rule
+        .overrides
+        .get(serde_yaml::Value::String(key.to_string()))?
+        .as_str()?;
+    value.parse().ok()
 }
 
 pub(super) fn policy_override_u32(rule: &ModelPolicyRule, key: &str) -> Option<u32> {
@@ -677,6 +678,19 @@ pub(super) fn matched_policy_string_override(
 ) -> Option<ResolvedField<String>> {
     let policy = matched_policy?;
     let value = policy_override_string(&policy.rule, key)?;
+    Some(ResolvedField {
+        value,
+        source: policy.layer.field_source(),
+        matched_rule: Some(policy.matched_rule_ref()),
+    })
+}
+
+pub(super) fn matched_policy_network_override(
+    matched_policy: Option<&MatchedModelPolicy>,
+    key: &str,
+) -> Option<ResolvedField<NetworkPolicy>> {
+    let policy = matched_policy?;
+    let value = policy_override_network(&policy.rule, key)?;
     Some(ResolvedField {
         value,
         source: policy.layer.field_source(),

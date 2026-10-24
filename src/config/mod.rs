@@ -214,30 +214,49 @@ impl AgentOverlayTools {
     }
 }
 
-/// Shell network access mode used by profiles and per-agent overlays.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Shell network policy used by every authored configuration surface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum NetworkMode {
+pub enum NetworkPolicy {
     Allow,
     Deny,
 }
 
-impl NetworkMode {
+impl NetworkPolicy {
     pub const ALLOWED: &'static str = "allow, deny";
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "allow" => Some(Self::Allow),
-            "deny" => Some(Self::Deny),
-            _ => None,
-        }
-    }
 
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Allow => "allow",
             Self::Deny => "deny",
         }
+    }
+}
+
+impl std::str::FromStr for NetworkPolicy {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "allow" => Ok(Self::Allow),
+            "deny" => Ok(Self::Deny),
+            _ => Err(format!(
+                "invalid network policy `{value}`; expected one of: {}",
+                Self::ALLOWED
+            )),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for NetworkPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use std::str::FromStr;
+
+        let value = String::deserialize(deserializer)?;
+        Self::from_str(&value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -257,7 +276,7 @@ pub struct AgentOverlay {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub network: Option<NetworkMode>,
+    pub network: Option<NetworkPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autocompact: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -376,7 +395,7 @@ impl ModelPolicyRuleParseError {
             Self::NetworkOverrideInvalid { found } => {
                 format!(
                     "model policy override `network` has invalid value `{found}`; allowed: {}",
-                    NetworkMode::ALLOWED
+                    NetworkPolicy::ALLOWED
                 )
             }
             Self::NoFallbackMustBeBoolean { .. } => {
@@ -398,7 +417,7 @@ fn validate_model_policy_network_override(
             found: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
         });
     };
-    if NetworkMode::parse(value_string).is_none() {
+    if value_string.parse::<NetworkPolicy>().is_err() {
         return Err(ModelPolicyRuleParseError::NetworkOverrideInvalid {
             found: value_string.to_string(),
         });
@@ -1935,7 +1954,7 @@ override = { effort = "high" }
         assert_eq!(overlay.model.as_deref(), Some("gpt55"));
         assert_eq!(overlay.harness.as_deref(), Some("codex"));
         assert_eq!(
-            overlay.network.as_ref().map(NetworkMode::as_str),
+            overlay.network.as_ref().map(NetworkPolicy::as_str),
             Some("deny")
         );
         assert_eq!(overlay.autocompact, Some(1200));

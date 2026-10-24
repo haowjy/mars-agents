@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
+use crate::config::NetworkPolicy;
 use crate::error::MarsError;
 use crate::harness::registry::HarnessId;
 
@@ -86,21 +87,6 @@ impl SandboxArg {
     }
 }
 
-#[derive(Debug, Clone, ValueEnum)]
-enum NetworkArg {
-    Allow,
-    Deny,
-}
-
-impl NetworkArg {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Deny => "deny",
-        }
-    }
-}
-
 #[derive(Debug, clap::Args)]
 pub struct LaunchBundleArgs {
     /// Agent name from `.mars/agents/<name>.md`.
@@ -141,8 +127,8 @@ pub struct LaunchBundleArgs {
     sandbox: Option<SandboxArg>,
 
     /// Override shell network access.
-    #[arg(long, value_enum)]
-    network: Option<NetworkArg>,
+    #[arg(long)]
+    network: Option<NetworkPolicy>,
 
     /// Add extra skills by name. Supports `--skill a --skill b` and `--skill a,b`.
     #[arg(long = "skill", value_delimiter = ',', action = ArgAction::Append)]
@@ -178,7 +164,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             effort: args.effort.as_ref().map(|e| e.as_str().to_string()),
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
-            network: args.network.as_ref().map(|n| n.as_str().to_string()),
+            network: args.network.clone(),
             extra_skills: args.extra_skills.clone(),
             models_refresh,
         },

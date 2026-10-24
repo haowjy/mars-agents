@@ -56,7 +56,7 @@ impl<'a> Effective<'a> {
         self.profile.sandbox.as_ref()
     }
 
-    fn network(&self) -> Option<&crate::compiler::agents::NetworkMode> {
+    fn network(&self) -> Option<&crate::compiler::agents::NetworkPolicy> {
         self.profile.network.as_ref()
     }
 

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::compiler::tool_policy::ToolRule;
+use crate::config::NetworkPolicy;
 
 pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 
@@ -47,7 +48,7 @@ pub struct ExecutionPolicy {
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
-    pub network: Option<String>,
+    pub network: Option<NetworkPolicy>,
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
     pub timeout: Option<u32>,

@@ -266,7 +266,10 @@ fn parses_sandbox_all_values() {
 
 #[test]
 fn parses_network_all_values() {
-    for (value, expected) in [("allow", NetworkMode::Allow), ("deny", NetworkMode::Deny)] {
+    for (value, expected) in [
+        ("allow", NetworkPolicy::Allow),
+        ("deny", NetworkPolicy::Deny),
+    ] {
         let content = format!("---\nnetwork: {value}\n---\n");
         let (profile, diags) = parse(&content);
         assert!(

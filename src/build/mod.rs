@@ -16,7 +16,7 @@ use prompt::compile_prompt_surface;
 use crate::cli::MarsContext;
 use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
-use crate::config::EffectiveProjectConfig;
+use crate::config::{EffectiveProjectConfig, NetworkPolicy};
 use crate::error::{ConfigError, MarsError};
 use crate::frontmatter::SkillsSpec;
 
@@ -32,7 +32,7 @@ pub struct LaunchBundleRequest {
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
-    pub network: Option<String>,
+    pub network: Option<NetworkPolicy>,
     pub extra_skills: Vec<String>,
     pub models_refresh: crate::models::ModelsRefreshControl,
 }
@@ -128,7 +128,7 @@ pub fn build_launch_bundle(
             effort_override: request.effort.as_deref(),
             approval_override: request.approval.as_deref(),
             sandbox_override: request.sandbox.as_deref(),
-            network_override: request.network.as_deref(),
+            network_override: request.network.as_ref(),
             models_refresh: request.models_refresh,
         },
     )?;

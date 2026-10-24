@@ -34,10 +34,10 @@ they are expected route metadata, not problems a user can fix.
 
 Route facts are recorded in `routing.harness_model_source` and
 `routing.harness_model_confidence`. Build policy owns warnings for selected model
-fallbacks and execution-policy combinations that no harness can enforce, such as
-`network: deny` with `sandbox: danger-full-access`. Tool permission gaps are never
-warnings: they ride `tools.rules[].native_status` and `note`. Exhausted routing
-is an error, never a warning followed by an unassessed replacement route.
+fallbacks and invalid resolved policy states it normalizes. Harness projection owns
+reporting about what the selected harness can enforce. Tool permission gaps are never
+warnings: they ride `tools.rules[].native_status` and `note`. Exhausted routing is an
+error, never a warning followed by an unassessed replacement route.
 
 Examples that are NOT warnings (they go to routing/provenance fields):
 - `harness_model_source: "passthrough"` — Pi or explicit harness receives the model token as-is; this is expected behavior

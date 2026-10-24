@@ -6,8 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Agent `network: allow|deny` policy for shell connections, with profile,
-  overlay, model-policy, `--network`, launch-bundle, provenance, and unenforceable
-  `deny` diagnostics. Built-in web tools remain governed by `tools: web`.
+  overlay, model-policy, `--network`, launch-bundle, and provenance. Built-in web
+  tools remain governed by `tools: web`; harness launchers report enforcement limits.
 
 ## [0.17.0] - 2026-10-22
 

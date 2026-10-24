@@ -271,6 +271,16 @@ pub enum MarsError {
     #[error("git command failed: `{command}` — {message}")]
     GitCli { command: String, message: String },
 
+    #[error("release aborted: {message}")]
+    Release { message: String },
+
+    #[error("{release}; rollback failed: {rollback}")]
+    ReleaseRollback {
+        #[source]
+        release: Box<MarsError>,
+        rollback: String,
+    },
+
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -302,6 +312,8 @@ impl MarsError {
             | MarsError::Io { .. }
             | MarsError::Http { .. }
             | MarsError::GitCli { .. }
+            | MarsError::Release { .. }
+            | MarsError::ReleaseRollback { .. }
             | MarsError::Internal(_) => 3,
             MarsError::ResolutionRestartNeeded { .. } => {
                 unreachable!("ResolutionRestartNeeded is an internal signal caught by resolve()")

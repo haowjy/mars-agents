@@ -1,0 +1,5 @@
+# src/cli follow-ups
+
+- `version.rs::require_validate_pass` leaves an untracked `.mars/` directory after its
+  dry-run. Make validation avoid creating canonical state or remove only the state that
+  this invocation created, so an aborted release can be rerun from a clean tree.

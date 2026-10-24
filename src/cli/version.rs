@@ -1,6 +1,8 @@
 //! `mars version <bump|X.Y.Z> [--push]` — bump package version, commit, and tag.
 
+use std::io::IsTerminal;
 use std::path::Path;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use semver::{BuildMetadata, Prerelease, Version};
@@ -65,32 +67,52 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     ensure_tag_not_exists(&ctx.project_root, &tag)?;
 
+    let snapshot = ReleaseSnapshot::capture(&ctx.project_root)?;
+    let review_filled_changelog = !json
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal()
+        && std::io::stderr().is_terminal();
     package.version = next_version.clone();
-    crate::config::save(&ctx.project_root, &config)?;
-    update_changelog_if_present(&ctx.project_root, &next_version)?;
+    let release_result = (|| {
+        update_changelog_if_present(&ctx.project_root, &next_version, review_filled_changelog)?;
 
-    crate::platform::process::run_git(
-        &["add", "mars.toml"],
-        &ctx.project_root,
-        "git add mars.toml",
-    )?;
-    if ctx.project_root.join("CHANGELOG.md").is_file() {
+        crate::config::save(&ctx.project_root, &config)?;
+
         crate::platform::process::run_git(
-            &["add", "CHANGELOG.md"],
+            &["add", "mars.toml"],
             &ctx.project_root,
-            "git add CHANGELOG.md",
+            "git add mars.toml",
         )?;
+        if snapshot.changelog.is_some() {
+            crate::platform::process::run_git(
+                &["add", "CHANGELOG.md"],
+                &ctx.project_root,
+                "git add CHANGELOG.md",
+            )?;
+        }
+        crate::platform::process::run_git(
+            &["commit", "-m", &tag],
+            &ctx.project_root,
+            &format!("git commit -m {tag}"),
+        )?;
+        crate::platform::process::run_git(
+            &["tag", "-a", &tag, "-m", &tag],
+            &ctx.project_root,
+            &format!("git tag -a {tag} -m {tag}"),
+        )?;
+
+        Ok::<(), MarsError>(())
+    })();
+
+    if let Err(error) = release_result {
+        if let Err(rollback) = snapshot.rollback(&ctx.project_root) {
+            return Err(MarsError::ReleaseRollback {
+                release: Box::new(error),
+                rollback,
+            });
+        }
+        return Err(error);
     }
-    crate::platform::process::run_git(
-        &["commit", "-m", &tag],
-        &ctx.project_root,
-        &format!("git commit -m {tag}"),
-    )?;
-    crate::platform::process::run_git(
-        &["tag", "-a", &tag, "-m", &tag],
-        &ctx.project_root,
-        &format!("git tag -a {tag} -m {tag}"),
-    )?;
 
     if args.push {
         let branch = current_branch(&ctx.project_root)?;
@@ -316,71 +338,309 @@ fn current_branch(project_root: &Path) -> Result<String, MarsError> {
     Ok(branch)
 }
 
-fn update_changelog_if_present(project_root: &Path, next_version: &str) -> Result<(), MarsError> {
+struct ReleaseSnapshot {
+    head: String,
+    mars_toml: Vec<u8>,
+    changelog: Option<Vec<u8>>,
+}
+
+impl ReleaseSnapshot {
+    fn capture(project_root: &Path) -> Result<Self, MarsError> {
+        let head = crate::platform::process::run_git(
+            &["rev-parse", "HEAD"],
+            project_root,
+            "capture HEAD before release",
+        )?;
+        let mars_toml = std::fs::read(project_root.join("mars.toml"))?;
+        let changelog_path = project_root.join("CHANGELOG.md");
+        let changelog = changelog_path
+            .is_file()
+            .then(|| std::fs::read(changelog_path))
+            .transpose()?;
+
+        Ok(Self {
+            head,
+            mars_toml,
+            changelog,
+        })
+    }
+
+    fn rollback(&self, project_root: &Path) -> Result<(), String> {
+        let mut failures = Vec::new();
+
+        match crate::platform::process::run_git(
+            &["rev-parse", "HEAD"],
+            project_root,
+            "read HEAD while rolling back release",
+        ) {
+            Ok(head) if head != self.head => {
+                if let Err(error) = crate::platform::process::run_git(
+                    &["reset", "--soft", &self.head],
+                    project_root,
+                    "roll back release commits",
+                ) {
+                    failures.push(error.to_string());
+                }
+            }
+            Ok(_) => {}
+            Err(error) => failures.push(error.to_string()),
+        }
+
+        if let Err(error) = restore_snapshot_file(&project_root.join("mars.toml"), &self.mars_toml)
+        {
+            failures.push(format!("could not restore mars.toml: {error}"));
+        }
+        if let Some(changelog) = &self.changelog
+            && let Err(error) = restore_snapshot_file(&project_root.join("CHANGELOG.md"), changelog)
+        {
+            failures.push(format!("could not restore CHANGELOG.md: {error}"));
+        }
+
+        if let Err(error) = crate::platform::process::run_git(
+            &["reset", "-q", "--", "mars.toml", "CHANGELOG.md"],
+            project_root,
+            "unstage release files",
+        ) {
+            failures.push(error.to_string());
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+}
+
+fn restore_snapshot_file(path: &Path, snapshot: &[u8]) -> Result<(), MarsError> {
+    if matches!(std::fs::read(path), Ok(current) if current == snapshot) {
+        return Ok(());
+    }
+
+    crate::fs::atomic_write(path, snapshot)
+}
+
+fn update_changelog_if_present(
+    project_root: &Path,
+    next_version: &str,
+    review_filled_section: bool,
+) -> Result<(), MarsError> {
     let changelog_path = project_root.join("CHANGELOG.md");
     if !changelog_path.is_file() {
         return Ok(());
     }
 
-    let content = std::fs::read_to_string(&changelog_path)?;
-    let Some(updated) = promote_unreleased_changelog(&content, next_version, &today_iso_date())
-    else {
+    let content = std::fs::read(&changelog_path)?;
+    let content = std::str::from_utf8(&content)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let Some(changelog) = UnreleasedChangelog::parse(content) else {
         return Ok(());
     };
 
-    if updated.unreleased_was_empty {
+    let commit_bullets = if changelog.is_empty() {
+        match changelog_commit_bullets(project_root) {
+            Ok(bullets) => bullets,
+            Err(error) => {
+                eprintln!("warning: could not collect commits for CHANGELOG.md: {error}");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    if !commit_bullets.is_empty() {
+        if review_filled_section {
+            eprintln!(
+                "note: filled CHANGELOG.md release section from {} commits; opening editor for review",
+                commit_bullets.len()
+            );
+        } else {
+            eprintln!(
+                "note: filled CHANGELOG.md release section from {} commits; section lists raw commit subjects",
+                commit_bullets.len()
+            );
+        }
+    } else if changelog.is_empty() {
         eprintln!("warning: CHANGELOG.md has no entries under [Unreleased]");
     }
 
-    std::fs::write(changelog_path, updated.content)?;
+    let updated = changelog.promote(next_version, &today_iso_date(), &commit_bullets);
+    crate::fs::atomic_write(&changelog_path, updated.as_bytes())?;
+
+    if review_filled_section && !commit_bullets.is_empty() {
+        open_changelog_in_git_editor(project_root, &changelog_path)?;
+
+        let edited = std::fs::read_to_string(&changelog_path)?;
+        if !release_section_has_entries(&edited, next_version) {
+            return Err(MarsError::Release {
+                message: format!(
+                    "CHANGELOG.md must retain a non-empty `## [{next_version}]` release section"
+                ),
+            });
+        }
+    }
+
     Ok(())
 }
 
-struct ChangelogPromotion {
-    content: String,
-    unreleased_was_empty: bool,
+fn open_changelog_in_git_editor(
+    project_root: &Path,
+    changelog_path: &Path,
+) -> Result<(), MarsError> {
+    let editor = crate::platform::process::run_git(
+        &["var", "GIT_EDITOR"],
+        project_root,
+        "git var GIT_EDITOR",
+    )?;
+
+    // A one-shot shell alias delegates both POSIX shell quoting and Git for Windows' bundled
+    // `sh` selection to Git itself. The function wrapper passes the path exactly once.
+    let editor_alias = format!("alias.mars-changelog-editor=!f() {{ {editor} \"$@\"; }}; f");
+    let mut command = Command::new("git");
+    crate::platform::process::remove_git_local_env(&mut command);
+    let status = command
+        .current_dir(project_root)
+        .arg("-c")
+        .arg(editor_alias)
+        .arg("mars-changelog-editor")
+        .arg(changelog_path)
+        .status()
+        .map_err(|error| MarsError::GitCli {
+            command: "git editor".to_string(),
+            message: format!("failed to launch editor: {error}"),
+        })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(MarsError::Release {
+            message: format!("editor exited unsuccessfully ({status})"),
+        })
+    }
 }
 
-fn promote_unreleased_changelog(
-    content: &str,
-    next_version: &str,
-    date: &str,
-) -> Option<ChangelogPromotion> {
-    let sections = content.split_inclusive('\n').collect::<Vec<_>>();
+fn changelog_commit_bullets(project_root: &Path) -> Result<Vec<String>, MarsError> {
+    let previous_tag = match crate::platform::process::run_git(
+        &[
+            "describe",
+            "--tags",
+            "--abbrev=0",
+            "--match",
+            "v*",
+            "--exclude",
+            "v*-*",
+        ],
+        project_root,
+        "git describe latest stable release tag",
+    ) {
+        Ok(tag) => tag,
+        Err(MarsError::GitCli { message, .. })
+            if ["no names found", "no tags can describe"]
+                .iter()
+                .any(|text| message.to_ascii_lowercase().contains(text)) =>
+        {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error),
+    };
+    let range = format!("{previous_tag}..HEAD");
+    let subjects = crate::platform::process::run_git(
+        &[
+            "log",
+            "--format=%s",
+            "--no-merges",
+            "--reverse",
+            &range,
+            "--",
+            ".",
+        ],
+        project_root,
+        "git log package commits since latest stable release",
+    )?;
 
-    let unreleased_index = sections
-        .iter()
-        .position(|line| is_unreleased_header(line.trim_end()))?;
-    let next_section_index = sections
-        .iter()
-        .enumerate()
-        .skip(unreleased_index + 1)
-        .find_map(|(index, line)| {
-            if line.trim_start().starts_with("## [") {
-                Some(index)
-            } else {
-                None
-            }
+    Ok(subjects
+        .lines()
+        .filter(|subject| !is_release_commit_subject(subject))
+        .map(|subject| format!("- {subject}"))
+        .collect())
+}
+
+fn is_release_commit_subject(subject: &str) -> bool {
+    if subject.starts_with("release:") {
+        return true;
+    }
+
+    subject
+        .strip_prefix('v')
+        .and_then(|version| Version::parse(version).ok())
+        .is_some()
+}
+
+struct UnreleasedChangelog<'a> {
+    sections: Vec<&'a str>,
+    unreleased_index: usize,
+    next_section_index: usize,
+    empty: bool,
+}
+
+impl<'a> UnreleasedChangelog<'a> {
+    fn parse(content: &'a str) -> Option<Self> {
+        let sections = content.split_inclusive('\n').collect::<Vec<_>>();
+        let unreleased_index = sections
+            .iter()
+            .position(|line| is_unreleased_header(line.trim_end()))?;
+        let next_section_index = sections
+            .iter()
+            .enumerate()
+            .skip(unreleased_index + 1)
+            .find_map(|(index, line)| {
+                if line.trim_start().starts_with("## [") {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(sections.len());
+        let empty = changelog_section_is_empty(&sections[unreleased_index + 1..next_section_index]);
+
+        Some(Self {
+            sections,
+            unreleased_index,
+            next_section_index,
+            empty,
         })
-        .unwrap_or(sections.len());
-
-    let unreleased_was_empty =
-        changelog_section_is_empty(&sections[unreleased_index + 1..next_section_index]);
-
-    let mut promoted = String::new();
-    for line in &sections[..unreleased_index] {
-        promoted.push_str(line);
-    }
-    promoted.push_str("## [Unreleased]\n\n");
-    promoted.push_str(&format!("## [{next_version}] - {date}\n"));
-    for line in &sections[unreleased_index + 1..] {
-        promoted.push_str(line);
     }
 
-    Some(ChangelogPromotion {
-        content: promoted,
-        unreleased_was_empty,
-    })
+    fn is_empty(&self) -> bool {
+        self.empty
+    }
+
+    fn promote(&self, next_version: &str, date: &str, empty_section_bullets: &[String]) -> String {
+        let mut promoted = String::new();
+        for line in &self.sections[..self.unreleased_index] {
+            promoted.push_str(line);
+        }
+        promoted.push_str("## [Unreleased]\n\n");
+        promoted.push_str(&format!("## [{next_version}] - {date}\n"));
+        if self.empty && !empty_section_bullets.is_empty() {
+            promoted.push('\n');
+            for bullet in empty_section_bullets {
+                promoted.push_str(bullet);
+                promoted.push('\n');
+            }
+            promoted.push('\n');
+            for line in &self.sections[self.next_section_index..] {
+                promoted.push_str(line);
+            }
+        } else {
+            for line in &self.sections[self.unreleased_index + 1..] {
+                promoted.push_str(line);
+            }
+        }
+
+        promoted
+    }
 }
 
 fn is_unreleased_header(line: &str) -> bool {
@@ -398,6 +658,26 @@ fn changelog_section_is_empty(lines: &[&str]) -> bool {
         let trimmed = line.trim();
         trimmed.is_empty() || trimmed.starts_with("###")
     })
+}
+
+fn release_section_has_entries(content: &str, version: &str) -> bool {
+    let sections = content.split_inclusive('\n').collect::<Vec<_>>();
+    let header = format!("## [{version}]");
+    let Some(release_index) = sections.iter().position(|line| {
+        let line = line.trim();
+        line.strip_prefix(&header)
+            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(" - "))
+    }) else {
+        return false;
+    };
+    let next_section_index = sections
+        .iter()
+        .enumerate()
+        .skip(release_index + 1)
+        .find_map(|(index, line)| line.trim_start().starts_with("## [").then_some(index))
+        .unwrap_or(sections.len());
+
+    !changelog_section_is_empty(&sections[release_index + 1..next_section_index])
 }
 
 fn today_iso_date() -> String {
@@ -581,10 +861,11 @@ mod tests {
     }
 
     #[test]
-    fn run_warns_on_empty_unreleased() {
+    fn run_fills_empty_unreleased_from_commits() {
         let (repo, ctx) = init_repo_with_mars_toml(
             "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
         );
+        run_git_test(repo.path(), ["tag", "-a", "v0.1.0", "-m", "v0.1.0"]);
         std::fs::write(
             repo.path().join("CHANGELOG.md"),
             "# Changelog\n\n## [Unreleased]\n\n### Added\n\n### Fixed\n",
@@ -604,15 +885,19 @@ mod tests {
 
         let changelog = std::fs::read_to_string(repo.path().join("CHANGELOG.md")).unwrap();
         assert!(changelog.contains("## [Unreleased]\n\n## [0.1.1] - "));
-        assert!(changelog.contains("## [0.1.1] - "));
+        assert!(changelog.contains("\n\n- add empty changelog\n"));
+        assert!(!changelog.contains("### Added"));
+        let parsed =
+            UnreleasedChangelog::parse("# Changelog\n\n## [Unreleased]\n\n### Added\n\n").unwrap();
+        assert!(parsed.is_empty());
         assert!(
-            promote_unreleased_changelog(
-                "# Changelog\n\n## [Unreleased]\n\n### Added\n\n",
-                "0.1.1",
-                "2026-04-30"
-            )
-            .unwrap()
-            .unreleased_was_empty
+            parsed
+                .promote(
+                    "0.1.1",
+                    "2026-04-30",
+                    &["- add empty changelog".to_string()]
+                )
+                .contains("## [0.1.1] - 2026-04-30\n\n- add empty changelog")
         );
     }
 

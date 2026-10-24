@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- `mars version` now fills an empty changelog release section from package commit subjects since the latest reachable stable `v*` tag, opens an editor only with terminal stdin/stdout/stderr, and restores both changelog and config state when a pre-tag release step fails.
+- `mars version` now fills an empty changelog release section from package commit subjects since the latest reachable stable `v*` tag, opens an editor only with terminal stdin/stdout/stderr, and restores the starting commit plus changelog and config state when a pre-tag release step fails.
 
 ## [0.17.0] - 2026-10-22
 

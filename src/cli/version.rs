@@ -73,7 +73,6 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         && std::io::stdout().is_terminal()
         && std::io::stderr().is_terminal();
     package.version = next_version.clone();
-    let mut commit_created = false;
     let release_result = (|| {
         update_changelog_if_present(&ctx.project_root, &next_version, review_filled_changelog)?;
 
@@ -96,7 +95,6 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             &ctx.project_root,
             &format!("git commit -m {tag}"),
         )?;
-        commit_created = true;
         crate::platform::process::run_git(
             &["tag", "-a", &tag, "-m", &tag],
             &ctx.project_root,
@@ -107,9 +105,10 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     })();
 
     if let Err(error) = release_result {
-        if let Err(rollback_error) = snapshot.rollback(&ctx.project_root, commit_created) {
-            return Err(MarsError::Release {
-                message: format!("{error}; rollback failed: {rollback_error}"),
+        if let Err(rollback) = snapshot.rollback(&ctx.project_root) {
+            return Err(MarsError::ReleaseRollback {
+                release: Box::new(error),
+                rollback,
             });
         }
         return Err(error);
@@ -340,12 +339,18 @@ fn current_branch(project_root: &Path) -> Result<String, MarsError> {
 }
 
 struct ReleaseSnapshot {
+    head: String,
     mars_toml: Vec<u8>,
     changelog: Option<Vec<u8>>,
 }
 
 impl ReleaseSnapshot {
     fn capture(project_root: &Path) -> Result<Self, MarsError> {
+        let head = crate::platform::process::run_git(
+            &["rev-parse", "HEAD"],
+            project_root,
+            "capture HEAD before release",
+        )?;
         let mars_toml = std::fs::read(project_root.join("mars.toml"))?;
         let changelog_path = project_root.join("CHANGELOG.md");
         let changelog = changelog_path
@@ -354,32 +359,39 @@ impl ReleaseSnapshot {
             .transpose()?;
 
         Ok(Self {
+            head,
             mars_toml,
             changelog,
         })
     }
 
-    fn rollback(&self, project_root: &Path, commit_created: bool) -> Result<(), String> {
+    fn rollback(&self, project_root: &Path) -> Result<(), String> {
         let mut failures = Vec::new();
 
-        if commit_created
-            && let Err(error) = crate::platform::process::run_git(
-                &["reset", "--soft", "HEAD~1"],
-                project_root,
-                "roll back release commit",
-            )
-        {
-            failures.push(error.to_string());
+        match crate::platform::process::run_git(
+            &["rev-parse", "HEAD"],
+            project_root,
+            "read HEAD while rolling back release",
+        ) {
+            Ok(head) if head != self.head => {
+                if let Err(error) = crate::platform::process::run_git(
+                    &["reset", "--soft", &self.head],
+                    project_root,
+                    "roll back release commits",
+                ) {
+                    failures.push(error.to_string());
+                }
+            }
+            Ok(_) => {}
+            Err(error) => failures.push(error.to_string()),
         }
 
-        if let Err(error) =
-            crate::fs::atomic_write(&project_root.join("mars.toml"), &self.mars_toml)
+        if let Err(error) = restore_snapshot_file(&project_root.join("mars.toml"), &self.mars_toml)
         {
             failures.push(format!("could not restore mars.toml: {error}"));
         }
         if let Some(changelog) = &self.changelog
-            && let Err(error) =
-                crate::fs::atomic_write(&project_root.join("CHANGELOG.md"), changelog)
+            && let Err(error) = restore_snapshot_file(&project_root.join("CHANGELOG.md"), changelog)
         {
             failures.push(format!("could not restore CHANGELOG.md: {error}"));
         }
@@ -398,6 +410,14 @@ impl ReleaseSnapshot {
             Err(failures.join("; "))
         }
     }
+}
+
+fn restore_snapshot_file(path: &Path, snapshot: &[u8]) -> Result<(), MarsError> {
+    if matches!(std::fs::read(path), Ok(current) if current == snapshot) {
+        return Ok(());
+    }
+
+    crate::fs::atomic_write(path, snapshot)
 }
 
 fn update_changelog_if_present(
@@ -516,7 +536,9 @@ fn changelog_commit_bullets(project_root: &Path) -> Result<Vec<String>, MarsErro
     ) {
         Ok(tag) => tag,
         Err(MarsError::GitCli { message, .. })
-            if message.to_ascii_lowercase().contains("no names found") =>
+            if ["no names found", "no tags can describe"]
+                .iter()
+                .any(|text| message.to_ascii_lowercase().contains(text)) =>
         {
             return Ok(Vec::new());
         }

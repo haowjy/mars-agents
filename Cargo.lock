@@ -1301,6 +1301,7 @@ dependencies = [
  "libc",
  "pathdiff",
  "predicates",
+ "rustversion",
  "semver",
  "serde",
  "serde_json",

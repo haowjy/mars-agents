@@ -89,6 +89,9 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   dispatches to the correct lowerer, ensuring emitted native artifacts carry concrete
   model IDs rather than aliases.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
+- `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
+  lowerers omit them; Codex records all three as dropped, while other targets record them as
+  Meridian-only.
 
 ### Harness Override Passthrough
 
@@ -104,18 +107,22 @@ spelling), never a string with reserved values.
 
 - **Parse.** Deprecated `tools:` list → `allow` per entry and a warning; map → `allow` /
   `deny` / `ask` per entry; `disallowed-tools:` → `deny`. Lists only grant for agents and
-  skills. An allowlist is a map with an explicit `'*': deny`. A `bash` pattern `X:*` becomes
-  `X *`.
+  skills. An allowlist is a map with an explicit `'*': deny`. A profile
+  `tools: { replace: [...] }` is invalid; replacement tables exist only on consumer overlays.
+  A `bash` pattern `X:*` becomes `X *`.
 - **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
   `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
   lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes
-  the rules back, since sync lowers skills from the staged file. `tools.allowed` replaces grant
-  rules without making an allowlist; an explicit `'*': deny` in the profile map is the
-  allowlist marker and survives the overlay. Overlay names are `OverlayToolName`s: parsed with
-  the profile grammar as `mars.toml` loads, so `apply_overlay`
-  never meets a name a profile would reject. Staging writes a skill back only when its own
-  `tools:` / `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would
-  drop the bad entry, a malformed deny among them, and hide the error sync reports for it.
+  the rules back, since sync lowers skills from the staged file. Plain permission lists add;
+  `{ replace = [...] }` clears lower rules for that action, including `'*': allow`. Plain lists
+  preserve wildcard rules; ask rules and an explicit `'*': deny` allowlist marker survive either
+  form. Overlay names are `OverlayToolName`s: parsed
+  with the profile grammar as `mars.toml` loads, so `apply_overlay`
+  never meets a name a profile would reject. Compatibility warnings are derived once from the
+  authored project/local constructs in `config::project_config_warnings`; policy consumers do not
+  model legacy resolution. Staging writes a skill back only when its own `tools:` /
+  `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would drop the bad
+  entry, a malformed deny among them, and hide the error sync reports for it.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
   permission names and unscoped harness tool names. Native agent lowering, skill lowering and the
   bundle read its `natives` / `gaps` / `overlaps`; never add a second projection path, or a

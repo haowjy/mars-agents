@@ -23,6 +23,9 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
         had_user_invocable_field: false,
         approval: None,
         sandbox: None,
+        network: None,
+        network_allow: Default::default(),
+        network_deny: Default::default(),
         effort: None,
         autocompact: None,
         autocompact_pct: None,
@@ -984,12 +987,12 @@ fn emit_all_consumes_overlay_model_policies() {
     overlays.insert(
         "worker".to_string(),
         crate::config::AgentOverlay {
-            model_policies: vec![crate::config::ModelPolicyRule {
+            model_policies: Some(vec![crate::config::ModelPolicyRule {
                 match_type: crate::config::ModelPolicyMatchType::Alias,
                 match_value: "opus".to_string(),
                 no_fallback: false,
                 overrides: serde_yaml::Mapping::new(),
-            }],
+            }]),
             ..Default::default()
         },
     );
@@ -1235,7 +1238,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
         crate::config::AgentOverlay {
             description: Some("Overlay description".to_string()),
             tools: crate::config::AgentOverlayTools {
-                disallowed: vec!["Write".to_string().try_into().unwrap()],
+                disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
                 ..Default::default()
             },
             ..Default::default()

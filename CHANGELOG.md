@@ -4,6 +4,47 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Agent `network: allow|deny|allowlist` mode plus canonical `network-allow` and
+  `network-deny` host sets. Modes resolve by policy precedence; host sets merge across user
+  config, project/local settings, profile, overlay, and repeatable CLI flags. Hosts accept
+  exact names, IPs, `*.x` (subdomains), and `**.x` (apex plus subdomains). The launch bundle
+  adds `execution_policy.network` as one `{mode, allow, deny}` object plus
+  `provenance.network_source`, and fails an empty allowlist closed to `deny` with a warning.
+  Both `_` / `-` separator spellings are accepted, duplicate spellings are errors, and other
+  network-looking keys warn instead of silently losing a deny. Host validation rejects ambiguous
+  numeric and hex-style endings and top-level wildcards, canonicalizes IPv4-mapped IPv6, and
+  points Unicode users to punycode. Built-in web tools remain governed by `tools: web`; harness
+  launchers report enforcement limits.
+- User network defaults in `$MARS_CONFIG_DIR/config.toml` (or the platform Mars config
+  directory): `[settings] default_network`, `network-allow`, and `network-deny`. An empty
+  `MARS_CONFIG_DIR` is treated as unset.
+- `--network allow|deny|allowlist` plus repeatable `--network-allow` / `--network-deny`.
+  Package profiles reject deny-host replacement and tool replacement tables; those replacement
+  forms belong to consumer overlays.
+
+### Changed
+- **Upgrade:** if a plain `[agents.<name>.tools]` or `[skills.<name>.tools]` `allowed` /
+  `disallowed` list was intended to narrow the profile, change it to `{ replace = [...] }`
+  ([how lists combine](docs/config/mars-toml.md#adding-to-or-replacing-a-permission-list)).
+  These are the only existing permission sets whose behavior changes; the network sets below
+  are new. Non-empty plain tool lists now add, while an empty plain list remains a no-op. A
+  replacement drops every lower rule for that action, including `'*': allow`; existing `ask`
+  rules and the `'*': deny` allowlist marker survive. For one release, Mars warns once for each
+  non-empty plain tool list and names its source file; empty lists and `{ replace = [...] }` do
+  not warn. A project tool list also now applies when a matching local block omits that list; the
+  warning names both files and recommends a local `{ replace = [...] }` list or removing the
+  project list. Package profiles cannot use replacement tables. The launch bundle, native agent
+  files, and staged skills all use the same merge.
+- **Upgrade:** matching `mars.toml` / `mars.local.toml` agent and skill blocks still use 0.17's
+  whole-entry replacement for scalars, options, model policies, and unknown keys. The two new
+  network sets (`network-allow`, `network-deny`) and the two changed tool sets (`tools.allowed`,
+  `tools.disallowed`) instead compose. Use `{ replace = [...] }` where a local set should discard
+  the project set and lower profile entries. Adding only `network-deny` to a local agent block
+  still drops the project block's `model`, `harness`, `description`, and model policies; repeat
+  the needed project scalars and model policies in the local block. `[models.*]` retains
+  whole-entry replacement.
+
 ## [0.17.0] - 2026-10-22
 
 ### Added

@@ -473,7 +473,7 @@ fn malformed_unknown_keys_harnesses_and_unreadable_files_name_path() {
 
 #[test]
 #[serial_test::serial]
-fn load_uses_mars_config_dir_without_a_general_user_settings_tier() {
+fn load_uses_the_shared_mars_config_directory() {
     let temp = TempDir::new().unwrap();
     let user_dir = temp.path().join("xdg");
     std::fs::create_dir(&user_dir).unwrap();
@@ -491,4 +491,13 @@ fn load_uses_mars_config_dir_without_a_general_user_settings_tier() {
             tier: Some(TierId::User)
         }
     );
+
+    let prior = std::env::var_os("MARS_CONFIG_DIR");
+    unsafe { std::env::set_var("MARS_CONFIG_DIR", "") };
+    let fallback = crate::platform::config::mars_config_dir();
+    match prior {
+        Some(value) => unsafe { std::env::set_var("MARS_CONFIG_DIR", value) },
+        None => unsafe { std::env::remove_var("MARS_CONFIG_DIR") },
+    }
+    assert_ne!(fallback, Some(std::path::PathBuf::new()));
 }

@@ -32,10 +32,10 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     require_clean_working_tree(&ctx.project_root)?;
     require_package_check(&ctx.project_root, args.force)?;
 
-    let mut config = crate::config::load(&ctx.project_root)?;
+    let config = crate::config::load(&ctx.project_root)?;
     let package = config
         .package
-        .as_mut()
+        .as_ref()
         .ok_or_else(|| ConfigError::Invalid {
             message: "mars.toml must contain [package] with name and version".to_string(),
         })?;
@@ -72,11 +72,10 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
         && std::io::stderr().is_terminal();
-    package.version = next_version.clone();
     let release_result = (|| {
         update_changelog_if_present(&ctx.project_root, &next_version, review_filled_changelog)?;
 
-        crate::config::save(&ctx.project_root, &config)?;
+        update_package_version(&ctx.project_root, &next_version)?;
 
         crate::platform::process::run_git(
             &["add", "mars.toml"],
@@ -140,6 +139,50 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
 
     Ok(0)
+}
+
+fn update_package_version(project_root: &Path, next_version: &str) -> Result<(), MarsError> {
+    let path = project_root.join("mars.toml");
+    let mut content = std::fs::read_to_string(&path)?;
+    let (version_span, current_version) = {
+        let document = toml_edit::ImDocument::parse(content.as_str()).map_err(|error| {
+            ConfigError::Invalid {
+                message: format!("failed to edit {}: {error}", path.display()),
+            }
+        })?;
+        let version = document
+            .get("package")
+            .and_then(|package| package.get("version"))
+            .and_then(toml_edit::Item::as_value)
+            .ok_or_else(|| ConfigError::Invalid {
+                message: "mars.toml must contain [package] with name and version".to_string(),
+            })?;
+        let current_version = version.as_str().ok_or_else(|| ConfigError::Invalid {
+            message: "[package].version must be a string".to_string(),
+        })?;
+        let span = version.span().ok_or_else(|| ConfigError::Invalid {
+            message: "could not locate [package].version in mars.toml".to_string(),
+        })?;
+        (span, current_version.to_string())
+    };
+
+    // Splice the parsed value span instead of rendering the document: rendering would normalize
+    // CRLF, while versioning must leave every byte outside the version value untouched.
+    let raw_version = &content[version_span.clone()];
+    if let Some(offset) = raw_version.find(&current_version) {
+        let value_start = version_span.start + offset;
+        content.replace_range(
+            value_start..value_start + current_version.len(),
+            next_version,
+        );
+    } else {
+        content.replace_range(
+            version_span,
+            &toml_edit::Value::from(next_version).to_string(),
+        );
+    }
+
+    crate::fs::atomic_write(&path, content.as_bytes())
 }
 
 fn require_clean_working_tree(project_root: &Path) -> Result<(), MarsError> {

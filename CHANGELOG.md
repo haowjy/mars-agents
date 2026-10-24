@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `mars version` now changes only `[package].version`, preserving comments, formatting,
+  ordering, and unrecognized tables in `mars.toml`.
+
 ## [0.18.1] - 2026-10-24
 
 ### Changed

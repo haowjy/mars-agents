@@ -18,6 +18,7 @@ pub mod local_source;
 pub mod lock;
 pub(crate) mod model;
 pub mod models;
+pub mod permission_set;
 pub mod platform;
 pub(crate) mod reader;
 pub mod resolve;

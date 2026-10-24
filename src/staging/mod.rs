@@ -435,7 +435,7 @@ mod tests {
                 description: Some("Overridden".to_string()),
                 user_invocable: Some(false),
                 tools: AgentOverlayTools {
-                    disallowed: vec!["Agent".to_string().try_into().unwrap()],
+                    disallowed: vec!["Agent".to_string().try_into().unwrap()].into(),
                     ..AgentOverlayTools::default()
                 },
                 ..SkillOverlay::default()

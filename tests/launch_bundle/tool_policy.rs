@@ -830,7 +830,7 @@ fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_notes_where_it_cannot() {
 }
 
 #[test]
-fn bundle_applies_the_tools_overlay_and_keeps_the_profiles_denies() {
+fn bundle_adds_the_tools_overlay_and_keeps_the_profile_rules() {
     let agent = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -864,7 +864,7 @@ Review code changes."#;
 
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["Bash", "Write"])
+        serde_json::json!(["Read", "Bash", "Write"])
     );
     let disallowed = bundle["tools"]["disallowed"].to_string();
     assert!(

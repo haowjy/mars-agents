@@ -10,6 +10,7 @@ use crate::compiler::tool_names::OverlayToolName;
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::dialect::Dialect;
 use crate::error::{ConfigError, MarsError};
+use crate::permission_set::PermissionSet;
 use crate::types::managed_cmd;
 use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
@@ -202,15 +203,15 @@ pub struct FilterConfig {
 /// fails `mars.toml` instead of reaching the policy.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentOverlayTools {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed: Vec<OverlayToolName>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub disallowed: Vec<OverlayToolName>,
+    #[serde(default, skip_serializing_if = "PermissionSet::is_noop")]
+    pub allowed: PermissionSet<OverlayToolName>,
+    #[serde(default, skip_serializing_if = "PermissionSet::is_noop")]
+    pub disallowed: PermissionSet<OverlayToolName>,
 }
 
 impl AgentOverlayTools {
     pub fn is_empty(&self) -> bool {
-        self.allowed.is_empty() && self.disallowed.is_empty()
+        self.allowed.is_noop() && self.disallowed.is_noop()
     }
 }
 
@@ -1962,7 +1963,7 @@ override = { effort = "high" }
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
         assert_eq!(
-            overlay_tool_strings(&overlay.tools.disallowed),
+            overlay_tool_strings(overlay.tools.disallowed.entries()),
             ["Bash(rm *)", "Write"]
         );
         assert_eq!(overlay.model_policies.len(), 1);
@@ -2006,7 +2007,7 @@ description = "Planning overlay"
 user_invocable = false
 model-invocable = true
 tools.disallowed = ["Agent", "Write"]
-tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
+tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
 "#,
         )
         .unwrap();
@@ -2016,13 +2017,14 @@ tools.allowed = ["Bash(git *)", "mcp(plugin:demo)"]
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
         assert_eq!(
-            overlay_tool_strings(&overlay.tools.disallowed),
+            overlay_tool_strings(overlay.tools.disallowed.entries()),
             ["Agent", "Write"]
         );
         assert_eq!(
-            overlay_tool_strings(&overlay.tools.allowed),
+            overlay_tool_strings(overlay.tools.allowed.entries()),
             ["Bash(git *)", "mcp(plugin:demo)"]
         );
+        assert!(overlay.tools.allowed.replaces());
     }
 
     fn overlay_tool_strings(names: &[OverlayToolName]) -> Vec<String> {

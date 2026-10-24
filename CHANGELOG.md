@@ -82,12 +82,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Claude reads that field as "only these tools". Map-form `allow`
   entries are grants, not an allowlist, so they no longer turn into `tools:`. Omitting
   `tools:` inherits every tool, so nothing is lost and no lossiness is recorded.
-- `mars.toml` `[agents.<name>.tools].allowed` replaces the profile's allow rules and keeps
-  its deny and `ask` rules; `disallowed` replaces its deny rules. The launch bundle now
-  applies the overlay too, through the same merge as native agent files. `[skills.<name>.tools]`
-  uses the same edit, so `allowed` no longer drops a map-form deny or `ask` in the skill's
-  `tools:`; `allowed` only grants and makes no allowlist. The staged skill writes
-  entries in canonical spelling (`agent`, not `Agent`), and denies in `disallowed-tools:`.
+- Permission sets use one layering rule: plain lists add, while
+  `{ replace = [...] }` clears lower entries before adding. This changes
+  `[agents.<name>.tools]` and `[skills.<name>.tools]`: `allowed` and `disallowed`
+  now add to profile rules by default; use the table form for the previous replacement
+  behavior. Package profiles cannot replace deny sets. Existing `ask` rules and a
+  `'*': deny` allowlist marker survive either overlay form. The launch bundle, native
+  agent files, and staged skills all use the same merge.
 - A scalar `tools: Read, Grep` (Claude's own agent-file spelling) is read as the list
   `[Read, Grep]`; staging splits it before lifting `Task` and `mcp__…` entries.
 - A malformed `tool(...)` entry (unclosed or empty parentheses, `*(x)`) is a validation

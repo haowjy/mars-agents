@@ -23,13 +23,14 @@ pipeline operates on EffectiveConfig only
 | `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`) |
 | `AgentOverlay` | `[agents.<name>]` overlay — `description`, `model`, `harness`, `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`), `model_policies` |
 
-`AgentOverlayTools` holds `OverlayToolName`s (`compiler/tool_names.rs`, a leaf grammar module):
-a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the profile grammar as the
-config loads, and a malformed one fails the load. It keeps the author's spelling, so `save`
-does not rewrite it. This is the one place `config` reaches into `compiler`.
-`tools.allowed` replaces profile grants without creating an allowlist; an explicit `'*': deny`
-in the profile map is the allowlist marker and survives the overlay. Profile list-form
-`tools: [...]` is deprecated and only grants its named tools.
+`AgentOverlayTools` holds permission sets of `OverlayToolName`s (`compiler/tool_names.rs`, a
+leaf grammar module): a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the
+profile grammar as the config loads, and a malformed one fails the load. It keeps the author's
+spelling, so `save` does not rewrite it. This is the one place `config` reaches into `compiler`.
+Plain `tools.allowed` / `tools.disallowed` lists add to profile rules; a
+`{ replace = [...] }` table clears that action's lower rules first. Existing asks and the
+`'*': deny` allowlist marker survive. Profile list-form `tools: [...]` is deprecated and only
+grants its named tools; package profiles cannot replace deny sets.
 
 ## Layering (`layering.rs`)
 

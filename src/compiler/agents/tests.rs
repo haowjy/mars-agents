@@ -419,6 +419,19 @@ fn tools_allow_deny_shorthand_is_rejected_not_read_as_a_tool_name() {
             "expected an invalid-value diagnostic for `tools: {shorthand}`: {diags:?}"
         );
     }
+
+    let (profile, diags) = parse("---\ntools: { replace: [read] }\n---\n");
+    assert_eq!(profile.tools.describe(), ["allow:read"]);
+    assert!(diags.iter().all(|diagnostic| !diagnostic.is_error()));
+
+    let (profile, diags) = parse("---\ndisallowed-tools: { replace: [write] }\n---\n");
+    assert!(profile.tools.rules.is_empty());
+    assert!(diags.iter().any(|diagnostic| matches!(
+        diagnostic,
+        AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
+            if field == "disallowed-tools"
+                && allowed.contains("package profiles cannot replace a deny set")
+    )));
 }
 
 #[test]

@@ -1236,7 +1236,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
         crate::config::AgentOverlay {
             description: Some("Overlay description".to_string()),
             tools: crate::config::AgentOverlayTools {
-                disallowed: vec!["Write".to_string().try_into().unwrap()],
+                disallowed: vec!["Write".to_string().try_into().unwrap()].into(),
                 ..Default::default()
             },
             ..Default::default()

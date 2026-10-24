@@ -323,17 +323,76 @@ fn update_changelog_if_present(project_root: &Path, next_version: &str) -> Resul
     }
 
     let content = std::fs::read_to_string(&changelog_path)?;
-    let Some(updated) = promote_unreleased_changelog(&content, next_version, &today_iso_date())
-    else {
+    let date = today_iso_date();
+    let Some(mut updated) = promote_unreleased_changelog(&content, next_version, &date, &[]) else {
         return Ok(());
     };
 
-    if updated.unreleased_was_empty {
+    let commit_bullets = if updated.unreleased_was_empty {
+        match changelog_commit_bullets(project_root) {
+            Ok(bullets) => bullets,
+            Err(error) => {
+                eprintln!("warning: could not collect commits for CHANGELOG.md: {error}");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    if !commit_bullets.is_empty() {
+        updated = promote_unreleased_changelog(&content, next_version, &date, &commit_bullets)
+            .expect("the changelog contains an [Unreleased] section");
+        eprintln!(
+            "note: filled CHANGELOG.md release section from {} commits; edit the release commit before pushing",
+            commit_bullets.len()
+        );
+    } else if updated.unreleased_was_empty {
         eprintln!("warning: CHANGELOG.md has no entries under [Unreleased]");
     }
 
     std::fs::write(changelog_path, updated.content)?;
     Ok(())
+}
+
+fn changelog_commit_bullets(project_root: &Path) -> Result<Vec<String>, MarsError> {
+    let tags = crate::platform::process::run_git(
+        &["tag", "--merged", "HEAD", "--list", "v*"],
+        project_root,
+        "git tag --merged HEAD --list v*",
+    )?;
+    if tags.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let previous_tag = crate::platform::process::run_git(
+        &["describe", "--tags", "--abbrev=0", "--match", "v*"],
+        project_root,
+        "git describe latest release tag",
+    )?;
+    let range = format!("{previous_tag}..HEAD");
+    let subjects = crate::platform::process::run_git(
+        &["log", "--format=%s", "--no-merges", "--reverse", &range],
+        project_root,
+        "git log commits since latest release",
+    )?;
+
+    Ok(subjects
+        .lines()
+        .filter(|subject| !is_release_commit_subject(subject))
+        .map(|subject| format!("- {subject}"))
+        .collect())
+}
+
+fn is_release_commit_subject(subject: &str) -> bool {
+    if subject.starts_with("release:") {
+        return true;
+    }
+
+    subject
+        .strip_prefix('v')
+        .and_then(|version| Version::parse(version).ok())
+        .is_some_and(|version| version.pre.is_empty() && version.build.is_empty())
 }
 
 struct ChangelogPromotion {
@@ -345,6 +404,7 @@ fn promote_unreleased_changelog(
     content: &str,
     next_version: &str,
     date: &str,
+    empty_section_bullets: &[String],
 ) -> Option<ChangelogPromotion> {
     let sections = content.split_inclusive('\n').collect::<Vec<_>>();
 
@@ -373,8 +433,20 @@ fn promote_unreleased_changelog(
     }
     promoted.push_str("## [Unreleased]\n\n");
     promoted.push_str(&format!("## [{next_version}] - {date}\n"));
-    for line in &sections[unreleased_index + 1..] {
-        promoted.push_str(line);
+    if unreleased_was_empty && !empty_section_bullets.is_empty() {
+        promoted.push('\n');
+        for bullet in empty_section_bullets {
+            promoted.push_str(bullet);
+            promoted.push('\n');
+        }
+        promoted.push('\n');
+        for line in &sections[next_section_index..] {
+            promoted.push_str(line);
+        }
+    } else {
+        for line in &sections[unreleased_index + 1..] {
+            promoted.push_str(line);
+        }
     }
 
     Some(ChangelogPromotion {
@@ -581,10 +653,11 @@ mod tests {
     }
 
     #[test]
-    fn run_warns_on_empty_unreleased() {
+    fn run_fills_empty_unreleased_from_commits() {
         let (repo, ctx) = init_repo_with_mars_toml(
             "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
         );
+        run_git_test(repo.path(), ["tag", "-a", "v0.1.0", "-m", "v0.1.0"]);
         std::fs::write(
             repo.path().join("CHANGELOG.md"),
             "# Changelog\n\n## [Unreleased]\n\n### Added\n\n### Fixed\n",
@@ -604,12 +677,14 @@ mod tests {
 
         let changelog = std::fs::read_to_string(repo.path().join("CHANGELOG.md")).unwrap();
         assert!(changelog.contains("## [Unreleased]\n\n## [0.1.1] - "));
-        assert!(changelog.contains("## [0.1.1] - "));
+        assert!(changelog.contains("\n\n- add empty changelog\n"));
+        assert!(!changelog.contains("### Added"));
         assert!(
             promote_unreleased_changelog(
                 "# Changelog\n\n## [Unreleased]\n\n### Added\n\n",
                 "0.1.1",
-                "2026-04-30"
+                "2026-04-30",
+                &["- add empty changelog".to_string()]
             )
             .unwrap()
             .unreleased_was_empty

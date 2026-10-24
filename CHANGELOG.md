@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `mars version` now fills an empty changelog release section from non-merge commit subjects since the latest reachable `v*` tag.
+
 ## [0.17.0] - 2026-10-22
 
 ### Added

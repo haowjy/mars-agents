@@ -61,7 +61,7 @@ Under `SuppressAll` (Meridian-managed, or `agent_emission = "never"` without age
 ### Model Alias Resolution at Compile Time
 
 When lowering a universal agent profile to a native harness format, model aliases like
-`opus46` are resolved to concrete model IDs (e.g., `claude-opus-4-6`) at compile time.
+`sol` are resolved to concrete model IDs (e.g., `gpt-5.6-sol`) at compile time.
 This is necessary because native harnesses (Claude Code, Codex) don't understand the
 alias system. `NativeModelRoutingRuntime` in `native_agents.rs` owns the merged alias
 registry, `.mars/models-cache.json`, catalog slugs, routing settings, one lazy

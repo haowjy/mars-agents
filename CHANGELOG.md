@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Claude MCP and hook config writers now accept explicit output paths, enabling fresh
+  plugin-tree output without changing sync destinations.
+
 ## [0.18.1] - 2026-10-24
 
 ### Changed

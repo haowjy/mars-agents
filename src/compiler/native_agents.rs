@@ -858,9 +858,12 @@ pub(crate) fn compile_native_agents<'a>(
 fn effective_native_profile(
     profile: &crate::compiler::agents::AgentProfile,
     overlay: Option<&crate::config::AgentOverlay>,
-) -> crate::compiler::agents::AgentProfile {
+) -> (
+    crate::compiler::agents::AgentProfile,
+    Vec<crate::compiler::tool_policy::ToolAction>,
+) {
     let Some(overlay) = overlay else {
-        return profile.clone();
+        return (profile.clone(), Vec::new());
     };
     let mut effective = profile.clone();
     effective.model =
@@ -887,8 +890,8 @@ fn effective_native_profile(
         effective.had_user_invocable_field = true;
     }
 
-    effective.tools.apply_overlay(&overlay.tools);
-    effective
+    let changed_from_legacy = effective.tools.apply_overlay(&overlay.tools);
+    (effective, changed_from_legacy)
 }
 
 /// Harnesses and native model fields that would receive lowered agent artifacts.
@@ -1171,7 +1174,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     // Resolve per-agent overlays into effective profiles ONCE here, so reconcile and
     // compile qualify against identical state without each re-deriving it (and without
     // threading the overlay map through their contexts).
-    let resolved = resolve_native_agent_profiles(mars_agents, agent_overlays);
+    let resolved = resolve_native_agent_profiles(mars_agents, agent_overlays, diag);
     let removed_native_outputs = match reconcile_ctx.policy {
         AgentSurfacePolicy::EmitSelective(_) => reconcile_native_agent_surfaces(
             reconcile_ctx,
@@ -1211,17 +1214,28 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
 fn resolve_native_agent_profiles(
     mars_agents: &[MarsCanonicalAgent],
     agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,
+    diag: &mut DiagnosticCollector,
 ) -> Vec<MarsCanonicalAgent> {
     mars_agents
         .iter()
-        .map(|agent| MarsCanonicalAgent {
-            agent_name: agent.agent_name.clone(),
-            canonical_dest_path: agent.canonical_dest_path.clone(),
-            profile: effective_native_profile(
-                &agent.profile,
-                agent_overlays.get(&agent.agent_name),
-            ),
-            fm: agent.fm.clone(),
+        .map(|agent| {
+            let (profile, changed_from_legacy) =
+                effective_native_profile(&agent.profile, agent_overlays.get(&agent.agent_name));
+            for action in changed_from_legacy {
+                diag.warn(
+                    "tool-overlay-additive",
+                    crate::compiler::tool_policy::overlay_list_upgrade_warning(
+                        &format!("[agents.{}.tools]", agent.agent_name),
+                        action,
+                    ),
+                );
+            }
+            MarsCanonicalAgent {
+                agent_name: agent.agent_name.clone(),
+                canonical_dest_path: agent.canonical_dest_path.clone(),
+                profile,
+                fm: agent.fm.clone(),
+            }
         })
         .collect()
 }

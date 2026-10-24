@@ -281,7 +281,7 @@ fn parses_network_all_values() {
     }
 
     let (profile, diags) = parse(
-        "---\nnetwork-allow: [GitHub.COM., '*.Example.com', '**.all.example', 127.0.0.1]\nnetwork-deny: [blocked.example]\n---\n",
+        "---\nnetwork_allow: [GitHub.COM., '*.Example.com', '**.all.example', '::ffff:127.0.0.1']\nnetwork_deny: [blocked.example]\n---\n",
     );
     assert!(diags.is_empty(), "{diags:?}");
     assert_eq!(
@@ -294,13 +294,30 @@ fn parses_network_all_values() {
         ["github.com", "*.example.com", "**.all.example", "127.0.0.1"]
     );
 
-    for invalid in ["https://example.com", "example.com:443", "/tmp/socket", "*"] {
+    for invalid in [
+        "https://example.com",
+        "example.com:443",
+        "/tmp/socket",
+        "*",
+        "127.1",
+        "256.1.1.1",
+        "host.0x7f",
+        "*.com",
+        "**.com",
+    ] {
         let (_, diags) = parse(&format!("---\nnetwork-allow: ['{invalid}']\n---\n"));
         assert!(
             diags.iter().any(AgentDiagnostic::is_error),
             "{invalid}: {diags:?}"
         );
     }
+    let (_, unicode_diags) = parse("---\nnetwork-allow: ['münchen.example']\n---\n");
+    assert!(
+        unicode_diags
+            .iter()
+            .any(|diagnostic| diagnostic.message().contains("punycode")),
+        "{unicode_diags:?}"
+    );
 
     let (_, diags) = parse("---\nnetwork-deny: { replace: [blocked.example] }\n---\n");
     assert!(diags.iter().any(|diagnostic| {
@@ -311,6 +328,17 @@ fn parses_network_all_values() {
                     && allowed.contains("package profiles cannot replace a deny set")
         )
     }));
+
+    let (_, diags) = parse("---\nnetwork_access: deny\ndefault-network-mode: deny\n---\n");
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic, AgentDiagnostic::UnknownNetworkField { .. }))
+            .count(),
+        2,
+        "{diags:?}"
+    );
+    assert!(diags.iter().all(|diagnostic| !diagnostic.is_error()));
 }
 
 #[test]
@@ -454,8 +482,13 @@ fn tools_allow_deny_shorthand_is_rejected_not_read_as_a_tool_name() {
     }
 
     let (profile, diags) = parse("---\ntools: { replace: [read] }\n---\n");
-    assert_eq!(profile.tools.describe(), ["allow:read"]);
-    assert!(diags.iter().all(|diagnostic| !diagnostic.is_error()));
+    assert!(profile.tools.rules.is_empty());
+    assert!(diags.iter().any(|diagnostic| matches!(
+        diagnostic,
+        AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
+            if field == "tools"
+                && allowed.contains("package profiles cannot replace a permission set")
+    )));
 
     let (profile, diags) = parse("---\ndisallowed-tools: { replace: [write] }\n---\n");
     assert!(profile.tools.rules.is_empty());

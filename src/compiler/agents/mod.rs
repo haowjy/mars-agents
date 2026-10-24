@@ -328,6 +328,8 @@ pub enum AgentDiagnostic {
     UnknownHarness { value: String },
     /// Unknown harness key under `harness-overrides`; preserved for forward compatibility.
     UnknownHarnessOverride { value: String },
+    /// Network-looking top-level field that is not a supported spelling.
+    UnknownNetworkField { field: String },
     /// Retired frontmatter field (e.g. legacy `mcp-tools:`).
     RemovedField { field: String },
 }
@@ -343,6 +345,7 @@ impl AgentDiagnostic {
             AgentDiagnostic::LegacyModelsField
             | AgentDiagnostic::DeprecatedApprovalYolo
             | AgentDiagnostic::DeprecatedListFormTools
+            | AgentDiagnostic::UnknownNetworkField { .. }
             | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
         }
     }
@@ -371,6 +374,10 @@ impl AgentDiagnostic {
             AgentDiagnostic::UnknownHarnessOverride { value } => {
                 format!("unknown harness override `{value}`; preserving passthrough block")
             }
+            AgentDiagnostic::UnknownNetworkField { field } => format!(
+                "agent field `{field}` is an unknown network key and is ignored; accepted keys: {}",
+                crate::config::NETWORK_OVERLAY_KEYS
+            ),
             AgentDiagnostic::RemovedField { field } => {
                 if tool_policy::REMOVED_MCP_TOOLS_FIELDS.contains(&field.as_str()) {
                     format!(
@@ -832,8 +839,18 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             }
         }
     });
-    let network_allow = parse_network_hosts("network-allow", fm.get("network-allow"), true, diags);
-    let network_deny = parse_network_hosts("network-deny", fm.get("network-deny"), false, diags);
+    let network_allow = parse_network_hosts(
+        "network-allow",
+        fm.get("network-allow").or_else(|| fm.get("network_allow")),
+        true,
+        diags,
+    );
+    let network_deny = parse_network_hosts(
+        "network-deny",
+        fm.get("network-deny").or_else(|| fm.get("network_deny")),
+        false,
+        diags,
+    );
 
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
@@ -948,6 +965,16 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
                 field: field.to_string(),
             });
         }
+    }
+
+    for field in fm.keys().into_iter().filter(|field| {
+        crate::config::looks_like_network_key(field)
+            && !matches!(
+                field.as_str(),
+                "network" | "network-allow" | "network_allow" | "network-deny" | "network_deny"
+            )
+    }) {
+        diags.push(AgentDiagnostic::UnknownNetworkField { field });
     }
 
     AgentProfile {

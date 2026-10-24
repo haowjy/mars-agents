@@ -57,7 +57,7 @@ impl<'de> Deserialize<'de> for NetworkPolicy {
 pub struct NetworkHost(String);
 
 impl NetworkHost {
-    pub const ALLOWED: &'static str = "exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); URLs, ports, paths, empty strings, and bare * are not allowed";
+    pub const ALLOWED: &'static str = "exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed";
 
     pub fn as_str(&self) -> &str {
         &self.0
@@ -94,6 +94,10 @@ impl FromStr for NetworkHost {
         }
 
         if let Ok(ip) = canonical.parse::<IpAddr>() {
+            let ip = match ip {
+                IpAddr::V6(ipv6) => ipv6.to_ipv4_mapped().map_or(IpAddr::V6(ipv6), IpAddr::V4),
+                ipv4 => ipv4,
+            };
             return Ok(Self(ip.to_string()));
         }
         if canonical.contains(':') {
@@ -109,12 +113,21 @@ impl FromStr for NetworkHost {
         };
         if host.contains('*')
             || (!prefix.is_empty() && host.parse::<IpAddr>().is_ok())
+            || (!prefix.is_empty() && !host.contains('.'))
             || !valid_dns_host(host)
+            || host.rsplit('.').next().is_some_and(numeric_or_hex_label)
         {
             return Err(invalid_host(raw));
         }
         Ok(Self(format!("{prefix}{host}")))
     }
+}
+
+fn numeric_or_hex_label(label: &str) -> bool {
+    label.bytes().all(|byte| byte.is_ascii_digit())
+        || label.strip_prefix("0x").is_some_and(|digits| {
+            !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_hexdigit())
+        })
 }
 
 impl<'de> Deserialize<'de> for NetworkHost {

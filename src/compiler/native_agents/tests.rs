@@ -856,7 +856,7 @@ fn compile_emit_all_with_overlays(
         fanout_agents: &[],
     };
     // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
-    let resolved = resolve_native_agent_profiles(agents, overlays);
+    let resolved = resolve_native_agent_profiles(agents, overlays, &mut diag);
     let mut router = test_router(aliases, &models_cache);
     compile_native_agents(
         &ctx,
@@ -987,12 +987,12 @@ fn emit_all_consumes_overlay_model_policies() {
     overlays.insert(
         "worker".to_string(),
         crate::config::AgentOverlay {
-            model_policies: vec![crate::config::ModelPolicyRule {
+            model_policies: Some(vec![crate::config::ModelPolicyRule {
                 match_type: crate::config::ModelPolicyMatchType::Alias,
                 match_value: "opus".to_string(),
                 no_fallback: false,
                 overrides: serde_yaml::Mapping::new(),
-            }],
+            }]),
             ..Default::default()
         },
     );
@@ -1238,7 +1238,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
         crate::config::AgentOverlay {
             description: Some("Overlay description".to_string()),
             tools: crate::config::AgentOverlayTools {
-                disallowed: vec!["Write".to_string().try_into().unwrap()].into(),
+                disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
                 ..Default::default()
             },
             ..Default::default()
@@ -1304,7 +1304,8 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
         },
         fanout_agents: &[],
     };
-    let resolved = resolve_native_agent_profiles(std::slice::from_ref(&agent), &overlays);
+    let resolved =
+        resolve_native_agent_profiles(std::slice::from_ref(&agent), &overlays, &mut diag);
     let mut router = test_router(&aliases, &models_cache);
     let records = compile_native_agents(
         &ctx,

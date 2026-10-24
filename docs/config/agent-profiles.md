@@ -258,9 +258,12 @@ network-deny: [uploads.example]
 project, local, profile, overlay, and CLI surfaces. `{replace: [...]}` clears lower entries;
 a package profile may replace its allow set but may not replace its deny set. Each entry is
 an exact host, an IP address, `*.x` (subdomains only), or `**.x` (apex plus subdomains).
-Mars lowercases hosts, removes a trailing dot, deduplicates, and sorts them. It rejects URLs,
-schemes, ports, paths, empty strings, and a bare `*`. An empty `allowlist` fails closed to
-`deny` with a warning.
+Wildcards require at least two DNS labels. Mars lowercases hosts, removes a trailing dot,
+canonicalizes IPv4-mapped IPv6 to IPv4, deduplicates, and sorts them. It rejects URLs, schemes,
+ports, paths, numeric or `0x`-style terminal DNS labels, empty strings, and a bare `*`;
+internationalized names must use punycode. `network_allow` / `network_deny` are accepted
+aliases. An unknown network-looking frontmatter key produces a warning instead of being
+silently ignored. An empty `allowlist` fails closed to `deny` with a warning.
 
 ---
 
@@ -392,6 +395,10 @@ Two forms:
   entries and leaves everything else to the harness. Add `'*': deny` to make a map an
   allowlist too. A capability that has only scoped allows (`bash(rg *)`) then runs only those
   commands.
+
+`tools: {replace: [...]}` is invalid in a package profile. Replacement tables belong to
+consumer `[agents.<name>.tools]` and `[skills.<name>.tools]` overlays; a profile has no lower
+package policy to replace.
 
 `ask` asks before the call. Native agent files (`.claude/agents/`) have no field for it, or
 for an allowlist with nothing allowed; Mars reports both as dropped lossiness. Meridian

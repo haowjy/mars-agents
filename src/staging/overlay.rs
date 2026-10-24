@@ -70,9 +70,13 @@ fn skill_name_from_rename_dest(rename_value: &str) -> String {
 pub(crate) fn apply_skill_overlay(
     frontmatter: &Frontmatter,
     overlay: &SkillOverlay,
-) -> (Frontmatter, bool) {
+) -> (
+    Frontmatter,
+    bool,
+    Vec<crate::compiler::tool_policy::ToolAction>,
+) {
     if overlay.is_empty() {
-        return (frontmatter.clone(), false);
+        return (frontmatter.clone(), false, Vec::new());
     }
 
     let mut merged = frontmatter.clone();
@@ -100,10 +104,14 @@ pub(crate) fn apply_skill_overlay(
         );
     }
 
-    if !overlay.tools.is_empty() {
-        changed |= apply_tool_overlay(&mut merged, &overlay.tools);
-    }
-    (merged, changed)
+    let changed_from_legacy = if overlay.tools.is_empty() {
+        Vec::new()
+    } else {
+        let (tool_changed, changed_from_legacy) = apply_tool_overlay(&mut merged, &overlay.tools);
+        changed |= tool_changed;
+        changed_from_legacy
+    };
+    (merged, changed, changed_from_legacy)
 }
 
 /// Apply `[skills.<name>.tools]` through the same edit an agent overlay uses, then write the
@@ -113,19 +121,22 @@ pub(crate) fn apply_skill_overlay(
 /// Writing back replaces `tools:` and `disallowed-tools:` with what parsed. If any entry did not,
 /// the frontmatter stays as written: rewriting it would drop that entry, a malformed deny
 /// among them, and hide the error sync's own parse reports for it.
-fn apply_tool_overlay(fm: &mut Frontmatter, overlay: &AgentOverlayTools) -> bool {
+fn apply_tool_overlay(
+    fm: &mut Frontmatter,
+    overlay: &AgentOverlayTools,
+) -> (bool, Vec<crate::compiler::tool_policy::ToolAction>) {
     let mut diags = Vec::new();
     let before = parse_skill_tool_policy(fm, &mut diags);
     if !diags.is_empty() {
-        return false;
+        return (false, Vec::new());
     }
     let mut after = before.clone();
-    after.apply_overlay(overlay);
+    let changed_from_legacy = after.apply_overlay(overlay);
     if after == before {
-        return false;
+        return (false, changed_from_legacy);
     }
     after.write_skill_frontmatter(fm);
-    true
+    (true, changed_from_legacy)
 }
 
 fn set_string_field(fm: &mut Frontmatter, key: &str, value: &str) -> bool {
@@ -163,12 +174,12 @@ mod tests {
             description: Some("Overridden".to_string()),
             user_invocable: Some(false),
             tools: AgentOverlayTools {
-                disallowed: vec!["Agent".to_string().try_into().unwrap()].into(),
+                disallowed: Some(vec!["Agent".to_string().try_into().unwrap()].into()),
                 ..AgentOverlayTools::default()
             },
             ..SkillOverlay::default()
         };
-        let (merged, changed) = apply_skill_overlay(
+        let (merged, changed, _) = apply_skill_overlay(
             &fm("name: demo\ndescription: base\nuser-invocable: true\n"),
             &overlay,
         );
@@ -188,12 +199,12 @@ mod tests {
     fn overlay_allowed_adds_grants_and_keeps_the_skills_denies() {
         let overlay = SkillOverlay {
             tools: AgentOverlayTools {
-                allowed: vec!["Bash(git *)".to_string().try_into().unwrap()].into(),
+                allowed: Some(vec!["Bash(git *)".to_string().try_into().unwrap()].into()),
                 ..AgentOverlayTools::default()
             },
             ..SkillOverlay::default()
         };
-        let (merged, changed) = apply_skill_overlay(
+        let (merged, changed, _) = apply_skill_overlay(
             &fm(
                 "name: demo\ndescription: base\ntools:\n  read: allow\n  'bash(git push *)': deny\n",
             ),
@@ -224,7 +235,7 @@ mod tests {
             user_invocable: Some(true),
             ..SkillOverlay::default()
         };
-        let (_, changed) = apply_skill_overlay(
+        let (_, changed, _) = apply_skill_overlay(
             &fm("name: demo\ndescription: Same\nuser-invocable: true\n"),
             &overlay,
         );

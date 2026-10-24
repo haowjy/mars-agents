@@ -3,15 +3,19 @@ use indexmap::IndexMap;
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
 use super::{AgentOverlay, LocalConfig, LocalSettings, Settings, SkillOverlay};
-use crate::permission_set::compose_permission_sets;
+use crate::permission_set::{PermissionSet, compose_permission_sets};
 
-fn overlay_map_replace_by_key<V: Clone>(
+fn overlay_map_by_key<V: Clone>(
     base: &IndexMap<String, V>,
     overlay: &IndexMap<String, V>,
+    merge: impl Fn(&V, &V) -> V,
 ) -> IndexMap<String, V> {
     let mut merged = base.clone();
     for (key, value) in overlay {
-        merged.insert(key.clone(), value.clone());
+        let value = merged
+            .get(key)
+            .map_or_else(|| value.clone(), |lower| merge(lower, value));
+        merged.insert(key.clone(), value);
     }
     merged
 }
@@ -20,21 +24,91 @@ pub fn overlay_models_replace_by_key(
     base: &IndexMap<String, crate::models::ModelAlias>,
     local: &LocalConfig,
 ) -> IndexMap<String, crate::models::ModelAlias> {
-    overlay_map_replace_by_key(base, &local.models)
+    overlay_map_by_key(base, &local.models, |_, higher| higher.clone())
 }
 
-pub fn overlay_agent_overlays_replace_by_key(
+pub fn overlay_agent_overlays_by_field(
     base: &IndexMap<String, AgentOverlay>,
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
-    overlay_map_replace_by_key(base, &local.agents)
+    overlay_map_by_key(base, &local.agents, compose_agent_overlay)
 }
 
-pub fn overlay_skills_replace_by_key(
+pub fn overlay_skill_overlays_by_field(
     base: &IndexMap<String, SkillOverlay>,
     local: &IndexMap<String, SkillOverlay>,
 ) -> IndexMap<String, SkillOverlay> {
-    overlay_map_replace_by_key(base, local)
+    overlay_map_by_key(base, local, compose_skill_overlay)
+}
+
+fn compose_agent_overlay(lower: &AgentOverlay, higher: &AgentOverlay) -> AgentOverlay {
+    let mut unknown = lower.unknown.clone();
+    unknown.extend(higher.unknown.clone());
+    AgentOverlay {
+        description: higher
+            .description
+            .clone()
+            .or_else(|| lower.description.clone()),
+        model: higher.model.clone().or_else(|| lower.model.clone()),
+        harness: higher.harness.clone().or_else(|| lower.harness.clone()),
+        effort: higher.effort.clone().or_else(|| lower.effort.clone()),
+        approval: higher.approval.clone().or_else(|| lower.approval.clone()),
+        sandbox: higher.sandbox.clone().or_else(|| lower.sandbox.clone()),
+        network: higher.network.clone().or_else(|| lower.network.clone()),
+        network_allow: compose_permission_sets(&lower.network_allow, &higher.network_allow),
+        network_deny: compose_permission_sets(&lower.network_deny, &higher.network_deny),
+        autocompact: higher.autocompact.or(lower.autocompact),
+        autocompact_pct: higher.autocompact_pct.or(lower.autocompact_pct),
+        model_invocable: higher.model_invocable.or(lower.model_invocable),
+        user_invocable: higher.user_invocable.or(lower.user_invocable),
+        tools: super::AgentOverlayTools {
+            allowed: compose_optional_permission_sets(
+                lower.tools.allowed.as_ref(),
+                higher.tools.allowed.as_ref(),
+            ),
+            disallowed: compose_optional_permission_sets(
+                lower.tools.disallowed.as_ref(),
+                higher.tools.disallowed.as_ref(),
+            ),
+        },
+        model_policies: higher
+            .model_policies
+            .clone()
+            .or_else(|| lower.model_policies.clone()),
+        unknown,
+    }
+}
+
+fn compose_skill_overlay(lower: &SkillOverlay, higher: &SkillOverlay) -> SkillOverlay {
+    SkillOverlay {
+        description: higher
+            .description
+            .clone()
+            .or_else(|| lower.description.clone()),
+        model_invocable: higher.model_invocable.or(lower.model_invocable),
+        user_invocable: higher.user_invocable.or(lower.user_invocable),
+        tools: super::AgentOverlayTools {
+            allowed: compose_optional_permission_sets(
+                lower.tools.allowed.as_ref(),
+                higher.tools.allowed.as_ref(),
+            ),
+            disallowed: compose_optional_permission_sets(
+                lower.tools.disallowed.as_ref(),
+                higher.tools.disallowed.as_ref(),
+            ),
+        },
+    }
+}
+
+fn compose_optional_permission_sets<T: Clone + Eq>(
+    lower: Option<&PermissionSet<T>>,
+    higher: Option<&PermissionSet<T>>,
+) -> Option<PermissionSet<T>> {
+    match (lower, higher) {
+        (Some(lower), Some(higher)) => Some(compose_permission_sets(lower, higher)),
+        (Some(layer), None) | (None, Some(layer)) => Some(layer.clone()),
+        (None, None) => None,
+    }
 }
 
 pub fn merged_settings(settings: &Settings, local: &LocalConfig) -> Settings {
@@ -58,6 +132,7 @@ impl LocalSettings {
             && self.agent_emission.is_none()
             && self.meridian.is_empty()
             && self.model_policies.is_none()
+            && self.unknown.is_empty()
     }
 
     pub(crate) fn overlay_settings(&self, base: &Settings) -> (Settings, TargetSource) {

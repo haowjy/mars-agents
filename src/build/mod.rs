@@ -99,12 +99,15 @@ pub fn build_launch_bundle(
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
     warnings.extend(effective_project_config.warnings.iter().cloned());
-    if let Some(overlay) = request
-        .agent
-        .as_deref()
-        .and_then(|agent| effective_project_config.agents.get(agent))
+    if let Some(agent) = request.agent.as_deref()
+        && let Some(overlay) = effective_project_config.agents.get(agent)
     {
-        profile.tools.apply_overlay(&overlay.tools);
+        for action in profile.tools.apply_overlay(&overlay.tools) {
+            warnings.push(crate::compiler::tool_policy::overlay_list_upgrade_warning(
+                &format!("[agents.{agent}.tools]"),
+                action,
+            ));
+        }
     }
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),

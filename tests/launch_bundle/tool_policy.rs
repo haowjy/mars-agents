@@ -880,4 +880,16 @@ Review code changes."#;
         "an allowed overlay only grants: {}",
         bundle["tools"]
     );
+    assert!(
+        bundle["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().is_some_and(|message| {
+                message.contains("[agents.reviewer.tools].allowed")
+                    && message.contains("allowed = { replace = [...] }")
+            })),
+        "{}",
+        bundle["warnings"]
+    );
 }

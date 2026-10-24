@@ -34,7 +34,9 @@ Default merge semantics:
 For keyed overlay tables:
 
 - `[models]` overlays are **replace-by-key** per alias entry (no recursive field merge inside one alias block).
-- `[agents]` overlays are **replace-by-key** per agent entry (no recursive field merge inside one agent block).
+- `[agents]` and `[skills]` entries merge field by field across `mars.toml` and
+  `mars.local.toml`: a local scalar wins when present, while network and tool permission sets
+  compose with their add/replace rule.
 
 ## `mars.toml`
 
@@ -232,10 +234,16 @@ expand target permission; a disabled profile/alias preference is skipped.
 
 Network hosts are canonicalized to lowercase without a trailing dot, deduplicated, and
 sorted in the launch bundle. Each entry is an exact host, an IP address, `*.x` (subdomains
-only), or `**.x` (the apex and subdomains). URLs, schemes, ports, paths, empty strings, and a
-bare `*` are errors. Under `deny`, both host sets are inert and omitted. Under `allow`, the
+only), or `**.x` (the apex and subdomains). Wildcards require at least two DNS labels. IPv4-mapped
+IPv6 is canonicalized to IPv4. URLs, schemes, ports, paths, numeric or `0x`-style terminal DNS
+labels, empty strings, and a bare `*` are errors; internationalized names must use punycode.
+Under `deny`, both host sets are inert and omitted. Under `allow`, the
 allow set is inert and omitted; deny hosts still apply. `allowlist` without an allowed host
 fails closed to `deny` and adds a bundle warning.
+
+Network policy keys accept separator aliases for compatibility: `default_network` or
+`default-network`, and `network-allow` / `network-deny` or `network_allow` / `network_deny`.
+Mars warns when another ignored key looks network-related and lists these accepted spellings.
 
 ### User network defaults
 
@@ -301,7 +309,7 @@ disallowed = ["agent"]
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
 | `user-invocable` | bool | Whether the user can `/name` this agent |
-| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile; `{ replace = [...] }` clears that action's lower rules first. Profile `ask` rules and a `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
+| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile; `{ replace = [...] }` clears that action's lower rules first. During the compatibility release, Mars warns when a plain list retains lower rules that the old replacement behavior removed. Profile `ask` rules and a `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
 | `model-policies` | table[] | Model routing policy rules |
 
 The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
@@ -522,13 +530,15 @@ Local overlays can target:
 
 For local overlay semantics:
 
-- Maps replace by key.
-- Arrays replace by value, except `network-allow` and `network-deny`, which use the
+- `[models.<alias>]` replaces the full keyed block when the same alias appears locally.
+- `[agents.<name>]` and `[skills.<name>]` merge field by field. Local scalar/options replace
+  only when present; an unrelated local field does not erase project policy.
+- `network-allow`, `network-deny`, `tools.allowed`, and `tools.disallowed` compose with the
   permission-set add/replace rule.
-- Scalars/options replace when present.
-- `[models.<alias>]` and `[agents.<name>]` entries replace the full keyed block from `mars.toml` when the same key appears in `mars.local.toml`.
+- Other arrays replace by value when authored locally.
 
-Unknown keys under `mars.local.toml [settings]` are rejected.
+Unknown policy keys remain tolerated for forward compatibility. An ignored key beginning with
+`network` or `default_network` / `default-network` produces a warning with the accepted keys.
 
 `mars models list` / `mars models resolve` now return local-config parse/validation errors instead of silently falling back to defaults. Fallback-to-default only happens when `mars.toml` is absent.
 

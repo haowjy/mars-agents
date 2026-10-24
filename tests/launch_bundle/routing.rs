@@ -3357,7 +3357,7 @@ override = { harness = "pi" }"#;
 }
 
 #[test]
-fn build_launch_bundle_local_overlay_replaces_base_overlay_by_name() {
+fn build_launch_bundle_local_overlay_composes_with_base_overlay_by_name() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
     let agent_content = r#"---
@@ -3403,8 +3403,10 @@ model = "gptmini""#,
     );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
-        Some("alias")
+        Some("config-order")
     );
+    assert_eq!(bundle["execution_policy"]["effort"], "high");
+    assert_eq!(selected_attempt(&bundle)["candidates_tried"][0], "codex");
 }
 
 #[test]

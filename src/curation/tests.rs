@@ -491,4 +491,13 @@ fn load_uses_the_shared_mars_config_directory() {
             tier: Some(TierId::User)
         }
     );
+
+    let prior = std::env::var_os("MARS_CONFIG_DIR");
+    unsafe { std::env::set_var("MARS_CONFIG_DIR", "") };
+    let fallback = crate::platform::config::mars_config_dir();
+    match prior {
+        Some(value) => unsafe { std::env::set_var("MARS_CONFIG_DIR", value) },
+        None => unsafe { std::env::remove_var("MARS_CONFIG_DIR") },
+    }
+    assert_ne!(fallback, Some(std::path::PathBuf::new()));
 }

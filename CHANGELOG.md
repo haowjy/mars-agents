@@ -20,13 +20,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{mode, allow, deny}` object. Inert hosts are omitted: `deny` clears both sets and `allow`
   clears its allow set. `provenance.network_source` remains compatible and settings defaults
   use `config`.
-- Permission sets use one layering rule: plain lists add, while
-  `{ replace = [...] }` clears lower entries before adding. This changes
-  `[agents.<name>.tools]` and `[skills.<name>.tools]`: `allowed` and `disallowed`
-  now add to profile rules by default; use the table form for the previous replacement
-  behavior. Package profiles cannot replace deny sets. Existing `ask` rules and a
+- **Upgrade:** if a plain `[agents.<name>.tools]` or `[skills.<name>.tools]` `allowed` /
+  `disallowed` list was intended to narrow the profile, change it to
+  `{ replace = [...] }`. Plain lists now add; Mars warns for one release when that produces a
+  different result from the previous replacement rule. Package profiles cannot use replacement
+  tables. Existing `ask` rules and a
   `'*': deny` allowlist marker survive either overlay form. The launch bundle, native
   agent files, and staged skills all use the same merge.
+- **Upgrade:** `mars.local.toml` agent and skill overlays now merge field by field with their
+  `mars.toml` entry instead of replacing the whole keyed block. Local scalars still win;
+  network and tool permission sets compose. `[models.*]` retains whole-entry replacement.
+
+### Fixed
+- Accept `_` / `-` separator aliases for every network policy surface and warn on other ignored
+  network-looking keys instead of silently losing a deny. Network hosts now reject ambiguous
+  numeric and hex-style endings and top-level wildcards, canonicalize IPv4-mapped IPv6, and
+  name punycode in validation errors.
+- Treat an empty `MARS_CONFIG_DIR` as unset, list every `--network` value in CLI help, and reject
+  profile `tools: { replace = [...] }` as invalid.
 
 ## [0.17.0] - 2026-10-22
 

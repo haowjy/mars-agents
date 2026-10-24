@@ -280,14 +280,14 @@ network-deny = ["blocked.overlay.example"]
 
     std::fs::write(
         project_root.join("mars.local.toml"),
-        "[settings]\nnetwork-allow = [\"local.example\"]\nnetwork-deny = [\"blocked.local.example\"]\n",
+        "[settings]\nnetwork_allow = [\"local.example\"]\nnetwork_deny = [\"blocked.local.example\"]\n[agents.reviewer]\neffort = \"high\"\n",
     )
     .unwrap();
     let user_config = temp.path().join("mars-config");
     std::fs::create_dir_all(&user_config).unwrap();
     std::fs::write(
         user_config.join("config.toml"),
-        "[settings]\ndefault_network = \"allowlist\"\nnetwork-allow = [\"z.user.example\"]\nnetwork-deny = [\"blocked.user.example\"]\ndefault_model = \"ignored\"\n",
+        "[settings]\ndefault-network = \"allowlist\"\nnetwork_allow = [\"z.user.example\"]\nnetwork_deny = [\"blocked.user.example\"]\ndefault_model = \"ignored\"\n",
     )
     .unwrap();
 
@@ -330,6 +330,7 @@ network-deny = ["blocked.overlay.example"]
         })
     );
     assert_eq!(bundle["provenance"]["network_source"], "config");
+    assert_eq!(bundle["execution_policy"]["effort"], "high");
     assert!(
         bundle["warnings"]
             .as_array()

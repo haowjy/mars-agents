@@ -53,6 +53,17 @@ impl ToolAction {
     }
 }
 
+pub(crate) fn overlay_list_upgrade_warning(surface: &str, action: ToolAction) -> String {
+    let field = match action {
+        ToolAction::Allow => "allowed",
+        ToolAction::Deny => "disallowed",
+        ToolAction::Ask => unreachable!("tool overlays do not have an ask permission set"),
+    };
+    format!(
+        "{surface}.{field} uses a plain list whose additive result differs from the previous replacement behavior; use `{field} = {{ replace = [...] }}` to keep the previous result"
+    )
+}
+
 /// One tool-policy statement: `action` for `capability`, optionally narrowed by `pattern`.
 ///
 /// Rules are kept in profile order, which carries no precedence: a broad rule against a scoped
@@ -397,26 +408,51 @@ impl EffectiveToolPolicy {
     ///
     /// Plain overlay lists add. `{ replace = [...] }` clears that action's lower-layer rules
     /// first. Ask rules and the `*: deny` allowlist marker are not members of either set.
-    pub(crate) fn apply_overlay(&mut self, overlay: &AgentOverlayTools) {
-        self.apply_permission_set(&overlay.allowed, ToolAction::Allow);
-        self.apply_permission_set(&overlay.disallowed, ToolAction::Deny);
+    pub(crate) fn apply_overlay(&mut self, overlay: &AgentOverlayTools) -> Vec<ToolAction> {
+        let mut changed_from_legacy = Vec::new();
+        if overlay
+            .allowed
+            .as_ref()
+            .is_some_and(|layer| self.apply_permission_set(layer, ToolAction::Allow))
+        {
+            changed_from_legacy.push(ToolAction::Allow);
+        }
+        if overlay
+            .disallowed
+            .as_ref()
+            .is_some_and(|layer| self.apply_permission_set(layer, ToolAction::Deny))
+        {
+            changed_from_legacy.push(ToolAction::Deny);
+        }
+        changed_from_legacy
     }
 
-    fn apply_permission_set(&mut self, layer: &PermissionSet<OverlayToolName>, action: ToolAction) {
-        if layer.is_noop() {
-            return;
-        }
+    fn apply_permission_set(
+        &mut self,
+        layer: &PermissionSet<OverlayToolName>,
+        action: ToolAction,
+    ) -> bool {
         let mut merged: Vec<ToolRule> = self
             .rules
             .iter()
             .filter(|rule| rule.action == action && !rule.is_wildcard())
             .cloned()
             .collect();
-        let layer = match layer {
-            PermissionSet::Add(entries) => PermissionSet::Add(overlay_rules(entries, action)),
-            PermissionSet::Replace { replace } => PermissionSet::Replace {
-                replace: overlay_rules(replace, action),
-            },
+        let (layer, changed_from_legacy) = match layer {
+            PermissionSet::Add(entries) => {
+                let overlay = overlay_rules(entries, action);
+                let changed = merged.iter().any(|rule| !overlay.contains(rule));
+                if overlay.is_empty() {
+                    return changed;
+                }
+                (PermissionSet::Add(overlay), changed)
+            }
+            PermissionSet::Replace { replace } => (
+                PermissionSet::Replace {
+                    replace: overlay_rules(replace, action),
+                },
+                false,
+            ),
         };
         merge_permission_set(&mut merged, &layer);
         self.rules
@@ -424,6 +460,7 @@ impl EffectiveToolPolicy {
         for rule in merged {
             self.push_unique(rule);
         }
+        changed_from_legacy
     }
 
     /// Write the policy back as a skill's `tools:` / `disallowed-tools:`, replacing what is
@@ -808,8 +845,13 @@ fn parse_entries(
 
 /// Parse `tools:`: a list of tools to allow, or a map of tool to `allow` / `deny` / `ask`.
 fn parse_tools_field(field: &str, val: &Value, on_invalid: OnInvalid<'_>) -> Vec<ToolRule> {
-    if let Some(entries) = permission_replace_entries(val) {
-        return parse_entries(field, entries, ToolAction::Allow, on_invalid);
+    if permission_replace_entries(val).is_some() {
+        on_invalid(
+            field,
+            &serde_json::to_string(val).unwrap_or_else(|_| format!("{val:?}")),
+            "plain list or mapping of tool to allow|deny|ask; package profiles cannot replace a permission set",
+        );
+        return Vec::new();
     }
     match val {
         Value::Mapping(mapping) => {
@@ -1407,8 +1449,8 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
     #[test]
     fn the_overlay_adds_or_replaces_agent_and_skill_permission_sets_alike() {
         let overlay = AgentOverlayTools {
-            allowed: vec!["bash".to_string().try_into().unwrap()].into(),
-            disallowed: vec!["agent".to_string().try_into().unwrap()].into(),
+            allowed: Some(vec!["bash".to_string().try_into().unwrap()].into()),
+            disallowed: Some(vec!["agent".to_string().try_into().unwrap()].into()),
         };
         let yaml = "tools:
   'bash(git push *)': deny
@@ -1418,7 +1460,10 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
 
         // Plain lists add grants and denies while keeping asks.
         let mut agent = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
-        agent.apply_overlay(&overlay);
+        assert_eq!(
+            agent.apply_overlay(&overlay),
+            [ToolAction::Allow, ToolAction::Deny]
+        );
         assert_eq!(
             agent.describe(),
             [
@@ -1432,23 +1477,46 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
 
         // A skill gets the same additive edit.
         let mut skill = skill_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\nbody"));
-        skill.apply_overlay(&overlay);
+        assert_eq!(
+            skill.apply_overlay(&overlay),
+            [ToolAction::Allow, ToolAction::Deny]
+        );
         assert_eq!(skill, agent);
 
         // Explicit replacement gives the previous overlay behavior.
         let replacing = AgentOverlayTools {
-            allowed: PermissionSet::Replace {
+            allowed: Some(PermissionSet::Replace {
                 replace: vec!["bash".to_string().try_into().unwrap()],
-            },
-            disallowed: PermissionSet::Replace {
+            }),
+            disallowed: Some(PermissionSet::Replace {
                 replace: vec!["agent".to_string().try_into().unwrap()],
-            },
+            }),
         };
         let mut replaced = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
-        replaced.apply_overlay(&replacing);
+        assert!(replaced.apply_overlay(&replacing).is_empty());
         assert_eq!(
             replaced.describe(),
             ["ask:bash(git commit *)", "allow:bash", "deny:agent"]
+        );
+
+        // An authored empty list is still a compatibility change: it used to clear the
+        // profile's rules for that action, while additive layering leaves them untouched.
+        let empty_lists = AgentOverlayTools {
+            allowed: Some(Vec::new().into()),
+            disallowed: Some(Vec::new().into()),
+        };
+        let mut unchanged = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
+        assert_eq!(
+            unchanged.apply_overlay(&empty_lists),
+            [ToolAction::Allow, ToolAction::Deny]
+        );
+        assert_eq!(
+            unchanged.describe(),
+            [
+                "deny:bash(git push *)",
+                "ask:bash(git commit *)",
+                "allow:read"
+            ]
         );
     }
 }

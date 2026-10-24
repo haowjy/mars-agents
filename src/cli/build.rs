@@ -76,6 +76,23 @@ enum SandboxArg {
     DangerFullAccess,
 }
 
+#[derive(Debug, Clone, ValueEnum)]
+enum NetworkArg {
+    Allow,
+    Deny,
+    Allowlist,
+}
+
+impl NetworkArg {
+    fn policy(&self) -> NetworkPolicy {
+        match self {
+            Self::Allow => NetworkPolicy::Allow,
+            Self::Deny => NetworkPolicy::Deny,
+            Self::Allowlist => NetworkPolicy::Allowlist,
+        }
+    }
+}
+
 impl SandboxArg {
     fn as_str(&self) -> &'static str {
         match self {
@@ -127,8 +144,8 @@ pub struct LaunchBundleArgs {
     sandbox: Option<SandboxArg>,
 
     /// Override shell network access.
-    #[arg(long)]
-    network: Option<NetworkPolicy>,
+    #[arg(long, value_enum)]
+    network: Option<NetworkArg>,
 
     /// Add a host to the network allow set (repeatable).
     #[arg(long = "network-allow", action = ArgAction::Append)]
@@ -172,7 +189,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             effort: args.effort.as_ref().map(|e| e.as_str().to_string()),
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
-            network: args.network.clone(),
+            network: args.network.as_ref().map(NetworkArg::policy),
             network_allow: args.network_allow.clone(),
             network_deny: args.network_deny.clone(),
             extra_skills: args.extra_skills.clone(),

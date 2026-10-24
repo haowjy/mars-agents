@@ -9,11 +9,20 @@ Config loading, schema, and routing config boundaries.
 | `mod.rs` | `mars.toml` schema (`Settings`, `Config`), load/save, `EffectiveConfig` |
 | `network.rs` | Typed network mode and canonical host grammar shared by all surfaces |
 | `user.rs` | Restricted user `config.toml` network tier and ignored-key warnings |
+| `layering.rs` | Project/local field composition for settings and agent/skill overlays |
 | `targets.rs` | Link normalization — raw target strings → typed `NormalizedLink` / `EffectiveLinks` |
 | `routing_settings.rs` | Raw `Settings` → typed routing input with shared diagnostics |
 | `migrations/link.rs` | Legacy link normalization (historical compat for old config forms) |
 
 ## Contracts
+
+### Project/local keyed overlays
+
+Model aliases replace their whole keyed entry. Agent and skill overlays do not: local scalars
+win only when authored, and network/tool permission sets compose through
+`compose_permission_sets`. This prevents an unrelated local scalar from erasing project denies.
+Unknown policy keys remain tolerated for forward compatibility, but network-looking unknowns are
+retained long enough to warn rather than silently failing open.
 
 ### `config::targets` — link normalization
 

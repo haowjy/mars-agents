@@ -107,8 +107,9 @@ spelling), never a string with reserved values.
 
 - **Parse.** Deprecated `tools:` list → `allow` per entry and a warning; map → `allow` /
   `deny` / `ask` per entry; `disallowed-tools:` → `deny`. Lists only grant for agents and
-  skills. An allowlist is a map with an explicit `'*': deny`. A `bash` pattern `X:*` becomes
-  `X *`.
+  skills. An allowlist is a map with an explicit `'*': deny`. A profile
+  `tools: { replace: [...] }` is invalid; replacement tables exist only on consumer overlays.
+  A `bash` pattern `X:*` becomes `X *`.
 - **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
   `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
   lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes

@@ -16,11 +16,11 @@ struct UserConfigFile {
 
 #[derive(Debug, Default, Deserialize)]
 struct UserNetworkSettings {
-    #[serde(default)]
+    #[serde(default, alias = "default-network")]
     default_network: Option<NetworkPolicy>,
-    #[serde(default, rename = "network-allow")]
+    #[serde(default, rename = "network-allow", alias = "network_allow")]
     network_allow: PermissionSet<NetworkHost>,
-    #[serde(default, rename = "network-deny")]
+    #[serde(default, rename = "network-deny", alias = "network_deny")]
     network_deny: PermissionSet<NetworkHost>,
     #[serde(flatten)]
     ignored: BTreeMap<String, toml::Value>,
@@ -65,8 +65,9 @@ pub(super) fn load() -> Result<Option<UserNetworkConfig>, MarsError> {
         .collect::<Vec<_>>();
     warnings.extend(user.settings.ignored.keys().map(|key| {
         format!(
-            "user config {}: [settings].{key} is ignored; supported keys are default_network, network-allow, network-deny",
-            path.display()
+            "user config {}: [settings].{key} is ignored; accepted keys: {}",
+            path.display(),
+            super::NETWORK_SETTINGS_KEYS,
         )
     }));
     Ok(Some(UserNetworkConfig {

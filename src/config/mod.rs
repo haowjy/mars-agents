@@ -1,5 +1,6 @@
 // qa-validated: harness-order-settings-audit
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -25,9 +26,19 @@ mod user;
 
 pub use network::{NetworkHost, NetworkPolicy};
 
+pub(crate) const NETWORK_SETTINGS_KEYS: &str = "default_network (or default-network), network-allow (or network_allow), network-deny (or network_deny)";
+pub(crate) const NETWORK_OVERLAY_KEYS: &str =
+    "network, network-allow (or network_allow), network-deny (or network_deny)";
+
+pub(crate) fn looks_like_network_key(key: &str) -> bool {
+    key.starts_with("network")
+        || key.starts_with("default_network")
+        || key.starts_with("default-network")
+}
+
 pub use layering::{
-    merged_settings, overlay_agent_overlays_replace_by_key, overlay_models_replace_by_key,
-    overlay_skills_replace_by_key,
+    merged_settings, overlay_agent_overlays_by_field, overlay_models_replace_by_key,
+    overlay_skill_overlays_by_field,
 };
 
 /// Top-level mars.toml configuration.
@@ -207,15 +218,15 @@ pub struct FilterConfig {
 /// fails `mars.toml` instead of reaching the policy.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentOverlayTools {
-    #[serde(default, skip_serializing_if = "PermissionSet::is_noop")]
-    pub allowed: PermissionSet<OverlayToolName>,
-    #[serde(default, skip_serializing_if = "PermissionSet::is_noop")]
-    pub disallowed: PermissionSet<OverlayToolName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<PermissionSet<OverlayToolName>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disallowed: Option<PermissionSet<OverlayToolName>>,
 }
 
 impl AgentOverlayTools {
     pub fn is_empty(&self) -> bool {
-        self.allowed.is_noop() && self.disallowed.is_noop()
+        self.allowed.is_none() && self.disallowed.is_none()
     }
 }
 
@@ -239,12 +250,14 @@ pub struct AgentOverlay {
     #[serde(
         default,
         rename = "network-allow",
+        alias = "network_allow",
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_allow: PermissionSet<NetworkHost>,
     #[serde(
         default,
         rename = "network-deny",
+        alias = "network_deny",
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_deny: PermissionSet<NetworkHost>,
@@ -269,9 +282,11 @@ pub struct AgentOverlay {
     #[serde(
         default,
         rename = "model-policies",
-        skip_serializing_if = "Vec::is_empty"
+        skip_serializing_if = "Option::is_none"
     )]
-    pub model_policies: Vec<ModelPolicyRule>,
+    pub model_policies: Option<Vec<ModelPolicyRule>>,
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Per-skill overlay policy in mars.toml `[skills.<name>]`.
@@ -563,7 +578,6 @@ pub struct LocalConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct LocalSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
@@ -577,17 +591,23 @@ pub struct LocalSettings {
     pub default_harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "default-network",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default_network: Option<NetworkPolicy>,
     #[serde(
         default,
         rename = "network-allow",
+        alias = "network_allow",
         skip_serializing_if = "Option::is_none"
     )]
     pub network_allow: Option<PermissionSet<NetworkHost>>,
     #[serde(
         default,
         rename = "network-deny",
+        alias = "network_deny",
         skip_serializing_if = "Option::is_none"
     )]
     pub network_deny: Option<PermissionSet<NetworkHost>>,
@@ -603,6 +623,8 @@ pub struct LocalSettings {
     pub meridian: MeridianSettings,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -642,17 +664,23 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     /// Project-wide network mode when no higher policy layer sets one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "default-network",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default_network: Option<NetworkPolicy>,
     #[serde(
         default,
         rename = "network-allow",
+        alias = "network_allow",
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_allow: PermissionSet<NetworkHost>,
     #[serde(
         default,
         rename = "network-deny",
+        alias = "network_deny",
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_deny: PermissionSet<NetworkHost>,
@@ -692,6 +720,8 @@ pub struct Settings {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub model_policies: Vec<ModelPolicyRule>,
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Selective native agent emission under managed mode or `agent_emission = "never"`.
@@ -761,6 +791,7 @@ impl Default for Settings {
             agent_emission: None,
             meridian: MeridianSettings::default(),
             model_policies: Vec::new(),
+            unknown: BTreeMap::new(),
         }
     }
 }
@@ -1064,12 +1095,12 @@ pub fn merged_models(
     overlay_models_replace_by_key(base, local)
 }
 
-/// Apply mars.local.toml agent overlays as replace-by-key entries.
+/// Compose mars.local.toml agent overlays field by field over project entries.
 pub fn merged_agent_overlays(
     base: &IndexMap<String, AgentOverlay>,
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
-    overlay_agent_overlays_replace_by_key(base, local)
+    overlay_agent_overlays_by_field(base, local)
 }
 
 /// Base model precedence for the overlay+profile layer shared by native emission
@@ -1098,6 +1129,8 @@ pub fn overlay_then_profile_policies<'a>(
         .flat_map(|entry| {
             entry
                 .model_policies
+                .as_deref()
+                .unwrap_or_default()
                 .iter()
                 .enumerate()
                 .map(|(index, rule)| (true, index, rule))
@@ -1131,9 +1164,51 @@ fn effective_project_config(
         settings,
         target_source,
         models: overlay_models_replace_by_key(&config.models, local),
-        agents: overlay_agent_overlays_replace_by_key(&config.agents, local),
-        warnings: Vec::new(),
+        agents: overlay_agent_overlays_by_field(&config.agents, local),
+        warnings: project_config_warnings(config, local),
     }
+}
+
+fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<String> {
+    let mut warnings = network_key_warnings(
+        "mars.toml [settings]",
+        &config.settings.unknown,
+        NETWORK_SETTINGS_KEYS,
+    );
+    for (name, overlay) in &config.agents {
+        warnings.extend(network_key_warnings(
+            &format!("mars.toml [agents.{name}]"),
+            &overlay.unknown,
+            NETWORK_OVERLAY_KEYS,
+        ));
+    }
+    warnings.extend(network_key_warnings(
+        "mars.local.toml [settings]",
+        &local.settings.unknown,
+        NETWORK_SETTINGS_KEYS,
+    ));
+    for (name, overlay) in &local.agents {
+        warnings.extend(network_key_warnings(
+            &format!("mars.local.toml [agents.{name}]"),
+            &overlay.unknown,
+            NETWORK_OVERLAY_KEYS,
+        ));
+    }
+    warnings
+}
+
+fn network_key_warnings(
+    surface: &str,
+    unknown: &BTreeMap<String, toml::Value>,
+    accepted: &str,
+) -> Vec<String> {
+    unknown
+        .keys()
+        .filter(|key| looks_like_network_key(key))
+        .map(|key| {
+            format!("{surface}: unknown network key `{key}` is ignored; accepted keys: {accepted}")
+        })
+        .collect()
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
@@ -1177,7 +1252,16 @@ pub fn merge_with_root(
 ) -> Result<(EffectiveConfig, Vec<Diagnostic>), MarsError> {
     let merged_settings = merged_settings(&config.settings, &local);
     let mut dependencies = IndexMap::new();
-    let mut diagnostics = Vec::new();
+    let mut diagnostics = project_config_warnings(&config, &local)
+        .into_iter()
+        .map(|message| Diagnostic {
+            level: DiagnosticLevel::Warning,
+            code: "unknown-network-key",
+            message,
+            context: None,
+            category: Some(DiagnosticCategory::Validation),
+        })
+        .collect::<Vec<_>>();
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
     diagnostics.extend(deprecated_agents_target_diagnostics(&merged_settings));
@@ -1264,7 +1348,7 @@ pub fn merge_with_root(
         );
     }
 
-    let skills = overlay_skills_replace_by_key(&config.skills, &local.skills);
+    let skills = overlay_skill_overlays_by_field(&config.skills, &local.skills);
 
     Ok((
         EffectiveConfig {
@@ -1982,7 +2066,7 @@ effort = "medium"
 approval = "default"
 sandbox = "default"
 network = "allowlist"
-network-allow = { replace = ["GitHub.COM.", "*.example.com"] }
+network_allow = { replace = ["GitHub.COM.", "*.example.com"] }
 network-deny = ["blocked.example"]
 autocompact = 1200
 autocompact_pct = 80
@@ -1996,8 +2080,8 @@ override = { harness = "opencode", effort = "low" }
 no-fallback = true
 
 [settings]
-default_network = "deny"
-network-allow = ["settings.example"]
+default-network = "deny"
+network_allow = ["settings.example"]
 
 [[settings.model-policies]]
 match = { model-glob = "gpt-*" }
@@ -2030,16 +2114,14 @@ override = { effort = "high" }
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
         assert_eq!(
-            overlay_tool_strings(overlay.tools.disallowed.entries()),
+            overlay_tool_strings(overlay.tools.disallowed.as_ref().unwrap().entries()),
             ["Bash(rm *)", "Write"]
         );
-        assert_eq!(overlay.model_policies.len(), 1);
-        assert_eq!(
-            overlay.model_policies[0].match_type,
-            ModelPolicyMatchType::Alias
-        );
-        assert_eq!(overlay.model_policies[0].match_value, "gpt55");
-        assert!(overlay.model_policies[0].no_fallback);
+        let overlay_policies = overlay.model_policies.as_ref().unwrap();
+        assert_eq!(overlay_policies.len(), 1);
+        assert_eq!(overlay_policies[0].match_type, ModelPolicyMatchType::Alias);
+        assert_eq!(overlay_policies[0].match_value, "gpt55");
+        assert!(overlay_policies[0].no_fallback);
 
         assert_eq!(config.settings.model_policies.len(), 1);
         assert_eq!(
@@ -2098,14 +2180,14 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
         assert_eq!(
-            overlay_tool_strings(overlay.tools.disallowed.entries()),
+            overlay_tool_strings(overlay.tools.disallowed.as_ref().unwrap().entries()),
             ["Agent", "Write"]
         );
         assert_eq!(
-            overlay_tool_strings(overlay.tools.allowed.entries()),
+            overlay_tool_strings(overlay.tools.allowed.as_ref().unwrap().entries()),
             ["Bash(git *)", "mcp(plugin:demo)"]
         );
-        assert!(overlay.tools.allowed.replaces());
+        assert!(overlay.tools.allowed.as_ref().unwrap().replaces());
     }
 
     fn overlay_tool_strings(names: &[OverlayToolName]) -> Vec<String> {
@@ -2113,13 +2195,18 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
     }
 
     #[test]
-    fn merged_skill_overlays_local_replaces_fields() {
+    fn merged_skill_overlays_local_compose_fields() {
         let mut base_skills = IndexMap::new();
         base_skills.insert(
             "planning".to_string(),
             SkillOverlay {
                 description: Some("Base description".to_string()),
+                model_invocable: Some(true),
                 user_invocable: Some(true),
+                tools: AgentOverlayTools {
+                    allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
+                    ..AgentOverlayTools::default()
+                },
                 ..SkillOverlay::default()
             },
         );
@@ -2130,6 +2217,10 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
             SkillOverlay {
                 description: Some("Local description".to_string()),
                 user_invocable: Some(false),
+                tools: AgentOverlayTools {
+                    allowed: Some(vec!["Bash(git *)".to_string().try_into().unwrap()].into()),
+                    ..AgentOverlayTools::default()
+                },
                 ..SkillOverlay::default()
             },
         );
@@ -2138,14 +2229,19 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
             ..LocalConfig::default()
         };
 
-        let merged = overlay_skills_replace_by_key(&base_skills, &local.skills);
-        let replaced = merged.get("planning").expect("planning overlay");
-        assert_eq!(replaced.description.as_deref(), Some("Local description"));
-        assert_eq!(replaced.user_invocable, Some(false));
+        let merged = overlay_skill_overlays_by_field(&base_skills, &local.skills);
+        let composed = merged.get("planning").expect("planning overlay");
+        assert_eq!(composed.description.as_deref(), Some("Local description"));
+        assert_eq!(composed.model_invocable, Some(true));
+        assert_eq!(composed.user_invocable, Some(false));
+        assert_eq!(
+            overlay_tool_strings(composed.tools.allowed.as_ref().unwrap().entries()),
+            ["Read", "Bash(git *)"]
+        );
     }
 
     #[test]
-    fn merged_agent_overlays_local_replaces_widened_fields() {
+    fn merged_agent_overlays_local_override_authored_fields() {
         let mut base_agents = IndexMap::new();
         base_agents.insert(
             "worker".to_string(),
@@ -2177,7 +2273,7 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
     }
 
     #[test]
-    fn merged_agent_overlays_replace_by_agent_name() {
+    fn merged_agent_overlays_compose_by_agent_name() {
         let mut base_agents = IndexMap::new();
         base_agents.insert(
             "tech-lead".to_string(),
@@ -2185,6 +2281,17 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                 model: Some("gpt55".to_string()),
                 harness: Some("codex".to_string()),
                 effort: Some("high".to_string()),
+                network_deny: vec!["project.example".parse().unwrap()].into(),
+                tools: AgentOverlayTools {
+                    allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
+                    disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
+                },
+                model_policies: Some(vec![ModelPolicyRule {
+                    match_type: ModelPolicyMatchType::Alias,
+                    match_value: "project-policy".to_string(),
+                    no_fallback: false,
+                    overrides: serde_yaml::Mapping::new(),
+                }]),
                 ..AgentOverlay::default()
             },
         );
@@ -2201,10 +2308,17 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
             "tech-lead".to_string(),
             AgentOverlay {
                 model: Some("gptmini".to_string()),
+                network_deny: vec!["local.example".parse().unwrap()].into(),
+                tools: AgentOverlayTools {
+                    allowed: Some(vec!["Bash(git *)".to_string().try_into().unwrap()].into()),
+                    disallowed: Some(PermissionSet::Replace {
+                        replace: vec!["Agent".to_string().try_into().unwrap()],
+                    }),
+                },
                 ..AgentOverlay::default()
             },
         );
-        let local = LocalConfig {
+        let mut local = LocalConfig {
             agents: local_agents,
             ..LocalConfig::default()
         };
@@ -2212,19 +2326,45 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
         let merged = merged_agent_overlays(&base_agents, &local);
         let replaced = merged.get("tech-lead").expect("tech-lead should exist");
         assert_eq!(replaced.model.as_deref(), Some("gptmini"));
-        assert!(
-            replaced.harness.is_none(),
-            "local overlay must replace the base overlay block"
+        assert_eq!(replaced.harness.as_deref(), Some("codex"));
+        assert_eq!(replaced.effort.as_deref(), Some("high"));
+        assert_eq!(
+            replaced
+                .network_deny
+                .entries()
+                .iter()
+                .map(NetworkHost::as_str)
+                .collect::<Vec<_>>(),
+            ["project.example", "local.example"]
         );
-        assert!(
-            replaced.effort.is_none(),
-            "local overlay replacement must not deep-merge base fields"
+        assert_eq!(
+            overlay_tool_strings(replaced.tools.allowed.as_ref().unwrap().entries()),
+            ["Read", "Bash(git *)"]
+        );
+        assert!(replaced.tools.disallowed.as_ref().unwrap().replaces());
+        assert_eq!(
+            overlay_tool_strings(replaced.tools.disallowed.as_ref().unwrap().entries()),
+            ["Agent"]
+        );
+        assert_eq!(
+            replaced.model_policies.as_ref().unwrap()[0].match_value,
+            "project-policy"
         );
         assert_eq!(
             merged
                 .get("reviewer")
                 .and_then(|overlay| overlay.model.as_deref()),
             Some("gpt-5.4-mini")
+        );
+
+        local.agents.get_mut("tech-lead").unwrap().model_policies = Some(Vec::new());
+        assert!(
+            merged_agent_overlays(&base_agents, &local)["tech-lead"]
+                .model_policies
+                .as_ref()
+                .unwrap()
+                .is_empty(),
+            "an authored empty local list should replace the project list"
         );
     }
 
@@ -2434,17 +2574,46 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
     }
 
     #[test]
-    fn load_local_rejects_unknown_local_settings_fields() {
+    fn policy_surfaces_warn_only_for_unknown_network_keys() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
+            dir.path().join("mars.toml"),
+            "[settings]\nnetwork_access = 'deny'\nfuture_key = true\n[agents.coder]\ndefault_network_mode = 'deny'\nfuture_agent_key = true\n",
+        )
+        .unwrap();
+        std::fs::write(
             dir.path().join("mars.local.toml"),
-            "[settings]\nnot_supported = true\n",
+            "[settings]\nnetwork-policy = 'deny'\nfuture_local_key = true\n[agents.coder]\ndefault-network-mode = 'deny'\nfuture_local_agent_key = true\n",
         )
         .unwrap();
 
-        let err = load_local(dir.path()).unwrap_err().to_string();
-        assert!(err.contains("unknown field"), "unexpected error: {err}");
-        assert!(err.contains("not_supported"), "unexpected error: {err}");
+        let effective = load_effective_project_config(dir.path()).unwrap();
+        assert_eq!(effective.warnings.len(), 4, "{:?}", effective.warnings);
+        for key in [
+            "network_access",
+            "default_network_mode",
+            "network-policy",
+            "default-network-mode",
+        ] {
+            assert!(
+                effective
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains(key)
+                        && warning.contains("network-allow")
+                        && warning.contains("network_deny")),
+                "missing warning for {key}: {:?}",
+                effective.warnings
+            );
+        }
+        assert!(
+            effective
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("future_")),
+            "forward-compatible keys should remain quiet: {:?}",
+            effective.warnings
+        );
     }
 
     #[test]

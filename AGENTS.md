@@ -91,6 +91,19 @@ Read `.github/PULL_REQUEST_TEMPLATE.md` and fill every section. **Always set a `
 | `release:rc` | Prerelease |
 | `release:skip` | No release |
 
+**A breaking change split across several PRs ships as one release.** Every PR merged to
+`main` with `release:minor`/`release:major` cuts its own release, so when one piece of work
+breaks behaviour in several PRs, plan this when you split it:
+1. Create an integration branch from `main` (e.g. `release/<topic>`) and open its PR to
+   `main` early, as a draft. It carries the release label, the combined changelog and
+   upgrade notes, and the whole-change review.
+2. Point each part's PR at the integration branch. Merging there releases nothing, so those
+   PRs need no label.
+3. When the last part lands and the full gate passes, merge the integration PR once.
+
+Work that must release on its own (e.g. a Mars release a Meridian change waits on) gets its
+own release; decide that when planning, not at merge time.
+
 ## Releasing
 
 CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, promotes changelog, commits, tags, and publishes to PyPI/npm/crates.io.

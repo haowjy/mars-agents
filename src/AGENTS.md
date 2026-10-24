@@ -81,5 +81,7 @@ cli → sync → compiler → target adapters
 
 - Windows is first-class. No POSIX-only assumptions in paths, process launching, or filesystem operations.
 - No VCS dependency — walk to filesystem root via `Path::parent()`, not `.git` boundaries.
-- Config precedence: CLI > ENV > YAML profile > project config > user config > harness default.
+- Execution-policy precedence: CLI > agent overlay > overlay model policy > YAML profile >
+  profile model policy > settings model policy > project/local settings > user config > harness
+  default. There is no environment-variable policy layer.
 - Resolve first, then act — zero mutations if any error detected during resolution.

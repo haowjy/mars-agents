@@ -163,7 +163,7 @@ mod tests {
             description: Some("Overridden".to_string()),
             user_invocable: Some(false),
             tools: AgentOverlayTools {
-                disallowed: vec!["Agent".to_string().try_into().unwrap()],
+                disallowed: Some(vec!["Agent".to_string().try_into().unwrap()].into()),
                 ..AgentOverlayTools::default()
             },
             ..SkillOverlay::default()
@@ -185,10 +185,10 @@ mod tests {
     }
 
     #[test]
-    fn overlay_allowed_replaces_grants_and_keeps_the_skills_denies() {
+    fn overlay_allowed_adds_grants_and_keeps_the_skills_denies() {
         let overlay = SkillOverlay {
             tools: AgentOverlayTools {
-                allowed: vec!["Bash(git *)".to_string().try_into().unwrap()],
+                allowed: Some(vec!["Bash(git *)".to_string().try_into().unwrap()].into()),
                 ..AgentOverlayTools::default()
             },
             ..SkillOverlay::default()
@@ -202,7 +202,10 @@ mod tests {
         assert!(changed);
         assert_eq!(
             merged.get("tools"),
-            Some(&Value::Sequence(vec![Value::String("bash(git *)".into())]))
+            Some(&Value::Sequence(vec![
+                Value::String("read".into()),
+                Value::String("bash(git *)".into())
+            ]))
         );
         // The map-form deny survives, now in `disallowed-tools`, where a skill reads denies.
         assert_eq!(

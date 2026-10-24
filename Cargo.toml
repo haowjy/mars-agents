@@ -1,6 +1,6 @@
 [package]
 name = "mars-agents"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2024"
 description = "Agent package manager for .agents/ directories"
 license = "MIT"
@@ -47,3 +47,4 @@ assert_cmd = "2"
 httpmock = "0.7"
 serial_test = "3"
 trybuild = "1.0.118"
+rustversion = "1"

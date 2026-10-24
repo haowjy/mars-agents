@@ -322,7 +322,11 @@ fn process_markdown_file(
             })
         })
         .flatten()
-        .and_then(|name| ctx.skill_overrides.get(&name));
+        .and_then(|name| {
+            ctx.skill_overrides
+                .get(&name)
+                .map(|overlay| (name, overlay))
+        });
 
     let original = fs::read_to_string(src)?;
     if let Ok(parsed) = Frontmatter::parse(&original) {
@@ -360,7 +364,7 @@ fn process_markdown_file(
 
         let (mut fm, mut changed) = lift_frontmatter_with_change(ctx.dialect, kind, &parsed);
 
-        if let Some(overlay) = skill_overlay
+        if let Some((_skill_name, overlay)) = skill_overlay
             && !overlay.is_empty()
         {
             let (overlaid, overlay_changed) = apply_skill_overlay(&fm, overlay);
@@ -435,7 +439,7 @@ mod tests {
                 description: Some("Overridden".to_string()),
                 user_invocable: Some(false),
                 tools: AgentOverlayTools {
-                    disallowed: vec!["Agent".to_string().try_into().unwrap()],
+                    disallowed: Some(vec!["Agent".to_string().try_into().unwrap()].into()),
                     ..AgentOverlayTools::default()
                 },
                 ..SkillOverlay::default()

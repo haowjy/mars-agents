@@ -24,6 +24,7 @@ use crate::compiler::tool_names::{
 use crate::compiler::tool_natives::{self, Native};
 use crate::config::AgentOverlayTools;
 use crate::frontmatter::Frontmatter;
+use crate::permission_set::{PermissionSet, merge_permission_set};
 
 /// What a rule does when its capability (and pattern) match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -394,23 +395,40 @@ impl EffectiveToolPolicy {
     /// Apply a `mars.toml` `[agents.<name>.tools]` or `[skills.<name>.tools]` overlay. The one
     /// place overlay tool lists meet a policy, for agents and skills alike.
     ///
-    /// `allowed` replaces what the policy grants; the existing deny and ask rules stay, because
-    /// an overlay that widens the grants must not silently lift a `git push` deny.
-    /// `disallowed` replaces the deny rules, except a `*: deny` that makes the policy an
-    /// allowlist, which no tool list stands in for.
+    /// Plain overlay lists add and keep wildcard rules. `{ replace = [...] }` clears that
+    /// action's lower-layer rules, including its wildcard; the `*: deny` allowlist marker is the
+    /// sole exception. Ask rules are not members of either set.
     pub(crate) fn apply_overlay(&mut self, overlay: &AgentOverlayTools) {
-        if !overlay.allowed.is_empty() {
-            self.rules.retain(|rule| rule.action != ToolAction::Allow);
-            for rule in overlay_rules(&overlay.allowed, ToolAction::Allow) {
-                self.push_unique(rule);
-            }
+        if let Some(layer) = &overlay.allowed {
+            self.apply_permission_set(layer, ToolAction::Allow);
         }
-        if !overlay.disallowed.is_empty() {
-            self.rules
-                .retain(|rule| rule.action != ToolAction::Deny || rule.is_wildcard());
-            for rule in overlay_rules(&overlay.disallowed, ToolAction::Deny) {
-                self.push_unique(rule);
-            }
+        if let Some(layer) = &overlay.disallowed {
+            self.apply_permission_set(layer, ToolAction::Deny);
+        }
+    }
+
+    fn apply_permission_set(&mut self, layer: &PermissionSet<OverlayToolName>, action: ToolAction) {
+        if layer.is_noop() {
+            return;
+        }
+        let mut merged = self
+            .rules
+            .iter()
+            .filter(|rule| rule.action == action && !rule.is_wildcard())
+            .cloned()
+            .collect::<Vec<_>>();
+        let layer = match layer {
+            PermissionSet::Add(entries) => PermissionSet::Add(overlay_rules(entries, action)),
+            PermissionSet::Replace { replace } => PermissionSet::Replace {
+                replace: overlay_rules(replace, action),
+            },
+        };
+        merge_permission_set(&mut merged, &layer);
+        let keep_wildcard = !layer.replaces() || action == ToolAction::Deny;
+        self.rules
+            .retain(|rule| rule.action != action || (keep_wildcard && rule.is_wildcard()));
+        for rule in merged {
+            self.push_unique(rule);
         }
     }
 
@@ -748,6 +766,14 @@ pub(crate) fn parse_tool_policy(
         }
     }
     if let Some(value) = disallowed {
+        if permission_replace_entries(value).is_some() {
+            on_invalid(
+                "disallowed-tools",
+                &serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
+                "plain list; package profiles cannot replace a deny set",
+            );
+            return policy;
+        }
         for rule in parse_entries("disallowed-tools", value, ToolAction::Deny, on_invalid) {
             policy.push_unique(rule);
         }
@@ -788,6 +814,14 @@ fn parse_entries(
 
 /// Parse `tools:`: a list of tools to allow, or a map of tool to `allow` / `deny` / `ask`.
 fn parse_tools_field(field: &str, val: &Value, on_invalid: OnInvalid<'_>) -> Vec<ToolRule> {
+    if permission_replace_entries(val).is_some() {
+        on_invalid(
+            field,
+            &serde_json::to_string(val).unwrap_or_else(|_| format!("{val:?}")),
+            "plain list or mapping of tool to allow|deny|ask; package profiles cannot replace a permission set",
+        );
+        return Vec::new();
+    }
     match val {
         Value::Mapping(mapping) => {
             let mut rules = Vec::new();
@@ -827,6 +861,13 @@ fn parse_tools_field(field: &str, val: &Value, on_invalid: OnInvalid<'_>) -> Vec
         }
         _ => parse_entries(field, val, ToolAction::Allow, on_invalid),
     }
+}
+
+fn permission_replace_entries(value: &Value) -> Option<&Value> {
+    let mapping = value.as_mapping()?;
+    (mapping.len() == 1)
+        .then(|| mapping.get(Value::String("replace".to_string())))
+        .flatten()
 }
 
 const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
@@ -1375,10 +1416,10 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
     }
 
     #[test]
-    fn the_overlay_edits_agent_and_skill_policies_alike() {
+    fn the_overlay_adds_or_replaces_agent_and_skill_permission_sets_alike() {
         let overlay = AgentOverlayTools {
-            allowed: vec!["bash".to_string().try_into().unwrap()],
-            disallowed: vec!["agent".to_string().try_into().unwrap()],
+            allowed: Some(vec!["bash".to_string().try_into().unwrap()].into()),
+            disallowed: Some(vec!["agent".to_string().try_into().unwrap()].into()),
         };
         let yaml = "tools:
   'bash(git push *)': deny
@@ -1386,20 +1427,76 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
   read: allow
 ";
 
-        // An agent: `allowed` replaces the grants and keeps deny and ask.
+        // Plain lists add grants and denies while keeping asks.
         let mut agent = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
         agent.apply_overlay(&overlay);
         assert_eq!(
             agent.describe(),
+            [
+                "ask:bash(git commit *)",
+                "allow:read",
+                "allow:bash",
+                "deny:bash(git push *)",
+                "deny:agent"
+            ]
+        );
+
+        // A skill gets the same additive edit.
+        let mut skill = skill_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\nbody"));
+        skill.apply_overlay(&overlay);
+        assert_eq!(skill, agent);
+
+        // Explicit replacement gives the previous overlay behavior.
+        let replacing = AgentOverlayTools {
+            allowed: Some(PermissionSet::Replace {
+                replace: vec!["bash".to_string().try_into().unwrap()],
+            }),
+            disallowed: Some(PermissionSet::Replace {
+                replace: vec!["agent".to_string().try_into().unwrap()],
+            }),
+        };
+        let mut replaced = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
+        replaced.apply_overlay(&replacing);
+        assert_eq!(
+            replaced.describe(),
             ["ask:bash(git commit *)", "allow:bash", "deny:agent"]
         );
 
-        // A skill gets the same policy edit.
-        let mut skill = skill_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\nbody"));
-        skill.apply_overlay(&overlay);
+        // An authored empty list was a no-op in 0.17 and remains one now.
+        let empty_lists = AgentOverlayTools {
+            allowed: Some(Vec::new().into()),
+            disallowed: Some(Vec::new().into()),
+        };
+        let mut unchanged = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
+        unchanged.apply_overlay(&empty_lists);
         assert_eq!(
-            skill.describe(),
-            ["ask:bash(git commit *)", "allow:bash", "deny:agent"]
+            unchanged.describe(),
+            [
+                "deny:bash(git push *)",
+                "ask:bash(git commit *)",
+                "allow:read"
+            ]
         );
+
+        // A plain list adds alongside a wildcard grant. An explicit replacement drops that
+        // wildcard grant, while preserving the deny rules.
+        let wildcard_profile = "---\nname: a\ntools: { '*': allow, write: deny }\n---\n";
+        let additive = AgentOverlayTools {
+            allowed: Some(vec!["read".to_string().try_into().unwrap()].into()),
+            disallowed: None,
+        };
+        let mut widened = agent_policy(wildcard_profile);
+        widened.apply_overlay(&additive);
+        assert_eq!(widened.describe(), ["allow:*", "deny:write", "allow:read"]);
+
+        let replacing = AgentOverlayTools {
+            allowed: Some(PermissionSet::Replace {
+                replace: vec!["read".to_string().try_into().unwrap()],
+            }),
+            ..AgentOverlayTools::default()
+        };
+        let mut narrowed = agent_policy(wildcard_profile);
+        narrowed.apply_overlay(&replacing);
+        assert_eq!(narrowed.describe(), ["deny:write", "allow:read"]);
     }
 }

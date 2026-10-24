@@ -145,6 +145,9 @@ mod tests {
             had_user_invocable_field: false,
             approval: None,
             sandbox: None,
+            network: None,
+            network_allow: Default::default(),
+            network_deny: Default::default(),
             effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -173,6 +176,9 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
+            network_override: None,
+            network_allow: &[],
+            network_deny: &[],
             models_refresh: crate::models::ModelsRefreshControl::background(),
         };
         let cache = ModelsCache {
@@ -203,6 +209,9 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
+            network_override: None,
+            network_allow: &[],
+            network_deny: &[],
             models_refresh: crate::models::ModelsRefreshControl::background(),
         };
         let cache = ModelsCache {

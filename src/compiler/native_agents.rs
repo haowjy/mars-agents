@@ -1214,14 +1214,15 @@ fn resolve_native_agent_profiles(
 ) -> Vec<MarsCanonicalAgent> {
     mars_agents
         .iter()
-        .map(|agent| MarsCanonicalAgent {
-            agent_name: agent.agent_name.clone(),
-            canonical_dest_path: agent.canonical_dest_path.clone(),
-            profile: effective_native_profile(
-                &agent.profile,
-                agent_overlays.get(&agent.agent_name),
-            ),
-            fm: agent.fm.clone(),
+        .map(|agent| {
+            let profile =
+                effective_native_profile(&agent.profile, agent_overlays.get(&agent.agent_name));
+            MarsCanonicalAgent {
+                agent_name: agent.agent_name.clone(),
+                canonical_dest_path: agent.canonical_dest_path.clone(),
+                profile,
+                fm: agent.fm.clone(),
+            }
         })
         .collect()
 }

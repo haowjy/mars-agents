@@ -2,7 +2,8 @@ use indexmap::IndexMap;
 
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
-use super::{AgentOverlay, LocalConfig, LocalSettings, Settings, SkillOverlay};
+use super::{AgentOverlay, AgentOverlayTools, LocalConfig, LocalSettings, Settings, SkillOverlay};
+use crate::permission_set::{PermissionSet, compose_permission_sets};
 
 fn overlay_map_replace_by_key<V: Clone>(
     base: &IndexMap<String, V>,
@@ -22,18 +23,72 @@ pub fn overlay_models_replace_by_key(
     overlay_map_replace_by_key(base, &local.models)
 }
 
-pub fn overlay_agent_overlays_replace_by_key(
+pub fn overlay_agent_overlays(
     base: &IndexMap<String, AgentOverlay>,
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
-    overlay_map_replace_by_key(base, &local.agents)
+    let mut merged = base.clone();
+    for (name, higher) in &local.agents {
+        let overlay = match base.get(name) {
+            Some(lower) => compose_agent_overlay(lower, higher),
+            None => higher.clone(),
+        };
+        merged.insert(name.clone(), overlay);
+    }
+    merged
 }
 
-pub fn overlay_skills_replace_by_key(
+pub fn overlay_skill_overlays(
     base: &IndexMap<String, SkillOverlay>,
     local: &IndexMap<String, SkillOverlay>,
 ) -> IndexMap<String, SkillOverlay> {
-    overlay_map_replace_by_key(base, local)
+    let mut merged = base.clone();
+    for (name, higher) in local {
+        let overlay = match base.get(name) {
+            Some(lower) => compose_skill_overlay(lower, higher),
+            None => higher.clone(),
+        };
+        merged.insert(name.clone(), overlay);
+    }
+    merged
+}
+
+fn compose_agent_overlay(lower: &AgentOverlay, higher: &AgentOverlay) -> AgentOverlay {
+    let mut merged = higher.clone();
+    merged.network_allow = compose_permission_sets(&lower.network_allow, &higher.network_allow);
+    merged.network_deny = compose_permission_sets(&lower.network_deny, &higher.network_deny);
+    merged.tools = compose_tool_permission_sets(&lower.tools, &higher.tools);
+    merged
+}
+
+fn compose_skill_overlay(lower: &SkillOverlay, higher: &SkillOverlay) -> SkillOverlay {
+    let mut merged = higher.clone();
+    merged.tools = compose_tool_permission_sets(&lower.tools, &higher.tools);
+    merged
+}
+
+fn compose_tool_permission_sets(
+    lower: &AgentOverlayTools,
+    higher: &AgentOverlayTools,
+) -> AgentOverlayTools {
+    AgentOverlayTools {
+        allowed: compose_optional_permission_sets(lower.allowed.as_ref(), higher.allowed.as_ref()),
+        disallowed: compose_optional_permission_sets(
+            lower.disallowed.as_ref(),
+            higher.disallowed.as_ref(),
+        ),
+    }
+}
+
+fn compose_optional_permission_sets<T: Clone + Eq>(
+    lower: Option<&PermissionSet<T>>,
+    higher: Option<&PermissionSet<T>>,
+) -> Option<PermissionSet<T>> {
+    match (lower, higher) {
+        (Some(lower), Some(higher)) => Some(compose_permission_sets(lower, higher)),
+        (Some(layer), None) | (None, Some(layer)) => Some(layer.clone()),
+        (None, None) => None,
+    }
 }
 
 pub fn merged_settings(settings: &Settings, local: &LocalConfig) -> Settings {
@@ -48,6 +103,9 @@ impl LocalSettings {
             && self.min_mars_version.is_none()
             && self.default_harness.is_none()
             && self.default_model.is_none()
+            && self.default_network.is_none()
+            && self.network_allow.is_none()
+            && self.network_deny.is_none()
             && self.harness_order.is_none()
             && self.provider_order.is_none()
             && self.catalog_providers.is_none()
@@ -92,6 +150,15 @@ impl LocalSettings {
         }
         if let Some(value) = &self.default_model {
             merged.default_model = Some(value.clone());
+        }
+        if let Some(value) = &self.default_network {
+            merged.default_network = Some(value.clone());
+        }
+        if let Some(value) = &self.network_allow {
+            merged.network_allow = compose_permission_sets(&merged.network_allow, value);
+        }
+        if let Some(value) = &self.network_deny {
+            merged.network_deny = compose_permission_sets(&merged.network_deny, value);
         }
         if let Some(value) = &self.harness_order {
             merged.harness_order = Some(value.clone());

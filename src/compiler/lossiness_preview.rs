@@ -6,7 +6,7 @@
 //!
 //! Config lens: **publish / consumer view** — `mars.toml` only, with
 //! `mars.local.toml` ignored. This matches `mars check` dependency resolution
-//! (`resolve_available_skills` in `cli/check.rs`), which strips local dev overrides
+//! (`resolve::resolve_publish_graph`), which strips local dev overrides
 //! so validation reflects what downstream consumers see.
 
 use std::path::{Path, PathBuf};

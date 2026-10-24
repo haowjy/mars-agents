@@ -1,6 +1,6 @@
 # src/resolve/ — Package Resolution
 
-Dependency resolution with semver constraints. 11 source files + tests, ~9500 lines.
+Dependency resolution with semver constraints. 13 source files + tests, ~9600 lines.
 
 ## Mental Model
 
@@ -72,6 +72,14 @@ unreadable-content exception.
 - `ResolvedGraph` — final output: nodes + deterministic alphabetical order
 - `ResolverContext` — accumulates registry, visited items, version constraints
 - `VersionConstraint` — `Semver`, `Latest`, `RefPin`
+
+## Production Lenses
+
+- `provider.rs` bridges the resolver traits to git/path source fetching for sync
+  and other real package resolution.
+- `resolve_publish_graph()` is the consumer-facing publish lens: it ignores
+  `mars.local.toml`, clears local dependencies, and resolves with no lock or
+  project staging. Source fetches use `GlobalCache`.
 
 ## Version Policy
 

@@ -89,7 +89,7 @@ fn link_target(
     );
 
     let cache = crate::source::GlobalCache::new()?;
-    let source_provider = crate::sync::provider::RealSourceProvider::new(&cache, &ctx.project_root);
+    let source_provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
     let resolve_options = crate::resolve::ResolveOptions::sync();
     let graph = crate::resolve::resolve(
         &effective,

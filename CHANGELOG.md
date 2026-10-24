@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Extract consumer-view dependency resolution into a shared library function for
+  package checks and artifact builders.
+
 ## [0.18.1] - 2026-10-24
 
 ### Changed

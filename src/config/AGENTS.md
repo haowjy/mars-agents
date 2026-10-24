@@ -1,6 +1,7 @@
 # src/config/ — Config Loading & Routing Settings
 
-mars.toml + mars.local.toml schemas, load/save, merge to EffectiveConfig. 6 files + `.context/`, ~3500 lines.
+User network defaults plus mars.toml + mars.local.toml schemas, load/save, and merge to
+EffectiveConfig.
 
 ## Mental Model
 
@@ -21,20 +22,34 @@ pipeline operates on EffectiveConfig only
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
 | `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`) |
-| `AgentOverlay` | `[agents.<name>]` overlay — `description`, `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact`, `autocompact_pct`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`), `model_policies` |
+| `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
+| `NetworkPolicy` / `NetworkHost` | Shared typed parsers for every mode and host surface |
 
-`AgentOverlayTools` holds `OverlayToolName`s (`compiler/tool_names.rs`, a leaf grammar module):
-a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the profile grammar as the
-config loads, and a malformed one fails the load. It keeps the author's spelling, so `save`
-does not rewrite it. This is the one place `config` reaches into `compiler`.
-`tools.allowed` replaces profile grants without creating an allowlist; an explicit `'*': deny`
-in the profile map is the allowlist marker and survives the overlay. Profile list-form
-`tools: [...]` is deprecated and only grants its named tools.
+`AgentOverlayTools` holds permission sets of `OverlayToolName`s (`compiler/tool_names.rs`, a
+leaf grammar module): a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the
+profile grammar as the config loads, and a malformed one fails the load. It keeps the author's
+spelling, so `save` does not rewrite it. This is the one place `config` reaches into `compiler`.
+Plain `tools.allowed` / `tools.disallowed` lists add to profile rules; a
+`{ replace = [...] }` table clears that action's lower rules, including `'*': allow`. Plain lists
+preserve wildcard rules; existing asks and the `'*': deny` allowlist marker survive both forms.
+Profile list-form `tools: [...]` is deprecated and only grants its named tools; package profiles
+cannot replace deny sets. The optional fields preserve absent versus authored-empty lists. During
+the compatibility release, `project_config_warnings` warns once for each non-empty plain tool
+list from the raw project/local config; empty lists and replacement tables are silent.
 
 ## Layering (`layering.rs`)
 
 - `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
-- Model and agent overlays are **replace-by-key** (entire alias/agent entry replaces lower layer).
+- Network host permission sets compose across user, project, and local settings; other settings
+  lists retain replacement semantics.
+- Model aliases are **replace-by-key**. Agent and skill overlays also replace the whole keyed
+  entry, except their four network/tool permission sets compose across project and local entries.
+- Composition means a project tool list survives a matching local block that omits the list. A
+  local block that adds only a network set still replaces project scalars; repeat any project
+  scalar the local entry must retain.
+- Unknown project settings and agent-overlay keys remain forward-compatible. Network-looking
+  unknowns are retained and warned because silently dropping a deny would fail open.
+  `mars.local.toml [settings]` remains strict and rejects unknown keys.
 - Removed `[settings.model_visibility]` is an error only for the consumer's
   project `mars.toml` and `mars.local.toml`. `load_manifest` parses only
   exported package sections, ignoring an upstream package's consumer settings.

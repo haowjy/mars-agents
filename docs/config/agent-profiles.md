@@ -10,6 +10,8 @@ model: opus
 harness: claude
 mode: subagent
 approval: auto
+sandbox: workspace-write
+network: allow
 effort: high
 autocompact: 200000
 autocompact_pct: 80
@@ -218,6 +220,54 @@ sandbox: workspace-write
 
 ---
 
+### `network`
+
+| | |
+|---|---|
+| Type | string |
+| Required | no |
+| Allowed values | `allow`, `deny`, `allowlist` |
+| Default | none (unset; Meridian follows the resolved sandbox) |
+
+Controls whether the agent's shell commands may open connections, including the
+public internet, host services, and local sockets. It does not control built-in
+web tools; grant or deny those with `tools: web`.
+
+| Value | Behavior |
+|---|---|
+| `allow` | Allow shell commands to open connections |
+| `deny` | Deny shell commands from opening connections |
+| `allowlist` | Allow only `network-allow` hosts, minus `network-deny` hosts |
+
+Mars carries an omitted mode as `null` in the launch bundle; it does not choose a network
+default unless `[settings] default_network` (project, local, or user config) supplies one.
+Meridian resolves a remaining unset mode from the sandbox. There is no explicit `default`
+value. Harness projection reports enforcement limits.
+
+At launch, the mode resolves in this order: CLI `--network`, agent overlay,
+matching overlay model policy, profile, matching profile model policy, then
+matching settings model policy, project/local settings, and user config.
+
+```yaml
+network: allowlist
+network-allow: [github.com, "*.github.com", "**.pypi.org"]
+network-deny: [uploads.example]
+```
+
+`network-allow` and `network-deny` are permission sets. Plain lists add across user,
+project, local, profile, overlay, and CLI surfaces. `{replace: [...]}` clears lower entries
+([how lists combine](mars-toml.md#adding-to-or-replacing-a-permission-list));
+a package profile may replace its allow set but may not replace its deny set. Each entry is
+an exact host, an IP address, `*.x` (subdomains only), or `**.x` (apex plus subdomains).
+Wildcards require at least two DNS labels. Mars lowercases hosts, removes a trailing dot,
+canonicalizes IPv4-mapped IPv6 to IPv4, deduplicates, and sorts them. It rejects URLs, schemes,
+ports, paths, numeric or `0x`-style terminal DNS labels, empty strings, and a bare `*`;
+internationalized names must use punycode. `network_allow` / `network_deny` are accepted
+aliases. An unknown network-looking frontmatter key produces a warning instead of being
+silently ignored. An empty `allowlist` fails closed to `deny` with a warning.
+
+---
+
 ### `effort`
 
 | | |
@@ -346,6 +396,10 @@ Two forms:
   entries and leaves everything else to the harness. Add `'*': deny` to make a map an
   allowlist too. A capability that has only scoped allows (`bash(rg *)`) then runs only those
   commands.
+
+`tools: {replace: [...]}` is invalid in a package profile. Replacement tables belong to
+consumer `[agents.<name>.tools]` and `[skills.<name>.tools]` overlays; a profile has no lower
+package policy to replace. See [Adding to or replacing a permission list](mars-toml.md#adding-to-or-replacing-a-permission-list).
 
 `ask` asks before the call. Native agent files (`.claude/agents/`) have no field for it, or
 for an allowlist with nothing allowed; Mars reports both as dropped lossiness. Meridian
@@ -494,6 +548,8 @@ model-policies:
       alias: opus
     override:
       effort: high
+      sandbox: workspace-write
+      network: deny
   - match:
       model: gpt-5.5
     override:
@@ -506,7 +562,11 @@ Native agent materialization has separate `include_fanout` semantics: flagged ru
 and expanded globs can still participate. Launch fallback filtering does not change
 native emission or reconciliation.
 
-Mars parses the `match`/`override` structure during `mars check` and before `mars version`, reporting malformed shape. `override` may be omitted or empty. Runtime consumers own the meaning and spelling of override keys.
+Mars parses the `match`/`override` structure during `mars check` and before
+`mars version`, reporting malformed shape. `override` may be omitted or empty.
+Launch-bundle execution overrides include `effort`, `approval`, `sandbox`,
+`network`, `autocompact`, and `autocompact_pct`; `network` uses the same policy
+layer and precedence as `sandbox`.
 
 ---
 

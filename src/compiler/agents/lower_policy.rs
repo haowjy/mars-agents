@@ -13,10 +13,12 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 ///
-/// Launch-time fields (approval, sandbox, mode where not emitted, autocompact, …) are
+/// Launch-time fields (approval, sandbox, network, mode where not emitted, autocompact, …) are
 /// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
 /// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
-/// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly.
+/// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly. One exception:
+/// Codex lowers `network` as [`Lossiness::Dropped`], because its native artifact carries
+/// `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
@@ -52,6 +54,18 @@ impl<'a> Effective<'a> {
 
     fn sandbox(&self) -> Option<&crate::compiler::agents::SandboxMode> {
         self.profile.sandbox.as_ref()
+    }
+
+    fn network(&self) -> Option<&crate::compiler::agents::NetworkPolicy> {
+        self.profile.network.as_ref()
+    }
+
+    fn has_network_allow_hosts(&self) -> bool {
+        !self.profile.network_allow.entries().is_empty()
+    }
+
+    fn has_network_deny_hosts(&self) -> bool {
+        !self.profile.network_deny.entries().is_empty()
     }
 
     fn skills(&self) -> Vec<String> {
@@ -155,9 +169,9 @@ fn record_agent_invocation_lossiness(
 ///
 /// Per agent-compilation-mapping.md V0 §10:
 /// - Preserved: name, description, model, skills, tools, disallowed-tools, body
-/// - Dropped (launch-time): approval, sandbox, mode, harness, autocompact, autocompact_pct,
-///   model-policies, harness-overrides,
-///   fanout, legacy-models
+/// - Meridian-only (launch-time): approval, sandbox, network, mode, autocompact,
+///   autocompact_pct, model-policies, fanout
+/// - Dropped: harness, harness-overrides, legacy-models
 ///
 /// What model field a lowered native agent should carry. The native compiler is the
 /// sole caller; this replaces a bare `Option<&str>` so "emit no model" is expressible
@@ -561,6 +575,21 @@ impl<'a> AgentLoweringCtx<'a> {
 
     fn record_meridian_only_fields(&mut self) {
         self.record_if_present(
+            "network",
+            self.eff.network().is_some(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
+            "network-allow",
+            self.eff.has_network_allow_hosts(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
+            "network-deny",
+            self.eff.has_network_deny_hosts(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
             "autocompact",
             self.profile.autocompact.is_some(),
             Lossiness::MeridianOnly,
@@ -660,7 +689,7 @@ pub fn lower_to_claude(
 ///   sandbox (as sandbox_mode), approval (as approval_policy), body
 ///   (as developer_instructions)
 /// - Dropped: skills (no native field), tools (no allowlist), disallowed-tools,
-///   mcp (approximate), mode, autocompact, model-policies, fanout
+///   mcp (approximate), network, mode, autocompact, model-policies, fanout
 /// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
 pub fn lower_to_codex(
     profile: &AgentProfile,
@@ -729,6 +758,27 @@ pub fn lower_to_codex(
             field: "autocompact".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
+        });
+    }
+    if eff.network().is_some() {
+        lossy.push(LossyField {
+            field: "network".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if eff.has_network_allow_hosts() {
+        lossy.push(LossyField {
+            field: "network-allow".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if eff.has_network_deny_hosts() {
+        lossy.push(LossyField {
+            field: "network-deny".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
         });
     }
     if eff.autocompact_pct().is_some() {

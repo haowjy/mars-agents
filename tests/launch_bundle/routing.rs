@@ -3209,7 +3209,7 @@ model = "gpt-5"
 
 [[settings.model-policies]]
 match = { alias = "gpt55" }
-override = { harness = "opencode", effort = "medium" }"#;
+override = { harness = "opencode", effort = "medium", network = "deny" }"#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
@@ -3227,12 +3227,20 @@ override = { harness = "opencode", effort = "medium" }"#;
         Some("medium")
     );
     assert_eq!(
+        bundle["execution_policy"]["network"],
+        serde_json::json!({"mode": "deny", "allow": [], "deny": []})
+    );
+    assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
         Some("settings-model-policy")
     );
     assert_eq!(
         bundle["provenance"]["effort_source"].as_str(),
         Some("settings-model-policy")
+    );
+    assert_eq!(
+        bundle["provenance"]["network_source"],
+        "settings-model-policy"
     );
     assert_eq!(
         bundle["provenance"]["matched_policy_rule"].as_str(),
@@ -3349,7 +3357,7 @@ override = { harness = "pi" }"#;
 }
 
 #[test]
-fn build_launch_bundle_local_overlay_replaces_base_overlay_by_name() {
+fn build_launch_bundle_local_overlay_replaces_base_scalars_by_name() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
     let agent_content = r#"---
@@ -3397,6 +3405,8 @@ model = "gptmini""#,
         bundle["provenance"]["harness_source"].as_str(),
         Some("alias")
     );
+    assert!(bundle["execution_policy"]["effort"].is_null());
+    assert_eq!(selected_attempt(&bundle)["candidates_tried"][0], "pi");
 }
 
 #[test]

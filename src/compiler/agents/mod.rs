@@ -13,8 +13,9 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
 use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
-pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule};
+pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkHost, NetworkPolicy};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
+use crate::permission_set::PermissionSet;
 
 // ---------------------------------------------------------------------------
 // Field enums
@@ -269,6 +270,9 @@ pub struct AgentProfile {
     pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
+    pub network: Option<NetworkPolicy>,
+    pub network_allow: PermissionSet<NetworkHost>,
+    pub network_deny: PermissionSet<NetworkHost>,
     pub effort: Option<EffortLevel>,
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
@@ -313,6 +317,8 @@ pub enum AgentDiagnostic {
         value: String,
         allowed: &'static str,
     },
+    /// Both separator spellings of one field were authored.
+    DuplicateField { field: String, alias: String },
     /// Deprecated `models:` field was found (use `model-overrides:` instead).
     LegacyModelsField,
     /// Deprecated list-form `tools: [read, grep]`: it grants the listed tools and restricts
@@ -324,6 +330,8 @@ pub enum AgentDiagnostic {
     UnknownHarness { value: String },
     /// Unknown harness key under `harness-overrides`; preserved for forward compatibility.
     UnknownHarnessOverride { value: String },
+    /// Network-looking top-level field that is not a supported spelling.
+    UnknownNetworkField { field: String },
     /// Retired frontmatter field (e.g. legacy `mcp-tools:`).
     RemovedField { field: String },
 }
@@ -334,11 +342,13 @@ impl AgentDiagnostic {
             AgentDiagnostic::InvalidFieldValue { field, .. } => {
                 !field.starts_with("harness-overrides")
             }
+            AgentDiagnostic::DuplicateField { .. } => true,
             AgentDiagnostic::UnknownHarness { .. } => true,
             AgentDiagnostic::RemovedField { .. } => true,
             AgentDiagnostic::LegacyModelsField
             | AgentDiagnostic::DeprecatedApprovalYolo
             | AgentDiagnostic::DeprecatedListFormTools
+            | AgentDiagnostic::UnknownNetworkField { .. }
             | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
         }
     }
@@ -351,6 +361,9 @@ impl AgentDiagnostic {
                 allowed,
             } => {
                 format!("agent field `{field}` has invalid value `{value}`; allowed: {allowed}")
+            }
+            AgentDiagnostic::DuplicateField { field, alias } => {
+                format!("agent fields `{field}` and `{alias}` are duplicate spellings; use only `{field}`")
             }
             AgentDiagnostic::LegacyModelsField => {
                 "agent uses deprecated `models:` field; rename to `model-overrides:`".to_string()
@@ -367,6 +380,10 @@ impl AgentDiagnostic {
             AgentDiagnostic::UnknownHarnessOverride { value } => {
                 format!("unknown harness override `{value}`; preserving passthrough block")
             }
+            AgentDiagnostic::UnknownNetworkField { field } => format!(
+                "agent field `{field}` is an unknown network key and is ignored; accepted keys: {}",
+                crate::config::NETWORK_OVERLAY_KEYS
+            ),
             AgentDiagnostic::RemovedField { field } => {
                 if tool_policy::REMOVED_MCP_TOOLS_FIELDS.contains(&field.as_str()) {
                     format!(
@@ -377,6 +394,28 @@ impl AgentDiagnostic {
                     format!("agent field `{field}` has been removed")
                 }
             }
+        }
+    }
+}
+
+impl From<crate::config::network::AgentNetworkDiagnostic> for AgentDiagnostic {
+    fn from(diagnostic: crate::config::network::AgentNetworkDiagnostic) -> Self {
+        use crate::config::network::AgentNetworkDiagnostic;
+
+        match diagnostic {
+            AgentNetworkDiagnostic::InvalidFieldValue {
+                field,
+                value,
+                allowed,
+            } => Self::InvalidFieldValue {
+                field,
+                value,
+                allowed,
+            },
+            AgentNetworkDiagnostic::DuplicateField { field, alias } => {
+                Self::DuplicateField { field, alias }
+            }
+            AgentNetworkDiagnostic::UnknownField { field } => Self::UnknownNetworkField { field },
         }
     }
 }
@@ -614,6 +653,22 @@ fn push_model_policy_parse_error(
         crate::config::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.override"), found, "mapping");
         }
+        crate::config::ModelPolicyRuleParseError::NetworkOverrideInvalid { found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.override.network"),
+                found,
+                NetworkPolicy::ALLOWED,
+            );
+        }
+        crate::config::ModelPolicyRuleParseError::NetworkHostsNotAllowed { key } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.override.{key}"),
+                key,
+                "network host sets on settings, profile, overlay, or CLI",
+            );
+        }
         crate::config::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.no-fallback"), found, "boolean");
         }
@@ -758,6 +813,12 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         }
     });
 
+    let (network_fields, network_diags) = crate::config::network::parse_agent_network(fm);
+    diags.extend(network_diags.into_iter().map(AgentDiagnostic::from));
+    let network = network_fields.policy;
+    let network_allow = network_fields.allow;
+    let network_deny = network_fields.deny;
+
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
         if s == "none" {
@@ -885,6 +946,9 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         had_user_invocable_field,
         approval,
         sandbox,
+        network,
+        network_allow,
+        network_deny,
         effort,
         autocompact,
         autocompact_pct,

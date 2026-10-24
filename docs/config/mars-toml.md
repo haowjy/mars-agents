@@ -7,13 +7,14 @@
 - **Target sync**: optional copies from `.mars/` into managed target directories, configured by `settings.targets`.
 - **`--root`**: points to the project root when you need to override auto-detection.
 
-Mars uses three config files, all at the project root:
+Mars uses three project files plus an optional user network-default file:
 
 | File | Purpose | Committed? |
 |---|---|---|
 | `mars.toml` | Dependencies, filters, settings | Yes |
 | `mars.lock` | Resolved versions, checksums, ownership | Yes |
 | `mars.local.toml` | Developer-local overrides | No (gitignored) |
+| `$MARS_CONFIG_DIR/config.toml` (otherwise the platform `mars/config.toml`) | User network defaults | User-owned |
 
 ## Layering and precedence
 
@@ -21,18 +22,65 @@ Mars applies configuration layers in this precedence order:
 
 `user config < mars.toml < mars.local.toml < CLI/command inputs`
 
-Current implementation uses `mars.toml < mars.local.toml < CLI/command inputs`; the user layer is reserved in the merge boundary for future support.
-
 Default merge semantics:
 
 - **Scalars / Option values:** higher layer replaces lower layer when present.
 - **Maps / tables:** higher layer adds/replaces entries by key.
-- **Arrays/lists:** higher layer replaces the full list (including explicit `[]`).
+- **Arrays/lists:** higher layer replaces the full list (including explicit `[]`), except the
+  permission sets below.
+- **Permission sets:** plain lists add; `{ replace = [...] }` clears lower entries first. This
+  applies only to network allow/deny hosts and tool grants/denies. See
+  [Adding to or replacing a permission list](#adding-to-or-replacing-a-permission-list).
 
 For keyed overlay tables:
 
 - `[models]` overlays are **replace-by-key** per alias entry (no recursive field merge inside one alias block).
-- `[agents]` overlays are **replace-by-key** per agent entry (no recursive field merge inside one agent block).
+- `[agents]` and `[skills]` are also **replace-by-key** for scalars, options, model policies,
+  and unknown keys. Their network and tool permission sets are the exception: those compose
+  across matching project/local entries with the add/replace rule.
+
+### Adding to or replacing a permission list
+
+Four lists are permission lists:
+- `network-allow`
+- `network-deny`
+- `tools.allowed`
+- `tools.disallowed`
+
+When more than one place sets one of these lists, Mars combines them. The places, from lowest
+to highest:
+
+user config < `mars.toml` `[settings]` < `mars.local.toml` `[settings]` < agent profile < `[agents.<name>]` / `[skills.<name>]` overlay < CLI flags
+
+A plain list **adds** its entries to what lower places gave:
+
+```toml
+# mars.toml
+[settings]
+network-allow = ["github.com"]
+
+# mars.local.toml
+[settings]
+network-allow = ["pypi.org"]   # result: github.com, pypi.org
+```
+
+To **discard** what lower places gave and use only your entries, write the list inside a
+`replace` table. Places above this one still add on top:
+
+```toml
+[agents.coder]
+network-allow = { replace = ["github.com"] }   # ignores user/project/profile hosts
+tools.allowed = { replace = ["Read", "Grep"] }
+```
+
+The same in profile YAML frontmatter is `network-allow: {replace: [github.com]}`.
+
+Limits:
+- A package's agent profile can't replace a **deny** list (`network-deny`,
+  `disallowed-tools`), and can't use `replace` for tools at all; both are errors. Profiles sit above your `[settings]`, so a package
+  could otherwise erase your denies. Your own config files and overlays can replace anything.
+- CLI flags (`--network-allow`, `--network-deny`) only add.
+- An empty plain list (`[]`) adds nothing. `{ replace = [] }` clears the lower entries.
 
 ## `mars.toml`
 
@@ -189,6 +237,9 @@ targets = [".claude", ".cursor"]
 agent_emission = "auto"
 min_mars_version = "0.12.0"
 models_cache_ttl_hours = 24
+default_network = "allowlist"
+network-allow = ["github.com", "*.github.com", "**.pypi.org"]
+network-deny = ["blocked.example"]
 # Catalog ingest only. Pins still run if the harness can resolve the provider.
 catalog_providers = ["anthropic", "openai", "google", "meta", "deepseek", "xai", "openrouter"]
 
@@ -209,6 +260,9 @@ include_fanout = false
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
+| `default_network` | string | unset | Project-wide network mode (`allow`, `deny`, `allowlist`) when no higher policy layer sets one. |
+| `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Allowed host permission set. Plain lists add across user/project/local/profile/overlay/CLI; `{ replace = [...] }` clears lower entries. |
+| `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Denied host permission set, with the same merge rule. Denies win at enforcement. |
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
 
@@ -222,6 +276,34 @@ Local targets replace project targets, even with an empty list. A local
 managed_root does not override project targets. An explicit `--harness` cannot
 expand target permission; a disabled profile/alias preference is skipped.
 
+Network hosts are canonicalized to lowercase without a trailing dot, deduplicated, and
+sorted in the launch bundle. Each entry is an exact host, an IP address, `*.x` (subdomains
+only), or `**.x` (the apex and subdomains). Wildcards require at least two DNS labels. IPv4-mapped
+IPv6 is canonicalized to IPv4. URLs, schemes, ports, paths, numeric or `0x`-style terminal DNS
+labels, empty strings, and a bare `*` are errors; internationalized names must use punycode.
+Under `deny`, both host sets are inert and omitted. Under `allow`, the
+allow set is inert and omitted; deny hosts still apply. `allowlist` without an allowed host
+fails closed to `deny` and adds a bundle warning.
+
+Network policy keys accept separator aliases for compatibility: `default_network` or
+`default-network`, and `network-allow` / `network-deny` or `network_allow` / `network_deny`.
+Mars warns when another ignored key looks network-related and lists these accepted spellings.
+
+### User network defaults
+
+`$MARS_CONFIG_DIR/config.toml`, or `mars/config.toml` under the platform config directory,
+accepts only these fields for now:
+
+```toml
+[settings]
+default_network = "allowlist"
+network-allow = ["github.com", "*.github.com"]
+network-deny = ["blocked.example"]
+```
+
+Project and local settings layer above them. Other user `[settings]` keys are ignored with a
+launch-bundle warning; Mars does not pretend they form a general user configuration tier.
+
 
 `[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
 
@@ -234,7 +316,7 @@ Qualifying agents have a matching `harness:`, a `model:` alias that resolves to 
 
 ### `[agents.<name>]` (overlay)
 
-Overlay policy applied to an agent during the staging seam. Applied on top of the agent's frontmatter — no forking or patching of the source. Available in both `mars.toml` and `mars.local.toml`; `mars.local.toml` wins when keys collide.
+Overlay policy applied to an agent during the staging seam. Applied on top of the agent's frontmatter — no forking or patching of the source. Available in both `mars.toml` and `mars.local.toml`; a matching local block replaces the project block except for the four composing permission sets.
 
 ```toml
 [agents.reviewer]
@@ -244,6 +326,9 @@ harness = "claude"
 effort = "high"
 approval = "confirm"
 sandbox = "read-only"
+network = "deny"
+network-allow = ["github.com", "*.github.com"]
+network-deny = ["uploads.example"]
 model-invocable = false
 user-invocable = true
 model-policies = [{ match = { model-glob = "gpt-5*" }, no-fallback = true }]
@@ -261,11 +346,14 @@ disallowed = ["agent"]
 | `effort` | string | Effort level: `low`, `medium`, `high`, `xhigh` |
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `yolo` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
+| `network` | string | Shell network mode: `allow`, `deny`, `allowlist`; unset follows the sandbox in Meridian and does not affect built-in web tools |
+| `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | Allowed host set. Plain lists add; `{ replace = [...] }` clears settings/profile hosts first. |
+| `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | Denied host set. Plain lists add; `{ replace = [...] }` clears lower hosts first. |
 | `autocompact` | integer | Token threshold for context compaction (0–4294967295) |
 | `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
 | `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
 | `user-invocable` | bool | Whether the user can `/name` this agent |
-| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays. `allowed` replaces the profile's allow rules and only grants its entries; the profile's own deny and `ask` rules stay. It does not add `'*': deny`, though an existing wildcard deny stays. `disallowed` replaces the profile's deny rules (an existing `'*': deny` allowlist marker stays). MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
+| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile and preserve wildcard rules; `{ replace = [...] }` clears that action's lower rules, including `'*': allow`. During the compatibility release, Mars warns once for each non-empty plain list and names its file; empty lists and replacement tables do not warn. Profile `ask` rules and the `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
 | `model-policies` | table[] | Model routing policy rules |
 
 The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
@@ -278,6 +366,11 @@ rules supply conditional settings. Profile rules also declare launch backups:
 all concrete, unflagged entries participate in declaration order, independently of
 the primary's active settings match. `no-fallback` excludes only its entry; it never
 vetoes the rest of the chain. See [model policies](agent-profiles.md#model-policies).
+
+Execution-policy overrides may set `effort`, `approval`, `sandbox`, `network`,
+`autocompact`, or `autocompact_pct`. `network` follows the same overlay → profile →
+settings model-policy precedence as `sandbox`. Network host sets are deliberately not valid
+inside model-policy overrides.
 
 ### `[skills.<name>]` (overlay)
 
@@ -298,7 +391,7 @@ disallowed = ["agent"]
 | `description` | string | Override the skill's description |
 | `model-invocable` | bool | Override model invocability |
 | `user-invocable` | bool | Override user invocability |
-| `tools` | table | Tool policy: `allowed` and `disallowed` string arrays, edited the same way as an agent's (above). `allowed` replaces the skill's grants and makes no allowlist. The skill's own deny and `ask` rules, in `tools:` or `disallowed-tools:`, stay; `disallowed` replaces its deny rules. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Names are checked at load like an agent's |
+| `tools` | table | Tool permission sets, layered like an agent's (above). Plain arrays add and preserve wildcard rules; `{ replace = [...] }` clears lower entries for that action, including `'*': allow`. The skill's `ask` rules and `'*': deny` allowlist marker stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Names are checked at load like an agent's |
 
 ## Curated model display
 
@@ -481,12 +574,23 @@ Local overlays can target:
 
 For local overlay semantics:
 
-- Maps replace by key.
-- Arrays replace by value.
-- Scalars/options replace when present.
-- `[models.<alias>]` and `[agents.<name>]` entries replace the full keyed block from `mars.toml` when the same key appears in `mars.local.toml`.
+- `[models.<alias>]` replaces the full keyed block when the same alias appears locally.
+- `[agents.<name>]` and `[skills.<name>]` replace the full keyed block for scalars, options,
+  model policies, and unknown keys.
+- `network-allow`, `network-deny`, `tools.allowed`, and `tools.disallowed` are the exception:
+  they compose across the matching project/local blocks with the permission-set add/replace rule.
+- A project tool list therefore still applies when the matching local block omits that list. To
+  discard it, add the corresponding local `{ replace = [...] }` list or remove the project list.
+  During the compatibility release, a non-empty plain project list warns and names both files
+  when a matching local block does not replace it.
+- Other fields still follow whole-entry replacement. For example, adding only `network-deny` to
+  a local agent block drops the project block's `model`, `harness`, `description`, and
+  `model-policies`; repeat the needed project scalars and model policies in the local block.
+- Other arrays replace by value when authored locally.
 
-Unknown keys under `mars.local.toml [settings]` are rejected.
+Unknown agent-overlay keys remain tolerated for forward compatibility. An ignored key beginning
+with `network` produces a warning with the accepted keys. Unknown keys under local `[settings]`
+are rejected.
 
 `mars models list` / `mars models resolve` now return local-config parse/validation errors instead of silently falling back to defaults. Fallback-to-default only happens when `mars.toml` is absent.
 

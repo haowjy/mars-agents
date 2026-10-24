@@ -1,6 +1,8 @@
 //! `mars version <bump|X.Y.Z> [--push]` — bump package version, commit, and tag.
 
+use std::io::IsTerminal;
 use std::path::Path;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use semver::{BuildMetadata, Prerelease, Version};
@@ -65,9 +67,12 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     ensure_tag_not_exists(&ctx.project_root, &tag)?;
 
+    let review_filled_changelog =
+        !json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    update_changelog_if_present(&ctx.project_root, &next_version, review_filled_changelog)?;
+
     package.version = next_version.clone();
     crate::config::save(&ctx.project_root, &config)?;
-    update_changelog_if_present(&ctx.project_root, &next_version)?;
 
     crate::platform::process::run_git(
         &["add", "mars.toml"],
@@ -316,19 +321,24 @@ fn current_branch(project_root: &Path) -> Result<String, MarsError> {
     Ok(branch)
 }
 
-fn update_changelog_if_present(project_root: &Path, next_version: &str) -> Result<(), MarsError> {
+fn update_changelog_if_present(
+    project_root: &Path,
+    next_version: &str,
+    review_filled_section: bool,
+) -> Result<(), MarsError> {
     let changelog_path = project_root.join("CHANGELOG.md");
     if !changelog_path.is_file() {
         return Ok(());
     }
 
-    let content = std::fs::read_to_string(&changelog_path)?;
-    let date = today_iso_date();
-    let Some(mut updated) = promote_unreleased_changelog(&content, next_version, &date, &[]) else {
+    let original = std::fs::read(&changelog_path)?;
+    let content = std::str::from_utf8(&original)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let Some(changelog) = UnreleasedChangelog::parse(content) else {
         return Ok(());
     };
 
-    let commit_bullets = if updated.unreleased_was_empty {
+    let commit_bullets = if changelog.is_empty() {
         match changelog_commit_bullets(project_root) {
             Ok(bullets) => bullets,
             Err(error) => {
@@ -341,18 +351,94 @@ fn update_changelog_if_present(project_root: &Path, next_version: &str) -> Resul
     };
 
     if !commit_bullets.is_empty() {
-        updated = promote_unreleased_changelog(&content, next_version, &date, &commit_bullets)
-            .expect("the changelog contains an [Unreleased] section");
-        eprintln!(
-            "note: filled CHANGELOG.md release section from {} commits; edit the release commit before pushing",
-            commit_bullets.len()
-        );
-    } else if updated.unreleased_was_empty {
+        if review_filled_section {
+            eprintln!(
+                "note: filled CHANGELOG.md release section from {} commits; opening editor for review",
+                commit_bullets.len()
+            );
+        } else {
+            eprintln!(
+                "note: filled CHANGELOG.md release section from {} commits; section lists raw commit subjects",
+                commit_bullets.len()
+            );
+        }
+    } else if changelog.is_empty() {
         eprintln!("warning: CHANGELOG.md has no entries under [Unreleased]");
     }
 
-    std::fs::write(changelog_path, updated.content)?;
+    let updated = changelog.promote(next_version, &today_iso_date(), &commit_bullets);
+    std::fs::write(&changelog_path, updated)?;
+
+    if review_filled_section && !commit_bullets.is_empty() {
+        if let Err(error) = open_changelog_in_git_editor(project_root, &changelog_path) {
+            return abort_release(&changelog_path, &original, &error.to_string());
+        }
+
+        let edited = match std::fs::read_to_string(&changelog_path) {
+            Ok(edited) => edited,
+            Err(error) => return abort_release(&changelog_path, &original, &error.to_string()),
+        };
+        if !release_section_has_entries(&edited, next_version) {
+            return abort_release(
+                &changelog_path,
+                &original,
+                &format!(
+                    "CHANGELOG.md must retain a non-empty `## [{next_version}]` release section"
+                ),
+            );
+        }
+    }
+
     Ok(())
+}
+
+fn open_changelog_in_git_editor(
+    project_root: &Path,
+    changelog_path: &Path,
+) -> Result<(), MarsError> {
+    let editor = crate::platform::process::run_git(
+        &["var", "GIT_EDITOR"],
+        project_root,
+        "git var GIT_EDITOR",
+    )?;
+
+    // A one-shot shell alias delegates both POSIX shell quoting and Git for Windows' bundled
+    // `sh` selection to Git itself. The function wrapper passes the path exactly once.
+    let editor_alias = format!("alias.mars-changelog-editor=!f() {{ {editor} \"$@\"; }}; f");
+    let mut command = Command::new("git");
+    crate::platform::process::remove_git_local_env(&mut command);
+    let status = command
+        .current_dir(project_root)
+        .arg("-c")
+        .arg(editor_alias)
+        .arg("mars-changelog-editor")
+        .arg(changelog_path)
+        .status()
+        .map_err(|error| MarsError::GitCli {
+            command: "git editor".to_string(),
+            message: format!("failed to launch editor: {error}"),
+        })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(MarsError::GitCli {
+            command: "git editor".to_string(),
+            message: format!("editor exited with status {status}"),
+        })
+    }
+}
+
+fn abort_release<T>(changelog_path: &Path, original: &[u8], reason: &str) -> Result<T, MarsError> {
+    std::fs::write(changelog_path, original).map_err(|restore_error| ConfigError::Invalid {
+        message: format!(
+            "release aborted ({reason}); failed to restore CHANGELOG.md: {restore_error}"
+        ),
+    })?;
+    Err(ConfigError::Invalid {
+        message: format!("release aborted: {reason}"),
+    }
+    .into())
 }
 
 fn changelog_commit_bullets(project_root: &Path) -> Result<Vec<String>, MarsError> {
@@ -395,64 +481,70 @@ fn is_release_commit_subject(subject: &str) -> bool {
         .is_some_and(|version| version.pre.is_empty() && version.build.is_empty())
 }
 
-struct ChangelogPromotion {
-    content: String,
-    unreleased_was_empty: bool,
+struct UnreleasedChangelog<'a> {
+    sections: Vec<&'a str>,
+    unreleased_index: usize,
+    next_section_index: usize,
+    empty: bool,
 }
 
-fn promote_unreleased_changelog(
-    content: &str,
-    next_version: &str,
-    date: &str,
-    empty_section_bullets: &[String],
-) -> Option<ChangelogPromotion> {
-    let sections = content.split_inclusive('\n').collect::<Vec<_>>();
+impl<'a> UnreleasedChangelog<'a> {
+    fn parse(content: &'a str) -> Option<Self> {
+        let sections = content.split_inclusive('\n').collect::<Vec<_>>();
+        let unreleased_index = sections
+            .iter()
+            .position(|line| is_unreleased_header(line.trim_end()))?;
+        let next_section_index = sections
+            .iter()
+            .enumerate()
+            .skip(unreleased_index + 1)
+            .find_map(|(index, line)| {
+                if line.trim_start().starts_with("## [") {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(sections.len());
+        let empty = changelog_section_is_empty(&sections[unreleased_index + 1..next_section_index]);
 
-    let unreleased_index = sections
-        .iter()
-        .position(|line| is_unreleased_header(line.trim_end()))?;
-    let next_section_index = sections
-        .iter()
-        .enumerate()
-        .skip(unreleased_index + 1)
-        .find_map(|(index, line)| {
-            if line.trim_start().starts_with("## [") {
-                Some(index)
-            } else {
-                None
-            }
+        Some(Self {
+            sections,
+            unreleased_index,
+            next_section_index,
+            empty,
         })
-        .unwrap_or(sections.len());
-
-    let unreleased_was_empty =
-        changelog_section_is_empty(&sections[unreleased_index + 1..next_section_index]);
-
-    let mut promoted = String::new();
-    for line in &sections[..unreleased_index] {
-        promoted.push_str(line);
     }
-    promoted.push_str("## [Unreleased]\n\n");
-    promoted.push_str(&format!("## [{next_version}] - {date}\n"));
-    if unreleased_was_empty && !empty_section_bullets.is_empty() {
-        promoted.push('\n');
-        for bullet in empty_section_bullets {
-            promoted.push_str(bullet);
+
+    fn is_empty(&self) -> bool {
+        self.empty
+    }
+
+    fn promote(&self, next_version: &str, date: &str, empty_section_bullets: &[String]) -> String {
+        let mut promoted = String::new();
+        for line in &self.sections[..self.unreleased_index] {
+            promoted.push_str(line);
+        }
+        promoted.push_str("## [Unreleased]\n\n");
+        promoted.push_str(&format!("## [{next_version}] - {date}\n"));
+        if self.empty && !empty_section_bullets.is_empty() {
             promoted.push('\n');
+            for bullet in empty_section_bullets {
+                promoted.push_str(bullet);
+                promoted.push('\n');
+            }
+            promoted.push('\n');
+            for line in &self.sections[self.next_section_index..] {
+                promoted.push_str(line);
+            }
+        } else {
+            for line in &self.sections[self.unreleased_index + 1..] {
+                promoted.push_str(line);
+            }
         }
-        promoted.push('\n');
-        for line in &sections[next_section_index..] {
-            promoted.push_str(line);
-        }
-    } else {
-        for line in &sections[unreleased_index + 1..] {
-            promoted.push_str(line);
-        }
-    }
 
-    Some(ChangelogPromotion {
-        content: promoted,
-        unreleased_was_empty,
-    })
+        promoted
+    }
 }
 
 fn is_unreleased_header(line: &str) -> bool {
@@ -470,6 +562,26 @@ fn changelog_section_is_empty(lines: &[&str]) -> bool {
         let trimmed = line.trim();
         trimmed.is_empty() || trimmed.starts_with("###")
     })
+}
+
+fn release_section_has_entries(content: &str, version: &str) -> bool {
+    let sections = content.split_inclusive('\n').collect::<Vec<_>>();
+    let header = format!("## [{version}]");
+    let Some(release_index) = sections.iter().position(|line| {
+        let line = line.trim();
+        line.strip_prefix(&header)
+            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(" - "))
+    }) else {
+        return false;
+    };
+    let next_section_index = sections
+        .iter()
+        .enumerate()
+        .skip(release_index + 1)
+        .find_map(|(index, line)| line.trim_start().starts_with("## [").then_some(index))
+        .unwrap_or(sections.len());
+
+    !changelog_section_is_empty(&sections[release_index + 1..next_section_index])
 }
 
 fn today_iso_date() -> String {
@@ -679,15 +791,17 @@ mod tests {
         assert!(changelog.contains("## [Unreleased]\n\n## [0.1.1] - "));
         assert!(changelog.contains("\n\n- add empty changelog\n"));
         assert!(!changelog.contains("### Added"));
+        let parsed =
+            UnreleasedChangelog::parse("# Changelog\n\n## [Unreleased]\n\n### Added\n\n").unwrap();
+        assert!(parsed.is_empty());
         assert!(
-            promote_unreleased_changelog(
-                "# Changelog\n\n## [Unreleased]\n\n### Added\n\n",
-                "0.1.1",
-                "2026-04-30",
-                &["- add empty changelog".to_string()]
-            )
-            .unwrap()
-            .unreleased_was_empty
+            parsed
+                .promote(
+                    "0.1.1",
+                    "2026-04-30",
+                    &["- add empty changelog".to_string()]
+                )
+                .contains("## [0.1.1] - 2026-04-30\n\n- add empty changelog")
         );
     }
 

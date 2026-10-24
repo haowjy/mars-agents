@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Hook fragment loading now accepts caller-provided `${MARS_HOOK_DIR}` replacement text, while sync continues to emit portable absolute installed paths.
+
 ## [0.18.1] - 2026-10-24
 
 ### Changed

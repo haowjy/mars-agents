@@ -222,7 +222,7 @@ pub fn load_merge_fragment(
     item: &ParsedHookItem,
     target_name: &str,
     known_events: &[&str],
-    installed_hook_dir: &Path,
+    hook_dir_token: &str,
     diag: &mut DiagnosticCollector,
     emit_unchecked_warning: bool,
 ) -> Result<HookFragment, MarsError> {
@@ -274,7 +274,7 @@ pub fn load_merge_fragment(
             event.clone(),
             array
                 .iter()
-                .map(|entry| substitute_json_strings(entry.clone(), installed_hook_dir))
+                .map(|entry| substitute_json_strings(entry.clone(), hook_dir_token))
                 .collect(),
         );
     }
@@ -286,7 +286,7 @@ pub fn load_merge_fragment(
 pub fn load_file_fragment(
     item: &ParsedHookItem,
     target_name: &str,
-    installed_hook_dir: &Path,
+    hook_dir_token: &str,
 ) -> Result<String, MarsError> {
     let target = &item.def.targets[target_name];
     if target.unchecked.is_some() {
@@ -304,25 +304,24 @@ pub fn load_file_fragment(
     let path = item.hook_dir.join(fragment_name);
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| invalid(&path, &format!("failed to read fragment: {error}")))?;
-    Ok(substitute_hook_dir(&raw, installed_hook_dir))
+    Ok(substitute_hook_dir(&raw, hook_dir_token))
 }
 
-fn substitute_hook_dir(text: &str, installed_hook_dir: &Path) -> String {
-    let portable_hook_dir = installed_hook_dir.to_string_lossy().replace('\\', "/");
-    text.replace("${MARS_HOOK_DIR}", &portable_hook_dir)
+fn substitute_hook_dir(text: &str, hook_dir_token: &str) -> String {
+    text.replace("${MARS_HOOK_DIR}", hook_dir_token)
 }
 
-fn substitute_json_strings(mut value: Value, installed_hook_dir: &Path) -> Value {
+fn substitute_json_strings(mut value: Value, hook_dir_token: &str) -> Value {
     match &mut value {
-        Value::String(text) => *text = substitute_hook_dir(text, installed_hook_dir),
+        Value::String(text) => *text = substitute_hook_dir(text, hook_dir_token),
         Value::Array(values) => {
             for value in values {
-                *value = substitute_json_strings(value.take(), installed_hook_dir);
+                *value = substitute_json_strings(value.take(), hook_dir_token);
             }
         }
         Value::Object(values) => {
             for value in values.values_mut() {
-                *value = substitute_json_strings(value.take(), installed_hook_dir);
+                *value = substitute_json_strings(value.take(), hook_dir_token);
             }
         }
         _ => {}
@@ -343,23 +342,26 @@ fn invalid(path: &Path, message: &str) -> MarsError {
 mod tests {
     use super::{substitute_hook_dir, substitute_json_strings};
     use serde_json::json;
-    use std::path::Path;
 
     #[test]
-    fn hook_dir_substitution_uses_escape_safe_separators_in_file_and_json_fragments() {
-        let windows_path = Path::new(r"C:\temp\Users\hooks\audit");
-        let substituted =
-            substitute_hook_dir(r#"const SCRIPT = "${MARS_HOOK_DIR}/run.sh";"#, windows_path);
+    fn hook_dir_substitution_uses_caller_provided_token_in_file_and_json_fragments() {
+        let hook_dir_token = "${CLAUDE_PLUGIN_ROOT}/hooks/audit";
+        let substituted = substitute_hook_dir(
+            r#"const SCRIPT = "${MARS_HOOK_DIR}/run.sh";"#,
+            hook_dir_token,
+        );
         assert_eq!(
             substituted,
-            r#"const SCRIPT = "C:/temp/Users/hooks/audit/run.sh";"#
+            r#"const SCRIPT = "${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh";"#
         );
 
-        let substituted =
-            substitute_json_strings(json!({"command": "${MARS_HOOK_DIR}/run.sh"}), windows_path);
+        let substituted = substitute_json_strings(
+            json!({"command": "${MARS_HOOK_DIR}/run.sh"}),
+            hook_dir_token,
+        );
         assert_eq!(
             substituted,
-            json!({"command": "C:/temp/Users/hooks/audit/run.sh"})
+            json!({"command": "${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh"})
         );
     }
 }

@@ -16,7 +16,7 @@ use prompt::compile_prompt_surface;
 use crate::cli::MarsContext;
 use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
-use crate::config::{EffectiveProjectConfig, NetworkPolicy};
+use crate::config::{EffectiveProjectConfig, NetworkHost, NetworkPolicy};
 use crate::error::{ConfigError, MarsError};
 use crate::frontmatter::SkillsSpec;
 
@@ -33,6 +33,8 @@ pub struct LaunchBundleRequest {
     pub approval: Option<String>,
     pub sandbox: Option<String>,
     pub network: Option<NetworkPolicy>,
+    pub network_allow: Vec<NetworkHost>,
+    pub network_deny: Vec<NetworkHost>,
     pub extra_skills: Vec<String>,
     pub models_refresh: crate::models::ModelsRefreshControl,
 }
@@ -96,6 +98,7 @@ pub fn build_launch_bundle(
     }
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+    warnings.extend(effective_project_config.warnings.iter().cloned());
     if let Some(overlay) = request
         .agent
         .as_deref()
@@ -129,6 +132,8 @@ pub fn build_launch_bundle(
             approval_override: request.approval.as_deref(),
             sandbox_override: request.sandbox.as_deref(),
             network_override: request.network.as_ref(),
+            network_allow: &request.network_allow,
+            network_deny: &request.network_deny,
             models_refresh: request.models_refresh,
         },
     )?;
@@ -201,6 +206,8 @@ fn empty_agent_profile() -> AgentProfile {
         approval: None,
         sandbox: None,
         network: None,
+        network_allow: Default::default(),
+        network_deny: Default::default(),
         effort: None,
         autocompact: None,
         autocompact_pct: None,
@@ -219,7 +226,7 @@ fn load_effective_project_config_or_default(
     match crate::config::load_effective_project_config(project_root) {
         Ok(config) => Ok(config),
         Err(MarsError::Config(ConfigError::NotFound { .. })) => {
-            Ok(EffectiveProjectConfig::default())
+            crate::config::load_user_effective_project_config()
         }
         Err(err) => Err(err),
     }

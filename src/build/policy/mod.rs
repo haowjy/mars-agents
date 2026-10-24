@@ -6,7 +6,8 @@ use indexmap::IndexMap;
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
 use crate::config::{
-    AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule, NetworkPolicy,
+    AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule, NetworkHost,
+    NetworkPolicy,
 };
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
@@ -57,6 +58,8 @@ pub struct PolicyInput<'a> {
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
     pub network_override: Option<&'a NetworkPolicy>,
+    pub network_allow: &'a [NetworkHost],
+    pub network_deny: &'a [NetworkHost],
     pub models_refresh: models::ModelsRefreshControl,
 }
 
@@ -474,8 +477,10 @@ pub fn resolve_policy(
         resolved_model.alias,
         overlay,
         matched_policy.as_ref(),
+        &effective_config.settings,
         native_config,
     );
+    warnings.extend(execution_resolution.warnings.iter().cloned());
 
     provenance.insert(
         "effort_source".to_string(),
@@ -617,7 +622,7 @@ pub fn resolve_policy(
             effort,
             approval: execution_resolution.approval.value,
             sandbox: execution_resolution.sandbox.value,
-            network: execution_resolution.network.value,
+            network: execution_resolution.resolved_network,
             autocompact: execution_resolution.autocompact.value,
             autocompact_pct: execution_resolution.autocompact_pct.value,
             timeout: None,

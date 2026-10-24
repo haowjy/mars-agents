@@ -104,6 +104,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
 | `network` | dropped | meridian-only |
+| `network-allow`, `network-deny` | dropped | meridian-only |
 | `mode` | dropped | dropped |
 | `autocompact` | dropped | meridian-only |
 | `autocompact_pct` | dropped | meridian-only |
@@ -112,7 +113,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `fanout` | dropped | meridian-only |
 | `harness` | dropped | dropped |
 
-`approval`, `sandbox`, and `network` policy fields are applied at launch time by
+`approval`, `sandbox`, `network`, and the network host sets are applied at launch time by
 Meridian through its harness projection layer, not stored in the agent file.
 
 ### Tool name projection
@@ -240,6 +241,7 @@ TOML format. Codex reads this for native agent invocation.
 | `sandbox` | `sandbox_mode` | exact |
 | `approval` | `approval_policy` | exact |
 | `network` | dropped | dropped |
+| `network-allow`, `network-deny` | dropped | dropped |
 | body | `developer_instructions` | exact |
 | `skills` | dropped | dropped |
 | `tools` | dropped | dropped |
@@ -251,7 +253,7 @@ TOML format. Codex reads this for native agent invocation.
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
 
-Mars does not write `network_access` into Codex native TOML. Native Codex
+Mars does not write `network_access` or host sets into Codex native TOML. Native Codex
 therefore keeps its own network default (off for `workspace-write`) rather than
 honoring the profile's `network` value.
 
@@ -295,6 +297,7 @@ YAML frontmatter + markdown body.
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
 | `network` | dropped | meridian-only |
+| `network-allow`, `network-deny` | dropped | meridian-only |
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
 | `effort` | dropped from frontmatter | approximate |
@@ -323,6 +326,7 @@ YAML frontmatter + markdown body.
 | `approval` | runtime-only (meridian projects `--force`/`--yolo`) | approximate |
 | `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | approximate |
 | `network` | dropped | meridian-only |
+| `network-allow`, `network-deny` | dropped | meridian-only |
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
 | `effort` | dropped from frontmatter | approximate |
@@ -372,6 +376,7 @@ YAML frontmatter + markdown body.
 | `effort` | dropped | approximate |
 | `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness) | approximate |
 | `network` | dropped | meridian-only |
+| `network-allow`, `network-deny` | dropped | meridian-only |
 | All other policy fields | dropped | dropped |
 | `autocompact`, `autocompact_pct`, `model-policies`, `fanout` | dropped | meridian-only |
 
@@ -462,6 +467,7 @@ Compact per-field, per-target classification:
 | `approval` | preserved | dropped | exact | dropped | approximate | dropped |
 | `sandbox` | preserved | dropped | exact | dropped | approximate | dropped |
 | `network` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
+| `network-allow`, `network-deny` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
 | `tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
 | `disallowed-tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
 | `mcp(...)` in `tools` / `disallowed-tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate |

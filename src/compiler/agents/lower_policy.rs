@@ -60,6 +60,14 @@ impl<'a> Effective<'a> {
         self.profile.network.as_ref()
     }
 
+    fn has_network_allow_hosts(&self) -> bool {
+        !self.profile.network_allow.entries().is_empty()
+    }
+
+    fn has_network_deny_hosts(&self) -> bool {
+        !self.profile.network_deny.entries().is_empty()
+    }
+
     fn skills(&self) -> Vec<String> {
         self.profile.effective_skills(&self.harness).all()
     }
@@ -572,6 +580,16 @@ impl<'a> AgentLoweringCtx<'a> {
             Lossiness::MeridianOnly,
         );
         self.record_if_present(
+            "network-allow",
+            self.eff.has_network_allow_hosts(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
+            "network-deny",
+            self.eff.has_network_deny_hosts(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
             "autocompact",
             self.profile.autocompact.is_some(),
             Lossiness::MeridianOnly,
@@ -745,6 +763,20 @@ pub fn lower_to_codex(
     if eff.network().is_some() {
         lossy.push(LossyField {
             field: "network".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if eff.has_network_allow_hosts() {
+        lossy.push(LossyField {
+            field: "network-allow".into(),
+            target: target.into(),
+            classification: Lossiness::Dropped,
+        });
+    }
+    if eff.has_network_deny_hosts() {
+        lossy.push(LossyField {
+            field: "network-deny".into(),
             target: target.into(),
             classification: Lossiness::Dropped,
         });

@@ -14,6 +14,8 @@ effort: low
 approval: confirm
 sandbox: read-only
 network: deny
+network-allow: [inert.example]
+network-deny: [blocked.example]
 ---
 Review code changes."#;
 
@@ -50,7 +52,10 @@ Review code changes."#;
         bundle["execution_policy"]["sandbox"].as_str(),
         Some("danger-full-access")
     );
-    assert_eq!(bundle["execution_policy"]["network"], "allow");
+    assert_eq!(
+        bundle["execution_policy"]["network"],
+        serde_json::json!({"mode": "allow", "allow": [], "deny": ["blocked.example"]})
+    );
     assert_eq!(bundle["provenance"]["effort_source"].as_str(), Some("cli"));
     assert_eq!(
         bundle["provenance"]["approval_source"].as_str(),
@@ -71,6 +76,8 @@ effort: low
 approval: confirm
 sandbox: read-only
 network: deny
+network-allow: [inert.example]
+network-deny: [also-inert.example]
 autocompact: 1200
 autocompact_pct: 40
 harness-overrides:
@@ -121,7 +128,10 @@ autocompact_pct = 55"#;
         bundle["execution_policy"]["sandbox"].as_str(),
         Some("read-only")
     );
-    assert_eq!(bundle["execution_policy"]["network"], "deny");
+    assert_eq!(
+        bundle["execution_policy"]["network"],
+        serde_json::json!({"mode": "deny", "allow": [], "deny": []})
+    );
     assert_eq!(
         bundle["execution_policy"]["autocompact"].as_u64(),
         Some(1200)
@@ -201,7 +211,10 @@ Review code changes."#;
         bundle["execution_policy"]["sandbox"].as_str(),
         Some("workspace-write")
     );
-    assert_eq!(bundle["execution_policy"]["network"], "allow");
+    assert_eq!(
+        bundle["execution_policy"]["network"],
+        serde_json::json!({"mode": "allow", "allow": [], "deny": []})
+    );
     assert_eq!(
         bundle["provenance"]["effort_source"].as_str(),
         Some("profile")
@@ -240,4 +253,165 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(bundle["warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn network_host_sets_merge_across_every_surface() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+network-allow: [Profile.Example., shared.example]
+network-deny: [blocked.profile.example]
+---
+Review code changes."#;
+    let extra_toml = r#"
+[settings]
+network-allow = ["Project.Example.", "shared.example"]
+network-deny = ["blocked.project.example"]
+
+[agents.reviewer]
+network-allow = ["overlay.example"]
+network-deny = ["blocked.overlay.example"]
+"#;
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
+
+    std::fs::write(
+        project_root.join("mars.local.toml"),
+        "[settings]\nnetwork-allow = [\"local.example\"]\nnetwork-deny = [\"blocked.local.example\"]\n",
+    )
+    .unwrap();
+    let user_config = temp.path().join("mars-config");
+    std::fs::create_dir_all(&user_config).unwrap();
+    std::fs::write(
+        user_config.join("config.toml"),
+        "[settings]\ndefault_network = \"allowlist\"\nnetwork-allow = [\"z.user.example\"]\nnetwork-deny = [\"blocked.user.example\"]\ndefault_model = \"ignored\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--network-allow",
+        "cli.example",
+        "--network-deny",
+        "blocked.cli.example",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["execution_policy"]["network"],
+        serde_json::json!({
+            "mode": "allowlist",
+            "allow": [
+                "cli.example",
+                "local.example",
+                "overlay.example",
+                "profile.example",
+                "project.example",
+                "shared.example",
+                "z.user.example"
+            ],
+            "deny": [
+                "blocked.cli.example",
+                "blocked.local.example",
+                "blocked.overlay.example",
+                "blocked.profile.example",
+                "blocked.project.example",
+                "blocked.user.example"
+            ]
+        })
+    );
+    assert_eq!(bundle["provenance"]["network_source"], "config");
+    assert!(
+        bundle["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning
+                    .as_str()
+                    .is_some_and(|message| message.contains("[settings].default_model is ignored"))
+            })
+    );
+
+    let project_config_path = project_root.join("mars.toml");
+    let project_config = std::fs::read_to_string(&project_config_path)
+        .unwrap()
+        .replace(
+            "network-allow = [\"overlay.example\"]",
+            "network-allow = { replace = [\"overlay.example\"] }",
+        )
+        .replace(
+            "network-deny = [\"blocked.overlay.example\"]",
+            "network-deny = { replace = [\"blocked.overlay.example\"] }",
+        );
+    std::fs::write(project_config_path, project_config).unwrap();
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args([
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--network-allow",
+        "cli.example",
+        "--network-deny",
+        "blocked.cli.example",
+    ]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let replaced: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        replaced["execution_policy"]["network"],
+        serde_json::json!({
+            "mode": "allowlist",
+            "allow": ["cli.example", "overlay.example"],
+            "deny": ["blocked.cli.example", "blocked.overlay.example"]
+        })
+    );
+}
+
+#[test]
+fn empty_allowlist_fails_closed_and_drops_inert_hosts() {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
+    let agent_content = r#"---
+name: reviewer
+model: claude-opus-4-6
+network: allowlist
+network-deny: [blocked.example]
+---
+Review code changes."#;
+    let (server, project_root) =
+        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        bundle["execution_policy"]["network"],
+        serde_json::json!({"mode": "deny", "allow": [], "deny": []})
+    );
+    assert!(
+        bundle["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning
+                    .as_str()
+                    .is_some_and(|message| message.contains("resolved to `deny`"))
+            })
+    );
 }

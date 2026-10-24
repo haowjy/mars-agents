@@ -15,6 +15,7 @@
 //! config reads, content hashing, domain validation in SourceSubpath.
 
 pub mod cache;
+pub mod config;
 pub mod fs;
 pub mod path_syntax;
 pub mod process;

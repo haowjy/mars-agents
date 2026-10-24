@@ -5,9 +5,28 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Agent `network: allow|deny` policy for shell connections, with profile,
-  overlay, model-policy, `--network`, launch-bundle, and provenance. Built-in web
-  tools remain governed by `tools: web`; harness launchers report enforcement limits.
+- Agent `network: allow|deny|allowlist` mode plus canonical `network-allow` and
+  `network-deny` host sets. Modes resolve by policy precedence; host sets merge across user
+  config, project/local settings, profile, overlay, and repeatable CLI flags. Hosts accept
+  exact names, IPs, `*.x` (subdomains), and `**.x` (apex plus subdomains). The launch bundle
+  emits one `{mode, allow, deny}` object and fails an empty allowlist closed to `deny` with a
+  warning. Built-in web tools remain governed by `tools: web`; harness launchers report
+  enforcement limits.
+- User network defaults in `$MARS_CONFIG_DIR/config.toml` (or the platform Mars config
+  directory): `[settings] default_network`, `network-allow`, and `network-deny`.
+
+### Changed
+- `execution_policy.network` changed from a nullable mode string to the resolved
+  `{mode, allow, deny}` object. Inert hosts are omitted: `deny` clears both sets and `allow`
+  clears its allow set. `provenance.network_source` remains compatible and settings defaults
+  use `config`.
+- Permission sets use one layering rule: plain lists add, while
+  `{ replace = [...] }` clears lower entries before adding. This changes
+  `[agents.<name>.tools]` and `[skills.<name>.tools]`: `allowed` and `disallowed`
+  now add to profile rules by default; use the table form for the previous replacement
+  behavior. Package profiles cannot replace deny sets. Existing `ask` rules and a
+  `'*': deny` allowlist marker survive either overlay form. The launch bundle, native
+  agent files, and staged skills all use the same merge.
 
 ## [0.17.0] - 2026-10-22
 
@@ -82,13 +101,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Claude reads that field as "only these tools". Map-form `allow`
   entries are grants, not an allowlist, so they no longer turn into `tools:`. Omitting
   `tools:` inherits every tool, so nothing is lost and no lossiness is recorded.
-- Permission sets use one layering rule: plain lists add, while
-  `{ replace = [...] }` clears lower entries before adding. This changes
-  `[agents.<name>.tools]` and `[skills.<name>.tools]`: `allowed` and `disallowed`
-  now add to profile rules by default; use the table form for the previous replacement
-  behavior. Package profiles cannot replace deny sets. Existing `ask` rules and a
-  `'*': deny` allowlist marker survive either overlay form. The launch bundle, native
-  agent files, and staged skills all use the same merge.
+- `mars.toml` `[agents.<name>.tools].allowed` replaces the profile's allow rules and keeps
+  its deny and `ask` rules; `disallowed` replaces its deny rules. The launch bundle now
+  applies the overlay too, through the same merge as native agent files. `[skills.<name>.tools]`
+  uses the same edit, so `allowed` no longer drops a map-form deny or `ask` in the skill's
+  `tools:`; `allowed` only grants and makes no allowlist. The staged skill writes
+  entries in canonical spelling (`agent`, not `Agent`), and denies in `disallowed-tools:`.
 - A scalar `tools: Read, Grep` (Claude's own agent-file spelling) is read as the list
   `[Read, Grep]`; staging splits it before lifting `Task` and `mcp__…` entries.
 - A malformed `tool(...)` entry (unclosed or empty parentheses, `*(x)`) is a validation

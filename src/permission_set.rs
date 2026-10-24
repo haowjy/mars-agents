@@ -1,3 +1,7 @@
+use std::fmt;
+use std::marker::PhantomData;
+
+use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 /// One layer of a permission set.
@@ -18,25 +22,48 @@ where
     where
         D: serde::Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Replacement<T> {
-            replace: Vec<T>,
+        struct PermissionSetVisitor<T>(PhantomData<T>);
+
+        impl<'de, T> Visitor<'de> for PermissionSetVisitor<T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = PermissionSet<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a list or a table containing only `replace = [...]`")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut entries = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+                while let Some(entry) = sequence.next_element()? {
+                    entries.push(entry);
+                }
+                Ok(PermissionSet::Add(entries))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let Some(key) = map.next_key::<String>()? else {
+                    return Err(serde::de::Error::missing_field("replace"));
+                };
+                if key != "replace" {
+                    return Err(serde::de::Error::unknown_field(&key, &["replace"]));
+                }
+                let entries = map.next_value::<Vec<T>>()?;
+                if let Some(extra) = map.next_key::<String>()? {
+                    return Err(serde::de::Error::unknown_field(&extra, &["replace"]));
+                }
+                Ok(PermissionSet::Replace { replace: entries })
+            }
         }
 
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Wire<T> {
-            Add(Vec<T>),
-            Replace(Replacement<T>),
-        }
-
-        match Wire::deserialize(deserializer)? {
-            Wire::Add(entries) => Ok(Self::Add(entries)),
-            Wire::Replace(replacement) => Ok(Self::Replace {
-                replace: replacement.replace,
-            }),
-        }
+        deserializer.deserialize_any(PermissionSetVisitor(PhantomData))
     }
 }
 
@@ -78,5 +105,19 @@ pub(crate) fn merge_permission_set<T: Clone + Eq>(merged: &mut Vec<T>, layer: &P
         if !merged.contains(entry) {
             merged.push(entry.clone());
         }
+    }
+}
+
+/// Compose adjacent authored layers while preserving whether they clear still-lower layers.
+pub(crate) fn compose_permission_sets<T: Clone + Eq>(
+    lower: &PermissionSet<T>,
+    higher: &PermissionSet<T>,
+) -> PermissionSet<T> {
+    let mut entries = lower.entries().to_vec();
+    merge_permission_set(&mut entries, higher);
+    if lower.replaces() || higher.replaces() {
+        PermissionSet::Replace { replace: entries }
+    } else {
+        PermissionSet::Add(entries)
     }
 }

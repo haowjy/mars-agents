@@ -607,7 +607,9 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 | `--effort <level>` | Override effort: `low`, `medium`, `high`, `xhigh`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `yolo`. |
 | `--sandbox <mode>` | Override sandbox: `default`, `read-only`, `workspace-write`, `danger-full-access`. |
-| `--network <mode>` | Override shell network access: `allow`, `deny`. Built-in web tools remain controlled by `tools: web`. |
+| `--network <mode>` | Override shell network mode: `allow`, `deny`, `allowlist`. Built-in web tools remain controlled by `tools: web`. |
+| `--network-allow <host>` | Add an allowed host. Repeatable; accepts exact hosts, IPs, `*.x`, and `**.x`. |
+| `--network-deny <host>` | Add a denied host. Repeatable; uses the same host grammar. |
 | `--skill <name>` | Add extra skills by name. Repeatable; also accepts `--skill a,b`. |
 
 **Output JSON structure:**
@@ -631,7 +633,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
     "effort": "high",
     "approval": "auto",
     "sandbox": "workspace-write",
-    "network": "allow",
+    "network": {"mode": "allow", "allow": [], "deny": ["blocked.example"]},
     "autocompact": null,
     "autocompact_pct": null,
     "timeout": null
@@ -671,9 +673,11 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
-- `execution_policy.network` is `"allow"`, `"deny"`, or `null` when unset. Mars
-  does not fill the unset value; Meridian resolves it to `allow`. The field governs
-  shell connections only; `tools: web` separately governs built-in web tools.
+- `execution_policy.network` is one resolved `{mode, allow, deny}` object. `mode` is
+  `"allow"`, `"deny"`, `"allowlist"`, or `null`; Meridian resolves a remaining unset mode
+  from the sandbox. Mars removes inert sets (`deny` removes both; `allow` removes `allow`) and
+  turns an empty allowlist into `deny` with a warning. The field governs shell connections
+  only; `tools: web` separately governs built-in web tools.
 
 **`tools.capability_natives`** is always present, independent of the profile's tool policy. It
 maps the `agent` (sub-agent) and `task` (task-list) capabilities to the resolved harness's

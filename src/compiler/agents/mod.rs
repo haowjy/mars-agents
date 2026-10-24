@@ -13,8 +13,9 @@ use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
 use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
-pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkPolicy};
+pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkHost, NetworkPolicy};
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
+use crate::permission_set::PermissionSet;
 
 // ---------------------------------------------------------------------------
 // Field enums
@@ -270,6 +271,8 @@ pub struct AgentProfile {
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
     pub network: Option<NetworkPolicy>,
+    pub network_allow: PermissionSet<NetworkHost>,
+    pub network_deny: PermissionSet<NetworkHost>,
     pub effort: Option<EffortLevel>,
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
@@ -623,6 +626,14 @@ fn push_model_policy_parse_error(
                 NetworkPolicy::ALLOWED,
             );
         }
+        crate::config::ModelPolicyRuleParseError::NetworkHostsNotAllowed { key } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.override.{key}"),
+                key,
+                "network host sets on settings, profile, overlay, or CLI",
+            );
+        }
         crate::config::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.no-fallback"), found, "boolean");
         }
@@ -649,6 +660,38 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
         }
     }
     out
+}
+
+fn parse_network_hosts(
+    field: &str,
+    value: Option<&Value>,
+    allow_replace: bool,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> PermissionSet<NetworkHost> {
+    let Some(value) = value else {
+        return PermissionSet::default();
+    };
+    let parsed = match serde_yaml::from_value::<PermissionSet<NetworkHost>>(value.clone()) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            let value = serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"));
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: field.to_string(),
+                value: format!("{value} ({error})"),
+                allowed: "list of exact hosts, IPs, *.example.com, or **.example.com; or {replace: [...]} for an allow set",
+            });
+            return PermissionSet::default();
+        }
+    };
+    if !allow_replace && parsed.replaces() {
+        diags.push(AgentDiagnostic::InvalidFieldValue {
+            field: field.to_string(),
+            value: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
+            allowed: "plain list; package profiles cannot replace a deny set",
+        });
+        return PermissionSet::default();
+    }
+    parsed
 }
 
 fn parse_invocability_field(
@@ -789,6 +832,8 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
             }
         }
     });
+    let network_allow = parse_network_hosts("network-allow", fm.get("network-allow"), true, diags);
+    let network_deny = parse_network_hosts("network-deny", fm.get("network-deny"), false, diags);
 
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
@@ -918,6 +963,8 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
         approval,
         sandbox,
         network,
+        network_allow,
+        network_deny,
         effort,
         autocompact,
         autocompact_pct,

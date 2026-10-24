@@ -3226,7 +3226,10 @@ override = { harness = "opencode", effort = "medium", network = "deny" }"#;
         bundle["execution_policy"]["effort"].as_str(),
         Some("medium")
     );
-    assert_eq!(bundle["execution_policy"]["network"], "deny");
+    assert_eq!(
+        bundle["execution_policy"]["network"],
+        serde_json::json!({"mode": "deny", "allow": [], "deny": []})
+    );
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
         Some("settings-model-policy")

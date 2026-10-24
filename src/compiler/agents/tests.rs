@@ -269,6 +269,7 @@ fn parses_network_all_values() {
     for (value, expected) in [
         ("allow", NetworkPolicy::Allow),
         ("deny", NetworkPolicy::Deny),
+        ("allowlist", NetworkPolicy::Allowlist),
     ] {
         let content = format!("---\nnetwork: {value}\n---\n");
         let (profile, diags) = parse(&content);
@@ -278,6 +279,38 @@ fn parses_network_all_values() {
         );
         assert_eq!(profile.network, Some(expected));
     }
+
+    let (profile, diags) = parse(
+        "---\nnetwork-allow: [GitHub.COM., '*.Example.com', '**.all.example', 127.0.0.1]\nnetwork-deny: [blocked.example]\n---\n",
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(
+        profile
+            .network_allow
+            .entries()
+            .iter()
+            .map(NetworkHost::as_str)
+            .collect::<Vec<_>>(),
+        ["github.com", "*.example.com", "**.all.example", "127.0.0.1"]
+    );
+
+    for invalid in ["https://example.com", "example.com:443", "/tmp/socket", "*"] {
+        let (_, diags) = parse(&format!("---\nnetwork-allow: ['{invalid}']\n---\n"));
+        assert!(
+            diags.iter().any(AgentDiagnostic::is_error),
+            "{invalid}: {diags:?}"
+        );
+    }
+
+    let (_, diags) = parse("---\nnetwork-deny: { replace: [blocked.example] }\n---\n");
+    assert!(diags.iter().any(|diagnostic| {
+        matches!(
+            diagnostic,
+            AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
+                if field == "network-deny"
+                    && allowed.contains("package profiles cannot replace a deny set")
+        )
+    }));
 }
 
 #[test]

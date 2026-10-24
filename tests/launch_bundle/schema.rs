@@ -83,7 +83,10 @@ Review code changes.
     assert!(bundle["provenance"]["selection_kind"].is_string());
     assert!(bundle["provenance"]["match_evidence"].is_string());
     assert!(bundle["provenance"]["candidates_tried"].is_string());
-    assert!(bundle["execution_policy"]["network"].is_null());
+    assert_eq!(
+        bundle["execution_policy"]["network"],
+        serde_json::json!({"mode": null, "allow": [], "deny": []})
+    );
     assert_eq!(
         bundle["tools"]["allowed"],
         serde_json::json!(["exec_command", "apply_patch"])

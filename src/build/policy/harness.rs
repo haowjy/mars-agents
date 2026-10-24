@@ -245,6 +245,8 @@ mod tests {
             approval: None,
             sandbox: None,
             network: None,
+            network_allow: Default::default(),
+            network_deny: Default::default(),
             effort: None,
             autocompact: None,
             autocompact_pct: None,
@@ -290,6 +292,8 @@ mod tests {
             approval_override: None,
             sandbox_override: None,
             network_override: None,
+            network_allow: &[],
+            network_deny: &[],
             models_refresh: crate::models::ModelsRefreshControl::background(),
         }
     }

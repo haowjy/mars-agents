@@ -130,13 +130,21 @@ mod tests {
 
     #[test]
     fn claude_lowering_drops_approval_sandbox_network_mode_autocompact() {
-        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nnetwork: deny\nmode: subagent\nautocompact: 50\nautocompact_pct: 80\n---\n# Body";
+        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\nmode: subagent\nautocompact: 50\nautocompact_pct: 80\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(!text.contains("approval:"), "approval leaked: {text}");
         assert!(!text.contains("sandbox:"), "sandbox leaked: {text}");
         assert!(!text.contains("network:"), "network leaked: {text}");
+        assert!(
+            !text.contains("network-allow:"),
+            "network hosts leaked: {text}"
+        );
+        assert!(
+            !text.contains("network-deny:"),
+            "network hosts leaked: {text}"
+        );
         assert!(!text.contains("autocompact:"), "autocompact leaked: {text}");
         // Launch-time fields are meridian-only, not target-enforced drops.
         let meridian_only: Vec<_> = out
@@ -149,6 +157,11 @@ mod tests {
             meridian_only.contains(&"approval"),
             "approval not in lossy: {meridian_only:?}"
         );
+        assert!(
+            meridian_only.contains(&"network-allow"),
+            "{meridian_only:?}"
+        );
+        assert!(meridian_only.contains(&"network-deny"), "{meridian_only:?}");
         assert!(
             meridian_only.contains(&"sandbox"),
             "sandbox not in lossy: {meridian_only:?}"
@@ -311,7 +324,7 @@ mod tests {
 
     #[test]
     fn codex_lowering_produces_top_level_toml() {
-        let content = "---\nname: coder\ndescription: Code agent\nmodel: gpt55\nharness: codex\neffort: high\nsandbox: workspace-write\nnetwork: deny\napproval: auto\n---\n# Coder\nYou code.";
+        let content = "---\nname: coder\ndescription: Code agent\nmodel: gpt55\nharness: codex\neffort: high\nsandbox: workspace-write\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\napproval: auto\n---\n# Coder\nYou code.";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
@@ -336,6 +349,12 @@ mod tests {
         assert!(!text.contains("network"), "network leaked: {text}");
         assert!(out.lossy_fields.iter().any(|field| {
             field.field == "network" && matches!(field.classification, Lossiness::Dropped)
+        }));
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "network-allow" && matches!(field.classification, Lossiness::Dropped)
+        }));
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "network-deny" && matches!(field.classification, Lossiness::Dropped)
         }));
         assert!(
             text.contains("developer_instructions ="),

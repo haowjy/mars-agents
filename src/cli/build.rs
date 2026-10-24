@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
-use crate::config::NetworkPolicy;
+use crate::config::{NetworkHost, NetworkPolicy};
 use crate::error::MarsError;
 use crate::harness::registry::HarnessId;
 
@@ -130,6 +130,14 @@ pub struct LaunchBundleArgs {
     #[arg(long)]
     network: Option<NetworkPolicy>,
 
+    /// Add a host to the network allow set (repeatable).
+    #[arg(long = "network-allow", action = ArgAction::Append)]
+    network_allow: Vec<NetworkHost>,
+
+    /// Add a host to the network deny set (repeatable).
+    #[arg(long = "network-deny", action = ArgAction::Append)]
+    network_deny: Vec<NetworkHost>,
+
     /// Add extra skills by name. Supports `--skill a --skill b` and `--skill a,b`.
     #[arg(long = "skill", value_delimiter = ',', action = ArgAction::Append)]
     pub extra_skills: Vec<String>,
@@ -165,6 +173,8 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
             network: args.network.clone(),
+            network_allow: args.network_allow.clone(),
+            network_deny: args.network_deny.clone(),
             extra_skills: args.extra_skills.clone(),
             models_refresh,
         },

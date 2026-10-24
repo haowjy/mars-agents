@@ -226,8 +226,8 @@ sandbox: workspace-write
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `allow`, `deny` |
-| Default | none (unset; Meridian resolves to `allow`) |
+| Allowed values | `allow`, `deny`, `allowlist` |
+| Default | none (unset; Meridian follows the resolved sandbox) |
 
 Controls whether the agent's shell commands may open connections, including the
 public internet, host services, and local sockets. It does not control built-in
@@ -237,22 +237,30 @@ web tools; grant or deny those with `tools: web`.
 |---|---|
 | `allow` | Allow shell commands to open connections |
 | `deny` | Deny shell commands from opening connections |
+| `allowlist` | Allow only `network-allow` hosts, minus `network-deny` hosts |
 
-Mars carries an omitted field as `null` in the launch bundle; it does not choose
-a network default. Meridian resolves unset to `allow`. There is no explicit
-`default` value because a higher-precedence value must not reopen a lower-layer
-`deny`. `network: deny` with resolved `sandbox: danger-full-access` produces a
-warning because no harness can enforce network isolation without a sandbox.
-Enforcement depends on running a Meridian version that projects `network` into
-the selected harness.
+Mars carries an omitted mode as `null` in the launch bundle; it does not choose a network
+default unless `[settings] default_network` (project, local, or user config) supplies one.
+Meridian resolves a remaining unset mode from the sandbox. There is no explicit `default`
+value. Harness projection reports enforcement limits.
 
-At launch, the field resolves in this order: CLI `--network`, agent overlay,
+At launch, the mode resolves in this order: CLI `--network`, agent overlay,
 matching overlay model policy, profile, matching profile model policy, then
-matching settings model policy.
+matching settings model policy, project/local settings, and user config.
 
 ```yaml
-network: deny
+network: allowlist
+network-allow: [github.com, "*.github.com", "**.pypi.org"]
+network-deny: [uploads.example]
 ```
+
+`network-allow` and `network-deny` are permission sets. Plain lists add across user,
+project, local, profile, overlay, and CLI surfaces. `{replace: [...]}` clears lower entries;
+a package profile may replace its allow set but may not replace its deny set. Each entry is
+an exact host, an IP address, `*.x` (subdomains only), or `**.x` (apex plus subdomains).
+Mars lowercases hosts, removes a trailing dot, deduplicates, and sorts them. It rejects URLs,
+schemes, ports, paths, empty strings, and a bare `*`. An empty `allowlist` fails closed to
+`deny` with a warning.
 
 ---
 

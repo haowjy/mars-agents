@@ -89,6 +89,9 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   dispatches to the correct lowerer, ensuring emitted native artifacts carry concrete
   model IDs rather than aliases.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
+- `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
+  lowerers omit them; Codex records all three as dropped, while other targets record them as
+  Meridian-only.
 
 ### Harness Override Passthrough
 

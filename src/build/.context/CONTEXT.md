@@ -147,7 +147,7 @@ marks effort consumed (cleared from execution policy output).
 `build_launch_bundle()` resolves project config once, then passes it into policy resolution.
 
 ```
-LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, extra_skills}
+LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, network_allow, network_deny, extra_skills}
     │
     ├─ [agent mode] read + parse .mars/agents/<name>.md → AgentProfile + body
     ├─ [ad-hoc mode] empty_agent_profile() + "" body

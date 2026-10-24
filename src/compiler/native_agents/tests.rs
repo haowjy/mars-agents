@@ -24,6 +24,8 @@ fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::age
         approval: None,
         sandbox: None,
         network: None,
+        network_allow: Default::default(),
+        network_deny: Default::default(),
         effort: None,
         autocompact: None,
         autocompact_pct: None,

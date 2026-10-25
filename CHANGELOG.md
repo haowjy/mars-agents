@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Agent inventory prompts no longer include Meridian prompt-file and parallel-spawn usage tips;
+  Meridian's injected guidance owns command usage.
+
 ## [0.18.1] - 2026-10-24
 
 ### Changed

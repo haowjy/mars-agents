@@ -31,7 +31,7 @@ pub struct PluginArgs {
 
     /// Destination for the generated plugin output.
     #[arg(long)]
-    pub out: PathBuf,
+    pub out: Option<PathBuf>,
 }
 
 fn parse_harness(value: &str) -> Result<HarnessId, String> {
@@ -194,17 +194,21 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
         Some(path) => std::env::current_dir()?.join(path),
         None => ctx.project_root.clone(),
     };
+    let manifest = crate::config::load(&package_root)?;
+    let harnesses = manifest
+        .plugin
+        .as_ref()
+        .map(|plugin| plugin.harnesses.clone())
+        .unwrap_or_else(crate::config::default_plugin_harnesses);
+    let destination = args
+        .out
+        .clone()
+        .map(crate::build::plugin::PluginBuildDestination::Out)
+        .unwrap_or(crate::build::plugin::PluginBuildDestination::Configured);
     let report = crate::build::plugin::build_plugin(&crate::build::plugin::PluginBuildRequest {
         package_root,
-        destination: crate::build::plugin::PluginBuildDestination::Out(args.out.clone()),
-        // `[plugin].harnesses` lands in the configuration lane. Until then,
-        // preserve the shipped Claude tree consumed by Claude and Codex; Grok
-        // consumes that same format too.
-        harnesses: vec![
-            crate::config::PluginHarness::Claude,
-            crate::config::PluginHarness::Codex,
-            crate::config::PluginHarness::Grok,
-        ],
+        destination,
+        harnesses,
         version: None,
     })?;
 

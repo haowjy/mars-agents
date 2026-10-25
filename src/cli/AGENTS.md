@@ -20,7 +20,7 @@ Four bypass conditions:
 1. **Root-free**: `init`, `check`, `cache` — no project needed
 2. **Auto-init**: `add`, `link` — creates mars.toml if missing
 3. **Ad-hoc launch**: `build launch-bundle` (no `--agent`, optional `--model <x>`) — works in plain directory
-4. **Explicit plugin package**: `build plugin PATH --out <dir>` — PATH supplies the package root
+4. **Explicit plugin package**: `build plugin PATH [--out <dir>]` — PATH supplies the package root
 
 ## Command Categories
 

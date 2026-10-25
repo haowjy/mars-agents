@@ -17,7 +17,8 @@ pipeline operates on EffectiveConfig only
 
 | Type | Role |
 |---|---|
-| `Config` | Full mars.toml: package, dependencies, local-dependencies, settings, models, agents |
+| `Config` | Full mars.toml: package, plugin, dependencies, local-dependencies, settings, models, agents |
+| `PluginConfig` | Committed plugin output directory, identity, description, and selected harnesses |
 | `PluginHarness` | The five harness names accepted by plugin builds; its default set is all five |
 | `LocalConfig` | Gitignored dev overrides: source path swaps, local agent overlays |
 | `EffectiveConfig` | Merged result — what the pipeline operates on |

@@ -1,14 +1,7 @@
-use serde::Serialize;
-
 use crate::config::Config;
 use crate::error::{ConfigError, MarsError};
 
-#[derive(Debug, Serialize)]
-pub(super) struct PackageAuthor {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-}
+pub(super) use crate::config::PackageAuthor;
 
 #[derive(Debug)]
 pub(super) struct PackageMetadata {
@@ -27,13 +20,21 @@ impl PackageMetadata {
                 message: "mars.toml needs a [package] table to build a plugin".to_string(),
             })
         })?;
+        let plugin = manifest.plugin.as_ref();
         Ok(Self {
-            name: package.name.clone(),
+            name: plugin
+                .map(|plugin| plugin.name(package))
+                .unwrap_or(&package.name)
+                .to_string(),
             version: package.version.clone(),
-            description: package.description.clone(),
-            author: None,
-            homepage: None,
-            license: None,
+            description: match plugin {
+                Some(plugin) => plugin.description(package),
+                None => package.description.as_deref(),
+            }
+            .map(str::to_string),
+            author: package.authors.first().cloned(),
+            homepage: package.homepage.clone(),
+            license: package.license.clone(),
         })
     }
 }

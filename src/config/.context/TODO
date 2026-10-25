@@ -1,0 +1,8 @@
+# Config TODO
+
+## Preserve the authored TOML document in `config::save`
+
+Replace whole-`Config` serialization in `config::save` with targeted `toml_edit`
+patches. Re-rendering drops comments, formatting, and unknown forward-compatible
+tables. In particular, an older Mars command that calls `config::save` can erase a
+new `[plugin]` table even though deserialization otherwise tolerates that table.

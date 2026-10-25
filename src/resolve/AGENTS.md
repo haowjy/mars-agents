@@ -64,6 +64,7 @@ unreadable-content exception.
 | `SourceFetcher` | Fetches concrete source trees (git version/ref/commit, path) |
 | `ManifestReader` | Reads source manifests for transitive deps |
 | `SourceProvider` | Composite of all three — production impl |
+| `RealSourceProvider` (`provider.rs`) | Production bridge from resolver traits to git/path source fetching for sync, link, and publish |
 
 ## Types
 
@@ -75,8 +76,6 @@ unreadable-content exception.
 
 ## Production Lenses
 
-- `provider.rs` bridges the resolver traits to git/path source fetching for sync
-  and other real package resolution.
 - `PublishLens` loads the consumer-facing config once: it ignores `mars.local.toml`
   and clears local dependencies while retaining both authored and effective config.
   `resolve_publish_graph(&lens, diag)` resolves it with no lock or project staging;

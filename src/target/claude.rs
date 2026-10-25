@@ -107,12 +107,14 @@ impl TargetAdapter for ClaudeAdapter {
             .collect();
 
         if !mcp_servers.is_empty() {
-            let path = write_mcp_json(&target_dir.join(".mcp.json"), &mcp_servers)?;
+            let path = target_dir.join(".mcp.json");
+            write_mcp_json(&path, &mcp_servers)?;
             written.push(path);
         }
 
         if !hooks.is_empty() {
-            let path = write_hooks_settings(&target_dir.join("settings.local.json"), &hooks)?;
+            let path = target_dir.join("settings.local.json");
+            write_hooks_settings(&path, &hooks)?;
             written.push(path);
         }
 
@@ -176,10 +178,7 @@ impl TargetAdapter for ClaudeAdapter {
 /// ```
 ///
 /// Existing entries with other names are preserved (merge, not replace).
-pub(crate) fn write_mcp_json(
-    path: &Path,
-    servers: &[&McpServerEntry],
-) -> Result<PathBuf, MarsError> {
+pub(crate) fn write_mcp_json(path: &Path, servers: &[&McpServerEntry]) -> Result<(), MarsError> {
     // Load existing config or start fresh.
     let mut root: serde_json::Value = if path.is_file() {
         super::parse_json_file(path)?
@@ -229,7 +228,7 @@ pub(crate) fn write_mcp_json(
     })?;
     crate::fs::atomic_write(path, content.as_bytes())?;
 
-    Ok(path.to_path_buf())
+    Ok(())
 }
 
 /// Remove MCP server entries by key from `.mcp.json`.
@@ -284,10 +283,7 @@ fn remove_mcp_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Result
 ///   }
 /// }
 /// ```
-pub(crate) fn write_hooks_settings(
-    path: &Path,
-    hooks: &[&HookEntry],
-) -> Result<PathBuf, MarsError> {
+pub(crate) fn write_hooks_settings(path: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
     let mut root: serde_json::Value = if path.is_file() {
         super::parse_json_file(path)?
     } else {
@@ -321,7 +317,7 @@ pub(crate) fn write_hooks_settings(
     })?;
     crate::fs::atomic_write(path, content.as_bytes())?;
 
-    Ok(path.to_path_buf())
+    Ok(())
 }
 
 fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name: &str) {

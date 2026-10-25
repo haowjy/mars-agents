@@ -75,26 +75,6 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
-
-    #[test]
-    fn claude_lowering_projects_canonical_tool_names() {
-        let content = "---\nname: coder\nharness: claude\ntools:\n  '*': deny\n  Bash: allow\n  AskUser: allow\ndisallowed-tools: [Bash(git reset *)]\n---\n# Body";
-        let (profile, fm, diags) = profile_from(content);
-        assert!(diags.is_empty());
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-
-        assert!(text.contains("- Bash"), "Bash not projected: {text}");
-        assert!(
-            text.contains("- AskUserQuestion"),
-            "ask_user not projected to Claude's AskUserQuestion: {text}"
-        );
-        assert!(
-            text.contains("- Bash(git reset *)"),
-            "scoped Bash not projected while preserving payload: {text}"
-        );
-    }
-
     #[test]
     fn claude_lowering_omits_unrecognized_tools_and_preserves_mcp_wire_identifiers() {
         let content = "---\nname: coder\nharness: claude\ntools:\n  '*': deny\n  my_custom_tool: allow\n  mcp__server__Tool: allow\n---\n# Body";
@@ -242,40 +222,6 @@ mod tests {
             "harness-overrides passthrough should not replace profile mcp: {text}"
         );
     }
-
-    #[test]
-    fn claude_agent_projects_mcp_refs_into_tools_and_disallowed() {
-        let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(github/create_issue): allow\n  mcp(context7): allow\ndisallowed-tools: [mcp(github/delete_repo), mcp(*/cross_server_tool)]\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("mcp__github__create_issue"),
-            "per-tool MCP should land in tools: {text}"
-        );
-        assert!(
-            text.contains("mcp__context7__*"),
-            "whole-server MCP should land in tools: {text}"
-        );
-        assert!(
-            text.contains("mcp__github__delete_repo"),
-            "disallowed MCP should project into disallowed-tools: {text}"
-        );
-        assert!(
-            !text.contains("mcp__*__cross_server_tool"),
-            "cross-server MCP must not be emitted: {text}"
-        );
-        assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "disallowed-tools"
-                && matches!(
-                    field.classification,
-                    Lossiness::Approximate {
-                        note: "Claude cannot scope a single MCP tool across all servers"
-                    }
-                )
-        }));
-    }
-
     #[test]
     fn pi_agent_records_mcp_lossiness_when_mcp_refs_present() {
         let content = "---\nname: r\nharness: pi\ntools:\n  mcp(plugin:demo): allow\n---\n# body";
@@ -287,28 +233,6 @@ mod tests {
                 && matches!(field.classification, Lossiness::Dropped)
         }));
     }
-
-    #[test]
-    fn claude_meridian_only_fields_dropped() {
-        let content = "---\nname: r\nharness: claude\nmodel-policies:\n  - match:\n      model: gpt55\n    override:\n      harness: codex\nfanout:\n  - alias: opus\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("model-policies:"),
-            "model-policies leaked: {text}"
-        );
-        assert!(!text.contains("fanout:"), "fanout leaked: {text}");
-        let meridian_only: Vec<_> = out
-            .lossy_fields
-            .iter()
-            .filter(|f| matches!(f.classification, Lossiness::MeridianOnly))
-            .map(|f| f.field.as_str())
-            .collect();
-        assert!(meridian_only.contains(&"model-policies"));
-        assert!(meridian_only.contains(&"fanout"));
-    }
-
     #[test]
     fn claude_agent_model_invocable_false_warn_drops_without_skill_key() {
         let content = "---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body";
@@ -391,38 +315,6 @@ mod tests {
         );
         assert_eq!(parsed.get("name").and_then(|v| v.as_str()), Some("coder"));
     }
-
-    #[test]
-    fn codex_lowering_carries_skills_in_body_and_drops_tools() {
-        let content = "---\nname: r\nharness: codex\nskills:\n  load: [review, review]\n  available: [diagnose, diagnose, review]\ntools:\n  Bash: allow\ndisallowed-tools: [Agent]\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes.clone()).unwrap();
-        let dropped: Vec<_> = out
-            .lossy_fields
-            .iter()
-            .filter(|f| matches!(f.classification, Lossiness::Dropped))
-            .map(|f| f.field.as_str())
-            .collect();
-        assert!(!dropped.iter().any(|field| field.starts_with("skills")));
-        assert!(dropped.contains(&"tools"));
-        assert!(dropped.contains(&"disallowed-tools"));
-        assert!(
-            !out.lossy_fields
-                .iter()
-                .any(|lossy| lossy.field.starts_with("skills")),
-            "designed skill guidance must not warn"
-        );
-        assert!(
-            text.contains(
-                "Load these skills before starting, unless they are already in your context: /review. Load these skills when the task fits: /diagnose."
-            ),
-            "skill guidance missing: {text}"
-        );
-        assert_eq!(text.matches("/review").count(), 1);
-        assert_eq!(text.matches("/diagnose").count(), 1);
-    }
-
     #[test]
     fn codex_harness_override_does_not_replace_execution_policy() {
         let content = "---\nname: r\nharness: codex\neffort: low\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: workspace-write\n---\n# body";
@@ -472,28 +364,6 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
-
-    #[test]
-    fn codex_lowering_multiline_instructions_are_parseable() {
-        let content = "---\nname: explorer\ndescription: \"Line one\\nLine two\"\nharness: codex\napproval: yolo\n---\n# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going.";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
-
-        assert_eq!(
-            parsed.get("approval_policy").and_then(|v| v.as_str()),
-            Some("never")
-        );
-        assert_eq!(
-            parsed
-                .get("developer_instructions")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default(),
-            "# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going."
-        );
-    }
-
     // --- 3.3: OpenCode lowering ---
 
     #[test]

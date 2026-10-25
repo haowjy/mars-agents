@@ -216,7 +216,6 @@ fn empty_agent_profile() -> AgentProfile {
         tools: Default::default(),
         harness_overrides: Default::default(),
         model_policies: Vec::new(),
-        fanout: Vec::new(),
     }
 }
 

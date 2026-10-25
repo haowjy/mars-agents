@@ -633,11 +633,6 @@ impl<'a> AgentLoweringCtx<'a> {
             Lossiness::MeridianOnly,
         );
         self.record_if_present(
-            "fanout",
-            !self.profile.fanout.is_empty(),
-            Lossiness::MeridianOnly,
-        );
-        self.record_if_present(
             "native-config",
             self.eff.native_config().is_some(),
             Lossiness::MeridianOnly,
@@ -927,13 +922,6 @@ pub fn lower_to_codex(
     if !profile.model_policies.is_empty() {
         lossy.push(LossyField {
             field: "model-policies".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.fanout.is_empty() {
-        lossy.push(LossyField {
-            field: "fanout".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });

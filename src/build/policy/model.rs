@@ -156,7 +156,6 @@ mod tests {
             tools: Default::default(),
             harness_overrides: HarnessOverrides::default(),
             model_policies: Vec::new(),
-            fanout: Vec::new(),
         }
     }
 

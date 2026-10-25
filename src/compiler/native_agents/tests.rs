@@ -35,7 +35,6 @@ fn profile_with_model(model: &str, harness: HarnessId) -> crate::compiler::agent
         tools: Default::default(),
         harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
         model_policies: Vec::new(),
-        fanout: Vec::new(),
     }
 }
 

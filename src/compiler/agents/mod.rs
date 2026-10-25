@@ -15,7 +15,7 @@ use serde_yaml::Value;
 pub use crate::config::{NetworkHost, NetworkPolicy};
 use crate::permission_set::PermissionSet;
 use mars_schema::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
-use mars_schema::invocability::{find_invocability_field, parse_invocability_axis};
+use mars_schema::invocability::parse_invocability_axis;
 use mars_schema::model_policy::ModelPolicyRule;
 use mars_schema::tool_policy::{self, EffectiveToolPolicy};
 
@@ -60,7 +60,7 @@ impl ApprovalMode {
             "default" => Some(Self::Default),
             "auto" => Some(Self::Auto),
             "confirm" => Some(Self::Confirm),
-            "never" | "yolo" => Some(Self::Never),
+            "never" => Some(Self::Never),
             _ => None,
         }
     }
@@ -166,14 +166,6 @@ impl HarnessOverrides {
     }
 }
 
-/// Marker for a validated fanout inventory entry (`fanout:`).
-///
-/// Fanout is metadata-only (D43): it never gains lowering behavior.
-/// Mars parses it for validation and preservation; no harness-native artifact
-/// receives fanout entries.
-#[derive(Debug, Clone)]
-pub struct FanoutEntry;
-
 // ---------------------------------------------------------------------------
 // AgentProfile — the fully parsed frontmatter
 // ---------------------------------------------------------------------------
@@ -202,9 +194,9 @@ pub struct AgentProfile {
     pub model_invocable: bool,
     /// Whether the user can invoke this agent directly (slash command, picker, etc.).
     pub user_invocable: bool,
-    /// `true` when source frontmatter explicitly set `model-invocable` (kebab or snake).
+    /// `true` when source frontmatter explicitly set `model-invocable`.
     pub had_model_invocable_field: bool,
-    /// `true` when source frontmatter explicitly set `user-invocable` (kebab or snake).
+    /// `true` when source frontmatter explicitly set `user-invocable`.
     pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
@@ -225,7 +217,6 @@ pub struct AgentProfile {
     // --- Override tables ---
     pub harness_overrides: HarnessOverrides,
     pub model_policies: Vec<ModelPolicyRule>,
-    pub fanout: Vec<FanoutEntry>,
 }
 
 impl AgentProfile {
@@ -257,21 +248,15 @@ pub enum AgentDiagnostic {
     },
     /// Both separator spellings of one field were authored.
     DuplicateField { field: String, alias: String },
-    /// Deprecated `models:` field was found (use `model-overrides:` instead).
-    LegacyModelsField,
     /// Deprecated list-form `tools: [read, grep]`: it grants the listed tools and restricts
     /// nothing, which readers often take for "only these tools".
     DeprecatedListFormTools,
-    /// Deprecated `approval: yolo` was found (use `approval: never` instead).
-    DeprecatedApprovalYolo,
     /// Unknown top-level harness name — not one of claude/codex/opencode/cursor/pi.
     UnknownHarness { value: String },
     /// Unknown harness key under `harness-overrides`; preserved for forward compatibility.
     UnknownHarnessOverride { value: String },
     /// Network-looking top-level field that is not a supported spelling.
     UnknownNetworkField { field: String },
-    /// Retired frontmatter field (e.g. legacy `mcp-tools:`).
-    RemovedField { field: String },
 }
 
 impl AgentDiagnostic {
@@ -281,13 +266,10 @@ impl AgentDiagnostic {
         let field = match self {
             Self::InvalidFieldValue { field, .. }
             | Self::DuplicateField { field, .. }
-            | Self::UnknownNetworkField { field }
-            | Self::RemovedField { field } => field.as_str(),
+            | Self::UnknownNetworkField { field } => field.as_str(),
             Self::UnknownHarness { .. } => "harness",
             Self::UnknownHarnessOverride { .. } => "harness-overrides",
-            Self::LegacyModelsField => "models",
             Self::DeprecatedListFormTools => "tools",
-            Self::DeprecatedApprovalYolo => "approval",
         };
         let mut path = key_path(field);
         if matches!(path.first(), Some(PathSegment::Key(key)) if key == "model-policies")
@@ -318,10 +300,7 @@ impl AgentDiagnostic {
             }
             AgentDiagnostic::DuplicateField { .. } => true,
             AgentDiagnostic::UnknownHarness { .. } => true,
-            AgentDiagnostic::RemovedField { .. } => true,
-            AgentDiagnostic::LegacyModelsField
-            | AgentDiagnostic::DeprecatedApprovalYolo
-            | AgentDiagnostic::DeprecatedListFormTools
+            AgentDiagnostic::DeprecatedListFormTools
             | AgentDiagnostic::UnknownNetworkField { .. }
             | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
         }
@@ -339,14 +318,8 @@ impl AgentDiagnostic {
             AgentDiagnostic::DuplicateField { field, alias } => {
                 format!("agent fields `{field}` and `{alias}` are duplicate spellings; use only `{field}`")
             }
-            AgentDiagnostic::LegacyModelsField => {
-                "agent uses deprecated `models:` field; rename to `model-overrides:`".to_string()
-            }
             AgentDiagnostic::DeprecatedListFormTools => {
                 "agent `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string()
-            }
-            AgentDiagnostic::DeprecatedApprovalYolo => {
-                "agent uses deprecated `approval: yolo`; use `approval: never` instead".to_string()
             }
             AgentDiagnostic::UnknownHarness { value } => {
                 format!("unknown harness `{value}`; known: claude, codex, opencode, cursor, pi")
@@ -358,16 +331,6 @@ impl AgentDiagnostic {
                 "agent field `{field}` is an unknown network key and is ignored; accepted keys: {}",
                 crate::config::NETWORK_OVERLAY_KEYS
             ),
-            AgentDiagnostic::RemovedField { field } => {
-                if tool_policy::REMOVED_MCP_TOOLS_FIELDS.contains(&field.as_str()) {
-                    format!(
-                        "agent field `{field}` has been removed; {}",
-                        tool_policy::removed_mcp_tools_replacement()
-                    )
-                } else {
-                    format!("agent field `{field}` has been removed")
-                }
-            }
         }
     }
 }
@@ -692,12 +655,6 @@ fn parse_invocability_field(
     (value, had_field)
 }
 
-fn parse_fanout(val: &Value) -> Vec<FanoutEntry> {
-    match val {
-        Value::Sequence(seq) => seq.iter().map(|_| FanoutEntry).collect(),
-        _ => vec![],
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -751,25 +708,14 @@ pub fn parse_agent_profile_legacy(
         });
 
     // model-invocable / user-invocable:
-    let model_invocability = find_invocability_field(fm, "model-invocable");
-    let (model_invocable, had_model_invocable_field) = parse_invocability_field(
-        "model-invocable",
-        model_invocability.as_ref().map(|f| &f.value),
-        diags,
-    );
-    let user_invocability = find_invocability_field(fm, "user-invocable");
-    let (user_invocable, had_user_invocable_field) = parse_invocability_field(
-        "user-invocable",
-        user_invocability.as_ref().map(|f| &f.value),
-        diags,
-    );
+    let (model_invocable, had_model_invocable_field) =
+        parse_invocability_field("model-invocable", fm.get("model-invocable"), diags);
+    let (user_invocable, had_user_invocable_field) =
+        parse_invocability_field("user-invocable", fm.get("user-invocable"), diags);
 
     // approval:
     let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
         if let Some(a) = ApprovalMode::from_str(s) {
-            if s == "yolo" {
-                diags.push(AgentDiagnostic::DeprecatedApprovalYolo);
-            }
             Some(a)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {
@@ -885,7 +831,7 @@ pub fn parse_agent_profile_legacy(
         let mut invalid = |field: &str, value: &str, allowed: &'static str| {
             push_agent_tool_invalid(diags, field, value, allowed);
         };
-        tool_policy::parse_tool_policy(fm.get("tools"), fm.get("disallowed-tools"), &mut invalid)
+        tool_policy::parse_tool_policy(fm.get("tools"), None, &mut invalid)
     };
 
     // harness-overrides:
@@ -899,22 +845,6 @@ pub fn parse_agent_profile_legacy(
         .get("model-policies")
         .map(|value| parse_model_policies(value, diags))
         .unwrap_or_default();
-
-    // fanout:
-    let fanout = fm.get("fanout").map(parse_fanout).unwrap_or_default();
-
-    // Legacy models: field
-    if fm.get("models").is_some() {
-        diags.push(AgentDiagnostic::LegacyModelsField);
-    }
-
-    for &field in tool_policy::REMOVED_MCP_TOOLS_FIELDS {
-        if fm.get(field).is_some() {
-            diags.push(AgentDiagnostic::RemovedField {
-                field: field.to_string(),
-            });
-        }
-    }
 
     AgentProfile {
         name,
@@ -939,7 +869,6 @@ pub fn parse_agent_profile_legacy(
         tools,
         harness_overrides,
         model_policies,
-        fanout,
     }
 }
 

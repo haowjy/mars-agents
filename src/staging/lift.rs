@@ -349,7 +349,6 @@ fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::AgentDiagnostic;
     use crate::compiler::agents::lower::{NativeModel, lower_to_claude};
     use crate::compiler::agents::parse_agent_content_legacy;
     use crate::compiler::lossiness::Lossiness;
@@ -1027,33 +1026,5 @@ when_to_use: Use when git history matters
             Some(&Value::String("allow".into()))
         );
         assert!(lifted.get("mcpServers").is_none());
-    }
-
-    #[test]
-    fn staging_strips_retired_agent_mcp_tools_field() {
-        let input = fm("name: a\ndescription: d\nmcp-tools: [plugin:demo]\n");
-
-        let mut diags = Vec::new();
-        let (_, _) = parse_agent_content_legacy(&input.render(), &mut diags).unwrap();
-        assert!(
-            diags.iter().any(
-                |d| matches!(d, AgentDiagnostic::RemovedField { field } if field == "mcp-tools")
-            ),
-            "expected RemovedField diagnostic, got {diags:?}"
-        );
-
-        let lifted = lift(Dialect::Claude, ItemKind::Agent, &input);
-        assert!(lifted.get("mcp-tools").is_none());
-        assert!(lifted.get("mcp_tools").is_none());
-
-        let mut staged_diags = Vec::new();
-        let (profile, fm) =
-            parse_agent_content_legacy(&lifted.render(), &mut staged_diags).unwrap();
-        assert!(
-            staged_diags.is_empty(),
-            "stripped field must not re-trigger diagnostic: {staged_diags:?}"
-        );
-        assert!(fm.get("mcp-tools").is_none());
-        assert!(profile.tools.rules.is_empty());
     }
 }

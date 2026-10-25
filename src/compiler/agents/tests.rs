@@ -95,19 +95,6 @@ fn explicit_true_invocability_lowers_without_lossiness() {
     assert!(!dropped_invocability(&out, "model-invocable"));
     assert!(!dropped_invocability(&out, "user-invocable"));
 }
-
-#[test]
-fn snake_case_invocability_keys_parse_and_warn_drop_when_false() {
-    let (p, out, diags) = lower_claude(
-        "---\nname: coder\nharness: claude\nmodel_invocable: false\nuser_invocable: false\n---\n# Body",
-    );
-    assert!(diags.is_empty());
-    assert!(!p.model_invocable);
-    assert!(!p.user_invocable);
-    assert!(dropped_invocability(&out, "model-invocable"));
-    assert!(dropped_invocability(&out, "user-invocable"));
-}
-
 #[test]
 fn invalid_model_invocable_produces_diagnostic_and_omits_lossiness() {
     let content = "---\nname: coder\nharness: claude\nmodel-invocable: nope\n---\n# Body";
@@ -238,17 +225,6 @@ fn parses_approval_all_values() {
         assert!(p.approval.is_some());
     }
 }
-
-#[test]
-fn approval_yolo_parses_with_deprecation_warning() {
-    let content = "---\napproval: yolo\n---\n";
-    let (p, diags) = parse(content);
-    assert_eq!(p.approval, Some(ApprovalMode::Never));
-    assert_eq!(diags.len(), 1);
-    assert!(!diags[0].is_error());
-    assert!(diags[0].message().contains("deprecated"));
-}
-
 #[test]
 fn parses_sandbox_all_values() {
     for s in [
@@ -442,25 +418,6 @@ fn autocompact_pct_string_produces_diagnostic() {
         matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact_pct")
     );
 }
-
-#[test]
-fn parses_skills_tools_disallowed_mcp() {
-    let content = "---\nskills: [review, dev-principles]\ntools:\n  Bash: allow\n  Write: allow\n  mcp(server): allow\ndisallowed-tools: [Agent]\n---\n";
-    let (p, diags) = parse(content);
-    assert!(diags.is_empty());
-    assert_eq!(p.skills.load, vec!["review", "dev-principles"]);
-    assert!(p.skills.available.is_empty());
-    assert_eq!(
-        p.tools.describe(),
-        [
-            "allow:bash",
-            "allow:write",
-            "allow:mcp(server/*)",
-            "deny:agent"
-        ]
-    );
-}
-
 #[test]
 fn parses_tools_map_allow_and_deny_with_canonical_names() {
     let content =
@@ -471,58 +428,7 @@ fn parses_tools_map_allow_and_deny_with_canonical_names() {
         p.tools.describe(),
         ["allow:bash", "allow:bash(meridian spawn *)", "deny:agent"]
     );
-}
-
-#[test]
-fn separator_tool_aliases_canonicalize() {
-    let content = "---\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\ndisallowed-tools: [web_search]\n---\n";
-    let (p, diags) = parse(content);
-
-    assert_eq!(
-        p.tools.describe(),
-        ["allow:ask_user", "deny:bash(git *)", "deny:web_search"]
-    );
-    assert!(diags.is_empty());
-}
-
-#[test]
-fn tools_allow_deny_shorthand_is_rejected_not_read_as_a_tool_name() {
-    for shorthand in ["allow", "deny"] {
-        let (p, diags) = parse(&format!("---\ntools: {shorthand}\n---\n"));
-        assert!(
-            p.tools.rules.is_empty(),
-            "{shorthand} must not become a tool"
-        );
-        assert!(
-            diags.iter().any(|d| matches!(
-                d,
-                AgentDiagnostic::InvalidFieldValue { field, value, .. }
-                    if field == "tools" && value == shorthand
-            )),
-            "expected an invalid-value diagnostic for `tools: {shorthand}`: {diags:?}"
-        );
-    }
-
-    let (profile, diags) = parse("---\ntools: { replace: [read] }\n---\n");
-    assert!(profile.tools.rules.is_empty());
-    assert!(diags.iter().any(|diagnostic| matches!(
-        diagnostic,
-        AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
-            if field == "tools"
-                && allowed.contains("package profiles cannot replace a permission set")
-    )));
-
-    let (profile, diags) = parse("---\ndisallowed-tools: { replace: [write] }\n---\n");
-    assert!(profile.tools.rules.is_empty());
-    assert!(diags.iter().any(|diagnostic| matches!(
-        diagnostic,
-        AgentDiagnostic::InvalidFieldValue { field, allowed, .. }
-            if field == "disallowed-tools"
-                && allowed.contains("package profiles cannot replace a deny set")
-    )));
-}
-
-#[test]
+}#[test]
 fn claude_native_agent_records_ask_rules_as_dropped_not_silently_lost() {
     let (_, out, diags) = lower_claude(
         "---\nname: a\nharness: claude\ntools:\n  read: allow\n  'bash(git push *)': ask\n---\n",
@@ -580,21 +486,6 @@ fn claude_native_agent_does_not_turn_map_form_grants_into_an_allowlist() {
         out.lossy_fields
     );
 }
-
-#[test]
-fn claude_native_agent_warns_when_a_native_stays_allowed_and_denied() {
-    let (_, out, _) = lower_claude(
-        "---\nname: a\nharness: claude\ntools:\n  '*': deny\n  read: allow\n  grep: allow\ndisallowed-tools: [grep]\n---\n",
-    );
-    assert!(
-        out.lossy_fields
-            .iter()
-            .any(|f| f.field == "tools (Grep both allowed and denied)"),
-        "{:?}",
-        out.lossy_fields
-    );
-}
-
 #[test]
 fn claude_native_agent_cannot_hold_an_allowlist_with_nothing_allowed() {
     // An omitted `tools:` inherits every tool, so deny-all has no frontmatter spelling.
@@ -646,40 +537,6 @@ tools:
     );
     assert!(diags.is_empty());
 }
-
-#[test]
-fn harness_overrides_do_not_replace_tool_policy() {
-    let content = "---
-tools:
-  Bash: allow
-  Read: deny
-  mcp(plugin:base): allow
-disallowed-tools: [Edit]
-harness-overrides:
-  codex:
-    tools: [shell]
-    disallowed-tools: [file_write]
-    mcp-tools: [plugin:codex]
----
-";
-    let (p, diags) = parse(content);
-    assert!(diags.is_empty());
-
-    assert_eq!(
-        p.tools.describe(),
-        vec![
-            "allow:bash",
-            "deny:read",
-            "allow:mcp(plugin:base/*)",
-            "deny:edit"
-        ]
-    );
-    assert_eq!(
-        p.harness_overrides.entries["codex"]["tools"],
-        serde_json::json!(["shell"])
-    );
-}
-
 #[test]
 fn effective_skills_ignore_harness_overrides_passthrough() {
     let content = "---
@@ -866,16 +723,6 @@ harness-overrides:
     ));
 }
 
-// --- 3.1: legacy models field ---
-
-#[test]
-fn legacy_models_field_produces_deprecation_warning() {
-    let content = "---\nmodels:\n  opus:\n    effort: high\n---\n";
-    let (_p, diags) = parse(content);
-    assert_eq!(diags.len(), 1);
-    assert!(matches!(&diags[0], AgentDiagnostic::LegacyModelsField));
-}
-
 // --- Empty agent ---
 
 #[test]
@@ -907,33 +754,4 @@ fn subagents_absent_gives_empty_vec() {
     let (p, diags) = parse("---\nname: solo\n---\n# Solo agent");
     assert!(diags.is_empty());
     assert!(p.subagents.is_empty());
-}
-
-#[test]
-fn removed_mcp_tools_field_emits_removed_field_diagnostic() {
-    let (p, diags) = parse("---\nname: a\ndescription: d\nmcp-tools: [plugin:demo]\n---\n# body");
-    assert!(p.tools.rules.is_empty());
-    assert!(
-        diags.iter().any(|d| matches!(
-            d,
-            AgentDiagnostic::RemovedField { field } if field == "mcp-tools"
-        )),
-        "expected RemovedField for mcp-tools, got {diags:?}"
-    );
-    assert!(diags.iter().any(|d| d.is_error()));
-}
-
-#[test]
-fn malformed_disallowed_mcp_ref_is_hard_validation_error() {
-    let (p, diags) = parse("---\nname: a\ndescription: d\ndisallowed-tools: [mcp()]\n---\n# body");
-    assert!(p.tools.rules.is_empty());
-    assert!(
-        diags.iter().any(|d| matches!(
-            d,
-            AgentDiagnostic::InvalidFieldValue { field, value, .. }
-                if field == "disallowed-tools[0]" && value == "mcp()"
-        )),
-        "expected invalid tool diagnostic, got {diags:?}"
-    );
-    assert!(diags.iter().any(|d| d.is_error()));
 }

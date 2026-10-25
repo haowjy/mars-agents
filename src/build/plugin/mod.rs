@@ -70,7 +70,7 @@ impl PluginBuildDestination {
     }
 }
 
-fn configured_output_path(
+pub(crate) fn configured_output_path(
     package_root: &Path,
     plugin: &crate::config::PluginConfig,
 ) -> Result<PathBuf, MarsError> {

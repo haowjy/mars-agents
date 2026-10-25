@@ -5,10 +5,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `mars build plugin [PATH] --out <dir>` now builds one deterministic Claude-format plugin
-  containing what `mars sync` installs in the package's own checkout: its items plus dependencies
-  under its own filters, renames, and visibility rules, including exported hooks and MCP servers. Rebuilds safely
-  replace only Mars-owned output trees using deterministic sentinels and crash-recoverable swaps.
+- `mars build plugin [PATH] --out <dir>` builds one Claude-format plugin (Codex installs the
+  same tree) holding what `mars sync` installs in the package's own checkout: its items plus its
+  dependencies under its own filters, renames and visibility, with exported hooks and MCP servers.
+  Skill and agent references are qualified as `<plugin>:<name>`. Output is deterministic and LF.
+  The output dir is Mars-owned: a `.mars-plugin.json` sentinel records the package version, an
+  offline input hash, dependency versions and per-file hashes; a non-empty dir without one is
+  refused; rebuilds swap the tree atomically and recover from an interrupted build.
 
 ### Fixed
 - `mars check PATH` now resolves package path dependencies relative to the checked package,
@@ -26,30 +29,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ordering, and unrecognized tables in `mars.toml`.
 - Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
   treated as local.
-- Plugin builds now report dependency MCP discovery failures instead of silently omitting those
-  servers, and Codex-only hook warnings follow the same parsed target selection as sync.
-- Source discovery, MCP discovery, and canonical staging now skip generated plugin trees marked
-  by a valid `.mars-plugin.json` at any depth and report each skipped path, preventing rebuild
-  output from becoming package input without changing downstream copy and hash semantics.
+- Discovery, MCP discovery and staging skip any directory holding a valid `.mars-plugin.json`
+  (generated plugin output) and report each skipped path, so a committed plugin tree is never
+  re-imported as package source.
 - Explicitly or automatically renamed agents and skills now carry their installed names in
   frontmatter, and `subagents:` references follow explicit agent renames as well as collision
   renames. Native agent sync also removes prior claims that are absent from the current emission
   set, including outputs left by dependency removals and renames.
 - MCP server collisions now prefer the shallowest package, then dependency declaration order,
   so a package's own server cannot lose to a transitive dependency.
-- Plugin sentinels now carry an offline-recomputable hash of the root package's discovered
-  authored inputs with normalized text line endings, resolved dependency identities, and hashes
-  for each generated file; unrelated checkout files, generated output, recovery leftovers, and
-  package version bumps do not make the input hash stale.
-- Plugin skill reference qualification now covers every Markdown resource, honors CommonMark
-  fence delimiters, and leaves path suffixes such as `/skill/SKILL.md` unchanged.
-- Plugin text output now uses LF line endings and generated JSON ends with a newline while binary
-  files remain byte-identical. Windows `.bat` and `.cmd` files retain their authored line endings.
-  Shared skill and hook copies preserve source executable bits.
-- Plugin sentinels now record path dependencies using their manifest versions.
-- Plugin term warnings now inspect authored content before qualification instead of generated
-  manifests, flat-root skill projection excludes Mars control files, and parent-directory output
-  refusals now explain the invalid `..` path.
+- Skill and hook copies now preserve source executable bits.
 
 ## [0.18.1] - 2026-10-24
 

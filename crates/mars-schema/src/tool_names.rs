@@ -3,11 +3,11 @@
 //! A tool entry is a *capability* (`bash`, `web`, …) with an optional *pattern*
 //! (`bash(git status *)`). [`parse_mars_tool_name`] canonicalizes the capability and
 //! normalizes the pattern. What a harness calls a capability lives in
-//! [`crate::compiler::tool_natives`].
+//! [`crate::tool_natives`].
 
 use serde::{Deserialize, Serialize};
 
-use crate::compiler::mcp_ref::{MCP_TOOL_NAME_GRAMMAR, McpRef, try_parse_mcp_tool_name};
+use crate::mcp::{MCP_TOOL_NAME_GRAMMAR, McpRef, try_parse_mcp_tool_name};
 
 const TOOL_NAME_ALLOWED: &str =
     "non-empty tool name; known tools use snake_case and scoped payloads use tool(pattern)";
@@ -17,7 +17,7 @@ const WILDCARD_ALLOWED: &str = "`*` stands alone; it takes no pattern";
 
 /// What a tool-policy rule is about.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Capability {
+pub enum Capability {
     /// `*`: every tool not otherwise named. An explicit `'*': deny` makes an allowlist.
     Any,
     /// `mcp(server/tool)`.
@@ -42,7 +42,7 @@ impl Capability {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ParsedToolName {
+pub struct ParsedToolName {
     pub capability: Capability,
     /// Scope inside `capability(...)`; a `bash` command prefix is normalized (`X:*` → `X *`).
     /// `None` for `*` and `mcp`, which carry their scope in the capability.
@@ -60,7 +60,7 @@ pub struct OverlayToolName {
 }
 
 impl OverlayToolName {
-    pub(crate) fn parsed(&self) -> &ParsedToolName {
+    pub fn parsed(&self) -> &ParsedToolName {
         &self.parsed
     }
 }
@@ -85,7 +85,7 @@ impl From<OverlayToolName> for String {
     }
 }
 
-pub(crate) fn render_scoped(name: &str, pattern: Option<&str>) -> String {
+pub fn render_scoped(name: &str, pattern: Option<&str>) -> String {
     match pattern {
         Some(pattern) => format!("{name}({pattern})"),
         None => name.to_string(),
@@ -93,7 +93,7 @@ pub(crate) fn render_scoped(name: &str, pattern: Option<&str>) -> String {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ToolNameParseError {
+pub enum ToolNameParseError {
     Empty,
     InvalidMcpRef,
     UnbalancedPattern,
@@ -254,7 +254,7 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
 ];
 
-pub(crate) fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolNameParseError> {
+pub fn parse_mars_tool_name(raw: &str) -> Result<ParsedToolName, ToolNameParseError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ToolNameParseError::Empty);
@@ -330,17 +330,17 @@ fn normalize_bash_pattern(pattern: &str) -> String {
 }
 
 #[cfg(test)]
-pub(crate) fn is_canonical_capability(name: &str) -> bool {
+pub fn is_canonical_capability(name: &str) -> bool {
     canonical_tool_name(name).is_some()
 }
 
 #[cfg(test)]
-pub(crate) fn canonical_capabilities() -> impl Iterator<Item = &'static str> {
+pub fn canonical_capabilities() -> impl Iterator<Item = &'static str> {
     CANONICAL_TOOLS.iter().map(|tool| tool.name)
 }
 
 /// Split `head(payload)` into `head` and `(payload)`; a name without parentheses has no payload.
-pub(crate) fn split_tool_name(value: &str) -> (&str, &str) {
+pub fn split_tool_name(value: &str) -> (&str, &str) {
     match value.find('(') {
         Some(index) => (&value[..index], &value[index..]),
         None => (value, ""),
@@ -352,7 +352,7 @@ pub(crate) fn split_tool_name(value: &str) -> (&str, &str) {
 /// Such a name passes to harnesses verbatim, casing included: the prefix is reserved on the MCP
 /// wire. The server/tool segments are not validated here, so whole-server `mcp__server__*` and
 /// global `mcp__*` forms pass through as written.
-pub(crate) fn is_mcp_wire_token(name: &str) -> bool {
+pub fn is_mcp_wire_token(name: &str) -> bool {
     name.trim()
         .get(..5)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mcp__"))

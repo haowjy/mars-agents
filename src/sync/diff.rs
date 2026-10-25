@@ -1,3 +1,5 @@
+#[cfg(test)]
+use mars_schema::item::ItemKind;
 use std::path::Path;
 
 use crate::error::MarsError;

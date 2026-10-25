@@ -20,10 +20,11 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Codex lowers `network` as [`Lossiness::Dropped`], because its native artifact carries
 /// `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
-pub use crate::compiler::tool_policy::EffectiveToolPolicy;
-use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
+use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
+pub use mars_schema::tool_policy::EffectiveToolPolicy;
+use mars_schema::tool_policy::ToolAction;
 
 // ---------------------------------------------------------------------------
 // Effective field access for target lowering

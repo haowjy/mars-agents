@@ -3,11 +3,11 @@
 use std::path::PathBuf;
 
 use crate::compiler::skills::{parse_skill_content, parse_skill_profile};
-use crate::compiler::tool_policy::ToolAction;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
 use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
+use mars_schema::tool_policy::ToolAction;
 
 use super::output;
 

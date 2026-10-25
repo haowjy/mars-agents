@@ -14,11 +14,11 @@
 //! Every name below must appear in the harness's real tool list, which the tests pin with the
 //! source each list came from. When a harness ships a tool, add it to that list first.
 
-use mars_schema::HarnessId;
+use crate::HarnessId;
 
 /// What a harness calls a capability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Native {
+pub enum Native {
     /// The harness's tools for this capability. A deny or allow covers all of them.
     Tools(&'static [&'static str]),
     /// A harness uses different permission names once a rule has a scope. Claude's file tools
@@ -40,7 +40,7 @@ pub(crate) enum Native {
 impl Native {
     /// The unscoped harness tool names this permission row concerns. Scoped permission names can
     /// differ from these tools, but availability controls always use the unscoped tool set.
-    pub(crate) fn native_tools(self) -> &'static [&'static str] {
+    pub fn native_tools(self) -> &'static [&'static str] {
         match self {
             Self::Tools(names)
             | Self::ScopedTools {
@@ -56,7 +56,7 @@ use Native::{Absent, NoSwitch, ScopedTools, Tools};
 type Table = &'static [(&'static str, Native)];
 
 /// The row for `capability` on `harness`, or `None` when Mars has no entry.
-pub(crate) fn lookup(capability: &str, harness: HarnessId) -> Option<Native> {
+pub fn lookup(capability: &str, harness: HarnessId) -> Option<Native> {
     table(harness)
         .iter()
         .find(|(name, _)| *name == capability)
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn every_native_name_and_native_tool_is_a_real_tool_of_its_harness() {
-        for &harness in mars_schema::harness::ALL {
+        for &harness in crate::harness::ALL {
             let real = real_tools(harness);
             for (capability, native) in table(harness) {
                 let lists: &[&[&str]] = match native {
@@ -558,11 +558,11 @@ mod tests {
 
     #[test]
     fn every_row_is_a_canonical_capability_named_once() {
-        for &harness in mars_schema::harness::ALL {
+        for &harness in crate::harness::ALL {
             let mut seen = std::collections::HashSet::new();
             for (capability, _) in table(harness) {
                 assert!(
-                    crate::compiler::tool_names::is_canonical_capability(capability),
+                    crate::tool_names::is_canonical_capability(capability),
                     "{harness:?} has a row for `{capability}`, which is not a canonical capability"
                 );
                 assert!(
@@ -583,7 +583,7 @@ mod tests {
             HarnessId::OpenCode,
             HarnessId::Pi,
         ] {
-            for capability in crate::compiler::tool_names::canonical_capabilities() {
+            for capability in crate::tool_names::canonical_capabilities() {
                 assert!(
                     lookup(capability, harness).is_some(),
                     "{harness:?} has no row for `{capability}`"

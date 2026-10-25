@@ -5,8 +5,9 @@ use serde_yaml::{Mapping, Value};
 use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use crate::compiler::skills::SkillProfile;
-use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
+use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
+use mars_schema::tool_policy::ToolAction;
 
 // ---------------------------------------------------------------------------
 // Policy axes

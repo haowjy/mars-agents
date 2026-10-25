@@ -22,8 +22,6 @@ pub(crate) mod native_agent_manifest;
 mod native_agents;
 /// Skill frontmatter compiler lane: universal schema parsing and native lowering.
 pub mod skills;
-pub(crate) mod tool_names;
-pub(crate) mod tool_natives;
 pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;

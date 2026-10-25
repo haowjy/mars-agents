@@ -1,4 +1,6 @@
 use mars_schema::HarnessId;
+#[cfg(test)]
+use mars_schema::item::ItemKind;
 use std::path::{Path, PathBuf};
 
 use crate::compiler::agents::{AgentMode, ModelPolicyMatchType, parse_agent_content};

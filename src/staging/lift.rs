@@ -2,13 +2,13 @@
 
 use serde_yaml::Value;
 
-use crate::compiler::mcp_ref::parse_foreign_mcp_token;
-use crate::compiler::tool_names::split_tool_name;
-use crate::compiler::tool_policy;
 use crate::dialect::Dialect;
 use mars_schema::frontmatter::Frontmatter;
 use mars_schema::invocability::find_invocability_field;
 use mars_schema::item::ItemKind;
+use mars_schema::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
+use mars_schema::tool_names::split_tool_name;
+use mars_schema::tool_policy;
 
 /// Rewrite the tool names in `fm[key]` with `rewrite`, which returns the new spelling of a name
 /// it changes. The field is a scalar, a list, or a map keyed by tool name (`tools: {mcp__s__t:
@@ -96,8 +96,15 @@ fn lift_tool_list_to_policy_map(fm: &mut Frontmatter, restricts: bool) -> bool {
 }
 
 fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Dialect) -> bool {
+    let dialect = match dialect {
+        Dialect::Claude => Some(ForeignMcpDialect::Claude),
+        Dialect::Cursor => Some(ForeignMcpDialect::Cursor),
+        Dialect::Codex | Dialect::OpenCode | Dialect::MarsNative => None,
+    };
     rewrite_tool_entries(fm, key, |raw| {
-        parse_foreign_mcp_token(raw, dialect).map(|mcp_ref| mcp_ref.to_canonical())
+        dialect.and_then(|dialect| {
+            parse_foreign_mcp_token(raw, dialect).map(|mcp_ref| mcp_ref.to_canonical())
+        })
     })
 }
 
@@ -695,7 +702,7 @@ when_to_use: Use when git history matters
 
     #[test]
     fn claude_agent_lifts_foreign_mcp_refs_in_tool_lists() {
-        use crate::compiler::mcp_ref::{parse_mcp_ref, try_parse_mcp_tool_name};
+        use mars_schema::mcp::{parse_mcp_ref, try_parse_mcp_tool_name};
 
         let lifted = lift(
             Dialect::Claude,

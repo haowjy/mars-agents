@@ -5,6 +5,7 @@ use std::path::Path;
 use serde_yaml::Value;
 
 use crate::compiler::skills::parse_skill_tool_policy;
+use crate::compiler::tool_policy::ToolPolicyRuntime;
 use crate::config::{AgentOverlayTools, SkillOverlay};
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::RenameMap;

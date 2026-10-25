@@ -7,10 +7,11 @@ pub mod prompt;
 use std::path::PathBuf;
 
 use crate::compiler::tool_policy::{
-    NativeStatus, OVERLAP_NOTE, RuleKind, ToolAction, project_platform_capability,
+    NativeStatus, OVERLAP_NOTE, RuleKind, ToolPolicyRuntime, project_platform_capability,
 };
 use crate::content::ContentRoots;
 use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
+use mars_schema::tool_policy::ToolAction;
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 

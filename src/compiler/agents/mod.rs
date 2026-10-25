@@ -12,11 +12,11 @@ use std::collections::BTreeMap;
 use mars_schema::HarnessId;
 use serde_yaml::Value;
 
-use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
 pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkHost, NetworkPolicy};
 use crate::permission_set::PermissionSet;
 use mars_schema::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 use mars_schema::invocability::{find_invocability_field, parse_invocability_axis};
+use mars_schema::tool_policy::{self, EffectiveToolPolicy};
 
 // ---------------------------------------------------------------------------
 // Field enums

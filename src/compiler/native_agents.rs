@@ -1,5 +1,6 @@
 //! Native harness agent surfaces: scan, reconcile, compile, and link materialization.
 
+use crate::compiler::tool_policy::ToolPolicyRuntime;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 

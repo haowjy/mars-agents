@@ -7,7 +7,6 @@ use indexmap::IndexMap;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
-use crate::compiler::tool_names::OverlayToolName;
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::dialect::Dialect;
 use crate::error::{ConfigError, MarsError};
@@ -16,6 +15,7 @@ use crate::types::managed_cmd;
 use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
+use mars_schema::tool_names::OverlayToolName;
 
 pub mod layering;
 pub mod migrations;

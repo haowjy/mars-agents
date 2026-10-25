@@ -5,6 +5,8 @@
 //!
 //! All targets are managed outputs — they get copies (not symlinks) of .mars/ content.
 
+#[cfg(test)]
+use mars_schema::item::ItemKind;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 

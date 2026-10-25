@@ -29,6 +29,8 @@
 //! operation; an unconfirmed pair cannot. This preserves retry authority instead
 //! of silently replacing ownership evidence after a failed sweep.
 
+#[cfg(test)]
+use mars_schema::item::ItemKind;
 pub(crate) mod retention;
 
 use std::path::Path;

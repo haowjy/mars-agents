@@ -2,8 +2,9 @@ use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
+use crate::target::ConfigEntry;
 
-use super::{StandardConfigFormat, StandardTreeOutput, TreeProfile};
+use super::{StandardTreeOutput, TreeProfile};
 
 pub(super) static PROFILE: TreeProfile = TreeProfile {
     format: &crate::plugin::CURSOR_TREE_SPEC,
@@ -15,9 +16,8 @@ pub(super) static PROFILE: TreeProfile = TreeProfile {
     standard_output: Some(StandardTreeOutput {
         manifest_path: ".cursor-plugin/plugin.json",
         manifest_description: "Cursor plugin manifest",
-        config_format: StandardConfigFormat::Cursor,
     }),
-    write_config: super::write_standard_config,
+    write_config: write_config_entries,
     finish: super::finish_standard_tree,
 };
 
@@ -31,3 +31,20 @@ fn preserve_agent(
 }
 
 fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut DiagnosticCollector) {}
+
+fn write_config_entries(
+    _profile: &TreeProfile,
+    root: &std::path::Path,
+    entries: &[ConfigEntry],
+    _diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let (mcp, hooks) = super::standard_config_entries(entries);
+
+    if !mcp.is_empty() {
+        crate::target::cursor::write_cursor_mcp_json(&root.join("mcp.json"), &mcp)?;
+    }
+    if !hooks.is_empty() {
+        crate::target::cursor::write_cursor_hooks_json(&root.join("hooks/hooks.json"), &hooks)?;
+    }
+    Ok(())
+}

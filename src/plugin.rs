@@ -3,16 +3,14 @@
 use serde::{Deserialize, Serialize};
 
 /// Harnesses that can consume a generated plugin artifact.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PluginHarness {
     Claude,
     Codex,
     Grok,
     Cursor,
     OpenCode,
-    #[serde(other)]
-    Unknown,
+    Unknown(String),
 }
 
 /// A distinct generated plugin tree format.
@@ -52,17 +50,13 @@ pub(crate) struct RootFileSpec {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum VerificationLevel {
     Live,
-    #[allow(dead_code)]
-    InstallOnly,
     DocsOnly,
 }
 
-#[cfg(test)]
 impl VerificationLevel {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Live => "live",
-            Self::InstallOnly => "install-only",
             Self::DocsOnly => "docs-only",
         }
     }
@@ -71,20 +65,25 @@ impl VerificationLevel {
 #[derive(Clone, Copy)]
 pub(crate) struct Verification {
     pub level: VerificationLevel,
-    #[allow(dead_code)]
     pub detail: &'static str,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct VerificationRow {
-    #[allow(dead_code)]
     pub install: Verification,
     pub skills: Verification,
     pub agents: Option<Verification>,
     pub hooks: Verification,
     pub mcp: Verification,
-    #[allow(dead_code)]
     pub evidence: &'static str,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PluginSupportCells {
+    pub skills: Option<&'static str>,
+    pub agents: Option<&'static str>,
+    pub hooks: Option<&'static str>,
+    pub mcp: Option<&'static str>,
 }
 
 pub(crate) struct PluginHarnessSpec {
@@ -93,8 +92,8 @@ pub(crate) struct PluginHarnessSpec {
     pub key: &'static str,
     pub name_rule: NameRule,
     pub loads_agents: bool,
-    pub mcp_callable: bool,
     pub display_name: &'static str,
+    pub support: PluginSupportCells,
     pub verification: VerificationRow,
 }
 
@@ -139,15 +138,23 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: PluginTree::Claude,
         name_rule: CLAUDE_NAME,
         loads_agents: true,
-        mcp_callable: true,
         display_name: "Claude",
+        support: PluginSupportCells {
+            skills: None,
+            agents: None,
+            hooks: None,
+            mcp: None,
+        },
         verification: VerificationRow {
-            install: verification(VerificationLevel::Live, ""),
-            skills: verification(VerificationLevel::Live, ""),
+            install: verification(VerificationLevel::Live, " (local marketplace)"),
+            skills: verification(VerificationLevel::Live, " (own and dependency skills)"),
             agents: Some(verification(VerificationLevel::Live, " (subagent preload)")),
-            hooks: verification(VerificationLevel::Live, " (`${CLAUDE_PLUGIN_ROOT}`)"),
-            mcp: verification(VerificationLevel::Live, ""),
-            evidence: "p9291, p9305, p9329, p9478",
+            hooks: verification(
+                VerificationLevel::Live,
+                " (`${CLAUDE_PLUGIN_ROOT}`, CommonJS script)",
+            ),
+            mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
+            evidence: "p9533, p9535",
         },
     },
     PluginHarnessSpec {
@@ -156,18 +163,20 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: PluginTree::Claude,
         name_rule: CODEX_NAME,
         loads_agents: false,
-        mcp_callable: false,
         display_name: "Codex",
+        support: PluginSupportCells {
+            skills: None,
+            agents: Some("**impossible**: Codex plugins don't load agents"),
+            hooks: Some("as Claude (reads the Claude tree's `hooks/hooks.json`)"),
+            mcp: Some("supported (same file as Claude)"),
+        },
         verification: VerificationRow {
-            install: verification(VerificationLevel::Live, ""),
-            skills: verification(VerificationLevel::Live, ""),
+            install: verification(VerificationLevel::Live, " (local marketplace)"),
+            skills: verification(VerificationLevel::Live, " (own and dependency skills)"),
             agents: None,
-            hooks: verification(
-                VerificationLevel::Live,
-                " on a hand-built Claude-format tree (p9291); V re-runs it on the built tree",
-            ),
-            mcp: verification(VerificationLevel::Live, ": listed, not callable"),
-            evidence: "p9291, p9478",
+            hooks: verification(VerificationLevel::Live, " (built tree, CommonJS script)"),
+            mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
+            evidence: "p9533, p9535",
         },
     },
     PluginHarnessSpec {
@@ -176,21 +185,23 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: PluginTree::Claude,
         name_rule: GROK_NAME,
         loads_agents: true,
-        mcp_callable: true,
         display_name: "Grok",
+        support: PluginSupportCells {
+            skills: None,
+            agents: Some("supported (same file as Claude)"),
+            hooks: Some("as Claude"),
+            mcp: Some("supported (same file as Claude)"),
+        },
         verification: VerificationRow {
-            install: verification(VerificationLevel::Live, ""),
-            skills: verification(VerificationLevel::Live, ", with `resources/` (p9479)"),
+            install: verification(VerificationLevel::Live, " (local marketplace)"),
+            skills: verification(VerificationLevel::Live, ", with `resources/`"),
             agents: Some(verification(
                 VerificationLevel::Live,
-                ": subagent, native preload, skills line (p9479)",
+                " (subagent with native skill preload)",
             )),
-            hooks: verification(
-                VerificationLevel::Live,
-                ": `SessionEnd`, `SubagentStop`, `CLAUDE_PLUGIN_ROOT` (p9479)",
-            ),
-            mcp: verification(VerificationLevel::DocsOnly, " (no server in any fixture)"),
-            evidence: "p9473, p9478, p9479",
+            hooks: verification(VerificationLevel::Live, " (`CLAUDE_PLUGIN_ROOT`)"),
+            mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
+            evidence: "p9473, p9478, p9533, p9535",
         },
     },
     PluginHarnessSpec {
@@ -199,15 +210,23 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: PluginTree::Cursor,
         name_rule: CURSOR_NAME,
         loads_agents: true,
-        mcp_callable: true,
         display_name: "Cursor",
+        support: PluginSupportCells {
+            skills: None,
+            agents: None,
+            hooks: None,
+            mcp: None,
+        },
         verification: VerificationRow {
-            install: verification(VerificationLevel::DocsOnly, ""),
-            skills: verification(VerificationLevel::DocsOnly, ""),
-            agents: Some(verification(VerificationLevel::DocsOnly, "")),
-            hooks: verification(VerificationLevel::DocsOnly, ""),
-            mcp: verification(VerificationLevel::DocsOnly, ""),
-            evidence: "p9474",
+            install: verification(VerificationLevel::DocsOnly, " (account required)"),
+            skills: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
+            agents: Some(verification(
+                VerificationLevel::DocsOnly,
+                " (schema validation only)",
+            )),
+            hooks: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
+            mcp: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
+            evidence: "p9533",
         },
     },
     PluginHarnessSpec {
@@ -216,18 +235,22 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: PluginTree::OpenCode,
         name_rule: OPENCODE_NAME,
         loads_agents: false,
-        mcp_callable: true,
         display_name: "OpenCode",
+        support: PluginSupportCells {
+            skills: Some("supported (registered by `index.mjs`)"),
+            agents: Some("**impossible**: no API adds an agent"),
+            hooks: Some(
+                "supported for hooks with an `opencode` fragment that has a default `{id, setup}` export; others dropped with warning",
+            ),
+            mcp: Some("supported (registered by `index.mjs`)"),
+        },
         verification: VerificationRow {
-            install: verification(VerificationLevel::Live, " (git)"),
+            install: verification(VerificationLevel::Live, " (`git+file://`)"),
             skills: verification(VerificationLevel::Live, ", with `resources/`"),
             agents: None,
-            hooks: verification(
-                VerificationLevel::Live,
-                " (composed fragment from a local path, p9477)",
-            ),
-            mcp: verification(VerificationLevel::Live, " (`<plugin>:<server>`, p9477)"),
-            evidence: "p9475, p9477",
+            hooks: verification(VerificationLevel::Live, " (git install, CommonJS script)"),
+            mcp: verification(VerificationLevel::Live, " (`<plugin>:<server>`)"),
+            evidence: "p9533",
         },
     },
 ];
@@ -283,24 +306,70 @@ pub(crate) static PLUGIN_TREE_SPECS: &[&PluginTreeSpec] =
     &[&CLAUDE_TREE_SPEC, &CURSOR_TREE_SPEC, &OPENCODE_TREE_SPEC];
 
 impl PluginHarness {
-    pub(crate) fn spec(self) -> Option<&'static PluginHarnessSpec> {
+    pub(crate) fn spec(&self) -> Option<&'static PluginHarnessSpec> {
         PLUGIN_HARNESS_SPECS
             .iter()
-            .find(|spec| spec.harness == self)
+            .find(|spec| &spec.harness == self)
     }
 
     pub(crate) fn specs() -> impl Iterator<Item = &'static PluginHarnessSpec> {
         PLUGIN_HARNESS_SPECS.iter()
     }
 
-    pub fn as_str(self) -> &'static str {
-        self.spec().map_or("unknown", |spec| spec.key)
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Unknown(value) => value,
+            _ => self.spec().expect("known plugin harness has a spec").key,
+        }
     }
 
-    pub(crate) fn tree(self) -> PluginTree {
+    pub(crate) fn tree(&self) -> PluginTree {
         self.spec()
             .expect("plugin build validation rejects unknown harnesses")
             .tree
+    }
+}
+
+pub(crate) fn unknown_plugin_harness_messages(harnesses: &[PluginHarness]) -> Vec<String> {
+    let valid = PluginHarness::specs()
+        .map(|spec| spec.key)
+        .collect::<Vec<_>>()
+        .join(", ");
+    harnesses
+        .iter()
+        .filter(|harness| harness.spec().is_none())
+        .map(|harness| {
+            format!(
+                "mars.toml [plugin].harnesses contains unknown harness `{}`; expected one of: {valid}",
+                harness.as_str()
+            )
+        })
+        .collect()
+}
+
+impl Serialize for PluginHarness {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PluginHarness {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "claude" => Self::Claude,
+            "codex" => Self::Codex,
+            "grok" => Self::Grok,
+            "cursor" => Self::Cursor,
+            "opencode" => Self::OpenCode,
+            _ => Self::Unknown(value),
+        })
     }
 }
 

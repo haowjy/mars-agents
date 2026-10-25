@@ -6,7 +6,7 @@ mod model;
 pub mod output;
 mod references;
 mod root_files;
-mod support;
+pub mod support;
 mod tree;
 
 pub use inspect::{
@@ -169,15 +169,16 @@ pub(crate) fn validate_plugin_build(
         }
         .into());
     }
+    if let Some(message) = crate::plugin::unknown_plugin_harness_messages(harnesses)
+        .into_iter()
+        .next()
+    {
+        return Err(ConfigError::Invalid { message }.into());
+    }
     let specs = harnesses
         .iter()
-        .map(|harness| {
-            harness.spec().ok_or_else(|| ConfigError::Invalid {
-                message: "mars.toml [plugin].harnesses contains an unknown harness name"
-                    .to_string(),
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|harness| harness.spec().expect("unknown harnesses were rejected"))
+        .collect::<Vec<_>>();
     if let Some((index, _)) = package
         .authors
         .iter()

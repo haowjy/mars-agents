@@ -42,9 +42,12 @@ set of built trees' sync roots. `TargetState` also retains every filtered export
 including hooks no built root selected. A source check before the tree loop emits authored-content
 diagnostics, including skill-schema findings, once; tree writing emits only lowering diagnostics.
 Support diagnostics consume the full `TargetState` for graph-wide counts rather than inferring
-them from one tree. `support.rs`
-derives component support from each listed harness's tree profile plus Codex's two loader gaps;
-only per-cell verification evidence is hand-entered, and the same data renders the README tables.
+them from one tree. `support.rs` derives component support from each listed harness's tree profile
+plus Codex's agent-loader gap; per-harness display copy and verification evidence live on the
+harness spec rows, and the same data renders the README tables. The Claude plugin MCP writer emits
+same-name environment pass-throughs as `env_vars` for Claude/Codex/Grok compatibility; renamed
+references retain Claude's `${VAR}` form and warn that Codex passes it literally. Sync continues to
+use the native Claude writer.
 
 The Cursor profile lowers native Cursor agents without an additional plugin field filter, uses no
 native model aliases, and writes `.cursor-plugin/plugin.json`, `mcp.json`, and versioned

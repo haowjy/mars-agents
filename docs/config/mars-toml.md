@@ -95,7 +95,7 @@ To keep project-local agents and skills without publishing, use `.mars-src/` ins
 name = "meridian-base"
 version = "1.2.0"
 description = "Core agents and skills for meridian"  # optional
-authors = [{ name = "Example Maintainer", email = "maintainer@example.com" }] # optional
+authors = ["Example Maintainer <maintainer@example.com>"] # optional; table form also accepted
 homepage = "https://github.com/example/meridian-base" # optional
 license = "Apache-2.0"                                # optional
 requires-mars = ">=0.11.0"                           # optional
@@ -107,7 +107,7 @@ requires-meridian = ">=0.20.0"                       # optional
 | `name` | string | yes | Package name, used for dependency resolution |
 | `version` | string | yes | Semver version of this package |
 | `description` | string | no | Human-readable description |
-| `authors` | table[] | no | Package authors; the first author supplies generated plugin owner metadata |
+| `authors` | string[] or table[] | no | Package authors as `"Name <email>"` strings or `{ name, email }` tables; the first author supplies generated plugin owner metadata |
 | `homepage` | string | no | Package or project homepage used in generated plugin manifests |
 | `license` | string | no | Package license identifier used in generated plugin manifests |
 | `requires-mars` | semver requirement | no | Mars versions that can consume this package |
@@ -154,6 +154,11 @@ components are rejected. Pi has no plugin format and cannot be listed.
 `name` must satisfy every listed harness. Cursor and Codex require lowercase identifiers
 made from letters, digits, dots, and hyphens; OpenCode requires an npm-compatible package
 name. Claude-compatible names cannot contain spaces, `@`, `:`, or path separators.
+
+Config loading checks the table's shape and preserves unknown harness values so commands can
+name them. Semantic checks run when building or versioning: output containment, non-empty author
+names, plugin and marketplace names for every selected harness, and the selected harness list.
+`mars check` reports an unknown harness as a warning and lists the valid values.
 
 Run `mars build plugin` in the package to rebuild configured output. Running
 `mars build plugin --out <dir>` instead writes only the owned output directory, accepts packages without

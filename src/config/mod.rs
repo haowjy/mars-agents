@@ -175,7 +175,9 @@ fn default_plugin_dir() -> PathBuf {
 pub use crate::plugin::PluginHarness;
 
 pub fn default_plugin_harnesses() -> Vec<PluginHarness> {
-    PluginHarness::specs().map(|spec| spec.harness).collect()
+    PluginHarness::specs()
+        .map(|spec| spec.harness.clone())
+        .collect()
 }
 
 fn validate_plugin_config_shape(config: &Config) -> Result<(), MarsError> {
@@ -2176,7 +2178,8 @@ harnesses = ["claude", "cursor"]
                 .unwrap_err()
                 .to_string();
             assert!(
-                error.contains("unknown harness name"),
+                error.contains(&format!("unknown harness `{harness}`"))
+                    && error.contains("expected one of: claude, codex, grok, cursor, opencode"),
                 "harness {harness:?} should be refused, got: {error}"
             );
         }

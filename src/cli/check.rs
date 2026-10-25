@@ -125,6 +125,13 @@ fn plugin_warnings(
         .expect("plugin config validation requires a package table");
 
     let mut warnings = Vec::new();
+    warnings.extend(crate::plugin::unknown_plugin_harness_messages(
+        &config
+            .plugin
+            .as_ref()
+            .expect("plugin presence was checked")
+            .harnesses,
+    ));
     if crate::resolve::validate_package_requirement_syntax(package).is_ok()
         && !crate::resolve::requirement_has_floor(
             package.requires_mars.as_deref(),

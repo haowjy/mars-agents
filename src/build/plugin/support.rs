@@ -6,8 +6,6 @@ use crate::sync::target::TargetState;
 use super::tree::{self, BuiltTree, TreeProfile};
 use crate::plugin::{Verification, VerificationLevel};
 
-const CODEX_PROBED_VERSION: &str = "0.164.0";
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Component {
     Skills,
@@ -39,14 +37,10 @@ pub(super) fn emit(
     }
 
     for harness in selected_harnesses(harnesses) {
-        let built = built_tree_for_harness(harness, built_trees);
         let profile = tree::profile(harness.tree());
 
         if support_state(harness, profile, Component::Agents) == SupportState::Impossible {
             emit_agents_impossible(harness, count_items(target, ItemKind::Agent), diag);
-        }
-        if support_state(harness, profile, Component::Mcp) == SupportState::DroppedWithWarning {
-            emit_mcp_dropped(harness, built.components.mcp_servers, diag);
         }
         emit_verification_info(harness, profile, diag);
     }
@@ -65,21 +59,16 @@ pub(super) fn emit(
     }
 }
 
-fn selected_harnesses(harnesses: &[PluginHarness]) -> impl Iterator<Item = PluginHarness> + '_ {
+fn selected_harnesses(
+    harnesses: &[PluginHarness],
+) -> impl Iterator<Item = &'static PluginHarness> + '_ {
     PluginHarness::specs()
-        .map(|spec| spec.harness)
+        .map(|spec| &spec.harness)
         .filter(|harness| harnesses.contains(harness))
 }
 
-fn built_tree_for_harness(harness: PluginHarness, built_trees: &[BuiltTree]) -> &BuiltTree {
-    built_trees
-        .iter()
-        .find(|built| built.tree() == harness.tree())
-        .expect("a listed harness has a built tree")
-}
-
 fn support_state(
-    harness: PluginHarness,
+    harness: &PluginHarness,
     profile: &TreeProfile,
     component: Component,
 ) -> SupportState {
@@ -96,9 +85,6 @@ fn support_state(
         }
         Component::Agents => SupportState::Supported,
         Component::Hooks => SupportState::DroppedWithWarning,
-        Component::Mcp if !harness.spec().expect("validated harness").mcp_callable => {
-            SupportState::DroppedWithWarning
-        }
         Component::Mcp => SupportState::Supported,
         Component::BootstrapDocs => SupportState::Impossible,
     }
@@ -154,7 +140,7 @@ fn human_list(items: &[&str]) -> String {
     }
 }
 
-fn emit_agents_impossible(harness: PluginHarness, agents: usize, diag: &mut DiagnosticCollector) {
+fn emit_agents_impossible(harness: &PluginHarness, agents: usize, diag: &mut DiagnosticCollector) {
     if agents == 0 {
         return;
     }
@@ -173,31 +159,11 @@ fn emit_agents_impossible(harness: PluginHarness, agents: usize, diag: &mut Diag
     );
 }
 
-fn emit_mcp_dropped(harness: PluginHarness, mcp_servers: usize, diag: &mut DiagnosticCollector) {
-    if mcp_servers == 0 {
-        return;
-    }
-    let noun = if mcp_servers == 1 {
-        "MCP server is"
-    } else {
-        "MCP servers are"
-    };
-    diag.warn(
-        "plugin-mcp-unavailable",
-        format!(
-            "{}: {mcp_servers} {noun} listed but not callable in {} {CODEX_PROBED_VERSION}",
-            harness.as_str(),
-            harness_display_name(harness)
-        ),
-    );
-}
-
 fn emit_verification_info(
-    harness: PluginHarness,
+    harness: &PluginHarness,
     profile: &TreeProfile,
     diag: &mut DiagnosticCollector,
 ) {
-    let mut install_only = Vec::new();
     let mut docs_only = Vec::new();
     for component in Component::SHIPPED {
         if support_state(harness, profile, component) == SupportState::Impossible {
@@ -205,35 +171,24 @@ fn emit_verification_info(
         }
         match verification(harness, component).level {
             VerificationLevel::Live => {}
-            VerificationLevel::InstallOnly => install_only.push(component_label(component)),
             VerificationLevel::DocsOnly => docs_only.push(component_label(component)),
         }
     }
-    if install_only.is_empty() && docs_only.is_empty() {
+    if docs_only.is_empty() {
         return;
     }
 
-    let mut states = Vec::new();
-    if !install_only.is_empty() {
-        states.push(format!(
-            "{} {} install-only",
-            list(&install_only),
-            agreement(install_only.len())
-        ));
-    }
-    if !docs_only.is_empty() {
-        states.push(format!(
-            "{} {} docs-only",
-            list(&docs_only),
-            agreement(docs_only.len())
-        ));
-    }
+    let state = format!(
+        "{} {} docs-only",
+        list(&docs_only),
+        agreement(docs_only.len())
+    );
     diag.info(
         "plugin-verification-below-live",
         format!(
             "{}: {}; not run on the {} binary",
             harness.as_str(),
-            states.join("; "),
+            state,
             harness_display_name(harness)
         ),
     );
@@ -261,14 +216,14 @@ fn list(items: &[&str]) -> String {
     }
 }
 
-fn harness_display_name(harness: PluginHarness) -> &'static str {
+fn harness_display_name(harness: &PluginHarness) -> &'static str {
     harness
         .spec()
         .expect("validated plugin harness")
         .display_name
 }
 
-fn verification(harness: PluginHarness, component: Component) -> Verification {
+fn verification(harness: &PluginHarness, component: Component) -> Verification {
     let row = &harness
         .spec()
         .expect("validated plugin harness")
@@ -284,8 +239,7 @@ fn verification(harness: PluginHarness, component: Component) -> Verification {
     }
 }
 
-#[cfg(test)]
-fn install_verification(harness: PluginHarness) -> Verification {
+fn install_verification(harness: &PluginHarness) -> Verification {
     harness
         .spec()
         .expect("validated plugin harness")
@@ -293,11 +247,14 @@ fn install_verification(harness: PluginHarness) -> Verification {
         .install
 }
 
-#[cfg(test)]
-fn render_readme_tables(harnesses: &[PluginHarness]) -> String {
+/// Render the generated README component-support and verification tables.
+pub fn render_readme_tables() -> String {
+    let harnesses = PluginHarness::specs()
+        .map(|spec| &spec.harness)
+        .collect::<Vec<_>>();
     let mut rendered = String::from("### Component support\n\n");
-    render_header(&mut rendered, harnesses);
-    render_row(&mut rendered, "Tree", harnesses, |harness| {
+    render_header(&mut rendered, &harnesses);
+    render_row(&mut rendered, "Tree", &harnesses, |harness| {
         harness.tree().as_str().to_string()
     });
     for component in [
@@ -310,24 +267,24 @@ fn render_readme_tables(harnesses: &[PluginHarness]) -> String {
         render_row(
             &mut rendered,
             component_table_label(component),
-            harnesses,
+            &harnesses,
             |harness| component_support_cell(harness, component),
         );
     }
 
     rendered.push_str("\n### Verification level\n\n");
-    render_header(&mut rendered, harnesses);
+    render_header(&mut rendered, &harnesses);
     render_row(
         &mut rendered,
         "Install from catalog",
-        harnesses,
+        &harnesses,
         |harness| render_verification(install_verification(harness)),
     );
     for component in Component::SHIPPED {
         render_row(
             &mut rendered,
             component_table_label(component),
-            harnesses,
+            &harnesses,
             |harness| {
                 let profile = tree::profile(harness.tree());
                 if support_state(harness, profile, component) == SupportState::Impossible {
@@ -338,17 +295,16 @@ fn render_readme_tables(harnesses: &[PluginHarness]) -> String {
             },
         );
     }
-    render_row(&mut rendered, "Evidence", harnesses, |harness| {
+    render_row(&mut rendered, "Evidence", &harnesses, |harness| {
         evidence(harness).to_string()
     });
     rendered
 }
 
-#[cfg(test)]
-fn render_header(rendered: &mut String, harnesses: &[PluginHarness]) {
+fn render_header(rendered: &mut String, harnesses: &[&PluginHarness]) {
     rendered.push_str("| |");
     for harness in harnesses {
-        rendered.push_str(&format!(" {} |", harness_display_name(*harness)));
+        rendered.push_str(&format!(" {} |", harness_display_name(harness)));
     }
     rendered.push_str("\n|---|");
     for _ in harnesses {
@@ -357,21 +313,19 @@ fn render_header(rendered: &mut String, harnesses: &[PluginHarness]) {
     rendered.push('\n');
 }
 
-#[cfg(test)]
 fn render_row(
     rendered: &mut String,
     label: &str,
-    harnesses: &[PluginHarness],
-    mut cell: impl FnMut(PluginHarness) -> String,
+    harnesses: &[&PluginHarness],
+    mut cell: impl FnMut(&PluginHarness) -> String,
 ) {
     rendered.push_str(&format!("| {label} |"));
     for harness in harnesses {
-        rendered.push_str(&format!(" {} |", cell(*harness)));
+        rendered.push_str(&format!(" {} |", cell(harness)));
     }
     rendered.push('\n');
 }
 
-#[cfg(test)]
 fn component_table_label(component: Component) -> &'static str {
     match component {
         Component::Skills => "Skills",
@@ -382,19 +336,15 @@ fn component_table_label(component: Component) -> &'static str {
     }
 }
 
-#[cfg(test)]
-fn component_support_cell(harness: PluginHarness, component: Component) -> String {
+fn component_support_cell(harness: &PluginHarness, component: Component) -> String {
     let profile = tree::profile(harness.tree());
     let state = support_state(harness, profile, component);
-    match (component, state, harness) {
-        (Component::Skills, SupportState::Supported, PluginHarness::OpenCode) => {
-            "supported (registered by `index.mjs`)".to_string()
-        }
-        (Component::Skills, SupportState::Supported, _) => "supported".to_string(),
-        (Component::Agents, SupportState::DroppedWithWarning, PluginHarness::Grok) => {
-            "supported (same file as Claude)".to_string()
-        }
-        (Component::Agents, SupportState::DroppedWithWarning, _) => format!(
+    if let Some(cell) = support_cell_override(harness, component) {
+        return cell.to_string();
+    }
+    match (component, state) {
+        (Component::Skills, SupportState::Supported) => "supported".to_string(),
+        (Component::Agents, SupportState::DroppedWithWarning) => format!(
             "supported; {} dropped with warning",
             profile
                 .dropped_agent_fields()
@@ -403,59 +353,37 @@ fn component_support_cell(harness: PluginHarness, component: Component) -> Strin
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        (Component::Agents, SupportState::Supported, _) => "supported".to_string(),
-        (Component::Agents, SupportState::Impossible, PluginHarness::Codex) => {
-            "**impossible**: Codex plugins don't load agents".to_string()
-        }
-        (Component::Agents, SupportState::Impossible, PluginHarness::OpenCode) => {
-            "**impossible**: no API adds an agent".to_string()
-        }
-        (Component::Agents, SupportState::Impossible, _) => format!(
+        (Component::Agents, SupportState::Supported) => "supported".to_string(),
+        (Component::Agents, SupportState::Impossible) => format!(
             "**impossible**: {} plugins don't load agents",
             harness_display_name(harness)
         ),
-        (Component::Hooks, SupportState::DroppedWithWarning, PluginHarness::Codex) => {
-            "as Claude (reads the Claude tree's `hooks/hooks.json`)".to_string()
-        }
-        (Component::Hooks, SupportState::DroppedWithWarning, PluginHarness::Grok) => {
-            "as Claude".to_string()
-        }
-        (Component::Hooks, SupportState::DroppedWithWarning, harness) => {
+        (Component::Hooks, SupportState::DroppedWithWarning) => {
             let fragment = profile.descriptor().target_dir.trim_start_matches('.');
-            let requirement = if harness == PluginHarness::OpenCode {
-                " that has a default `{id, setup}` export"
-            } else {
-                ""
-            };
-            format!(
-                "supported for hooks with a `{fragment}` fragment{requirement}; others dropped with warning"
-            )
+            format!("supported for hooks with a `{fragment}` fragment; others dropped with warning")
         }
-        (Component::Mcp, SupportState::DroppedWithWarning, PluginHarness::Codex) => {
-            format!("dropped with warning: listed, not callable in {CODEX_PROBED_VERSION}")
-        }
-        (Component::Mcp, SupportState::DroppedWithWarning, _) => {
-            "dropped with warning: listed, not callable".to_string()
-        }
-        (Component::Mcp, SupportState::Supported, PluginHarness::Grok) => {
-            "supported (same file as Claude)".to_string()
-        }
-        (Component::Mcp, SupportState::Supported, PluginHarness::OpenCode) => {
-            "supported (registered by `index.mjs`)".to_string()
-        }
-        (Component::Mcp, SupportState::Supported, _) => "supported".to_string(),
-        (Component::BootstrapDocs, SupportState::Impossible, _) => "impossible".to_string(),
+        (Component::Mcp, SupportState::Supported) => "supported".to_string(),
+        (Component::BootstrapDocs, SupportState::Impossible) => "impossible".to_string(),
         _ => unreachable!("support state and component are internally consistent"),
     }
 }
 
-#[cfg(test)]
+fn support_cell_override(harness: &PluginHarness, component: Component) -> Option<&'static str> {
+    let cells = harness.spec().expect("validated plugin harness").support;
+    match component {
+        Component::Skills => cells.skills,
+        Component::Agents => cells.agents,
+        Component::Hooks => cells.hooks,
+        Component::Mcp => cells.mcp,
+        Component::BootstrapDocs => None,
+    }
+}
+
 fn render_verification(verification: Verification) -> String {
     format!("{}{}", verification.level.as_str(), verification.detail)
 }
 
-#[cfg(test)]
-fn evidence(harness: PluginHarness) -> &'static str {
+fn evidence(harness: &PluginHarness) -> &'static str {
     harness
         .spec()
         .expect("validated plugin harness")
@@ -468,37 +396,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn readme_tables_render_from_tree_support_and_verification_cells() {
-        let rendered = render_readme_tables(&[
-            PluginHarness::Claude,
-            PluginHarness::Codex,
-            PluginHarness::Grok,
-        ]);
+    fn readme_plugin_tables_match_renderer() {
+        const START: &str = "<!-- BEGIN GENERATED PLUGIN SUPPORT -->\n";
+        const END: &str = "<!-- END GENERATED PLUGIN SUPPORT -->";
+        let readme = include_str!("../../../README.md");
+        let actual = readme
+            .split_once(START)
+            .and_then(|(_, rest)| rest.split_once(END).map(|(tables, _)| tables))
+            .expect("README plugin support markers must exist");
+        let rendered = render_readme_tables();
 
         assert_eq!(
-            rendered,
-            r#"### Component support
-
-| | Claude | Codex | Grok |
-|---|---|---|---|
-| Tree | claude | claude | claude |
-| Skills | supported | supported | supported |
-| Agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning | **impossible**: Codex plugins don't load agents | supported (same file as Claude) |
-| Hooks | supported for hooks with a `claude` fragment; others dropped with warning | as Claude (reads the Claude tree's `hooks/hooks.json`) | as Claude |
-| MCP | supported | dropped with warning: listed, not callable in 0.164.0 | supported (same file as Claude) |
-| Bootstrap docs | impossible | impossible | impossible |
-
-### Verification level
-
-| | Claude | Codex | Grok |
-|---|---|---|---|
-| Install from catalog | live | live | live |
-| Skills | live | live | live, with `resources/` (p9479) |
-| Agents | live (subagent preload) | n/a (impossible) | live: subagent, native preload, skills line (p9479) |
-| Hooks | live (`${CLAUDE_PLUGIN_ROOT}`) | live on a hand-built Claude-format tree (p9291); V re-runs it on the built tree | live: `SessionEnd`, `SubagentStop`, `CLAUDE_PLUGIN_ROOT` (p9479) |
-| MCP | live | live: listed, not callable | docs-only (no server in any fixture) |
-| Evidence | p9291, p9305, p9329, p9478 | p9291, p9478 | p9473, p9478, p9479 |
-"#
+            actual, rendered,
+            "README plugin support tables are stale. Regenerate by replacing the text between {START:?} and {END:?} with:\n\n{rendered}"
         );
     }
 }

@@ -30,8 +30,9 @@ pipeline operates on EffectiveConfig only
 `load()` checks only the structural relationship that `[plugin]` needs `[package]`; plugin author,
 dir, identity, marketplace, and requested-harness semantics belong to
 `build::plugin::stage_plugin` so a bad publish configuration cannot block `sync` or `list`.
-Unknown requested harness spellings deserialize to the typed `Unknown` value for that reason and
-are rejected at the build boundary. Dependency `load_manifest()` uses a narrow package view
+Unknown requested harness spellings deserialize to a typed `Unknown(String)` value that retains the
+author's spelling for build errors and `mars check` warnings, and are rejected at the build
+boundary. Dependency `load_manifest()` uses a narrow package view
 (identity and engine floors) and ignores plugin-only metadata even when its shape is invalid for the
 package being built.
 

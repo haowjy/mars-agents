@@ -1,9 +1,10 @@
 use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
-use crate::error::MarsError;
+use crate::error::{ConfigError, MarsError};
 use crate::sync::target::TargetItem;
+use crate::target::{ConfigEntry, McpServerEntry};
 
-use super::{StandardConfigFormat, StandardTreeOutput, TreeProfile, invalid_item};
+use super::{StandardTreeOutput, TreeProfile, invalid_item};
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
 pub(super) static PROFILE: TreeProfile = TreeProfile {
@@ -16,13 +17,85 @@ pub(super) static PROFILE: TreeProfile = TreeProfile {
     standard_output: Some(StandardTreeOutput {
         manifest_path: ".claude-plugin/plugin.json",
         manifest_description: "Claude plugin manifest",
-        config_format: StandardConfigFormat::Claude,
     }),
-    write_config: super::write_standard_config,
+    write_config: write_config_entries,
     finish: super::finish_standard_tree,
 };
 
 fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut DiagnosticCollector) {}
+
+fn write_config_entries(
+    _profile: &TreeProfile,
+    root: &std::path::Path,
+    entries: &[ConfigEntry],
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let (mcp, hooks) = super::standard_config_entries(entries);
+
+    if !mcp.is_empty() {
+        write_plugin_mcp_json(&root.join(".mcp.json"), &mcp, diag)?;
+    }
+    if !hooks.is_empty() {
+        crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), &hooks)?;
+    }
+    Ok(())
+}
+
+fn write_plugin_mcp_json(
+    path: &std::path::Path,
+    servers: &[&McpServerEntry],
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let mut root = serde_json::json!({ "mcpServers": {} });
+    let mcp_servers = root["mcpServers"]
+        .as_object_mut()
+        .expect("new MCP root contains an object");
+
+    for server in servers {
+        let mut entry = serde_json::json!({
+            "command": server.command,
+            "args": server.args,
+        });
+        let mut env = serde_json::Map::new();
+        let mut env_vars = Vec::new();
+        let mut renamed = Vec::new();
+        for (key, variable) in &server.env {
+            if key == variable {
+                env_vars.push(variable.clone());
+            } else {
+                env.insert(
+                    key.clone(),
+                    serde_json::Value::String(format!("${{{variable}}}")),
+                );
+                renamed.push(format!("`{key}` from `{variable}`"));
+            }
+        }
+        if !env.is_empty() {
+            entry["env"] = serde_json::Value::Object(env);
+        }
+        if !env_vars.is_empty() {
+            entry["env_vars"] = serde_json::json!(env_vars);
+        }
+        if !renamed.is_empty() {
+            diag.warn(
+                "plugin-codex-mcp-env-rename",
+                format!(
+                    "MCP server `{}` renames {}; Codex 0.164.0 passes these `${{VAR}}` values literally instead of reading the source environment variables",
+                    server.name,
+                    renamed.join(", ")
+                ),
+            );
+        }
+        mcp_servers.insert(server.name.clone(), entry);
+    }
+
+    let content = serde_json::to_string_pretty(&root).map_err(|error| {
+        MarsError::Config(ConfigError::Invalid {
+            message: format!("failed to serialize {}: {error}", path.display()),
+        })
+    })?;
+    crate::fs::atomic_write(path, content.as_bytes())
+}
 
 fn apply_agent_policy(
     lowered: &str,

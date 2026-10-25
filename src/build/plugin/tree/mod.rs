@@ -159,65 +159,20 @@ pub(super) fn finish_standard_tree(
 pub(super) struct StandardTreeOutput {
     manifest_path: &'static str,
     manifest_description: &'static str,
-    config_format: StandardConfigFormat,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum StandardConfigFormat {
-    Claude,
-    Cursor,
-}
-
-pub(super) fn write_standard_config(
-    profile: &TreeProfile,
-    root: &Path,
+pub(super) fn standard_config_entries(
     entries: &[ConfigEntry],
-    _diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    let format = profile
-        .standard_output
-        .expect("standard tree has output policy")
-        .config_format;
-    let mcp: Vec<&McpServerEntry> = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            ConfigEntry::McpServer(entry) => Some(entry),
-            ConfigEntry::Hook(_) => None,
-        })
-        .collect();
-    let hooks: Vec<&HookEntry> = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            ConfigEntry::Hook(entry) => Some(entry),
-            ConfigEntry::McpServer(_) => None,
-        })
-        .collect();
-
-    match format {
-        StandardConfigFormat::Claude => {
-            if !mcp.is_empty() {
-                crate::target::claude::write_mcp_json(&root.join(".mcp.json"), &mcp)?;
-            }
-            if !hooks.is_empty() {
-                crate::target::claude::write_hooks_settings(
-                    &root.join("hooks/hooks.json"),
-                    &hooks,
-                )?;
-            }
-        }
-        StandardConfigFormat::Cursor => {
-            if !mcp.is_empty() {
-                crate::target::cursor::write_cursor_mcp_json(&root.join("mcp.json"), &mcp)?;
-            }
-            if !hooks.is_empty() {
-                crate::target::cursor::write_cursor_hooks_json(
-                    &root.join("hooks/hooks.json"),
-                    &hooks,
-                )?;
-            }
+) -> (Vec<&McpServerEntry>, Vec<&HookEntry>) {
+    let mut mcp = Vec::new();
+    let mut hooks = Vec::new();
+    for entry in entries {
+        match entry {
+            ConfigEntry::McpServer(entry) => mcp.push(entry),
+            ConfigEntry::Hook(entry) => hooks.push(entry),
         }
     }
-    Ok(())
+    (mcp, hooks)
 }
 
 pub(super) struct TermSet {

@@ -5,22 +5,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `mars build plugin [PATH] [--out <dir>]` builds an owned, multi-harness plugin containing what
-  `mars sync` installs in the package's own checkout: its items plus dependencies under its own
-  filters, renames and visibility, with exported hooks and MCP servers. A `[plugin]` table configures
-  the output directory, plugin identity, marketplace, description and harness selection (all five
-  by default); `[package]` supplies author, homepage and license metadata. Explicit `--out` builds
-  remain available without `[plugin]`. Generated output can contain a Claude-format tree consumed
-  by Claude, Codex and Grok; a Cursor tree with native agents, skills, hooks, MCP and manifests; and
-  an npm-shaped OpenCode tree that registers skills and MCP and composes default-export hook
-  fragments while preserving CommonJS hook scripts. Skill and agent references are qualified as
-  `<plugin>:<name>`. Per-harness support comes from the same tree profiles that render the README
-  tables, with one warning per unavailable component and info lines for verification below live.
-  Output is deterministic and LF. A root `<dir>/.mars-plugin.json` sentinel records the package
-  version, an offline input hash, dependency versions, per-file hashes and root-file ownership; a
-  non-empty directory without one is refused, and rebuilds atomically swap the whole output and
-  recover from interruption. Build output reports each generated tree with its own path and
-  component counts.
+- `mars build plugin [PATH] [--out <dir>]` builds owned Claude, Cursor, and OpenCode plugin trees
+  from a package's publish graph. Explicit output uses the nested
+  `<dir>/{claude,cursor,opencode}/` layout with a root `.mars-plugin.json` sentinel.
+- `[plugin]` configures committed output, identity, marketplace, description, and harnesses.
+  Configured builds also generate the Claude and Cursor catalogs and root OpenCode `package.json`;
+  `[package]` supplies author, homepage, and license metadata.
+- `mars check` reports stale, hand-edited, skipped, or root-conflicted configured plugin output and
+  warns when plugin packages do not require Mars 0.19.0 or newer.
+- Build and commit configured multi-harness plugin output during `mars version`, with rollback-safe
+  publication and a `--no-plugins` escape hatch.
 
 ### Fixed
 - Plugin builds now reject source symlinks that leave their package and special files instead of

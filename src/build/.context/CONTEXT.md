@@ -46,8 +46,12 @@ selected MCP union once;
 per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
 exported graph hooks even when no requested tree selected a fragment, which is the input for plugin
 omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap
-counts never depend on one format's emitted components. Component support and verification come from each selected harness row plus its tree profile;
-the same verification rows render the README tables.
+counts never depend on one format's emitted components. Component support and verification come
+from each selected harness row plus its tree profile; per-harness table copy lives on those rows,
+and the same data renders the README tables. The Claude plugin tree writes same-name MCP environment
+pass-throughs as `env_vars`, which Claude, Codex, and Grok all accept. Renamed references keep
+Claude's `${VAR}` spelling and warn once per server because Codex passes the value literally; the
+sync writer is unchanged.
 
 The Cursor tree is a `TreeProfile`, not a second walk: it preserves the shared Cursor agent
 lowering as-is, has no native model aliases or extra agent allowlist, and delegates `mcp.json` and

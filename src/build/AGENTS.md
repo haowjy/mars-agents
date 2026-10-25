@@ -14,9 +14,9 @@ root come from `compiler::harness_descriptor`. Each profile has a typed tree ide
 hook-root token, and a hook acceptance policy that runs before copying. `PluginTree::as_str()` is
 the single key for both staged directory names and reported output paths. Claude, Codex, and Grok
 share the Claude tree; Cursor and OpenCode have their own tree identities. The OpenCode tree is an
-npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and renders accepted
-default-export hook fragments through atomic writes into hash-checked files before importing them,
-preferring a private cache directory.
+npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and imports accepted
+default-export hook fragments as in-memory TypeScript data URLs. Hook-directory substitution is
+JavaScript-string encoded, and one fragment's load or setup failure does not block later hooks.
 
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
 project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the

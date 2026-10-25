@@ -24,8 +24,9 @@ writer. Profiles also carry their typed `PluginTree` identity; `PluginTree::as_s
 directory and report key. Their hook filter runs before copying, so files, counts and finish-writer
 inputs agree. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits an
 npm-shaped package with a fixed `index.mjs`; at runtime it
-registers the built skills and MCP servers and imports accepted default-export hooks only after
-rendering them through atomic writes into hash-checked files, preferring a private cache directory.
+registers the built skills and MCP servers and imports accepted default-export hooks from in-memory
+TypeScript data URLs. Hook-directory substitution is JavaScript-string encoded before import, and
+each hook's load and setup are isolated so a failure does not block later hooks.
 `tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
 selected MCP union once;
 per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered

@@ -1,6 +1,7 @@
+use mars_schema::HarnessId;
 use std::path::{Path, PathBuf};
 
-use crate::compiler::agents::{AgentMode, HarnessKind, ModelPolicyMatchType, parse_agent_content};
+use crate::compiler::agents::{AgentMode, ModelPolicyMatchType, parse_agent_content};
 use crate::compiler::native_agent_manifest::{
     agent_is_native_for_harness, read_native_agent_manifest,
 };
@@ -278,8 +279,8 @@ fn render_native_agent_line(agent: &ParsedAgentInventory) -> String {
 }
 
 fn render_native_section_heading(harness: &str) -> Vec<String> {
-    match HarnessKind::from_str(harness) {
-        Some(HarnessKind::Claude) => vec![
+    match mars_schema::harness::parse(harness) {
+        Some(HarnessId::Claude) => vec![
             "".to_string(),
             "## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)".to_string(),
         ],
@@ -299,9 +300,9 @@ fn render_native_section_heading(harness: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::HarnessKind;
     use crate::compiler::native_agent_manifest::write_native_agent_manifest_from_lock;
     use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
+    use mars_schema::HarnessId;
     use std::fs;
     use tempfile::TempDir;
 
@@ -330,7 +331,7 @@ mod tests {
         agent_key: &str,
         canonical_dest: &str,
         native_dest: &str,
-        harness: HarnessKind,
+        harness: HarnessId,
     ) -> LockFile {
         let mut lock = LockFile::empty();
         lock.items.insert(
@@ -347,7 +348,9 @@ mod tests {
                         "sha256:mars".into(),
                     ),
                     OutputRecord::installed(
-                        harness.target_dir().to_string(),
+                        crate::harness::registry::descriptor(harness)
+                            .default_target
+                            .to_string(),
                         native_dest.into(),
                         "sha256:native".into(),
                     ),
@@ -357,7 +360,7 @@ mod tests {
         lock
     }
 
-    fn lock_with_native_agent(agent_name: &str, harness: HarnessKind) -> LockFile {
+    fn lock_with_native_agent(agent_name: &str, harness: HarnessId) -> LockFile {
         let canonical = format!("agents/{agent_name}.md");
         lock_with_native_agent_paths(
             &format!("agent/{agent_name}"),
@@ -495,7 +498,7 @@ Implement changes.
 
         write_native_agent_manifest_from_lock(
             project_root,
-            &lock_with_native_agent("frontend-coder", HarnessKind::Claude),
+            &lock_with_native_agent("frontend-coder", HarnessId::Claude),
         )
         .unwrap();
 
@@ -537,7 +540,7 @@ Implement changes.
                 "agent/my-file",
                 "agents/my-file.md",
                 "agents/logical-name.md",
-                HarnessKind::Claude,
+                HarnessId::Claude,
             ),
         )
         .unwrap();
@@ -567,7 +570,7 @@ Implement changes.
 
         write_native_agent_manifest_from_lock(
             project_root,
-            &lock_with_native_agent("frontend-coder", HarnessKind::Claude),
+            &lock_with_native_agent("frontend-coder", HarnessId::Claude),
         )
         .unwrap();
 
@@ -596,7 +599,7 @@ Implement changes.
 
         write_native_agent_manifest_from_lock(
             project_root,
-            &lock_with_native_agent("reviewer", HarnessKind::Claude),
+            &lock_with_native_agent("reviewer", HarnessId::Claude),
         )
         .unwrap();
 

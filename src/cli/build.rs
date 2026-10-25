@@ -7,7 +7,7 @@ use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
 use crate::config::{NetworkHost, NetworkPolicy};
 use crate::error::MarsError;
-use crate::harness::registry::HarnessId;
+use mars_schema::HarnessId;
 
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
@@ -35,10 +35,10 @@ pub struct PluginArgs {
 }
 
 fn parse_harness(value: &str) -> Result<HarnessId, String> {
-    crate::harness::registry::parse(value).ok_or_else(|| {
+    mars_schema::harness::parse(value).ok_or_else(|| {
         format!(
             "unknown harness `{value}`; expected one of: {}",
-            crate::harness::registry::names().join(", ")
+            mars_schema::harness::NAMES.join(", ")
         )
     })
 }

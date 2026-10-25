@@ -171,28 +171,28 @@ fn network_model_policy_rejects_present_non_string_value() {
 fn parses_harness_claude() {
     let (p, diags) = parse("---\nharness: claude\n---\n");
     assert!(diags.is_empty());
-    assert_eq!(p.harness, Some(HarnessKind::Claude));
+    assert_eq!(p.harness, Some(HarnessId::Claude));
 }
 
 #[test]
 fn parses_harness_codex() {
     let (p, diags) = parse("---\nharness: codex\n---\n");
     assert!(diags.is_empty());
-    assert_eq!(p.harness, Some(HarnessKind::Codex));
+    assert_eq!(p.harness, Some(HarnessId::Codex));
 }
 
 #[test]
 fn parses_harness_opencode() {
     let (p, diags) = parse("---\nharness: opencode\n---\n");
     assert!(diags.is_empty());
-    assert_eq!(p.harness, Some(HarnessKind::OpenCode));
+    assert_eq!(p.harness, Some(HarnessId::OpenCode));
 }
 
 #[test]
 fn parses_harness_cursor() {
     let (p, diags) = parse("---\nharness: cursor\n---\n");
     assert!(diags.is_empty());
-    assert_eq!(p.harness, Some(HarnessKind::Cursor));
+    assert_eq!(p.harness, Some(HarnessId::Cursor));
 }
 
 #[test]
@@ -691,7 +691,7 @@ harness-overrides:
 ";
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
-    assert_eq!(p.effective_skills(&HarnessKind::Codex).load, vec!["base"]);
+    assert_eq!(p.effective_skills(&HarnessId::Codex).load, vec!["base"]);
     assert_eq!(
         p.harness_overrides.entries["codex"]["skills"],
         serde_json::json!(["codex-only"])
@@ -714,7 +714,7 @@ harness-overrides:
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
 
-    let codex = p.effective_skills(&HarnessKind::Codex);
+    let codex = p.effective_skills(&HarnessId::Codex);
     assert_eq!(codex.load, vec!["dev-principles"]);
     assert_eq!(codex.available, vec!["planning", "spawn"]);
     assert!(p.harness_overrides.entries.contains_key("codex"));
@@ -733,14 +733,14 @@ harness-overrides:
     let (p, diags) = parse(content);
     assert!(diags.is_empty());
     assert_eq!(
-        p.effective_native_config(&HarnessKind::Codex).unwrap()["sandbox_workspace_write.network_access"],
+        p.effective_native_config(&HarnessId::Codex).unwrap()["sandbox_workspace_write.network_access"],
         serde_json::json!(true)
     );
     assert_eq!(
-        p.effective_native_config(&HarnessKind::Claude).unwrap()["ui.theme"],
+        p.effective_native_config(&HarnessId::Claude).unwrap()["ui.theme"],
         serde_json::json!("dark")
     );
-    assert!(p.effective_native_config(&HarnessKind::OpenCode).is_none());
+    assert!(p.effective_native_config(&HarnessId::OpenCode).is_none());
 }
 
 // --- 3.1: harness-overrides ---

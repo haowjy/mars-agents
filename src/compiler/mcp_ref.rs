@@ -247,10 +247,7 @@ impl McpUnsupportedReason {
 ///
 /// Unknown harness ids passthrough canonical `mcp(server/tool)` rather than inventing
 /// a native wire form that might be wrong for that target.
-pub(crate) fn project_mcp_ref(
-    r: &McpRef,
-    harness: crate::compiler::agents::HarnessKind,
-) -> McpProjection {
+pub(crate) fn project_mcp_ref(r: &McpRef, harness: mars_schema::HarnessId) -> McpProjection {
     let descriptor = crate::compiler::harness_descriptor::descriptor(harness);
     match descriptor.mcp_projection {
         crate::compiler::harness_descriptor::McpProjectionPolicy::ClaudeToolList => {

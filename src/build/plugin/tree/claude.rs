@@ -1,15 +1,15 @@
-use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 use crate::sync::target::TargetItem;
 use crate::target::{ConfigEntry, McpServerEntry};
+use mars_schema::HarnessId;
 
 use super::{StandardTreeOutput, TreeProfile, invalid_item};
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
 pub(super) static PROFILE: TreeProfile = TreeProfile {
     format: &crate::plugin::CLAUDE_TREE_SPEC,
-    harness: HarnessKind::Claude,
+    harness: HarnessId::Claude,
     agents: Some(apply_agent_policy),
     native_model_aliases: NATIVE_MODEL_ALIASES,
     plugin_root_token: Some("${CLAUDE_PLUGIN_ROOT}"),

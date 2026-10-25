@@ -9,6 +9,7 @@ pub mod lower;
 
 use std::collections::BTreeMap;
 
+use mars_schema::HarnessId;
 use serde_yaml::Value;
 
 use crate::compiler::invocability::{find_invocability_field, parse_invocability_axis};
@@ -40,67 +41,6 @@ impl AgentMode {
 impl std::fmt::Display for AgentMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-/// Known harness execution targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HarnessKind {
-    Claude,
-    Codex,
-    OpenCode,
-    Cursor,
-    Pi,
-}
-
-impl HarnessKind {
-    pub fn all() -> &'static [Self] {
-        const ALL: &[HarnessKind] = &[
-            HarnessKind::Claude,
-            HarnessKind::Codex,
-            HarnessKind::Pi,
-            HarnessKind::OpenCode,
-            HarnessKind::Cursor,
-        ];
-        ALL
-    }
-
-    /// Parse from a frontmatter string value.
-    pub fn from_str(s: &str) -> Option<Self> {
-        crate::harness::registry::parse(s).map(Self::from_harness_id)
-    }
-
-    /// Target directory root for harness-native artifacts.
-    pub fn target_dir(&self) -> &str {
-        self.to_harness_id().default_target()
-    }
-
-    pub fn to_harness_id(self) -> crate::harness::registry::HarnessId {
-        match self {
-            Self::Claude => crate::harness::registry::HarnessId::Claude,
-            Self::Codex => crate::harness::registry::HarnessId::Codex,
-            Self::OpenCode => crate::harness::registry::HarnessId::OpenCode,
-            Self::Cursor => crate::harness::registry::HarnessId::Cursor,
-            Self::Pi => crate::harness::registry::HarnessId::Pi,
-        }
-    }
-
-    pub fn from_harness_id(id: crate::harness::registry::HarnessId) -> Self {
-        match id {
-            crate::harness::registry::HarnessId::Claude => Self::Claude,
-            crate::harness::registry::HarnessId::Codex => Self::Codex,
-            crate::harness::registry::HarnessId::Pi => Self::Pi,
-            crate::harness::registry::HarnessId::OpenCode => Self::OpenCode,
-            crate::harness::registry::HarnessId::Cursor => Self::Cursor,
-        }
-    }
-
-    /// Resolve a linked target directory (e.g. `.claude`) to its harness kind.
-    pub fn from_target_dir(target_root: &str) -> Option<Self> {
-        Self::all()
-            .iter()
-            .find(|harness| harness.target_dir() == target_root)
-            .cloned()
     }
 }
 
@@ -215,15 +155,12 @@ pub struct HarnessOverrides {
     pub entries: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
 }
 
-fn harness_key(harness: &HarnessKind) -> &'static str {
+fn harness_key(harness: &HarnessId) -> &'static str {
     crate::compiler::harness_descriptor::descriptor(*harness).canonical_id
 }
 
 impl HarnessOverrides {
-    pub fn get(
-        &self,
-        harness: &HarnessKind,
-    ) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    pub fn get(&self, harness: &HarnessId) -> Option<&serde_json::Map<String, serde_json::Value>> {
         self.entries.get(harness_key(harness))
     }
 }
@@ -254,7 +191,7 @@ pub struct AgentProfile {
     pub description: Option<String>,
 
     // --- Routing fields ---
-    pub harness: Option<HarnessKind>,
+    pub harness: Option<HarnessId>,
 
     // --- Model fields ---
     pub model: Option<String>,
@@ -291,13 +228,13 @@ pub struct AgentProfile {
 }
 
 impl AgentProfile {
-    pub fn effective_skills(&self, _harness: &HarnessKind) -> &SkillsSpec {
+    pub fn effective_skills(&self, _harness: &HarnessId) -> &SkillsSpec {
         &self.skills
     }
 
     pub fn effective_native_config(
         &self,
-        harness: &HarnessKind,
+        harness: &HarnessId,
     ) -> Option<&serde_json::Map<String, serde_json::Value>> {
         self.harness_overrides
             .get(harness)
@@ -738,7 +675,7 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
 
     // harness:
     let harness = fm.get("harness").and_then(Value::as_str).and_then(|s| {
-        if let Some(h) = HarnessKind::from_str(s) {
+        if let Some(h) = mars_schema::harness::parse(s) {
             Some(h)
         } else {
             diags.push(AgentDiagnostic::UnknownHarness {

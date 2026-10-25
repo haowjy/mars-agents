@@ -160,11 +160,11 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         .harness
         .as_deref()
         .map(|name| {
-            registry::parse(name).ok_or_else(|| {
+            mars_schema::harness::parse(name).ok_or_else(|| {
                 MarsError::Config(ConfigError::Invalid {
                     message: format!(
                         "unknown harness `{name}`; valid harnesses: {}",
-                        registry::names().join(", ")
+                        mars_schema::harness::NAMES.join(", ")
                     ),
                 })
             })
@@ -385,7 +385,7 @@ fn assess(
     // Probe-backed inventories are keyed by exact launch slug. A broad
     // provider constraint intentionally groups variants for ordinary routing,
     // but would score the wrong displayed row here.
-    let model_id = if row.key.harness.native_provider().is_none() {
+    let model_id = if registry::native_provider(row.key.harness).is_none() {
         &row.key.harness_model_id
     } else {
         &row.key.model_id
@@ -501,7 +501,7 @@ mod tests {
     fn live_verdict_cannot_cross_provider_or_model_spelling() {
         let row = CuratedRow {
             key: RowKey {
-                harness: registry::HarnessId::OpenCode,
+                harness: mars_schema::HarnessId::OpenCode,
                 harness_model_id: "openai/gpt-5".into(),
                 provider: Some("openai".into()),
                 model_id: "gpt-5".into(),

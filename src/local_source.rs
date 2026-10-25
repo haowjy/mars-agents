@@ -97,9 +97,9 @@ pub(crate) fn flat_skill_excluded_paths(
         // an authored `.mars-src` resource tree.
         excluded.extend([PathBuf::from(LOCAL_SOURCE_DIR), PathBuf::from(".agents")]);
         excluded.extend(
-            crate::harness::registry::all()
+            mars_schema::harness::ALL
                 .iter()
-                .map(|h| PathBuf::from(h.default_target())),
+                .map(|h| PathBuf::from(crate::harness::registry::descriptor(*h).default_target)),
         );
     }
     for target in targets {

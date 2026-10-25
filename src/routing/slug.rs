@@ -1,3 +1,4 @@
+use crate::harness::registry;
 /// Decomposed slug — the shared representation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlugParts<'a> {
@@ -70,8 +71,8 @@ pub fn providers_exact_match(a: &str, b: &str) -> bool {
 /// Whether a provider string maps to a native harness's registry provider,
 /// including variants such as `openai-codex` or `anthropic-claude`.
 pub fn provider_matches_native_harness(provider: &str, harness: &str) -> bool {
-    crate::harness::registry::parse(harness)
-        .and_then(|id| id.native_provider())
+    mars_schema::harness::parse(harness)
+        .and_then(|id| registry::native_provider(id))
         .is_some_and(|native| providers_match(provider, native))
 }
 

@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::compiler::harness_descriptor::{CompilerHarnessDescriptor, descriptor};
 use crate::diagnostic::DiagnosticCollector;
@@ -13,6 +12,7 @@ use crate::sync::rewrite::RenameIndex;
 use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry};
 use crate::types::SourceName;
+use mars_schema::HarnessId;
 
 use super::metadata::PackageMetadata;
 use super::model::{ModelFallbackReason, resolve_model};
@@ -45,7 +45,7 @@ pub(super) type HookCheck = fn(&crate::compiler::hooks::ParsedHookItem, &mut Dia
 
 pub(super) struct TreeProfile {
     format: &'static crate::plugin::PluginTreeSpec,
-    harness: HarnessKind,
+    harness: HarnessId,
     pub(super) agents: Option<AgentPolicy>,
     native_model_aliases: &'static [&'static str],
     plugin_root_token: Option<&'static str>,

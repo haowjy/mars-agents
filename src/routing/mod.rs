@@ -1,6 +1,8 @@
 use crate::config::targets::HarnessScope;
 use crate::harness::host::{AuthState, ListingEvidence, ListingEvidenceSet};
-use crate::harness::registry::{HarnessClass, HarnessId, ListingAuth};
+use crate::harness::registry;
+use crate::harness::registry::{HarnessClass, ListingAuth};
+use mars_schema::HarnessId;
 use std::collections::HashSet;
 
 pub mod acceptance;
@@ -239,7 +241,7 @@ pub fn permission_denial(
 ) -> Option<&'static str> {
     if !scope.permits(harness) {
         Some("disabled_target")
-    } else if crate::harness::registry::parse(harness).is_some_and(|id| excluded.contains(&id)) {
+    } else if mars_schema::harness::parse(harness).is_some_and(|id| excluded.contains(&id)) {
         Some("excluded_by_caller")
     } else {
         None
@@ -423,7 +425,7 @@ where
         candidates.push((harness, None, RouteSource::ConfigDefault));
     }
     candidates.extend(
-        crate::harness::registry::all()
+        mars_schema::harness::ALL
             .iter()
             .map(|id| (id.as_str().to_string(), None, RouteSource::Provider)),
     );
@@ -546,11 +548,11 @@ where
     F: Fn(&str) -> crate::harness::host::AuthState,
     P: ProbeResolver + ?Sized,
 {
-    let harness_id = crate::harness::registry::parse(harness);
+    let harness_id = mars_schema::harness::parse(harness);
     let mut assessment =
         candidate_support_evidence(input, harness, harness_id, provider_order, probe_resolver);
     if assessment.match_evidence.is_some() && assessment.skip_reason.is_none() {
-        let auth = match harness_id.map(HarnessId::class) {
+        let auth = match harness_id.map(|id| registry::descriptor(id).class) {
             Some(HarnessClass::Native { .. }) => auth_check(harness),
             Some(HarnessClass::ProbeBacked {
                 listing: ListingAuth::Gated,
@@ -614,7 +616,7 @@ where
         };
     }
 
-    if harness_id.is_some_and(|id| id.native_provider().is_some())
+    if harness_id.is_some_and(|id| registry::native_provider(id).is_some())
         && provider_constraint_excludes_native_harness(input.provider_constraint, harness)
     {
         return CandidateAssessment {
@@ -640,7 +642,7 @@ where
             chosen_slug: None,
             chosen_model: None,
             match_evidence: Some(
-                if harness_id.is_some_and(|id| id.native_provider().is_some()) {
+                if harness_id.is_some_and(|id| registry::native_provider(id).is_some()) {
                     MatchEvidence::Confirmed
                 } else {
                     MatchEvidence::Passthrough
@@ -650,7 +652,7 @@ where
         };
     }
 
-    if harness_id.is_some_and(|id| id.native_provider().is_some()) {
+    if harness_id.is_some_and(|id| registry::native_provider(id).is_some()) {
         let native_slugs = catalog_slugs_for_native_harness(harness, input.catalog_model_slugs);
         if !native_slugs.is_empty() {
             let selection = select_probe_slug(
@@ -958,7 +960,7 @@ fn passthrough_assessment(harness: &str) -> CandidateAssessment {
 }
 
 fn native_provider_for_harness(harness: &str) -> Option<&'static str> {
-    crate::harness::registry::parse(harness).and_then(HarnessId::native_provider)
+    mars_schema::harness::parse(harness).and_then(registry::native_provider)
 }
 
 fn is_native_match(provider: Option<&str>, harness: &str) -> bool {
@@ -1169,7 +1171,7 @@ mod tests {
                 Some(names) => HarnessScope::Only(
                     names
                         .iter()
-                        .map(|name| crate::harness::registry::parse(name).unwrap())
+                        .map(|name| mars_schema::harness::parse(name).unwrap())
                         .collect(),
                 ),
             },

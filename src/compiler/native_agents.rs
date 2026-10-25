@@ -24,7 +24,7 @@ pub(crate) struct NativeAgentReconcileCtx<'a> {
     pub old_lock: &'a crate::lock::LockFile,
     pub dry_run: bool,
     /// When set (e.g. `mars link <target>`), selective reconcile only touches these harnesses.
-    pub selective_harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
+    pub selective_harness_scope: Option<&'a [mars_schema::HarnessId]>,
 }
 
 pub(crate) struct NativeAgentSurfaceCompileOptions {
@@ -37,15 +37,15 @@ pub(crate) struct NativeAgentSurfaceCompileOptions {
 pub(crate) struct NativeAgentCompileCtx<'a> {
     pub project_root: &'a Path,
     pub old_lock: &'a crate::lock::LockFile,
-    pub harness_scope: Option<&'a [crate::compiler::agents::HarnessKind]>,
-    pub configured_emit_harnesses: &'a [crate::compiler::agents::HarnessKind],
+    pub harness_scope: Option<&'a [mars_schema::HarnessId]>,
+    pub configured_emit_harnesses: &'a [mars_schema::HarnessId],
     pub options: NativeAgentSurfaceCompileOptions,
     /// Agents from `[settings.meridian.fanout].agents` for per-agent fanout qualification.
     pub fanout_agents: &'a [String],
 }
 
 struct NativeAgentEmit<'a> {
-    harness: &'a crate::compiler::agents::HarnessKind,
+    harness: &'a mars_schema::HarnessId,
     profile: &'a crate::compiler::agents::AgentProfile,
     fm: &'a crate::frontmatter::Frontmatter,
     body: &'a str,
@@ -93,7 +93,7 @@ struct NativeResolvedModel<'a> {
 #[derive(Debug, Clone)]
 struct NativeModelCandidate {
     token: String,
-    harness_constraint: Option<crate::compiler::agents::HarnessKind>,
+    harness_constraint: Option<mars_schema::HarnessId>,
 }
 
 struct NativeSessionProbeResolver<'a> {
@@ -115,7 +115,7 @@ impl crate::routing::ProbeResolver for NativeSessionProbeResolver<'_> {
 
     fn listing_evidence(
         &mut self,
-        harness: crate::harness::registry::HarnessId,
+        harness: mars_schema::HarnessId,
     ) -> crate::harness::host::ListingEvidence {
         self.session.listing_evidence(harness)
     }
@@ -155,9 +155,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     ) -> Self {
         let mut installed_for_native_targets = session.installed_harnesses();
         installed_for_native_targets.extend(
-            crate::compiler::agents::HarnessKind::all()
+            mars_schema::harness::ALL
                 .iter()
-                .map(|harness| harness.to_harness_id().as_str().to_string()),
+                .map(|harness| harness.as_str().to_string()),
         );
         session.extend_installed_harnesses(installed_for_native_targets.iter().cloned());
         Self {
@@ -174,7 +174,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     pub(crate) fn decision_for_profile(
         &mut self,
         profile: &crate::compiler::agents::AgentProfile,
-        target_harness: &crate::compiler::agents::HarnessKind,
+        target_harness: &mars_schema::HarnessId,
         include_fanout: bool,
         emit_all: bool,
     ) -> NativeModelDecision {
@@ -255,9 +255,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         &mut self,
         profile: &crate::compiler::agents::AgentProfile,
         token: &str,
-        target_harness: &crate::compiler::agents::HarnessKind,
+        target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
-        let memo_effort = if *target_harness == crate::compiler::agents::HarnessKind::Cursor {
+        let memo_effort = if *target_harness == mars_schema::HarnessId::Cursor {
             self.resolve_candidate(token).and_then(|resolved| {
                 cursor_effective_effort(profile, resolved.alias).map(str::to_string)
             })
@@ -266,7 +266,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         };
         let key = (
             token.to_string(),
-            target_harness.to_harness_id().as_str().to_string(),
+            target_harness.as_str().to_string(),
             memo_effort,
         );
         if let Some(cached) = self.memo.get(&key) {
@@ -282,10 +282,10 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         &mut self,
         profile: &crate::compiler::agents::AgentProfile,
         token: &str,
-        target_harness: &crate::compiler::agents::HarnessKind,
+        target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
         let resolved = self.resolve_candidate(token)?;
-        let target_name = target_harness.to_harness_id().as_str().to_string();
+        let target_name = target_harness.as_str().to_string();
         let provider_order = self.routing_settings.provider_order_names();
         let harness_order = self.routing_settings.harness_order_names();
         let default_harness = self.routing_settings.default_harness_name();
@@ -307,7 +307,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 installed_harnesses: &self.installed_for_native_targets,
                 excluded_harnesses: &[],
                 harness_scope: crate::config::targets::HarnessScope::Only(
-                    [target_harness.to_harness_id()].into_iter().collect(),
+                    [*target_harness].into_iter().collect(),
                 ),
                 opencode_probe_result: None,
                 pi_probe_result: None,
@@ -346,11 +346,11 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
     fn route_model_ids(
         &self,
-        target_harness: &crate::compiler::agents::HarnessKind,
+        target_harness: &mars_schema::HarnessId,
         model_id: &str,
     ) -> Vec<String> {
         let mut ids = vec![model_id.to_string()];
-        if *target_harness == crate::compiler::agents::HarnessKind::Cursor
+        if *target_harness == mars_schema::HarnessId::Cursor
             && let Some(shimmed) = cursor_probe_model_id_shim(model_id)
             && !ids.iter().any(|id| id == &shimmed)
         {
@@ -362,19 +362,19 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     fn native_model_id(
         &mut self,
         profile: &crate::compiler::agents::AgentProfile,
-        target_harness: &crate::compiler::agents::HarnessKind,
+        target_harness: &mars_schema::HarnessId,
         resolved: &NativeResolvedModel<'_>,
         routed_model_id: &str,
         trace: &crate::routing::RoutingTrace,
     ) -> Option<String> {
-        if *target_harness == crate::compiler::agents::HarnessKind::OpenCode {
-            let harness_name = target_harness.to_harness_id();
+        if *target_harness == mars_schema::HarnessId::OpenCode {
+            let harness_name = target_harness;
             let selected = trace
                 .assessments
                 .iter()
                 .find(|assessment| assessment.harness == harness_name.as_str());
             let launch = crate::models::harness_model::resolve_harness_model(
-                harness_name,
+                *harness_name,
                 &resolved.model_id,
                 selected.and_then(|assessment| assessment.chosen_slug.as_deref()),
                 selected.and_then(|assessment| assessment.chosen_model.as_deref()),
@@ -387,7 +387,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             return (!launch.harness_model_id.is_empty() && launch.harness_model_id.contains('/'))
                 .then_some(launch.harness_model_id);
         }
-        if *target_harness != crate::compiler::agents::HarnessKind::Cursor {
+        if *target_harness != mars_schema::HarnessId::Cursor {
             return Some(resolved.model_id.clone());
         }
 
@@ -448,7 +448,7 @@ pub fn native_agent_orphan_preserve_paths(
 
     let mut preserved: HashMap<String, HashSet<String>> = HashMap::new();
     for target in targets {
-        if crate::compiler::agents::HarnessKind::from_target_dir(target).is_none() {
+        if crate::harness::registry::harness_for_target(target).is_none() {
             continue;
         }
         for dest_path in old_lock.output_dest_paths_for_target(target) {
@@ -471,7 +471,11 @@ pub fn selective_native_orphan_preserve_paths(
     let targets: Vec<_> = spec
         .harnesses
         .iter()
-        .map(|harness| harness.target_dir().to_string())
+        .map(|harness| {
+            crate::harness::registry::descriptor(*harness)
+                .default_target
+                .to_string()
+        })
         .collect();
     native_agent_orphan_preserve_paths(old_lock, &targets)
 }
@@ -580,8 +584,7 @@ pub(crate) fn reconcile_native_agent_surfaces(
         .filter(|item| item.kind == crate::lock::ItemKind::Agent)
     {
         for output in &item.outputs {
-            let Some(harness) =
-                crate::compiler::agents::HarnessKind::from_target_dir(&output.target_root)
+            let Some(harness) = crate::harness::registry::harness_for_target(&output.target_root)
             else {
                 continue;
             };
@@ -648,13 +651,15 @@ fn desired_native_agent_outputs(
             ctx.configured_emit_harnesses,
             model_router,
         ) {
-            let extension = if harness == crate::compiler::agents::HarnessKind::Codex {
+            let extension = if harness == mars_schema::HarnessId::Codex {
                 "toml"
             } else {
                 "md"
             };
             desired.insert((
-                harness.target_dir().to_string(),
+                crate::harness::registry::descriptor(harness)
+                    .default_target
+                    .to_string(),
                 format!("agents/{}.{extension}", agent.agent_name),
             ));
         }
@@ -681,7 +686,7 @@ fn desired_native_agent_outputs(
             continue;
         }
         for output in &item.outputs {
-            if crate::compiler::agents::HarnessKind::from_target_dir(&output.target_root).is_some()
+            if crate::harness::registry::harness_for_target(&output.target_root).is_some()
                 && is_native_agent_dest_path(output.dest_path.as_str())
             {
                 desired.insert((output.target_root.clone(), output.dest_path.to_string()));
@@ -794,17 +799,16 @@ pub(crate) fn qualifying_agent_emissions(
     agent_name: &str,
     policy: &AgentSurfacePolicy,
     fanout_agents: &[String],
-    harness_scope: Option<&[crate::compiler::agents::HarnessKind]>,
-    configured_emit_harnesses: &[crate::compiler::agents::HarnessKind],
+    harness_scope: Option<&[mars_schema::HarnessId]>,
+    configured_emit_harnesses: &[mars_schema::HarnessId],
     model_router: &mut NativeModelRoutingRuntime<'_>,
 ) -> Vec<(
-    crate::compiler::agents::HarnessKind,
+    mars_schema::HarnessId,
     crate::compiler::agents::lower::NativeModel,
 )> {
-    use crate::compiler::agents::HarnessKind;
+    use mars_schema::HarnessId;
 
-    let in_scope =
-        |harness: &HarnessKind| harness_scope.is_none_or(|scope| scope.contains(harness));
+    let in_scope = |harness: &HarnessId| harness_scope.is_none_or(|scope| scope.contains(harness));
 
     match policy {
         AgentSurfacePolicy::SuppressAll => Vec::new(),
@@ -873,15 +877,17 @@ fn emit_lowered_native_agent(
         diag,
     );
 
-    let harness_dir = ctx.project_root.join(agent.harness.target_dir());
+    let harness_dir = ctx
+        .project_root
+        .join(crate::harness::registry::descriptor(*agent.harness).default_target);
     let native_agents_dir = harness_dir.join("agents");
     let file_name = match agent.harness {
-        crate::compiler::agents::HarnessKind::Codex => format!("{}.toml", agent.agent_name),
+        mars_schema::HarnessId::Codex => format!("{}.toml", agent.agent_name),
         _ => format!("{}.md", agent.agent_name),
     };
     let native_path = native_agents_dir.join(&file_name);
     let dest_rel = format!("agents/{file_name}");
-    let target_dir = agent.harness.target_dir();
+    let target_dir = crate::harness::registry::descriptor(*agent.harness).default_target;
     let dest_exists = surface_ownership::target_dest_exists(&native_path);
     match surface_ownership::copy_decision(
         ctx.old_lock,
@@ -999,25 +1005,24 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
 
 fn policy_override_harness(
     policy: &crate::config::ModelPolicyRule,
-) -> Option<crate::compiler::agents::HarnessKind> {
+) -> Option<mars_schema::HarnessId> {
     policy
         .overrides
         .get(serde_yaml::Value::String("harness".to_string()))
         .and_then(|value| value.as_str())
-        .and_then(crate::compiler::agents::HarnessKind::from_str)
+        .and_then(mars_schema::harness::parse)
 }
 
 fn native_acceptance_policy(
-    target_harness: &crate::compiler::agents::HarnessKind,
+    target_harness: &mars_schema::HarnessId,
 ) -> crate::routing::acceptance::MatchPolicy {
     match target_harness {
-        crate::compiler::agents::HarnessKind::Claude
-        | crate::compiler::agents::HarnessKind::Codex => {
+        mars_schema::HarnessId::Claude | mars_schema::HarnessId::Codex => {
             crate::routing::acceptance::MatchPolicy::AllowPassthrough
         }
-        crate::compiler::agents::HarnessKind::OpenCode
-        | crate::compiler::agents::HarnessKind::Cursor
-        | crate::compiler::agents::HarnessKind::Pi => {
+        mars_schema::HarnessId::OpenCode
+        | mars_schema::HarnessId::Cursor
+        | mars_schema::HarnessId::Pi => {
             crate::routing::acceptance::MatchPolicy::RequireSlugEvidence
         }
     }
@@ -1123,12 +1128,10 @@ pub(crate) fn materialize_native_agents_after_link(
     input: &NativeAgentLinkMaterializeCtx<'_>,
     diag: &mut DiagnosticCollector,
 ) -> (Vec<CompiledNativeOutput>, Vec<RemovedNativeOutput>) {
-    use crate::compiler::agents::HarnessKind;
-
     if !input
         .managed_targets
         .iter()
-        .any(|target| HarnessKind::from_target_dir(target).is_some())
+        .any(|target| crate::harness::registry::harness_for_target(target).is_some())
     {
         return (Vec::new(), Vec::new());
     }
@@ -1136,7 +1139,7 @@ pub(crate) fn materialize_native_agents_after_link(
     let link_harness_scope: Vec<_> = input
         .target_outcomes
         .iter()
-        .filter_map(|outcome| HarnessKind::from_target_dir(&outcome.target))
+        .filter_map(|outcome| crate::harness::registry::harness_for_target(&outcome.target))
         .collect();
     if link_harness_scope.is_empty() {
         return (Vec::new(), Vec::new());
@@ -1177,7 +1180,7 @@ pub(crate) fn materialize_native_agents_after_link(
     let configured_emit_harnesses: Vec<_> = input
         .managed_targets
         .iter()
-        .filter_map(|t| HarnessKind::from_target_dir(t))
+        .filter_map(|t| crate::harness::registry::harness_for_target(t))
         .collect();
     let fanout_agents = input.effective.settings.meridian_fanout_agents();
     let reconcile_ctx = NativeAgentReconcileCtx {

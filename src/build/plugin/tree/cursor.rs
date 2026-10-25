@@ -1,14 +1,14 @@
-use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
+use mars_schema::HarnessId;
 
 use super::{StandardTreeOutput, TreeProfile};
 
 pub(super) static PROFILE: TreeProfile = TreeProfile {
     format: &crate::plugin::CURSOR_TREE_SPEC,
-    harness: HarnessKind::Cursor,
+    harness: HarnessId::Cursor,
     agents: Some(preserve_agent),
     native_model_aliases: &[],
     plugin_root_token: Some("${CURSOR_PLUGIN_ROOT}"),

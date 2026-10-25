@@ -15,7 +15,6 @@
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_yaml::Value;
 
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use crate::compiler::tool_names::{
     Capability, OverlayToolName, ParsedToolName, is_mcp_wire_token, parse_mars_tool_name,
@@ -25,6 +24,7 @@ use crate::compiler::tool_natives::{self, Native};
 use crate::config::AgentOverlayTools;
 use crate::frontmatter::Frontmatter;
 use crate::permission_set::{PermissionSet, merge_permission_set};
+use mars_schema::HarnessId;
 
 /// What a rule does when its capability (and pattern) match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -248,7 +248,7 @@ impl ProjectedRule {
 
 /// Project `rule` onto `harness`. The one place a capability becomes native permission names
 /// and unscoped harness tool names.
-fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
+fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
     match &rule.capability {
         Capability::Any => ProjectedRule {
             bindings: Vec::new(),
@@ -279,7 +279,7 @@ fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
 /// projection path.
 pub(crate) fn project_platform_capability(
     capability: &'static str,
-    harness: HarnessKind,
+    harness: HarnessId,
 ) -> ProjectedRule {
     project_builtin_capability(capability, None, harness)
 }
@@ -287,7 +287,7 @@ pub(crate) fn project_platform_capability(
 fn project_builtin_capability(
     capability: &str,
     pattern: Option<&str>,
-    harness: HarnessKind,
+    harness: HarnessId,
 ) -> ProjectedRule {
     match tool_natives::lookup(capability, harness) {
         Some(Native::Tools(names)) => ProjectedRule::known(
@@ -341,7 +341,7 @@ impl EffectiveToolPolicy {
 
     /// Every rule spelled for `harness`. The one projection both lowerers and the launch
     /// bundle use.
-    pub(crate) fn project(&self, harness: HarnessKind) -> PolicyProjection<'_> {
+    pub(crate) fn project(&self, harness: HarnessId) -> PolicyProjection<'_> {
         let mut rules: Vec<(&ToolRule, ProjectedRule)> = self
             .rules
             .iter()
@@ -571,7 +571,7 @@ impl<'a> PolicyProjection<'a> {
 /// documented deny → ask → allow order selects the stricter action. Scoped rules compare by
 /// their rendered `name(pattern)`, so a scope never narrows an unscoped rule and the harness's
 /// own path-pattern precedence applies.
-fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: HarnessKind) {
+fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: HarnessId) {
     let takes_part = |rule: &ToolRule| !rule.is_wildcard() && !rule.is_mcp();
     let narrower: Vec<Option<(ToolAction, Vec<String>)>> = rules
         .iter()
@@ -600,7 +600,7 @@ fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: Har
     // `write(p)` and `edit(p)` both become `Edit(p)`, while `glob(p)` and `grep(p)` both become
     // `Read(p)`. Claude evaluates matching actions as deny, then ask, then allow. Resolve that
     // documented order here so every downstream representation carries the same winner.
-    if harness == HarnessKind::Claude {
+    if harness == HarnessId::Claude {
         let scoped: Vec<(ToolAction, bool, Vec<String>)> = rules
             .iter()
             .map(|(rule, projected)| (rule.action, rule.pattern.is_some(), projected.native()))
@@ -901,9 +901,10 @@ pub const NON_CANONICAL_TOOL_FIELD_ALIASES: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{AgentDiagnostic, HarnessKind, parse_agent_content};
+    use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
     use crate::compiler::skills::{SkillDiagnostic, parse_skill_content};
     use crate::frontmatter::Frontmatter;
+    use mars_schema::HarnessId;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
         let mut diags = Vec::new();
@@ -1126,14 +1127,14 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n  notebook: deny\n---\n",
         );
-        let claude = policy.project(HarnessKind::Claude);
+        let claude = policy.project(HarnessId::Claude);
         assert_eq!(claude.rules()[0].1.native(), ["Edit", "NotebookEdit"]);
         assert_eq!(claude.rules()[0].1.native_tools(), ["Edit", "NotebookEdit"]);
         assert_eq!(claude.rules()[1].1.native(), ["Write"]);
         assert_eq!(claude.rules()[1].1.native_tools(), ["Write"]);
-        assert!(policy.project(HarnessKind::Claude).overlaps().is_empty());
+        assert!(policy.project(HarnessId::Claude).overlaps().is_empty());
         // Pi names `edit` and `write` as separate tools too.
-        assert!(policy.project(HarnessKind::Pi).overlaps().is_empty());
+        assert!(policy.project(HarnessId::Pi).overlaps().is_empty());
     }
 
     #[test]
@@ -1142,10 +1143,7 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n---\n",
         );
-        assert_eq!(
-            policy.project(HarnessKind::Codex).overlaps(),
-            ["apply_patch"]
-        );
+        assert_eq!(policy.project(HarnessId::Codex).overlaps(), ["apply_patch"]);
     }
 
     #[test]
@@ -1153,7 +1151,7 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  bash: allow\n  'bash(git push *)': deny\n---\n",
         );
-        let projection = policy.project(HarnessKind::Claude);
+        let projection = policy.project(HarnessId::Claude);
         assert_eq!(projection.rules()[0].1.native(), ["Bash"]);
         assert_eq!(projection.rules()[1].1.native(), ["Bash(git push *)"]);
         assert!(projection.overlaps().is_empty());
@@ -1236,7 +1234,7 @@ mod tests {
             let parsed = parse_mars_tool_name(rule).unwrap();
             let projected = project_rule(
                 &ToolRule::from_parsed(parsed, ToolAction::Deny),
-                HarnessKind::Claude,
+                HarnessId::Claude,
             );
             assert_eq!(projected.native_tools(), native_tools, "{rule}");
         }
@@ -1246,7 +1244,7 @@ mod tests {
                 parse_mars_tool_name("write(src/**)").unwrap(),
                 ToolAction::Allow,
             ),
-            HarnessKind::Claude,
+            HarnessId::Claude,
         );
         assert!(
             write
@@ -1262,7 +1260,7 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  'write(src/**)': allow\n  'edit(src/**)': ask\n  'notebook(src/**)': deny\n---\n",
         );
-        let projection = policy.project(HarnessKind::Claude);
+        let projection = policy.project(HarnessId::Claude);
         assert!(projection.rules()[0].1.native().is_empty(), "allow loses");
         assert!(
             projection.rules()[0].1.native_tools().is_empty(),
@@ -1365,7 +1363,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
 ---
 ",
         );
-        let claude = policy.project(HarnessKind::Claude);
+        let claude = policy.project(HarnessId::Claude);
         assert_eq!(
             claude.natives(ToolAction::Deny, RuleKind::All),
             ["Bash", "Read", "mcp__github__delete_repo"]
@@ -1375,7 +1373,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
             ["mcp__github__delete_repo"]
         );
         // Codex cannot scope one MCP tool: the rule is a gap with the reason, not a name.
-        let codex = policy.project(HarnessKind::Codex);
+        let codex = policy.project(HarnessId::Codex);
         assert_eq!(
             codex.natives(ToolAction::Deny, RuleKind::Mcp),
             Vec::<String>::new()

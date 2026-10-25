@@ -29,7 +29,7 @@ pub struct LaunchBundleRequest {
     pub model: Option<String>,
     pub literal_model: bool,
     pub harness: Option<String>,
-    pub excluded_harnesses: Vec<crate::harness::registry::HarnessId>,
+    pub excluded_harnesses: Vec<mars_schema::HarnessId>,
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,

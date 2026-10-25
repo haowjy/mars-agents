@@ -22,9 +22,7 @@ use crate::compiler::lossiness::Lossiness;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{
-        AgentDiagnostic, AgentProfile, HarnessKind, parse_agent_content,
-    };
+    use crate::compiler::agents::{AgentDiagnostic, AgentProfile, HarnessId, parse_agent_content};
     use crate::frontmatter::Frontmatter;
 
     fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<AgentDiagnostic>) {
@@ -538,7 +536,7 @@ mod tests {
         let content = "---\nname: coder\nmode: subagent\nharness: claude\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_for_harness_with_model(
-            &HarnessKind::Claude,
+            &HarnessId::Claude,
             &profile,
             &fm,
             fm.body(),
@@ -728,7 +726,7 @@ mod tests {
         let claude_content = "---\nname: coder\nmodel: gpt55\nharness: claude\n---\n# Coder\nbody";
         let (claude_profile, claude_fm, _) = profile_from(claude_content);
         let claude_out = lower_for_harness_with_model(
-            &HarnessKind::Claude,
+            &HarnessId::Claude,
             &claude_profile,
             &claude_fm,
             claude_fm.body(),
@@ -747,7 +745,7 @@ mod tests {
         let codex_content = "---\nname: coder\nmodel: gpt55\nharness: codex\n---\n# body";
         let (codex_profile, codex_fm, _) = profile_from(codex_content);
         let codex_out = lower_for_harness_with_model(
-            &HarnessKind::Codex,
+            &HarnessId::Codex,
             &codex_profile,
             &codex_fm,
             codex_fm.body(),
@@ -772,7 +770,7 @@ mod tests {
         let (profile, fm, _) = profile_from(content);
         let body = fm.body().to_string();
         let out = lower_for_harness_with_model(
-            &HarnessKind::Claude,
+            &HarnessId::Claude,
             &profile,
             &fm,
             &body,
@@ -785,7 +783,7 @@ mod tests {
         let (profile2, fm2, _) = profile_from(content2);
         let body2 = fm2.body().to_string();
         let out2 = lower_for_harness_with_model(
-            &HarnessKind::Codex,
+            &HarnessId::Codex,
             &profile2,
             &fm2,
             &body2,
@@ -801,7 +799,7 @@ mod tests {
         let content3 = "---\nname: cursor-agent\nmodel: gpt55\nharness: cursor\n---\n# body";
         let (profile3, fm3, _) = profile_from(content3);
         let out3 = lower_for_harness_with_model(
-            &HarnessKind::Cursor,
+            &HarnessId::Cursor,
             &profile3,
             &fm3,
             fm3.body(),

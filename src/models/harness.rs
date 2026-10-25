@@ -8,7 +8,7 @@ pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "cursor", "openc
 
 pub fn detect_installed_harnesses() -> HashSet<String> {
     let resolver = PathExecutableResolver;
-    registry::all()
+    mars_schema::harness::ALL
         .iter()
         .copied()
         .filter(|id| {
@@ -21,7 +21,7 @@ pub fn detect_installed_harnesses() -> HashSet<String> {
         .collect()
 }
 pub fn normalize_harness_name(name: &str) -> Option<String> {
-    registry::normalize_name(name)
+    mars_schema::harness::normalize_name(name)
 }
 
 pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {

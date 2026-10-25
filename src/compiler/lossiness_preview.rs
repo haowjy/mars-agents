@@ -11,12 +11,13 @@
 
 use std::path::{Path, PathBuf};
 
+use mars_schema::HarnessId;
 use tempfile::TempDir;
 
 use crate::compiler::agent_copy;
 use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
-use crate::compiler::agents::{HarnessKind, parse_agent_profile};
+use crate::compiler::agents::parse_agent_profile;
 use crate::compiler::harness_descriptor::configured_emit_harnesses;
 use crate::compiler::native_agents::{NativeModelRoutingRuntime, qualifying_agent_emissions};
 use crate::compiler::variants;
@@ -213,7 +214,7 @@ fn collect_staged_agent_lossiness(
     path: &Path,
     agent_name: &str,
     policy: &crate::compiler::AgentSurfacePolicy,
-    configured_harnesses: &[HarnessKind],
+    configured_harnesses: &[HarnessId],
     fanout_agents: &[String],
     model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
@@ -255,6 +256,7 @@ fn collect_staged_agent_lossiness(
 mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticCategory;
+    use mars_schema::HarnessId;
     use tempfile::TempDir;
 
     fn collect_lossiness(base: &Path, mode: LossinessMode) -> Result<Vec<Diagnostic>, MarsError> {
@@ -272,7 +274,7 @@ mod tests {
             ..Default::default()
         };
         let harnesses = configured_emit_harnesses(&settings);
-        assert_eq!(harnesses, vec![HarnessKind::Cursor]);
+        assert_eq!(harnesses, vec![HarnessId::Cursor]);
     }
 
     #[test]

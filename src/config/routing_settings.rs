@@ -1,5 +1,5 @@
 use super::targets::HarnessScope;
-use crate::harness::registry::HarnessId;
+use mars_schema::HarnessId;
 
 use super::Settings;
 
@@ -108,11 +108,11 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
 
         let mut candidates = Vec::new();
         for (position, candidate) in order.iter().enumerate() {
-            let Some(harness) = crate::harness::registry::parse(candidate) else {
+            let Some(harness) = mars_schema::harness::parse(candidate) else {
                 diagnostics.push(RoutingConfigDiagnostic {
                     message: format!(
                         "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
-                        crate::harness::registry::names().join(", ")
+                        mars_schema::harness::NAMES.join(", ")
                     ),
                 });
                 continue;
@@ -142,7 +142,7 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
     });
 
     let default_harness = settings.default_harness.as_ref().and_then(|value| {
-        match crate::harness::registry::parse(value) {
+        match mars_schema::harness::parse(value) {
             Some(harness) => Some(ParsedHarnessValue {
                 harness,
                 original: value.clone(),
@@ -151,7 +151,7 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
                 diagnostics.push(RoutingConfigDiagnostic {
                     message: format!(
                         "settings.default_harness `{value}` is invalid; expected one of: {}",
-                        crate::harness::registry::names().join(", ")
+                        mars_schema::harness::NAMES.join(", ")
                     ),
                 });
                 None

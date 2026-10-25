@@ -14,7 +14,7 @@
 //! Every name below must appear in the harness's real tool list, which the tests pin with the
 //! source each list came from. When a harness ships a tool, add it to that list first.
 
-use crate::compiler::agents::HarnessKind;
+use mars_schema::HarnessId;
 
 /// What a harness calls a capability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,20 +56,20 @@ use Native::{Absent, NoSwitch, ScopedTools, Tools};
 type Table = &'static [(&'static str, Native)];
 
 /// The row for `capability` on `harness`, or `None` when Mars has no entry.
-pub(crate) fn lookup(capability: &str, harness: HarnessKind) -> Option<Native> {
+pub(crate) fn lookup(capability: &str, harness: HarnessId) -> Option<Native> {
     table(harness)
         .iter()
         .find(|(name, _)| *name == capability)
         .map(|(_, native)| *native)
 }
 
-fn table(harness: HarnessKind) -> Table {
+fn table(harness: HarnessId) -> Table {
     match harness {
-        HarnessKind::Claude => CLAUDE,
-        HarnessKind::Codex => CODEX,
-        HarnessKind::OpenCode => OPENCODE,
-        HarnessKind::Pi => PI,
-        HarnessKind::Cursor => CURSOR,
+        HarnessId::Claude => CLAUDE,
+        HarnessId::Codex => CODEX,
+        HarnessId::OpenCode => OPENCODE,
+        HarnessId::Pi => PI,
+        HarnessId::Cursor => CURSOR,
     }
 }
 
@@ -351,11 +351,11 @@ mod tests {
 
     /// Every tool each harness ships, with where the list came from. A name in a table above
     /// that is not here is a guess.
-    fn real_tools(harness: HarnessKind) -> &'static [&'static str] {
+    fn real_tools(harness: HarnessId) -> &'static [&'static str] {
         match harness {
             // Tools reference + 2.1.307 binary, plus `TaskOutput`: removed in 2.1.277, so 2.1.307
             // no longer offers it, but older builds do (see the `task` row).
-            HarnessKind::Claude => &[
+            HarnessId::Claude => &[
                 "Agent",
                 "Artifact",
                 "AskUserQuestion",
@@ -407,7 +407,7 @@ mod tests {
             // 0.163.0 binary: tool handlers (`core/src/tools/handlers/`) and registered tool
             // names. Leaves out experimental and internal tools no capability names (`sleep`,
             // `current_time`, `skills.list`, `skills.read`, memory and message-board tools).
-            HarnessKind::Codex => &[
+            HarnessId::Codex => &[
                 "apply_patch",
                 "close_agent",
                 "exec_command",
@@ -434,7 +434,7 @@ mod tests {
             ],
             // v1 permission names: opencode.ai/docs/permissions, v1.19.3 / v2.0.29 captures and
             // binaries.
-            HarnessKind::OpenCode => &[
+            HarnessId::OpenCode => &[
                 "bash",
                 "edit",
                 "glob",
@@ -452,7 +452,7 @@ mod tests {
                 "websearch",
             ],
             // Package `@earendil-works/pi-coding-agent` dist/core/tools/index.js.
-            HarnessKind::Pi => &[
+            HarnessId::Pi => &[
                 "bash",
                 "edit",
                 "find",
@@ -463,7 +463,7 @@ mod tests {
                 "write",
             ],
             // Mars 0.16 table; not re-verified (target unmaintained).
-            HarnessKind::Cursor => &[
+            HarnessId::Cursor => &[
                 "AskQuestion",
                 "EditNotebook",
                 "Glob",
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn every_native_name_and_native_tool_is_a_real_tool_of_its_harness() {
-        for &harness in HarnessKind::all() {
+        for &harness in mars_schema::harness::ALL {
             let real = real_tools(harness);
             for (capability, native) in table(harness) {
                 let lists: &[&[&str]] = match native {
@@ -531,14 +531,14 @@ mod tests {
                 unscoped: actual_unscoped,
                 scoped: actual_scoped,
                 note,
-            }) = lookup(capability, HarnessKind::Claude)
+            }) = lookup(capability, HarnessId::Claude)
             else {
                 panic!("Claude `{capability}` must distinguish bare and scoped rules");
             };
             assert_eq!(actual_unscoped, unscoped, "{capability} bare rule");
             assert_eq!(actual_scoped, scoped, "{capability} scoped rule");
             assert_eq!(
-                lookup(capability, HarnessKind::Claude)
+                lookup(capability, HarnessId::Claude)
                     .expect("row")
                     .native_tools(),
                 unscoped,
@@ -551,14 +551,14 @@ mod tests {
         }
 
         assert_eq!(
-            lookup("web_fetch", HarnessKind::Claude),
+            lookup("web_fetch", HarnessId::Claude),
             Some(Tools(&["WebFetch"]))
         );
     }
 
     #[test]
     fn every_row_is_a_canonical_capability_named_once() {
-        for &harness in HarnessKind::all() {
+        for &harness in mars_schema::harness::ALL {
             let mut seen = std::collections::HashSet::new();
             for (capability, _) in table(harness) {
                 assert!(
@@ -578,10 +578,10 @@ mod tests {
         // A missing row means Mars has not decided. The maintained harnesses decide every
         // capability: tools, `Absent`, or `NoSwitch`.
         for harness in [
-            HarnessKind::Claude,
-            HarnessKind::Codex,
-            HarnessKind::OpenCode,
-            HarnessKind::Pi,
+            HarnessId::Claude,
+            HarnessId::Codex,
+            HarnessId::OpenCode,
+            HarnessId::Pi,
         ] {
             for capability in crate::compiler::tool_names::canonical_capabilities() {
                 assert!(

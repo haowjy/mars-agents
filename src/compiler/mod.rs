@@ -241,11 +241,11 @@ pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
 #[cfg(test)]
 mod skill_surface_tests {
     use super::*;
-    use crate::compiler::agents::HarnessKind;
     use crate::config::AgentEmission;
     use crate::lock::{ItemId, ItemKind};
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::{DestPath, ItemName};
+    use mars_schema::HarnessId;
 
     #[test]
     fn native_agent_emission_defaults_to_standalone_auto() {
@@ -313,7 +313,7 @@ mod skill_surface_tests {
     #[test]
     fn agent_copy_supersedes_meridian_managed_auto() {
         let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessKind::Claude],
+            harnesses: vec![HarnessId::Claude],
             include_fanout: false,
         };
         assert!(matches!(
@@ -325,7 +325,7 @@ mod skill_surface_tests {
     #[test]
     fn agent_copy_supersedes_never_emission() {
         let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessKind::Claude],
+            harnesses: vec![HarnessId::Claude],
             include_fanout: false,
         };
         assert!(matches!(
@@ -337,7 +337,7 @@ mod skill_surface_tests {
     #[test]
     fn agent_emission_always_takes_precedence_over_agent_copy() {
         let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessKind::Claude],
+            harnesses: vec![HarnessId::Claude],
             include_fanout: false,
         };
         assert_eq!(

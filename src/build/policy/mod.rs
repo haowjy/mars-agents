@@ -39,7 +39,7 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
 
     fn listing_evidence(
         &mut self,
-        harness: crate::harness::registry::HarnessId,
+        harness: mars_schema::HarnessId,
     ) -> crate::harness::host::ListingEvidence {
         self.session.listing_evidence(harness)
     }
@@ -53,7 +53,7 @@ pub struct PolicyInput<'a> {
     pub model_override: Option<&'a str>,
     pub literal_model: bool,
     pub harness_override: Option<&'a str>,
-    pub excluded_harnesses: &'a [crate::harness::registry::HarnessId],
+    pub excluded_harnesses: &'a [mars_schema::HarnessId],
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
@@ -469,9 +469,8 @@ pub fn resolve_policy(
     {
         provenance.insert("harness_order_position".to_string(), position.to_string());
     }
-    let native_config =
-        crate::compiler::agents::HarnessKind::from_str(harness_resolution.harness.value.as_str())
-            .and_then(|harness| input.profile.effective_native_config(&harness).cloned());
+    let native_config = mars_schema::harness::parse(harness_resolution.harness.value.as_str())
+        .and_then(|harness| input.profile.effective_native_config(&harness).cloned());
     let execution_resolution = execution::resolve_execution_policy(
         &input,
         resolved_model.alias,
@@ -535,8 +534,8 @@ pub fn resolve_policy(
     }
 
     let selected_harness = harness_resolution.harness.value.clone();
-    let needs_cursor_probe = crate::harness::registry::parse(&selected_harness)
-        == Some(crate::harness::registry::HarnessId::Cursor);
+    let needs_cursor_probe =
+        mars_schema::harness::parse(&selected_harness) == Some(mars_schema::HarnessId::Cursor);
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();

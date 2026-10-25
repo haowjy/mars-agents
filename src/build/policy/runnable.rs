@@ -1,10 +1,10 @@
 use crate::build::bundle::Routing;
-use crate::harness::registry::{self, HarnessId};
 use crate::models::availability::{RunnableConfidence, RunnablePathSource};
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::probes::CursorProbeResult;
 use crate::models::probes::cursor::{CursorEffortResolutionError, resolve_cursor_effort_slug};
 use crate::routing::{MatchEvidence, report::RouteDecisionReport};
+use mars_schema::HarnessId;
 
 pub(super) struct RoutingInput<'a> {
     pub(super) model: String,
@@ -55,7 +55,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         .into_iter()
         .flat_map(|attempt| &attempt.assessments)
         .find(|assessment| assessment.harness == harness);
-    let harness_id = registry::parse(&harness).expect("selected harness is registered");
+    let harness_id = mars_schema::harness::parse(&harness).expect("selected harness is registered");
     let runnable = resolve_harness_model(
         harness_id,
         &model,

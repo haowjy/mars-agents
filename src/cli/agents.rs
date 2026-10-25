@@ -201,11 +201,7 @@ fn run_show(
         }
 
         let mode_str = profile.mode.as_ref().map(|m| m.as_str()).unwrap_or("");
-        let harness_str = profile
-            .harness
-            .as_ref()
-            .map(|h| h.to_harness_id().as_str())
-            .unwrap_or("");
+        let harness_str = profile.harness.as_ref().map(|h| h.as_str()).unwrap_or("");
         let model_str = profile.model.as_deref().unwrap_or("");
         let approval_str = profile
             .approval

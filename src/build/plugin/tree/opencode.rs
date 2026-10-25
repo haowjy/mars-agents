@@ -3,11 +3,11 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::hooks::{ParsedHookItem, default_fragment_name};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::target::ConfigEntry;
+use mars_schema::HarnessId;
 
 use super::super::metadata::PackageMetadata;
 use super::{TreeProfile, WrittenTreeContents};
@@ -18,7 +18,7 @@ const DATA_PLACEHOLDER: &str = "/*__MARS_PLUGIN_DATA__*/";
 
 pub(super) static PROFILE: TreeProfile = TreeProfile {
     format: &crate::plugin::OPENCODE_TREE_SPEC,
-    harness: HarnessKind::OpenCode,
+    harness: HarnessId::OpenCode,
     agents: None,
     native_model_aliases: &[],
     plugin_root_token: None,

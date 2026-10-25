@@ -2,8 +2,8 @@
 //!
 //! Mirrors the first-class harness set (minus Pi) plus `MarsNative` for
 //! already-canonical mars-authored sources. Harness identity comes from
-//! [`crate::harness::registry::HarnessId`] — not the compiler layer.
-//! `compiler::agents::HarnessKind` bridges via `to_dialect` / `from_dialect`.
+//! [`mars_schema::HarnessId`] — not the compiler layer.
+//! `compiler::agents::HarnessId` bridges via `to_dialect` / `from_dialect`.
 
 use std::fmt;
 use std::path::Path;
@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::harness::registry::HarnessId;
+use mars_schema::HarnessId;
 
 /// Recognized inbound source dialects for lift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn harness_id_roundtrip() {
-        use crate::harness::registry::HarnessId;
+        use mars_schema::HarnessId;
 
         for id in [
             HarnessId::Claude,

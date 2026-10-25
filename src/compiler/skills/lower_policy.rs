@@ -2,11 +2,11 @@
 
 use serde_yaml::{Mapping, Value};
 
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use crate::compiler::skills::SkillProfile;
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
+use mars_schema::HarnessId;
 
 // ---------------------------------------------------------------------------
 // Policy axes
@@ -207,7 +207,7 @@ const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
     when_to_use: WhenToUsePolicy::FoldIntoDescription,
 };
 
-fn policy_for(harness: HarnessKind) -> &'static SkillLoweringPolicy {
+fn policy_for(harness: HarnessId) -> &'static SkillLoweringPolicy {
     match harness_descriptor::descriptor(harness).skill_policy {
         SkillLoweringPolicyKind::Claude => &CLAUDE_POLICY,
         SkillLoweringPolicyKind::Codex => &CODEX_POLICY,
@@ -288,7 +288,7 @@ struct LoweringCtx<'a> {
 
 impl<'a> LoweringCtx<'a> {
     fn new(
-        harness_kind: HarnessKind,
+        harness_kind: HarnessId,
         policy: &'static SkillLoweringPolicy,
         profile: &'a SkillProfile,
     ) -> Self {
@@ -582,7 +582,7 @@ fn codex_openai_yaml_sibling() -> LoweredSibling {
 }
 
 pub(super) fn lower_skill_with_policy(
-    harness: HarnessKind,
+    harness: HarnessId,
     profile: &SkillProfile,
     body: &str,
 ) -> LoweredOutput {

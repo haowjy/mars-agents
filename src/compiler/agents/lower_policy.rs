@@ -1,5 +1,5 @@
 //! Declarative per-harness agent lowering policies and shared pipeline.
-use crate::compiler::agents::{AgentProfile, HarnessKind};
+use crate::compiler::agents::AgentProfile;
 use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
 ///
@@ -23,6 +23,7 @@ pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
 use crate::frontmatter::{Frontmatter, SkillsSpec};
+use mars_schema::HarnessId;
 
 // ---------------------------------------------------------------------------
 // Effective field access for target lowering
@@ -30,13 +31,13 @@ use crate::frontmatter::{Frontmatter, SkillsSpec};
 
 /// Effective field values read from top-level Mars semantics.
 struct Effective<'a> {
-    harness: HarnessKind,
+    harness: HarnessId,
     profile: &'a AgentProfile,
     tools: &'a EffectiveToolPolicy,
 }
 
 impl<'a> Effective<'a> {
-    fn new(profile: &'a AgentProfile, harness: HarnessKind) -> Self {
+    fn new(profile: &'a AgentProfile, harness: HarnessId) -> Self {
         Self {
             harness,
             profile,
@@ -353,7 +354,7 @@ fn yv(s: &str) -> serde_yaml::Value {
 }
 
 struct AgentLoweringCtx<'a> {
-    harness: HarnessKind,
+    harness: HarnessId,
     policy: &'static AgentLoweringPolicy,
     profile: &'a AgentProfile,
     model_field: &'a NativeModel,
@@ -366,7 +367,7 @@ struct AgentLoweringCtx<'a> {
 
 impl<'a> AgentLoweringCtx<'a> {
     fn new(
-        harness: HarnessKind,
+        harness: HarnessId,
         policy: &'static AgentLoweringPolicy,
         profile: &'a AgentProfile,
         body: &str,
@@ -553,7 +554,7 @@ impl<'a> AgentLoweringCtx<'a> {
         let Some(_) = self.eff.approval() else {
             return;
         };
-        let classification = if self.harness == HarnessKind::Cursor {
+        let classification = if self.harness == HarnessId::Cursor {
             // Cursor maps approval to CLI flags — approximate, target-enforced gap.
             Lossiness::Approximate {
                 note: "auto maps to --force, yolo to --yolo; confirm has no Cursor equivalent and falls back to default",
@@ -573,7 +574,7 @@ impl<'a> AgentLoweringCtx<'a> {
         let Some(_) = self.eff.sandbox() else {
             return;
         };
-        let classification = if self.harness == HarnessKind::Cursor {
+        let classification = if self.harness == HarnessId::Cursor {
             // Cursor sandbox is a coarse enabled/disabled mapping — target-enforced gap.
             Lossiness::Approximate {
                 note: "Cursor only supports enabled/disabled; workspace-write and danger-full-access both map to disabled",
@@ -787,7 +788,7 @@ fn render_markdown(yaml: serde_yaml::Mapping, body: &str) -> Vec<u8> {
 }
 
 fn lower_markdown_agent(
-    harness: HarnessKind,
+    harness: HarnessId,
     policy: &'static AgentLoweringPolicy,
     profile: &AgentProfile,
     body: &str,
@@ -810,7 +811,7 @@ pub fn lower_to_claude(
     model_field: &NativeModel,
 ) -> LoweredOutput {
     lower_markdown_agent(
-        HarnessKind::Claude,
+        HarnessId::Claude,
         &CLAUDE_AGENT_POLICY,
         profile,
         body,
@@ -837,7 +838,7 @@ pub fn lower_to_codex(
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    let eff = Effective::new(profile, HarnessKind::Codex);
+    let eff = Effective::new(profile, HarnessId::Codex);
     let target = "Codex";
     let lowered_skills = lower_agent_skills(eff.skills(), AgentSkillsPolicy::BodyGuidance, body);
     let mut lossy = Vec::new();
@@ -994,7 +995,7 @@ pub fn lower_to_opencode(
     model_field: &NativeModel,
 ) -> LoweredOutput {
     lower_markdown_agent(
-        HarnessKind::OpenCode,
+        HarnessId::OpenCode,
         &OPENCODE_AGENT_POLICY,
         profile,
         body,
@@ -1012,7 +1013,7 @@ pub fn lower_to_cursor_with_model(
     model_field: &NativeModel,
 ) -> LoweredOutput {
     lower_markdown_agent(
-        HarnessKind::Cursor,
+        HarnessId::Cursor,
         &CURSOR_AGENT_POLICY,
         profile,
         body,
@@ -1022,13 +1023,7 @@ pub fn lower_to_cursor_with_model(
 
 /// Lower an agent profile to Pi-native markdown format.
 pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel) -> LoweredOutput {
-    lower_markdown_agent(
-        HarnessKind::Pi,
-        &PI_AGENT_POLICY,
-        profile,
-        body,
-        model_field,
-    )
+    lower_markdown_agent(HarnessId::Pi, &PI_AGENT_POLICY, profile, body, model_field)
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,7 +1035,7 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel
 /// Returns `None` for unknown harnesses (should not happen if the profile was
 /// validated, but guards against future harness additions).
 pub fn lower_for_harness_with_model(
-    harness: &HarnessKind,
+    harness: &HarnessId,
     profile: &AgentProfile,
     fm: &Frontmatter,
     body: &str,
@@ -1050,10 +1045,10 @@ pub fn lower_for_harness_with_model(
         AgentLoweringPolicyKind::Claude => lower_to_claude(profile, fm, body, model_field),
         AgentLoweringPolicyKind::Codex => lower_to_codex(profile, body, model_field),
         AgentLoweringPolicyKind::Markdown => match harness {
-            HarnessKind::OpenCode => lower_to_opencode(profile, body, model_field),
-            HarnessKind::Cursor => lower_to_cursor_with_model(profile, body, model_field),
-            HarnessKind::Pi => lower_to_pi(profile, body, model_field),
-            HarnessKind::Claude | HarnessKind::Codex => {
+            HarnessId::OpenCode => lower_to_opencode(profile, body, model_field),
+            HarnessId::Cursor => lower_to_cursor_with_model(profile, body, model_field),
+            HarnessId::Pi => lower_to_pi(profile, body, model_field),
+            HarnessId::Claude | HarnessId::Codex => {
                 unreachable!("native policies handled above")
             }
         },

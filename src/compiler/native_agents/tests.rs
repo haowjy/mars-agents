@@ -1,5 +1,4 @@
 use super::*;
-use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
 use crate::harness::host::{
     CapabilityCollectionOptions, CapabilitySession, ExecutableResolver, ExecutableState,
@@ -7,10 +6,11 @@ use crate::harness::host::{
 use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
 use crate::models::{CachedModel, ModelAlias, ModelSpec, ModelsCache};
 use indexmap::IndexMap;
+use mars_schema::HarnessId;
 use std::path::Path;
 use tempfile::TempDir;
 
-fn profile_with_model(model: &str, harness: HarnessKind) -> crate::compiler::agents::AgentProfile {
+fn profile_with_model(model: &str, harness: HarnessId) -> crate::compiler::agents::AgentProfile {
     crate::compiler::agents::AgentProfile {
         name: None,
         description: None,
@@ -135,8 +135,8 @@ fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
     let mut router = test_router(&aliases, &cache);
     assert_eq!(
         router.decision_for_profile(
-            &profile_with_model("sonnet", HarnessKind::Claude),
-            &HarnessKind::Claude,
+            &profile_with_model("sonnet", HarnessId::Claude),
+            &HarnessId::Claude,
             false,
             true,
         ),
@@ -146,8 +146,8 @@ fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
     );
     assert_eq!(
         router.decision_for_profile(
-            &profile_with_model("raw-model-id", HarnessKind::Codex),
-            &HarnessKind::Codex,
+            &profile_with_model("raw-model-id", HarnessId::Codex),
+            &HarnessId::Codex,
             false,
             true,
         ),
@@ -155,8 +155,8 @@ fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
     );
     assert_eq!(
         router.decision_for_profile(
-            &profile_with_model("gpt-auto", HarnessKind::Codex),
-            &HarnessKind::Codex,
+            &profile_with_model("gpt-auto", HarnessId::Codex),
+            &HarnessId::Codex,
             false,
             true,
         ),
@@ -188,8 +188,8 @@ fn native_model_routing_resolves_auto_aliases_from_models_cache() {
 
     assert_eq!(
         router.decision_for_profile(
-            &profile_with_model("sonnet", HarnessKind::Claude),
-            &HarnessKind::Cursor,
+            &profile_with_model("sonnet", HarnessId::Claude),
+            &HarnessId::Cursor,
             false,
             true,
         ),
@@ -198,8 +198,8 @@ fn native_model_routing_resolves_auto_aliases_from_models_cache() {
     );
     assert_eq!(
         router.decision_for_profile(
-            &profile_with_model("sonnet", HarnessKind::Claude),
-            &HarnessKind::Claude,
+            &profile_with_model("sonnet", HarnessId::Claude),
+            &HarnessId::Claude,
             false,
             true,
         ),
@@ -232,8 +232,8 @@ fn native_model_routing_does_not_linked_fallback_foreign_provider_alias() {
 
     assert_eq!(
         router.decision_for_profile(
-            &profile_with_model("deepseek", HarnessKind::Claude),
-            &HarnessKind::Claude,
+            &profile_with_model("deepseek", HarnessId::Claude),
+            &HarnessId::Claude,
             false,
             true,
         ),
@@ -302,7 +302,7 @@ fn link_suppress_all_reconciles_selective_native_target() {
             project_root: dir.path(),
             old_lock: &lock,
             dry_run: false,
-            selective_harness_scope: Some(&[HarnessKind::Claude]),
+            selective_harness_scope: Some(&[HarnessId::Claude]),
         },
         &HashSet::new(),
         &mut diag,
@@ -362,7 +362,7 @@ fn emit_selective_fanout_agents_match_case_insensitively() {
     );
 
     let spec = agent_copy::AgentCopySpec {
-        harnesses: vec![HarnessKind::Claude],
+        harnesses: vec![HarnessId::Claude],
         include_fanout: false,
     };
     let fanout_agents = vec!["Reviewer".to_string()];
@@ -372,7 +372,7 @@ fn emit_selective_fanout_agents_match_case_insensitively() {
         project_root: dir.path(),
         old_lock: &LockFile::empty(),
         harness_scope: None,
-        configured_emit_harnesses: &[HarnessKind::Claude],
+        configured_emit_harnesses: &[HarnessId::Claude],
         options: NativeAgentSurfaceCompileOptions {
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
@@ -468,7 +468,7 @@ fn parse_mars_agent(content: &str, stem: &str) -> MarsCanonicalAgent {
 
 fn compile_emit_all_agents(
     dir: &Path,
-    configured_harnesses: &[HarnessKind],
+    configured_harnesses: &[HarnessId],
     agents: &[MarsCanonicalAgent],
     aliases: &IndexMap<String, ModelAlias>,
 ) -> Vec<CompiledNativeOutput> {
@@ -525,7 +525,7 @@ fn compile_emit_all_opencode(
         project_root: dir,
         old_lock: &LockFile::empty(),
         harness_scope: None,
-        configured_emit_harnesses: &[HarnessKind::OpenCode],
+        configured_emit_harnesses: &[HarnessId::OpenCode],
         options: NativeAgentSurfaceCompileOptions {
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
@@ -642,7 +642,7 @@ fn emit_all_emits_every_agent_to_single_configured_claude_target() {
     );
     let agents = [pinned, model_less];
 
-    let records = compile_emit_all_agents(dir.path(), &[HarnessKind::Claude], &agents, &aliases);
+    let records = compile_emit_all_agents(dir.path(), &[HarnessId::Claude], &agents, &aliases);
     assert_eq!(records.len(), 2);
     assert!(records.iter().all(|r| r.target_root == ".claude"));
 
@@ -687,7 +687,7 @@ fn emit_all_emits_to_every_configured_target() {
 
     let records = compile_emit_all_agents(
         dir.path(),
-        &[HarnessKind::Claude, HarnessKind::Codex],
+        &[HarnessId::Claude, HarnessId::Codex],
         std::slice::from_ref(&agent),
         &aliases,
     );
@@ -742,7 +742,7 @@ fn emit_all_ignores_authored_harness_pin_for_coverage() {
 
     let records = compile_emit_all_agents(
         dir.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
     );
@@ -760,7 +760,7 @@ fn emit_all_ignores_authored_harness_pin_for_coverage() {
 
 fn compile_emit_all_with_overlays(
     dir: &Path,
-    configured_harnesses: &[HarnessKind],
+    configured_harnesses: &[HarnessId],
     agents: &[MarsCanonicalAgent],
     aliases: &IndexMap<String, ModelAlias>,
     overlays: &IndexMap<String, crate::config::AgentOverlay>,
@@ -818,7 +818,7 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
             project_root: dir.path(),
             old_lock: &lock,
             harness_scope: None,
-            configured_emit_harnesses: &[HarnessKind::Claude],
+            configured_emit_harnesses: &[HarnessId::Claude],
             options: NativeAgentSurfaceCompileOptions {
                 force: false,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
@@ -878,7 +878,7 @@ fn emit_all_consumes_overlay_model_over_profile_model() {
 
     let records = compile_emit_all_with_overlays(
         dir.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
         &overlays,
@@ -923,7 +923,7 @@ fn emit_all_consumes_overlay_model_policies() {
 
     let records = compile_emit_all_with_overlays(
         dir.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
         &overlays,
@@ -967,7 +967,7 @@ fn emit_all_overlay_cross_harness_clears_foreign_declared_harness() {
 
     let records = compile_emit_all_with_overlays(
         dir.path(),
-        &[HarnessKind::Claude, HarnessKind::Codex],
+        &[HarnessId::Claude, HarnessId::Codex],
         std::slice::from_ref(&agent),
         &aliases,
         &overlays,
@@ -1009,7 +1009,7 @@ fn emit_all_hand_authored_cross_harness_clears_foreign_model() {
 
     let records = compile_emit_all_agents(
         dir.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
     );
@@ -1043,7 +1043,7 @@ fn emit_all_declared_harness_matching_model_still_pins() {
 
     let records = compile_emit_all_agents(
         dir.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         &[pinned, model_less],
         &aliases,
     );
@@ -1086,7 +1086,7 @@ fn emit_all_ignores_overlay_harness_for_model_resolution() {
 
     let records = compile_emit_all_with_overlays(
         dir.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
         &overlays,
@@ -1116,7 +1116,7 @@ fn emit_all_empty_overlay_leaves_lowered_output_unchanged() {
     );
     compile_emit_all_with_overlays(
         dir_baseline.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
         &IndexMap::new(),
@@ -1128,7 +1128,7 @@ fn emit_all_empty_overlay_leaves_lowered_output_unchanged() {
     std::fs::create_dir_all(dir_empty.path().join(".claude/agents")).unwrap();
     compile_emit_all_with_overlays(
         dir_empty.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
         &IndexMap::from([("worker".to_string(), crate::config::AgentOverlay::default())]),
@@ -1171,7 +1171,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
 
     let records = compile_emit_all_with_overlays(
         dir.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
         &overlays,
@@ -1220,7 +1220,7 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
         project_root: dir.path(),
         old_lock: &LockFile::empty(),
         harness_scope: None,
-        configured_emit_harnesses: &[HarnessKind::Claude],
+        configured_emit_harnesses: &[HarnessId::Claude],
         options: NativeAgentSurfaceCompileOptions {
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
@@ -1300,7 +1300,7 @@ fn emit_all_merged_local_overlay_wins_for_description() {
 
     let records = compile_emit_all_with_overlays(
         dir.path(),
-        &[HarnessKind::Claude],
+        &[HarnessId::Claude],
         std::slice::from_ref(&agent),
         &aliases,
         &merged,

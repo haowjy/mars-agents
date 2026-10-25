@@ -281,10 +281,7 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
         self.session.cursor_probe_result()
     }
 
-    fn listing_evidence(
-        &mut self,
-        harness: crate::harness::registry::HarnessId,
-    ) -> ListingEvidence {
+    fn listing_evidence(&mut self, harness: mars_schema::HarnessId) -> ListingEvidence {
         self.session.listing_evidence(harness)
     }
 }

@@ -217,6 +217,7 @@ pub(crate) fn preflight_config_entries(
                 .join(target_name)
                 .join("hooks")
                 .join(&item.def.name);
+            let hook_dir_token = portable_installed_hook_dir(&installed);
             if let Err(error) = validate_destination_path(&ctx.project_root, &installed, true) {
                 errors.push(error);
                 continue;
@@ -238,10 +239,15 @@ pub(crate) fn preflight_config_entries(
             let result = match mode {
                 Some(HookFragmentMode::MergeJson) => {
                     match adapter.and_then(|adapter| adapter.known_hook_events()) {
-                        Some(known) => {
-                            load_merge_fragment(&item, target_name, known, &installed, diag, true)
-                                .map(|_| ())
-                        }
+                        Some(known) => load_merge_fragment(
+                            &item,
+                            target_name,
+                            known,
+                            &hook_dir_token,
+                            diag,
+                            true,
+                        )
+                        .map(|_| ()),
                         None => Err(MarsError::Config(ConfigError::Invalid {
                             message: format!(
                                 "hook `{}`: target `{target_name}` has no native event allowlist",
@@ -262,7 +268,7 @@ pub(crate) fn preflight_config_entries(
                             continue;
                         }
                     }
-                    load_file_fragment(&item, target_name, &installed).map(|_| ())
+                    load_file_fragment(&item, target_name, &hook_dir_token).map(|_| ())
                 }
                 None => Err(MarsError::Config(ConfigError::Invalid {
                     message: format!(
@@ -517,6 +523,7 @@ pub(crate) fn compile_config_entries(
                     .join(target_root)
                     .join("hooks")
                     .join(&item.def.name);
+                let hook_dir_token = portable_installed_hook_dir(&installed);
                 if !dry_run && !hook_directory_is_installed(item, &installed) {
                     diag.warn(
                         "hook-not-installed",
@@ -532,7 +539,7 @@ pub(crate) fn compile_config_entries(
                     item,
                     target_root,
                     known_events,
-                    &installed,
+                    &hook_dir_token,
                     diag,
                     false,
                 ) {
@@ -585,6 +592,7 @@ pub(crate) fn compile_config_entries(
                     .join(target_root)
                     .join("hooks")
                     .join(&item.def.name);
+                let hook_dir_token = portable_installed_hook_dir(&installed);
                 if !dry_run && !hook_directory_is_installed(item, &installed) {
                     diag.warn(
                         "hook-not-installed",
@@ -605,7 +613,8 @@ pub(crate) fn compile_config_entries(
                     );
                     continue;
                 };
-                match crate::compiler::hooks::load_file_fragment(item, target_root, &installed) {
+                match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir_token)
+                {
                     Ok(content) => {
                         let relative_dest = relative_dest.to_string_lossy().into_owned();
                         desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
@@ -988,6 +997,10 @@ fn hook_directory_is_installed(
         .ok()
         .zip(crate::hash::compute_hash(&item.hook_dir, crate::lock::ItemKind::Hook).ok())
         .is_some_and(|(installed, desired)| installed == desired)
+}
+
+fn portable_installed_hook_dir(installed: &std::path::Path) -> String {
+    installed.to_string_lossy().replace('\\', "/")
 }
 
 /// Compute package depth for hook ordering.

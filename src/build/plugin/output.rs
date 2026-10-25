@@ -166,9 +166,10 @@ impl OutputPaths {
             "{}.lock",
             crate::platform::cache::safe_component_with_hash(&identity_text)
         );
-        let lock = crate::platform::cache::global_cache_root()?
-            .join("plugin-output-locks")
-            .join(lock_name);
+        let cache_root = crate::platform::cache::global_cache_root()?;
+        let cache_root = std::path::absolute(&cache_root)
+            .map_err(|source| io_error("resolve Mars cache path", &cache_root, source))?;
+        let lock = cache_root.join("plugin-output-locks").join(lock_name);
         let lock_identity = canonicalize_existing_prefix(&lock)?;
         if lock_identity.starts_with(&identity) {
             return Err(invalid(format!(

@@ -192,10 +192,10 @@ fn copy_and_lift_path(
     let logical_root = package_root.join(relative_root);
     if fs::metadata(&logical_root)?.is_dir() {
         fs::create_dir_all(dest_root.join(relative_root))?;
-        for entry in crate::fs::strict_authored_tree_entries(
-            package_root,
+        for entry in crate::fs::authored_tree_entries(
             &logical_root,
             &input.excluded_paths,
+            crate::fs::AuthoredSymlinkPolicy::ConfineTo(package_root),
             ctx.diag,
         )? {
             let relative = relative_root.join(&entry.relative);

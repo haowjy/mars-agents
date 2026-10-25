@@ -72,30 +72,6 @@ pub(crate) fn stage_rooted_source(
     )
 }
 
-/// Stage a package for publication, rejecting source indirection that leaves
-/// the package boundary. Sync continues to use [`stage_rooted_source`].
-pub(crate) fn stage_rooted_source_for_publish(
-    source_name: &SourceName,
-    rooted: RootedSourceRef,
-    options: RootedStageOptions,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    renames: &RenameMap,
-    staging_root: &Path,
-    diag: &mut DiagnosticCollector,
-) -> Result<StagedRootedSource, MarsError> {
-    let inputs = discover_publish_inputs(&rooted.package_root, Some(source_name.as_ref()), diag)?;
-    stage_rooted_source_for_publish_inputs(
-        source_name,
-        rooted,
-        options,
-        skill_overrides,
-        renames,
-        staging_root,
-        &inputs,
-        diag,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_rooted_source_for_publish_inputs(
     source_name: &SourceName,
@@ -331,7 +307,12 @@ fn copy_and_lift_tree(
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let entries = crate::fs::authored_tree_entries(source_root, excluded_paths, diag)?;
+    let entries = crate::fs::authored_tree_entries(
+        source_root,
+        excluded_paths,
+        crate::fs::AuthoredSymlinkPolicy::Follow,
+        diag,
+    )?;
     for entry in entries {
         let dest_path = dest_root.join(&entry.relative);
         if entry.kind == crate::fs::AuthoredEntryKind::Directory {

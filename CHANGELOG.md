@@ -45,8 +45,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hook order now follows shortest dependency depth, changing only when a direct dependency is
   also reached transitively. Codex users may need to re-trust moved hooks once with `/hooks`.
 - Discovery, MCP discovery and staging skip any directory holding a valid `.mars-plugin.json`
-  (generated plugin output) and report each skipped path, so a committed plugin tree is never
-  re-imported as package source.
+  (generated plugin output), so a committed plugin tree is never re-imported as package source.
+  A package's configured `[plugin].dir` is excluded directly and silently from `sync` and `check`;
+  other generated trees still report each skipped path.
 - Explicitly or automatically renamed agents and skills now carry their installed names in
   frontmatter, and `subagents:` references follow explicit agent renames as well as collision
   renames. Native agent sync also removes prior claims that are absent from the current emission

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use semver::{Comparator, Op, Version, VersionReq};
+use semver::Version;
 use serde::Serialize;
 
 use crate::dialect::Dialect;
@@ -126,7 +126,10 @@ fn plugin_warnings(
 
     let mut warnings = Vec::new();
     if crate::resolve::validate_package_requirement_syntax(package).is_ok()
-        && !requires_mars_has_plugin_floor(package.requires_mars.as_deref())
+        && !crate::resolve::requirement_has_floor(
+            package.requires_mars.as_deref(),
+            &Version::parse(PLUGIN_MARS_FLOOR).expect("plugin Mars floor is valid semver"),
+        )
     {
         warnings.push(format!(
             "plugin packages should set [package] `requires-mars = \">={PLUGIN_MARS_FLOOR}\"` or a higher floor, then rebuild the plugin; older Mars versions may drop [plugin] during `mars version`"
@@ -149,54 +152,6 @@ fn plugin_warnings(
     warnings.extend(state.root_files.iter().filter_map(|state| state.message()));
 
     Ok(warnings)
-}
-
-fn requires_mars_has_plugin_floor(requirement: Option<&str>) -> bool {
-    let Some(raw) = requirement.map(str::trim) else {
-        return false;
-    };
-    let parts: Vec<&str> = raw.split('.').collect();
-    let normalized = if (1..=3).contains(&parts.len())
-        && parts
-            .iter()
-            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
-    {
-        let mut parts = parts;
-        while parts.len() < 3 {
-            parts.push("0");
-        }
-        format!(">={}", parts.join("."))
-    } else {
-        raw.to_string()
-    };
-    let Ok(requirement) = VersionReq::parse(&normalized) else {
-        return false;
-    };
-    let floor = Version::parse(PLUGIN_MARS_FLOOR).expect("plugin Mars floor is valid semver");
-    requirement
-        .comparators
-        .iter()
-        .any(|comparator| comparator_floor(comparator).is_some_and(|minimum| minimum >= floor))
-}
-
-fn comparator_floor(comparator: &Comparator) -> Option<Version> {
-    // Partial strict bounds advance to the next specified component: `>0.18`
-    // means `>=0.19.0`, unlike the fully specified `>0.18.0`.
-    let (major, minor, patch) = match comparator.op {
-        Op::Greater if comparator.minor.is_none() => (comparator.major.checked_add(1)?, 0, 0),
-        Op::Greater if comparator.patch.is_none() => {
-            (comparator.major, comparator.minor?.checked_add(1)?, 0)
-        }
-        Op::Exact | Op::Greater | Op::GreaterEq | Op::Tilde | Op::Caret | Op::Wildcard => (
-            comparator.major,
-            comparator.minor.unwrap_or(0),
-            comparator.patch.unwrap_or(0),
-        ),
-        _ => return None,
-    };
-    let mut version = Version::new(major, minor, patch);
-    version.pre = comparator.pre.clone();
-    Some(version)
 }
 
 fn lossiness_diagnostics_for_check(

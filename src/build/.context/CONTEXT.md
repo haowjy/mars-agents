@@ -18,24 +18,24 @@ its lock-owning `StagedPlugin` alone replaces the destination when published.
 
 The publish variant of rooted-package staging selects graph-filtered item roots, eligible MCP
 definitions, and all hook roots (for strict pre-filter compatibility validation) rather than
-walking the package checkout. Staging and the input fingerprint share that typed item/MCP inventory;
-the sole raw plugin-tree copier uses the same strict authored-entry walker. Manifestless foreign
-sources separately copy manifest metadata with declarations filtered to selected items. The walker
-dereferences only links whose canonical targets remain inside the owning package and rejects special
-files; repo tooling and filtered-out non-hook items are ignored, and sync deliberately retains the
-ordinary walker. The root-package fingerprint includes inventory kinds, but not generated catalog
-metadata. Flat-root skills keep authored resources but exclude standard repo tooling and top-level
-special filesystem nodes from their publication inventory. Skill rename content is written into a
-strict-copied prepared source before native projection, and hook copies omit fragment paths
-belonging only to other targets.
+walking the package checkout. Staging and the input fingerprint share that typed item/MCP inventory.
+Manifestless foreign sources separately copy manifest metadata with declarations filtered to
+selected items. The one authored walker takes a symlink policy: publication dereferences only links
+whose canonical targets remain inside the owning package and rejects special files, while sync uses
+its historical follow behavior. Repo tooling and filtered-out non-hook items are ignored. The
+root-package fingerprint includes inventory kinds, but not generated catalog metadata. Flat-root
+skills keep authored resources but exclude standard repo tooling and top-level special filesystem
+nodes from their publication inventory. Skill rename content is written once into graph staging
+before native projection, and plain derived-tree copies omit hook fragment paths belonging only to
+other targets.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three
 tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. Tree profiles
 derive their harness kind, variant key and target root from the compiler descriptor; they add only
 plugin-specific agent policy, native model aliases, hook-root token, config writer and finish
 writer. Profiles also carry their typed `PluginTree` identity; `PluginTree::as_str()` is the sole
-directory and report key. Their hook filter runs before copying, so files, counts and finish-writer
-inputs agree. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits an
+directory and report key. Their authored-hook check runs once before the item loop; every selected
+hook is copied. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits an
 npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
 servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
 default-export check warns but never removes a hook; hook-directory substitution is

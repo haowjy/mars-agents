@@ -18,7 +18,7 @@ pub(super) static PROFILE: TreeProfile = TreeProfile {
     agents: Some(preserve_agent),
     native_model_aliases: &[],
     plugin_root_token: Some("${CURSOR_PLUGIN_ROOT}"),
-    accept_hook,
+    check_hook,
     write_config: write_config_entries,
     finish: write_manifest,
 };
@@ -32,12 +32,7 @@ fn preserve_agent(
     Ok(lowered.to_string())
 }
 
-fn accept_hook(
-    _hook: &crate::compiler::hooks::ParsedHookItem,
-    _diag: &mut DiagnosticCollector,
-) -> bool {
-    true
-}
+fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut DiagnosticCollector) {}
 
 fn write_manifest(
     root: &Path,

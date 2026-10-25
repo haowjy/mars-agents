@@ -262,34 +262,29 @@ pub(super) fn inspect_output(
     package_version: &str,
     expected_root_files: BTreeSet<&'static str>,
 ) -> Result<PluginOutputState, MarsError> {
-    let sentinel = match fs::symlink_metadata(output) {
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => None,
-        Err(source) => {
-            return Err(io_error("inspect plugin output", output, source));
-        }
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+    let sentinel = match super::output::classify_tree(output)? {
+        super::output::TreeState::Missing => None,
+        super::output::TreeState::Empty => {
             return without_sentinel(
                 package_root,
                 expected_root_files,
                 PluginDirectoryState::Unowned {
                     path: output.to_path_buf(),
-                    reason: "the configured output is not a regular directory".to_string(),
+                    reason: "the configured output directory is empty".to_string(),
                 },
             );
         }
-        Ok(_) => match crate::plugin_metadata::read(output) {
-            Ok(sentinel) => Some(sentinel),
-            Err(error) => {
-                return without_sentinel(
-                    package_root,
-                    expected_root_files,
-                    PluginDirectoryState::Unowned {
-                        path: output.to_path_buf(),
-                        reason: error.to_string(),
-                    },
-                );
-            }
-        },
+        super::output::TreeState::Unowned(reason) => {
+            return without_sentinel(
+                package_root,
+                expected_root_files,
+                PluginDirectoryState::Unowned {
+                    path: output.to_path_buf(),
+                    reason,
+                },
+            );
+        }
+        super::output::TreeState::Owned(sentinel) => Some(sentinel),
     };
 
     let Some(sentinel) = sentinel else {
@@ -453,8 +448,9 @@ fn changed_output_paths(
     output: &Path,
     sentinel: &PluginSentinel,
 ) -> Result<Vec<PathBuf>, MarsError> {
-    let mut actual = BTreeMap::new();
-    collect_output_entries(output, output, &mut actual)?;
+    let actual = crate::platform::fs::directory_tree_snapshot_filtered(output, &[SENTINEL_FILE])?
+        .expect("owned plugin output is a directory")
+        .file_hash_states();
 
     let paths: BTreeSet<String> = sentinel
         .files
@@ -472,43 +468,6 @@ fn changed_output_paths(
         })
         .map(PathBuf::from)
         .collect())
-}
-
-fn collect_output_entries(
-    root: &Path,
-    directory: &Path,
-    entries: &mut BTreeMap<String, Option<String>>,
-) -> Result<(), MarsError> {
-    let read_dir = fs::read_dir(directory)
-        .map_err(|source| io_error("read plugin output", directory, source))?;
-    for entry in read_dir {
-        let entry = entry.map_err(|source| io_error("read plugin output", directory, source))?;
-        let path = entry.path();
-        let relative = crate::hash::portable_relative(root, &path).ok_or_else(|| {
-            MarsError::InvalidRequest {
-                message: format!(
-                    "generated plugin path must be valid Unicode: {}",
-                    path.display()
-                ),
-            }
-        })?;
-        if relative == SENTINEL_FILE {
-            continue;
-        }
-        let file_type = entry
-            .file_type()
-            .map_err(|source| io_error("inspect plugin output entry", &path, source))?;
-        if file_type.is_dir() {
-            collect_output_entries(root, &path, entries)?;
-        } else if file_type.is_file() {
-            let bytes = fs::read(&path)
-                .map_err(|source| io_error("read plugin output file", &path, source))?;
-            entries.insert(relative, Some(crate::hash::hash_bytes(&bytes)));
-        } else {
-            entries.insert(relative, None);
-        }
-    }
-    Ok(())
 }
 
 fn root_file_conflict_message(path: &Path, reason: &str) -> String {

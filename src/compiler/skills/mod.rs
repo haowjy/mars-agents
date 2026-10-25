@@ -103,7 +103,7 @@ impl SkillDiagnostic {
             }
             Self::DeprecatedListFormTools => "skill `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string(),
             Self::MalformedFrontmatter { message } => {
-                format!("skill frontmatter is malformed; raw fallback used: {message}")
+                format!("skill frontmatter is malformed: {message}")
             }
         }
     }

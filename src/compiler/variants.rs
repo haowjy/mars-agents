@@ -425,9 +425,16 @@ fn lower_projected_skill_for_harness(
     let selected_fm = match crate::frontmatter::parse(selected_content) {
         Ok(fm) => fm,
         Err(e) => {
+            let fallback = if emit_schema_diags {
+                "; raw fallback used"
+            } else {
+                ""
+            };
             diag.error_with_category(
                 "skill-schema-error",
-                format!("skill `{skill_name}` selected variant frontmatter is malformed; raw fallback used: {e}"),
+                format!(
+                    "skill `{skill_name}` selected variant frontmatter is malformed{fallback}: {e}"
+                ),
                 crate::diagnostic::DiagnosticCategory::Validation,
             );
             return Ok(None);

@@ -11,7 +11,7 @@ resolves through `PublishLens`, stages every package, collects the flattened tar
 sync's shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
 `TreeProfile`. Profiles store only plugin-format policy; harness identity, variant key, and sync
 root come from `compiler::harness_descriptor`. Each profile has a typed tree identity, an optional
-hook-root token, and a hook acceptance policy that runs before copying. `PluginTree::as_str()` is
+hook-root token, and an authored-hook check that runs once before copying. `PluginTree::as_str()` is
 the single key for both staged directory names and reported output paths. Claude, Codex, and Grok
 share the Claude tree; Cursor and OpenCode have their own tree identities. The OpenCode tree is an
 npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and imports every
@@ -20,19 +20,18 @@ no recognizable default export, but runtime isolation decides whether each hook 
 Hook-directory substitution is JavaScript-string encoded, and one fragment's load or setup failure
 does not block later hooks.
 
-Publication staging, input fingerprinting, and the plugin-only source-tree copier share a typed
-inventory of item roots and MCP definitions. Graph filters narrow each staged dependency to what
-target collection can publish, except that every hook root remains available for the strict
-pre-filter compatibility check. Within that surface the strict authored walker rejects an
-out-of-package symlink or special file and materializes an in-package symlink as regular output.
-Manifestless foreign sources separately copy manifest metadata with declarations rewritten to the
-selected typed inventory, so rediscovery does not require excluded paths. The root-package input
-fingerprint includes inventory kinds and authored bytes, but never Mars-generated catalog metadata.
-Repo tooling and filtered-out non-hook items are not staged. Sync keeps its existing copy policy. A
-flat-root skill retains authored root resources but its publication inventory excludes standard
-tooling directories and top-level special filesystem nodes.
-Skills are copied to a prepared source tree and renamed before projection, so lowering sees
-installed frontmatter; hook copies exclude fragment files owned only by other tree targets.
+Publication staging and input fingerprinting share a typed inventory of item roots and MCP
+definitions. Graph filters narrow each staged dependency to what target collection can publish,
+except that every hook root remains available for the strict pre-filter compatibility check. A
+single authored walker takes the policy: publication confines links to the package and rejects
+special files, while sync retains its historical follow behavior. Manifestless foreign sources
+separately copy manifest metadata with declarations rewritten to the selected typed inventory, so
+rediscovery does not require excluded paths. The root-package input fingerprint includes inventory
+kinds and authored bytes, but never Mars-generated catalog metadata. Repo tooling and filtered-out
+non-hook items are not staged. A flat-root skill retains authored root resources but its publication
+inventory excludes standard tooling directories and top-level special filesystem nodes. Installed
+skill frontmatter is written once into graph staging before every tree projects it; derived skill
+and hook trees then use the plain copier, with other-target hook fragments excluded.
 
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
 project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the

@@ -40,8 +40,7 @@ pub(super) type FinishWriter = for<'a> fn(
     &mut DiagnosticCollector,
 ) -> Result<(), MarsError>;
 
-pub(super) type HookFilter =
-    fn(&crate::compiler::hooks::ParsedHookItem, &mut DiagnosticCollector) -> bool;
+pub(super) type HookCheck = fn(&crate::compiler::hooks::ParsedHookItem, &mut DiagnosticCollector);
 
 pub(super) struct TreeProfile {
     tree: PluginTree,
@@ -49,7 +48,7 @@ pub(super) struct TreeProfile {
     pub(super) agents: Option<AgentPolicy>,
     native_model_aliases: &'static [&'static str],
     plugin_root_token: Option<&'static str>,
-    accept_hook: HookFilter,
+    check_hook: HookCheck,
     write_config: ConfigWriter,
     finish: FinishWriter,
 }
@@ -181,6 +180,14 @@ pub(super) fn check_sources(
         }
     }
     warn_relative_mcp_args(&selected_mcp, diag);
+    for profile in profiles {
+        for (hook, _) in input
+            .target
+            .selected_hooks_for_target(profile.descriptor().target_dir)
+        {
+            (profile.check_hook)(hook, diag);
+        }
+    }
     Ok(())
 }
 
@@ -258,19 +265,11 @@ pub(super) fn write_tree(
         .target
         .selected_hooks_for_target(descriptor.target_dir)
         .map(|(hook, _)| hook)
-        .filter(|hook| (profile.accept_hook)(hook, diag))
         .collect();
     for hook in &hooks {
         let destination = root.join("hooks").join(&hook.def.name);
-        let package_root = &input
-            .graph
-            .nodes
-            .get(hook.source_name.as_str())
-            .expect("selected hook names a resolved package")
-            .rooted_ref
-            .package_root;
         let excluded = other_hook_fragments(hook, descriptor.target_dir);
-        super::published_tree::copy(package_root, &hook.hook_dir, &destination, &excluded, diag)?;
+        crate::fs::copy_dir_filtered(&hook.hook_dir, &destination, &excluded)?;
     }
     let mcp: Vec<_> = input
         .target
@@ -458,10 +457,8 @@ fn write_skill(
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let destination = root.join("skills").join(item.id.name.as_str());
-    let package_root = &input.graph.nodes[&item.source_name].rooted_ref.package_root;
-    let source = SkillSource::prepare(item, package_root, diag)?;
     crate::compiler::variants::project_skill_for_target_with_checked_schema(
-        &source.path,
+        &item.source_path,
         &destination,
         Some(profile.descriptor().variant_key),
         diag,
@@ -492,41 +489,6 @@ fn write_skill(
     crate::frontmatter::parse(&qualified)
         .map_err(|error| invalid_item("skill", item, error.to_string()))?;
     Ok(())
-}
-
-struct SkillSource {
-    path: PathBuf,
-    _temp: Option<tempfile::TempDir>,
-}
-
-impl SkillSource {
-    fn prepare(
-        item: &TargetItem,
-        package_root: &Path,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<Self, MarsError> {
-        let temp = tempfile::TempDir::new()?;
-        let path = temp.path().join("skill");
-        let excluded = if item.is_flat_skill {
-            crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
-                .iter()
-                .map(PathBuf::from)
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        super::published_tree::copy(package_root, &item.source_path, &path, &excluded, diag)?;
-        if let Some(content) = &item.rewritten_content {
-            crate::fs::atomic_write_preserving_permissions(
-                &path.join("SKILL.md"),
-                content.as_bytes(),
-            )?;
-        }
-        Ok(Self {
-            path,
-            _temp: Some(temp),
-        })
-    }
 }
 
 fn other_hook_fragments(

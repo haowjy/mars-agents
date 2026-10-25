@@ -23,12 +23,12 @@ pub(super) static PROFILE: TreeProfile = TreeProfile {
     agents: None,
     native_model_aliases: &[],
     plugin_root_token: None,
-    accept_hook,
+    check_hook,
     write_config: write_config_entries,
     finish: write_package,
 };
 
-fn accept_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) -> bool {
+fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
     let fragment = fragment_name(hook);
     let path = hook.hook_dir.join(&fragment);
     let content = match std::fs::read_to_string(&path) {
@@ -41,11 +41,11 @@ fn accept_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) -> bool {
                     hook.def.name, hook.source_name
                 ),
             );
-            return true;
+            return;
         }
     };
     if has_default_export(&content) {
-        return true;
+        return;
     }
 
     diag.warn(
@@ -55,7 +55,6 @@ fn accept_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) -> bool {
             hook.def.name, hook.source_name
         ),
     );
-    true
 }
 
 fn has_default_export(content: &str) -> bool {

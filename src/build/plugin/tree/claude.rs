@@ -22,17 +22,12 @@ pub(super) static PROFILE: TreeProfile = TreeProfile {
     agents: Some(apply_agent_policy),
     native_model_aliases: NATIVE_MODEL_ALIASES,
     plugin_root_token: Some("${CLAUDE_PLUGIN_ROOT}"),
-    accept_hook,
+    check_hook,
     write_config: write_config_entries,
     finish: write_manifest,
 };
 
-fn accept_hook(
-    _hook: &crate::compiler::hooks::ParsedHookItem,
-    _diag: &mut DiagnosticCollector,
-) -> bool {
-    true
-}
+fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut DiagnosticCollector) {}
 
 fn apply_agent_policy(
     lowered: &str,

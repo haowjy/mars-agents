@@ -592,32 +592,24 @@ pub(crate) fn stage_rooted_package(
     staging_root: Option<&Path>,
     diag: &mut DiagnosticCollector,
 ) -> Result<staging::StagedRootedSource, MarsError> {
-    stage_rooted_package_with_policy(
+    let Some(staging_root) = staging_root else {
+        return Ok(staging::StagedRootedSource {
+            rooted,
+            hook_surface: staging::HookSurfaceState::Readable,
+        });
+    };
+    let dep = effective_config.dependencies.get(source_name);
+    let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
+    let empty_renames = crate::types::RenameMap::new();
+    let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
+    staging::stage_rooted_source(
         source_name,
         rooted,
-        effective_config,
+        staging::RootedStageOptions { dialect },
+        &effective_config.skills,
+        renames,
         staging_root,
         diag,
-        false,
-    )
-}
-
-/// Plugin publication stages through the same lift/overlay path as sync while
-/// refusing filesystem indirection outside each source package.
-pub(crate) fn stage_rooted_package_for_publish(
-    source_name: &SourceName,
-    rooted: super::types::RootedSourceRef,
-    effective_config: &EffectiveConfig,
-    staging_root: &Path,
-    diag: &mut DiagnosticCollector,
-) -> Result<staging::StagedRootedSource, MarsError> {
-    stage_rooted_package_with_policy(
-        source_name,
-        rooted,
-        effective_config,
-        Some(staging_root),
-        diag,
-        true,
     )
 }
 
@@ -643,49 +635,6 @@ pub(crate) fn stage_rooted_package_for_publish_inputs(
         inputs,
         diag,
     )
-}
-
-fn stage_rooted_package_with_policy(
-    source_name: &SourceName,
-    rooted: super::types::RootedSourceRef,
-    effective_config: &EffectiveConfig,
-    staging_root: Option<&Path>,
-    diag: &mut DiagnosticCollector,
-    publish: bool,
-) -> Result<staging::StagedRootedSource, MarsError> {
-    let Some(staging_root) = staging_root else {
-        return Ok(staging::StagedRootedSource {
-            rooted,
-            hook_surface: staging::HookSurfaceState::Readable,
-        });
-    };
-
-    let dep = effective_config.dependencies.get(source_name);
-    let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
-    let empty_renames = crate::types::RenameMap::new();
-    let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
-    let options = staging::RootedStageOptions { dialect };
-    if publish {
-        staging::stage_rooted_source_for_publish(
-            source_name,
-            rooted,
-            options,
-            &effective_config.skills,
-            renames,
-            staging_root,
-            diag,
-        )
-    } else {
-        staging::stage_rooted_source(
-            source_name,
-            rooted,
-            options,
-            &effective_config.skills,
-            renames,
-            staging_root,
-            diag,
-        )
-    }
 }
 
 fn package_has_unfiltered_materialization_request(

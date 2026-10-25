@@ -226,8 +226,26 @@ impl DirectoryTreeSnapshot {
             .filter_map(|(path, kind)| match kind {
                 TreeEntryKind::Directory => None,
                 TreeEntryKind::File(hash) => Some((path.clone(), hash.clone())),
+                TreeEntryKind::Unsupported => None,
             })
             .collect()
+    }
+
+    pub(crate) fn file_hash_states(&self) -> std::collections::BTreeMap<String, Option<String>> {
+        self.entries
+            .iter()
+            .filter_map(|(path, kind)| match kind {
+                TreeEntryKind::Directory => None,
+                TreeEntryKind::File(hash) => Some((path.clone(), Some(hash.clone()))),
+                TreeEntryKind::Unsupported => Some((path.clone(), None)),
+            })
+            .collect()
+    }
+
+    fn is_strict(&self) -> bool {
+        self.entries
+            .values()
+            .all(|kind| !matches!(kind, TreeEntryKind::Unsupported))
     }
 }
 
@@ -235,6 +253,7 @@ impl DirectoryTreeSnapshot {
 enum TreeEntryKind {
     Directory,
     File(String),
+    Unsupported,
 }
 
 pub(crate) fn directory_tree_matches_snapshot(
@@ -252,6 +271,14 @@ pub(crate) fn strict_directory_tree_snapshot_filtered(
     root: &Path,
     excluded_top_level: &[&str],
 ) -> Result<Option<DirectoryTreeSnapshot>, MarsError> {
+    let snapshot = directory_tree_snapshot_filtered(root, excluded_top_level)?;
+    Ok(snapshot.filter(DirectoryTreeSnapshot::is_strict))
+}
+
+pub(crate) fn directory_tree_snapshot_filtered(
+    root: &Path,
+    excluded_top_level: &[&str],
+) -> Result<Option<DirectoryTreeSnapshot>, MarsError> {
     let metadata = match fs::symlink_metadata(root) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -261,11 +288,8 @@ pub(crate) fn strict_directory_tree_snapshot_filtered(
         return Ok(None);
     }
     let mut snapshot = DirectoryTreeSnapshot::new();
-    if collect_relative_tree_entries(root, root, excluded_top_level, &mut snapshot)? {
-        Ok(Some(snapshot))
-    } else {
-        Ok(None)
-    }
+    collect_relative_tree_entries(root, root, excluded_top_level, &mut snapshot)?;
+    Ok(Some(snapshot))
 }
 
 fn collect_relative_tree_entries(
@@ -273,7 +297,7 @@ fn collect_relative_tree_entries(
     current: &Path,
     excluded_top_level: &[&str],
     snapshot: &mut DirectoryTreeSnapshot,
-) -> Result<bool, MarsError> {
+) -> Result<(), MarsError> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
@@ -287,24 +311,27 @@ fn collect_relative_tree_entries(
             continue;
         }
         let Some(rel_path) = crate::hash::portable_relative(root, &path) else {
-            return Ok(false);
+            return Err(MarsError::InvalidRequest {
+                message: format!("path must be valid Unicode: {}", path.display()),
+            });
         };
 
         if file_type.is_symlink() {
-            return Ok(false);
-        }
-        if file_type.is_dir() {
+            snapshot
+                .entries
+                .insert(rel_path, TreeEntryKind::Unsupported);
+        } else if file_type.is_dir() {
             snapshot.insert_directory(rel_path);
-            if !collect_relative_tree_entries(root, &path, excluded_top_level, snapshot)? {
-                return Ok(false);
-            }
+            collect_relative_tree_entries(root, &path, excluded_top_level, snapshot)?;
         } else if file_type.is_file() {
             snapshot.insert_file_hash(rel_path, crate::hash::hash_bytes(&fs::read(path)?));
         } else {
-            return Ok(false);
+            snapshot
+                .entries
+                .insert(rel_path, TreeEntryKind::Unsupported);
         }
     }
-    Ok(true)
+    Ok(())
 }
 
 /// Recursively copy a directory, following symlinks on the source side.

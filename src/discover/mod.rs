@@ -210,6 +210,9 @@ fn discover_convention_items(
             if !path.is_dir() {
                 continue;
             }
+            if configured_plugin_tree(package_root, &path) {
+                continue;
+            }
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
@@ -603,6 +606,9 @@ fn path_is_in_generated_plugin_tree(
     path: &Path,
     diag: &mut DiagnosticCollector,
 ) -> bool {
+    if configured_plugin_tree(package_root, path) {
+        return true;
+    }
     let mut current = if path.is_dir() {
         Some(path)
     } else {
@@ -618,6 +624,22 @@ fn path_is_in_generated_plugin_tree(
         current = directory.parent();
     }
     false
+}
+
+fn configured_plugin_tree(package_root: &Path, path: &Path) -> bool {
+    configured_plugin_dir(package_root).is_some_and(|dir| path.starts_with(dir))
+}
+
+fn configured_plugin_dir(package_root: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(package_root.join("mars.toml")).ok()?;
+    let manifest: toml::Value = toml::from_str(&content).ok()?;
+    let plugin = manifest.get("plugin")?.as_table()?;
+    let dir = match plugin.get("dir") {
+        None => PathBuf::from("plugin"),
+        Some(value) => PathBuf::from(value.as_str()?),
+    };
+    crate::config::validate_plugin_dir(&dir).ok()?;
+    Some(package_root.join(dir))
 }
 
 fn generated_plugin_tree(path: &Path, diag: &mut DiagnosticCollector) -> bool {

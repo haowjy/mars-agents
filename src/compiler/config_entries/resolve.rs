@@ -35,40 +35,9 @@ pub fn resolve_mcp_collisions_for_target<'a>(
         .collect()
 }
 
-/// One loaded native fragment contribution before collision resolution.
-#[derive(Debug, Clone)]
-pub struct LoadedHookContribution<'a> {
-    pub item: &'a ParsedHookItem,
-    pub event: String,
-    pub entries: Vec<serde_json::Value>,
-}
-
-/// Hook identity is `(native event, name)` within a target table.
-pub fn resolve_hook_collisions_for_target<'a>(
-    contributions: &'a [LoadedHookContribution<'a>],
-    target_root: &str,
-    diag: &mut DiagnosticCollector,
-) -> Vec<&'a LoadedHookContribution<'a>> {
-    let mut groups: BTreeMap<(&str, &str), Vec<&LoadedHookContribution<'a>>> = BTreeMap::new();
-    for contribution in contributions {
-        groups
-            .entry((
-                contribution.event.as_str(),
-                contribution.item.def.name.as_str(),
-            ))
-            .or_default()
-            .push(contribution);
-    }
-    groups
-        .into_iter()
-        .map(|((event, _), group)| {
-            resolve_group(group, target_root, &format!("hook event `{event}`"), diag)
-        })
-        .collect()
-}
-
-/// Resolve file-mode hook collisions by placed filename (`mars-<name>.ts`).
-pub fn resolve_file_hook_collisions_for_target<'a>(
+/// Pick the hook whose target-scoped canonical directory was installed for
+/// each name. The same winners feed merge-mode and file-mode lowering.
+pub fn resolve_hook_items_for_target<'a>(
     items: &'a [ParsedHookItem],
     target_root: &str,
     diag: &mut DiagnosticCollector,
@@ -103,18 +72,6 @@ impl CollisionItem for ParsedMcpItem {
 
     fn display_name(&self) -> String {
         self.name.clone()
-    }
-}
-
-impl CollisionItem for LoadedHookContribution<'_> {
-    fn source_name(&self) -> &str {
-        &self.item.source_name
-    }
-    fn decl_order(&self) -> usize {
-        self.item.decl_order
-    }
-    fn display_name(&self) -> String {
-        self.item.def.name.clone()
     }
 }
 

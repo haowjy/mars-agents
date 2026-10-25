@@ -87,7 +87,7 @@ pub struct HookEntry {
 /// How a target consumes hook fragments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookFragmentMode {
-    MergeJson,
+    MergeJson { events: &'static [&'static str] },
     File,
 }
 
@@ -108,12 +108,6 @@ pub enum HookFragmentMode {
 pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Target root name (e.g., `.claude`, `.codex`).
     fn name(&self) -> &str;
-
-    /// Documented native command-hook events, or `None` when this target has
-    /// no declarative command-hook mechanism.
-    fn known_hook_events(&self) -> Option<&'static [&'static str]> {
-        None
-    }
 
     /// Native fragment placement mechanism declared by this adapter.
     fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
@@ -454,27 +448,34 @@ mod tests {
     #[test]
     fn hook_event_allowlists_match_supported_command_hook_targets() {
         let registry = TargetRegistry::new();
-        let claude = registry
-            .get(".claude")
-            .unwrap()
-            .known_hook_events()
-            .unwrap();
-        let codex = registry.get(".codex").unwrap().known_hook_events().unwrap();
+        let Some(HookFragmentMode::MergeJson { events: claude }) =
+            registry.get(".claude").unwrap().hook_fragment_mode()
+        else {
+            panic!("Claude must declare merge-mode hooks");
+        };
+        let Some(HookFragmentMode::MergeJson { events: codex }) =
+            registry.get(".codex").unwrap().hook_fragment_mode()
+        else {
+            panic!("Codex must declare merge-mode hooks");
+        };
         assert_eq!(claude.len(), 29);
         assert!(claude.contains(&"SessionEnd"));
         assert_eq!(codex.len(), 10);
         assert!(!codex.contains(&"SessionEnd"));
-        let cursor = registry
-            .get(".cursor")
-            .unwrap()
-            .known_hook_events()
-            .unwrap();
+        let Some(HookFragmentMode::MergeJson { events: cursor }) =
+            registry.get(".cursor").unwrap().hook_fragment_mode()
+        else {
+            panic!("Cursor must declare merge-mode hooks");
+        };
         assert_eq!(cursor.len(), 21);
         assert!(cursor.contains(&"beforeShellExecution"));
         assert!(cursor.contains(&"sessionStart"));
 
         for target in [".opencode", ".pi"] {
-            assert!(registry.get(target).unwrap().known_hook_events().is_none());
+            assert_eq!(
+                registry.get(target).unwrap().hook_fragment_mode(),
+                Some(HookFragmentMode::File)
+            );
         }
     }
 

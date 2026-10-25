@@ -12,43 +12,41 @@ use super::{ResolveOptions, ResolvedGraph, resolve};
 
 /// The consumer-facing configuration view of a package being published.
 ///
-/// Both the authored config and its effective form come from `mars.toml` only.
-/// A missing manifest is represented by defaults so raw source directories can
-/// still use the same check and lossiness paths.
+/// Both the manifest and its effective form come from `mars.toml` only. Raw
+/// source directories have no manifest but still use the same check and
+/// lossiness paths through the default effective configuration.
 #[derive(Debug, Clone)]
 pub struct PublishLens {
     package_root: PathBuf,
-    manifest_present: bool,
-    pub config: Config,
+    pub manifest: Option<Config>,
     pub effective: EffectiveConfig,
 }
 
 impl PublishLens {
     pub fn load(package_root: &Path, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
-        let (mut config, manifest_present) = match crate::config::load(package_root) {
-            Ok(config) => (config, true),
-            Err(MarsError::Config(ConfigError::NotFound { .. })) => (Config::default(), false),
+        let mut manifest = match crate::config::load(package_root) {
+            Ok(config) => Some(config),
+            Err(MarsError::Config(ConfigError::NotFound { .. })) => None,
             Err(err) => return Err(err),
         };
+        let mut config = manifest.clone().unwrap_or_default();
         config.local_dependencies.clear();
+        if let Some(manifest) = &mut manifest {
+            manifest.local_dependencies.clear();
+        }
         let (effective, diagnostics) =
-            crate::config::merge_with_root(config.clone(), LocalConfig::default(), package_root)?;
+            crate::config::merge_with_root(config, LocalConfig::default(), package_root)?;
         diag.extend(diagnostics);
 
         Ok(Self {
             package_root: package_root.to_path_buf(),
-            manifest_present,
-            config,
+            manifest,
             effective,
         })
     }
 
     pub fn package_root(&self) -> &Path {
         &self.package_root
-    }
-
-    pub fn manifest_config(&self) -> Option<&Config> {
-        self.manifest_present.then_some(&self.config)
     }
 }
 

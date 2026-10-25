@@ -25,43 +25,41 @@ impl TargetAdapter for ClaudeAdapter {
         ".claude"
     }
 
-    fn known_hook_events(&self) -> Option<&'static [&'static str]> {
-        // https://code.claude.com/docs/en/hooks — verified 2026-07-24.
-        Some(&[
-            "SessionStart",
-            "Setup",
-            "UserPromptSubmit",
-            "UserPromptExpansion",
-            "PreToolUse",
-            "PermissionRequest",
-            "PermissionDenied",
-            "PostToolUse",
-            "PostToolUseFailure",
-            "PostToolBatch",
-            "SubagentStart",
-            "SubagentStop",
-            "TaskCreated",
-            "TaskCompleted",
-            "Stop",
-            "StopFailure",
-            "TeammateIdle",
-            "PreCompact",
-            "PostCompact",
-            "Elicitation",
-            "ElicitationResult",
-            "Notification",
-            "ConfigChange",
-            "InstructionsLoaded",
-            "CwdChanged",
-            "FileChanged",
-            "WorktreeCreate",
-            "WorktreeRemove",
-            "SessionEnd",
-        ])
-    }
-
     fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
-        Some(HookFragmentMode::MergeJson)
+        // https://code.claude.com/docs/en/hooks — verified 2026-07-24.
+        Some(HookFragmentMode::MergeJson {
+            events: &[
+                "SessionStart",
+                "Setup",
+                "UserPromptSubmit",
+                "UserPromptExpansion",
+                "PreToolUse",
+                "PermissionRequest",
+                "PermissionDenied",
+                "PostToolUse",
+                "PostToolUseFailure",
+                "PostToolBatch",
+                "SubagentStart",
+                "SubagentStop",
+                "TaskCreated",
+                "TaskCompleted",
+                "Stop",
+                "StopFailure",
+                "TeammateIdle",
+                "PreCompact",
+                "PostCompact",
+                "Elicitation",
+                "ElicitationResult",
+                "Notification",
+                "ConfigChange",
+                "InstructionsLoaded",
+                "CwdChanged",
+                "FileChanged",
+                "WorktreeCreate",
+                "WorktreeRemove",
+                "SessionEnd",
+            ],
+        })
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

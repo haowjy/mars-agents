@@ -77,7 +77,7 @@ unreadable-content exception.
 ## Production Lenses
 
 - `PublishLens` loads the consumer-facing config once: it ignores `mars.local.toml`
-  and clears local dependencies while retaining both authored and effective config.
+  and clears local dependencies while retaining the optional manifest and effective config.
   `resolve_publish_graph(&lens, diag)` resolves it with no lock or project staging;
   source fetches use `GlobalCache` and diagnostics belong to the caller.
 

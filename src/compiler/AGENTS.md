@@ -165,10 +165,10 @@ Universal schema parsing and native lowering. Skills support variant layouts per
 ## Config Entries (`config_entries/`)
 
 MCP servers and hooks discovered from packages, validated, and written to target config files via adapters.
-`lower_config_entries_for_target` owns per-target MCP/hook collision resolution, native fragment
-loading, and hook ordering. Callers supply the `${MARS_HOOK_DIR}` replacement through its
-hook-directory callback; sync filters out hooks whose installed directories are not current before
-calling it.
+Sync selects one hook per target and name before checking its installed directory, then passes the
+same winners to merge-mode lowering and file-mode emission. `lower_config_entries_for_target` owns
+per-target MCP collision resolution, native merge-fragment loading, and hook ordering. Callers
+supply the `${MARS_HOOK_DIR}` replacement through its hook-directory callback.
 
 ## MCP Compilation (`mcp/`)
 

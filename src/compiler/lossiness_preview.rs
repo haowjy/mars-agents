@@ -64,7 +64,7 @@ pub fn collect_source_lossiness_diagnostics(
     }
 
     let (source_root, dialect, fallback_skill_name) =
-        preview_staging_root_and_dialect(base, lens.manifest_config())?;
+        preview_staging_root_and_dialect(base, lens.manifest.as_ref())?;
     let staging = TempDir::new()?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(mode);
     crate::staging::stage_canonical_source(
@@ -93,9 +93,15 @@ pub fn collect_source_lossiness_diagnostics(
         fetched_at: None,
     };
     let routing_settings = ResolvedRoutingSettings::from_settings(settings);
+    let empty_model_aliases = indexmap::IndexMap::new();
+    let model_aliases = lens
+        .manifest
+        .as_ref()
+        .map(|manifest| &manifest.models)
+        .unwrap_or(&empty_model_aliases);
     let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
         .then(|| {
-            NativeModelRoutingRuntime::collect(&lens.config.models, &models_cache, routing_settings)
+            NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
         });
 
     let discovered =

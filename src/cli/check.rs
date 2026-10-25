@@ -57,7 +57,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
     let lens = crate::resolve::PublishLens::load(&base, &mut publish_diag)?;
-    let report = check_dir_with_lens(&base, Some(&lens), None, &mut publish_diag)?;
+    let report = check_dir_with_lens(&base, Ok(&lens), &mut publish_diag)?;
     let mut diagnostics = publish_diag.drain();
     diagnostics.extend(lossiness_diagnostics_for_check(&lens, args.verbose)?);
     let clean = report.errors.is_empty();
@@ -111,16 +111,13 @@ fn lossiness_diagnostics_for_check(
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    match crate::resolve::PublishLens::load(base, &mut diag) {
-        Ok(lens) => check_dir_with_lens(base, Some(&lens), None, &mut diag),
-        Err(config_error) => check_dir_with_lens(base, None, Some(&config_error), &mut diag),
-    }
+    let lens = crate::resolve::PublishLens::load(base, &mut diag);
+    check_dir_with_lens(base, lens.as_ref(), &mut diag)
 }
 
 fn check_dir_with_lens(
     base: &Path,
-    lens: Option<&crate::resolve::PublishLens>,
-    config_error: Option<&MarsError>,
+    lens: Result<&crate::resolve::PublishLens, &MarsError>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<CheckReport, MarsError> {
     let skills_dir = base.join("skills");
@@ -128,7 +125,8 @@ fn check_dir_with_lens(
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    if let Some(config) = lens.map(|lens| &lens.config)
+    if let Ok(lens) = lens
+        && let Some(config) = lens.manifest.as_ref()
         && let Some(package) = config.package.as_ref()
         && let Err(error) = crate::resolve::validate_package_requirement_syntax(package)
     {
@@ -377,8 +375,8 @@ fn check_dir_with_lens(
     // ── Skill dependency check ───────────────────────────────────────
     let available: HashSet<&str> = skill_names.keys().map(|s| s.as_str()).collect();
 
-    match (lens, config_error) {
-        (Some(lens), _) if has_package_dependencies(lens) => {
+    match lens {
+        Ok(lens) if has_package_dependencies(lens) => {
             // Graph-backed validation: resolve deps fresh from constraints, check
             // skill refs against local skills + all resolved dependency packages.
             match resolve_available_skills(lens, diag) {
@@ -403,7 +401,7 @@ fn check_dir_with_lens(
                 }
             }
         }
-        (Some(_), _) => {
+        Ok(_) => {
             // No [dependencies] — local-only validation, emit warnings for external refs.
             for (agent_name, skills) in &agent_skill_refs {
                 for skill in skills {
@@ -415,12 +413,11 @@ fn check_dir_with_lens(
                 }
             }
         }
-        (None, Some(config_err)) => {
+        Err(config_err) => {
             errors.push(format!(
                 "failed to load mars.toml for dependency checks: {config_err}\n  hint: fix mars.toml syntax (Windows paths in TOML must use `/` or escaped `\\\\`)"
             ));
         }
-        (None, None) => unreachable!("a missing publish lens must carry its load error"),
     }
 
     // ── Output ───────────────────────────────────────────────────────
@@ -438,7 +435,9 @@ fn check_dir_with_lens(
 /// this is a publishable source package, and `[dependencies]` means there are
 /// skills that could come from external packages.
 fn has_package_dependencies(lens: &crate::resolve::PublishLens) -> bool {
-    lens.config.package.is_some() && !lens.config.dependencies.is_empty()
+    lens.manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.package.is_some() && !manifest.dependencies.is_empty())
 }
 
 /// Resolve the dependency graph and collect available skills, respecting package filters.

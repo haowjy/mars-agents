@@ -232,17 +232,9 @@ pub fn yaml_str_list(val: &Value) -> Vec<String> {
 
 type OnInvalid<'a> = &'a mut dyn FnMut(&str, &str, &'static str);
 
-/// Whether a profile's `tools:` is the deprecated list form (`tools: [read, grep]`), which
-/// grants the listed tools and restricts nothing. Callers raise the deprecation warning.
-pub fn is_list_form(tools: Option<&Value>) -> bool {
-    matches!(tools, Some(Value::Sequence(items)) if !items.is_empty())
-}
-
 /// Read a profile's `tools:` and `disallowed-tools:` into one policy.
 ///
-/// A list-form `tools:` only grants (see [`is_list_form`]); an allowlist is spelled with
-/// `'*': deny`. An empty list names no tools, so it stays "no policy" rather than "deny
-/// everything". `on_invalid` gets `(field, value, allowed)` for each entry Mars rejects.
+/// `on_invalid` gets `(field, value, allowed)` for each entry Mars rejects.
 pub fn parse_tool_policy(
     tools: Option<&Value>,
     disallowed: Option<&Value>,
@@ -360,11 +352,6 @@ const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
 
 /// Retired top-level MCP grant field spellings (use inline `mcp(...)` in `tools:` instead).
 pub const REMOVED_MCP_TOOLS_FIELDS: &[&str] = &["mcp-tools", "mcp_tools"];
-
-/// Replacement guidance for [`REMOVED_MCP_TOOLS_FIELDS`] diagnostics.
-pub fn removed_mcp_tools_replacement() -> &'static str {
-    "use `mcp(server)` or `mcp(server/tool)` entries in `tools:` / `disallowed-tools:` instead"
-}
 
 /// Strip retired `mcp-tools` keys from canonical frontmatter during staging lift.
 pub fn strip_removed_mcp_tools_fields(fm: &mut Frontmatter) -> bool {

@@ -474,7 +474,7 @@ mod tests {
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
     use mars_schema::tool_policy::{
-        append_mcp_server_entries_to_tools, is_list_form, parse_tool_policy, yaml_str_list,
+        append_mcp_server_entries_to_tools, parse_tool_policy, yaml_str_list,
     };
     use serde_yaml::Value;
 
@@ -581,11 +581,6 @@ mod tests {
         assert!(!profile.tools.is_allowlist());
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "tools.list-form");
-        assert!(is_list_form(Some(&Value::Sequence(vec![Value::String(
-            "read".into()
-        )]))));
-        assert!(!is_list_form(Some(&Value::Sequence(vec![]))));
-        assert!(!is_list_form(None));
     }
 
     #[test]

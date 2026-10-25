@@ -65,7 +65,7 @@ host.rs       ←── I/O at collection time only
 ## Rationale
 
 Before this module: harness names and validity were scattered across
-`models::harness`, `compiler::agents::HarnessKind`, and hardcoded error strings.
+`models::harness` and hardcoded error strings.
 Divergence between modules was a live risk.
 
 `ExecutableResolver` as a trait enables fake PATH injection in tests (`FakeResolver`

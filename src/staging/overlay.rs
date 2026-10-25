@@ -102,13 +102,7 @@ pub(crate) fn apply_skill_overlay(
     (merged, changed)
 }
 
-/// Apply `[skills.<name>.tools]` through the same edit an agent overlay uses, then write the
-/// rules back, since sync lowers skills from this staged text. A skill's `tools:` only grants,
-/// so `allowed` makes no allowlist, and the skill's own deny and ask rules survive it.
-///
-/// Writing back replaces `tools:` and `disallowed-tools:` with what parsed. If any entry did not,
-/// the frontmatter stays as written: rewriting it would drop that entry, a malformed deny
-/// among them, and hide the error sync's own parse reports for it.
+/// Set the scalar skill fields that consumer overlays may author.
 fn set_string_field(fm: &mut Frontmatter, key: &str, value: &str) -> bool {
     if fm.get(key).and_then(Value::as_str) == Some(value) {
         return false;

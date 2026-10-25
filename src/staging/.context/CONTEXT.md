@@ -100,8 +100,8 @@ Foreign MCP permission tokens in `tools:` / `disallowed-tools:` (and skill
 | `Mcp(server:tool)` | Cursor | `mcp(server/tool)` (last `:` separates tool; namespaced server ids preserved) |
 | `mcpServers` | Claude | Appends `mcp(server)` entries to `tools:` (whole-server grant) |
 
-The removed `mcp-tools:` / `mcp_tools` field is rejected at parse time (`RemovedField`).
-Use a `tools:` map with `mcp(server): allow` instead. Projection to harness-native tokens:
+Legacy staging strips the removed `mcp-tools:` / `mcp_tools` field before the strict
+schema-v1 reader runs. Authored schema-v1 definitions receive `field.removed`. Projection to harness-native tokens:
 [`src/compiler/mcp_ref.rs`](../../compiler/mcp_ref.rs) — documented in
 [agent-compilation.md](../../../docs/config/agent-compilation.md#mcp-tool-policy-references).
 

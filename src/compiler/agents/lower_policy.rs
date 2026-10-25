@@ -163,7 +163,6 @@ fn record_agent_invocation_lossiness(
 #[derive(Debug, Clone)]
 pub enum NativeModel {
     /// Emit the profile's own model verbatim (unpinned alias / fanout token).
-    #[allow(dead_code)]
     Inherit,
     /// Emit this resolved model id.
     Set(String),

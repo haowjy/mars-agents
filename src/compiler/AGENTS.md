@@ -68,7 +68,7 @@ This is necessary because native harnesses (Claude Code, Codex) don't understand
 alias system. `NativeModelRoutingRuntime` in `native_agents.rs` owns the merged alias
 registry, `.mars/models-cache.json`, catalog slugs, routing settings, one lazy
 capability session, and memoized `(model token, target harness)` decisions. It resolves
-profile `model` first, then model-policy candidates when fanout is enabled, and delegates
+profile `model` first, then model-policy candidates when consumer fanout is enabled, and delegates
 accept/reject to `routing::evaluate_candidates*` constrained to the target harness.
 
 ### Agent Surface Policy
@@ -84,7 +84,7 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 
 ## Agent Compilation (`agents/`)
 
-- `mod.rs` — schema parser, `AgentProfile` from YAML frontmatter + markdown body
+- `mars-schema::agent` — the schema-v1 reader and `AgentProfile` authority
 - `lower.rs` — per-harness lowering with lossiness tracking. All lowerers accept a
   `model_field: &NativeModel` parameter (`Set(id)` or `Clear` for native compile;
   `Inherit` remains for direct lowerer tests). `lower_for_harness_with_model()`
@@ -103,30 +103,11 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 
 ## Shared Tool Policy (`tool_policy.rs`)
 
-`EffectiveToolPolicy` is the one tool-gating model of **agents** and the **launch bundle**: a list
-of `ToolRule { capability, pattern, action }`, parsed once into `AgentProfile.tools` by the schema
-reader. `capability` is a
-`Capability` (`Any` for `*`, `Mcp(McpRef)`, a vocabulary `Builtin`, or the author's `Unknown`
-spelling), never a string with reserved values.
+`EffectiveToolPolicy` is the one tool-gating model for **agents** and launch bundles. The
+schema reader accepts only the v1 action-map form and stores
+`ToolRule { capability, pattern, action }` values. Consumer `[agents.*.tools]` overlays
+edit that rule list; skills do not carry tool policy in schema v1.
 
-- **Parse.** Deprecated `tools:` list → `allow` per entry and a warning; map → `allow` /
-  `deny` / `ask` per entry; `disallowed-tools:` → `deny`. Lists only grant for agents and
-  skills. An allowlist is a map with an explicit `'*': deny`. A profile
-  `tools: { replace: [...] }` is invalid; replacement tables exist only on consumer overlays.
-  A `bash` pattern `X:*` becomes `X *`.
-- **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
-  `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
-  lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes
-  the rules back, since sync lowers skills from the staged file. Plain permission lists add;
-  `{ replace = [...] }` clears lower rules for that action, including `'*': allow`. Plain lists
-  preserve wildcard rules; ask rules and an explicit `'*': deny` allowlist marker survive either
-  form. Overlay names are `OverlayToolName`s: parsed
-  with the profile grammar as `mars.toml` loads, so `apply_overlay`
-  never meets a name a profile would reject. Compatibility warnings are derived once from the
-  authored project/local constructs in `config::project_config_warnings`; policy consumers do not
-  model legacy resolution. Staging writes a skill back only when its own `tools:` /
-  `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would drop the bad
-  entry, a malformed deny among them, and hide the error sync reports for it.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
   permission names and unscoped harness tool names. Native agent lowering, skill lowering and the
   bundle read its `natives` / `gaps` / `overlaps`; never add a second projection path, or a

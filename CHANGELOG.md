@@ -20,8 +20,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reminder for `--agent`, whose session path does not honor the native preload field.
 - Hook order now follows shortest dependency depth, changing only when a direct dependency is
   also reached transitively. Codex users may need to re-trust moved hooks once with `/hooks`.
-- Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
-  treated as local.
 - Discovery, MCP discovery and staging skip any directory holding a valid `.mars-plugin.json`
   (generated plugin output) and report each skipped path, so a committed plugin tree is never
   re-imported as package source.
@@ -32,6 +30,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - MCP server collisions now prefer the shallowest package, then dependency declaration order,
   so a package's own server cannot lose to a transitive dependency.
 - Skill and hook copies now preserve source executable bits.
+
+## [0.18.3] - 2026-10-25
+
+### Fixed
+- Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
+  treated as local.
 
 ## [0.18.2] - 2026-10-25
 

@@ -2,17 +2,17 @@
 
 pub mod lower;
 
-use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
-use mars_schema::skill::{SkillDiagnostic, parse_skill_content_legacy};
 use std::path::Path;
+
+use crate::diagnostic::DiagnosticCollector;
 
 pub(crate) fn emit_skill_schema_diags(
     diag: &mut DiagnosticCollector,
     skill_name: &str,
     skill_diags: &[mars_schema::diagnostic::SchemaDiagnostic],
 ) {
-    for d in skill_diags {
-        diag.schema(d, &format!("skill `{skill_name}`"), false);
+    for diagnostic in skill_diags {
+        diag.schema(diagnostic, &format!("skill `{skill_name}`"), false);
     }
 }
 
@@ -21,12 +21,7 @@ pub(crate) fn emit_skill_schema_diags_from_source(
     skill_name: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    emit_skill_schema_diags_from_source_with(
-        source_path,
-        skill_name,
-        diag,
-        SkillDiagnostic::message,
-    );
+    emit_skill_schema_diags_from_source_with(source_path, skill_name, diag);
 }
 
 pub(crate) fn emit_plugin_skill_schema_diags_from_source(
@@ -34,19 +29,13 @@ pub(crate) fn emit_plugin_skill_schema_diags_from_source(
     skill_name: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    emit_skill_schema_diags_from_source_with(
-        source_path,
-        skill_name,
-        diag,
-        SkillDiagnostic::plugin_message,
-    );
+    emit_skill_schema_diags_from_source_with(source_path, skill_name, diag);
 }
 
 fn emit_skill_schema_diags_from_source_with(
     source_path: &Path,
     skill_name: &str,
     diag: &mut DiagnosticCollector,
-    message: fn(&SkillDiagnostic) -> String,
 ) {
     let skill_md = if source_path.is_dir() {
         source_path.join("SKILL.md")
@@ -56,18 +45,6 @@ fn emit_skill_schema_diags_from_source_with(
     let Ok(content) = std::fs::read_to_string(skill_md) else {
         return;
     };
-    let mut skill_diags = Vec::new();
-    let _ = parse_skill_content_legacy(&content, &mut skill_diags);
-    for d in &skill_diags {
-        let message = format!("skill `{skill_name}`: {}", message(d));
-        if d.is_error() {
-            diag.error_with_category(
-                "skill-schema-error",
-                message,
-                DiagnosticCategory::Validation,
-            );
-        } else {
-            diag.warn("skill-schema-warning", message);
-        }
-    }
+    let reading = mars_schema::skill::read(&content);
+    emit_skill_schema_diags(diag, skill_name, &reading.diagnostics);
 }

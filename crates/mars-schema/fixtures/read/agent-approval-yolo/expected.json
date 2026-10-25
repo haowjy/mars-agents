@@ -10,7 +10,7 @@
       "severity": "error"
     },
     {
-      "code": "agent-schema-error",
+      "code": "field.value",
       "message": "agent field `approval` has invalid value `yolo`; allowed: default, auto, confirm, never",
       "path": [
         "approval"

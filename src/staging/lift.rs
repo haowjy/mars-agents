@@ -352,9 +352,9 @@ mod tests {
     use crate::compiler::agents::lower::{NativeModel, lower_to_claude};
     use crate::compiler::lossiness::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
-    use mars_schema::agent::parse_agent_content_legacy;
+    use mars_schema::agent::parse_agent_content;
     use mars_schema::frontmatter::Frontmatter;
-    use mars_schema::skill::parse_skill_content_legacy;
+    use mars_schema::skill::parse_skill_content;
 
     fn fm(yaml: &str) -> Frontmatter {
         Frontmatter::parse(&format!("---\n{yaml}---\n# Body\n")).unwrap()
@@ -482,8 +482,12 @@ mod tests {
         assert!(lifted.get("alwaysApply").is_none());
 
         let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content_legacy(&lifted.render(), &mut diags).unwrap();
-        assert!(diags.is_empty(), "{diags:?}");
+        let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
+        assert!(
+            diags
+                .iter()
+                .any(|diagnostic| diagnostic.code == "field.required")
+        );
         assert!(profile.description.is_none());
         assert!(!profile.model_invocable);
         assert!(profile.had_model_invocable_field);
@@ -610,8 +614,7 @@ mod tests {
         );
 
         let mut diags = Vec::new();
-        let (profile, canonical) =
-            parse_agent_content_legacy(&lifted.render(), &mut diags).unwrap();
+        let (profile, canonical) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty(), "{diags:?}");
 
         let output = lower_to_claude(
@@ -702,7 +705,7 @@ mod tests {
         );
 
         let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content_legacy(&lifted.render(), &mut diags).unwrap();
+        let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
             profile.tools.describe(),

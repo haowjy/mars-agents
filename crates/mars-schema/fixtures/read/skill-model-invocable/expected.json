@@ -16,14 +16,6 @@
         "description"
       ],
       "severity": "error"
-    },
-    {
-      "code": "skill-schema-error",
-      "message": "skill field `name` has invalid value `missing`; allowed: string",
-      "path": [
-        "name"
-      ],
-      "severity": "error"
     }
   ],
   "fields": {

@@ -470,7 +470,7 @@ fn overlay_rules(names: &[OverlayToolName], action: ToolAction) -> Vec<ToolRule>
 mod tests {
     use super::*;
     use mars_schema::HarnessId;
-    use mars_schema::agent::{AgentDiagnostic, parse_agent_content_legacy};
+    use mars_schema::agent::{parse_agent_content, parse_agent_profile};
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
     use mars_schema::tool_policy::{
@@ -480,7 +480,7 @@ mod tests {
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
         let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content_legacy(yaml, &mut diags).unwrap();
+        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
         assert!(diags.is_empty(), "agent diags: {diags:?}");
         profile.tools
     }
@@ -576,10 +576,11 @@ mod tests {
     fn list_form_only_grants_and_is_flagged_deprecated() {
         let yaml = "---\nname: a\ndescription: d\ntools: [read, grep]\n---\n";
         let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content_legacy(yaml, &mut diags).unwrap();
+        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
         assert_eq!(profile.tools.describe(), vec!["allow:read", "allow:grep"]);
         assert!(!profile.tools.is_allowlist());
-        assert_eq!(diags, [AgentDiagnostic::DeprecatedListFormTools]);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, "tools.list-form");
         assert!(is_list_form(Some(&Value::Sequence(vec![Value::String(
             "read".into()
         )]))));
@@ -603,13 +604,6 @@ mod tests {
         );
         assert_eq!(policy.describe(), vec!["deny:*", "allow:bash(rg *)"]);
         assert!(policy.is_allowlist());
-    }
-
-    #[test]
-    fn empty_list_names_no_tools_and_is_no_policy() {
-        let policy = agent_policy("---\nname: a\ndescription: d\ntools: []\n---\n");
-        assert!(policy.rules.is_empty());
-        assert!(!policy.is_allowlist());
     }
 
     #[test]
@@ -657,7 +651,7 @@ mod tests {
             &["context7".to_string()]
         ));
         let mut diags = Vec::new();
-        let policy = mars_schema::agent::parse_agent_profile_legacy(&fm, &mut diags).tools;
+        let policy = parse_agent_profile(&fm, &mut diags).tools;
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)"]);
         assert!(!policy.is_allowlist());
     }

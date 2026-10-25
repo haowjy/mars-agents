@@ -2,10 +2,11 @@
   "body": "body",
   "diagnostics": [
     {
-      "code": "agent-schema-warning",
+      "code": "harness.unknown",
       "message": "unknown harness override `flow`; preserving passthrough block",
       "path": [
-        "harness-overrides"
+        "harness-overrides",
+        "flow"
       ],
       "severity": "warning"
     }

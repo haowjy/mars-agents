@@ -10,7 +10,7 @@
       "severity": "error"
     },
     {
-      "code": "agent-schema-error",
+      "code": "field.value",
       "message": "agent field `model-invocable` has invalid value `true`; allowed: boolean",
       "path": [
         "model-invocable"

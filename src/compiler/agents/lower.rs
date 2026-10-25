@@ -20,12 +20,15 @@ use crate::compiler::lossiness::Lossiness;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mars_schema::agent::{AgentDiagnostic, AgentProfile, parse_agent_content_legacy};
     use mars_schema::{HarnessId, frontmatter::Frontmatter};
+    use mars_schema::{
+        agent::{AgentProfile, parse_agent_content},
+        diagnostic::SchemaDiagnostic,
+    };
 
-    fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<AgentDiagnostic>) {
+    fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<SchemaDiagnostic>) {
         let mut diags = Vec::new();
-        let (profile, fm) = parse_agent_content_legacy(content, &mut diags).unwrap();
+        let (profile, fm) = parse_agent_content(content, &mut diags).unwrap();
         (profile, fm, diags)
     }
 

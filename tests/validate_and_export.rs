@@ -284,10 +284,9 @@ fn validate_json_reports_skill_removed_field_error() {
     let diagnostics = json["diagnostics"].as_array().unwrap();
     assert!(
         diagnostics.iter().any(|diag| {
-            diag["code"] == "skill-schema-error"
+            diag["code"] == "field.removed"
                 && diag["message"].as_str().is_some_and(|message| {
-                    message.contains("allow_implicit_invocation")
-                        && message.contains("has been removed")
+                    message.contains("allow_implicit_invocation") && message.contains("was removed")
                 })
         }),
         "expected removed skill field error: {stdout}"
@@ -455,10 +454,10 @@ fn validate_json_reports_malformed_skill_frontmatter_error() {
     let diagnostics = json["diagnostics"].as_array().unwrap();
     assert!(
         diagnostics.iter().any(|diag| {
-            diag["code"] == "skill-schema-error"
+            diag["code"] == "yaml.invalid"
                 && diag["message"].as_str().is_some_and(|message| {
                     message.contains("skill `planning`")
-                        && message.contains("skill frontmatter is malformed")
+                        && message.contains("malformed YAML frontmatter")
                 })
         }),
         "expected malformed skill frontmatter error: {stdout}"

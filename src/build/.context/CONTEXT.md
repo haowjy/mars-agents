@@ -26,7 +26,9 @@ loop. `tree::check_sources` scans authored agents, skills, hooks and the selecte
 per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
 exported graph hooks even when no requested tree selected a fragment, which is the input for plugin
 omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap
-counts never depend on one format's emitted components.
+counts never depend on one format's emitted components. Component support comes from each listed
+harness's tree profile plus Codex's agent and MCP loader exceptions; verification levels are the
+only hand-entered matrix cells, and those same answers render the README tables.
 
 The build request carries the semantic destination instead of only a path. `Configured` resolves
 `[plugin].dir` package-relative and includes the root-file plan; explicit `Out(path)` keeps today's

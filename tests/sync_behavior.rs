@@ -352,7 +352,9 @@ fn sync_promotes_matching_v2_linked_skill_as_installed() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::is_empty());
+        .stderr(predicate::str::contains(
+            "body-only skill has no frontmatter",
+        ));
 
     let promoted = mars_agents::lock::load(project.path()).unwrap();
     let linked = promoted.items["skill/planning"]

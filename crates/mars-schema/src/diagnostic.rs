@@ -81,7 +81,7 @@ pub fn display_path(path: &[PathSegment]) -> String {
             }
             PathSegment::Index(index) => {
                 use std::fmt::Write;
-                let _ = write!(display, "[{}]", index + 1);
+                let _ = write!(display, "[{index}]");
             }
         }
     }

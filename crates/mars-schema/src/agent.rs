@@ -276,7 +276,23 @@ fn push_agent_invalid(
     } else {
         Severity::Error
     };
-    let display_field = display_path(&path);
+    let display_field = if matches!(path.first(), Some(PathSegment::Key(key)) if key == "model-policies")
+    {
+        path.iter()
+            .map(|segment| match segment {
+                PathSegment::Key(key) => key.clone(),
+                PathSegment::Index(index) => format!("[{}]", index + 1),
+            })
+            .fold(String::new(), |mut display, segment| {
+                if !display.is_empty() && !segment.starts_with('[') {
+                    display.push('.');
+                }
+                display.push_str(&segment);
+                display
+            })
+    } else {
+        display_path(&path)
+    };
     diags.push(SchemaDiagnostic::new(
         "field.value",
         severity,

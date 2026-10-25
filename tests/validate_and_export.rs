@@ -241,6 +241,67 @@ fn validate_json_strict_escalates_warnings_in_output() {
 }
 
 #[test]
+fn validate_json_reports_skill_removed_field_error() {
+    let dir = TempDir::new().unwrap();
+    let agent_content = "---\nname: reader\ndescription: reads things\n---\n# Reader";
+    let skill_content = "---\nname: legacy\ndescription: legacy skill\n---\n# Legacy";
+    let source = create_source(
+        &dir,
+        "src",
+        &[("reader", agent_content)],
+        &[("legacy", skill_content)],
+    );
+    let project = dir.child("proj");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies]\nsrc = {{ path = \"{}\", dialect = \"mars-native\" }}\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    offline_mars(dir.path())
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+    fs::write(
+        source.join("skills/legacy/SKILL.md"),
+        skill_content.replace(
+            "description: legacy skill",
+            "description: legacy skill\nallow_implicit_invocation: false",
+        ),
+    )
+    .unwrap();
+
+    let output = offline_mars(dir.path())
+        .args([
+            "validate",
+            "--json",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "removed field should make validate fail"
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag["code"] == "field.removed"
+                && diag["message"].as_str().is_some_and(|message| {
+                    message.contains("allow_implicit_invocation") && message.contains("was removed")
+                })
+        }),
+        "expected removed skill field error: {stdout}"
+    );
+}
+
+#[test]
 fn validate_json_stays_clean_for_codex_project_with_lowered_native_skill() {
     let dir = TempDir::new().unwrap();
     let source = create_source(
@@ -362,4 +423,57 @@ fn list_json_includes_skill_variant_availability() {
         .find(|entry| entry["name"] == "planning")
         .expect("planning skill should be listed");
     assert_eq!(planning["variants"].as_str(), Some("claude, codex"));
+}
+
+#[test]
+fn validate_json_reports_malformed_skill_frontmatter_error() {
+    let dir = TempDir::new().unwrap();
+    let agent_content = "---\nname: reader\ndescription: reads things\n---\n# Reader";
+    let valid_skill = "---\nname: planning\ndescription: planning skill\n---\n# Planning\n";
+    let malformed_skill =
+        "---\nname: planning\ndescription: broken skill\nmetadata: [\n---\n# Broken\n";
+    let project = setup_synced_project(
+        &dir,
+        "proj",
+        "src",
+        &[("reader", agent_content)],
+        &[("planning", valid_skill)],
+    );
+    fs::write(
+        dir.path().join("src/skills/planning/SKILL.md"),
+        malformed_skill,
+    )
+    .unwrap();
+
+    let output = offline_mars(dir.path())
+        .args(["validate", "--json", "--root", project.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "malformed skill frontmatter should make validate fail"
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(
+        json["clean"].as_bool(),
+        Some(false),
+        "expected clean=false for malformed frontmatter: {stdout}"
+    );
+    assert!(
+        json["error_count"].as_u64().unwrap_or(0) > 0,
+        "expected nonzero error_count for malformed frontmatter: {stdout}"
+    );
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag["code"] == "yaml.invalid"
+                && diag["message"].as_str().is_some_and(|message| {
+                    message.contains("planning/SKILL.md`")
+                        && message.contains("malformed YAML frontmatter")
+                })
+        }),
+        "expected malformed skill frontmatter error: {stdout}"
+    );
 }

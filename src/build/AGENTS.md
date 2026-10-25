@@ -11,18 +11,20 @@ resolves through `PublishLens`, stages every package, collects the flattened tar
 sync's shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
 `TreeProfile`. Profiles store only plugin-format policy; harness identity, variant key, and sync
 root come from `compiler::harness_descriptor`. Each profile has a typed tree identity, an optional
-hook-root token, and a hook acceptance policy that runs before copying. Claude, Codex, and Grok
+hook-root token, and a hook acceptance policy that runs before copying. `PluginTree::as_str()` is
+the single key for both staged directory names and reported output paths. Claude, Codex, and Grok
 share the Claude tree; Cursor and OpenCode have their own tree identities. The OpenCode tree is an
 npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and renders accepted
 default-export hook fragments through atomic writes into hash-checked files before importing them,
-preferring a private cache directory. An unavailable tree profile is an error.
+preferring a private cache directory.
 
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
 project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the
 set of built trees' sync roots. `TargetState` also retains every filtered exported graph hook,
 including hooks no built root selected. A source check before the tree loop emits authored-content
-diagnostics once; tree writing emits only lowering diagnostics. Support diagnostics consume the
-full `TargetState` for graph-wide counts rather than inferring them from one tree. `support.rs`
+diagnostics, including skill-schema findings, once; tree writing emits only lowering diagnostics.
+Support diagnostics consume the full `TargetState` for graph-wide counts rather than inferring
+them from one tree. `support.rs`
 derives component support from each listed harness's tree profile plus Codex's two loader gaps;
 only per-cell verification evidence is hand-entered, and the same data renders the README tables.
 

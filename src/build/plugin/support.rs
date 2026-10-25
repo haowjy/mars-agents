@@ -70,7 +70,7 @@ pub(super) fn emit(
 
     for harness in selected_harnesses(harnesses) {
         let built = built_tree_for_harness(harness, built_trees);
-        let profile = tree::profile(harness.tree()).expect("a built tree retains its profile");
+        let profile = tree::profile(harness.tree());
 
         if support_state(harness, profile, Component::Agents) == SupportState::Impossible {
             emit_agents_impossible(harness, count_items(target, ItemKind::Agent), diag);
@@ -84,7 +84,7 @@ pub(super) fn emit(
     // Bootstrap docs have no slot in any plugin tree, so report the omission
     // once rather than repeating the same package-wide fact for every harness.
     let bootstrap_is_impossible = selected_harnesses(harnesses).all(|harness| {
-        let profile = tree::profile(harness.tree()).expect("a built tree retains its profile");
+        let profile = tree::profile(harness.tree());
         support_state(harness, profile, Component::BootstrapDocs) == SupportState::Impossible
     });
     if bootstrap_is_impossible && count_items(target, ItemKind::BootstrapDoc) > 0 {
@@ -146,7 +146,7 @@ fn warn_hooks_without_tree_fragment(
     exported_hooks: &[crate::compiler::hooks::ParsedHookItem],
     diag: &mut DiagnosticCollector,
 ) {
-    let profile = tree::profile(built.tree()).expect("a built tree retains its profile");
+    let profile = tree::profile(built.tree());
     let target_dir = profile.descriptor().target_dir;
     let fragment = target_dir.trim_start_matches('.');
     let tree = built.tree().as_str();
@@ -342,12 +342,12 @@ fn install_verification(harness: PluginHarness) -> Verification {
 }
 
 #[cfg(test)]
-fn render_readme_tables(harnesses: &[PluginHarness]) -> Result<String, crate::error::MarsError> {
+fn render_readme_tables(harnesses: &[PluginHarness]) -> String {
     let mut rendered = String::from("### Component support\n\n");
     render_header(&mut rendered, harnesses);
     render_row(&mut rendered, "Tree", harnesses, |harness| {
-        Ok(harness.tree().as_str().to_string())
-    })?;
+        harness.tree().as_str().to_string()
+    });
     for component in [
         Component::Skills,
         Component::Agents,
@@ -360,7 +360,7 @@ fn render_readme_tables(harnesses: &[PluginHarness]) -> Result<String, crate::er
             component_table_label(component),
             harnesses,
             |harness| component_support_cell(harness, component),
-        )?;
+        );
     }
 
     rendered.push_str("\n### Verification level\n\n");
@@ -369,27 +369,27 @@ fn render_readme_tables(harnesses: &[PluginHarness]) -> Result<String, crate::er
         &mut rendered,
         "Install from catalog",
         harnesses,
-        |harness| Ok(render_verification(install_verification(harness))),
-    )?;
+        |harness| render_verification(install_verification(harness)),
+    );
     for component in Component::SHIPPED {
         render_row(
             &mut rendered,
             component_table_label(component),
             harnesses,
             |harness| {
-                let profile = tree::profile(harness.tree())?;
+                let profile = tree::profile(harness.tree());
                 if support_state(harness, profile, component) == SupportState::Impossible {
-                    Ok("n/a (impossible)".to_string())
+                    "n/a (impossible)".to_string()
                 } else {
-                    Ok(render_verification(verification(harness, component)))
+                    render_verification(verification(harness, component))
                 }
             },
-        )?;
+        );
     }
     render_row(&mut rendered, "Evidence", harnesses, |harness| {
-        Ok(evidence(harness).to_string())
-    })?;
-    Ok(rendered)
+        evidence(harness).to_string()
+    });
+    rendered
 }
 
 #[cfg(test)]
@@ -410,14 +410,13 @@ fn render_row(
     rendered: &mut String,
     label: &str,
     harnesses: &[PluginHarness],
-    mut cell: impl FnMut(PluginHarness) -> Result<String, crate::error::MarsError>,
-) -> Result<(), crate::error::MarsError> {
+    mut cell: impl FnMut(PluginHarness) -> String,
+) {
     rendered.push_str(&format!("| {label} |"));
     for harness in harnesses {
-        rendered.push_str(&format!(" {} |", cell(*harness)?));
+        rendered.push_str(&format!(" {} |", cell(*harness)));
     }
     rendered.push('\n');
-    Ok(())
 }
 
 #[cfg(test)]
@@ -432,13 +431,10 @@ fn component_table_label(component: Component) -> &'static str {
 }
 
 #[cfg(test)]
-fn component_support_cell(
-    harness: PluginHarness,
-    component: Component,
-) -> Result<String, crate::error::MarsError> {
-    let profile = tree::profile(harness.tree())?;
+fn component_support_cell(harness: PluginHarness, component: Component) -> String {
+    let profile = tree::profile(harness.tree());
     let state = support_state(harness, profile, component);
-    let rendered = match (component, state, harness) {
+    match (component, state, harness) {
         (Component::Skills, SupportState::Supported, PluginHarness::OpenCode) => {
             "supported (registered by `index.mjs`)".to_string()
         }
@@ -490,8 +486,7 @@ fn component_support_cell(
         (Component::Mcp, SupportState::Supported, _) => "supported".to_string(),
         (Component::BootstrapDocs, SupportState::Impossible, _) => "impossible".to_string(),
         _ => unreachable!("support state and component are internally consistent"),
-    };
-    Ok(rendered)
+    }
 }
 
 #[cfg(test)]
@@ -520,8 +515,7 @@ mod tests {
             PluginHarness::Claude,
             PluginHarness::Codex,
             PluginHarness::Grok,
-        ])
-        .unwrap();
+        ]);
 
         assert_eq!(
             rendered,

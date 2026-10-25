@@ -2,6 +2,8 @@
 
 pub mod lower;
 
+use std::path::Path;
+
 use serde_yaml::Value;
 
 use crate::compiler::invocability::{
@@ -155,6 +157,24 @@ pub(crate) fn emit_skill_schema_diags(
             diag.warn("skill-schema-warning", message);
         }
     }
+}
+
+pub(crate) fn emit_skill_schema_diags_from_source(
+    source_path: &Path,
+    skill_name: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    let skill_md = if source_path.is_dir() {
+        source_path.join("SKILL.md")
+    } else {
+        source_path.to_path_buf()
+    };
+    let Ok(content) = std::fs::read_to_string(skill_md) else {
+        return;
+    };
+    let mut skill_diags = Vec::new();
+    let _ = parse_skill_content(&content, &mut skill_diags);
+    emit_skill_schema_diags(diag, skill_name, &skill_diags);
 }
 
 fn push_skill_tool_invalid(

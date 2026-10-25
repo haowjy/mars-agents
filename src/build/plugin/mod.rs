@@ -244,7 +244,12 @@ pub fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, M
     let out_dir = request.destination.resolve(&package_root, manifest)?;
     let plugin_name = metadata.name.clone();
     let root_source = SourceName::from(package.name.clone());
-    let profiles = requested_tree_profiles(&request.harnesses)?;
+    if request.harnesses.is_empty() {
+        return Err(MarsError::InvalidRequest {
+            message: "a plugin build needs at least one harness".to_string(),
+        });
+    }
+    let profiles = requested_tree_profiles(&request.harnesses);
 
     let graph_staging = tempfile::TempDir::new()?;
     let effective = implicit_consumer_config(&lens, &root_source, &profiles)?;
@@ -290,7 +295,7 @@ pub fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, M
             let inputs_hash = plugin_inputs_hash(&package_root)?;
             let mut built_trees = Vec::with_capacity(profiles.len());
             for profile in &profiles {
-                let tree_root = staging.join(profile.descriptor().canonical_id);
+                let tree_root = staging.join(profile.tree().as_str());
                 built_trees.push(tree::write_tree(
                     &tree_root,
                     &tree_input,
@@ -352,20 +357,12 @@ pub fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, M
     })
 }
 
-fn requested_tree_profiles(
-    harnesses: &[PluginHarness],
-) -> Result<Vec<&'static tree::TreeProfile>, MarsError> {
-    if harnesses.is_empty() {
-        return Err(MarsError::InvalidRequest {
-            message: "a plugin build needs at least one harness".to_string(),
-        });
-    }
-
-    Ok(PluginTree::ALL
+fn requested_tree_profiles(harnesses: &[PluginHarness]) -> Vec<&'static tree::TreeProfile> {
+    PluginTree::ALL
         .into_iter()
         .filter(|tree| harnesses.iter().any(|harness| harness.tree() == *tree))
         .map(tree::profile)
-        .collect())
+        .collect()
 }
 
 fn implicit_consumer_config(

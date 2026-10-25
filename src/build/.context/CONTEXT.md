@@ -18,14 +18,16 @@ its lock-owning `StagedPlugin` alone replaces the destination when published.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three
 tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. Tree profiles
-derive their harness kind, canonical id, variant key and target root from the compiler descriptor;
-they add only plugin-specific agent policy, native model aliases, hook-root token, config writer
-and finish writer. Profiles also carry their typed `PluginTree` identity and apply a hook filter
-before copying, so files, counts and finish-writer inputs agree. `tree::write_tree` is the sole item
-loop. The OpenCode finish writer emits an npm-shaped package with a fixed `index.mjs`; at runtime it
+derive their harness kind, variant key and target root from the compiler descriptor; they add only
+plugin-specific agent policy, native model aliases, hook-root token, config writer and finish
+writer. Profiles also carry their typed `PluginTree` identity; `PluginTree::as_str()` is the sole
+directory and report key. Their hook filter runs before copying, so files, counts and finish-writer
+inputs agree. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits an
+npm-shaped package with a fixed `index.mjs`; at runtime it
 registers the built skills and MCP servers and imports accepted default-export hooks only after
 rendering them through atomic writes into hash-checked files, preferring a private cache directory.
-`tree::check_sources` scans authored agents, skills, hooks and the selected MCP union once;
+`tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
+selected MCP union once;
 per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
 exported graph hooks even when no requested tree selected a fragment, which is the input for plugin
 omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap

@@ -161,14 +161,28 @@ pub enum PluginHarness {
     OpenCode,
 }
 
+impl PluginHarness {
+    pub const DEFAULT: &'static [Self] = &[
+        Self::Claude,
+        Self::Codex,
+        Self::Grok,
+        Self::Cursor,
+        Self::OpenCode,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Grok => "grok",
+            Self::Cursor => "cursor",
+            Self::OpenCode => "opencode",
+        }
+    }
+}
+
 pub fn default_plugin_harnesses() -> Vec<PluginHarness> {
-    vec![
-        PluginHarness::Claude,
-        PluginHarness::Codex,
-        PluginHarness::Grok,
-        PluginHarness::Cursor,
-        PluginHarness::OpenCode,
-    ]
+    PluginHarness::DEFAULT.to_vec()
 }
 
 fn validate_plugin_config(config: &Config) -> Result<(), MarsError> {

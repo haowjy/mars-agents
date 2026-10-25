@@ -224,9 +224,36 @@ pub fn project_skill_for_target(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
 ) -> Result<bool, MarsError> {
+    project_skill_for_target_impl(source, dest, harness_variant_key, diag, skill_name, true)
+}
+
+/// Project after the caller has emitted the base skill's schema diagnostics once.
+/// Harness-specific variant and lossiness diagnostics still come from this projection.
+pub(crate) fn project_skill_for_target_with_checked_schema(
+    source: &Path,
+    dest: &Path,
+    harness_variant_key: Option<&str>,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+    skill_name: &str,
+) -> Result<bool, MarsError> {
+    project_skill_for_target_impl(source, dest, harness_variant_key, diag, skill_name, false)
+}
+
+fn project_skill_for_target_impl(
+    source: &Path,
+    dest: &Path,
+    harness_variant_key: Option<&str>,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+    skill_name: &str,
+    emit_schema_diags: bool,
+) -> Result<bool, MarsError> {
     let native_projection = match harness_variant_key {
-        Some(key) => Some(prepare_native_skill_projection(
-            source, key, diag, skill_name,
+        Some(key) => Some(prepare_native_skill_projection_impl(
+            source,
+            key,
+            diag,
+            skill_name,
+            emit_schema_diags,
         )?),
         None => None,
     };
@@ -246,6 +273,16 @@ pub(crate) fn prepare_native_skill_projection(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
 ) -> Result<NativeSkillProjection, MarsError> {
+    prepare_native_skill_projection_impl(source, harness_key, diag, skill_name, true)
+}
+
+fn prepare_native_skill_projection_impl(
+    source: &Path,
+    harness_key: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+    skill_name: &str,
+    emit_schema_diags: bool,
+) -> Result<NativeSkillProjection, MarsError> {
     let selected_skill =
         harness_skill_variant_path(source, harness_key).unwrap_or_else(|| source.join("SKILL.md"));
     let selected_content = fs::read_to_string(&selected_skill)?;
@@ -255,6 +292,7 @@ pub(crate) fn prepare_native_skill_projection(
         harness_key,
         skill_name,
         diag,
+        emit_schema_diags,
     )?;
 
     let mut overrides =
@@ -342,6 +380,7 @@ pub(crate) fn emit_staged_skill_lossiness_for_harness(
         harness_key,
         skill_name,
         diag,
+        true,
     )?;
     Ok(())
 }
@@ -352,6 +391,7 @@ fn lower_projected_skill_for_harness(
     harness_key: &str,
     skill_name: &str,
     diag: &mut crate::diagnostic::DiagnosticCollector,
+    emit_schema_diags: bool,
 ) -> Result<Option<crate::compiler::lossiness::LoweredOutput>, MarsError> {
     use crate::compiler::skills::lower::{lower_skill_for_harness, skill_harness_from_variant_key};
     use crate::compiler::skills::parse_skill_content;
@@ -367,30 +407,15 @@ fn lower_projected_skill_for_harness(
     let (profile, _) = match parse_skill_content(&base_content, &mut skill_diags) {
         Ok(parsed) => parsed,
         Err(_) => {
-            for d in &skill_diags {
-                diag.error_with_category(
-                    "skill-schema-error",
-                    format!("skill `{skill_name}`: {}", d.message()),
-                    crate::diagnostic::DiagnosticCategory::Validation,
-                );
+            if emit_schema_diags {
+                crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
             }
             return Ok(None);
         }
     };
 
-    for d in &skill_diags {
-        if d.is_error() {
-            diag.error_with_category(
-                "skill-schema-error",
-                format!("skill `{skill_name}`: {}", d.message()),
-                crate::diagnostic::DiagnosticCategory::Validation,
-            );
-        } else {
-            diag.warn(
-                "skill-schema-warning",
-                format!("skill `{skill_name}`: {}", d.message()),
-            );
-        }
+    if emit_schema_diags {
+        crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
     }
 
     if !profile.has_frontmatter {

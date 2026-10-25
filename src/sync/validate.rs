@@ -4,7 +4,6 @@
 //! Called from `build_target` against the post-prune, post-rewrite target state.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ItemKind;
@@ -64,21 +63,11 @@ pub(crate) fn validate_skill_frontmatter_in_target(
 }
 
 fn validate_skill_frontmatter_at_source(
-    source_path: &Path,
+    source_path: &std::path::Path,
     skill_name: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    let skill_md = if source_path.is_dir() {
-        source_path.join("SKILL.md")
-    } else {
-        source_path.to_path_buf()
-    };
-    let Ok(content) = std::fs::read_to_string(&skill_md) else {
-        return;
-    };
-    let mut skill_diags = Vec::new();
-    let _ = crate::compiler::skills::parse_skill_content(&content, &mut skill_diags);
-    crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
+    crate::compiler::skills::emit_skill_schema_diags_from_source(source_path, skill_name, diag);
 }
 
 pub(crate) fn warn_config_dangles_after_rename(

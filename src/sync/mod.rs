@@ -534,7 +534,6 @@ pub(crate) fn prepare_target_state(
         }
     }
 
-    validate::validate_skill_frontmatter_in_target(&target, diag);
     let warnings = validate::validate_skill_refs(&target);
 
     Ok(PreparedTarget {
@@ -782,6 +781,8 @@ pub(crate) fn build_target(
             Ok(())
         },
     )?;
+
+    validate::validate_skill_frontmatter_in_target(&target_state, diag);
 
     validate::warn_config_dangles_after_rename(
         &renames,

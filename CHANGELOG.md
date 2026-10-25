@@ -5,18 +5,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Plugin builds can emit an npm-shaped OpenCode tree that registers dependency-flattened skills
-  and MCP servers, composes default-export hook fragments at runtime, and keeps CommonJS hook
-  scripts working.
-- `mars build plugin [PATH] --out <dir>` builds an owned plugin output containing a Claude-format
-  tree at `<dir>/claude` (also consumed by Codex and Grok) with what `mars sync` installs in the
-  package's own checkout: its items plus dependencies under its own filters, renames and visibility,
-  with exported hooks and MCP servers. Skill and agent references are qualified as
-  `<plugin>:<name>`. Output is deterministic and LF. A root `<dir>/.mars-plugin.json` sentinel
-  records the package version, an offline input hash, dependency versions, per-file hashes, and
-  root-file ownership; a non-empty dir without one is refused; rebuilds swap the whole output
-  atomically and recover from an interrupted build. Build output reports each generated tree with
-  its own path and component counts.
+- `mars build plugin [PATH] [--out <dir>]` builds an owned, multi-harness plugin containing what
+  `mars sync` installs in the package's own checkout: its items plus dependencies under its own
+  filters, renames and visibility, with exported hooks and MCP servers. A `[plugin]` table configures
+  the output directory, plugin identity, marketplace, description and harness selection (all five
+  by default); `[package]` supplies author, homepage and license metadata. Explicit `--out` builds
+  remain available without `[plugin]`. Generated output can contain a Claude-format tree consumed
+  by Claude, Codex and Grok; a Cursor tree with native agents, skills, hooks, MCP and manifests; and
+  an npm-shaped OpenCode tree that registers skills and MCP and composes default-export hook
+  fragments while preserving CommonJS hook scripts. Skill and agent references are qualified as
+  `<plugin>:<name>`. Per-harness support comes from the same tree profiles that render the README
+  tables, with one warning per unavailable component and info lines for verification below live.
+  Output is deterministic and LF. A root `<dir>/.mars-plugin.json` sentinel records the package
+  version, an offline input hash, dependency versions, per-file hashes and root-file ownership; a
+  non-empty directory without one is refused, and rebuilds atomically swap the whole output and
+  recover from interruption. Build output reports each generated tree with its own path and
+  component counts.
 
 ### Fixed
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and

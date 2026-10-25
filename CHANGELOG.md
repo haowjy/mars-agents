@@ -42,7 +42,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Plugin skill reference qualification now covers every Markdown resource, honors CommonMark
   fence delimiters, and leaves path suffixes such as `/skill/SKILL.md` unchanged.
 - Plugin text output now uses LF line endings and generated JSON ends with a newline while binary
-  files remain byte-identical. Shared skill and hook copies preserve source executable bits.
+  files remain byte-identical. Windows `.bat` and `.cmd` files retain their authored line endings.
+  Shared skill and hook copies preserve source executable bits.
+- Plugin sentinels now record path dependencies using their manifest versions.
 - Plugin term warnings now inspect authored content before qualification instead of generated
   manifests, flat-root skill projection excludes Mars control files, and parent-directory output
   refusals now explain the invalid `..` path.

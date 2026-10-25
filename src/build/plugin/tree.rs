@@ -533,6 +533,16 @@ fn normalize_text_tree(root: &Path) -> Result<(), MarsError> {
         if !entry.file_type().is_file() {
             continue;
         }
+        if entry
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("bat") || extension.eq_ignore_ascii_case("cmd")
+            })
+        {
+            continue;
+        }
         let bytes = std::fs::read(entry.path())?;
         let Ok(content) = String::from_utf8(bytes) else {
             continue;

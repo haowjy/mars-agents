@@ -453,12 +453,18 @@ fn resolved_dependency_identities(
         if source_name == root_source {
             continue;
         }
-        let resolved = &graph.nodes[source_name].resolved_ref;
+        let node = &graph.nodes[source_name];
+        let resolved = &node.resolved_ref;
         let version = resolved
             .version
             .as_ref()
             .map(ToString::to_string)
-            .or_else(|| resolved.version_tag.clone());
+            .or_else(|| resolved.version_tag.clone())
+            .or_else(|| {
+                node.manifest
+                    .as_ref()
+                    .map(|manifest| manifest.package.version.clone())
+            });
         let commit = resolved.commit.as_ref().map(ToString::to_string);
         if version.is_none() && commit.is_none() {
             continue;

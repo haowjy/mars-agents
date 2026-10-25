@@ -1,0 +1,4 @@
+# Plugin build TODO
+
+- F3's hand-edit check must apply the plugin build's line-ending normalization before comparing
+  checkout bytes with sentinel file hashes. Keep `.bat` and `.cmd` byte-faithful under that policy.

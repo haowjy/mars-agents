@@ -48,6 +48,14 @@ impl SchemaDiagnostic {
             range: None,
         }
     }
+
+    pub fn is_error(&self) -> bool {
+        self.severity == Severity::Error
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 pub fn key_path(field: &str) -> Vec<PathSegment> {

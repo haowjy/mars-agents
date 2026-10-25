@@ -544,8 +544,7 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             .unwrap_or(&canonical_file_stem)
             .to_string();
         for d in &agent_diags {
-            let schema = d.schema_diagnostic();
-            diag.schema(&schema, &format!("agent `{agent_name}`"), true);
+            diag.schema(d, &format!("agent `{agent_name}`"), true);
         }
 
         agents.push(MarsCanonicalAgent {

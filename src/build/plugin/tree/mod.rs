@@ -639,7 +639,7 @@ fn agent_overlay_name<'a>(
 
 fn emit_agent_parse_diagnostics(
     item: &TargetItem,
-    findings: &[crate::compiler::agents::AgentDiagnostic],
+    findings: &[mars_schema::diagnostic::SchemaDiagnostic],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     for finding in findings {

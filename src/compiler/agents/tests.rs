@@ -6,14 +6,14 @@ use mars_schema::frontmatter::Frontmatter;
 fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
     let fm = Frontmatter::parse(content).unwrap();
     let mut diags = Vec::new();
-    let profile = parse_agent_profile(&fm, &mut diags);
+    let profile = parse_agent_profile_legacy(&fm, &mut diags);
     (profile, diags)
 }
 
 fn lower_claude(content: &str) -> (AgentProfile, lower::LoweredOutput, Vec<AgentDiagnostic>) {
     let fm = Frontmatter::parse(content).unwrap();
     let mut diags = Vec::new();
-    let profile = parse_agent_profile(&fm, &mut diags);
+    let profile = parse_agent_profile_legacy(&fm, &mut diags);
     let out = lower::lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
     (profile, out, diags)
 }
@@ -614,7 +614,7 @@ fn non_claude_native_agents_drop_ask_and_allowlists_with_lossiness() {
     let content = "---\nname: a\ntools:\n  'bash(git push *)': ask\n---\n";
     let fm = Frontmatter::parse(content).unwrap();
     let mut diags = Vec::new();
-    let profile = parse_agent_profile(&fm, &mut diags);
+    let profile = parse_agent_profile_legacy(&fm, &mut diags);
     for out in [
         lower::lower_to_codex(&profile, fm.body(), &NativeModel::Inherit),
         lower::lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit),

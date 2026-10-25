@@ -507,8 +507,8 @@ fn overlay_rules(names: &[OverlayToolName], action: ToolAction) -> Vec<ToolRule>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
-    use crate::compiler::skills::{SkillDiagnostic, parse_skill_content};
+    use crate::compiler::agents::{AgentDiagnostic, parse_agent_content_legacy};
+    use crate::compiler::skills::{SkillDiagnostic, parse_skill_content_legacy};
     use mars_schema::HarnessId;
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
@@ -518,14 +518,14 @@ mod tests {
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
         let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
+        let (profile, _) = parse_agent_content_legacy(yaml, &mut diags).unwrap();
         assert!(diags.is_empty(), "agent diags: {diags:?}");
         profile.tools
     }
 
     fn skill_policy(yaml: &str) -> EffectiveToolPolicy {
         let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content(yaml, &mut diags).unwrap();
+        let (profile, _) = parse_skill_content_legacy(yaml, &mut diags).unwrap();
         assert!(diags.is_empty(), "skill diags: {diags:?}");
         profile.tools
     }
@@ -643,7 +643,7 @@ mod tests {
     fn list_form_only_grants_and_is_flagged_deprecated() {
         let yaml = "---\nname: a\ndescription: d\ntools: [read, grep]\n---\n";
         let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
+        let (profile, _) = parse_agent_content_legacy(yaml, &mut diags).unwrap();
         assert_eq!(profile.tools.describe(), vec!["allow:read", "allow:grep"]);
         assert!(!profile.tools.is_allowlist());
         assert_eq!(diags, [AgentDiagnostic::DeprecatedListFormTools]);
@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn skill_list_form_grants_and_never_restricts() {
         let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content(
+        let (profile, _) = parse_skill_content_legacy(
             "---\nname: a\ndescription: d\ntools: [read]\n---\nbody",
             &mut diags,
         )
@@ -788,7 +788,7 @@ mod tests {
             &["context7".to_string()]
         ));
         let mut diags = Vec::new();
-        let policy = crate::compiler::agents::parse_agent_profile(&fm, &mut diags).tools;
+        let policy = crate::compiler::agents::parse_agent_profile_legacy(&fm, &mut diags).tools;
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)"]);
         assert!(!policy.is_allowlist());
     }

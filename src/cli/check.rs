@@ -240,7 +240,6 @@ fn check_dir_with_lens(
                             let _profile =
                                 crate::compiler::agents::parse_agent_profile(&fm, &mut agent_diags);
                             for diagnostic in agent_diags {
-                                let diagnostic = diagnostic.schema_diagnostic();
                                 let message = format!("agent `{name}`: {}", diagnostic.message);
                                 if diagnostic.severity == mars_schema::diagnostic::Severity::Error {
                                     errors.push(message);
@@ -336,19 +335,21 @@ fn check_dir_with_lens(
                                     .unwrap_or_else(|| dirname.clone());
 
                                 let schema_missing_name = skill_diags.iter().any(|diagnostic| {
-                                    matches!(
-                                        diagnostic,
-                                        crate::compiler::skills::SkillDiagnostic::InvalidFieldValue { field, value, .. }
-                                            if field == "name" && value == "missing"
-                                    )
+                                    diagnostic.path
+                                        == [mars_schema::diagnostic::PathSegment::Key(
+                                            "name".to_string(),
+                                        )]
+                                        && diagnostic.message.contains("invalid value `missing`")
                                 });
                                 let schema_missing_description =
                                     skill_diags.iter().any(|diagnostic| {
-                                        matches!(
-                                            diagnostic,
-                                            crate::compiler::skills::SkillDiagnostic::InvalidFieldValue { field, value, .. }
-                                                if field == "description" && value == "missing"
-                                        )
+                                        diagnostic.path
+                                            == [mars_schema::diagnostic::PathSegment::Key(
+                                                "description".to_string(),
+                                            )]
+                                            && diagnostic
+                                                .message
+                                                .contains("invalid value `missing`")
                                     });
 
                                 for diagnostic in skill_diags {

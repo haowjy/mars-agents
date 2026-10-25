@@ -147,7 +147,10 @@ impl SkillDiagnostic {
 ///
 /// Runs on raw source frontmatter before lift. Lifted foreign imports (e.g. Cursor
 /// Manual rules) never hit this path.
-pub(crate) fn push_authored_skill_schema_diags(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) {
+pub(crate) fn push_authored_skill_schema_diags_legacy(
+    fm: &Frontmatter,
+    diags: &mut Vec<SkillDiagnostic>,
+) {
     if fm.has_frontmatter() {
         validate_required_string("description", fm.get("description"), diags);
     }
@@ -158,8 +161,17 @@ pub(crate) fn push_authored_skill_schema_diags(fm: &Frontmatter, diags: &mut Vec
     }
 }
 
+pub(crate) fn push_authored_skill_schema_diags(
+    fm: &Frontmatter,
+    diags: &mut Vec<mars_schema::diagnostic::SchemaDiagnostic>,
+) {
+    let mut findings = Vec::new();
+    push_authored_skill_schema_diags_legacy(fm, &mut findings);
+    diags.extend(findings.iter().map(SkillDiagnostic::schema_diagnostic));
+}
+
 /// Emit warnings for foreign tool-field spellings in raw skill frontmatter.
-pub(crate) fn push_non_canonical_tool_field_diags(
+pub(crate) fn push_non_canonical_tool_field_diags_legacy(
     fm: &Frontmatter,
     diags: &mut Vec<SkillDiagnostic>,
 ) {
@@ -173,15 +185,23 @@ pub(crate) fn push_non_canonical_tool_field_diags(
     }
 }
 
+pub(crate) fn push_non_canonical_tool_field_diags(
+    fm: &Frontmatter,
+    diags: &mut Vec<mars_schema::diagnostic::SchemaDiagnostic>,
+) {
+    let mut findings = Vec::new();
+    push_non_canonical_tool_field_diags_legacy(fm, &mut findings);
+    diags.extend(findings.iter().map(SkillDiagnostic::schema_diagnostic));
+}
+
 /// Forward parsed skill schema diagnostics into the pipeline collector.
 pub(crate) fn emit_skill_schema_diags(
     diag: &mut DiagnosticCollector,
     skill_name: &str,
-    skill_diags: &[SkillDiagnostic],
+    skill_diags: &[mars_schema::diagnostic::SchemaDiagnostic],
 ) {
     for d in skill_diags {
-        let schema = d.schema_diagnostic();
-        diag.schema(&schema, &format!("skill `{skill_name}`"), false);
+        diag.schema(d, &format!("skill `{skill_name}`"), false);
     }
 }
 
@@ -226,7 +246,7 @@ fn emit_skill_schema_diags_from_source_with(
         return;
     };
     let mut skill_diags = Vec::new();
-    let _ = parse_skill_content(&content, &mut skill_diags);
+    let _ = parse_skill_content_legacy(&content, &mut skill_diags);
     for d in &skill_diags {
         let message = format!("skill `{skill_name}`: {}", message(d));
         if d.is_error() {
@@ -302,7 +322,10 @@ fn parse_invocability_bool(
     (value, had_field)
 }
 
-pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -> SkillProfile {
+pub fn parse_skill_profile_legacy(
+    fm: &Frontmatter,
+    diags: &mut Vec<SkillDiagnostic>,
+) -> SkillProfile {
     // Track which keys we consume so passthrough = all keys minus consumed.
     // This avoids a static list that drifts when new fields are added.
     let mut consumed_keys: Vec<String> = Vec::new();
@@ -385,7 +408,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     for &(field, _) in tool_policy::NON_CANONICAL_TOOL_FIELD_ALIASES {
         consumed_keys.push(field.to_string());
     }
-    push_non_canonical_tool_field_diags(fm, diags);
+    push_non_canonical_tool_field_diags_legacy(fm, diags);
 
     for field in [
         "invocation",
@@ -432,7 +455,7 @@ pub fn parse_skill_profile(fm: &Frontmatter, diags: &mut Vec<SkillDiagnostic>) -
     }
 }
 
-pub fn parse_skill_content(
+pub fn parse_skill_content_legacy(
     content: &str,
     diags: &mut Vec<SkillDiagnostic>,
 ) -> Result<(SkillProfile, Frontmatter), FrontmatterError> {
@@ -440,6 +463,32 @@ pub fn parse_skill_content(
         diags.push(SkillDiagnostic::MalformedFrontmatter {
             message: e.to_string(),
         });
+    })?;
+    let profile = parse_skill_profile_legacy(&fm, diags);
+    Ok((profile, fm))
+}
+
+pub fn parse_skill_profile(
+    fm: &Frontmatter,
+    diags: &mut Vec<mars_schema::diagnostic::SchemaDiagnostic>,
+) -> SkillProfile {
+    let mut findings = Vec::new();
+    let profile = parse_skill_profile_legacy(fm, &mut findings);
+    diags.extend(findings.iter().map(SkillDiagnostic::schema_diagnostic));
+    profile
+}
+
+pub fn parse_skill_content(
+    content: &str,
+    diags: &mut Vec<mars_schema::diagnostic::SchemaDiagnostic>,
+) -> Result<(SkillProfile, Frontmatter), FrontmatterError> {
+    let fm = Frontmatter::parse(content).inspect_err(|error| {
+        diags.push(
+            SkillDiagnostic::MalformedFrontmatter {
+                message: error.to_string(),
+            }
+            .schema_diagnostic(),
+        );
     })?;
     let profile = parse_skill_profile(&fm, diags);
     Ok((profile, fm))
@@ -451,7 +500,7 @@ mod tests {
 
     fn parse(content: &str) -> (SkillProfile, Vec<SkillDiagnostic>, Frontmatter) {
         let mut diags = Vec::new();
-        let (profile, fm) = parse_skill_content(content, &mut diags).unwrap();
+        let (profile, fm) = parse_skill_content_legacy(content, &mut diags).unwrap();
         (profile, diags, fm)
     }
 
@@ -649,7 +698,7 @@ body",
     fn authored_skill_requires_description() {
         let fm = Frontmatter::parse("---\nname: a\nmodel-invocable: false\n---\nbody").unwrap();
         let mut d = Vec::new();
-        push_authored_skill_schema_diags(&fm, &mut d);
+        push_authored_skill_schema_diags_legacy(&fm, &mut d);
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::InvalidFieldValue { field, value, .. }
@@ -664,7 +713,7 @@ body",
         )
         .unwrap();
         let mut d = Vec::new();
-        push_authored_skill_schema_diags(&fm, &mut d);
+        push_authored_skill_schema_diags_legacy(&fm, &mut d);
         assert!(d.iter().any(|d| matches!(
             d,
             SkillDiagnostic::RemovedField { field } if field == RESERVED_IMPORT_MARKER
@@ -787,7 +836,8 @@ body",
     #[test]
     fn malformed_yaml_raw_fallback_diagnostic() {
         let mut diags = Vec::new();
-        let err = parse_skill_content("---\ninvalid: [:\n---\nbody", &mut diags).unwrap_err();
+        let err =
+            parse_skill_content_legacy("---\ninvalid: [:\n---\nbody", &mut diags).unwrap_err();
         assert!(matches!(err, FrontmatterError::MalformedYaml(_)));
         assert!(matches!(
             diags[0],

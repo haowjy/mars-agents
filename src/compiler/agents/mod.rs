@@ -708,7 +708,10 @@ fn parse_fanout(val: &Value) -> Vec<FanoutEntry> {
 /// Collects diagnostics without failing — the caller decides whether errors
 /// are fatal. The parsed [`AgentProfile`] is always returned even when there
 /// are validation errors; invalid fields are skipped (omitted from the profile).
-pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -> AgentProfile {
+pub fn parse_agent_profile_legacy(
+    fm: &Frontmatter,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> AgentProfile {
     let name = fm.name().map(str::to_owned);
     let description = fm
         .get("description")
@@ -943,9 +946,29 @@ pub fn parse_agent_profile(fm: &Frontmatter, diags: &mut Vec<AgentDiagnostic>) -
 /// Parse an agent profile from raw markdown content.
 ///
 /// Convenience wrapper over [`parse_agent_profile`].
-pub fn parse_agent_content(
+#[cfg(test)]
+pub fn parse_agent_content_legacy(
     content: &str,
     diags: &mut Vec<AgentDiagnostic>,
+) -> Result<(AgentProfile, Frontmatter), FrontmatterError> {
+    let fm = Frontmatter::parse(content)?;
+    let profile = parse_agent_profile_legacy(&fm, diags);
+    Ok((profile, fm))
+}
+
+pub fn parse_agent_profile(
+    fm: &Frontmatter,
+    diags: &mut Vec<mars_schema::diagnostic::SchemaDiagnostic>,
+) -> AgentProfile {
+    let mut findings = Vec::new();
+    let profile = parse_agent_profile_legacy(fm, &mut findings);
+    diags.extend(findings.iter().map(AgentDiagnostic::schema_diagnostic));
+    profile
+}
+
+pub fn parse_agent_content(
+    content: &str,
+    diags: &mut Vec<mars_schema::diagnostic::SchemaDiagnostic>,
 ) -> Result<(AgentProfile, Frontmatter), FrontmatterError> {
     let fm = Frontmatter::parse(content)?;
     let profile = parse_agent_profile(&fm, diags);

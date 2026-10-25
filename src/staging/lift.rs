@@ -351,10 +351,10 @@ mod tests {
     use super::*;
     use crate::compiler::agents::AgentDiagnostic;
     use crate::compiler::agents::lower::{NativeModel, lower_to_claude};
-    use crate::compiler::agents::parse_agent_content;
+    use crate::compiler::agents::parse_agent_content_legacy;
     use crate::compiler::lossiness::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
-    use crate::compiler::skills::parse_skill_content;
+    use crate::compiler::skills::parse_skill_content_legacy;
     use mars_schema::frontmatter::Frontmatter;
 
     fn fm(yaml: &str) -> Frontmatter {
@@ -483,7 +483,7 @@ mod tests {
         assert!(lifted.get("alwaysApply").is_none());
 
         let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
+        let (profile, _) = parse_skill_content_legacy(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty(), "{diags:?}");
         assert!(profile.description.is_none());
         assert!(!profile.model_invocable);
@@ -565,7 +565,7 @@ when_to_use: Use when git history matters
         let staged = lifted.render();
 
         let mut diags = Vec::new();
-        let (profile, fm) = parse_skill_content(&staged, &mut diags).unwrap();
+        let (profile, fm) = parse_skill_content_legacy(&staged, &mut diags).unwrap();
         assert!(diags.is_empty(), "{diags:?}");
         assert!(!profile.model_invocable);
         assert!(!profile.user_invocable);
@@ -648,7 +648,7 @@ when_to_use: Use when git history matters
         assert!(lifted.get("allowed-tools").is_none());
 
         let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
+        let (profile, _) = parse_skill_content_legacy(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(profile.tools.describe(), ["allow:bash(git *)"]);
     }
@@ -662,7 +662,7 @@ when_to_use: Use when git history matters
         );
         assert_eq!(skill.get("tools"), Some(&tool_map(&[("Read", "allow")])));
         let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content(&skill.render(), &mut diags).unwrap();
+        let (profile, _) = parse_skill_content_legacy(&skill.render(), &mut diags).unwrap();
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(profile.tools.describe(), ["allow:read"]);
         assert!(!profile.tools.is_allowlist());
@@ -688,7 +688,7 @@ when_to_use: Use when git history matters
         );
         let staged = lifted.render();
         let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(&staged, &mut diags).unwrap();
+        let (profile, _) = parse_agent_content_legacy(&staged, &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(profile.tools.describe(), ["deny:web_search"]);
     }
@@ -730,7 +730,7 @@ when_to_use: Use when git history matters
         }
 
         let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
+        let (profile, _) = parse_agent_content_legacy(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
             profile.tools.describe(),
@@ -809,7 +809,8 @@ when_to_use: Use when git history matters
         );
 
         let mut diags = Vec::new();
-        let (profile, canonical) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
+        let (profile, canonical) =
+            parse_agent_content_legacy(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty(), "{diags:?}");
 
         let output = lower_to_claude(
@@ -864,7 +865,7 @@ when_to_use: Use when git history matters
         assert!(lifted.get("allowed-tools").is_none());
 
         let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content(&lifted.render(), &mut diags).unwrap();
+        let (profile, _) = parse_skill_content_legacy(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
             profile.tools.describe(),
@@ -987,7 +988,7 @@ when_to_use: Use when git history matters
         );
 
         let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(&lifted.render(), &mut diags).unwrap();
+        let (profile, _) = parse_agent_content_legacy(&lifted.render(), &mut diags).unwrap();
         assert!(diags.is_empty());
         assert_eq!(
             profile.tools.describe(),
@@ -1033,7 +1034,7 @@ when_to_use: Use when git history matters
         let input = fm("name: a\ndescription: d\nmcp-tools: [plugin:demo]\n");
 
         let mut diags = Vec::new();
-        let (_, _) = parse_agent_content(&input.render(), &mut diags).unwrap();
+        let (_, _) = parse_agent_content_legacy(&input.render(), &mut diags).unwrap();
         assert!(
             diags.iter().any(
                 |d| matches!(d, AgentDiagnostic::RemovedField { field } if field == "mcp-tools")
@@ -1046,7 +1047,8 @@ when_to_use: Use when git history matters
         assert!(lifted.get("mcp_tools").is_none());
 
         let mut staged_diags = Vec::new();
-        let (profile, fm) = parse_agent_content(&lifted.render(), &mut staged_diags).unwrap();
+        let (profile, fm) =
+            parse_agent_content_legacy(&lifted.render(), &mut staged_diags).unwrap();
         assert!(
             staged_diags.is_empty(),
             "stripped field must not re-trigger diagnostic: {staged_diags:?}"

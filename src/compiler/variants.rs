@@ -424,7 +424,7 @@ fn lower_projected_skill_for_harness(
         return Ok(None);
     }
 
-    let selected_fm = match crate::frontmatter::parse(selected_content) {
+    let selected_fm = match mars_schema::frontmatter::parse(selected_content) {
         Ok(fm) => fm,
         Err(e) => {
             let fallback = if emit_schema_diags {

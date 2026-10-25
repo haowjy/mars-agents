@@ -3,9 +3,9 @@
 use std::path::Path;
 
 use crate::error::MarsError;
-use crate::frontmatter;
 use crate::hash;
-use crate::lock::ItemKind;
+use mars_schema::frontmatter;
+use mars_schema::item::ItemKind;
 
 use super::output::{self, CatalogEntry, ListEntry};
 

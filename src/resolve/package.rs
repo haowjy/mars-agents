@@ -1,3 +1,4 @@
+use mars_schema::item::ItemKind;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -6,7 +7,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::dialect::Dialect;
 use crate::discover;
 use crate::error::{ConfigError, MarsError, ResolutionError};
-use crate::lock::{ItemKind, LockFile};
+use crate::lock::LockFile;
 use crate::staging;
 use crate::types::{ItemName, SourceId, SourceName, SourceSubpath};
 use indexmap::IndexMap;

@@ -1,3 +1,4 @@
+use mars_schema::item::ItemKind;
 pub mod apply;
 pub mod diff;
 pub mod filter;
@@ -19,7 +20,7 @@ use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::error::MarsError;
 use crate::fs::FileLock;
 use crate::hash;
-use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, ItemKind};
+use crate::lock::{CANONICAL_TARGET_ROOT, ItemId};
 use crate::lock::{LockFile, LockIndex};
 use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;

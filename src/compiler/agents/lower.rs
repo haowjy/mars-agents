@@ -23,7 +23,7 @@ use crate::compiler::lossiness::Lossiness;
 mod tests {
     use super::*;
     use crate::compiler::agents::{AgentDiagnostic, AgentProfile, HarnessId, parse_agent_content};
-    use crate::frontmatter::Frontmatter;
+    use mars_schema::frontmatter::Frontmatter;
 
     fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<AgentDiagnostic>) {
         let mut diags = Vec::new();

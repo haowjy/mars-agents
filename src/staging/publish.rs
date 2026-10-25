@@ -8,8 +8,8 @@ use crate::config::SkillOverlay;
 use crate::diagnostic::DiagnosticCollector;
 use crate::dialect::Dialect;
 use crate::error::MarsError;
-use crate::lock::ItemKind;
 use crate::types::RenameMap;
+use mars_schema::item::ItemKind;
 
 use super::{
     StageOverlayContext, item_kind_for_markdown, process_markdown_file, should_lift_markdown,

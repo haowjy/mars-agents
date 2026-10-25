@@ -129,7 +129,7 @@ pub fn warn_no_installed_claim_adopted(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
+    use crate::lock::{LockFile, LockedItemV2, OutputRecord};
     use indexmap::IndexMap;
 
     fn lock_with_output(target_root: &str, dest_path: &str) -> LockFile {

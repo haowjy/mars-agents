@@ -10,9 +10,9 @@ use super::models_common::{
 use crate::build::policy::{PolicyInput, resolve_policy};
 use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::error::MarsError;
-use crate::lock::ItemKind;
 use crate::models::{self, ModelAlias};
 use crate::types::MarsContext;
+use mars_schema::item::ItemKind;
 
 #[derive(Debug, Parser)]
 #[command(

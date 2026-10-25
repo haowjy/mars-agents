@@ -23,11 +23,11 @@ use crate::config::SkillOverlay;
 use crate::diagnostic::DiagnosticCollector;
 use crate::dialect::Dialect;
 use crate::error::MarsError;
-use crate::frontmatter::Frontmatter;
-use crate::lock::ItemKind;
 use crate::platform::cache::safe_component;
 use crate::resolve::RootedSourceRef;
 use crate::types::{RenameMap, SourceName};
+use mars_schema::frontmatter::Frontmatter;
+use mars_schema::item::ItemKind;
 
 pub(crate) use lift::lift_frontmatter_with_change;
 pub(crate) use overlay::{apply_skill_overlay, skill_overlay_lookup_name};

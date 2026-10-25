@@ -1,3 +1,4 @@
+use mars_schema::item::ItemKind;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -10,7 +11,7 @@ use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::discover;
 use crate::error::MarsError;
 use crate::hash;
-use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, ItemKind, LockFile, LockIndex};
+use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, LockFile, LockIndex};
 use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
 use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};

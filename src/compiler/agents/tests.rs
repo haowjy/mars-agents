@@ -1,7 +1,7 @@
 use super::*;
 use crate::compiler::agents::lower::{self, NativeModel};
 use crate::compiler::lossiness::Lossiness;
-use crate::frontmatter::Frontmatter;
+use mars_schema::frontmatter::Frontmatter;
 
 fn parse(content: &str) -> (AgentProfile, Vec<AgentDiagnostic>) {
     let fm = Frontmatter::parse(content).unwrap();

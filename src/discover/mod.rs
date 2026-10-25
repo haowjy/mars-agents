@@ -13,9 +13,10 @@ use serde_json::Value;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::lock::{ItemId, ItemKind};
+use crate::lock::ItemId;
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::ItemName;
+use mars_schema::item::ItemKind;
 
 // These high-volume generated directories are skipped in addition to the dot-dir
 // rule to avoid slow walks and false-positive imports from dependency/build

@@ -15,6 +15,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::plan::{PlannedAction, SyncPlan};
+use mars_schema::item::ItemKind;
+
 use crate::{
     error::{LockError, MarsError},
     hash,
@@ -22,7 +24,7 @@ use crate::{
         self, CANONICAL_TARGET_ROOT, LockFile, LockIndex, LockedItemV2, OutputRecord, OutputState,
     },
     resolve::ResolvedGraph,
-    types::{ContentHash, DestPath, ItemKind, SourceName},
+    types::{ContentHash, DestPath, SourceName},
 };
 
 const INTENT_FILE: &str = ".mars/pending-canonical.json";

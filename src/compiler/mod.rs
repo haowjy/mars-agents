@@ -13,7 +13,6 @@ pub mod config_entries;
 pub(crate) mod harness_descriptor;
 pub mod hooks;
 /// Hook compiler lane: native event discovery, validation, and ordering.
-pub(crate) mod invocability;
 pub(crate) mod lossiness;
 pub(crate) mod lossiness_preview;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
@@ -217,7 +216,7 @@ pub fn suppress_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome>
         .iter()
         .cloned()
         .map(|mut outcome| {
-            if outcome.item_id.kind == crate::lock::ItemKind::Agent {
+            if outcome.item_id.kind == mars_schema::item::ItemKind::Agent {
                 outcome.action = ActionTaken::Removed;
             }
             outcome
@@ -233,7 +232,7 @@ pub fn suppress_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome>
 pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
     outcomes
         .iter()
-        .filter(|outcome| outcome.item_id.kind != crate::lock::ItemKind::Agent)
+        .filter(|outcome| outcome.item_id.kind != mars_schema::item::ItemKind::Agent)
         .cloned()
         .collect()
 }
@@ -242,10 +241,11 @@ pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
 mod skill_surface_tests {
     use super::*;
     use crate::config::AgentEmission;
-    use crate::lock::{ItemId, ItemKind};
+    use crate::lock::ItemId;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::{DestPath, ItemName};
     use mars_schema::HarnessId;
+    use mars_schema::item::ItemKind;
 
     #[test]
     fn native_agent_emission_defaults_to_standalone_auto() {

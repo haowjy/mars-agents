@@ -23,7 +23,7 @@ pub(super) static PROFILE: TreeProfile = TreeProfile {
 
 fn preserve_agent(
     lowered: &str,
-    _source: &crate::frontmatter::Frontmatter,
+    _source: &mars_schema::frontmatter::Frontmatter,
     _item: &TargetItem,
     _diag: &mut DiagnosticCollector,
 ) -> Result<String, MarsError> {

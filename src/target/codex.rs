@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::lock::ItemKind;
 use crate::types::DestPath;
+use mars_schema::item::ItemKind;
 
 use super::{ConfigEntry, HookEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
 

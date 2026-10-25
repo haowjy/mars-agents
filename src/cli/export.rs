@@ -227,8 +227,8 @@ fn action_label(action: &crate::sync::apply::ActionTaken) -> &'static str {
     }
 }
 
-fn kind_label(kind: &crate::lock::ItemKind) -> String {
-    use crate::lock::ItemKind;
+fn kind_label(kind: &mars_schema::item::ItemKind) -> String {
+    use mars_schema::item::ItemKind;
     match kind {
         ItemKind::Agent => "agent".to_string(),
         ItemKind::Skill => "skill".to_string(),

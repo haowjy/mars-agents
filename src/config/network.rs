@@ -5,8 +5,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
-use crate::frontmatter::Frontmatter;
 use crate::permission_set::PermissionSet;
+use mars_schema::frontmatter::Frontmatter;
 
 use super::looks_like_network_key;
 

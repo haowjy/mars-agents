@@ -19,7 +19,7 @@ use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
 use crate::config::{EffectiveProjectConfig, NetworkHost, NetworkPolicy};
 use crate::error::{ConfigError, MarsError};
-use crate::frontmatter::SkillsSpec;
+use mars_schema::frontmatter::SkillsSpec;
 
 pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 

@@ -7,7 +7,7 @@ use crate::compiler::skills::parse_skill_content;
 use crate::compiler::variants::harness_skill_variant_path;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
-use crate::frontmatter::{Frontmatter, SkillsSpec};
+use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
 

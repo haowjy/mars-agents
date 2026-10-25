@@ -47,7 +47,7 @@ pub(crate) struct NativeAgentCompileCtx<'a> {
 struct NativeAgentEmit<'a> {
     harness: &'a mars_schema::HarnessId,
     profile: &'a crate::compiler::agents::AgentProfile,
-    fm: &'a crate::frontmatter::Frontmatter,
+    fm: &'a mars_schema::frontmatter::Frontmatter,
     body: &'a str,
     agent_name: &'a str,
     canonical_dest_path: &'a str,
@@ -64,7 +64,7 @@ pub(crate) struct MarsCanonicalAgent {
     pub agent_name: String,
     pub canonical_dest_path: String,
     pub profile: crate::compiler::agents::AgentProfile,
-    pub fm: crate::frontmatter::Frontmatter,
+    pub fm: mars_schema::frontmatter::Frontmatter,
 }
 
 pub(crate) struct MarsAgentScan {
@@ -581,7 +581,7 @@ pub(crate) fn reconcile_native_agent_surfaces(
         .old_lock
         .items
         .values()
-        .filter(|item| item.kind == crate::lock::ItemKind::Agent)
+        .filter(|item| item.kind == mars_schema::item::ItemKind::Agent)
     {
         for output in &item.outputs {
             let Some(harness) = crate::harness::registry::harness_for_target(&output.target_root)
@@ -670,7 +670,7 @@ fn desired_native_agent_outputs(
     for item in previous_lock
         .items
         .values()
-        .filter(|item| item.kind == crate::lock::ItemKind::Agent)
+        .filter(|item| item.kind == mars_schema::item::ItemKind::Agent)
     {
         let Some(canonical_path) = item.outputs.iter().find_map(|output| {
             (output.target_root == crate::lock::CANONICAL_TARGET_ROOT

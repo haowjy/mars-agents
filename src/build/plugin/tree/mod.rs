@@ -6,13 +6,13 @@ use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::compiler::harness_descriptor::{CompilerHarnessDescriptor, descriptor};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
-use crate::lock::ItemKind;
 use crate::resolve::ResolvedGraph;
 use crate::sync::rewrite::RenameIndex;
 use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry};
 use crate::types::SourceName;
 use mars_schema::HarnessId;
+use mars_schema::item::ItemKind;
 
 use super::metadata::PackageMetadata;
 use super::model::{ModelFallbackReason, resolve_model};
@@ -25,7 +25,7 @@ mod opencode;
 
 pub(super) type AgentPolicy = fn(
     &str,
-    &crate::frontmatter::Frontmatter,
+    &mars_schema::frontmatter::Frontmatter,
     &TargetItem,
     &mut DiagnosticCollector,
 ) -> Result<String, MarsError>;
@@ -525,7 +525,7 @@ fn write_agent(
 }
 
 fn qualify_agent_skills(
-    skills: &mut crate::frontmatter::SkillsSpec,
+    skills: &mut mars_schema::frontmatter::SkillsSpec,
     references: &IndexMap<String, String>,
 ) {
     for skill in skills.load.iter_mut().chain(&mut skills.available) {
@@ -573,7 +573,7 @@ fn write_skill(
 
     let skill_md = destination.join("SKILL.md");
     let qualified = std::fs::read_to_string(&skill_md)?;
-    crate::frontmatter::parse(&qualified)
+    mars_schema::frontmatter::parse(&qualified)
         .map_err(|error| invalid_item("skill", item, error.to_string()))?;
     Ok(())
 }

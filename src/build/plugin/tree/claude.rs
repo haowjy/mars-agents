@@ -99,11 +99,11 @@ fn write_plugin_mcp_json(
 
 fn apply_agent_policy(
     lowered: &str,
-    source: &crate::frontmatter::Frontmatter,
+    source: &mars_schema::frontmatter::Frontmatter,
     item: &TargetItem,
     diag: &mut DiagnosticCollector,
 ) -> Result<String, MarsError> {
-    let mut plugin = crate::frontmatter::parse(lowered)
+    let mut plugin = mars_schema::frontmatter::parse(lowered)
         .map_err(|error| invalid_item("agent", item, error.to_string()))?;
 
     // The universal agent schema does not interpret these Claude-native fields,

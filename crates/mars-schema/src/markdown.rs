@@ -4,20 +4,20 @@
 //! property of Markdown input, not of either consumer's orchestration layer.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Fence {
-    pub(crate) marker: char,
-    pub(crate) length: usize,
-    pub(crate) indentation: usize,
+pub struct Fence {
+    pub marker: char,
+    pub length: usize,
+    pub indentation: usize,
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct FenceTracker {
+pub struct FenceTracker {
     open: Option<Fence>,
 }
 
 impl FenceTracker {
     /// Observe one source line, returning whether it belongs to a fenced block.
-    pub(crate) fn visit(&mut self, line: &str) -> bool {
+    pub fn visit(&mut self, line: &str) -> bool {
         if let Some(open) = self.open() {
             if is_closing_fence(line, open) {
                 self.open = None;
@@ -33,7 +33,7 @@ impl FenceTracker {
         false
     }
 
-    pub(crate) fn open(&self) -> Option<Fence> {
+    pub fn open(&self) -> Option<Fence> {
         self.open
     }
 }

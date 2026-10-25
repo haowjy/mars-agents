@@ -5,9 +5,9 @@ use indexmap::IndexMap;
 
 use crate::discover;
 use crate::error::{MarsError, ResolutionError};
-use crate::lock::ItemKind;
 use crate::types::{ItemName, SourceName};
 use crate::validate;
+use mars_schema::item::ItemKind;
 
 use super::package::RegisteredPackage;
 use super::types::{PendingItem, VersionConstraint};

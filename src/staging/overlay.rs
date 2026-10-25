@@ -6,9 +6,9 @@ use serde_yaml::Value;
 
 use crate::compiler::skills::parse_skill_tool_policy;
 use crate::config::{AgentOverlayTools, SkillOverlay};
-use crate::frontmatter::Frontmatter;
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::RenameMap;
+use mars_schema::frontmatter::Frontmatter;
 
 /// Installed skill name for `[skills.<name>]` overlay lookup.
 ///

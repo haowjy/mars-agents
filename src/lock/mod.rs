@@ -1,3 +1,4 @@
+use mars_schema::item::ItemKind;
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -381,8 +382,8 @@ pub struct LockedItem {
 }
 
 // Re-export ItemKind and ItemId from types — they're shared vocabulary,
-// not lock-specific. This preserves `use crate::lock::ItemKind` compatibility.
-pub use crate::types::{ItemId, ItemKind};
+// not lock-specific. This preserves `use mars_schema::item::ItemKind` compatibility.
+pub use crate::types::ItemId;
 
 const LOCK_FILE: &str = "mars.lock";
 /// Current lock file schema version.

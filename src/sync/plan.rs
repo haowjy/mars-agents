@@ -115,7 +115,7 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
 mod tests {
     use super::*;
     use crate::hash;
-    use crate::lock::{ItemId, ItemKind, LockedItem};
+    use crate::lock::{ItemId, LockedItem};
     use crate::sync::diff::{DiffEntry, SyncDiff};
     use crate::sync::target::TargetItem;
     use std::path::PathBuf;

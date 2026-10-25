@@ -417,7 +417,7 @@ fn materialize_rewritten_skills(
     target: &mut crate::sync::target::TargetState,
 ) -> Result<(), MarsError> {
     for item in target.items.values_mut() {
-        if item.id.kind != crate::lock::ItemKind::Skill {
+        if item.id.kind != mars_schema::item::ItemKind::Skill {
             continue;
         }
         if item.is_flat_skill {
@@ -524,7 +524,7 @@ fn stage_graph(
         // compatibility errors cannot be hidden by an unrelated item filter.
         for item in discovered
             .iter()
-            .filter(|item| item.id.kind == crate::lock::ItemKind::Hook)
+            .filter(|item| item.id.kind == mars_schema::item::ItemKind::Hook)
         {
             if !selected.contains(item) {
                 selected.push(item.clone());

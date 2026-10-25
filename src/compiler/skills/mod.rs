@@ -6,12 +6,10 @@ use std::path::Path;
 
 use serde_yaml::Value;
 
-use crate::compiler::invocability::{
-    find_invocability_field, parse_invocability_axis, value_label,
-};
 use crate::compiler::tool_policy::{self, EffectiveToolPolicy};
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
-use crate::frontmatter::{Frontmatter, FrontmatterError};
+use mars_schema::frontmatter::{Frontmatter, FrontmatterError};
+use mars_schema::invocability::{find_invocability_field, parse_invocability_axis, value_label};
 
 /// Reserved lift-internal key; must not appear in user-authored MarsNative packages.
 const RESERVED_IMPORT_MARKER: &str = "mars.imported-without-description";

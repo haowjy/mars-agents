@@ -2,9 +2,10 @@
 
 use super::*;
 use crate::config::*;
-use crate::lock::{ItemKind, LockFile};
+use crate::lock::LockFile;
 use crate::resolve::{ResolvedGraph, ResolvedNode};
 use indexmap::IndexMap;
+use mars_schema::item::ItemKind;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -222,7 +223,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         .rewritten_content
         .as_ref()
         .expect("agent ref should rewrite after unmanaged source skill is pruned");
-    let fm = crate::frontmatter::parse(rewritten).unwrap();
+    let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
     assert_eq!(fm.skills(), vec!["planning__source-b"]);
 }
 

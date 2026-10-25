@@ -56,7 +56,7 @@ impl ParsedHookItem {
     pub(crate) fn discovered_item(&self, package_root: &Path) -> crate::discover::DiscoveredItem {
         crate::discover::DiscoveredItem {
             id: crate::lock::ItemId {
-                kind: crate::lock::ItemKind::Hook,
+                kind: mars_schema::item::ItemKind::Hook,
                 name: self.def.name.clone().into(),
             },
             source_path: self

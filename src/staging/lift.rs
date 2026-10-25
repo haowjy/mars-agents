@@ -2,13 +2,13 @@
 
 use serde_yaml::Value;
 
-use crate::compiler::invocability::find_invocability_field;
 use crate::compiler::mcp_ref::parse_foreign_mcp_token;
 use crate::compiler::tool_names::split_tool_name;
 use crate::compiler::tool_policy;
 use crate::dialect::Dialect;
-use crate::frontmatter::Frontmatter;
-use crate::lock::ItemKind;
+use mars_schema::frontmatter::Frontmatter;
+use mars_schema::invocability::find_invocability_field;
+use mars_schema::item::ItemKind;
 
 /// Rewrite the tool names in `fm[key]` with `rewrite`, which returns the new spelling of a name
 /// it changes. The field is a scalar, a list, or a map keyed by tool name (`tools: {mcp__s__t:
@@ -355,7 +355,7 @@ mod tests {
     use crate::compiler::lossiness::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
     use crate::compiler::skills::parse_skill_content;
-    use crate::frontmatter::Frontmatter;
+    use mars_schema::frontmatter::Frontmatter;
 
     fn fm(yaml: &str) -> Frontmatter {
         Frontmatter::parse(&format!("---\n{yaml}---\n# Body\n")).unwrap()

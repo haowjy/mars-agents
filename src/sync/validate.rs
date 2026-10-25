@@ -6,10 +6,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::diagnostic::DiagnosticCollector;
-use crate::lock::ItemKind;
 use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::validate::ValidationWarning;
+use mars_schema::item::ItemKind;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
 /// reference skills that exist in the target state.

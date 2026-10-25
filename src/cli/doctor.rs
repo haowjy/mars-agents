@@ -48,7 +48,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
 
         // Check for conflict markers
-        if item.kind == crate::lock::ItemKind::Agent
+        if item.kind == mars_schema::item::ItemKind::Agent
             && super::conflict_markers::file_has_conflict_markers(&disk_path)
         {
             errors.push(format!("{dest_path_str} has unresolved conflict markers"));
@@ -106,7 +106,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(false)
             {
-                let kind = if item.id.kind == crate::lock::ItemKind::Agent {
+                let kind = if item.id.kind == mars_schema::item::ItemKind::Agent {
                     "agent"
                 } else {
                     "skill"
@@ -327,7 +327,7 @@ mod tests {
         }
         let item = crate::lock::LockedItemV2 {
             source: "test-source".into(),
-            kind: crate::lock::ItemKind::Agent,
+            kind: mars_schema::item::ItemKind::Agent,
             version: None,
             source_checksum: expected_hash.clone().into(),
             outputs,

@@ -288,28 +288,7 @@ impl fmt::Display for SourceOrigin {
     }
 }
 
-/// Kind of installable item.
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ItemKind {
-    Agent,
-    Skill,
-    Hook,
-    McpServer,
-    BootstrapDoc,
-}
-
-impl fmt::Display for ItemKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ItemKind::Agent => write!(f, "agent"),
-            ItemKind::Skill => write!(f, "skill"),
-            ItemKind::Hook => write!(f, "hook"),
-            ItemKind::McpServer => write!(f, "mcp-server"),
-            ItemKind::BootstrapDoc => write!(f, "bootstrap-doc"),
-        }
-    }
-}
+use mars_schema::item::ItemKind;
 
 /// Stable identity for an installed item — decoupled from source URL.
 ///

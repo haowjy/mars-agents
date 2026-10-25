@@ -10,7 +10,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::dialect::Dialect;
 use crate::discover::{self, DiscoveredItem};
 use crate::error::MarsError;
-use crate::types::ItemKind;
+use mars_schema::item::ItemKind;
 
 pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
 
@@ -121,7 +121,7 @@ pub(crate) fn flat_skill_excluded_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ItemKind;
+    use mars_schema::item::ItemKind;
     use tempfile::TempDir;
 
     #[test]

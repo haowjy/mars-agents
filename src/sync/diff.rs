@@ -144,8 +144,8 @@ pub fn compute(
     Ok(SyncDiff { items })
 }
 
-fn hash_path_for_kind(path: &Path, kind: crate::lock::ItemKind) -> std::path::PathBuf {
-    if kind == crate::lock::ItemKind::BootstrapDoc {
+fn hash_path_for_kind(path: &Path, kind: mars_schema::item::ItemKind) -> std::path::PathBuf {
+    if kind == mars_schema::item::ItemKind::BootstrapDoc {
         path.parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| path.to_path_buf())
@@ -158,7 +158,7 @@ fn hash_path_for_kind(path: &Path, kind: crate::lock::ItemKind) -> std::path::Pa
 mod tests {
     use super::*;
     use crate::hash;
-    use crate::lock::{ItemId, ItemKind, LockedItemV2, OutputRecord};
+    use crate::lock::{ItemId, LockedItemV2, OutputRecord};
     use crate::types::{ItemName, SourceName};
     use indexmap::IndexMap;
     use std::fs;

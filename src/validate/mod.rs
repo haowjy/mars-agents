@@ -2,9 +2,10 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::frontmatter;
-use crate::lock::{ItemId, ItemKind};
+use crate::lock::ItemId;
 use crate::types::ItemName;
+use mars_schema::frontmatter;
+use mars_schema::item::ItemKind;
 
 /// Warning from dependency validation.
 ///

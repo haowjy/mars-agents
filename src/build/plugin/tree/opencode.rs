@@ -250,7 +250,7 @@ fn write_package(
 fn skill_data(root: &Path, directory: &str) -> Result<SkillData, MarsError> {
     let path = root.join("skills").join(directory).join("SKILL.md");
     let content = std::fs::read_to_string(&path)?;
-    let frontmatter = crate::frontmatter::parse(&content).map_err(|error| {
+    let frontmatter = mars_schema::frontmatter::parse(&content).map_err(|error| {
         MarsError::Internal(format!(
             "generated OpenCode skill {} has invalid frontmatter: {error}",
             path.display()

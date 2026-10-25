@@ -11,11 +11,11 @@ use std::collections::{HashMap, HashSet};
 use indexmap::IndexMap;
 
 use crate::error::MarsError;
-use crate::frontmatter;
-use crate::lock::ItemKind;
 use crate::resolve::ResolvedGraph;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::types::{DestPath, ItemName, SourceName};
+use mars_schema::frontmatter;
+use mars_schema::item::ItemKind;
 
 type ContentRewriteFn =
     fn(&str, &IndexMap<String, String>) -> Result<Option<String>, frontmatter::FrontmatterError>;
@@ -401,11 +401,12 @@ fn source_has_unrenamed_item(
 mod tests {
     use super::*;
     use crate::hash;
-    use crate::lock::{ItemId, ItemKind};
+    use crate::lock::ItemId;
     use crate::resolve::ResolvedGraph;
     use crate::sync::target::{CollisionRename, ExplicitRename, TargetItem, TargetState};
     use crate::types::SourceId;
     use indexmap::IndexMap;
+    use mars_schema::item::ItemKind;
     use std::fs;
     use tempfile::TempDir;
 
@@ -555,7 +556,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .unwrap();
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["plan__org_base", "planner"]);
     }
 
@@ -722,7 +723,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__org_b"]);
     }
 
@@ -805,7 +806,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         let subagents = match fm.get("subagents").unwrap() {
             serde_yaml::Value::Sequence(seq) => seq
                 .iter()
@@ -891,7 +892,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-a"]);
     }
 
@@ -982,7 +983,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["shared__source-a"]);
     }
 
@@ -1067,7 +1068,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("local agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-a"]);
     }
 
@@ -1152,7 +1153,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("local agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-b"]);
     }
 
@@ -1231,7 +1232,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("dependency agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-c"]);
     }
 
@@ -1283,7 +1284,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten after same-source item was pruned");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-b"]);
     }
 

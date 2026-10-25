@@ -41,7 +41,8 @@ fn agent_name_from_native_dest(path: &str) -> Option<String> {
 
 /// Native harness outputs recorded in the lock for agent items (canonical + linked targets).
 fn compiled_native_outputs_from_lock(lock: &crate::lock::LockFile) -> Vec<CompiledNativeOutput> {
-    use crate::lock::{CANONICAL_TARGET_ROOT, ItemKind};
+    use crate::lock::CANONICAL_TARGET_ROOT;
+    use mars_schema::item::ItemKind;
 
     let mut records = Vec::new();
     for item in lock.items.values() {
@@ -185,8 +186,9 @@ pub fn agent_is_native_for_harness(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
+    use crate::lock::{LockFile, LockedItemV2, OutputRecord};
     use mars_schema::HarnessId;
+    use mars_schema::item::ItemKind;
     use tempfile::TempDir;
 
     fn lock_with_agent_outputs(

@@ -7,9 +7,9 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::error::MarsError;
 use crate::local_source;
-use crate::lock::ItemKind;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
 use crate::types::{DestPath, MarsContext};
+use mars_schema::item::ItemKind;
 
 use super::output;
 

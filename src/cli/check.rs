@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::dialect::Dialect;
 use crate::discover;
 use crate::error::MarsError;
-use crate::frontmatter;
+use mars_schema::frontmatter;
 
 use super::output;
 
@@ -210,7 +210,7 @@ fn check_dir_with_lens(
     for item in discovered {
         let path = base.join(&item.source_path);
         match item.id.kind {
-            crate::lock::ItemKind::Agent => {
+            mars_schema::item::ItemKind::Agent => {
                 if super::is_symlink(&path) {
                     let name = path
                         .file_stem()
@@ -288,7 +288,7 @@ fn check_dir_with_lens(
                     }
                 }
             }
-            crate::lock::ItemKind::Skill => {
+            mars_schema::item::ItemKind::Skill => {
                 let (dirname, skill_md, duplicate_path) = if item.source_path
                     == std::path::Path::new(".")
                 {
@@ -404,9 +404,9 @@ fn check_dir_with_lens(
                 }
             }
             // New kinds not yet subject to source-package checks.
-            crate::lock::ItemKind::Hook
-            | crate::lock::ItemKind::McpServer
-            | crate::lock::ItemKind::BootstrapDoc => {}
+            mars_schema::item::ItemKind::Hook
+            | mars_schema::item::ItemKind::McpServer
+            | mars_schema::item::ItemKind::BootstrapDoc => {}
         }
     }
 
@@ -526,7 +526,7 @@ fn resolve_available_skills(
             crate::discover::discover_resolved_source(&node.rooted_ref.package_root, None, diag)?;
         let package_filters = graph.filters.get(source_name);
         for item in &discovered {
-            if item.id.kind == crate::lock::ItemKind::Skill
+            if item.id.kind == mars_schema::item::ItemKind::Skill
                 && item_passes_filters(item, package_filters)
             {
                 let version_str = node

@@ -8,9 +8,9 @@ use semver::VersionReq;
 use super::compat::CompatibilityResult;
 use crate::config::{EffectiveDependency, FilterMode, Manifest};
 use crate::error::ResolutionError;
-use crate::lock::ItemKind;
 use crate::source::ResolvedRef;
 use crate::types::{ItemName, SourceId, SourceName};
+use mars_schema::item::ItemKind;
 
 /// The resolved dependency graph — all sources with concrete versions.
 ///

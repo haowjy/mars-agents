@@ -46,13 +46,13 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                 "agent",
                 "agents/muse.md",
                 ".mars/agents/muse.md",
-                lock::ItemKind::Agent,
+                mars_schema::item::ItemKind::Agent,
             ),
             (
                 "skill",
                 "skills/craft/SKILL.md",
                 ".mars/skills/craft",
-                lock::ItemKind::Skill,
+                mars_schema::item::ItemKind::Skill,
             ),
         ] {
             for same_bytes in [true, false] {
@@ -72,7 +72,7 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                 let desired = if same_bytes { original } else { "# Desired\n" };
                 source.write_str(desired).unwrap();
                 let destination = dir.child(dest_rel);
-                if item_kind == lock::ItemKind::Agent {
+                if item_kind == mars_schema::item::ItemKind::Agent {
                     destination.write_str(original).unwrap();
                 } else {
                     destination.child("SKILL.md").write_str(original).unwrap();
@@ -82,7 +82,7 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                     .unwrap();
 
                 let source_before = fs::read(source.path()).unwrap();
-                let canonical_file = if item_kind == lock::ItemKind::Agent {
+                let canonical_file = if item_kind == mars_schema::item::ItemKind::Agent {
                     destination.path().to_path_buf()
                 } else {
                     destination.child("SKILL.md").path().to_path_buf()

@@ -5,8 +5,8 @@
 /// V0: stub only — no per-target behavior yet.
 use std::path::PathBuf;
 
-use crate::lock::ItemKind;
 use crate::types::DestPath;
+use mars_schema::item::ItemKind;
 
 use super::{HookFragmentMode, TargetAdapter};
 

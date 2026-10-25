@@ -250,7 +250,7 @@ mod tests {
             effort: None,
             autocompact: None,
             autocompact_pct: None,
-            skills: crate::frontmatter::SkillsSpec::default(),
+            skills: mars_schema::frontmatter::SkillsSpec::default(),
             subagents: Vec::new(),
             tools: Default::default(),
             harness_overrides: HarnessOverrides::default(),

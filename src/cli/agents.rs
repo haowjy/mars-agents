@@ -6,8 +6,8 @@ use crate::compiler::agents::{parse_agent_content, parse_agent_profile};
 use crate::compiler::tool_policy::ToolAction;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
-use crate::frontmatter;
-use crate::lock::ItemKind;
+use mars_schema::frontmatter;
+use mars_schema::item::ItemKind;
 
 use super::output;
 

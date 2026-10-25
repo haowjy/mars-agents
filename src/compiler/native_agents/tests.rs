@@ -3,10 +3,11 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::harness::host::{
     CapabilityCollectionOptions, CapabilitySession, ExecutableResolver, ExecutableState,
 };
-use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
+use crate::lock::{LockFile, LockedItemV2, OutputRecord};
 use crate::models::{CachedModel, ModelAlias, ModelSpec, ModelsCache};
 use indexmap::IndexMap;
 use mars_schema::HarnessId;
+use mars_schema::item::ItemKind;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -29,7 +30,7 @@ fn profile_with_model(model: &str, harness: HarnessId) -> crate::compiler::agent
         effort: None,
         autocompact: None,
         autocompact_pct: None,
-        skills: crate::frontmatter::SkillsSpec::default(),
+        skills: mars_schema::frontmatter::SkillsSpec::default(),
         subagents: Vec::new(),
         tools: Default::default(),
         harness_overrides: crate::compiler::agents::HarnessOverrides::default(),

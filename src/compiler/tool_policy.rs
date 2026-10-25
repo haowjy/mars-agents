@@ -22,9 +22,9 @@ use crate::compiler::tool_names::{
 };
 use crate::compiler::tool_natives::{self, Native};
 use crate::config::AgentOverlayTools;
-use crate::frontmatter::Frontmatter;
 use crate::permission_set::{PermissionSet, merge_permission_set};
 use mars_schema::HarnessId;
+use mars_schema::frontmatter::Frontmatter;
 
 /// What a rule does when its capability (and pattern) match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -903,8 +903,8 @@ mod tests {
     use super::*;
     use crate::compiler::agents::{AgentDiagnostic, parse_agent_content};
     use crate::compiler::skills::{SkillDiagnostic, parse_skill_content};
-    use crate::frontmatter::Frontmatter;
     use mars_schema::HarnessId;
+    use mars_schema::frontmatter::Frontmatter;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
         let mut diags = Vec::new();

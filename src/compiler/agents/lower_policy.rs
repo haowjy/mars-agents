@@ -22,8 +22,8 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 pub use crate::compiler::tool_policy::EffectiveToolPolicy;
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
-use crate::frontmatter::{Frontmatter, SkillsSpec};
 use mars_schema::HarnessId;
+use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
 
 // ---------------------------------------------------------------------------
 // Effective field access for target lowering
@@ -719,7 +719,7 @@ fn append_guidance(body: &str, guidance: &str) -> String {
     let line_ending = body_line_ending(body);
     let mut lowered = body.to_string();
 
-    let mut fences = crate::markdown::FenceTracker::default();
+    let mut fences = mars_schema::markdown::FenceTracker::default();
     for line in body.split_inclusive('\n') {
         fences.visit(line);
     }

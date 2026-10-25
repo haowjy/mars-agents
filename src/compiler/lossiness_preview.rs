@@ -26,14 +26,14 @@ use crate::config::{Config, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::dialect::Dialect;
 use crate::error::MarsError;
-use crate::frontmatter;
 use crate::local_source::LOCAL_SOURCE_DIR;
-use crate::lock::ItemKind;
 use crate::models::ModelsCache;
 use crate::resolve::PublishLens;
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::target::TargetRegistry;
 use crate::types::RenameMap;
+use mars_schema::frontmatter;
+use mars_schema::item::ItemKind;
 
 /// Native harness variant keys for skill projection on configured managed targets.
 fn native_skill_harness_keys(settings: &Settings) -> Vec<String> {

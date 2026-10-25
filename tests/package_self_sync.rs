@@ -2,7 +2,8 @@ mod common;
 
 use assert_fs::{TempDir, prelude::*};
 use common::*;
-use mars_agents::{discover, frontmatter::Frontmatter};
+use mars_agents::discover;
+use mars_schema::frontmatter::Frontmatter;
 use std::{fs, path::Path};
 
 const PACKAGE: &str = "[package]\nname = 'demo'\nversion = '1.0.0'\n";

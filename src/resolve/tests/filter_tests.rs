@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::ItemKind;
+use mars_schema::item::ItemKind;
 
 #[test]
 fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {

@@ -130,7 +130,7 @@ mod tests {
     use super::*;
 
     use crate::compiler::agents::{AgentProfile, HarnessOverrides};
-    use crate::frontmatter::SkillsSpec;
+    use mars_schema::frontmatter::SkillsSpec;
 
     fn empty_profile() -> AgentProfile {
         AgentProfile {

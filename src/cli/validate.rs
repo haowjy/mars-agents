@@ -281,8 +281,9 @@ mod tests {
 
     #[test]
     fn validation_warning_missing_skill_no_suggestion() {
-        use crate::lock::{ItemId, ItemKind};
+        use crate::lock::ItemId;
         use crate::types::ItemName;
+        use mars_schema::item::ItemKind;
         let vw = crate::validate::ValidationWarning::MissingSkill {
             agent: ItemId {
                 kind: ItemKind::Agent,
@@ -300,8 +301,9 @@ mod tests {
 
     #[test]
     fn validation_warning_missing_skill_with_suggestion() {
-        use crate::lock::{ItemId, ItemKind};
+        use crate::lock::ItemId;
         use crate::types::ItemName;
+        use mars_schema::item::ItemKind;
         let vw = crate::validate::ValidationWarning::MissingSkill {
             agent: ItemId {
                 kind: ItemKind::Agent,

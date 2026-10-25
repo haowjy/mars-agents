@@ -16,6 +16,8 @@ pub enum DefinitionKind {
 pub struct UpgradeResult {
     pub text: String,
     pub diagnostics: Vec<SchemaDiagnostic>,
+    /// A changed definition whose source shape prevented top-level block editing.
+    pub fully_rewritten: bool,
 }
 
 impl UpgradeResult {
@@ -35,19 +37,32 @@ pub enum UpgradeError {
 }
 
 pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeResult, UpgradeError> {
-    let mut frontmatter = Frontmatter::parse(text)?;
+    let original = Frontmatter::parse(text)?;
+    let mut frontmatter = original.clone();
     let mut diagnostics = Vec::new();
     match kind {
         DefinitionKind::Agent => upgrade_agent(&mut frontmatter, &mut diagnostics),
         DefinitionKind::Skill => upgrade_skill(&mut frontmatter, &mut diagnostics),
     }
-    let upgraded = frontmatter.render();
+    if frontmatter.mapping() == original.mapping() {
+        return Ok(UpgradeResult {
+            text: text.to_string(),
+            diagnostics,
+            fully_rewritten: false,
+        });
+    }
+
+    let fallback = frontmatter.render();
+    let minimally_edited = edit_top_level_blocks(text, original.mapping(), frontmatter.mapping())
+        .and_then(|edited| {
+            Frontmatter::parse(&edited)
+                .ok()
+                .filter(|parsed| parsed.mapping() == frontmatter.mapping())
+                .map(|_| edited)
+        });
     Ok(UpgradeResult {
-        text: if upgraded == text {
-            text.to_string()
-        } else {
-            upgraded
-        },
+        fully_rewritten: minimally_edited.is_none(),
+        text: minimally_edited.unwrap_or(fallback),
         diagnostics,
     })
 }
@@ -62,6 +77,7 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
         return Ok(UpgradeResult {
             text: text.to_string(),
             diagnostics: Vec::new(),
+            fully_rewritten: false,
         });
     }
     package.insert("schema", toml_edit::value(1));
@@ -72,7 +88,142 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
     Ok(UpgradeResult {
         text: document.to_string(),
         diagnostics,
+        fully_rewritten: false,
     })
+}
+
+#[derive(Debug)]
+struct SourceBlock<'a> {
+    key: &'a str,
+    text: &'a str,
+    key_end: usize,
+    start: usize,
+}
+
+/// Rewrite only changed top-level blocks. Complex top-level YAML deliberately returns `None` so
+/// the caller has one explicit, verified full-serialization fallback.
+fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Option<String> {
+    let (prefix, yaml, suffix) = frontmatter_source(text)?;
+    let blocks = source_blocks(yaml)?;
+    let before_keys = before
+        .keys()
+        .map(Value::as_str)
+        .collect::<Option<Vec<_>>>()?;
+    if blocks.iter().map(|block| block.key).collect::<Vec<_>>() != before_keys {
+        return None;
+    }
+
+    let mut output = String::with_capacity(text.len());
+    output.push_str(prefix);
+    let first_key_offset = blocks.first().map_or(yaml.len(), |block| block.start);
+    output.push_str(&yaml[..first_key_offset]);
+
+    let mut emitted = Vec::new();
+    for block in blocks {
+        let before_value = before.get(Value::String(block.key.to_string()))?;
+        if let Some(rename) = renamed_key(block.key, before, after) {
+            output.push_str(rename);
+            output.push_str(&block.text[block.key_end..]);
+            emitted.push(rename);
+        } else if let Some(after_value) = after.get(Value::String(block.key.to_string())) {
+            if before_value == after_value {
+                output.push_str(block.text);
+            } else {
+                output.push_str(&render_block(block.key, after_value));
+            }
+            emitted.push(block.key);
+        }
+    }
+
+    for (key, value) in after {
+        let key = key.as_str()?;
+        if emitted.contains(&key) {
+            continue;
+        }
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str(&render_block(key, value));
+    }
+    output.push_str(suffix);
+    Some(output)
+}
+
+fn renamed_key<'a>(old: &str, before: &Mapping, after: &'a Mapping) -> Option<&'a str> {
+    let new = match old {
+        "model_invocable" => "model-invocable",
+        "user_invocable" => "user-invocable",
+        "disallowed_tools" => "disallowed-tools",
+        _ => return None,
+    };
+    if before.contains_key(Value::String(new.to_string())) {
+        return None;
+    }
+    let old_value = before.get(Value::String(old.to_string()))?;
+    (after.get(Value::String(new.to_string())) == Some(old_value)).then_some(new)
+}
+
+fn render_block(key: &str, value: &Value) -> String {
+    let mut mapping = Mapping::new();
+    mapping.insert(Value::String(key.to_string()), value.clone());
+    let yaml = serde_yaml::to_string(&mapping).expect("serializing an upgraded YAML block");
+    yaml.strip_prefix("---\n").unwrap_or(&yaml).to_string()
+}
+
+fn frontmatter_source(text: &str) -> Option<(&str, &str, &str)> {
+    let first_end = text.find('\n').map_or(text.len(), |offset| offset + 1);
+    if text[..first_end].trim_end() != "---" {
+        return None;
+    }
+    let mut offset = first_end;
+    for line in text[first_end..].split_inclusive('\n') {
+        if line.trim_end() == "---" {
+            return Some((
+                &text[..first_end],
+                &text[first_end..offset],
+                &text[offset..],
+            ));
+        }
+        offset += line.len();
+    }
+    None
+}
+
+fn source_blocks(yaml: &str) -> Option<Vec<SourceBlock<'_>>> {
+    let mut starts = Vec::new();
+    let mut offset = 0;
+    for line in yaml.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\r', '\n']);
+        if !content.is_empty()
+            && !content.starts_with(char::is_whitespace)
+            && !content.starts_with('#')
+        {
+            let colon = content.find(':')?;
+            let key = &content[..colon];
+            if key.is_empty()
+                || !key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            {
+                return None;
+            }
+            starts.push((offset, key, colon));
+        }
+        offset += line.len();
+    }
+    let mut blocks = Vec::with_capacity(starts.len());
+    for (index, (start, key, key_end)) in starts.iter().copied().enumerate() {
+        let end = starts
+            .get(index + 1)
+            .map_or(yaml.len(), |(start, _, _)| *start);
+        blocks.push(SourceBlock {
+            key,
+            text: &yaml[start..end],
+            key_end,
+            start,
+        });
+    }
+    Some(blocks)
 }
 
 fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {

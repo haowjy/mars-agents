@@ -467,10 +467,11 @@ fn process_markdown_file(
             }
         }
 
-        let (mut fm, mut changed) = match ctx.preparation {
-            DefinitionPreparation::Schema1 => (parsed, false),
+        let (mut fm, mut changed, mut prepared_text) = match ctx.preparation {
+            DefinitionPreparation::Schema1 => (parsed, false, None),
             DefinitionPreparation::Foreign(dialect) => {
-                lift_frontmatter_with_change(dialect, kind, &parsed)
+                let (lifted, changed) = lift_frontmatter_with_change(dialect, kind, &parsed);
+                (lifted, changed, None)
             }
             DefinitionPreparation::Legacy => {
                 let definition_kind = match kind {
@@ -503,12 +504,13 @@ fn process_markdown_file(
                                 }
                             })?,
                             true,
+                            Some(upgraded.text),
                         )
                     } else {
-                        (parsed, false)
+                        (parsed, false, None)
                     }
                 } else {
-                    (parsed, false)
+                    (parsed, false, None)
                 }
             }
         };
@@ -519,10 +521,13 @@ fn process_markdown_file(
             let (overlaid, overlay_changed) = apply_skill_overlay(&fm, overlay);
             fm = overlaid;
             changed |= overlay_changed;
+            if overlay_changed {
+                prepared_text = None;
+            }
         }
 
         if changed {
-            fs::write(dest, fm.render())?;
+            fs::write(dest, prepared_text.unwrap_or_else(|| fm.render()))?;
         } else {
             fs::copy(src, dest)?;
         }

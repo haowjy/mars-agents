@@ -165,6 +165,11 @@ impl Frontmatter {
             .collect()
     }
 
+    /// Parsed top-level YAML, for schema transforms that must verify an edited source.
+    pub(crate) fn mapping(&self) -> &Mapping {
+        &self.yaml
+    }
+
     /// Insert or replace a top-level frontmatter field.
     pub fn insert(&mut self, key: &str, value: Value) {
         self.has_frontmatter = true;

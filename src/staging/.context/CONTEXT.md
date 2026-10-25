@@ -49,8 +49,9 @@ is `schema-1`, `legacy`, or a foreign dialect. Selected local items stage separa
 
 The canonical store (`.mars/`) is installed from the **prepared** tree, never raw legacy
 bytes. Schema-v1 definitions stay byte-identical unless a consumer overlay changes them.
-Legacy definitions use the same pure conversion as `mars migrate`. Foreign frontmatter is
-lifted through `staging/lift.rs`.
+Legacy definitions use the same pure conversion as `mars migrate`, including its minimal
+top-level block edits; staging writes that edited source directly unless a consumer overlay
+requires another transform. Foreign frontmatter is lifted through `staging/lift.rs`.
 
 ## Non-canonical skill tool handling
 

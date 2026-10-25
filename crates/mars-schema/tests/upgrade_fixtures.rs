@@ -28,6 +28,12 @@ fn legacy_upgrade_fixtures() {
             other => panic!("unknown fixture kind {other}"),
         };
         assert_eq!(result.text, expected, "fixture {}", case.display());
+        assert_eq!(
+            result.fully_rewritten,
+            case.join("fully-rewritten.txt").exists(),
+            "fixture {} rewrite mode",
+            case.display()
+        );
 
         let expected_keys: Vec<String> = serde_json::from_str(
             &fs::read_to_string(case.join("expected-diagnostics.json")).unwrap(),

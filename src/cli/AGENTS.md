@@ -27,7 +27,7 @@ Four bypass conditions:
 | Category | Commands | Notes |
 |---|---|---|
 | Package mgmt | `add`, `remove`, `upgrade`, `outdated`, `why` | Mutate mars.toml + lock; `upgrade` updates dependency versions |
-| Definition format | `migrate` | Atomically upgrades only root-authored definitions to schema v1; `--check` exits nonzero when rewrites are pending |
+| Definition format | `migrate` | Atomically upgrades package definitions or a consumer's authored `.mars-src`; `--check` exits nonzero when edits are pending |
 | Sync | `sync`, `repair` | Make reality match config |
 | Build | `validate`, `export`, `build` | Dry-run or produce artifacts |
 | Config | `link`, `unlink`, `override`, `resolve` | Target/dev settings; `link --force` adopts unmanaged collisions and persists lock |

@@ -25,6 +25,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- `mars migrate` now preserves untouched frontmatter bytes, identifies rare full-frontmatter
+  rewrites, and treats consumer configuration without authored `.mars-src` changes as a no-op.
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
   Cursor no longer preload available-only skills, while every target receives `/name` body
   guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a

@@ -22,6 +22,7 @@ struct MigrateReport {
     check: bool,
     changed: bool,
     files: Vec<String>,
+    fully_rewritten_files: Vec<String>,
 }
 
 struct PendingWrite {
@@ -34,6 +35,7 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let root = &ctx.project_root;
     let manifest_path = root.join("mars.toml");
     let manifest_text = std::fs::read_to_string(&manifest_path)?;
+    let consumer = is_consumer_manifest(&manifest_text);
     match classify_manifest(Some(manifest_text.as_bytes())) {
         ManifestClassification::Schema1 => return report(args.check, Vec::new(), json),
         ManifestClassification::MarsLegacy => {}
@@ -45,6 +47,9 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             });
         }
         ManifestClassification::Invalid { message } => {
+            if consumer {
+                return migrate_consumer(args, root, json);
+            }
             return Err(MarsError::InvalidRequest { message });
         }
         ManifestClassification::NoManifest => unreachable!("manifest bytes were provided"),
@@ -80,9 +85,42 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     report(args.check, pending, json)
 }
 
+fn migrate_consumer(args: &MigrateArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+    let mut pending = Vec::new();
+    for (path, kind) in definition_files_in(&root.join(".mars-src"), true)? {
+        let text = std::fs::read_to_string(&path)?;
+        let upgraded = upgrade_definition(kind, &text).map_err(upgrade_error)?;
+        push_if_changed(root, path, &text, upgraded, &mut pending);
+    }
+    pending.sort_by(|left, right| left.relative.cmp(&right.relative));
+    if !args.check {
+        for file in &pending {
+            crate::platform::fs::atomic_write_file(&file.path, file.result.text.as_bytes())?;
+        }
+    }
+    if pending.is_empty() && !json {
+        output::print_info(&format!(
+            "nothing to migrate: {} is consumer configuration, not a package; dependencies migrate in their own repositories",
+            root.display()
+        ));
+        return Ok(0);
+    }
+    report(args.check, pending, json)
+}
+
+fn is_consumer_manifest(text: &str) -> bool {
+    text.parse::<toml::Value>()
+        .is_ok_and(|manifest| manifest.get("package").is_none())
+}
+
 fn report(check: bool, pending: Vec<PendingWrite>, json: bool) -> Result<i32, MarsError> {
     let files = pending
         .iter()
+        .map(|file| file.relative.clone())
+        .collect::<Vec<_>>();
+    let fully_rewritten_files = pending
+        .iter()
+        .filter(|file| file.result.fully_rewritten)
         .map(|file| file.relative.clone())
         .collect::<Vec<_>>();
     if json {
@@ -90,13 +128,19 @@ fn report(check: bool, pending: Vec<PendingWrite>, json: bool) -> Result<i32, Ma
             check,
             changed: !files.is_empty(),
             files,
+            fully_rewritten_files,
         });
     } else if files.is_empty() {
         output::print_info("definition format is already schema v1");
     } else {
-        let verb = if check { "would rewrite" } else { "rewrote" };
-        for file in &files {
-            output::print_info(&format!("{verb} {file}"));
+        for file in &pending {
+            let verb = match (check, file.result.fully_rewritten) {
+                (true, true) => "would fully rewrite",
+                (true, false) => "would edit",
+                (false, true) => "fully rewrote",
+                (false, false) => "edited",
+            };
+            output::print_info(&format!("{verb} {}", file.relative));
         }
     }
     Ok(i32::from(check && !pending.is_empty()))
@@ -133,10 +177,20 @@ fn definition_files(root: &Path) -> Result<Vec<(PathBuf, DefinitionKind)>, MarsE
         (root.join("skills"), false),
         (root.join(".mars-src"), true),
     ] {
-        if !base.exists() {
-            continue;
-        }
-        for entry in walkdir::WalkDir::new(&base).follow_links(false) {
+        files.extend(definition_files_in(&base, authored_root)?);
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files.dedup_by(|left, right| left.0 == right.0);
+    Ok(files)
+}
+
+fn definition_files_in(
+    base: &Path,
+    authored_root: bool,
+) -> Result<Vec<(PathBuf, DefinitionKind)>, MarsError> {
+    let mut files = Vec::new();
+    if base.exists() {
+        for entry in walkdir::WalkDir::new(base).follow_links(false) {
             let entry = entry.map_err(|error| MarsError::InvalidRequest {
                 message: format!("failed to walk {}: {error}", base.display()),
             })?;
@@ -161,8 +215,6 @@ fn definition_files(root: &Path) -> Result<Vec<(PathBuf, DefinitionKind)>, MarsE
             }
         }
     }
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    files.dedup_by(|left, right| left.0 == right.0);
     Ok(files)
 }
 

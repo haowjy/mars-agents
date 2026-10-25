@@ -72,7 +72,7 @@ pub fn providers_exact_match(a: &str, b: &str) -> bool {
 /// including variants such as `openai-codex` or `anthropic-claude`.
 pub fn provider_matches_native_harness(provider: &str, harness: &str) -> bool {
     mars_schema::harness::parse(harness)
-        .and_then(|id| registry::native_provider(id))
+        .and_then(registry::native_provider)
         .is_some_and(|native| providers_match(provider, native))
 }
 

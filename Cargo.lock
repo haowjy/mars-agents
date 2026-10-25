@@ -1299,6 +1299,7 @@ dependencies = [
  "httpmock",
  "indexmap",
  "libc",
+ "mars-schema",
  "pathdiff",
  "predicates",
  "rustversion",
@@ -1320,6 +1321,26 @@ dependencies = [
  "walkdir",
  "which",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "mars-schema"
+version = "0.18.3"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.18",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "mars-schema-wasm"
+version = "0.18.3"
+dependencies = [
+ "mars-schema",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -10,11 +10,16 @@ readme = "README.md"
 keywords = ["agents", "package-manager", "ai", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
+[workspace]
+members = [".", "crates/mars-schema", "crates/mars-schema-wasm"]
+resolver = "2"
+
 [[bin]]
 name = "mars"
 path = "src/main.rs"
 
 [dependencies]
+mars-schema = { version = "0.18.3", path = "crates/mars-schema" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

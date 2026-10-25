@@ -44,6 +44,14 @@ jobs:
             exit 1
           fi
 
+          for manifest in crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml; do
+            CRATE_VERSION=$(grep '^version' "$manifest" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            if [[ "$TAG_VERSION" != "$CRATE_VERSION" ]]; then
+              echo "::error::Tag version ($TAG_VERSION) != $manifest ($CRATE_VERSION)"
+              exit 1
+            fi
+          done
+
           if [[ "$PYPI_VERSION" != "$PYPROJECT_VERSION" ]]; then
             echo "::error::Expected pyproject.toml version $PYPI_VERSION for $RELEASE_KIND tag $TAG_VERSION, got $PYPROJECT_VERSION"
             exit 1
@@ -459,15 +467,20 @@ jobs:
           publish_stderr="$(mktemp)"
           trap 'rm -f "${publish_stderr}"' EXIT
 
-          if cargo publish 2> >(tee "${publish_stderr}" >&2); then
-            exit 0
-          fi
+          publish_crate() {
+            local package="$1"
+            : >"${publish_stderr}"
+            if cargo publish --locked -p "${package}" 2> >(tee "${publish_stderr}" >&2); then
+              return 0
+            fi
+            if grep -Eiq 'already (uploaded|published)|already exists' "${publish_stderr}"; then
+              echo "::notice::${package} version already published on crates.io; continuing."
+              return 0
+            fi
+            echo "::error::cargo publish failed for ${package} with an unexpected error."
+            cat "${publish_stderr}" >&2
+            return 1
+          }
 
-          if grep -Eiq 'already (uploaded|published)|already exists' "${publish_stderr}"; then
-            echo "::notice::Crate version already published on crates.io; continuing."
-            exit 0
-          fi
-
-          echo "::error::cargo publish failed with an unexpected error."
-          cat "${publish_stderr}" >&2
-          exit 1
+          publish_crate mars-schema
+          publish_crate mars-agents

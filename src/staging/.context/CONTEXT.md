@@ -10,10 +10,11 @@ discovery. Staging copies schema-v1 packages without schema rewrites, runs
 `mars_schema::upgrade` for legacy packages, or lifts manifest-free foreign content.
 `RootedSourceRef.package_root` is repointed at the staged tree.
 
-Local discovery follows the same ordering. Declared content is classified first and legacy
-content is staged before discovery. Undeclared `.mars-src` always passes through the legacy
-upgrade and warns only when a definition changed. Items from either prepared tree are schema-v1
-when `sync/mod.rs` later stages each selected item.
+Local discovery follows the same ordering: declared content is classified first, and
+`.mars-src` is inspected for pending legacy rewrites before discovery. Discovery keeps the
+authored tree's symlink topology; `sync/mod.rs` passes each selected item through the chosen
+schema preparation before compilation. `.mars-src` always uses the legacy upgrade and warns
+only when inspection found a definition that will change.
 
 Flat package skills filter control files, `.mars-src`, standard native roots, and configured or previously owned target paths
 (including existing resolved paths for aliases/absolute/dot-segment spellings)
@@ -37,8 +38,8 @@ Discovery runs from the staged/rooted package directory. Its convention walk ski
 ## Staging location
 
 Per-consumer under `<project>/.mars/staging/<source-name>/<preparation>/`, where preparation
-is `schema-1`, `legacy`, or a foreign dialect. Local prepared roots live under
-`.mars/staging/_authored/`.
+is `schema-1`, `legacy`, or a foreign dialect. Selected local items stage separately under
+`.mars/staging/_local/`.
 
 - Never mutates the global fetch cache (`ResolvedRef.tree_path`).
 - Dependency- and preparation-scoped paths make restaging deterministic for `--frozen`.

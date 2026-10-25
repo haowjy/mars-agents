@@ -192,25 +192,6 @@ pub(crate) fn stage_canonical_source(
     Ok(())
 }
 
-/// Materialize authored content after applying one schema preparation mode.
-pub(crate) fn stage_authored_content(
-    source_root: &Path,
-    dest_root: &Path,
-    preparation: DefinitionPreparation,
-    diag: &mut DiagnosticCollector,
-) -> Result<bool, MarsError> {
-    stage_canonical_source_with_policy(
-        source_root,
-        dest_root,
-        preparation,
-        &IndexMap::new(),
-        &RenameMap::new(),
-        None,
-        diag,
-        None,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn stage_canonical_source_with_policy(
     source_root: &Path,
@@ -449,7 +430,10 @@ fn process_markdown_file(
     let original = fs::read_to_string(src)?;
     let mut legacy_changed = false;
     if let Ok(parsed) = Frontmatter::parse(&original) {
-        if !matches!(ctx.preparation, DefinitionPreparation::Foreign(_)) && kind == ItemKind::Skill
+        if !matches!(
+            ctx.preparation,
+            DefinitionPreparation::Foreign(dialect) if dialect != Dialect::MarsNative
+        ) && kind == ItemKind::Skill
         {
             let mut skill_diags = Vec::new();
             crate::compiler::skills::push_authored_skill_schema_diags(&parsed, &mut skill_diags);

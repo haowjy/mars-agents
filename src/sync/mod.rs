@@ -596,7 +596,6 @@ pub(crate) fn build_target(
                     crate::local_source::flat_skill_excluded_paths(
                         &ctx.project_root,
                         &item.disk_path(),
-                        item.declared_package,
                         &targets,
                     )?
                 } else {

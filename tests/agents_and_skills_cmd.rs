@@ -113,7 +113,6 @@ fn agents_show_json_subagents_and_kebab_keys() {
         .unwrap_or_else(|_| panic!("mars agents show --json must be valid JSON:\n{stdout}"));
 
     assert_eq!(json["name"], "orchestrator", "'name' value:\n{stdout}");
-    assert_eq!(json["network"], "deny", "'network' value:\n{stdout}");
     assert!(
         json["description"].is_string(),
         "'description' required:\n{stdout}"

@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
-use crate::config::{AgentOverlay, EffectiveProjectConfig, NetworkHost, NetworkPolicy};
+use crate::config::{AgentOverlay, EffectiveProjectConfig};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
@@ -55,9 +55,6 @@ pub struct PolicyInput<'a> {
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
-    pub network_override: Option<&'a NetworkPolicy>,
-    pub network_allow: &'a [NetworkHost],
-    pub network_deny: &'a [NetworkHost],
     pub models_refresh: models::ModelsRefreshControl,
 }
 
@@ -474,10 +471,8 @@ pub fn resolve_policy(
         resolved_model.alias,
         overlay,
         matched_policy.as_ref(),
-        &effective_config.settings,
         native_config,
     );
-    warnings.extend(execution_resolution.warnings.iter().cloned());
 
     provenance.insert(
         "effort_source".to_string(),
@@ -490,10 +485,6 @@ pub fn resolve_policy(
     provenance.insert(
         "sandbox_source".to_string(),
         execution_resolution.sandbox.source.label().to_string(),
-    );
-    provenance.insert(
-        "network_source".to_string(),
-        execution_resolution.network.source.label().to_string(),
     );
     provenance.insert(
         "autocompact_source".to_string(),
@@ -519,7 +510,6 @@ pub fn resolve_policy(
         .or(execution_resolution.effort.matched_rule)
         .or(execution_resolution.approval.matched_rule)
         .or(execution_resolution.sandbox.matched_rule)
-        .or(execution_resolution.network.matched_rule)
         .or(execution_resolution.autocompact.matched_rule)
         .or(execution_resolution.autocompact_pct.matched_rule)
         .or_else(|| {
@@ -619,7 +609,6 @@ pub fn resolve_policy(
             effort,
             approval: execution_resolution.approval.value,
             sandbox: execution_resolution.sandbox.value,
-            network: execution_resolution.resolved_network,
             autocompact: execution_resolution.autocompact.value,
             autocompact_pct: execution_resolution.autocompact_pct.value,
             timeout: None,
@@ -637,14 +626,6 @@ pub(super) fn policy_override_string(rule: &ModelPolicyRule, key: &str) -> Optio
         .as_str()?;
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-pub(super) fn policy_override_network(rule: &ModelPolicyRule, key: &str) -> Option<NetworkPolicy> {
-    let value = rule
-        .overrides
-        .get(serde_yaml::Value::String(key.to_string()))?
-        .as_str()?;
-    value.parse().ok()
 }
 
 pub(super) fn policy_override_u32(rule: &ModelPolicyRule, key: &str) -> Option<u32> {
@@ -680,19 +661,6 @@ pub(super) fn matched_policy_string_override(
 ) -> Option<ResolvedField<String>> {
     let policy = matched_policy?;
     let value = policy_override_string(&policy.rule, key)?;
-    Some(ResolvedField {
-        value,
-        source: policy.layer.field_source(),
-        matched_rule: Some(policy.matched_rule_ref()),
-    })
-}
-
-pub(super) fn matched_policy_network_override(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-) -> Option<ResolvedField<NetworkPolicy>> {
-    let policy = matched_policy?;
-    let value = policy_override_network(&policy.rule, key)?;
     Some(ResolvedField {
         value,
         source: policy.layer.field_source(),

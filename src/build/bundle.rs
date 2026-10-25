@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::config::{NetworkHost, NetworkPolicy};
 use mars_schema::tool_policy::ToolRule;
 
 pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
@@ -48,7 +47,6 @@ pub struct ExecutionPolicy {
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
-    pub network: ExecutionNetworkPolicy,
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
     pub timeout: Option<u32>,
@@ -56,12 +54,6 @@ pub struct ExecutionPolicy {
     pub native_config: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ExecutionNetworkPolicy {
-    pub mode: Option<NetworkPolicy>,
-    pub allow: Vec<NetworkHost>,
-    pub deny: Vec<NetworkHost>,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PromptSurface {

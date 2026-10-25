@@ -48,30 +48,6 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_rejects_duplicate_network_separator_spellings() {
-    let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-network-deny: [a.example]
-network_deny: [b.example]
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains(
-            "fields `network-deny` and `network_deny` are duplicate spellings",
-        ));
-}
-
-#[test]
 fn build_launch_bundle_accepts_model_invocable_passthrough_override() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);

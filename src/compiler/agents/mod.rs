@@ -12,8 +12,6 @@ use std::collections::BTreeMap;
 use mars_schema::HarnessId;
 use serde_yaml::Value;
 
-pub use crate::config::{NetworkHost, NetworkPolicy};
-use crate::permission_set::PermissionSet;
 use mars_schema::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 use mars_schema::invocability::parse_invocability_axis;
 use mars_schema::model_policy::ModelPolicyRule;
@@ -200,9 +198,6 @@ pub struct AgentProfile {
     pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
-    pub network: Option<NetworkPolicy>,
-    pub network_allow: PermissionSet<NetworkHost>,
-    pub network_deny: PermissionSet<NetworkHost>,
     pub effort: Option<EffortLevel>,
     pub autocompact: Option<u32>,
     pub autocompact_pct: Option<u8>,
@@ -246,8 +241,6 @@ pub enum AgentDiagnostic {
         value: String,
         allowed: &'static str,
     },
-    /// Both separator spellings of one field were authored.
-    DuplicateField { field: String, alias: String },
     /// Deprecated list-form `tools: [read, grep]`: it grants the listed tools and restricts
     /// nothing, which readers often take for "only these tools".
     DeprecatedListFormTools,
@@ -255,8 +248,6 @@ pub enum AgentDiagnostic {
     UnknownHarness { value: String },
     /// Unknown harness key under `harness-overrides`; preserved for forward compatibility.
     UnknownHarnessOverride { value: String },
-    /// Network-looking top-level field that is not a supported spelling.
-    UnknownNetworkField { field: String },
 }
 
 impl AgentDiagnostic {
@@ -265,8 +256,7 @@ impl AgentDiagnostic {
 
         let field = match self {
             Self::InvalidFieldValue { field, .. }
-            | Self::DuplicateField { field, .. }
-            | Self::UnknownNetworkField { field } => field.as_str(),
+            => field.as_str(),
             Self::UnknownHarness { .. } => "harness",
             Self::UnknownHarnessOverride { .. } => "harness-overrides",
             Self::DeprecatedListFormTools => "tools",
@@ -298,10 +288,8 @@ impl AgentDiagnostic {
             AgentDiagnostic::InvalidFieldValue { field, .. } => {
                 !field.starts_with("harness-overrides")
             }
-            AgentDiagnostic::DuplicateField { .. } => true,
             AgentDiagnostic::UnknownHarness { .. } => true,
             AgentDiagnostic::DeprecatedListFormTools
-            | AgentDiagnostic::UnknownNetworkField { .. }
             | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
         }
     }
@@ -315,9 +303,6 @@ impl AgentDiagnostic {
             } => {
                 format!("agent field `{field}` has invalid value `{value}`; allowed: {allowed}")
             }
-            AgentDiagnostic::DuplicateField { field, alias } => {
-                format!("agent fields `{field}` and `{alias}` are duplicate spellings; use only `{field}`")
-            }
             AgentDiagnostic::DeprecatedListFormTools => {
                 "agent `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string()
             }
@@ -327,35 +312,10 @@ impl AgentDiagnostic {
             AgentDiagnostic::UnknownHarnessOverride { value } => {
                 format!("unknown harness override `{value}`; preserving passthrough block")
             }
-            AgentDiagnostic::UnknownNetworkField { field } => format!(
-                "agent field `{field}` is an unknown network key and is ignored; accepted keys: {}",
-                crate::config::NETWORK_OVERLAY_KEYS
-            ),
         }
     }
 }
 
-impl From<crate::config::network::AgentNetworkDiagnostic> for AgentDiagnostic {
-    fn from(diagnostic: crate::config::network::AgentNetworkDiagnostic) -> Self {
-        use crate::config::network::AgentNetworkDiagnostic;
-
-        match diagnostic {
-            AgentNetworkDiagnostic::InvalidFieldValue {
-                field,
-                value,
-                allowed,
-            } => Self::InvalidFieldValue {
-                field,
-                value,
-                allowed,
-            },
-            AgentNetworkDiagnostic::DuplicateField { field, alias } => {
-                Self::DuplicateField { field, alias }
-            }
-            AgentNetworkDiagnostic::UnknownField { field } => Self::UnknownNetworkField { field },
-        }
-    }
-}
 
 fn push_agent_tool_invalid(
     diags: &mut Vec<AgentDiagnostic>,
@@ -595,22 +555,6 @@ fn push_model_policy_parse_error(
         mars_schema::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.override"), found, "mapping");
         }
-        mars_schema::model_policy::ModelPolicyRuleParseError::NetworkOverrideInvalid { found } => {
-            push_model_policy_invalid(
-                diags,
-                format!("{rule_field}.override.network"),
-                found,
-                NetworkPolicy::ALLOWED,
-            );
-        }
-        mars_schema::model_policy::ModelPolicyRuleParseError::NetworkHostsNotAllowed { key } => {
-            push_model_policy_invalid(
-                diags,
-                format!("{rule_field}.override.{key}"),
-                key,
-                "network host sets on settings, profile, overlay, or CLI",
-            );
-        }
         mars_schema::model_policy::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.no-fallback"), found, "boolean");
         }
@@ -741,12 +685,6 @@ pub fn parse_agent_profile_legacy(
         }
     });
 
-    let (network_fields, network_diags) = crate::config::network::parse_agent_network(fm);
-    diags.extend(network_diags.into_iter().map(AgentDiagnostic::from));
-    let network = network_fields.policy;
-    let network_allow = network_fields.allow;
-    let network_deny = network_fields.deny;
-
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
         if s == "none" {
@@ -858,9 +796,6 @@ pub fn parse_agent_profile_legacy(
         had_user_invocable_field,
         approval,
         sandbox,
-        network,
-        network_allow,
-        network_deny,
         effort,
         autocompact,
         autocompact_pct,

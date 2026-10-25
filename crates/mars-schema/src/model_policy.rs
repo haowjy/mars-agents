@@ -32,8 +32,6 @@ pub enum ModelPolicyRuleParseError {
     MatchValueMustBeString { key: String, found: String },
     MatchValueEmpty { key: String },
     OverrideMustBeMapping { found: String },
-    NetworkOverrideInvalid { found: String },
-    NetworkHostsNotAllowed { key: String },
     NoFallbackMustBeBoolean { found: String },
 }
 
@@ -55,24 +53,11 @@ impl ModelPolicyRuleParseError {
             Self::MatchValueEmpty { .. } => {
                 "model policy `match` value must be a non-empty string".to_string()
             }
-            Self::UnknownMatchKey { key } => {
-                format!(
-                    "unknown model policy match key `{key}`; expected model, alias, or model-glob"
-                )
-            }
+            Self::UnknownMatchKey { key } => format!(
+                "unknown model policy match key `{key}`; expected model, alias, or model-glob"
+            ),
             Self::OverrideMustBeMapping { .. } => {
                 "model policy `override` must be a mapping".to_string()
-            }
-            Self::NetworkOverrideInvalid { found } => {
-                format!(
-                    "model policy override `network` has invalid value `{found}`; allowed: {}",
-                    "allow, deny, allowlist"
-                )
-            }
-            Self::NetworkHostsNotAllowed { key } => {
-                format!(
-                    "model policy override `{key}` is not supported; set it on settings, the profile, an agent overlay, or the CLI"
-                )
             }
             Self::NoFallbackMustBeBoolean { .. } => {
                 "model policy `no-fallback` must be a boolean".to_string()
@@ -80,32 +65,6 @@ impl ModelPolicyRuleParseError {
             Self::RuleMustBeMapping { .. } => "model policy rule must be a mapping".to_string(),
         }
     }
-}
-
-fn validate_model_policy_network_override(
-    overrides: &serde_yaml::Mapping,
-) -> Result<(), ModelPolicyRuleParseError> {
-    for key in ["network-allow", "network-deny"] {
-        if overrides.contains_key(serde_yaml::Value::String(key.to_string())) {
-            return Err(ModelPolicyRuleParseError::NetworkHostsNotAllowed {
-                key: key.to_string(),
-            });
-        }
-    }
-    let Some(value) = overrides.get(serde_yaml::Value::String("network".to_string())) else {
-        return Ok(());
-    };
-    let Some(value_string) = value.as_str() else {
-        return Err(ModelPolicyRuleParseError::NetworkOverrideInvalid {
-            found: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
-        });
-    };
-    if !matches!(value_string, "allow" | "deny" | "allowlist") {
-        return Err(ModelPolicyRuleParseError::NetworkOverrideInvalid {
-            found: value_string.to_string(),
-        });
-    }
-    Ok(())
 }
 
 pub fn parse_model_policy_rule_value(
@@ -180,7 +139,6 @@ pub fn parse_model_policy_rule_value(
             }
         })?,
     };
-    validate_model_policy_network_override(&overrides)?;
 
     let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {
         None | Some(serde_yaml::Value::Null) => false,

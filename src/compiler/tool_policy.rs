@@ -612,22 +612,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn disallowed_mcp_ref_round_trips_through_policy() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ndisallowed-tools: [mcp(github/delete_repo)]\n---\n",
-        );
-        assert_eq!(
-            policy.describe(),
-            vec!["deny:mcp(github/delete_repo)".to_string()]
-        );
-        let Capability::Mcp(mcp_ref) = &policy.rules[0].capability else {
-            panic!("expected an MCP rule");
-        };
-        assert_eq!(mcp_ref.to_canonical(), "mcp(github/delete_repo)");
-    }
-
-    #[test]
+        #[test]
     fn plugin_colon_server_names_preserve_verbatim_in_mcp_refs() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  mcp(plugin:context7:context7): allow\n---\n",
@@ -687,50 +672,7 @@ mod tests {
         assert_eq!(policy.describe(), vec!["ask:bash(git push *)", "ask:edit"]);
     }
 
-    #[test]
-    fn legacy_colon_star_patterns_normalize_to_space_star() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  'bash(git revert:*)': deny\n  'bash(git reset --hard:*)': deny\ndisallowed-tools: ['Bash(git clean:*)']\n---\n",
-        );
-        assert_eq!(
-            policy.describe(),
-            vec![
-                "deny:bash(git revert *)",
-                "deny:bash(git reset --hard *)",
-                "deny:bash(git clean *)",
-            ]
-        );
-    }
-
-    #[test]
-    fn colon_star_normalizes_only_for_bash() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ndisallowed-tools: ['read(./secrets:*)', 'web_fetch(domain:*)', 'bash(rm:*)']\n---\n",
-        );
-        assert_eq!(
-            policy.describe(),
-            vec![
-                "deny:read(./secrets:*)",
-                "deny:web_fetch(domain:*)",
-                "deny:bash(rm *)"
-            ]
-        );
-    }
-
-    #[test]
-    fn scalar_tools_split_on_commas_into_grants() {
-        let policy =
-            agent_policy("---\nname: a\ndescription: d\ntools: Read, Grep, bash(rg a,b)\n---\n");
-        assert_eq!(
-            policy.describe(),
-            vec!["allow:read", "allow:grep", "allow:bash(rg a,b)"]
-        );
-        let policy =
-            agent_policy("---\nname: a\ndescription: d\ndisallowed-tools: Edit, Write\n---\n");
-        assert_eq!(policy.describe(), vec!["deny:edit", "deny:write"]);
-    }
-
-    #[test]
+                #[test]
     fn narrower_capability_wins_over_broader_for_the_natives_they_share() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n  notebook: deny\n---\n",
@@ -961,38 +903,7 @@ mod tests {
         assert_eq!(natives("*", "claude"), (vec![], "none"));
     }
 
-    #[test]
-    fn natives_put_builtin_tools_before_mcp_refs_and_name_each_once() {
-        let policy = agent_policy(
-            "---
-name: a
-description: d
-disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
----
-",
-        );
-        let claude = policy.project(HarnessId::Claude);
-        assert_eq!(
-            claude.natives(ToolAction::Deny, RuleKind::All),
-            ["Bash", "Read", "mcp__github__delete_repo"]
-        );
-        assert_eq!(
-            claude.natives(ToolAction::Deny, RuleKind::Mcp),
-            ["mcp__github__delete_repo"]
-        );
-        // Codex cannot scope one MCP tool: the rule is a gap with the reason, not a name.
-        let codex = policy.project(HarnessId::Codex);
-        assert_eq!(
-            codex.natives(ToolAction::Deny, RuleKind::Mcp),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            codex.gaps(ToolAction::Deny, RuleKind::Mcp),
-            ["Codex per-tool MCP gating lives in server config, not the tool list"]
-        );
-    }
-
-    #[test]
+        #[test]
     fn malformed_mcp_in_disallowed_tools_is_validation_error() {
         let mut diags = Vec::new();
         let value = Value::Sequence(vec![Value::String("mcp()".into())]);

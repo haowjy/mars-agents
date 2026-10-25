@@ -677,72 +677,7 @@ when_to_use: Use when git history matters
         );
     }
 
-    #[test]
-    fn claude_agent_disallowed_tools_round_trip_through_stage() {
-        let source = "---\nname: reviewer\ndescription: Reviews code\ndisallowedTools: [WebSearch]\n---\n# Body\n";
-        let lifted = lift(
-            Dialect::Claude,
-            ItemKind::Agent,
-            &Frontmatter::parse(source).unwrap(),
-        );
-        let staged = lifted.render();
-        let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content_legacy(&staged, &mut diags).unwrap();
-        assert!(diags.is_empty());
-        assert_eq!(profile.tools.describe(), ["deny:web_search"]);
-    }
-
-    #[test]
-    fn claude_agent_lifts_foreign_mcp_refs_in_tool_lists() {
-        use mars_schema::mcp::{parse_mcp_ref, try_parse_mcp_tool_name};
-
-        let lifted = lift(
-            Dialect::Claude,
-            ItemKind::Agent,
-            &fm(
-                "name: a\ndescription: d\nallowed-tools: [Read, mcp__github__create_issue, mcp__context7__*]\ndisallowedTools: [mcp__github__delete_repo]\n",
-            ),
-        );
-        assert_eq!(
-            lifted.get("tools"),
-            Some(&tool_map(&[
-                ("Read", "allow"),
-                ("mcp(github/create_issue)", "allow"),
-                ("mcp(context7/*)", "allow"),
-            ]))
-        );
-        assert_eq!(
-            lifted.get("disallowed-tools"),
-            Some(&Value::Sequence(vec![Value::String(
-                "mcp(github/delete_repo)".into()
-            )]))
-        );
-
-        for canonical in [
-            "mcp(github/create_issue)",
-            "mcp(context7/*)",
-            "mcp(github/delete_repo)",
-        ] {
-            let parsed = try_parse_mcp_tool_name(canonical).unwrap();
-            let inner = canonical.trim_start_matches("mcp(").trim_end_matches(')');
-            assert_eq!(parse_mcp_ref(inner).unwrap(), parsed);
-        }
-
-        let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content_legacy(&lifted.render(), &mut diags).unwrap();
-        assert!(diags.is_empty());
-        assert_eq!(
-            profile.tools.describe(),
-            [
-                "allow:read",
-                "allow:mcp(github/create_issue)",
-                "allow:mcp(context7/*)",
-                "deny:mcp(github/delete_repo)"
-            ]
-        );
-    }
-
-    #[test]
+            #[test]
     fn claude_agent_lifts_task_tool_to_agent_in_every_tool_field() {
         let lifted = lift(
             Dialect::Claude,

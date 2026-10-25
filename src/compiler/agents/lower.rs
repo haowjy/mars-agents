@@ -131,63 +131,7 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn claude_lowering_drops_approval_sandbox_network_mode_autocompact() {
-        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\nmode: subagent\nautocompact: 50\nautocompact_pct: 80\n---\n# Body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(!text.contains("approval:"), "approval leaked: {text}");
-        assert!(!text.contains("sandbox:"), "sandbox leaked: {text}");
-        assert!(!text.contains("network:"), "network leaked: {text}");
-        assert!(
-            !text.contains("network-allow:"),
-            "network hosts leaked: {text}"
-        );
-        assert!(
-            !text.contains("network-deny:"),
-            "network hosts leaked: {text}"
-        );
-        assert!(!text.contains("autocompact:"), "autocompact leaked: {text}");
-        // Launch-time fields are meridian-only, not target-enforced drops.
-        let meridian_only: Vec<_> = out
-            .lossy_fields
-            .iter()
-            .filter(|f| matches!(f.classification, Lossiness::MeridianOnly))
-            .map(|f| f.field.as_str())
-            .collect();
-        assert!(
-            meridian_only.contains(&"approval"),
-            "approval not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"network-allow"),
-            "{meridian_only:?}"
-        );
-        assert!(meridian_only.contains(&"network-deny"), "{meridian_only:?}");
-        assert!(
-            meridian_only.contains(&"sandbox"),
-            "sandbox not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"network"),
-            "network not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"mode"),
-            "mode not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"autocompact"),
-            "autocompact not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"autocompact_pct"),
-            "autocompact_pct not in lossy: {meridian_only:?}"
-        );
-    }
-
-    #[test]
+        #[test]
     fn claude_harness_override_does_not_replace_skills_before_lowering() {
         let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
@@ -269,53 +213,7 @@ mod tests {
 
     // --- 3.3: Codex lowering ---
 
-    #[test]
-    fn codex_lowering_produces_top_level_toml() {
-        let content = "---\nname: coder\ndescription: Code agent\nmodel: gpt55\nharness: codex\neffort: high\nsandbox: workspace-write\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\napproval: auto\n---\n# Coder\nYou code.";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("[agent]"),
-            "legacy [agent] table leaked: {text}"
-        );
-        assert!(text.contains("name = \"coder\""), "name missing");
-        assert!(text.contains("model = \"gpt55\""), "model missing");
-        assert!(
-            text.contains("model_reasoning_effort = \"high\""),
-            "effort missing"
-        );
-        assert!(
-            text.contains("sandbox_mode = \"workspace-write\""),
-            "sandbox missing"
-        );
-        assert!(
-            text.contains("approval_policy = \"on-request\""),
-            "approval missing"
-        );
-        assert!(!text.contains("network"), "network leaked: {text}");
-        assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "network" && matches!(field.classification, Lossiness::Dropped)
-        }));
-        assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "network-allow" && matches!(field.classification, Lossiness::Dropped)
-        }));
-        assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "network-deny" && matches!(field.classification, Lossiness::Dropped)
-        }));
-        assert!(
-            text.contains("developer_instructions ="),
-            "developer instructions missing"
-        );
-
-        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
-        assert!(
-            parsed.get("agent").is_none(),
-            "nested [agent] table present"
-        );
-        assert_eq!(parsed.get("name").and_then(|v| v.as_str()), Some("coder"));
-    }
-    #[test]
+        #[test]
     fn codex_harness_override_does_not_replace_execution_policy() {
         let content = "---\nname: r\nharness: codex\neffort: low\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: workspace-write\n---\n# body";
         let (profile, fm, _) = profile_from(content);

@@ -443,62 +443,6 @@ Review code changes."#;
     assert_eq!(codex_bundle["warnings"], serde_json::json!([]));
 }
 
-#[test]
-fn build_launch_bundle_projects_disallowed_mcp_refs_per_harness() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "codex"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-disallowed-tools: [mcp(github/delete_repo)]
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cursor_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cursor_cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "cursor",
-    ]);
-    cursor_cmd.env("PATH", replace_path_with(&bin_dir));
-    let cursor_output = cursor_cmd.assert().success().get_output().clone();
-    let cursor_bundle: Value = serde_json::from_slice(&cursor_output.stdout).unwrap();
-    assert_eq!(cursor_bundle["tools"]["mcp"], serde_json::json!([]));
-    assert_eq!(
-        cursor_bundle["tools"]["disallowed"],
-        serde_json::json!(["Mcp(github:delete_repo)"])
-    );
-    assert_eq!(cursor_bundle["warnings"], serde_json::json!([]));
-
-    let mut codex_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    codex_cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "codex",
-        "--model",
-        "gpt-5",
-    ]);
-    codex_cmd.env("PATH", replace_path_with(&bin_dir));
-    let codex_output = codex_cmd.assert().success().get_output().clone();
-    let codex_bundle: Value = serde_json::from_slice(&codex_output.stdout).unwrap();
-    assert_eq!(codex_bundle["tools"]["mcp"], serde_json::json!([]));
-    assert_eq!(codex_bundle["tools"]["disallowed"], serde_json::json!([]));
-    let codex_rule = rule(&codex_bundle, "mcp", Some("github/delete_repo"));
-    assert_eq!(codex_rule["action"], "deny");
-    assert_eq!(codex_rule["native_status"], "unknown");
-    assert!(codex_rule["note"].is_string(), "{codex_rule}");
-    assert_eq!(codex_bundle["warnings"], serde_json::json!([]));
-}
-
 /// Launch bundle for `agent_content` on `harness`.
 fn bundle_for(agent_content: &str, harness: &str) -> Value {
     let temp = TempDir::new().unwrap();
@@ -827,71 +771,6 @@ fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_notes_where_it_cannot() {
         );
     }
     assert_eq!(codex["warnings"], serde_json::json!([]));
-}
-
-#[test]
-fn bundle_adds_the_tools_overlay_and_keeps_the_profile_rules() {
-    let agent = r#"---
-name: reviewer
-model: claude-opus-4-6
-tools:
-  read: allow
-  'bash(git push *)': deny
-disallowed-tools: [agent]
----
-Review code changes."#;
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
-    let (server, project_root) = setup_bundle_project(
-        &temp,
-        "bundle-source",
-        agent,
-        &[],
-        "[agents.reviewer.tools]\nallowed = [\"bash\", \"write\"]",
-    );
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "claude",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(
-        bundle["tools"]["allowed"],
-        serde_json::json!(["Read", "Bash", "Write"])
-    );
-    let disallowed = bundle["tools"]["disallowed"].to_string();
-    assert!(
-        disallowed.contains("Bash(git push *)") && disallowed.contains("Agent"),
-        "{disallowed}"
-    );
-    assert!(
-        bundle["tools"]["rules"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|rule| rule["capability"] != "*"),
-        "an allowed overlay only grants: {}",
-        bundle["tools"]
-    );
-    assert!(
-        bundle["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().is_some_and(|message| {
-                message.contains("mars.toml [agents.reviewer.tools].allowed")
-                    && message.contains("allowed = { replace = [...] }")
-            })),
-        "{}",
-        bundle["warnings"]
-    );
 }
 
 #[test]

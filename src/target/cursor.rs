@@ -88,10 +88,14 @@ impl TargetAdapter for CursorAdapter {
 
         let mut written = Vec::new();
         if !mcp_servers.is_empty() {
-            written.push((write_cursor_mcp_json)(&target_dir, &mcp_servers)?);
+            let path = target_dir.join("mcp.json");
+            write_cursor_mcp_json(&path, &mcp_servers)?;
+            written.push(path);
         }
         if !hooks.is_empty() {
-            written.push((write_cursor_hooks_json)(&target_dir, &hooks)?);
+            let path = target_dir.join("hooks.json");
+            write_cursor_hooks_json(&path, &hooks)?;
+            written.push(path);
         }
         Ok(written)
     }
@@ -136,10 +140,9 @@ impl TargetAdapter for CursorAdapter {
 }
 
 // Cursor uses a flat entry array and requires the version wrapper.
-fn write_cursor_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, MarsError> {
-    let path = target_dir.join("hooks.json");
+pub(crate) fn write_cursor_hooks_json(path: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
     let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(&path)?
+        super::parse_json_file(path)?
     } else {
         serde_json::json!({})
     };
@@ -159,10 +162,10 @@ fn write_cursor_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pa
             })
         })?;
     for hook in hooks {
-        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, &path)?;
+        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, path)?;
     }
     crate::fs::atomic_write(
-        &path,
+        path,
         serde_json::to_string_pretty(&root)
             .map_err(|error| {
                 MarsError::Config(crate::error::ConfigError::Invalid {
@@ -171,7 +174,7 @@ fn write_cursor_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<Pa
             })?
             .as_bytes(),
     )?;
-    Ok(path)
+    Ok(())
 }
 
 fn remove_owned_cursor_hooks(
@@ -254,14 +257,12 @@ fn remove_owned_cursor_hooks(
 //   }
 // }
 
-fn write_cursor_mcp_json(
-    target_dir: &Path,
+pub(crate) fn write_cursor_mcp_json(
+    path: &Path,
     servers: &[&McpServerEntry],
-) -> Result<PathBuf, MarsError> {
-    let path = target_dir.join("mcp.json");
-
+) -> Result<(), MarsError> {
     let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(&path)?
+        super::parse_json_file(path)?
     } else {
         serde_json::json!({})
     };
@@ -311,9 +312,9 @@ fn write_cursor_mcp_json(
             message: format!("failed to serialize {}: {e}", path.display()),
         })
     })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
+    crate::fs::atomic_write(path, content.as_bytes())?;
 
-    Ok(path)
+    Ok(())
 }
 
 fn remove_cursor_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {

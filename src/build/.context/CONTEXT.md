@@ -28,6 +28,11 @@ exported graph hooks even when no requested tree selected a fragment, which is t
 omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap
 counts never depend on one format's emitted components.
 
+The Cursor tree is a `TreeProfile`, not a second walk: it preserves the shared Cursor agent
+lowering as-is, has no native model aliases or extra agent allowlist, and delegates `mcp.json` and
+the versioned `hooks/hooks.json` to the path-parameterized `.cursor` target writers. Plugin hook
+paths substitute `${CURSOR_PLUGIN_ROOT}` before those writers run.
+
 The build request carries the semantic destination instead of only a path. `Configured` resolves
 `[plugin].dir` package-relative and includes the root-file plan; explicit `Out(path)` keeps today's
 cwd-relative CLI path semantics and excludes repo-root files. Until the config schema owns the

@@ -45,6 +45,8 @@ pub use layering::{
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<PackageInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<PluginConfig>,
     #[serde(default)]
     pub dependencies: IndexMap<SourceName, InstallDep>,
     /// Local-only dependencies — installed when syncing this repo but NOT
@@ -73,6 +75,12 @@ pub struct PackageInfo {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authors: Vec<PackageAuthor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
     #[serde(
         default,
         rename = "requires-mars",
@@ -87,6 +95,61 @@ pub struct PackageInfo {
     pub requires_meridian: Option<String>,
 }
 
+/// Package author metadata used by generated plugin manifests and catalogs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PackageAuthor {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
+/// Configuration for committed, multi-harness plugin output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginConfig {
+    #[serde(default = "default_plugin_dir", with = "toml_path_serde")]
+    pub dir: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marketplace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default = "default_plugin_harnesses")]
+    pub harnesses: Vec<PluginHarness>,
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            dir: default_plugin_dir(),
+            name: None,
+            marketplace: None,
+            description: None,
+            harnesses: default_plugin_harnesses(),
+        }
+    }
+}
+
+impl PluginConfig {
+    pub fn name<'a>(&'a self, package: &'a PackageInfo) -> &'a str {
+        self.name.as_deref().unwrap_or(&package.name)
+    }
+
+    pub fn marketplace<'a>(&'a self, package: &'a PackageInfo) -> &'a str {
+        self.marketplace.as_deref().unwrap_or(&package.name)
+    }
+
+    pub fn description<'a>(&'a self, package: &'a PackageInfo) -> Option<&'a str> {
+        self.description
+            .as_deref()
+            .or(package.description.as_deref())
+    }
+}
+
+fn default_plugin_dir() -> PathBuf {
+    PathBuf::from("plugin")
+}
+
 /// Harnesses that can consume a generated plugin artifact.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
@@ -98,28 +161,179 @@ pub enum PluginHarness {
     OpenCode,
 }
 
-impl PluginHarness {
-    pub const DEFAULT: &'static [Self] = &[
-        Self::Claude,
-        Self::Codex,
-        Self::Grok,
-        Self::Cursor,
-        Self::OpenCode,
-    ];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Grok => "grok",
-            Self::Cursor => "cursor",
-            Self::OpenCode => "opencode",
-        }
-    }
+pub fn default_plugin_harnesses() -> Vec<PluginHarness> {
+    vec![
+        PluginHarness::Claude,
+        PluginHarness::Codex,
+        PluginHarness::Grok,
+        PluginHarness::Cursor,
+        PluginHarness::OpenCode,
+    ]
 }
 
-pub fn default_plugin_harnesses() -> Vec<PluginHarness> {
-    PluginHarness::DEFAULT.to_vec()
+fn validate_plugin_config(config: &Config) -> Result<(), MarsError> {
+    let Some(plugin) = &config.plugin else {
+        return Ok(());
+    };
+    let package = config
+        .package
+        .as_ref()
+        .ok_or_else(|| ConfigError::Invalid {
+            message: "mars.toml [plugin] requires a [package] table".to_string(),
+        })?;
+
+    validate_plugin_dir(&plugin.dir)?;
+    if plugin.harnesses.is_empty() {
+        return Err(ConfigError::Invalid {
+            message: "mars.toml [plugin].harnesses must list at least one harness".to_string(),
+        }
+        .into());
+    }
+
+    let name = plugin.name(package);
+    for harness in &plugin.harnesses {
+        let valid = match harness {
+            PluginHarness::Claude | PluginHarness::Grok => valid_claude_plugin_name(name),
+            PluginHarness::Codex => valid_codex_plugin_name(name),
+            PluginHarness::Cursor => valid_cursor_plugin_name(name),
+            PluginHarness::OpenCode => valid_npm_package_name(name),
+        };
+        if !valid {
+            let rule = match harness {
+                PluginHarness::Claude => {
+                    "Claude names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters"
+                }
+                PluginHarness::Grok => {
+                    "Grok reads the Claude tree, whose names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters"
+                }
+                PluginHarness::Codex => {
+                    "Codex names must be 1-64 lowercase letters, digits, dots, or hyphens, start and end with a letter or digit, and contain neither `--` nor `..`"
+                }
+                PluginHarness::Cursor => {
+                    "Cursor names must contain only lowercase letters, digits, dots, or hyphens and start and end with a letter or digit"
+                }
+                PluginHarness::OpenCode => {
+                    "OpenCode names must be valid lowercase npm package names"
+                }
+            };
+            return Err(ConfigError::Invalid {
+                message: format!("mars.toml [plugin].name `{name}` is invalid: {rule}"),
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), MarsError> {
+    const SOURCE_DIRS: &[&str] = &["agents", "skills", "hooks", "bootstrap"];
+
+    if dir.as_os_str().is_empty() {
+        return Err(ConfigError::Invalid {
+            message: "mars.toml [plugin].dir cannot be empty".to_string(),
+        }
+        .into());
+    }
+    for component in dir.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "mars.toml [plugin].dir `{}` must be a relative path inside the package without `.` or `..` components",
+                    dir.display()
+                ),
+            }
+            .into());
+        };
+        let name = name.to_str().ok_or_else(|| ConfigError::Invalid {
+            message: "mars.toml [plugin].dir must be valid Unicode".to_string(),
+        })?;
+        if name.starts_with('.') {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "mars.toml [plugin].dir `{}` cannot use a dot directory",
+                    dir.display()
+                ),
+            }
+            .into());
+        }
+        if SOURCE_DIRS.contains(&name) {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "mars.toml [plugin].dir `{}` cannot use the source convention directory `{name}`",
+                    dir.display()
+                ),
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn valid_claude_plugin_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.chars().any(|character| {
+            character.is_whitespace()
+                || character.is_control()
+                || matches!(character, '@' | ':' | '/' | '\\')
+                || matches!(
+                    character,
+                    '\u{061c}'
+                        | '\u{200e}'
+                        | '\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
+}
+
+fn valid_cursor_plugin_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    !bytes.is_empty()
+        && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b".-".contains(byte))
+}
+
+fn valid_codex_plugin_name(name: &str) -> bool {
+    name.len() <= 64
+        && !name.contains("--")
+        && !name.contains("..")
+        && valid_cursor_plugin_name(name)
+}
+
+fn valid_npm_package_name(name: &str) -> bool {
+    if name.is_empty()
+        || name.len() > 214
+        || name != name.to_ascii_lowercase()
+        || matches!(name, "node_modules" | "favicon.ico")
+    {
+        return false;
+    }
+    let segments: Vec<_> = if let Some(scoped) = name.strip_prefix('@') {
+        let Some((scope, package)) = scoped.split_once('/') else {
+            return false;
+        };
+        if package.contains('/') {
+            return false;
+        }
+        vec![scope, package]
+    } else {
+        if name.contains('/') {
+            return false;
+        }
+        vec![name]
+    };
+    segments.into_iter().all(|segment| {
+        !segment.is_empty()
+            && !segment.starts_with(['.', '_'])
+            && segment.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'-' | b'_' | b'.' | b'~')
+            })
+    })
 }
 
 mod toml_path_serde {
@@ -1047,6 +1261,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
     })?;
     let mut config: Config = parse_without_removed_visibility(&content, &path)?;
     migrate_legacy_source_urls(&mut config);
+    validate_plugin_config(&config)?;
     Ok(config)
 }
 
@@ -1629,6 +1844,7 @@ fn should_upgrade_legacy_git_url(url: &str) -> bool {
 
 /// Write mars.toml atomically.
 pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
+    validate_plugin_config(config)?;
     let path = root.join(CONFIG_FILE);
     let content = toml::to_string_pretty(config).map_err(|e| ConfigError::Invalid {
         message: format!("failed to serialize config: {e}"),
@@ -1641,6 +1857,12 @@ pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
 }
 
 fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), MarsError> {
+    if reparsed.plugin != original.plugin {
+        return Err(ConfigError::Invalid {
+            message: "refusing to save config: [plugin] changed during roundtrip".to_string(),
+        }
+        .into());
+    }
     if reparsed.dependencies.len() != original.dependencies.len() {
         return Err(ConfigError::Invalid {
             message: format!(
@@ -1892,6 +2114,157 @@ path = "../local-agents"
         assert!(config.package.is_some());
         assert!(config.dependencies.contains_key("base"));
         assert!(config.dependencies.contains_key("local"));
+    }
+
+    #[test]
+    fn plugin_config_applies_defaults_from_package() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[package]
+name = "example-plugin"
+version = "1.2.3"
+description = "Package description"
+authors = [{ name = "Example Author", email = "author@example.com" }]
+homepage = "https://example.com/plugin"
+license = "MIT"
+
+[plugin]
+"#,
+        )
+        .unwrap();
+
+        let config = load(dir.path()).unwrap();
+        let package = config.package.as_ref().unwrap();
+        let plugin = config.plugin.as_ref().unwrap();
+        assert_eq!(plugin.dir, Path::new("plugin"));
+        assert_eq!(plugin.name(package), "example-plugin");
+        assert_eq!(plugin.marketplace(package), "example-plugin");
+        assert_eq!(plugin.description(package), Some("Package description"));
+        assert_eq!(plugin.harnesses, default_plugin_harnesses());
+        assert_eq!(package.authors[0].name, "Example Author");
+        assert_eq!(
+            package.authors[0].email.as_deref(),
+            Some("author@example.com")
+        );
+        assert_eq!(
+            package.homepage.as_deref(),
+            Some("https://example.com/plugin")
+        );
+        assert_eq!(package.license.as_deref(), Some("MIT"));
+    }
+
+    #[test]
+    fn plugin_config_parses_explicit_values() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[package]
+name = "example-package"
+version = "1.2.3"
+description = "Package description"
+
+[plugin]
+dir = "generated/plugin"
+name = "custom-plugin"
+marketplace = "custom-marketplace"
+description = "Plugin description"
+harnesses = ["claude", "cursor"]
+"#,
+        )
+        .unwrap();
+
+        let config = load(dir.path()).unwrap();
+        let package = config.package.as_ref().unwrap();
+        let plugin = config.plugin.as_ref().unwrap();
+        assert_eq!(plugin.dir, Path::new("generated/plugin"));
+        assert_eq!(plugin.name(package), "custom-plugin");
+        assert_eq!(plugin.marketplace(package), "custom-marketplace");
+        assert_eq!(plugin.description(package), Some("Plugin description"));
+        assert_eq!(
+            plugin.harnesses,
+            vec![PluginHarness::Claude, PluginHarness::Cursor]
+        );
+
+        save(dir.path(), &config).unwrap();
+        let reloaded = load(dir.path()).unwrap();
+        assert_eq!(reloaded.plugin, config.plugin);
+    }
+
+    #[test]
+    fn plugin_config_rejects_unsafe_directories() {
+        for (plugin_dir, expected) in [
+            ("", "cannot be empty"),
+            ("/tmp/plugin", "must be a relative path"),
+            ("../plugin", "without `.` or `..`"),
+            (".", "without `.` or `..`"),
+            (".generated", "cannot use a dot directory"),
+            ("generated/.private", "cannot use a dot directory"),
+            ("skills/plugin", "source convention directory `skills`"),
+        ] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(
+                dir.path().join("mars.toml"),
+                format!(
+                    "[package]\nname = \"example-plugin\"\nversion = \"1.0.0\"\n\n[plugin]\ndir = {plugin_dir:?}\n"
+                ),
+            )
+            .unwrap();
+
+            let error = load(dir.path()).unwrap_err().to_string();
+            assert!(
+                error.contains(expected),
+                "dir {plugin_dir:?} should report {expected:?}, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_config_rejects_unknown_harnesses_and_pi() {
+        for harness in ["unknown", "pi"] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(
+                dir.path().join("mars.toml"),
+                format!(
+                    "[package]\nname = \"example-plugin\"\nversion = \"1.0.0\"\n\n[plugin]\nharnesses = [{harness:?}]\n"
+                ),
+            )
+            .unwrap();
+
+            let error = load(dir.path()).unwrap_err().to_string();
+            assert!(
+                error.contains("unknown variant") && error.contains(harness),
+                "harness {harness:?} should be refused, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_config_validates_name_for_each_listed_harness() {
+        for (harness, name, expected) in [
+            ("claude", "bad:name", "Claude names"),
+            ("codex", "bad--name", "Codex names"),
+            ("grok", "bad/name", "Grok reads the Claude tree"),
+            ("cursor", "Bad_name", "Cursor names"),
+            ("opencode", "_bad-name", "OpenCode names"),
+        ] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(
+                dir.path().join("mars.toml"),
+                format!(
+                    "[package]\nname = \"fallback-name\"\nversion = \"1.0.0\"\n\n[plugin]\nname = {name:?}\nharnesses = [{harness:?}]\n"
+                ),
+            )
+            .unwrap();
+
+            let error = load(dir.path()).unwrap_err().to_string();
+            assert!(
+                error.contains(expected),
+                "name {name:?} for {harness} should report {expected:?}, got: {error}"
+            );
+        }
     }
 
     #[test]

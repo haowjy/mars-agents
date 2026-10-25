@@ -31,18 +31,103 @@ pub enum PluginBuildDestination {
 }
 
 impl PluginBuildDestination {
-    fn resolve(&self, _package_root: &Path) -> Result<PathBuf, MarsError> {
-        let path = match self {
-            Self::Configured => {
-                return Err(MarsError::InvalidRequest {
-                    message:
-                        "a configured plugin build needs a [plugin] table with `dir` in mars.toml"
-                            .to_string(),
+    fn resolve(&self, package_root: &Path, manifest: &Config) -> Result<PathBuf, MarsError> {
+        let configured = manifest
+            .plugin
+            .as_ref()
+            .map(|plugin| configured_output_path(package_root, plugin))
+            .transpose()?;
+        match self {
+            Self::Configured => configured.ok_or_else(|| MarsError::InvalidRequest {
+                message: "a configured plugin build needs a [plugin] table in mars.toml"
+                    .to_string(),
+            }),
+            Self::Out(path) => {
+                let out = std::path::absolute(path)?;
+                if configured
+                    .as_ref()
+                    .map(|configured| paths_resolve_equal(&out, configured))
+                    .transpose()?
+                    .unwrap_or(false)
+                {
+                    return Err(MarsError::InvalidRequest {
+                        message: format!(
+                            "--out {} resolves to [plugin].dir; omit --out for a configured build",
+                            path.display()
+                        ),
+                    });
+                }
+                Ok(out)
+            }
+        }
+    }
+}
+
+fn configured_output_path(
+    package_root: &Path,
+    plugin: &crate::config::PluginConfig,
+) -> Result<PathBuf, MarsError> {
+    crate::config::validate_plugin_dir(&plugin.dir)?;
+    let package_root = resolved_path_identity(package_root)?;
+    let output = std::path::absolute(package_root.join(&plugin.dir))?;
+    let identity = resolved_path_identity(&output)?;
+    if identity == package_root || !identity.starts_with(&package_root) {
+        return Err(MarsError::InvalidRequest {
+            message: format!(
+                "[plugin].dir `{}` must resolve inside the package root",
+                plugin.dir.display()
+            ),
+        });
+    }
+    Ok(output)
+}
+
+fn paths_resolve_equal(left: &Path, right: &Path) -> Result<bool, MarsError> {
+    Ok(resolved_path_identity(left)? == resolved_path_identity(right)?)
+}
+
+fn resolved_path_identity(path: &Path) -> Result<PathBuf, MarsError> {
+    let absolute = std::path::absolute(path)?;
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    let absolute = normalized;
+    let mut existing = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match dunce::canonicalize(existing) {
+            Ok(mut canonical) => {
+                for component in missing.iter().rev() {
+                    canonical.push(component);
+                }
+                return Ok(canonical);
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                let component = existing.file_name().ok_or_else(|| MarsError::Io {
+                    operation: "resolve plugin output path".to_string(),
+                    path: absolute.clone(),
+                    source,
+                })?;
+                missing.push(component.to_os_string());
+                existing = existing.parent().ok_or_else(|| MarsError::InvalidRequest {
+                    message: format!("cannot resolve plugin output path {}", absolute.display()),
+                })?;
+            }
+            Err(source) => {
+                return Err(MarsError::Io {
+                    operation: "resolve plugin output path".to_string(),
+                    path: existing.to_path_buf(),
+                    source,
                 });
             }
-            Self::Out(path) => path.clone(),
-        };
-        Ok(std::path::absolute(path)?)
+        }
     }
 }
 
@@ -156,7 +241,7 @@ pub fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, M
         .package
         .as_ref()
         .expect("PackageMetadata validates the package table");
-    let out_dir = request.destination.resolve(&package_root)?;
+    let out_dir = request.destination.resolve(&package_root, manifest)?;
     let plugin_name = metadata.name.clone();
     let root_source = SourceName::from(package.name.clone());
     let profiles = requested_tree_profiles(&request.harnesses)?;

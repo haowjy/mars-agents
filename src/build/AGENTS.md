@@ -24,11 +24,13 @@ full `TargetState` for graph-wide counts rather than inferring them from one tre
 
 `PluginBuildRequest` keeps destination intent: `Configured` resolves from `[plugin].dir` and
 enables the root-file plan, while `Out(path)` is the explicit CLI output and never writes repo-root
-files. The config schema does not expose `[plugin]` yet, so `Configured` currently returns a clear
-configuration error. Its optional version overrides only the generated package metadata; `None`
-uses `[package].version`. `PackageMetadata` is the authority for the plugin-facing name, while the
-publish graph's root source continues to use `[package].name`. Build reports contain one typed tree
-record and output path per generated tree; human output prints one success line per record.
+files. `[plugin]` defaults its directory to `plugin`, its identity and description from `[package]`,
+and its harnesses to all five; `Configured` requires that table. Explicit output cannot resolve to
+the configured directory. The request's optional version overrides only the generated package
+metadata; `None` uses `[package].version`. `PackageMetadata` is the authority for the plugin-facing
+name and package author/homepage/license metadata, while the publish graph's root source continues
+to use `[package].name`. Build reports contain one typed tree record and output path per generated
+tree; human output prints one success line per record.
 
 The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
 core never mutates the destination itself. The staged build holds the output lock and root-file

@@ -30,13 +30,13 @@ counts never depend on one format's emitted components.
 
 The build request carries the semantic destination instead of only a path. `Configured` resolves
 `[plugin].dir` package-relative and includes the root-file plan; explicit `Out(path)` keeps today's
-cwd-relative CLI path semantics and excludes repo-root files. Until the config schema owns the
-`[plugin]` table, the configured form fails with a targeted error. `version: None` takes
+cwd-relative CLI path semantics and excludes repo-root files. `Configured` requires `[plugin]`, and
+an explicit output that resolves to the configured directory is refused. `version: None` takes
 `[package].version`; an override changes generated metadata and the sentinel without changing the
-manifest used for resolution. Plugin-facing identity comes from `PackageMetadata`, while
-`SourceName` must continue to come from `[package].name` because the plugin name may differ. The
-report's `trees` array carries each typed tree's final output path and component counts rather than
-flattening one preferred tree into the top level.
+manifest used for resolution. Plugin-facing identity and package author/homepage/license come from
+`PackageMetadata`, while `SourceName` must continue to come from `[package].name` because the plugin
+name may differ. The report's `trees` array carries each typed tree's final output path and component
+counts rather than flattening one preferred tree into the top level.
 
 The output writer builds `<tree>/` directories directly into an empty sibling staging directory.
 After it succeeds, the output layer hashes every tree, writes one root `.mars-plugin.json`, and

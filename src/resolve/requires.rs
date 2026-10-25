@@ -203,6 +203,9 @@ mod tests {
             name: "pkg".into(),
             version: "1.0.0".into(),
             description: None,
+            authors: Vec::new(),
+            homepage: None,
+            license: None,
             requires_mars: requirement.map(str::to_string),
             requires_meridian: None,
         }

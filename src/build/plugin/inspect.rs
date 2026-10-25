@@ -436,9 +436,23 @@ fn changed_output_paths(
     output: &Path,
     sentinel: &PluginSentinel,
 ) -> Result<Vec<PathBuf>, MarsError> {
-    let actual = crate::platform::fs::directory_tree_snapshot_filtered(output, &[SENTINEL_FILE])?
-        .expect("owned plugin output is a directory")
-        .file_hash_states();
+    let actual =
+        match crate::platform::fs::directory_tree_snapshot_filtered(output, &[SENTINEL_FILE])? {
+            crate::platform::fs::DirectoryTreeSnapshotResult::Snapshot(snapshot) => {
+                snapshot.file_hash_states()
+            }
+            crate::platform::fs::DirectoryTreeSnapshotResult::NonUnicode(path) => {
+                return Err(MarsError::InvalidRequest {
+                    message: format!(
+                        "generated plugin path must be valid Unicode: {}",
+                        path.display()
+                    ),
+                });
+            }
+            crate::platform::fs::DirectoryTreeSnapshotResult::Unavailable => {
+                unreachable!("owned plugin output is a directory")
+            }
+        };
 
     let paths: BTreeSet<String> = sentinel
         .files

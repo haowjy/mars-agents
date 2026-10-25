@@ -103,8 +103,17 @@ impl SkillDiagnostic {
             }
             Self::DeprecatedListFormTools => "skill `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string(),
             Self::MalformedFrontmatter { message } => {
+                format!("skill frontmatter is malformed; raw fallback used: {message}")
+            }
+        }
+    }
+
+    fn plugin_message(&self) -> String {
+        match self {
+            Self::MalformedFrontmatter { message } => {
                 format!("skill frontmatter is malformed: {message}")
             }
+            _ => self.message(),
         }
     }
 }
@@ -164,6 +173,33 @@ pub(crate) fn emit_skill_schema_diags_from_source(
     skill_name: &str,
     diag: &mut DiagnosticCollector,
 ) {
+    emit_skill_schema_diags_from_source_with(
+        source_path,
+        skill_name,
+        diag,
+        SkillDiagnostic::message,
+    );
+}
+
+pub(crate) fn emit_plugin_skill_schema_diags_from_source(
+    source_path: &Path,
+    skill_name: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    emit_skill_schema_diags_from_source_with(
+        source_path,
+        skill_name,
+        diag,
+        SkillDiagnostic::plugin_message,
+    );
+}
+
+fn emit_skill_schema_diags_from_source_with(
+    source_path: &Path,
+    skill_name: &str,
+    diag: &mut DiagnosticCollector,
+    message: fn(&SkillDiagnostic) -> String,
+) {
     let skill_md = if source_path.is_dir() {
         source_path.join("SKILL.md")
     } else {
@@ -174,7 +210,18 @@ pub(crate) fn emit_skill_schema_diags_from_source(
     };
     let mut skill_diags = Vec::new();
     let _ = parse_skill_content(&content, &mut skill_diags);
-    emit_skill_schema_diags(diag, skill_name, &skill_diags);
+    for d in &skill_diags {
+        let message = format!("skill `{skill_name}`: {}", message(d));
+        if d.is_error() {
+            diag.error_with_category(
+                "skill-schema-error",
+                message,
+                DiagnosticCategory::Validation,
+            );
+        } else {
+            diag.warn("skill-schema-warning", message);
+        }
+    }
 }
 
 fn push_skill_tool_invalid(

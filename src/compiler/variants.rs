@@ -352,12 +352,14 @@ pub(crate) fn project_prepared_skill_for_target(
         }
     }
 
-    let tmp_path = tmp_dir.keep();
-    if dest.exists() && crate::platform::fs::directory_trees_content_equal(&tmp_path, dest)? {
-        let _ = crate::platform::fs::safe_remove(&tmp_path);
+    if dest.exists() && crate::platform::fs::directory_trees_content_equal(tmp_dir.path(), dest)? {
         return Ok(false);
     }
-    crate::platform::fs::replace_generated_dir(&tmp_path, dest)?;
+    let tmp_path = tmp_dir.keep();
+    if let Err(error) = crate::platform::fs::replace_generated_dir(&tmp_path, dest) {
+        let _ = crate::platform::fs::safe_remove(&tmp_path);
+        return Err(error);
+    }
     Ok(true)
 }
 

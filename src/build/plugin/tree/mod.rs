@@ -216,7 +216,7 @@ pub(super) fn check_sources(
         match item.id.kind {
             ItemKind::Agent => check_agent_source(item, input.terms, diag)?,
             ItemKind::Skill => {
-                crate::compiler::skills::emit_skill_schema_diags_from_source(
+                crate::compiler::skills::emit_plugin_skill_schema_diags_from_source(
                     &item.source_path,
                     item.id.name.as_str(),
                     diag,

@@ -3,7 +3,7 @@
 //! All durable Mars writes should go through this module.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::fs::atomic_write;
@@ -242,7 +242,7 @@ impl DirectoryTreeSnapshot {
             .collect()
     }
 
-    fn is_strict(&self) -> bool {
+    pub(crate) fn is_strict(&self) -> bool {
         self.entries
             .values()
             .all(|kind| !matches!(kind, TreeEntryKind::Unsupported))
@@ -271,25 +271,43 @@ pub(crate) fn strict_directory_tree_snapshot_filtered(
     root: &Path,
     excluded_top_level: &[&str],
 ) -> Result<Option<DirectoryTreeSnapshot>, MarsError> {
-    let snapshot = directory_tree_snapshot_filtered(root, excluded_top_level)?;
-    Ok(snapshot.filter(DirectoryTreeSnapshot::is_strict))
+    match directory_tree_snapshot_filtered(root, excluded_top_level)? {
+        DirectoryTreeSnapshotResult::Snapshot(snapshot) if snapshot.is_strict() => {
+            Ok(Some(snapshot))
+        }
+        DirectoryTreeSnapshotResult::Snapshot(_)
+        | DirectoryTreeSnapshotResult::Unavailable
+        | DirectoryTreeSnapshotResult::NonUnicode(_) => Ok(None),
+    }
+}
+
+pub(crate) enum DirectoryTreeSnapshotResult {
+    Unavailable,
+    NonUnicode(PathBuf),
+    Snapshot(DirectoryTreeSnapshot),
 }
 
 pub(crate) fn directory_tree_snapshot_filtered(
     root: &Path,
     excluded_top_level: &[&str],
-) -> Result<Option<DirectoryTreeSnapshot>, MarsError> {
+) -> Result<DirectoryTreeSnapshotResult, MarsError> {
     let metadata = match fs::symlink_metadata(root) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DirectoryTreeSnapshotResult::Unavailable);
+        }
         Err(error) => return Err(error.into()),
     };
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Ok(None);
+        return Ok(DirectoryTreeSnapshotResult::Unavailable);
     }
     let mut snapshot = DirectoryTreeSnapshot::new();
-    collect_relative_tree_entries(root, root, excluded_top_level, &mut snapshot)?;
-    Ok(Some(snapshot))
+    if let Some(path) =
+        collect_relative_tree_entries(root, root, excluded_top_level, &mut snapshot)?
+    {
+        return Ok(DirectoryTreeSnapshotResult::NonUnicode(path));
+    }
+    Ok(DirectoryTreeSnapshotResult::Snapshot(snapshot))
 }
 
 fn collect_relative_tree_entries(
@@ -297,7 +315,7 @@ fn collect_relative_tree_entries(
     current: &Path,
     excluded_top_level: &[&str],
     snapshot: &mut DirectoryTreeSnapshot,
-) -> Result<(), MarsError> {
+) -> Result<Option<PathBuf>, MarsError> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
@@ -311,9 +329,7 @@ fn collect_relative_tree_entries(
             continue;
         }
         let Some(rel_path) = crate::hash::portable_relative(root, &path) else {
-            return Err(MarsError::InvalidRequest {
-                message: format!("path must be valid Unicode: {}", path.display()),
-            });
+            return Ok(Some(path));
         };
 
         if file_type.is_symlink() {
@@ -322,7 +338,11 @@ fn collect_relative_tree_entries(
                 .insert(rel_path, TreeEntryKind::Unsupported);
         } else if file_type.is_dir() {
             snapshot.insert_directory(rel_path);
-            collect_relative_tree_entries(root, &path, excluded_top_level, snapshot)?;
+            if let Some(path) =
+                collect_relative_tree_entries(root, &path, excluded_top_level, snapshot)?
+            {
+                return Ok(Some(path));
+            }
         } else if file_type.is_file() {
             snapshot.insert_file_hash(rel_path, crate::hash::hash_bytes(&fs::read(path)?));
         } else {
@@ -331,7 +351,7 @@ fn collect_relative_tree_entries(
                 .insert(rel_path, TreeEntryKind::Unsupported);
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Recursively copy a directory, following symlinks on the source side.

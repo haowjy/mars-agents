@@ -992,7 +992,7 @@ tools:
   Bash: allow
   Write: allow
   Edit: allow
-disallowed-tools: [Agent]
+  Agent: deny
 ---
 # Integration tester
 Run focused integration checks.

@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn claude_lowering_preserves_name_description_model_skills_tools_body() {
-        let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills: [dev-principles]\ntools:\n  '*': deny\n  Bash: allow\n  Write: allow\n---\n# Coder\nYou write code.";
+        let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills:\n  load: [dev-principles]\n  available: [review]\ntools:\n  '*': deny\n  Bash: allow\n  Write: allow\n---\n# Coder\nYou write code.";
         let (profile, fm, _) = profile_from(content);
         let body = fm.body();
         let out = lower_to_claude(&profile, &fm, body, &NativeModel::Inherit);
@@ -48,9 +48,26 @@ mod tests {
             "desc missing"
         );
         assert!(text.contains("model: gpt55"), "model missing");
-        assert!(text.contains("skills"), "skills missing");
+        let lowered = Frontmatter::parse(&text).unwrap();
+        assert_eq!(lowered.skills_structured().load, ["dev-principles"]);
+        assert!(
+            !lowered.skills().contains(&"review".to_string()),
+            "available skill must not be preloaded: {text}"
+        );
         assert!(text.contains("tools"), "tools missing");
         assert!(text.contains("# Coder"), "body missing");
+        assert!(
+            lowered.body().ends_with(
+                "Load these skills before starting, unless they are already in your context: /dev-principles. Load these skills when the task fits: /review.\n"
+            ),
+            "skill guidance missing: {text}"
+        );
+        for field in ["skills.load", "skills.available"] {
+            assert!(out.lossy_fields.iter().any(|lossy| {
+                lossy.field == field
+                    && matches!(lossy.classification, Lossiness::Approximate { .. })
+            }));
+        }
     }
 
     #[test]
@@ -370,19 +387,32 @@ mod tests {
     }
 
     #[test]
-    fn codex_lowering_drops_skills_and_tools() {
-        let content = "---\nname: r\nharness: codex\nskills: [review]\ntools:\n  Bash: allow\ndisallowed-tools: [Agent]\n---\n# body";
+    fn codex_lowering_carries_skills_in_body_and_drops_tools() {
+        let content = "---\nname: r\nharness: codex\nskills:\n  load: [review]\n  available: [diagnose]\ntools:\n  Bash: allow\ndisallowed-tools: [Agent]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes.clone()).unwrap();
         let dropped: Vec<_> = out
             .lossy_fields
             .iter()
             .filter(|f| matches!(f.classification, Lossiness::Dropped))
             .map(|f| f.field.as_str())
             .collect();
-        assert!(dropped.contains(&"skills"));
+        assert!(!dropped.iter().any(|field| field.starts_with("skills")));
         assert!(dropped.contains(&"tools"));
         assert!(dropped.contains(&"disallowed-tools"));
+        for field in ["skills.load", "skills.available"] {
+            assert!(out.lossy_fields.iter().any(|lossy| {
+                lossy.field == field
+                    && matches!(lossy.classification, Lossiness::Approximate { .. })
+            }));
+        }
+        assert!(
+            text.contains(
+                "Load these skills before starting, unless they are already in your context: /review. Load these skills when the task fits: /diagnose."
+            ),
+            "skill guidance missing: {text}"
+        );
     }
 
     #[test]
@@ -460,7 +490,7 @@ mod tests {
 
     #[test]
     fn opencode_lowering_preserves_name_description_model_mode() {
-        let content = "---\nname: r\ndescription: Reviewer\nmodel: gpt55\nmode: primary\nharness: opencode\n---\n# Reviewer\nbody";
+        let content = "---\nname: r\ndescription: Reviewer\nmodel: gpt55\nmode: primary\nharness: opencode\nskills:\n  load: [review]\n  available: [diagnose]\n---\n# Reviewer\nbody";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
@@ -468,6 +498,11 @@ mod tests {
         assert!(text.contains("description: Reviewer"), "desc missing");
         assert!(text.contains("model: gpt55"), "model missing");
         assert!(text.contains("mode: primary"), "mode missing");
+        let lowered = Frontmatter::parse(&text).unwrap();
+        assert!(lowered.skills().is_empty(), "skills field leaked: {text}");
+        assert!(lowered.body().contains(
+            "Load these skills before starting, unless they are already in your context: /review. Load these skills when the task fits: /diagnose."
+        ));
         assert!(
             !out.lossy_fields.iter().any(|f| f.field == "mode"),
             "mode should be exact, not lossy: {:?}",
@@ -559,7 +594,7 @@ mod tests {
 
     #[test]
     fn cursor_lowering_normalizes_multiline_description_to_one_line() {
-        let content = "---\nname: cursor-agent\ndescription: |\n  Cursor agent\n  with   lots\t of\n  whitespace\nharness: cursor\n---\n# body";
+        let content = "---\nname: cursor-agent\ndescription: |\n  Cursor agent\n  with   lots\t of\n  whitespace\nharness: cursor\nskills:\n  load: [review]\n  available: [diagnose]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
         let out = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
@@ -573,6 +608,17 @@ mod tests {
         assert!(
             !text.contains("description: |\n"),
             "block description should be flattened: {text}"
+        );
+        let lowered = Frontmatter::parse(&text).unwrap();
+        assert_eq!(lowered.skills(), ["review"]);
+        assert!(
+            !lowered.body().contains("before starting"),
+            "Cursor's native preload should not be repeated: {text}"
+        );
+        assert!(
+            lowered
+                .body()
+                .ends_with("Load these skills when the task fits: /diagnose.\n")
         );
     }
 
@@ -646,12 +692,17 @@ mod tests {
 
     #[test]
     fn pi_lowering_preserves_name_description_model() {
-        let content = "---\nname: pi-agent\ndescription: Pi agent\nmodel: gpt55\nharness: pi\n---\n# Pi\nbody";
+        let content = "---\nname: pi-agent\ndescription: Pi agent\nmodel: gpt55\nharness: pi\nskills:\n  load: [review]\n  available: [diagnose]\n---\n# Pi\nbody";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_pi(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.contains("name: pi-agent"), "name missing");
         assert!(text.contains("description: Pi agent"), "desc missing");
+        let lowered = Frontmatter::parse(&text).unwrap();
+        assert!(lowered.skills().is_empty(), "skills field leaked: {text}");
+        assert!(lowered.body().contains(
+            "Load these skills before starting, unless they are already in your context: /review. Load these skills when the task fits: /diagnose."
+        ));
     }
 
     #[test]

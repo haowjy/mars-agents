@@ -88,6 +88,11 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   `Inherit` remains for direct lowerer tests). `lower_for_harness_with_model()`
   dispatches to the correct lowerer, ensuring emitted native artifacts carry concrete
   model IDs rather than aliases.
+- `lower_policy.rs` owns capability-aware agent skill lowering. Claude and Cursor native
+  `skills:` fields receive `skills.load` only; body guidance carries `skills.available`, plus
+  `skills.load` on targets without per-agent preload and on Claude's dual-use
+  subagent/session-agent file. Body-guided channels record approximate lossiness. Plugin builds
+  call this same path before qualifying `/name` references.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
 - `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
   lowerers omit them; Codex records all three as dropped, while other targets record them as

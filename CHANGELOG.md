@@ -14,6 +14,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refused; rebuilds swap the tree atomically and recover from an interrupted build.
 
 ### Fixed
+- Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
+  Cursor no longer preload available-only skills, while every target receives `/name` body
+  guidance for skills its per-agent format cannot preload.
 - `mars check PATH` now resolves package path dependencies relative to the checked package,
   rather than the caller's working directory.
 - `mars check` and `mars init` now report publish-view configuration warnings instead of

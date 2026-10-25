@@ -150,6 +150,7 @@ fn discover_convention_items(
     let mut visited_hooks = HashSet::new();
     let mut visited_bootstrap = HashSet::new();
     let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
+    let configured_plugin_dir = configured_plugin_dir(package_root);
 
     while let Some((base_dir, depth)) = queue.pop_front() {
         let base_rel = if base_dir == package_root {
@@ -210,7 +211,7 @@ fn discover_convention_items(
             if !path.is_dir() {
                 continue;
             }
-            if configured_plugin_tree(package_root, &path) {
+            if configured_plugin_tree(configured_plugin_dir.as_deref(), &path) {
                 continue;
             }
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -431,13 +432,14 @@ fn scan_bootstrap_dir(
 
 fn scan_manifest_declared_path(
     package_root: &Path,
+    configured_plugin_dir: Option<&Path>,
     declared_path: &DeclaredPath,
     items: &mut Vec<DiscoveredItem>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut visited = HashSet::new();
     let candidate = package_root.join(&declared_path.relative_path);
-    if path_is_in_generated_plugin_tree(package_root, &candidate, diag) {
+    if path_is_in_generated_plugin_tree(package_root, configured_plugin_dir, &candidate, diag) {
         return Ok(());
     }
     match declared_path.kind {
@@ -595,18 +597,26 @@ fn discover_manifest_declared_items(
         return Ok(Vec::new());
     }
     let mut items = Vec::new();
+    let configured_plugin_dir = configured_plugin_dir(package_root);
     for declared_path in collect_manifest_declared_paths(package_root, source_name)? {
-        scan_manifest_declared_path(package_root, &declared_path, &mut items, diag)?;
+        scan_manifest_declared_path(
+            package_root,
+            configured_plugin_dir.as_deref(),
+            &declared_path,
+            &mut items,
+            diag,
+        )?;
     }
     Ok(dedupe_items_by_path(items))
 }
 
 fn path_is_in_generated_plugin_tree(
     package_root: &Path,
+    configured_plugin_dir: Option<&Path>,
     path: &Path,
     diag: &mut DiagnosticCollector,
 ) -> bool {
-    if configured_plugin_tree(package_root, path) {
+    if configured_plugin_tree(configured_plugin_dir, path) {
         return true;
     }
     let mut current = if path.is_dir() {
@@ -626,8 +636,8 @@ fn path_is_in_generated_plugin_tree(
     false
 }
 
-fn configured_plugin_tree(package_root: &Path, path: &Path) -> bool {
-    configured_plugin_dir(package_root).is_some_and(|dir| path.starts_with(dir))
+fn configured_plugin_tree(configured_plugin_dir: Option<&Path>, path: &Path) -> bool {
+    configured_plugin_dir.is_some_and(|dir| path.starts_with(dir))
 }
 
 fn configured_plugin_dir(package_root: &Path) -> Option<PathBuf> {

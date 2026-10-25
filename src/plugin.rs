@@ -1,17 +1,6 @@
 //! Declarative harness and generated-tree plugin format specifications.
 
-use serde::{Deserialize, Serialize};
-
-/// Harnesses that can consume a generated plugin artifact.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PluginHarness {
-    Claude,
-    Codex,
-    Grok,
-    Cursor,
-    OpenCode,
-    Unknown(String),
-}
+use serde::Serialize;
 
 /// A distinct generated plugin tree format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -75,7 +64,6 @@ pub(crate) struct VerificationRow {
     pub agents: Option<Verification>,
     pub hooks: Verification,
     pub mcp: Verification,
-    pub evidence: &'static str,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -87,7 +75,6 @@ pub(crate) struct PluginSupportCells {
 }
 
 pub(crate) struct PluginHarnessSpec {
-    pub harness: PluginHarness,
     pub tree: PluginTree,
     pub key: &'static str,
     pub name_rule: NameRule,
@@ -133,7 +120,6 @@ const OPENCODE_NAME: NameRule = NameRule {
 
 pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
     PluginHarnessSpec {
-        harness: PluginHarness::Claude,
         key: "claude",
         tree: PluginTree::Claude,
         name_rule: CLAUDE_NAME,
@@ -154,11 +140,9 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
                 " (`${CLAUDE_PLUGIN_ROOT}`, CommonJS script)",
             ),
             mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
-            evidence: "p9533, p9535",
         },
     },
     PluginHarnessSpec {
-        harness: PluginHarness::Codex,
         key: "codex",
         tree: PluginTree::Claude,
         name_rule: CODEX_NAME,
@@ -176,11 +160,9 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
             agents: None,
             hooks: verification(VerificationLevel::Live, " (built tree, CommonJS script)"),
             mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
-            evidence: "p9533, p9535",
         },
     },
     PluginHarnessSpec {
-        harness: PluginHarness::Grok,
         key: "grok",
         tree: PluginTree::Claude,
         name_rule: GROK_NAME,
@@ -201,11 +183,9 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
             )),
             hooks: verification(VerificationLevel::Live, " (`CLAUDE_PLUGIN_ROOT`)"),
             mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
-            evidence: "p9473, p9478, p9533, p9535",
         },
     },
     PluginHarnessSpec {
-        harness: PluginHarness::Cursor,
         key: "cursor",
         tree: PluginTree::Cursor,
         name_rule: CURSOR_NAME,
@@ -226,11 +206,9 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
             )),
             hooks: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
             mcp: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
-            evidence: "p9533",
         },
     },
     PluginHarnessSpec {
-        harness: PluginHarness::OpenCode,
         key: "opencode",
         tree: PluginTree::OpenCode,
         name_rule: OPENCODE_NAME,
@@ -250,7 +228,6 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
             agents: None,
             hooks: verification(VerificationLevel::Live, " (git install, CommonJS script)"),
             mcp: verification(VerificationLevel::Live, " (`<plugin>:<server>`)"),
-            evidence: "p9533",
         },
     },
 ];
@@ -305,72 +282,28 @@ pub(crate) static OPENCODE_TREE_SPEC: PluginTreeSpec = PluginTreeSpec {
 pub(crate) static PLUGIN_TREE_SPECS: &[&PluginTreeSpec] =
     &[&CLAUDE_TREE_SPEC, &CURSOR_TREE_SPEC, &OPENCODE_TREE_SPEC];
 
-impl PluginHarness {
-    pub(crate) fn spec(&self) -> Option<&'static PluginHarnessSpec> {
-        PLUGIN_HARNESS_SPECS
-            .iter()
-            .find(|spec| &spec.harness == self)
-    }
-
-    pub(crate) fn specs() -> impl Iterator<Item = &'static PluginHarnessSpec> {
-        PLUGIN_HARNESS_SPECS.iter()
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Unknown(value) => value,
-            _ => self.spec().expect("known plugin harness has a spec").key,
-        }
-    }
-
-    pub(crate) fn tree(&self) -> PluginTree {
-        self.spec()
-            .expect("plugin build validation rejects unknown harnesses")
-            .tree
-    }
+pub(crate) fn harness_specs() -> impl Iterator<Item = &'static PluginHarnessSpec> {
+    PLUGIN_HARNESS_SPECS.iter()
 }
 
-pub(crate) fn unknown_plugin_harness_messages(harnesses: &[PluginHarness]) -> Vec<String> {
-    let valid = PluginHarness::specs()
+pub(crate) fn harness_spec(key: &str) -> Option<&'static PluginHarnessSpec> {
+    harness_specs().find(|spec| spec.key == key)
+}
+
+pub(crate) fn unknown_plugin_harness_messages(harnesses: &[String]) -> Vec<String> {
+    let valid = harness_specs()
         .map(|spec| spec.key)
         .collect::<Vec<_>>()
         .join(", ");
     harnesses
         .iter()
-        .filter(|harness| harness.spec().is_none())
+        .filter(|harness| harness_spec(harness).is_none())
         .map(|harness| {
             format!(
-                "mars.toml [plugin].harnesses contains unknown harness `{}`; expected one of: {valid}",
-                harness.as_str()
+                "mars.toml [plugin].harnesses contains unknown harness `{harness}`; expected one of: {valid}"
             )
         })
         .collect()
-}
-
-impl Serialize for PluginHarness {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for PluginHarness {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Ok(match value.as_str() {
-            "claude" => Self::Claude,
-            "codex" => Self::Codex,
-            "grok" => Self::Grok,
-            "cursor" => Self::Cursor,
-            "opencode" => Self::OpenCode,
-            _ => Self::Unknown(value),
-        })
-    }
 }
 
 impl PluginTree {

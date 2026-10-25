@@ -18,8 +18,7 @@ pipeline operates on EffectiveConfig only
 | Type | Role |
 |---|---|
 | `Config` | Full mars.toml: package, plugin, dependencies, local-dependencies, settings, models, agents |
-| `PluginConfig` | Committed plugin output directory, identity, description, and selected harnesses |
-| `PluginHarness` | The five harness names accepted by plugin builds; its default set is all five |
+| `PluginConfig` | Raw `[plugin]` table, preserved without applying publish defaults |
 | `LocalConfig` | Gitignored dev overrides: source path swaps, local agent overlays |
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
@@ -27,12 +26,13 @@ pipeline operates on EffectiveConfig only
 | `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
 | `NetworkPolicy` / `NetworkHost` | Shared typed parsers for every mode and host surface |
 
-`load()` checks only the structural relationship that `[plugin]` needs `[package]`; plugin author,
-dir, identity, marketplace, and requested-harness semantics belong to
-`build::plugin::stage_plugin` so a bad publish configuration cannot block `sync` or `list`.
-Unknown requested harness spellings deserialize to a typed `Unknown(String)` value that retains the
-author's spelling for build errors and `mars check` warnings, and are rejected at the build
-boundary. Dependency `load_manifest()` uses a narrow package view
+`load()` parses `[plugin]` and the plugin-only `[package]` fields `authors`, `homepage`, and
+`license` as raw TOML values. It applies no publish defaults and validates none of their content,
+so config-saving commands round-trip authored values without making publish metadata a sync
+boundary. Typed plugin metadata and harness specs live in `build/plugin/metadata.rs`; plugin build
+validation owns their defaults and semantics, while `mars check` converts the same validation
+error into a warning. Keep `PackageInfo` flat and easy to extend with the planned catch-all for
+unknown package keys. Dependency `load_manifest()` uses a narrow package view
 (identity and engine floors) and ignores plugin-only metadata even when its shape is invalid for the
 package being built.
 

@@ -75,12 +75,12 @@ pub struct PackageInfo {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub authors: Vec<PackageAuthor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub homepage: Option<String>,
+    pub authors: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub license: Option<String>,
+    pub homepage: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<toml::Value>,
     #[serde(
         default,
         rename = "requires-mars",
@@ -95,113 +95,24 @@ pub struct PackageInfo {
     pub requires_meridian: Option<String>,
 }
 
-/// Package author metadata used by generated plugin manifests and catalogs.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct PackageAuthor {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-}
-
-impl<'de> Deserialize<'de> for PackageAuthor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum AuthorValue {
-            Text(String),
-            Table {
-                name: String,
-                #[serde(default)]
-                email: Option<String>,
-            },
-        }
-
-        Ok(match AuthorValue::deserialize(deserializer)? {
-            AuthorValue::Table { name, email } => Self { name, email },
-            AuthorValue::Text(value) => {
-                let value = value.trim();
-                let (name, email) = value
-                    .strip_suffix('>')
-                    .and_then(|without_close| without_close.rsplit_once(" <"))
-                    .filter(|(name, email)| !name.trim().is_empty() && !email.trim().is_empty())
-                    .map_or_else(
-                        || (value.to_string(), None),
-                        |(name, email)| (name.trim().to_string(), Some(email.trim().to_string())),
-                    );
-                Self { name, email }
-            }
-        })
-    }
-}
-
-/// Configuration for committed, multi-harness plugin output.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct PluginConfig {
-    #[serde(default = "default_plugin_dir", with = "toml_path_serde")]
-    pub dir: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub marketplace: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default = "default_plugin_harnesses")]
-    pub harnesses: Vec<PluginHarness>,
-}
+/// Raw `[plugin]` values. Plugin publishing validates these at its own boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(transparent)]
+pub struct PluginConfig(pub toml::Table);
 
 impl PluginConfig {
-    pub fn name<'a>(&'a self, package: &'a PackageInfo) -> &'a str {
-        self.name.as_deref().unwrap_or(&package.name)
-    }
-
-    pub fn marketplace<'a>(&'a self, package: &'a PackageInfo) -> &'a str {
-        self.marketplace.as_deref().unwrap_or(&package.name)
-    }
-
-    pub fn description<'a>(&'a self, package: &'a PackageInfo) -> Option<&'a str> {
-        self.description
-            .as_deref()
-            .or(package.description.as_deref())
+    pub(crate) fn get(&self, key: &str) -> Option<&toml::Value> {
+        self.0.get(key)
     }
 }
 
-fn default_plugin_dir() -> PathBuf {
-    PathBuf::from("plugin")
-}
-
-pub use crate::plugin::PluginHarness;
-
-pub fn default_plugin_harnesses() -> Vec<PluginHarness> {
-    PluginHarness::specs()
-        .map(|spec| spec.harness.clone())
-        .collect()
-}
-
-fn validate_plugin_config_shape(config: &Config) -> Result<(), MarsError> {
-    if config.plugin.is_none() {
-        return Ok(());
-    }
-    if config.package.is_none() {
-        return Err(ConfigError::Invalid {
-            message: "mars.toml [plugin] requires a [package] table".to_string(),
-        }
-        .into());
-    }
-
-    Ok(())
-}
-
-pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), MarsError> {
+pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), ConfigError> {
     const SOURCE_DIRS: &[&str] = &["agents", "skills", "hooks", "bootstrap"];
 
     if dir.as_os_str().is_empty() {
         return Err(ConfigError::Invalid {
             message: "mars.toml [plugin].dir cannot be empty".to_string(),
-        }
-        .into());
+        });
     }
     for component in dir.components() {
         let std::path::Component::Normal(name) = component else {
@@ -210,8 +121,7 @@ pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), MarsError> {
                     "mars.toml [plugin].dir `{}` must be a relative path inside the package without `.` or `..` components",
                     dir.display()
                 ),
-            }
-            .into());
+            });
         };
         let name = name.to_str().ok_or_else(|| ConfigError::Invalid {
             message: "mars.toml [plugin].dir must be valid Unicode".to_string(),
@@ -222,8 +132,7 @@ pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), MarsError> {
                     "mars.toml [plugin].dir `{}` cannot use a dot directory",
                     dir.display()
                 ),
-            }
-            .into());
+            });
         }
         if SOURCE_DIRS.contains(&name) {
             return Err(ConfigError::Invalid {
@@ -231,8 +140,7 @@ pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), MarsError> {
                     "mars.toml [plugin].dir `{}` cannot use the source convention directory `{name}`",
                     dir.display()
                 ),
-            }
-            .into());
+            });
         }
     }
     Ok(())
@@ -364,7 +272,7 @@ impl From<SourcePackageInfo> for PackageInfo {
             name: package.name,
             version: package.version,
             description: None,
-            authors: Vec::new(),
+            authors: None,
             homepage: None,
             license: None,
             requires_mars: package.requires_mars,
@@ -1191,7 +1099,6 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
     })?;
     let mut config: Config = parse_without_removed_visibility(&content, &path)?;
     migrate_legacy_source_urls(&mut config);
-    validate_plugin_config_shape(&config)?;
     Ok(config)
 }
 
@@ -1775,7 +1682,6 @@ fn should_upgrade_legacy_git_url(url: &str) -> bool {
 
 /// Write mars.toml atomically.
 pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
-    validate_plugin_config_shape(config)?;
     let path = root.join(CONFIG_FILE);
     let content = toml::to_string_pretty(config).map_err(|e| ConfigError::Invalid {
         message: format!("failed to serialize config: {e}"),
@@ -2069,21 +1975,40 @@ license = "MIT"
         let config = load(dir.path()).unwrap();
         let package = config.package.as_ref().unwrap();
         let plugin = config.plugin.as_ref().unwrap();
-        assert_eq!(plugin.dir, Path::new("plugin"));
-        assert_eq!(plugin.name(package), "example-plugin");
-        assert_eq!(plugin.marketplace(package), "example-plugin");
-        assert_eq!(plugin.description(package), Some("Package description"));
-        assert_eq!(plugin.harnesses, default_plugin_harnesses());
-        assert_eq!(package.authors[0].name, "Example Author");
+        assert!(plugin.0.is_empty());
         assert_eq!(
-            package.authors[0].email.as_deref(),
-            Some("author@example.com")
+            package.authors.as_ref().and_then(toml::Value::as_array),
+            Some(&vec![toml::Value::Table(toml::Table::from_iter([
+                (
+                    "name".to_string(),
+                    toml::Value::String("Example Author".to_string())
+                ),
+                (
+                    "email".to_string(),
+                    toml::Value::String("author@example.com".to_string())
+                ),
+            ]))])
         );
         assert_eq!(
-            package.homepage.as_deref(),
+            package.homepage.as_ref().and_then(toml::Value::as_str),
             Some("https://example.com/plugin")
         );
-        assert_eq!(package.license.as_deref(), Some("MIT"));
+        assert_eq!(
+            package.license.as_ref().and_then(toml::Value::as_str),
+            Some("MIT")
+        );
+
+        let metadata = crate::build::plugin::validate_plugin_build(&config).unwrap();
+        assert_eq!(metadata.dir, Path::new("plugin"));
+        assert_eq!(metadata.name, "example-plugin");
+        assert_eq!(metadata.marketplace, "example-plugin");
+        assert_eq!(metadata.description.as_deref(), Some("Package description"));
+        assert_eq!(metadata.harnesses.len(), 5);
+        assert_eq!(metadata.authors[0].name, "Example Author");
+        assert_eq!(
+            metadata.authors[0].email.as_deref(),
+            Some("author@example.com")
+        );
     }
 
     #[test]
@@ -2109,20 +2034,28 @@ harnesses = ["claude", "cursor"]
         .unwrap();
 
         let config = load(dir.path()).unwrap();
-        let package = config.package.as_ref().unwrap();
         let plugin = config.plugin.as_ref().unwrap();
-        assert_eq!(plugin.dir, Path::new("generated/plugin"));
-        assert_eq!(plugin.name(package), "custom-plugin");
-        assert_eq!(plugin.marketplace(package), "custom-marketplace");
-        assert_eq!(plugin.description(package), Some("Plugin description"));
-        assert_eq!(package.authors[0].name, "Example Author");
         assert_eq!(
-            package.authors[0].email.as_deref(),
+            plugin.get("dir").and_then(toml::Value::as_str),
+            Some("generated/plugin")
+        );
+        let metadata = crate::build::plugin::validate_plugin_build(&config).unwrap();
+        assert_eq!(metadata.dir, Path::new("generated/plugin"));
+        assert_eq!(metadata.name, "custom-plugin");
+        assert_eq!(metadata.marketplace, "custom-marketplace");
+        assert_eq!(metadata.description.as_deref(), Some("Plugin description"));
+        assert_eq!(metadata.authors[0].name, "Example Author");
+        assert_eq!(
+            metadata.authors[0].email.as_deref(),
             Some("author@example.com")
         );
         assert_eq!(
-            plugin.harnesses,
-            vec![PluginHarness::Claude, PluginHarness::Cursor]
+            metadata
+                .harnesses
+                .iter()
+                .map(|harness| harness.key)
+                .collect::<Vec<_>>(),
+            vec!["claude", "cursor"]
         );
 
         save(dir.path(), &config).unwrap();
@@ -2151,8 +2084,10 @@ harnesses = ["claude", "cursor"]
             .unwrap();
 
             let config = load(dir.path()).unwrap();
-            let plugin = config.plugin.as_ref().unwrap();
-            let error = validate_plugin_dir(&plugin.dir).unwrap_err().to_string();
+            let error = crate::build::plugin::validate_plugin_build(&config)
+                .err()
+                .unwrap()
+                .to_string();
             assert!(
                 error.contains(expected),
                 "dir {plugin_dir:?} should report {expected:?}, got: {error}"
@@ -2173,9 +2108,9 @@ harnesses = ["claude", "cursor"]
             .unwrap();
 
             let config = load(dir.path()).unwrap();
-            let harnesses = config.plugin.as_ref().unwrap().harnesses.clone();
-            let error = crate::build::plugin::validate_plugin_build(&config, &harnesses)
-                .unwrap_err()
+            let error = crate::build::plugin::validate_plugin_build(&config)
+                .err()
+                .unwrap()
                 .to_string();
             assert!(
                 error.contains(&format!("unknown harness `{harness}`"))
@@ -2204,9 +2139,9 @@ harnesses = ["claude", "cursor"]
             .unwrap();
 
             let config = load(dir.path()).unwrap();
-            let harnesses = config.plugin.as_ref().unwrap().harnesses.clone();
-            let error = crate::build::plugin::validate_plugin_build(&config, &harnesses)
-                .unwrap_err()
+            let error = crate::build::plugin::validate_plugin_build(&config)
+                .err()
+                .unwrap()
                 .to_string();
             assert!(
                 error.contains(expected),

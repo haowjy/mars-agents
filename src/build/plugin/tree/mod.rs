@@ -30,8 +30,13 @@ pub(super) type AgentPolicy = fn(
     &mut DiagnosticCollector,
 ) -> Result<String, MarsError>;
 
-pub(super) type ConfigWriter =
-    fn(&TreeProfile, &Path, &[ConfigEntry], &mut DiagnosticCollector) -> Result<(), MarsError>;
+pub(super) type ConfigWriter = fn(
+    &TreeProfile,
+    &Path,
+    &[ConfigEntry],
+    &[&'static crate::plugin::PluginHarnessSpec],
+    &mut DiagnosticCollector,
+) -> Result<(), MarsError>;
 
 pub(super) type FinishWriter = for<'a> fn(
     &TreeProfile,
@@ -147,7 +152,7 @@ pub(super) fn finish_standard_tree(
             name: &metadata.name,
             version: &metadata.version,
             description: metadata.description.as_deref(),
-            author: metadata.author.as_ref(),
+            author: metadata.author(),
             homepage: metadata.homepage.as_deref(),
             license: metadata.license.as_deref(),
         },
@@ -205,6 +210,7 @@ pub(super) struct TreeInput<'a> {
     pub collision_renames: &'a [CollisionRename],
     pub dep_precedence: &'a [SourceName],
     pub terms: &'a TermSet,
+    pub harnesses: &'a [&'static crate::plugin::PluginHarnessSpec],
 }
 
 pub(super) fn check_sources(
@@ -381,7 +387,7 @@ pub(super) fn write_tree(
         },
         diag,
     );
-    (profile.write_config)(profile, root, &entries, diag)?;
+    (profile.write_config)(profile, root, &entries, input.harnesses, diag)?;
     let contents = WrittenTreeContents {
         skills: &skill_names,
         hooks: &hooks,

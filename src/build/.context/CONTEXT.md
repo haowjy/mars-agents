@@ -58,15 +58,17 @@ lowering as-is, has no native model aliases or extra agent allowlist, and delega
 the versioned `hooks/hooks.json` to the path-parameterized `.cursor` target writers. Plugin hook
 paths substitute `${CURSOR_PLUGIN_ROOT}` before those writers run.
 
-The build request carries the semantic destination instead of only a path. `Configured` resolves
-`[plugin].dir` package-relative and includes the root-file plan; explicit `Out(path)` keeps today's
-cwd-relative CLI path semantics and excludes repo-root files. `Configured` requires `[plugin]`, and
-an explicit output that resolves to the configured directory is refused. `version: None` takes
-`[package].version`; an override changes generated metadata and the sentinel without changing the
-manifest used for resolution. Plugin-facing identity and package author/homepage/license come from
-`PackageMetadata`, while `SourceName` must continue to come from `[package].name` because the plugin
-name may differ. The report's `trees` array carries each typed tree's final output path and component
-counts rather than flattening one preferred tree into the top level.
+The build request carries validated `PackageMetadata` and the semantic destination instead of only
+a path. Validation is the boundary where raw `[plugin]` and package author/homepage/license values
+become typed values, omitted defaults become concrete, and harness names become spec references.
+`Configured` resolves the validated directory package-relative and includes the root-file plan;
+explicit `Out(path)` keeps today's cwd-relative CLI path semantics and excludes repo-root files.
+`Configured` requires `[plugin]`, and an explicit output that resolves to the configured directory
+is refused. `version: None` takes `[package].version`; an override changes generated metadata and
+the sentinel without changing the manifest used for resolution. `SourceName` must continue to come
+from `[package].name` because the plugin name may differ. The report's `trees` array carries each
+typed tree's final output path and component counts rather than flattening one preferred tree into
+the top level.
 
 The output writer builds `<tree>/` directories directly into an empty sibling staging directory.
 For configured builds, the root-file plan generates both marketplace catalogs and the OpenCode

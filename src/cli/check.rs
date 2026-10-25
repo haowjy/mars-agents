@@ -119,19 +119,17 @@ fn plugin_warnings(
     if config.plugin.is_none() {
         return Ok(Vec::new());
     }
-    let package = config
-        .package
-        .as_ref()
-        .expect("plugin config validation requires a package table");
-
     let mut warnings = Vec::new();
-    warnings.extend(crate::plugin::unknown_plugin_harness_messages(
-        &config
-            .plugin
-            .as_ref()
-            .expect("plugin presence was checked")
-            .harnesses,
-    ));
+    let metadata = match crate::build::plugin::validate_plugin_build(config) {
+        Ok(metadata) => Some(metadata),
+        Err(error) => {
+            warnings.push(error.to_string());
+            None
+        }
+    };
+    let Some(package) = config.package.as_ref() else {
+        return Ok(warnings);
+    };
     if crate::resolve::validate_package_requirement_syntax(package).is_ok()
         && !crate::resolve::requirement_has_floor(
             package.requires_mars.as_deref(),
@@ -143,7 +141,10 @@ fn plugin_warnings(
         ));
     }
 
-    let state = crate::build::plugin::inspect(base)?;
+    let Some(metadata) = metadata else {
+        return Ok(warnings);
+    };
+    let state = crate::build::plugin::inspect_validated(base, &metadata)?;
     if let Some(message) = state.directory.message() {
         if matches!(
             state.directory,

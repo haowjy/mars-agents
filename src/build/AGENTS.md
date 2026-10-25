@@ -54,20 +54,21 @@ native model aliases, and writes `.cursor-plugin/plugin.json`, `mcp.json`, and v
 `hooks/hooks.json` with `${CURSOR_PLUGIN_ROOT}` hook paths. Its MCP and hook serializers are the
 same path-parameterized writers used by `.cursor` sync.
 
-`PluginBuildRequest` keeps destination intent: `Configured` resolves from `[plugin].dir` and
-enables the root-file plan, while `Out(path)` is the explicit CLI output and never writes repo-root
-files. `[plugin]` defaults its directory to `plugin`, its identity and description from `[package]`,
-and its harnesses to all five; `Configured` requires that table. Explicit output cannot resolve to
-the configured directory. The request's optional version overrides only the generated package
-metadata; `None` uses `[package].version`. `PackageMetadata` is the authority for the plugin-facing
-name and package author/homepage/license metadata, while the publish graph's root source continues
-to use `[package].name`. Build reports contain one typed tree record and output path per generated
+`PluginBuildRequest` carries validated `PackageMetadata` plus destination intent. `Configured`
+resolves its validated `[plugin].dir` and enables the root-file plan, while `Out(path)` is the
+explicit CLI output and never writes repo-root files. Validation applies `[plugin]` defaults only at
+this boundary: directory `plugin`, identity and description from `[package]`, and all five harness
+specs. `Configured` still requires the table, and explicit output cannot resolve to the configured
+directory. The request's optional version overrides only generated metadata; `None` uses
+`[package].version`. The publish graph's root source continues to use `[package].name` because the
+plugin name may differ. Build reports contain one typed tree record and output path per generated
 tree; human output prints one success line per record.
 
-Config loading validates only `[plugin]` shape. `stage_plugin` is the semantic boundary for package
-authors, the canonical configured directory, requested harness set, plugin name, and catalog
-marketplace. The same rules therefore apply to configured and explicit `--out` builds without
-blocking sync or list; `mars version` invokes that plugin validation even when output is skipped.
+Config loading keeps `[plugin]` and package plugin metadata raw. `validate_plugin_build` is the one
+semantic conversion to typed authors, canonical configured directory, requested harness specs,
+plugin name, and catalog marketplace. The same rules therefore apply to configured and explicit
+`--out` builds without blocking sync or list; `mars version` invokes that validation even when
+output is skipped, and `mars check` reports its error as a warning.
 
 The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
 core never mutates the destination itself. The staged build holds the output lock and root-file

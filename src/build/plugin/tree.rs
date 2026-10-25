@@ -173,7 +173,7 @@ fn write_agent(
         .and_then(|name| input.agent_overlays.get(name));
     let body_refs = body_reference_map(item, input, installed_skills);
     let mut effective = crate::compiler::effective_native_profile(&profile, overlay);
-    qualify_agent_skills(&mut effective.skills, &body_refs);
+    qualify_agent_skills(&mut effective.skills, installed_skills);
     let model = resolve_claude_model(
         item.id.name.as_str(),
         effective.model.as_deref(),

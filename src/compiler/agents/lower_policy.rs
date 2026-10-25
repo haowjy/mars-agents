@@ -388,7 +388,7 @@ impl<'a> AgentLoweringCtx<'a> {
             body: lowered_skills.body,
             native_skills: lowered_skills.native_preload,
             yaml: serde_yaml::Mapping::new(),
-            lossy: lowered_skills.lossy,
+            lossy: Vec::new(),
         }
     }
 
@@ -660,7 +660,6 @@ impl<'a> AgentLoweringCtx<'a> {
 struct LoweredAgentSkills {
     native_preload: Vec<String>,
     body: String,
-    lossy: Vec<LossyField>,
 }
 
 fn lower_agent_skills(
@@ -708,10 +707,6 @@ fn lower_agent_skills(
     LoweredAgentSkills {
         native_preload,
         body,
-        // Body guidance is the designed representation on these targets, not an
-        // actionable lowering loss. Keep diagnostics owned by this pass without
-        // turning the expected result into a warning on every sync.
-        lossy: Vec::new(),
     }
 }
 
@@ -729,12 +724,18 @@ fn append_guidance(body: &str, guidance: &str) -> String {
     let line_ending = body_line_ending(body);
     let mut lowered = body.to_string();
 
+    let mut fences = crate::markdown::FenceTracker::default();
+    for line in body.split_inclusive('\n') {
+        fences.visit(line);
+    }
+
     // An unclosed authored fence would otherwise turn the generated instruction into code.
-    if let Some((character, length)) = unclosed_fence(body) {
+    if let Some(fence) = fences.open() {
         if !lowered.ends_with(line_ending) {
             lowered.push_str(line_ending);
         }
-        lowered.extend(std::iter::repeat_n(character, length));
+        lowered.extend(std::iter::repeat_n(' ', fence.indentation));
+        lowered.extend(std::iter::repeat_n(fence.marker, fence.length));
         lowered.push_str(line_ending);
     }
 
@@ -761,35 +762,6 @@ fn body_line_ending(body: &str) -> &'static str {
             }
         })
         .unwrap_or("\n")
-}
-
-fn unclosed_fence(body: &str) -> Option<(char, usize)> {
-    let mut fence = None;
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        if let Some((character, length)) = fence {
-            let closing_length = trimmed
-                .chars()
-                .take_while(|candidate| *candidate == character)
-                .count();
-            if closing_length >= length && trimmed[closing_length..].trim().is_empty() {
-                fence = None;
-            }
-            continue;
-        }
-
-        let Some(character @ ('`' | '~')) = trimmed.chars().next() else {
-            continue;
-        };
-        let length = trimmed
-            .chars()
-            .take_while(|candidate| *candidate == character)
-            .count();
-        if length >= 3 {
-            fence = Some((character, length));
-        }
-    }
-    fence
 }
 
 fn format_skill_references<'a>(skills: impl Iterator<Item = &'a str>) -> String {
@@ -862,7 +834,7 @@ pub fn lower_to_claude(
 /// - Preserved: name, description, model, effort (as model_reasoning_effort),
 ///   sandbox (as sandbox_mode), approval (as approval_policy), body
 ///   (as developer_instructions)
-/// - Approximate: skills (body guidance; no native field)
+/// - Skills: designed body guidance (Codex has no native field)
 /// - Dropped: tools (no allowlist), disallowed-tools,
 ///   mcp (approximate), network, mode, autocompact, model-policies, fanout
 /// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
@@ -874,7 +846,7 @@ pub fn lower_to_codex(
     let eff = Effective::new(profile, HarnessKind::Codex);
     let target = "Codex";
     let lowered_skills = lower_agent_skills(eff.skills(), AgentSkillsPolicy::BodyGuidance, body);
-    let mut lossy = lowered_skills.lossy;
+    let mut lossy = Vec::new();
 
     // Effort — exact (lowered to model_reasoning_effort)
     let effort_str = eff.effort().map(|e| e.as_str());

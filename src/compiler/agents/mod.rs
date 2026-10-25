@@ -276,7 +276,7 @@ pub enum AgentDiagnostic {
 
 impl AgentDiagnostic {
     pub fn schema_diagnostic(&self) -> mars_schema::diagnostic::SchemaDiagnostic {
-        use mars_schema::diagnostic::{SchemaDiagnostic, Severity, key_path};
+        use mars_schema::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path};
 
         let field = match self {
             Self::InvalidFieldValue { field, .. }
@@ -289,6 +289,12 @@ impl AgentDiagnostic {
             Self::DeprecatedListFormTools => "tools",
             Self::DeprecatedApprovalYolo => "approval",
         };
+        let mut path = key_path(field);
+        if matches!(path.first(), Some(PathSegment::Key(key)) if key == "model-policies")
+            && let Some(PathSegment::Index(index)) = path.get_mut(1)
+        {
+            *index = index.saturating_sub(1);
+        }
         SchemaDiagnostic::new(
             if self.is_error() {
                 "agent-schema-error"
@@ -300,7 +306,7 @@ impl AgentDiagnostic {
             } else {
                 Severity::Warning
             },
-            key_path(field),
+            path,
             self.message(),
         )
     }

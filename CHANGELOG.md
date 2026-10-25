@@ -24,11 +24,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Plugin builds now reject source symlinks that leave their package and special files instead of
-  copying their contents into published output; safe in-package links become regular files. Builds
-  also lower renamed skills before projection, ship only each tree's hook fragment, validate the
-  requested plugin identities for configured and `--out` builds, and retain warnings on failure.
+  copying their contents into published output; safe in-package links become regular files, while
+  unrelated repo tooling and filtered-out items are not walked. Sentinel root-file ownership is
+  limited to the three paths Mars generates, only Mars-created catalog directories are retired,
+  gitignore negation is honored for configured builds, explicit `--out` may target ignored CI
+  directories, and unowned recovery staging directories are preserved. Builds also
+  lower renamed skills before projection, ship only each tree's hook fragment, retain OpenCode
+  hooks when the default-export check warns, validate the requested plugin identities for configured
+  and `--out` builds, and retain warnings on failure.
 - `[package].authors` accepts both `"Name <email>"` strings and `{ name, email }` tables, while
-  dependency consumers ignore malformed plugin-only package metadata for compatibility.
+  rejecting empty author names; dependency consumers ignore malformed plugin-only package metadata
+  for compatibility.
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
   Cursor no longer preload available-only skills, while every target receives `/name` body
   guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a

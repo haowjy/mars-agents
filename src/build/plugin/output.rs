@@ -287,18 +287,14 @@ fn recover_interrupted_swap(paths: &OutputPaths) -> Result<(), MarsError> {
 }
 
 fn remove_recovery_staging(path: &Path) -> Result<(), MarsError> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => return Err(io_error("inspect plugin recovery staging", path, source)),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(invalid(format!(
-            "refusing plugin recovery because staging path {} is not a regular directory",
+    match classify_tree(path)? {
+        TreeState::Missing => Ok(()),
+        TreeState::Empty | TreeState::Owned => crate::platform::fs::safe_remove(path),
+        TreeState::Unowned(reason) => Err(invalid(format!(
+            "refusing plugin recovery because staging path {} contains unowned content ({reason}); the path was preserved",
             path.display()
-        )));
+        ))),
     }
-    crate::platform::fs::safe_remove(path)
 }
 
 #[derive(Debug)]

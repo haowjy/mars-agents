@@ -14,15 +14,25 @@ root come from `compiler::harness_descriptor`. Each profile has a typed tree ide
 hook-root token, and a hook acceptance policy that runs before copying. `PluginTree::as_str()` is
 the single key for both staged directory names and reported output paths. Claude, Codex, and Grok
 share the Claude tree; Cursor and OpenCode have their own tree identities. The OpenCode tree is an
-npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and imports accepted
-default-export hook fragments as in-memory TypeScript data URLs. Hook-directory substitution is
-JavaScript-string encoded, and one fragment's load or setup failure does not block later hooks.
+npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and imports every
+targeted hook fragment as an in-memory TypeScript data URL. A build warning reports fragments with
+no recognizable default export, but runtime isolation decides whether each hook loads.
+Hook-directory substitution is JavaScript-string encoded, and one fragment's load or setup failure
+does not block later hooks.
 
-Publication staging, input fingerprinting, and the plugin-only source-tree copier share the strict
-authored walker: an out-of-package symlink or special file fails the build, while an in-package
-symlink is materialized as regular output. Sync keeps its existing copy policy. Skills are copied
-to a prepared source tree and renamed before projection, so lowering sees installed frontmatter;
-hook copies exclude fragment files owned only by other tree targets.
+Publication staging, input fingerprinting, and the plugin-only source-tree copier share a typed
+inventory of item roots and MCP definitions. Graph filters narrow each staged dependency to what
+target collection can publish, except that every hook root remains available for the strict
+pre-filter compatibility check. Within that surface the strict authored walker rejects an
+out-of-package symlink or special file and materializes an in-package symlink as regular output.
+Manifestless foreign sources separately copy manifest metadata with declarations rewritten to the
+selected typed inventory, so rediscovery does not require excluded paths. The root-package input
+fingerprint includes inventory kinds and authored bytes, but never Mars-generated catalog metadata.
+Repo tooling and filtered-out non-hook items are not staged. Sync keeps its existing copy policy. A
+flat-root skill retains authored root resources but its publication inventory excludes standard
+tooling directories and top-level special filesystem nodes.
+Skills are copied to a prepared source tree and renamed before projection, so lowering sees
+installed frontmatter; hook copies exclude fragment files owned only by other tree targets.
 
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
 project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the
@@ -49,22 +59,27 @@ name and package author/homepage/license metadata, while the publish graph's roo
 to use `[package].name`. Build reports contain one typed tree record and output path per generated
 tree; human output prints one success line per record.
 
-Config loading validates only `[plugin]` shape. `stage_plugin` is the semantic boundary for the
-canonical configured directory, requested harness set, plugin name, and catalog marketplace. The
-same rules therefore apply to configured and explicit `--out` builds without blocking sync.
+Config loading validates package author names and only `[plugin]` shape. `stage_plugin` is the
+semantic boundary for the canonical configured directory, requested harness set, plugin name, and
+catalog marketplace. The same rules therefore apply to configured and explicit `--out` builds
+without blocking sync.
 
 The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
 core never mutates the destination itself. The staged build holds the output lock and root-file
 plan until publication applies the plan and calls `StagedPlugin::publish`. Configured builds plan
 the Claude/Cursor catalogs and OpenCode root package; explicit `--out` builds plan none. The shared
 offline `inspect` classifies the owned directory, its fingerprint/version, and every recorded or
-expected root file. Root publication accepts an absent path, an unchanged recorded file, or bytes
-identical to the new build, and removes recorded files retired by a narrowed harness set. Planning
-also rejects any final staged or root-file path reported by `git check-ignore --stdin`. The output
+expected root file. Sentinel ownership is limited to the three generated root paths and records a
+catalog directory only when Mars created its previously missing parent. Root publication accepts an
+absent path, an unchanged recorded file, or bytes identical to the new build, and removes recorded
+files plus owned, now-empty catalog directories retired by a narrowed harness set. Configured-build
+planning also rejects final staged or root-file paths that remain ignored after gitignore negation.
+The output
 layer stages the whole output in a sibling directory, records one root
 `<out>/.mars-plugin.json` sentinel, and publishes with a two-rename swap under the lock.
-It recovers interrupted swaps before a new build and never replaces a non-empty destination
-without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
+It recovers interrupted swaps before a new build, removes a recovery staging sibling only when it
+is empty or Mars-owned, and never replaces a non-empty destination without a valid sentinel.
+Reference qualification uses each source item's `RenameIndex` view
 before applying the building package's single plugin namespace. Agent skill names are qualified
 before native lowering so generated guidance is born qualified; the fence-aware prose pass is
 only responsible for authored body references.

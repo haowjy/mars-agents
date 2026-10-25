@@ -232,7 +232,7 @@ pub fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, M
     match stage_plugin_inner(request, &mut diag) {
         Ok(staged) => Ok(staged),
         Err(source) => {
-            let diagnostics = diag.drain();
+            let diagnostics = plugin_diagnostics(diag.drain());
             if diagnostics.is_empty() {
                 Err(source)
             } else {
@@ -274,6 +274,7 @@ fn stage_plugin_inner(
         .as_ref()
         .expect("PackageMetadata validates the package table");
     let out_dir = request.destination.resolve(&package_root, manifest)?;
+    diag.suppress_generated_plugin_tree(&out_dir);
     let plugin_name = metadata.name.clone();
     let root_source = SourceName::from(package.name.clone());
     let profiles = requested_tree_profiles(&request.harnesses);
@@ -340,7 +341,7 @@ fn stage_plugin_inner(
                 &request.harnesses,
                 diag,
             )?;
-            let collected = diag.drain();
+            let collected = plugin_diagnostics(diag.drain());
             if let Err(error) = fail_on_diagnostic_errors(&collected) {
                 diag.extend(collected);
                 return Err(error);
@@ -355,6 +356,7 @@ fn stage_plugin_inner(
                     dependencies: resolved_dependency_identities(&graph, &root_source),
                     files: std::collections::BTreeMap::new(),
                     root_files: root_file_plan.root_files.clone(),
+                    root_directories: root_file_plan.root_directories.clone(),
                 },
                 (built_trees, collected, root_file_plan),
             ))
@@ -382,6 +384,15 @@ fn stage_plugin_inner(
             diagnostics,
         },
     })
+}
+
+fn plugin_diagnostics(mut diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    for diagnostic in &mut diagnostics {
+        if diagnostic.level == DiagnosticLevel::Error {
+            diagnostic.message = diagnostic.message.replace("; raw fallback used:", ":");
+        }
+    }
+    diagnostics
 }
 
 fn requested_tree_profiles(harnesses: &[PluginHarness]) -> Vec<&'static tree::TreeProfile> {
@@ -444,17 +455,65 @@ fn stage_graph(
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     for source_name in graph.order.clone() {
+        let rooted = graph
+            .nodes
+            .get(&source_name)
+            .expect("resolved graph order names an existing node")
+            .rooted_ref
+            .clone();
+        let discovered = crate::discover::discover_resolved_source(
+            &rooted.package_root,
+            Some(source_name.as_str()),
+            diag,
+        )?;
+        let mut selected = crate::sync::target::apply_source_filters(
+            graph,
+            &source_name,
+            effective.dependencies.get(&source_name),
+            &discovered,
+            &rooted.package_root,
+        )?
+        .unwrap_or_default();
+        // Hook manifests are parsed strictly before source filters are applied.
+        // Keep every hook root in the staged tree so removed schemas and other
+        // compatibility errors cannot be hidden by an unrelated item filter.
+        for item in discovered
+            .iter()
+            .filter(|item| item.id.kind == crate::lock::ItemKind::Hook)
+        {
+            if !selected.contains(item) {
+                selected.push(item.clone());
+            }
+        }
+        let include_mcp = crate::sync::target::source_may_emit_mcp(graph, &source_name);
+        let staged = if selected.len() == discovered.len() && include_mcp {
+            crate::resolve::stage_rooted_package_for_publish(
+                &source_name,
+                rooted,
+                effective,
+                staging_root,
+                diag,
+            )?
+        } else {
+            let inputs = crate::staging::publish_inputs_for_items(
+                &rooted.package_root,
+                &selected,
+                include_mcp,
+                diag,
+            )?;
+            crate::resolve::stage_rooted_package_for_publish_inputs(
+                &source_name,
+                rooted,
+                effective,
+                staging_root,
+                &inputs,
+                diag,
+            )?
+        };
         let node = graph
             .nodes
             .get_mut(&source_name)
             .expect("resolved graph order names an existing node");
-        let staged = crate::resolve::stage_rooted_package_for_publish(
-            &source_name,
-            node.rooted_ref.clone(),
-            effective,
-            staging_root,
-            diag,
-        )?;
         node.rooted_ref = staged.rooted;
         if let crate::staging::HookSurfaceState::Unreadable { hook_names } = staged.hook_surface {
             graph
@@ -539,39 +598,34 @@ pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsErro
     }
 
     let mut diag = DiagnosticCollector::new();
-    for item in crate::discover::discover_resolved_source(package_root, None, &mut diag)? {
-        let source = package_root.join(&item.source_path);
-        match item.id.kind {
-            crate::lock::ItemKind::Agent | crate::lock::ItemKind::McpServer => {
-                fingerprint_authored_file(package_root, &source, &mut entries)?;
+    for input in crate::staging::discover_publish_inputs(package_root, None, &mut diag)? {
+        let source = package_root.join(&input.relative);
+        let relative = crate::hash::portable_relative(package_root, &source).ok_or_else(|| {
+            MarsError::InvalidRequest {
+                message: format!(
+                    "plugin input path must be valid Unicode and remain under the package root: {}",
+                    source.display()
+                ),
             }
-            crate::lock::ItemKind::Skill
-            | crate::lock::ItemKind::Hook
-            | crate::lock::ItemKind::BootstrapDoc => {
-                let excluded = if item.id.kind == crate::lock::ItemKind::Skill
-                    && item.source_path == Path::new(".")
-                {
-                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
-                        .iter()
-                        .map(PathBuf::from)
-                        .collect::<Vec<_>>()
-                } else {
-                    Vec::new()
-                };
-                fingerprint_authored_tree(
-                    package_root,
-                    &source,
-                    &excluded,
-                    &mut diag,
-                    &mut entries,
-                )?;
-            }
+        })?;
+        for kind in &input.item_kinds {
+            entries.insert(
+                format!("@inventory/{kind}/{relative}"),
+                crate::hash::hash_bytes(kind.to_string().as_bytes()),
+            );
+        }
+        if std::fs::metadata(&source)?.is_dir() {
+            fingerprint_authored_tree(
+                package_root,
+                &source,
+                &input.excluded_paths,
+                &mut diag,
+                &mut entries,
+            )?;
+        } else {
+            fingerprint_authored_file(package_root, &source, &mut entries)?;
         }
     }
-    for path in crate::compiler::mcp::discover_mcp_definition_paths(package_root, &mut diag)? {
-        fingerprint_authored_file(package_root, &path, &mut entries)?;
-    }
-
     Ok(crate::hash::hash_file_manifest(
         entries.into_iter().collect(),
     ))
@@ -604,33 +658,7 @@ fn fingerprint_authored_file(
     path: &Path,
     entries: &mut std::collections::BTreeMap<String, String>,
 ) -> Result<(), MarsError> {
-    let package_identity = dunce::canonicalize(package_root).map_err(|source| MarsError::Io {
-        operation: "resolve plugin package root".to_string(),
-        path: package_root.to_path_buf(),
-        source,
-    })?;
-    let resolved = dunce::canonicalize(path).map_err(|source| MarsError::Io {
-        operation: "resolve plugin input path".to_string(),
-        path: path.to_path_buf(),
-        source,
-    })?;
-    if !resolved.starts_with(&package_identity) {
-        return Err(MarsError::InvalidRequest {
-            message: format!(
-                "plugin input symlink {} resolves outside package root {}",
-                path.display(),
-                package_root.display()
-            ),
-        });
-    }
-    if !std::fs::metadata(&resolved)?.is_file() {
-        return Err(MarsError::InvalidRequest {
-            message: format!(
-                "plugin input path must be a regular file: {}",
-                path.display()
-            ),
-        });
-    }
+    let resolved = crate::fs::strict_authored_file(package_root, path)?;
     fingerprint_authored_file_from(package_root, path, &resolved, entries)
 }
 

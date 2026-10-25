@@ -17,9 +17,11 @@ use super::metadata::PackageMetadata;
 
 pub(super) struct RootFilePlan {
     pub(super) root_files: BTreeMap<String, String>,
+    pub(super) root_directories: BTreeSet<String>,
     package_root: PathBuf,
     writes: BTreeMap<String, Vec<u8>>,
     deletes: BTreeSet<String>,
+    directory_deletes: BTreeSet<String>,
     ownership: BTreeMap<String, PluginRootFileState>,
 }
 
@@ -52,12 +54,13 @@ pub(super) fn plan(
     })?;
 
     if matches!(destination, PluginBuildDestination::Out(_)) {
-        check_gitignored(&package_root, out_dir, staging, &BTreeSet::new())?;
         return Ok(RootFilePlan {
             root_files: BTreeMap::new(),
+            root_directories: BTreeSet::new(),
             package_root,
             writes: BTreeMap::new(),
             deletes: BTreeSet::new(),
+            directory_deletes: BTreeSet::new(),
             ownership: BTreeMap::new(),
         });
     }
@@ -116,6 +119,7 @@ pub(super) fn plan(
     let state =
         inspect::inspect_output(&package_root, out_dir, &metadata.version, expected.clone())?;
     let mut deletes = BTreeSet::new();
+    let mut directory_deletes = BTreeSet::new();
     let mut ownership = BTreeMap::new();
 
     for root_file in &state.root_files {
@@ -130,7 +134,24 @@ pub(super) fn plan(
                 return Err(root_file_refusal(root_file, "delete"));
             }
             deletes.insert(key.clone());
+            if let Some(directory) = catalog_directory(&key)
+                && state.root_directories.contains(directory)
+            {
+                directory_deletes.insert(directory.to_string());
+            }
             ownership.insert(key, root_file.clone());
+        }
+    }
+
+    let mut root_directories = BTreeSet::new();
+    for path in writes.keys() {
+        let Some(directory) = catalog_directory(path) else {
+            continue;
+        };
+        if state.root_directories.contains(directory)
+            || !path_exists(&package_root.join(directory))?
+        {
+            root_directories.insert(directory.to_string());
         }
     }
 
@@ -143,9 +164,11 @@ pub(super) fn plan(
         .collect();
     Ok(RootFilePlan {
         root_files,
+        root_directories,
         package_root,
         writes,
         deletes,
+        directory_deletes,
         ownership,
     })
 }
@@ -198,7 +221,50 @@ pub(super) fn apply(plan: &RootFilePlan) -> Result<(), MarsError> {
             }
         }
     }
+    for relative in &plan.directory_deletes {
+        remove_empty_catalog_directory(&plan.package_root, relative)?;
+    }
     Ok(())
+}
+
+fn remove_empty_catalog_directory(package_root: &Path, relative: &str) -> Result<(), MarsError> {
+    let directory = package_root.join(relative);
+    match fs::remove_dir(&directory) {
+        Ok(()) => Ok(()),
+        Err(source)
+            if matches!(
+                source.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(source) => Err(MarsError::Io {
+            operation: "remove empty retired plugin catalog directory".to_string(),
+            path: directory,
+            source,
+        }),
+    }
+}
+
+fn catalog_directory(path: &str) -> Option<&'static str> {
+    match path {
+        crate::plugin_metadata::CLAUDE_CATALOG => Some(crate::plugin_metadata::CLAUDE_CATALOG_DIR),
+        crate::plugin_metadata::CURSOR_CATALOG => Some(crate::plugin_metadata::CURSOR_CATALOG_DIR),
+        _ => None,
+    }
+}
+
+fn path_exists(path: &Path) -> Result<bool, MarsError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(MarsError::Io {
+            operation: "inspect generated root directory".to_string(),
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 #[derive(Serialize)]
@@ -356,14 +422,20 @@ fn check_gitignored(
                 .split(|byte| *byte == 0)
                 .filter(|field| !field.is_empty())
                 .collect();
-            let (source, line, pattern, path) = match fields.as_slice() {
-                [source, line, pattern, path, ..] => (*source, *line, *pattern, *path),
-                _ => (
-                    b"<unknown>".as_slice(),
-                    b"0".as_slice(),
-                    b"<unknown>".as_slice(),
-                    b"<unknown>".as_slice(),
-                ),
+            if fields.is_empty() || !fields.len().is_multiple_of(4) {
+                return Err(git_error(
+                    "git check-ignore --stdin",
+                    "unexpected verbose output while checking generated plugin paths".to_string(),
+                ));
+            }
+            let ignored = fields.chunks_exact(4).find_map(|record| {
+                let [source, line, pattern, path] = record else {
+                    unreachable!("chunks_exact returns four fields")
+                };
+                (!pattern.starts_with(b"!")).then_some((*source, *line, *pattern, *path))
+            });
+            let Some((source, line, pattern, path)) = ignored else {
+                return Ok(());
             };
             Err(MarsError::InvalidRequest {
                 message: format!(

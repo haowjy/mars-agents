@@ -34,14 +34,14 @@ fn accept_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) -> bool {
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
         Err(error) => {
-            diag.error(
+            diag.warn(
                 "hook-fragment",
                 format!(
-                    "hook `{}` from `{}`: failed to read OpenCode fragment `{fragment}`: {error}",
+                    "hook `{}` from `{}`: could not check OpenCode fragment `{fragment}` for a default export: {error}; the hook will still be shipped and isolated at runtime",
                     hook.def.name, hook.source_name
                 ),
             );
-            return false;
+            return true;
         }
     };
     if has_default_export(&content) {
@@ -51,127 +51,43 @@ fn accept_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) -> bool {
     diag.warn(
         "plugin-opencode-hook-default-export",
         format!(
-            "hook `{}` from `{}`: OpenCode fragment `{fragment}` has no `export default`; add a default `{{ id, setup }}` export; hook omitted",
+            "hook `{}` from `{}`: OpenCode fragment `{fragment}` has no recognizable default export; add a default `{{ id, setup }}` export; the hook will still be shipped and isolated at runtime",
             hook.def.name, hook.source_name
         ),
     );
-    false
+    true
 }
 
 fn has_default_export(content: &str) -> bool {
-    #[derive(Clone, Copy)]
-    enum State {
-        Code,
-        BlockComment,
-        SingleQuote,
-        DoubleQuote,
-        Template,
-    }
-
-    let bytes = content.as_bytes();
-    let mut state = State::Code;
-    let mut line_start = true;
-    let mut escaped = false;
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        match state {
-            State::Code => {
-                if byte == b'\n' {
-                    line_start = true;
-                    index += 1;
-                    continue;
-                }
-                if line_start {
-                    let mut token = index;
-                    while bytes
-                        .get(token)
-                        .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
-                    {
-                        token += 1;
-                    }
-                    if default_export_at(bytes, token) {
-                        return true;
-                    }
-                    index = token;
-                    if index >= bytes.len() {
-                        break;
-                    }
-                    line_start = false;
-                }
-                if bytes[index..].starts_with(b"//") {
-                    index = bytes[index..]
-                        .iter()
-                        .position(|byte| *byte == b'\n')
-                        .map_or(bytes.len(), |offset| index + offset);
-                    continue;
-                }
-                if bytes[index..].starts_with(b"/*") {
-                    state = State::BlockComment;
-                    index += 2;
-                    continue;
-                }
-                state = match byte {
-                    b'\'' => State::SingleQuote,
-                    b'"' => State::DoubleQuote,
-                    b'`' => State::Template,
-                    _ => State::Code,
-                };
-                escaped = false;
-            }
-            State::BlockComment => {
-                if bytes[index..].starts_with(b"*/") {
-                    state = State::Code;
-                    index += 2;
-                    continue;
-                }
-                if byte == b'\n' {
-                    line_start = true;
-                }
-            }
-            State::SingleQuote | State::DoubleQuote | State::Template => {
-                if byte == b'\n' {
-                    line_start = true;
-                }
-                if escaped {
-                    escaped = false;
-                } else if byte == b'\\' {
-                    escaped = true;
-                } else if matches!(
-                    (state, byte),
-                    (State::SingleQuote, b'\'')
-                        | (State::DoubleQuote, b'"')
-                        | (State::Template, b'`')
-                ) {
-                    state = State::Code;
-                }
-            }
+    content.lines().any(|line| {
+        let line = line.trim_start();
+        let Some(after_export) = line.strip_prefix("export") else {
+            return false;
+        };
+        if after_export
+            .chars()
+            .next()
+            .is_some_and(|character| !character.is_whitespace() && character != '{')
+        {
+            return false;
         }
-        index += 1;
-    }
-    false
-}
-
-fn default_export_at(bytes: &[u8], start: usize) -> bool {
-    let Some(after_export) = bytes
-        .get(start..)
-        .and_then(|rest| rest.strip_prefix(b"export"))
-    else {
-        return false;
-    };
-    let whitespace = after_export
-        .iter()
-        .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
-        .count();
-    if whitespace == 0 {
-        return false;
-    }
-    let Some(after_default) = after_export[whitespace..].strip_prefix(b"default") else {
-        return false;
-    };
-    after_default
-        .first()
-        .is_none_or(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'$'))
+        let exported = after_export.trim_start();
+        exported.strip_prefix("default").is_some_and(|rest| {
+            rest.chars().next().is_none_or(|character| {
+                !character.is_ascii_alphanumeric() && !matches!(character, '_' | '$')
+            })
+        }) || (exported.starts_with('{')
+            && exported.split_once('}').is_some_and(|(bindings, _)| {
+                bindings.split(',').any(|binding| {
+                    binding.split_whitespace().collect::<Vec<_>>() == ["{", "default"]
+                        || binding
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .windows(2)
+                            .any(|tokens| tokens == ["as", "default"])
+                })
+            }))
+    })
 }
 
 fn fragment_name(hook: &ParsedHookItem) -> String {

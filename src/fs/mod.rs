@@ -242,6 +242,27 @@ pub(crate) fn strict_authored_tree_entries(
     Ok(entries)
 }
 
+/// Resolve one authored file for publication without following it outside the
+/// package that owns it.
+pub(crate) fn strict_authored_file(
+    package_root: &Path,
+    source_path: &Path,
+) -> Result<PathBuf, MarsError> {
+    let package_root = dunce::canonicalize(package_root).map_err(|source| MarsError::Io {
+        operation: "resolve published package root".to_string(),
+        path: package_root.to_path_buf(),
+        source,
+    })?;
+    let resolved = resolve_published_path(&package_root, source_path)?;
+    if !fs::metadata(&resolved)?.is_file() {
+        return Err(invalid_published_entry(
+            source_path,
+            "entry is not a regular file",
+        ));
+    }
+    Ok(resolved)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_strict_authored_tree_entries(
     package_root: &Path,
@@ -412,6 +433,9 @@ fn collect_authored_tree_entries(
 
 pub(crate) fn report_generated_tree(path: &Path, diag: &mut DiagnosticCollector) {
     let path = path.components().collect::<PathBuf>();
+    if !diag.reports_generated_plugin_tree(&path) {
+        return;
+    }
     diag.info_once(
         "generated-plugin-tree-skipped",
         format!(

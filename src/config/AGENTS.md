@@ -27,11 +27,12 @@ pipeline operates on EffectiveConfig only
 | `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
 | `NetworkPolicy` / `NetworkHost` | Shared typed parsers for every mode and host surface |
 
-`load()` checks only the structural relationship that `[plugin]` needs `[package]`; plugin dir,
-identity, marketplace, and requested-harness semantics belong to `build::plugin::stage_plugin` so a
-bad publish configuration cannot block `sync` or `list`. Dependency `load_manifest()` uses a narrow
-package view (identity and engine floors) and ignores plugin-only metadata even when its shape is
-invalid for the package being built.
+`load()` rejects package authors whose names are empty and otherwise checks only the structural
+relationship that `[plugin]` needs `[package]`; plugin dir, identity, marketplace, and
+requested-harness semantics belong to `build::plugin::stage_plugin` so a bad publish configuration
+cannot block `sync` or `list`. Dependency `load_manifest()` uses a narrow package view (identity and
+engine floors) and ignores plugin-only metadata even when its shape is invalid for the package being
+built.
 
 `AgentOverlayTools` holds permission sets of `OverlayToolName`s (`compiler/tool_names.rs`, a
 leaf grammar module): a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the

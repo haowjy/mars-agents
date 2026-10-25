@@ -278,12 +278,13 @@ pub fn build_with_collisions_and_diag(
             }
         }
 
-        let Some(filters) = graph
-            .filters
-            .get(source_name)
-            .filter(|filters| !filters.is_empty())
-            .cloned()
-            .or_else(|| source_config.map(|source| vec![source.filter.clone()]))
+        let Some(filtered) = apply_source_filters(
+            graph,
+            source_name,
+            source_config,
+            &discovered,
+            &node.rooted_ref.package_root,
+        )?
         else {
             // No materialization request reached this transitive source.
             continue;
@@ -293,8 +294,6 @@ pub fn build_with_collisions_and_diag(
             .map(|s| &s.rename)
             .cloned()
             .unwrap_or_default();
-
-        let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
 
         for item in filtered {
             if item.id.kind == ItemKind::Hook {
@@ -404,12 +403,31 @@ fn mcp_target_roots(
         .collect()
 }
 
-fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
+pub(crate) fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
     graph.filters.get(source_name).is_none_or(|filters| {
         filters
             .iter()
             .any(|filter| matches!(filter, FilterMode::All | FilterMode::Exclude(_)))
     })
+}
+
+pub(crate) fn apply_source_filters(
+    graph: &ResolvedGraph,
+    source_name: &SourceName,
+    source_config: Option<&crate::config::EffectiveDependency>,
+    discovered: &[discover::DiscoveredItem],
+    package_root: &Path,
+) -> Result<Option<Vec<discover::DiscoveredItem>>, MarsError> {
+    let Some(filters) = graph
+        .filters
+        .get(source_name)
+        .filter(|filters| !filters.is_empty())
+        .cloned()
+        .or_else(|| source_config.map(|source| vec![source.filter.clone()]))
+    else {
+        return Ok(None);
+    };
+    apply_filter_union(discovered, &filters, package_root).map(Some)
 }
 
 pub(crate) fn hook_target_items(

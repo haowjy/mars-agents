@@ -6,8 +6,13 @@
 
 mod lift;
 mod overlay;
+mod publish;
 
 pub(crate) use lift::cursor_manual_rule_shape;
+pub(crate) use publish::{
+    PublishInput, discover_inputs as discover_publish_inputs,
+    inputs_for_items as publish_inputs_for_items,
+};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -63,7 +68,7 @@ pub(crate) fn stage_rooted_source(
         renames,
         staging_root,
         diag,
-        SourceWalk::Standard,
+        None,
     )
 }
 
@@ -78,6 +83,30 @@ pub(crate) fn stage_rooted_source_for_publish(
     staging_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<StagedRootedSource, MarsError> {
+    let inputs = discover_publish_inputs(&rooted.package_root, Some(source_name.as_ref()), diag)?;
+    stage_rooted_source_for_publish_inputs(
+        source_name,
+        rooted,
+        options,
+        skill_overrides,
+        renames,
+        staging_root,
+        &inputs,
+        diag,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stage_rooted_source_for_publish_inputs(
+    source_name: &SourceName,
+    rooted: RootedSourceRef,
+    options: RootedStageOptions,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    staging_root: &Path,
+    inputs: &[PublishInput],
+    diag: &mut DiagnosticCollector,
+) -> Result<StagedRootedSource, MarsError> {
     stage_rooted_source_with_policy(
         source_name,
         rooted,
@@ -86,7 +115,7 @@ pub(crate) fn stage_rooted_source_for_publish(
         renames,
         staging_root,
         diag,
-        SourceWalk::Publish,
+        Some(inputs),
     )
 }
 
@@ -99,7 +128,7 @@ fn stage_rooted_source_with_policy(
     renames: &RenameMap,
     staging_root: &Path,
     diag: &mut DiagnosticCollector,
-    walk: SourceWalk,
+    publish_inputs: Option<&[PublishInput]>,
 ) -> Result<StagedRootedSource, MarsError> {
     let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
     stage_canonical_source_with_policy(
@@ -110,7 +139,7 @@ fn stage_rooted_source_with_policy(
         renames,
         Some(source_name.as_ref()),
         diag,
-        walk,
+        publish_inputs,
     )?;
     let hook_surface = detect_unreadable_hook_surface(&staged_package_root, diag)?;
     Ok(StagedRootedSource {
@@ -120,12 +149,6 @@ fn stage_rooted_source_with_policy(
         },
         hook_surface,
     })
-}
-
-#[derive(Clone, Copy)]
-enum SourceWalk {
-    Standard,
-    Publish,
 }
 
 fn detect_unreadable_hook_surface(
@@ -171,7 +194,7 @@ pub(crate) fn stage_canonical_source(
         renames,
         fallback_skill_name,
         diag,
-        SourceWalk::Standard,
+        None,
     )
 }
 
@@ -184,23 +207,34 @@ fn stage_canonical_source_with_policy(
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
     diag: &mut DiagnosticCollector,
-    walk: SourceWalk,
+    publish_inputs: Option<&[PublishInput]>,
 ) -> Result<(), MarsError> {
     if dest_root.exists() {
         fs::remove_dir_all(dest_root)?;
     }
     fs::create_dir_all(dest_root)?;
-    copy_and_lift_tree(
-        source_root,
-        dest_root,
-        dialect,
-        skill_overrides,
-        renames,
-        fallback_skill_name,
-        &[],
-        diag,
-        walk,
-    )
+    match publish_inputs {
+        None => copy_and_lift_tree(
+            source_root,
+            dest_root,
+            dialect,
+            skill_overrides,
+            renames,
+            fallback_skill_name,
+            &[],
+            diag,
+        ),
+        Some(inputs) => publish::copy_and_lift_inputs(
+            source_root,
+            dest_root,
+            dialect,
+            skill_overrides,
+            renames,
+            fallback_skill_name,
+            inputs,
+            diag,
+        ),
+    }
 }
 
 /// Stage a single local item path (agent file or skill directory).
@@ -264,7 +298,6 @@ pub(crate) fn stage_local_item(
                 skill_overlay_key,
                 excluded_paths,
                 diag,
-                SourceWalk::Standard,
             )?;
             Ok(dest)
         }
@@ -297,16 +330,8 @@ fn copy_and_lift_tree(
     fallback_skill_name: Option<&str>,
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
-    walk: SourceWalk,
 ) -> Result<(), MarsError> {
-    let entries = match walk {
-        SourceWalk::Standard => {
-            crate::fs::authored_tree_entries(source_root, excluded_paths, diag)?
-        }
-        SourceWalk::Publish => {
-            crate::fs::strict_authored_tree_entries(source_root, source_root, excluded_paths, diag)?
-        }
-    };
+    let entries = crate::fs::authored_tree_entries(source_root, excluded_paths, diag)?;
     for entry in entries {
         let dest_path = dest_root.join(&entry.relative);
         if entry.kind == crate::fs::AuthoredEntryKind::Directory {

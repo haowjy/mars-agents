@@ -39,6 +39,7 @@ pub use types::*;
 
 pub(crate) use package::{
     PackageResolutionState, PendingSource, RegisteredPackage, stage_rooted_package_for_publish,
+    stage_rooted_package_for_publish_inputs,
 };
 #[cfg(test)]
 pub(crate) use path::apply_subpath;

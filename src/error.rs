@@ -14,13 +14,10 @@ pub enum ConfigError {
     )]
     ProjectRootNotFound { start: PathBuf },
 
-    #[error("invalid config: {message}")]
+    #[error("{message}")]
     Invalid { message: String },
 
-    #[error(
-        "invalid config: {}: {message}",
-        path.display()
-    )]
+    #[error("{}: {message}", path.display())]
     RemovedHookSchema {
         path: PathBuf,
         message: &'static str,

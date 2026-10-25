@@ -16,11 +16,18 @@ must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configura
 caches, or installed harnesses. `plugin::output::stage` owns staging and sentinel publication;
 its lock-owning `StagedPlugin` alone replaces the destination when published.
 
-The publish variant of rooted-package staging uses the same strict authored-entry walker as the
-input fingerprint and the sole raw plugin-tree copier. It dereferences only links whose canonical
-targets remain inside the owning package and rejects special files; sync deliberately retains the
-ordinary walker. Skill rename content is written into a strict-copied prepared source before native
-projection, and hook copies omit fragment paths belonging only to other targets.
+The publish variant of rooted-package staging selects graph-filtered item roots, eligible MCP
+definitions, and all hook roots (for strict pre-filter compatibility validation) rather than
+walking the package checkout. Staging and the input fingerprint share that typed item/MCP inventory;
+the sole raw plugin-tree copier uses the same strict authored-entry walker. Manifestless foreign
+sources separately copy manifest metadata with declarations filtered to selected items. The walker
+dereferences only links whose canonical targets remain inside the owning package and rejects special
+files; repo tooling and filtered-out non-hook items are ignored, and sync deliberately retains the
+ordinary walker. The root-package fingerprint includes inventory kinds, but not generated catalog
+metadata. Flat-root skills keep authored resources but exclude standard repo tooling and top-level
+special filesystem nodes from their publication inventory. Skill rename content is written into a
+strict-copied prepared source before native projection, and hook copies omit fragment paths
+belonging only to other targets.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three
 tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. Tree profiles
@@ -29,10 +36,11 @@ plugin-specific agent policy, native model aliases, hook-root token, config writ
 writer. Profiles also carry their typed `PluginTree` identity; `PluginTree::as_str()` is the sole
 directory and report key. Their hook filter runs before copying, so files, counts and finish-writer
 inputs agree. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits an
-npm-shaped package with a fixed `index.mjs`; at runtime it
-registers the built skills and MCP servers and imports accepted default-export hooks from in-memory
-TypeScript data URLs. Hook-directory substitution is JavaScript-string encoded before import, and
-each hook's load and setup are isolated so a failure does not block later hooks.
+npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
+servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
+default-export check warns but never removes a hook; hook-directory substitution is
+JavaScript-string encoded before import, and each hook's load and setup are isolated so a failure
+does not block later hooks.
 `tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
 selected MCP union once;
 per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
@@ -60,13 +68,18 @@ counts rather than flattening one preferred tree into the top level.
 The output writer builds `<tree>/` directories directly into an empty sibling staging directory.
 For configured builds, the root-file plan generates both marketplace catalogs and the OpenCode
 root package, uses `inspect` to enforce recorded-or-identical ownership and plan retired-file
-deletes, and rejects gitignored final paths. Explicit `--out` builds have no root files. After the
+deletes. Sentinel root-file ownership is closed to the Claude catalog, Cursor catalog, and OpenCode
+`package.json`; directory ownership is recorded only when Mars creates a missing catalog parent, so
+retirement removes only an owned, now-empty directory. Configured builds
+reject final paths that remain gitignored after negation, while explicit `--out` builds have no root
+files and may target ignored CI output. After the
 tree and root-file plan succeed, the output layer hashes every tree and writes one root
 `.mars-plugin.json`; publication applies root writes/deletes and then swaps the staged output with
 two renames. Publication and startup recovery share a cross-process lock keyed by the absolute
 output path; non-empty trees without a valid sentinel are never replaced.
-Recovery refuses symlink/non-directory staging siblings and preserves an unowned rollback
-directory even when the live output is valid; ambiguous evidence is never deleted.
+Recovery removes staging siblings only when empty or Mars-owned, refuses other staging content,
+and preserves an unowned rollback directory even when the live output is valid; ambiguous evidence
+is never deleted.
 The root-package input fingerprint is computed from discovered authored item paths after recovery
 and under that same lock, before the staging tree is populated, so crash leftovers and generated
 catalog/output trees cannot make an otherwise clean checkout stale.

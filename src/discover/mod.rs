@@ -21,7 +21,7 @@ use crate::types::ItemName;
 // rule to avoid slow walks and false-positive imports from dependency/build
 // outputs that sometimes contain docs shaped like agents or skills.
 const RECURSIVE_SKIP_DIRS: &[&str] = &["node_modules", ".git", "dist", "build", "__pycache__"];
-const PLUGIN_MANIFESTS: &[&str] = &[
+pub(crate) const SOURCE_MANIFEST_PATHS: &[&str] = &[
     ".claude-plugin/plugin.json",
     ".claude-plugin/marketplace.json",
 ];
@@ -669,7 +669,7 @@ fn collect_manifest_declared_paths(
     source_name: &str,
 ) -> Result<Vec<DeclaredPath>, MarsError> {
     let mut declared = Vec::new();
-    for manifest in PLUGIN_MANIFESTS {
+    for manifest in SOURCE_MANIFEST_PATHS {
         let path = package_root.join(manifest);
         if !path.is_file() {
             continue;
@@ -821,6 +821,68 @@ fn parse_declared_paths(json: &Value) -> Vec<RawDeclaredPath> {
         }
     }
     declared
+}
+
+/// Remove manifest declarations that cannot contribute any selected item.
+///
+/// Publication staging uses this after discovery and filtering so rediscovery
+/// does not require excluded paths to be copied merely because the authored
+/// foreign manifest still names them.
+pub(crate) fn retain_selected_manifest_declarations(
+    json: &mut Value,
+    selected: &[(ItemKind, PathBuf)],
+) {
+    let Some(map) = json.as_object_mut() else {
+        return;
+    };
+    for (kind, keys) in [
+        (ItemKind::Skill, MANIFEST_SKILL_KEYS),
+        (ItemKind::Agent, MANIFEST_AGENT_KEYS),
+        (ItemKind::BootstrapDoc, MANIFEST_BOOTSTRAP_KEYS),
+    ] {
+        for key in keys {
+            let keep = map
+                .get_mut(*key)
+                .is_none_or(|value| retain_selected_declared_value(value, kind, selected));
+            if !keep {
+                map.remove(*key);
+            }
+        }
+    }
+}
+
+fn retain_selected_declared_value(
+    value: &mut Value,
+    kind: ItemKind,
+    selected: &[(ItemKind, PathBuf)],
+) -> bool {
+    match value {
+        Value::String(path) => declaration_can_select(path, kind, selected),
+        Value::Array(values) => {
+            values.retain_mut(|child| retain_selected_declared_value(child, kind, selected));
+            !values.is_empty()
+        }
+        Value::Object(map) => map
+            .get("path")
+            .and_then(Value::as_str)
+            .is_none_or(|path| declaration_can_select(path, kind, selected)),
+        // Discovery ignores unsupported shapes, so preserve them verbatim.
+        _ => true,
+    }
+}
+
+fn declaration_can_select(path: &str, kind: ItemKind, selected: &[(ItemKind, PathBuf)]) -> bool {
+    let raw = Path::new(path);
+    if !raw.starts_with("./") {
+        return true;
+    }
+    let Some(normalized) = normalize_manifest_declared_path(raw) else {
+        // Initial discovery reports malformed declarations before staging.
+        return true;
+    };
+    selected.iter().any(|(selected_kind, path)| {
+        *selected_kind == kind && (path.starts_with(&normalized) || normalized.starts_with(path))
+    })
 }
 
 fn collect_declared_paths_from_value(

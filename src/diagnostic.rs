@@ -70,6 +70,7 @@ pub enum DiagnosticCategory {
 pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
+    suppressed_generated_plugin_trees: std::collections::BTreeSet<std::path::PathBuf>,
     lossiness_mode: LossinessMode,
     /// Launch-time / meridian-enforced field mappings accumulated for summary or verbose detail.
     meridian_only_records: Vec<MeridianOnlyRecord>,
@@ -84,6 +85,7 @@ impl DiagnosticCollector {
         Self {
             diagnostics: Vec::new(),
             engine_fallbacks: Vec::new(),
+            suppressed_generated_plugin_trees: std::collections::BTreeSet::new(),
             lossiness_mode,
             meridian_only_records: Vec::new(),
         }
@@ -236,6 +238,17 @@ impl DiagnosticCollector {
             return;
         }
         self.info(code, message);
+    }
+
+    pub(crate) fn suppress_generated_plugin_tree(&mut self, path: &std::path::Path) {
+        self.suppressed_generated_plugin_trees
+            .insert(path.components().collect());
+    }
+
+    pub(crate) fn reports_generated_plugin_tree(&self, path: &std::path::Path) -> bool {
+        !self
+            .suppressed_generated_plugin_trees
+            .contains(&path.components().collect::<std::path::PathBuf>())
     }
 
     pub fn info_with_category(

@@ -4,13 +4,11 @@ use std::path::{Path, PathBuf};
 
 use crate::config::PluginHarness;
 use crate::error::MarsError;
-use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
+use crate::plugin_metadata::{
+    CLAUDE_CATALOG, CURSOR_CATALOG, OPENCODE_PACKAGE, PluginSentinel, SENTINEL_FILE,
+};
 
 use super::{configured_output_path, plugin_inputs_hash};
-
-const CLAUDE_CATALOG: &str = ".claude-plugin/marketplace.json";
-const CURSOR_CATALOG: &str = ".cursor-plugin/marketplace.json";
-const OPENCODE_PACKAGE: &str = "package.json";
 
 /// Offline state of a configured plugin build and the repo-root files it owns.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +17,7 @@ pub struct PluginOutputState {
     pub inputs: Option<PluginInputsState>,
     pub version: Option<PluginVersionState>,
     pub root_files: Vec<PluginRootFileState>,
+    pub root_directories: BTreeSet<String>,
 }
 
 impl PluginOutputState {
@@ -202,9 +201,10 @@ impl PluginRootFileState {
                 path,
                 "differs from the hash in the current Mars sentinel",
             )),
-            Self::Unrecorded { path } => Some(root_file_conflict_message(
-                path,
-                "exists but is not recorded by the current Mars sentinel",
+            Self::Unrecorded { path } => Some(format!(
+                "generated root file {} is an unmanaged user file, but the {} harness needs that path for generated plugin metadata",
+                path.display(),
+                root_file_harness(path)
             )),
         }
     }
@@ -340,6 +340,7 @@ pub(super) fn inspect_output(
         inputs: Some(inputs),
         version: Some(version),
         root_files,
+        root_directories: sentinel.root_directories,
     })
 }
 
@@ -353,6 +354,7 @@ fn without_sentinel(
         inputs: None,
         version: None,
         root_files: inspect_root_files(package_root, expected_root_files, None)?,
+        root_directories: BTreeSet::new(),
     })
 }
 
@@ -515,6 +517,18 @@ fn root_file_conflict_message(path: &Path, reason: &str) -> String {
         path.display(),
         path.display()
     )
+}
+
+fn root_file_harness(path: &Path) -> &'static str {
+    if path == Path::new(CLAUDE_CATALOG) {
+        "Claude/Codex/Grok"
+    } else if path == Path::new(CURSOR_CATALOG) {
+        "Cursor"
+    } else if path == Path::new(OPENCODE_PACKAGE) {
+        "OpenCode"
+    } else {
+        "requested"
+    }
 }
 
 fn display_paths(paths: &[PathBuf]) -> String {

@@ -8,6 +8,14 @@ use crate::error::MarsError;
 
 pub(crate) const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
+pub(crate) const CLAUDE_CATALOG: &str = ".claude-plugin/marketplace.json";
+pub(crate) const CURSOR_CATALOG: &str = ".cursor-plugin/marketplace.json";
+pub(crate) const OPENCODE_PACKAGE: &str = "package.json";
+pub(crate) const GENERATED_ROOT_FILES: &[&str] =
+    &[CLAUDE_CATALOG, CURSOR_CATALOG, OPENCODE_PACKAGE];
+pub(crate) const CLAUDE_CATALOG_DIR: &str = ".claude-plugin";
+pub(crate) const CURSOR_CATALOG_DIR: &str = ".cursor-plugin";
+pub(crate) const GENERATED_ROOT_DIRECTORIES: &[&str] = &[CLAUDE_CATALOG_DIR, CURSOR_CATALOG_DIR];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PluginSentinel {
@@ -20,6 +28,8 @@ pub(crate) struct PluginSentinel {
     pub files: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub root_files: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub root_directories: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +66,10 @@ impl PluginSentinel {
                 .root_files
                 .iter()
                 .all(|(path, hash)| valid_entry(path, hash))
+            && self
+                .root_directories
+                .iter()
+                .all(|path| GENERATED_ROOT_DIRECTORIES.contains(&path.as_str()))
     }
 }
 
@@ -67,6 +81,26 @@ fn valid_entry(path: &str, hash: &str) -> bool {
 }
 
 pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), MarsError> {
+    if let Some(unsupported) = sentinel
+        .root_files
+        .keys()
+        .find(|recorded| !GENERATED_ROOT_FILES.contains(&recorded.as_str()))
+    {
+        return Err(invalid(format!(
+            "plugin sentinel records unsupported generated root file `{unsupported}`: {}",
+            path.display()
+        )));
+    }
+    if let Some(unsupported) = sentinel
+        .root_directories
+        .iter()
+        .find(|recorded| !GENERATED_ROOT_DIRECTORIES.contains(&recorded.as_str()))
+    {
+        return Err(invalid(format!(
+            "plugin sentinel records unsupported generated root directory `{unsupported}`: {}",
+            path.display()
+        )));
+    }
     if sentinel.is_valid() {
         Ok(())
     } else {

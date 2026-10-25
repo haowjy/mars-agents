@@ -221,6 +221,22 @@ fn validate_plugin_config_shape(config: &Config) -> Result<(), MarsError> {
     Ok(())
 }
 
+fn validate_package_authors(config: &Config) -> Result<(), MarsError> {
+    let Some((index, _)) = config.package.as_ref().and_then(|package| {
+        package
+            .authors
+            .iter()
+            .enumerate()
+            .find(|(_, author)| author.name.trim().is_empty())
+    }) else {
+        return Ok(());
+    };
+    Err(ConfigError::Invalid {
+        message: format!("mars.toml [package].authors[{index}].name cannot be empty"),
+    }
+    .into())
+}
+
 pub(crate) fn validate_plugin_build(
     config: &Config,
     harnesses: &[PluginHarness],
@@ -1385,6 +1401,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
     })?;
     let mut config: Config = parse_without_removed_visibility(&content, &path)?;
     migrate_legacy_source_urls(&mut config);
+    validate_package_authors(&config)?;
     validate_plugin_config_shape(&config)?;
     Ok(config)
 }
@@ -1969,6 +1986,7 @@ fn should_upgrade_legacy_git_url(url: &str) -> bool {
 
 /// Write mars.toml atomically.
 pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
+    validate_package_authors(config)?;
     validate_plugin_config_shape(config)?;
     let path = root.join(CONFIG_FILE);
     let content = toml::to_string_pretty(config).map_err(|e| ConfigError::Invalid {

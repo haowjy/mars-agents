@@ -15,23 +15,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   warns when plugin packages do not require Mars 0.19.0 or newer.
 - Build and commit configured multi-harness plugin output during `mars version`, with rollback-safe
   publication and a `--no-plugins` escape hatch.
+- Plugin builds refuse source symlinks that leave the package, and special files, so published
+  output never carries files from outside it. `[package].authors` takes `"Name <email>"` strings or
+  `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
-- Plugin builds now reject source symlinks that leave their package and special files instead of
-  copying their contents into published output; safe in-package links become regular files, while
-  unrelated repo tooling and filtered-out items are not walked. Sentinel root-file ownership is
-  limited to the three paths Mars generates, only Mars-created catalog directories are retired,
-  gitignore negation is honored for configured builds, explicit `--out` may target ignored CI
-  directories, reserved recovery staging directories are cleared, and ambiguous rollback
-  directories are preserved. Builds also
-  lower renamed skills before projection, ship only each tree's hook fragment, retain OpenCode
-  hooks when the default-export check warns, validate the requested plugin identities for configured
-  and `--out` builds, and retain warnings on failure.
-- `[package].authors` accepts both `"Name <email>"` strings and `{ name, email }` tables, while
-  plugin builds and releases reject empty author names and unknown plugin harnesses without making
-  plugin-only metadata block `mars sync` or `mars list`. Releases recover partial reserved staging
-  directories after interruption, tolerate already-absent retired root files, and refuse before
-  writing when a release-touched file is untracked, so rollback never deletes user content.
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
   Cursor no longer preload available-only skills, while every target receives `/name` body
   guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a

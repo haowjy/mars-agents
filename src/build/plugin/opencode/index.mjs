@@ -1,16 +1,10 @@
-import { createHash, randomUUID } from "node:crypto"
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
-import { homedir } from "node:os"
+import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { fileURLToPath, pathToFileURL } from "node:url"
+import { fileURLToPath } from "node:url"
 
 const DATA = /*__MARS_PLUGIN_DATA__*/
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const HOOK_DIR_TOKEN = "${MARS_HOOK_DIR}"
-
-function hash(content) {
-  return createHash("sha256").update(content).digest("hex")
-}
 
 function runtimeServer(server) {
   if (!server.environment) return server
@@ -28,46 +22,16 @@ function runtimeServer(server) {
   return { ...server, environment }
 }
 
-async function verifiedWrite(directory, filename, content, expectedHash, privateDirectory) {
-  if (privateDirectory) {
-    await mkdir(directory, { recursive: true, mode: 0o700 })
-    await chmod(directory, 0o700)
-  }
-
-  const destination = join(directory, filename)
-  const existing = await readFile(destination, "utf8").catch(() => undefined)
-  if (existing === undefined || hash(existing) !== expectedHash) {
-    const temporary = join(directory, `.${filename}.${process.pid}.${randomUUID()}.tmp`)
-    try {
-      await writeFile(temporary, content, { flag: "wx", mode: 0o600 })
-      await rename(temporary, destination)
-    } finally {
-      await rm(temporary, { force: true }).catch(() => {})
-    }
-  }
-
-  const installed = await readFile(destination, "utf8")
-  if (hash(installed) !== expectedHash) {
-    throw new Error(`refusing to import modified rendered hook ${destination}`)
-  }
-  return destination
+function encodeForJavaScriptString(value) {
+  return value.replace(/[^A-Za-z0-9/._-]/g, (character) => {
+    return `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`
+  })
 }
 
 async function renderHook(hook) {
   const hookDirectory = join(ROOT, "hooks", hook.name)
   const source = await readFile(join(hookDirectory, hook.fragment), "utf8")
-  const portableHookDirectory = hookDirectory.replaceAll("\\", "/")
-  const rendered = source.replaceAll(HOOK_DIR_TOKEN, portableHookDirectory)
-  const contentHash = hash(rendered)
-  const filename = `${contentHash}.ts`
-  const cacheRoot = process.env.XDG_CACHE_HOME || join(homedir(), ".cache")
-  const cacheDirectory = join(cacheRoot, "opencode", "mars-hooks", hash(DATA.plugin))
-
-  try {
-    return await verifiedWrite(cacheDirectory, filename, rendered, contentHash, true)
-  } catch {
-    return verifiedWrite(hookDirectory, `.mars-rendered-${filename}`, rendered, contentHash, false)
-  }
+  return source.replaceAll(HOOK_DIR_TOKEN, encodeForJavaScriptString(hookDirectory))
 }
 
 export default {
@@ -104,13 +68,18 @@ export default {
 
     const cleanups = []
     for (const hook of DATA.hooks) {
-      const rendered = await renderHook(hook)
-      const definition = (await import(pathToFileURL(rendered).href)).default
-      if (!definition || typeof definition.id !== "string" || typeof definition.setup !== "function") {
-        throw new Error(`OpenCode hook ${hook.name} must export default { id, setup }`)
+      try {
+        const rendered = await renderHook(hook)
+        const url = `data:text/typescript;base64,${Buffer.from(rendered, "utf8").toString("base64")}`
+        const definition = (await import(url)).default
+        if (!definition || typeof definition.id !== "string" || typeof definition.setup !== "function") {
+          throw new Error(`OpenCode hook ${hook.name} must export default { id, setup }`)
+        }
+        const cleanup = await definition.setup(ctx)
+        if (typeof cleanup === "function") cleanups.push(cleanup)
+      } catch (error) {
+        console.error(`[${DATA.plugin}] failed to load hook ${hook.name}`, error)
       }
-      const cleanup = await definition.setup(ctx)
-      if (typeof cleanup === "function") cleanups.push(cleanup)
     }
 
     if (cleanups.length) {

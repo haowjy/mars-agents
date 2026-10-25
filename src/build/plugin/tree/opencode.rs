@@ -251,18 +251,22 @@ fn write_package(
 fn skill_data(root: &Path, directory: &str) -> Result<SkillData, MarsError> {
     let path = root.join("skills").join(directory).join("SKILL.md");
     let content = std::fs::read_to_string(&path)?;
-    let frontmatter = mars_schema::frontmatter::parse(&content).map_err(|error| {
+    let reading = mars_schema::skill::read(&content);
+    let fields = reading.fields.ok_or_else(|| {
         MarsError::Internal(format!(
-            "generated OpenCode skill {} has invalid frontmatter: {error}",
-            path.display()
+            "generated OpenCode skill {} has invalid frontmatter: {}",
+            path.display(),
+            reading
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
         ))
     })?;
     Ok(SkillData {
         directory: directory.to_string(),
-        name: frontmatter.name().unwrap_or(directory).to_string(),
-        description: frontmatter
-            .get("description")
-            .and_then(serde_yaml::Value::as_str)
-            .map(str::to_owned),
+        name: fields.name.unwrap_or_else(|| directory.to_string()),
+        description: fields.description,
     })
 }

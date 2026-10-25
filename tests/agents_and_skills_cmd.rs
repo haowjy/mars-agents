@@ -20,7 +20,6 @@ const AGENT_CONTENT: &str = "---
 name: orchestrator
 description: Orchestrates work
 mode: primary
-network: deny
 subagents:
   - worker
 ---

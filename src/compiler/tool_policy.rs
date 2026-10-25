@@ -469,8 +469,8 @@ fn overlay_rules(names: &[OverlayToolName], action: ToolAction) -> Vec<ToolRule>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{AgentDiagnostic, parse_agent_content_legacy};
     use mars_schema::HarnessId;
+    use mars_schema::agent::{AgentDiagnostic, parse_agent_content_legacy};
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
     use mars_schema::tool_policy::{
@@ -657,7 +657,7 @@ mod tests {
             &["context7".to_string()]
         ));
         let mut diags = Vec::new();
-        let policy = crate::compiler::agents::parse_agent_profile_legacy(&fm, &mut diags).tools;
+        let policy = mars_schema::agent::parse_agent_profile_legacy(&fm, &mut diags).tools;
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)"]);
         assert!(!policy.is_allowlist());
     }

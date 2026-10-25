@@ -295,7 +295,7 @@ fn check_agent_source(
         .as_deref()
         .unwrap_or(&authored_content);
     let mut parse_diags = Vec::new();
-    crate::compiler::agents::parse_agent_content(content, &mut parse_diags)
+    mars_schema::agent::parse_agent_content(content, &mut parse_diags)
         .map_err(|error| invalid_item("agent", item, error.to_string()))?;
     emit_agent_parse_diagnostics(item, &parse_diags, diag)
 }
@@ -461,7 +461,7 @@ fn write_agent(
     let content = item.rewritten_content.clone().unwrap_or(authored_content);
     let mut ignored_parse_diags = Vec::new();
     let (profile, frontmatter) =
-        crate::compiler::agents::parse_agent_content(&content, &mut ignored_parse_diags)
+        mars_schema::agent::parse_agent_content(&content, &mut ignored_parse_diags)
             .map_err(|error| invalid_item("agent", item, error.to_string()))?;
 
     let overlay = (item.source_name == *input.root_source)

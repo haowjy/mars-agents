@@ -8,10 +8,10 @@ use super::models_common::{
     models_cache_ttl_hours,
 };
 use crate::build::policy::{PolicyInput, resolve_policy};
-use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::error::MarsError;
 use crate::models::{self, ModelAlias};
 use crate::types::MarsContext;
+use mars_schema::agent::{AgentProfile, parse_agent_content};
 use mars_schema::item::ItemKind;
 
 #[derive(Debug, Parser)]

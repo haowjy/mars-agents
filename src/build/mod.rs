@@ -16,10 +16,10 @@ use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
 use crate::cli::MarsContext;
-use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
 use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
+use mars_schema::agent::{AgentProfile, parse_agent_content};
 use mars_schema::frontmatter::SkillsSpec;
 
 pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
@@ -225,7 +225,7 @@ fn load_effective_project_config_or_default(
 /// `native_status: unknown` and a `note`, and the consumer reports it. `mars sync` is where an
 /// author hears about a typo.
 fn resolve_bundle_tools(
-    profile: &crate::compiler::agents::AgentProfile,
+    profile: &mars_schema::agent::AgentProfile,
     harness: &str,
 ) -> Result<ToolsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;
@@ -277,7 +277,7 @@ fn resolve_bundle_tools(
 }
 
 fn resolve_effective_skills(
-    profile: &crate::compiler::agents::AgentProfile,
+    profile: &mars_schema::agent::AgentProfile,
     harness: &str,
 ) -> Result<SkillsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;

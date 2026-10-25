@@ -1,5 +1,4 @@
 //! Declarative per-harness agent lowering policies and shared pipeline.
-use crate::compiler::agents::AgentProfile;
 use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
 ///
@@ -20,6 +19,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
+use mars_schema::agent::AgentProfile;
 use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
 pub use mars_schema::tool_policy::EffectiveToolPolicy;
 use mars_schema::tool_policy::ToolAction;
@@ -44,15 +44,15 @@ impl<'a> Effective<'a> {
         }
     }
 
-    fn effort(&self) -> Option<&crate::compiler::agents::EffortLevel> {
+    fn effort(&self) -> Option<&mars_schema::agent::EffortLevel> {
         self.profile.effort.as_ref()
     }
 
-    fn approval(&self) -> Option<&crate::compiler::agents::ApprovalMode> {
+    fn approval(&self) -> Option<&mars_schema::agent::ApprovalMode> {
         self.profile.approval.as_ref()
     }
 
-    fn sandbox(&self) -> Option<&crate::compiler::agents::SandboxMode> {
+    fn sandbox(&self) -> Option<&mars_schema::agent::SandboxMode> {
         self.profile.sandbox.as_ref()
     }
 
@@ -803,7 +803,7 @@ pub fn lower_to_codex(
 
     // Approval — exact (lowered to approval_policy)
     let approval_policy = eff.approval().and_then(|a| {
-        use crate::compiler::agents::ApprovalMode;
+        use mars_schema::agent::ApprovalMode;
         match a {
             ApprovalMode::Default => None,
             ApprovalMode::Auto => Some("on-request"),

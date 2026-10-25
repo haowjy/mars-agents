@@ -47,7 +47,7 @@ pub(crate) struct NativeAgentCompileCtx<'a> {
 
 struct NativeAgentEmit<'a> {
     harness: &'a mars_schema::HarnessId,
-    profile: &'a crate::compiler::agents::AgentProfile,
+    profile: &'a mars_schema::agent::AgentProfile,
     fm: &'a mars_schema::frontmatter::Frontmatter,
     body: &'a str,
     agent_name: &'a str,
@@ -64,7 +64,7 @@ struct NativeAgentEmitCtx<'a> {
 pub(crate) struct MarsCanonicalAgent {
     pub agent_name: String,
     pub canonical_dest_path: String,
-    pub profile: crate::compiler::agents::AgentProfile,
+    pub profile: mars_schema::agent::AgentProfile,
     pub fm: mars_schema::frontmatter::Frontmatter,
 }
 
@@ -174,7 +174,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
     pub(crate) fn decision_for_profile(
         &mut self,
-        profile: &crate::compiler::agents::AgentProfile,
+        profile: &mars_schema::agent::AgentProfile,
         target_harness: &mars_schema::HarnessId,
         include_fanout: bool,
         emit_all: bool,
@@ -202,7 +202,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
     fn candidates(
         &self,
-        profile: &crate::compiler::agents::AgentProfile,
+        profile: &mars_schema::agent::AgentProfile,
         include_fanout: bool,
     ) -> Vec<NativeModelCandidate> {
         let mut candidates = Vec::new();
@@ -253,7 +253,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
     fn route_candidate(
         &mut self,
-        profile: &crate::compiler::agents::AgentProfile,
+        profile: &mars_schema::agent::AgentProfile,
         token: &str,
         target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
@@ -280,7 +280,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
     fn route_candidate_uncached(
         &mut self,
-        profile: &crate::compiler::agents::AgentProfile,
+        profile: &mars_schema::agent::AgentProfile,
         token: &str,
         target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
@@ -361,7 +361,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
     fn native_model_id(
         &mut self,
-        profile: &crate::compiler::agents::AgentProfile,
+        profile: &mars_schema::agent::AgentProfile,
         target_harness: &mars_schema::HarnessId,
         resolved: &NativeResolvedModel<'_>,
         routed_model_id: &str,
@@ -488,7 +488,7 @@ fn is_native_agent_dest_path(dest_rel: &str) -> bool {
 }
 
 pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) -> MarsAgentScan {
-    use crate::compiler::agents::parse_agent_content;
+    use mars_schema::agent::parse_agent_content;
 
     let agents_dir = mars_dir.join("agents");
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
@@ -748,9 +748,9 @@ pub(crate) fn compile_native_agents<'a>(
 /// Content/policy: optional overlay fields replace the corresponding profile values;
 /// absent/`None`/empty overlay slots leave the profile unchanged.
 pub(crate) fn effective_native_profile(
-    profile: &crate::compiler::agents::AgentProfile,
+    profile: &mars_schema::agent::AgentProfile,
     overlay: Option<&crate::config::AgentOverlay>,
-) -> crate::compiler::agents::AgentProfile {
+) -> mars_schema::agent::AgentProfile {
     let Some(overlay) = overlay else {
         return profile.clone();
     };
@@ -785,7 +785,7 @@ pub(crate) fn effective_native_profile(
 
 /// Harnesses and native model fields that would receive lowered agent artifacts.
 pub(crate) fn qualifying_agent_emissions(
-    profile: &crate::compiler::agents::AgentProfile,
+    profile: &mars_schema::agent::AgentProfile,
     agent_name: &str,
     policy: &AgentSurfacePolicy,
     fanout_agents: &[String],
@@ -1009,13 +1009,13 @@ fn native_acceptance_policy(
 }
 
 fn cursor_effective_effort<'a>(
-    profile: &'a crate::compiler::agents::AgentProfile,
+    profile: &'a mars_schema::agent::AgentProfile,
     alias: Option<&'a ModelAlias>,
 ) -> Option<&'a str> {
     profile
         .effort
         .as_ref()
-        .map(crate::compiler::agents::EffortLevel::as_str)
+        .map(mars_schema::agent::EffortLevel::as_str)
         .or_else(|| alias.and_then(|entry| entry.default_effort.as_deref()))
 }
 

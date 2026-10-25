@@ -11,8 +11,8 @@ use mars_schema::item::ItemKind;
 use std::path::Path;
 use tempfile::TempDir;
 
-fn profile_with_model(model: &str, harness: HarnessId) -> crate::compiler::agents::AgentProfile {
-    crate::compiler::agents::AgentProfile {
+fn profile_with_model(model: &str, harness: HarnessId) -> mars_schema::agent::AgentProfile {
+    mars_schema::agent::AgentProfile {
         name: None,
         description: None,
         harness: Some(harness),
@@ -28,7 +28,7 @@ fn profile_with_model(model: &str, harness: HarnessId) -> crate::compiler::agent
         skills: mars_schema::frontmatter::SkillsSpec::default(),
         subagents: Vec::new(),
         tools: Default::default(),
-        harness_overrides: crate::compiler::agents::HarnessOverrides::default(),
+        harness_overrides: mars_schema::agent::HarnessOverrides::default(),
         model_policies: Vec::new(),
     }
 }
@@ -450,8 +450,7 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
 
 fn parse_mars_agent(content: &str, stem: &str) -> MarsCanonicalAgent {
     let mut agent_diags = Vec::new();
-    let (profile, fm) =
-        crate::compiler::agents::parse_agent_content(content, &mut agent_diags).unwrap();
+    let (profile, fm) = mars_schema::agent::parse_agent_content(content, &mut agent_diags).unwrap();
     let agent_name = profile.name.clone().unwrap_or_else(|| stem.to_string());
     MarsCanonicalAgent {
         agent_name,

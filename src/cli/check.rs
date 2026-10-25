@@ -238,7 +238,7 @@ fn check_dir_with_lens(
 
                             let mut agent_diags = Vec::new();
                             let _profile =
-                                crate::compiler::agents::parse_agent_profile(&fm, &mut agent_diags);
+                                mars_schema::agent::parse_agent_profile(&fm, &mut agent_diags);
                             for diagnostic in agent_diags {
                                 let message = format!("agent `{name}`: {}", diagnostic.message);
                                 if diagnostic.severity == mars_schema::diagnostic::Severity::Error {
@@ -316,13 +316,10 @@ fn check_dir_with_lens(
                 match std::fs::read_to_string(&skill_md) {
                     Ok(content) => {
                         let mut skill_diags = Vec::new();
-                        match crate::compiler::skills::parse_skill_content(
-                            &content,
-                            &mut skill_diags,
-                        ) {
+                        match mars_schema::skill::parse_skill_content(&content, &mut skill_diags) {
                             Ok((profile, fm)) => {
                                 if dialect == Dialect::MarsNative {
-                                    crate::compiler::skills::push_authored_skill_schema_diags(
+                                    mars_schema::skill::push_authored_skill_schema_diags(
                                         &fm,
                                         &mut skill_diags,
                                     );

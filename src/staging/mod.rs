@@ -436,7 +436,7 @@ fn process_markdown_file(
         ) && kind == ItemKind::Skill
         {
             let mut skill_diags = Vec::new();
-            crate::compiler::skills::push_authored_skill_schema_diags(&parsed, &mut skill_diags);
+            mars_schema::skill::push_authored_skill_schema_diags(&parsed, &mut skill_diags);
             if !skill_diags.is_empty() {
                 let skill_name = parsed
                     .get("name")
@@ -773,7 +773,7 @@ mod tests {
         assert!(content.contains("disable-model-invocation"));
 
         let mut diags = Vec::new();
-        crate::compiler::skills::parse_skill_content(&content, &mut diags).unwrap();
+        mars_schema::skill::parse_skill_content(&content, &mut diags).unwrap();
         assert!(diags.iter().any(|d| d.is_error()));
     }
 

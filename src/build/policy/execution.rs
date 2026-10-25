@@ -5,9 +5,9 @@ use crate::build::policy::PolicySource::{
 use crate::build::policy::{
     MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
 };
-use crate::compiler::agents::{ApprovalMode, EffortLevel, SandboxMode};
 use crate::config::AgentOverlay;
 use crate::models::ModelAlias;
+use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
 
 pub(super) struct ExecutionResolution {
     pub(super) effort: ResolvedField<Option<String>>,

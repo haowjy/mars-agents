@@ -5,12 +5,12 @@ use std::path::Path;
 use indexmap::IndexMap;
 
 use crate::build::bundle::ExecutionPolicy;
-use crate::compiler::agents::AgentProfile;
 use crate::config::{AgentOverlay, EffectiveProjectConfig};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
 use crate::routing;
+use mars_schema::agent::AgentProfile;
 
 mod execution;
 mod harness;

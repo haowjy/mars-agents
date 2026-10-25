@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use crate::compiler::agents::{parse_agent_content, parse_agent_profile};
 use crate::content::ContentRoots;
 use crate::error::MarsError;
+use mars_schema::agent::{parse_agent_content, parse_agent_profile};
 use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
 use mars_schema::tool_policy::ToolAction;

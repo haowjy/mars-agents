@@ -7,8 +7,8 @@ use crate::compiler::harness_descriptor::{
     SkillLoweringPolicyKind, descriptor, descriptor_for_variant_key,
 };
 use crate::compiler::lossiness::LoweredOutput;
-use crate::compiler::skills::SkillProfile;
 use mars_schema::HarnessId;
+use mars_schema::skill::SkillProfile;
 
 pub type SkillHarness = HarnessId;
 
@@ -53,7 +53,7 @@ pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutpu
 mod tests {
     use super::*;
     use crate::compiler::lossiness::{Lossiness, LossyField};
-    use crate::compiler::skills::parse_skill_content;
+    use mars_schema::skill::parse_skill_content;
 
     fn parse_profile(content: &str) -> SkillProfile {
         let mut diags = Vec::new();

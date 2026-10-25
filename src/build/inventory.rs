@@ -3,12 +3,12 @@ use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 use std::path::{Path, PathBuf};
 
-use crate::compiler::agents::{AgentMode, parse_agent_content};
 use crate::compiler::native_agent_manifest::{
     agent_is_native_for_harness, read_native_agent_manifest,
 };
 use crate::content::ContentRoots;
 use crate::error::{ConfigError, MarsError};
+use mars_schema::agent::{AgentMode, parse_agent_content};
 use mars_schema::model_policy::ModelPolicyMatchType;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,7 +238,7 @@ fn parse_inventory_agent(
 }
 
 fn fallback_model_policies_for_inventory(
-    profile: &crate::compiler::agents::AgentProfile,
+    profile: &mars_schema::agent::AgentProfile,
 ) -> Vec<String> {
     super::policy::fallback_model_policy_entries(&profile.model_policies)
         .map(|(kind, token)| match kind {

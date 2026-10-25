@@ -3,7 +3,7 @@
 pub mod lower;
 
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
-pub use mars_schema::skill::*;
+use mars_schema::skill::{SkillDiagnostic, parse_skill_content_legacy};
 use std::path::Path;
 
 pub(crate) fn emit_skill_schema_diags(

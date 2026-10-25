@@ -17,7 +17,6 @@ use tempfile::TempDir;
 use crate::compiler::agent_copy;
 use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
-use crate::compiler::agents::parse_agent_profile;
 use crate::compiler::harness_descriptor::configured_emit_harnesses;
 use crate::compiler::native_agents::{NativeModelRoutingRuntime, qualifying_agent_emissions};
 use crate::compiler::variants;
@@ -32,6 +31,7 @@ use crate::resolve::PublishLens;
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::target::TargetRegistry;
 use crate::types::RenameMap;
+use mars_schema::agent::parse_agent_profile;
 use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
 

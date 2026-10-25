@@ -186,11 +186,11 @@ mod tests {
     use std::path::Path;
     use std::sync::LazyLock;
 
-    use crate::compiler::agents::AgentProfile;
-    use crate::compiler::agents::HarnessOverrides;
     use crate::models::ModelSpec;
     use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
     use crate::routing::MatchEvidence;
+    use mars_schema::agent::AgentProfile;
+    use mars_schema::agent::HarnessOverrides;
 
     static EMPTY_RUNTIME_ALIASES: LazyLock<IndexMap<String, ModelAlias>> =
         LazyLock::new(IndexMap::new);

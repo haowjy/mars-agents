@@ -350,11 +350,11 @@ fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
 mod tests {
     use super::*;
     use crate::compiler::agents::lower::{NativeModel, lower_to_claude};
-    use crate::compiler::agents::parse_agent_content_legacy;
     use crate::compiler::lossiness::Lossiness;
     use crate::compiler::skills::lower::{SkillHarness, lower_skill_for_harness};
-    use crate::compiler::skills::parse_skill_content_legacy;
+    use mars_schema::agent::parse_agent_content_legacy;
     use mars_schema::frontmatter::Frontmatter;
+    use mars_schema::skill::parse_skill_content_legacy;
 
     fn fm(yaml: &str) -> Frontmatter {
         Frontmatter::parse(&format!("---\n{yaml}---\n# Body\n")).unwrap()

@@ -396,7 +396,7 @@ fn lower_projected_skill_for_harness(
     emit_schema_diags: bool,
 ) -> Result<Option<crate::compiler::lossiness::LoweredOutput>, MarsError> {
     use crate::compiler::skills::lower::{lower_skill_for_harness, skill_harness_from_variant_key};
-    use crate::compiler::skills::parse_skill_content;
+    use mars_schema::skill::parse_skill_content;
 
     let Some(harness) = skill_harness_from_variant_key(harness_key) else {
         return Ok(None);

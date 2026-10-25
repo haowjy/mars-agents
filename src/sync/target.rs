@@ -1,4 +1,6 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(test)]
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -23,12 +25,20 @@ pub struct TargetState {
     // Selection is intent, not proof of installation. Keep it when an unmanaged
     // canonical path prunes `items` so post-sync lowering can report the missing winner.
     selected_hooks: IndexMap<DestPath, SelectedHook>,
+    selected_mcp: Vec<SelectedMcp>,
 }
 
 #[derive(Debug, Clone)]
 struct SelectedHook {
     target_root: String,
     item: crate::compiler::hooks::ParsedHookItem,
+    source_hash: ContentHash,
+}
+
+#[derive(Debug, Clone)]
+struct SelectedMcp {
+    target_roots: Vec<String>,
+    item: crate::compiler::mcp::ParsedMcpItem,
 }
 
 impl TargetState {
@@ -43,39 +53,80 @@ impl TargetState {
     pub(crate) fn selected_hooks_for_target(
         &self,
         target_root: &str,
-    ) -> impl Iterator<Item = &crate::compiler::hooks::ParsedHookItem> {
+    ) -> impl Iterator<
+        Item = (
+            &crate::compiler::hooks::ParsedHookItem,
+            &crate::types::ContentHash,
+        ),
+    > {
         self.selected_hooks
             .values()
             .filter(move |hook| hook.target_root == target_root)
-            .map(|hook| &hook.item)
+            .map(|hook| (&hook.item, &hook.source_hash))
     }
 
     pub(crate) fn select_hook(
         &mut self,
         target_root: &str,
-        dest_path: DestPath,
-        parsed: crate::compiler::hooks::ParsedHookItem,
-    ) {
-        self.selected_hooks.insert(
-            dest_path,
-            SelectedHook {
-                target_root: target_root.to_string(),
-                item: parsed,
-            },
-        );
-    }
-
-    pub(crate) fn insert_hook(
-        &mut self,
-        target_root: &str,
-        target_item: TargetItem,
+        target_item: &TargetItem,
         parsed: crate::compiler::hooks::ParsedHookItem,
     ) {
         debug_assert_eq!(target_item.id.kind, ItemKind::Hook);
         debug_assert_eq!(target_item.source_name.as_str(), parsed.source_name);
-        let dest_path = target_item.dest_path.clone();
-        self.items.insert(dest_path.clone(), target_item);
-        self.select_hook(target_root, dest_path, parsed);
+        self.selected_hooks.insert(
+            target_item.dest_path.clone(),
+            SelectedHook {
+                target_root: target_root.to_string(),
+                item: parsed,
+                source_hash: target_item.source_hash.clone(),
+            },
+        );
+    }
+
+    pub(crate) fn selected_mcp(
+        &self,
+    ) -> impl Iterator<Item = &crate::compiler::mcp::ParsedMcpItem> {
+        self.selected_mcp.iter().map(|selected| &selected.item)
+    }
+
+    pub(crate) fn selected_mcp_targets(&self) -> impl Iterator<Item = &str> {
+        self.selected_mcp
+            .iter()
+            .flat_map(|selected| selected.target_roots.iter().map(String::as_str))
+    }
+
+    pub(crate) fn selected_mcp_for_target(
+        &self,
+        target_root: &str,
+    ) -> impl Iterator<Item = &crate::compiler::mcp::ParsedMcpItem> {
+        self.selected_mcp
+            .iter()
+            .filter(move |selected| {
+                selected
+                    .target_roots
+                    .iter()
+                    .any(|target| target == target_root)
+            })
+            .map(|selected| &selected.item)
+    }
+
+    pub(crate) fn select_mcp(
+        &mut self,
+        item: crate::compiler::mcp::ParsedMcpItem,
+        managed_targets: &[String],
+    ) {
+        let target_roots = mcp_target_roots(&item, managed_targets);
+        let selected = SelectedMcp { target_roots, item };
+        let insert_at = self
+            .selected_mcp
+            .iter()
+            .position(|existing| existing.item.source_name != "_self")
+            .unwrap_or(self.selected_mcp.len());
+        if selected.item.source_name == "_self" {
+            self.selected_mcp.insert(insert_at, selected);
+        } else {
+            self.selected_mcp.push(selected);
+        }
     }
 
     #[cfg(test)]
@@ -83,6 +134,7 @@ impl TargetState {
         Self {
             items,
             selected_hooks: IndexMap::new(),
+            selected_mcp: Vec::new(),
         }
     }
 }
@@ -104,12 +156,36 @@ pub struct TargetItem {
     pub rewritten_content: Option<String>,
 }
 
+impl TargetItem {
+    /// Hash of the bytes/tree mars intends to install after in-memory rewrites.
+    pub(crate) fn expected_installed_hash(&self) -> Result<ContentHash, MarsError> {
+        let Some(content) = &self.rewritten_content else {
+            return Ok(self.source_hash.clone());
+        };
+        let hash = match self.id.kind {
+            ItemKind::Skill => crate::hash::compute_skill_hash_with_override(
+                &self.source_path,
+                "SKILL.md",
+                content.as_bytes(),
+                if self.is_flat_skill {
+                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
+                } else {
+                    &[]
+                },
+            )?,
+            _ => crate::hash::hash_bytes(content.as_bytes()),
+        };
+        Ok(ContentHash::from(hash))
+    }
+}
+
 /// Explicit skill rename that changes the installed skill name.
 #[derive(Debug, Clone)]
-pub struct ExplicitSkillRename {
+pub struct ExplicitRename {
     pub original_name: ItemName,
     pub new_name: ItemName,
     pub source_name: SourceName,
+    pub kind: ItemKind,
 }
 
 /// Automatic rename applied when multiple sources target the same destination.
@@ -124,33 +200,74 @@ pub fn build_with_collisions_and_diag(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
     diag: &mut DiagnosticCollector,
-) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
+) -> Result<(TargetState, Vec<ExplicitRename>, Vec<CollisionRename>), MarsError> {
     let mut collected_items = Vec::new();
-    let mut selected_hooks = Vec::new();
-    let mut explicit_skill_renames = Vec::new();
-    let managed_targets: HashSet<String> = config.settings.managed_targets().into_iter().collect();
-    let hook_depths = dependency_depths(graph);
-    let decl_orders = dependency_decl_orders(graph, &config.dependencies);
+    let mut target = TargetState {
+        items: IndexMap::new(),
+        selected_hooks: IndexMap::new(),
+        selected_mcp: Vec::new(),
+    };
+    let mut explicit_renames = Vec::new();
+    let managed_target_roots = config.settings.managed_targets();
+    // Hooks and MCP share shortest graph distance as their precedence key.
+    // Keeping one definition avoids a second meaning of dependency depth.
+    let dependency_depths = graph.dependency_depths(&config.dependencies);
+    let decl_orders = graph.dependency_decl_orders(&config.dependencies);
 
     for source_name in &graph.order {
         let node = &graph.nodes[source_name];
         let source_config = config.dependencies.get(source_name);
 
-        let discovered = discover::discover_resolved_source(
-            &node.rooted_ref.package_root,
-            Some(source_name.as_str()),
-        )?;
         // Removed hook schemas are a compatibility error even when dependency
-        // filters select no hook. Parse once here, then select only from `filtered`.
+        // filters select no hook. Strict parsing also supplies hook discovery,
+        // avoiding a second lenient hook.toml parse for filters.
         let parsed_hooks = crate::compiler::hooks::discover_resolved_hook_items(
             node,
             source_name,
-            hook_depths.get(source_name).copied().unwrap_or(1),
+            dependency_depths.get(source_name).copied().unwrap_or(1),
             decl_orders
                 .get(source_name)
                 .copied()
                 .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1),
+            diag,
         )?;
+        let discovered_hooks = parsed_hooks
+            .iter()
+            .map(|hook| hook.discovered_item(&node.rooted_ref.package_root))
+            .collect::<Vec<_>>();
+        let discovered = discover::discover_resolved_source_with_hooks(
+            &node.rooted_ref.package_root,
+            Some(source_name.as_str()),
+            &discovered_hooks,
+            diag,
+        )?;
+
+        if source_may_emit_mcp(graph, source_name) {
+            let decl_order = decl_orders
+                .get(source_name)
+                .copied()
+                .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
+            match crate::compiler::mcp::discover_mcp_items_at_depth(
+                &node.rooted_ref.package_root,
+                source_name.as_str(),
+                dependency_depths.get(source_name).copied().unwrap_or(1),
+                decl_order,
+                diag,
+            ) {
+                Ok(items) => {
+                    for item in items {
+                        if item.def.visibility == crate::compiler::visibility::Visibility::Exported
+                        {
+                            target.select_mcp(item, &managed_target_roots);
+                        }
+                    }
+                }
+                Err(error) => diag.warn(
+                    "mcp-discover",
+                    format!("failed to scan MCP items in `{source_name}`: {error}"),
+                ),
+            }
+        }
 
         let Some(filters) = graph
             .filters
@@ -177,36 +294,14 @@ pub fn build_with_collisions_and_diag(
                     .iter()
                     .find(|hook| hook.hook_dir == hook_dir)
                     .expect("discovered hook directory has a parsed definition");
-                if parsed.def.visibility != "exported" {
+                if parsed.def.visibility != crate::compiler::visibility::Visibility::Exported {
                     continue;
                 }
-                let source_hash = ContentHash::from(hash::compute_hash(&hook_dir, ItemKind::Hook)?);
-                for target_name in parsed
-                    .def
-                    .targets
-                    .keys()
-                    .filter(|target| managed_targets.contains(*target))
+                for (target_name, _dest_path, target_item) in
+                    hook_target_items(parsed, source_name, &managed_target_roots)?
                 {
-                    let dest_path = hook_canonical_dest_path(target_name, &parsed.def.name);
-                    selected_hooks.push((
-                        dest_path.clone(),
-                        SelectedHook {
-                            target_root: target_name.clone(),
-                            item: parsed.clone(),
-                        },
-                    ));
-                    collected_items.push(TargetItem {
-                        id: ItemId {
-                            kind: ItemKind::Hook,
-                            name: hook_scoped_item_name(target_name, &parsed.def.name),
-                        },
-                        source_name: source_name.clone(),
-                        source_path: hook_dir.clone(),
-                        dest_path,
-                        source_hash: source_hash.clone(),
-                        is_flat_skill: false,
-                        rewritten_content: None,
-                    });
+                    target.select_hook(&target_name, &target_item, parsed.clone());
+                    collected_items.push(target_item);
                 }
                 continue;
             }
@@ -234,11 +329,14 @@ pub fn build_with_collisions_and_diag(
                 );
                 continue;
             }
-            if item.id.kind == ItemKind::Skill && dest_name != item.id.name {
-                explicit_skill_renames.push(ExplicitSkillRename {
+            if matches!(item.id.kind, ItemKind::Agent | ItemKind::Skill)
+                && dest_name != item.id.name
+            {
+                explicit_renames.push(ExplicitRename {
                     original_name: item.id.name.clone(),
                     new_name: dest_name.clone(),
                     source_name: source_name.clone(),
+                    kind: item.id.kind,
                 });
             }
 
@@ -277,16 +375,61 @@ pub fn build_with_collisions_and_diag(
         items.insert(target_item.dest_path.clone(), target_item);
     }
 
-    let selected_hooks = selected_hooks.into_iter().collect();
+    target.items = items;
 
-    Ok((
-        TargetState {
-            items,
-            selected_hooks,
-        },
-        explicit_skill_renames,
-        collision_renames,
-    ))
+    Ok((target, explicit_renames, collision_renames))
+}
+
+fn mcp_target_roots(
+    item: &crate::compiler::mcp::ParsedMcpItem,
+    managed_targets: &[String],
+) -> Vec<String> {
+    if item.def.targets.is_empty() {
+        return managed_targets.to_vec();
+    }
+    managed_targets
+        .iter()
+        .filter(|target| item.def.targets.contains(target))
+        .cloned()
+        .collect()
+}
+
+fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
+    graph.filters.get(source_name).is_none_or(|filters| {
+        filters
+            .iter()
+            .any(|filter| matches!(filter, FilterMode::All | FilterMode::Exclude(_)))
+    })
+}
+
+pub(crate) fn hook_target_items(
+    parsed: &crate::compiler::hooks::ParsedHookItem,
+    source_name: &SourceName,
+    managed_targets: &[String],
+) -> Result<Vec<(String, DestPath, TargetItem)>, MarsError> {
+    let source_hash = ContentHash::from(hash::compute_hash(&parsed.hook_dir, ItemKind::Hook)?);
+    Ok(parsed
+        .def
+        .targets
+        .keys()
+        .filter(|target| managed_targets.contains(target))
+        .map(|target_name| {
+            let dest_path = hook_canonical_dest_path(target_name, &parsed.def.name);
+            let target_item = TargetItem {
+                id: ItemId {
+                    kind: ItemKind::Hook,
+                    name: hook_scoped_item_name(target_name, &parsed.def.name),
+                },
+                source_name: source_name.clone(),
+                source_path: parsed.hook_dir.clone(),
+                dest_path: dest_path.clone(),
+                source_hash: source_hash.clone(),
+                is_flat_skill: false,
+                rewritten_content: None,
+            };
+            (target_name.clone(), dest_path, target_item)
+        })
+        .collect())
 }
 
 /// Canonical hook directories are target-scoped so providers with the same
@@ -403,94 +546,6 @@ fn apply_filter_union(
         .collect())
 }
 
-fn dependency_depths(graph: &ResolvedGraph) -> HashMap<SourceName, usize> {
-    let mut remaining_dependents: HashMap<SourceName, usize> = HashMap::new();
-    for name in &graph.order {
-        remaining_dependents.insert(name.clone(), 0);
-    }
-    for name in &graph.order {
-        let Some(node) = graph.nodes.get(name) else {
-            continue;
-        };
-        for dep in &node.deps {
-            if graph.nodes.contains_key(dep) {
-                *remaining_dependents.entry(dep.clone()).or_insert(0) += 1;
-            }
-        }
-    }
-
-    let mut depths = HashMap::new();
-    let mut queue = VecDeque::new();
-    for name in &graph.order {
-        if remaining_dependents.get(name) == Some(&0) {
-            depths.insert(name.clone(), 1);
-            queue.push_back(name.clone());
-        }
-    }
-
-    while let Some(current) = queue.pop_front() {
-        let current_depth = depths[&current];
-        if let Some(node) = graph.nodes.get(&current) {
-            for dep in &node.deps {
-                let Some(remaining) = remaining_dependents.get_mut(dep) else {
-                    continue;
-                };
-                depths
-                    .entry(dep.clone())
-                    .and_modify(|depth| *depth = (*depth).max(current_depth + 1))
-                    .or_insert(current_depth + 1);
-                *remaining -= 1;
-                if *remaining == 0 {
-                    queue.push_back(dep.clone());
-                }
-            }
-        }
-    }
-
-    depths
-}
-
-pub(crate) fn dependency_decl_orders(
-    graph: &ResolvedGraph,
-    dependencies: &IndexMap<SourceName, crate::config::EffectiveDependency>,
-) -> HashMap<SourceName, usize> {
-    let mut orders = HashMap::new();
-    let mut queue = VecDeque::new();
-
-    for (idx, source_name) in dependencies.keys().enumerate() {
-        if graph.nodes.contains_key(source_name) {
-            orders.insert(source_name.clone(), idx + 1);
-            queue.push_back(source_name.clone());
-        }
-    }
-
-    while let Some(current) = queue.pop_front() {
-        let current_order = orders[&current];
-        let Some(node) = graph.nodes.get(&current) else {
-            continue;
-        };
-
-        for dep in &node.deps {
-            if !graph.nodes.contains_key(dep) {
-                continue;
-            }
-            match orders.get_mut(dep) {
-                Some(existing) if current_order < *existing => {
-                    *existing = current_order;
-                    queue.push_back(dep.clone());
-                }
-                Some(_) => {}
-                None => {
-                    orders.insert(dep.clone(), current_order);
-                    queue.push_back(dep.clone());
-                }
-            }
-        }
-    }
-
-    orders
-}
-
 /// Existing on-disk destination that is not lock-managed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnmanagedCollision {
@@ -527,7 +582,9 @@ pub fn check_unmanaged_collisions(
             // unmanaged user file. Safe to overwrite.
             let hash_path = hash_path_for_kind(&disk_path, target_item.id.kind);
             if let Ok(disk_hash) = hash::compute_hash(&hash_path, target_item.id.kind)
-                && disk_hash == target_item.source_hash.as_str()
+                && target_item
+                    .expected_installed_hash()
+                    .is_ok_and(|expected| disk_hash == expected.as_str())
             {
                 continue;
             }
@@ -865,6 +922,30 @@ mod tests {
             "shared".to_string(),
             "leaf".to_string(),
         ];
+        let direct_dependencies = ["direct-short", "direct-long"]
+            .into_iter()
+            .map(|name| {
+                let path = PathBuf::from(format!("/tmp/{name}"));
+                (
+                    SourceName::from(name),
+                    EffectiveDependency {
+                        declared_source_id: SourceId::Path {
+                            canonical: path.clone(),
+                            subpath: None,
+                        },
+                        source_id: SourceId::Path {
+                            canonical: path.clone(),
+                            subpath: None,
+                        },
+                        spec: SourceSpec::Path(path),
+                        subpath: None,
+                        filter: FilterMode::All,
+                        rename: RenameMap::new(),
+                        dialect: None,
+                    },
+                )
+            })
+            .collect();
 
         for run in 0..128 {
             let mut insertion_order = definitions.clone();
@@ -884,7 +965,7 @@ mod tests {
                 version_constraints: HashMap::new(),
                 unreadable_hook_surfaces: std::collections::BTreeMap::new(),
             };
-            let depths = dependency_depths(&graph);
+            let depths = graph.dependency_depths(&direct_dependencies);
             let mut emitted_order = graph.order.clone();
             emitted_order.sort_by_key(|name| (depths[name], name.clone()));
             assert_eq!(
@@ -964,7 +1045,10 @@ mod tests {
         let (target, renames, _) =
             build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
                 .unwrap();
-        assert!(renames.is_empty());
+        assert_eq!(renames.len(), 1);
+        assert_eq!(renames[0].kind, ItemKind::Agent);
+        assert_eq!(renames[0].original_name.as_str(), "old-name");
+        assert_eq!(renames[0].new_name.as_str(), "new-name");
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/new-name.md"));
         assert_eq!(target.items["agents/new-name.md"].id.name, "new-name");

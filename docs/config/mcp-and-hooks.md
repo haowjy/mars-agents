@@ -319,13 +319,13 @@ hooks with the same name on different events are distinct and both install.
 
 **Precedence rules (highest to lowest):**
 
-1. **Local package (`_self`) always wins** — an MCP server or hook declared in
-   your project's local `mcp/` or `hooks/` directory silently overrides any
-   dependency that declares the same name. No warning is emitted.
+1. **Shallower package wins** — the local package (`_self`) beats direct dependencies,
+   and a direct dependency beats its transitive dependencies. A local winner is silent;
+   dependency collisions emit a warning naming both sources.
 
-2. **Earlier declaration order wins** — when two dependencies declare the same
-   name, the one that appears earlier in `[dependencies]` in `mars.toml` wins
-   and the later one is dropped. A warning is emitted naming both sources.
+2. **Earlier declaration order wins at equal depth** — when two dependencies at
+   the same depth declare the same name, the one reached through the earlier
+   `[dependencies]` entry wins and the later one is dropped.
 
 3. **Alphabetical tiebreak** — when two sources have the same declaration order
    (e.g., both are transitive at the same depth), the alphabetically-first

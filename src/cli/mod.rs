@@ -285,6 +285,8 @@ fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
         cmd,
         Command::Build(build::BuildArgs {
             command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs { agent: None, .. })
+        }) | Command::Build(build::BuildArgs {
+            command: build::BuildCommand::Plugin(build::PluginArgs { path: Some(_), .. })
         }) | Command::Models(models::ModelsArgs {
             command: models::ModelsCommand::RefreshCatalog(_),
         })

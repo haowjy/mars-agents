@@ -60,14 +60,23 @@ pub fn resolve_publish_graph(
     lens: &PublishLens,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedGraph, MarsError> {
+    resolve_publish_graph_from_config(lens, &lens.effective, &ResolveOptions::default(), diag)
+}
+
+/// Resolve a caller-provided consumer view through the same publish lens.
+///
+/// Plugin builds use this to resolve an implicit consumer configuration before
+/// staging the resulting graph. Keeping provider construction here preserves
+/// the publish lens's no-lock, no-local-config boundary without teaching the
+/// build module how sources are fetched.
+pub(crate) fn resolve_publish_graph_from_config(
+    lens: &PublishLens,
+    effective: &EffectiveConfig,
+    options: &ResolveOptions,
+    diag: &mut DiagnosticCollector,
+) -> Result<ResolvedGraph, MarsError> {
     let cache = GlobalCache::new()?;
     let provider = RealSourceProvider::new(&cache, lens.package_root());
 
-    resolve(
-        &lens.effective,
-        &provider,
-        None,
-        &ResolveOptions::default(),
-        diag,
-    )
+    resolve(effective, &provider, None, options, diag)
 }

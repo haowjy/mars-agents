@@ -245,15 +245,23 @@ pub(crate) fn directory_tree_matches_snapshot(
 }
 
 fn strict_directory_tree_snapshot(root: &Path) -> Result<Option<DirectoryTreeSnapshot>, MarsError> {
+    strict_directory_tree_snapshot_filtered(root, &[])
+}
+
+pub(crate) fn strict_directory_tree_snapshot_filtered(
+    root: &Path,
+    excluded_top_level: &[&str],
+) -> Result<Option<DirectoryTreeSnapshot>, MarsError> {
     let metadata = match fs::symlink_metadata(root) {
         Ok(metadata) => metadata,
-        Err(_) => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
     };
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Ok(None);
     }
     let mut snapshot = DirectoryTreeSnapshot::new();
-    if collect_relative_tree_entries(root, root, &mut snapshot)? {
+    if collect_relative_tree_entries(root, root, excluded_top_level, &mut snapshot)? {
         Ok(Some(snapshot))
     } else {
         Ok(None)
@@ -263,6 +271,7 @@ fn strict_directory_tree_snapshot(root: &Path) -> Result<Option<DirectoryTreeSna
 fn collect_relative_tree_entries(
     root: &Path,
     current: &Path,
+    excluded_top_level: &[&str],
     snapshot: &mut DirectoryTreeSnapshot,
 ) -> Result<bool, MarsError> {
     for entry in fs::read_dir(current)? {
@@ -270,18 +279,23 @@ fn collect_relative_tree_entries(
         let path = entry.path();
         let file_type = entry.file_type()?;
         let rel = path.strip_prefix(root).expect("path is always under root");
-        let rel_path: String = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
+        if rel.components().next().is_some_and(|component| {
+            excluded_top_level
+                .iter()
+                .any(|name| component.as_os_str() == *name)
+        }) {
+            continue;
+        }
+        let Some(rel_path) = crate::hash::portable_relative(root, &path) else {
+            return Ok(false);
+        };
 
         if file_type.is_symlink() {
             return Ok(false);
         }
         if file_type.is_dir() {
             snapshot.insert_directory(rel_path);
-            if !collect_relative_tree_entries(root, &path, snapshot)? {
+            if !collect_relative_tree_entries(root, &path, excluded_top_level, snapshot)? {
                 return Ok(false);
             }
         } else if file_type.is_file() {
@@ -331,7 +345,8 @@ fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsErr
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o644))?;
+                let mode = 0o644 | (metadata.permissions().mode() & 0o111);
+                fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))?;
             }
         } else {
             return Err(std::io::Error::new(

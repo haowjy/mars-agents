@@ -65,7 +65,7 @@ pub(crate) fn stage_rooted_source(
         Some(source_name.as_ref()),
         diag,
     )?;
-    let hook_surface = detect_unreadable_hook_surface(&staged_package_root)?;
+    let hook_surface = detect_unreadable_hook_surface(&staged_package_root, diag)?;
     Ok(StagedRootedSource {
         rooted: RootedSourceRef {
             checkout_root: rooted.checkout_root,
@@ -75,8 +75,11 @@ pub(crate) fn stage_rooted_source(
     })
 }
 
-fn detect_unreadable_hook_surface(package_root: &Path) -> Result<HookSurfaceState, MarsError> {
-    let hook_dirs = crate::discover::discover_hook_directories(package_root)?;
+fn detect_unreadable_hook_surface(
+    package_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<HookSurfaceState, MarsError> {
+    let hook_dirs = crate::discover::discover_hook_directories(package_root, diag)?;
     let mut hook_names = std::collections::BTreeSet::new();
     for hook_dir in hook_dirs {
         let manifest = hook_dir.join("hook.toml");
@@ -114,7 +117,6 @@ pub(crate) fn stage_canonical_source(
     copy_and_lift_tree(
         source_root,
         dest_root,
-        source_root,
         dialect,
         skill_overrides,
         renames,
@@ -178,7 +180,6 @@ pub(crate) fn stage_local_item(
             copy_and_lift_tree(
                 source_path,
                 &dest,
-                source_path,
                 dialect,
                 skill_overrides,
                 &RenameMap::new(),
@@ -211,7 +212,6 @@ struct StageOverlayContext<'a> {
 fn copy_and_lift_tree(
     source_root: &Path,
     dest_root: &Path,
-    current: &Path,
     dialect: Dialect,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
@@ -219,44 +219,13 @@ fn copy_and_lift_tree(
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let mut entries: Vec<_> = fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-
+    let entries = crate::fs::authored_tree_entries(source_root, excluded_paths, diag)?;
     for entry in entries {
-        let src_path = entry.path();
-        let rel = src_path
-            .strip_prefix(source_root)
-            .map_err(|_| MarsError::Source {
-                source_name: "staging".to_string(),
-                message: format!(
-                    "staging traversal escaped source root at {}",
-                    src_path.display()
-                ),
-            })?;
-        // Filter before descending: local flat skills contain their own staging tree.
-        if excluded_paths
-            .iter()
-            .any(|excluded| rel.starts_with(excluded))
-        {
-            continue;
-        }
-        let dest_path = dest_root.join(rel);
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
+        let dest_path = dest_root.join(&entry.relative);
+        if entry.kind == crate::fs::AuthoredEntryKind::Directory {
             fs::create_dir_all(&dest_path)?;
-            copy_and_lift_tree(
-                source_root,
-                dest_root,
-                &src_path,
-                dialect,
-                skill_overrides,
-                renames,
-                fallback_skill_name,
-                excluded_paths,
-                diag,
-            )?;
-        } else if should_lift_markdown(&src_path) {
+        } else if should_lift_markdown(&entry.source) {
+            let src_path = entry.source;
             let kind = item_kind_for_markdown(&src_path);
             process_markdown_file(
                 &src_path,
@@ -276,7 +245,7 @@ fn copy_and_lift_tree(
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::copy(&src_path, &dest_path)?;
+            fs::copy(&entry.source, &dest_path)?;
         }
     }
     Ok(())

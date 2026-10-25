@@ -369,11 +369,7 @@ pub(super) fn prepare(
         {
             continue;
         }
-        let expected = target
-            .rewritten_content
-            .as_ref()
-            .map(|content| ContentHash::from(hash::hash_bytes(content.as_bytes())))
-            .unwrap_or_else(|| target.source_hash.clone());
+        let expected = target.expected_installed_hash()?;
         let item = PendingWrite {
             source: target.source_name.clone(),
             kind: target.id.kind,

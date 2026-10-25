@@ -508,7 +508,8 @@ fn copy_entry_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsE
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(dest, fs::Permissions::from_mode(0o644))?;
+            let mode = 0o644 | (metadata.permissions().mode() & 0o111);
+            fs::set_permissions(dest, fs::Permissions::from_mode(mode))?;
         }
         Ok(())
     } else {

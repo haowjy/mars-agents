@@ -1,6 +1,32 @@
-# src/build/ — Launch Bundle Construction
+# src/build/ — Runtime and Distribution Artifacts
 
-Generates serializable launch bundles for harness runtimes. 6 files + `.context/`, ~2700 lines.
+Generates serializable launch bundles for harness runtimes and committed plugin trees for
+package distribution.
+
+## Plugin Builds
+
+`plugin/` builds one Claude-format tree matching what `mars sync` installs in the package's own
+checkout: its items plus dependencies under its own filters, renames, and visibility rules. It
+resolves through `PublishLens`, stages every package, collects the flattened target with sync's
+shared collect/rename/validate pipeline, then lowers agents, skills, exported hooks, and exported
+MCP servers without reading project config, a lockfile, `.mars/`, or host model state. The
+implicit target selection includes Claude and Codex so warnings about hooks that the shared tree
+cannot carry come from the parsed `TargetState`, not a second manifest scan.
+
+The generated tree is handed to `plugin::output::replace_owned_tree`; the build core never
+mutates the destination itself. The output layer stages in a sibling directory, records a
+`.mars-plugin.json` sentinel, and publishes with a two-rename swap under a cross-process lock.
+It recovers interrupted swaps before a new build and never replaces a non-empty destination
+without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
+before applying the building package's single plugin namespace.
+
+`plugin_inputs_hash` is the offline F3 seam: bytes under the root package's discovered own-item
+paths (including hook fragments and MCP definitions), with generated trees skipped and text line
+endings normalized, plus `[package]` without `version` and the `[plugin]`, `[dependencies]`,
+`[models]`, `[skills]`, and `[agents]` tables. It never resolves. Builds compute it after output
+recovery while holding the output lock. The sentinel separately records resolved dependency
+version/commit identities and one SHA-256 per generated file; those file hashes are the only
+output-integrity source.
 
 ## Mental Model
 

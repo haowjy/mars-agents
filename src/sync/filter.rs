@@ -122,6 +122,7 @@ fn resolve_agent_skill_deps(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::DiagnosticCollector;
     use crate::discover;
     use std::fs;
     use tempfile::TempDir;
@@ -154,7 +155,8 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[("planning", "# planning")],
         );
-        let discovered = discover::discover_source(tree.path(), None).unwrap();
+        let discovered =
+            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
         let filtered = apply_filter(&discovered, &FilterMode::All, tree.path()).unwrap();
         assert_eq!(filtered.len(), 3);
     }
@@ -165,7 +167,8 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[],
         );
-        let discovered = discover::discover_source(tree.path(), None).unwrap();
+        let discovered =
+            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Exclude(vec!["reviewer".into()]),
@@ -180,7 +183,8 @@ mod tests {
     #[test]
     fn filter_exclude_path_matches_mixed_separators_on_windows() {
         let tree = make_source_tree(&[("coder.md", "# coder")], &[]);
-        let discovered = discover::discover_source(tree.path(), None).unwrap();
+        let discovered =
+            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Exclude(vec![r"agents\coder.md".into()]),
@@ -195,7 +199,8 @@ mod tests {
     #[test]
     fn filter_exclude_path_preserves_backslash_on_posix() {
         let tree = make_source_tree(&[("coder.md", "# coder")], &[]);
-        let discovered = discover::discover_source(tree.path(), None).unwrap();
+        let discovered =
+            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Exclude(vec![r"agents\coder.md".into()]),
@@ -213,7 +218,8 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[("planning", "# planning")],
         );
-        let discovered = discover::discover_source(tree.path(), None).unwrap();
+        let discovered =
+            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Include {
@@ -239,7 +245,8 @@ mod tests {
                 ("review", "# Review skill"),
             ],
         );
-        let discovered = discover::discover_source(tree.path(), None).unwrap();
+        let discovered =
+            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Include {

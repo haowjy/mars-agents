@@ -13,6 +13,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 
@@ -44,32 +45,34 @@ impl EnvRef {
     }
 }
 
-/// Parsed content of a single `mcp/<name>/mcp.toml`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct McpServerDef {
-    /// Server name — matches the directory name by convention but can be
-    /// overridden in the TOML file.
+#[derive(Debug, Deserialize)]
+struct RawMcpServerDef {
     #[serde(default)]
-    pub name: Option<String>,
+    name: Option<String>,
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: indexmap::IndexMap<String, EnvRef>,
+    #[serde(default = "crate::compiler::visibility::default_visibility")]
+    visibility: String,
+    #[serde(default)]
+    targets: Vec<String>,
+}
+
+/// Parsed content of a single `mcp/<name>/mcp.toml`.
+#[derive(Debug, Clone)]
+pub struct McpServerDef {
     /// Command to launch the MCP server.
     pub command: String,
     /// Arguments to pass to the command.
-    #[serde(default)]
     pub args: Vec<String>,
     /// Symbolic environment references.
-    #[serde(default)]
     pub env: indexmap::IndexMap<String, EnvRef>,
-    /// Visibility: "local" (default) or "exported".
-    /// Exported MCP servers propagate to transitive consumers.
-    #[serde(default = "default_visibility")]
-    pub visibility: String,
+    /// Whether this server crosses package boundaries.
+    pub visibility: Visibility,
     /// Optional target filter — if absent, applies to all targets.
-    #[serde(default)]
     pub targets: Vec<String>,
-}
-
-fn default_visibility() -> String {
-    "local".to_string()
 }
 
 /// A discovered MCP server item with provenance.
@@ -81,6 +84,10 @@ pub struct ParsedMcpItem {
     pub def: McpServerDef,
     /// Source package name this item came from.
     pub source_name: String,
+    /// Authored definition used for content diagnostics.
+    pub source_path: std::path::PathBuf,
+    /// Shortest dependency distance from the consumer package.
+    pub depth: usize,
     /// Declaration order of the source package in the consumer graph.
     pub decl_order: usize,
 }
@@ -97,13 +104,79 @@ pub fn discover_mcp_items(
     package_root: &Path,
     source_name: &str,
     decl_order: usize,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedMcpItem>, MarsError> {
+    let depth = usize::from(source_name != "_self");
+    discover_mcp_items_at_depth(package_root, source_name, depth, decl_order, diag)
+}
+
+/// Discover MCP items with graph precedence supplied by the target builder.
+pub(crate) fn discover_mcp_items_at_depth(
+    package_root: &Path,
+    source_name: &str,
+    depth: usize,
+    decl_order: usize,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<ParsedMcpItem>, MarsError> {
+    let definitions = discover_mcp_definition_paths(package_root, diag)?;
+    let mut items = Vec::new();
+    for toml_path in definitions {
+        let entry_dir = toml_path
+            .parent()
+            .expect("discovered MCP definition belongs to a server directory");
+        let server_name = entry_dir
+            .file_name()
+            .expect("discovered MCP server directory has a name")
+            .to_string_lossy();
+
+        let raw = std::fs::read_to_string(&toml_path).map_err(MarsError::from)?;
+        let raw_def: RawMcpServerDef = toml::from_str(&raw).map_err(|e| {
+            MarsError::Config(ConfigError::Invalid {
+                message: format!("failed to parse {}: {e}", toml_path.display()),
+            })
+        })?;
+        let resolved_name = raw_def.name.as_deref().unwrap_or(&server_name).to_string();
+        let def = McpServerDef {
+            command: raw_def.command,
+            args: raw_def.args,
+            env: raw_def.env,
+            visibility: Visibility::parse(
+                &raw_def.visibility,
+                "MCP server",
+                &resolved_name,
+                source_name,
+                diag,
+            ),
+            targets: raw_def.targets,
+        };
+
+        items.push(ParsedMcpItem {
+            name: resolved_name,
+            def,
+            source_name: source_name.to_string(),
+            source_path: toml_path,
+            depth,
+            decl_order,
+        });
+    }
+    Ok(items)
+}
+
+pub(crate) fn discover_mcp_definition_paths(
+    package_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<std::path::PathBuf>, MarsError> {
+    if skip_generated_tree(package_root, diag) {
+        return Ok(Vec::new());
+    }
     let mcp_dir = package_root.join("mcp");
     if !mcp_dir.is_dir() {
         return Ok(Vec::new());
     }
+    if skip_generated_tree(&mcp_dir, diag) {
+        return Ok(Vec::new());
+    }
 
-    let mut items = Vec::new();
     let mut entries: Vec<_> = std::fs::read_dir(&mcp_dir)
         .map_err(MarsError::from)?
         .filter_map(|e| e.ok())
@@ -111,7 +184,11 @@ pub fn discover_mcp_items(
         .collect();
     entries.sort_by_key(|e| e.file_name());
 
+    let mut definitions = Vec::new();
     for entry in entries {
+        if skip_generated_tree(&entry.path(), diag) {
+            continue;
+        }
         let dir_name = entry.file_name();
         let server_name = dir_name.to_string_lossy();
         // Skip hidden directories.
@@ -124,25 +201,17 @@ pub fn discover_mcp_items(
             continue;
         }
 
-        let raw = std::fs::read_to_string(&toml_path).map_err(MarsError::from)?;
-        let def: McpServerDef = toml::from_str(&raw).map_err(|e| {
-            MarsError::Config(ConfigError::Invalid {
-                message: format!("failed to parse {}: {e}", toml_path.display()),
-            })
-        })?;
-
-        // Resolved name: TOML override wins, else directory name.
-        let resolved_name = def.name.as_deref().unwrap_or(&server_name).to_string();
-
-        items.push(ParsedMcpItem {
-            name: resolved_name,
-            def,
-            source_name: source_name.to_string(),
-            decl_order,
-        });
+        definitions.push(toml_path);
     }
+    Ok(definitions)
+}
 
-    Ok(items)
+fn skip_generated_tree(path: &Path, diag: &mut DiagnosticCollector) -> bool {
+    let generated = crate::plugin_metadata::has_valid_plugin_sentinel(path);
+    if generated {
+        crate::fs::report_generated_tree(path, diag);
+    }
+    generated
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +308,8 @@ args = ["-y", "@upstash/context7-mcp@latest"]
 "#,
         );
 
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "context7");
         assert_eq!(items[0].def.command, "npx");
@@ -249,7 +319,8 @@ args = ["-y", "@upstash/context7-mcp@latest"]
     #[test]
     fn discover_empty_when_no_mcp_dir() {
         let tmp = TempDir::new().unwrap();
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert!(items.is_empty());
     }
 
@@ -257,7 +328,8 @@ args = ["-y", "@upstash/context7-mcp@latest"]
     fn discover_skips_dir_without_mcp_toml() {
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("mcp/no-toml")).unwrap();
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert!(items.is_empty());
     }
 
@@ -272,7 +344,8 @@ name = "custom-name"
 command = "node"
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items[0].name, "custom-name");
     }
 
@@ -288,7 +361,8 @@ command = "npx"
 API_KEY = { from = "env", var = "MY_API_KEY" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items[0].def.env.len(), 1);
         let env_ref = &items[0].def.env["API_KEY"];
         assert_eq!(env_ref.var_name(), "MY_API_KEY");
@@ -306,7 +380,8 @@ command = "npx"
 KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ123" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         let mut diag = DiagnosticCollector::new();
         check_env_refs(&items, false, &mut diag).unwrap();
         let collected = diag.drain();
@@ -330,7 +405,8 @@ command = "npx"
 KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ456" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         let mut diag = DiagnosticCollector::new();
         let result = check_env_refs(&items, true, &mut diag);
         assert!(result.is_err());
@@ -348,7 +424,8 @@ command = "npx"
 TOKEN = { from = "env", var = "SECRET_TOKEN" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         let entry = TargetMcpEntry::from_parsed(&items[0]);
         // The env map carries the variable name, not the resolved value.
         assert_eq!(entry.env["TOKEN"], "SECRET_TOKEN");

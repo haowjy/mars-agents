@@ -16,7 +16,7 @@ fn conventional_discovery_finds_agents_and_skills() {
     fs::write(dir.path().join("agents/coder.md"), "# coder").unwrap();
     fs::write(dir.path().join("skills/planning/SKILL.md"), "# planning").unwrap();
 
-    let items = discover_source(dir.path(), None).unwrap();
+    let items = discover_source(dir.path(), None, &mut DiagnosticCollector::new()).unwrap();
     assert_eq!(items.len(), 2);
     assert!(
         items
@@ -40,7 +40,7 @@ fn conventional_discovery_grounds_to_shallowest_convention_layer() {
     fs::write(dir.path().join("sub/agents/foo.md"), "# foo").unwrap();
     fs::write(dir.path().join("a/b/skills/bar/SKILL.md"), "# bar").unwrap();
 
-    let items = discover_source(dir.path(), None).unwrap();
+    let items = discover_source(dir.path(), None, &mut DiagnosticCollector::new()).unwrap();
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].source_path, PathBuf::from("agents/top.md"));
@@ -67,7 +67,9 @@ fn grounding_uses_registering_skill_container_layer_not_first_skill_segment() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::Skill);
@@ -82,7 +84,9 @@ fn grounding_uses_registering_agent_container_layer_not_first_agent_segment() {
     fs::write(dir.path().join("outer/agents/foo.md"), "# foo").unwrap();
     fs::write(dir.path().join("outer/agents/foo/agents/bar.md"), "# bar").unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::Agent);
@@ -102,7 +106,9 @@ fn grounding_uses_registering_bootstrap_container_layer_not_first_bootstrap_segm
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
@@ -116,7 +122,7 @@ fn conventional_discovery_keeps_nested_only_min_layer() {
     fs::create_dir_all(dir.path().join("sub/agents")).unwrap();
     fs::write(dir.path().join("sub/agents/x.md"), "# x").unwrap();
 
-    let items = discover_source(dir.path(), None).unwrap();
+    let items = discover_source(dir.path(), None, &mut DiagnosticCollector::new()).unwrap();
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::Agent);
@@ -132,7 +138,7 @@ fn top_level_skills_suppress_nested_example_skills() {
     fs::write(dir.path().join("skills/foo/SKILL.md"), "# foo").unwrap();
     fs::write(dir.path().join("examples/skills/bar/SKILL.md"), "# bar").unwrap();
 
-    let items = discover_source(dir.path(), None).unwrap();
+    let items = discover_source(dir.path(), None, &mut DiagnosticCollector::new()).unwrap();
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::Skill);
@@ -157,7 +163,7 @@ fn conventional_discovery_finds_package_bootstrap_docs() {
     .unwrap();
     fs::write(dir.path().join("bootstrap/.hidden/BOOTSTRAP.md"), "# hide").unwrap();
 
-    let items = discover_source(dir.path(), None).unwrap();
+    let items = discover_source(dir.path(), None, &mut DiagnosticCollector::new()).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
     assert_eq!(items[0].id.name.as_str(), "global-auth");
@@ -174,7 +180,7 @@ fn conventional_bootstrap_discovery_ignores_missing_bootstrap_file() {
     )
     .unwrap();
 
-    let items = discover_source(dir.path(), None).unwrap();
+    let items = discover_source(dir.path(), None, &mut DiagnosticCollector::new()).unwrap();
     assert!(items.is_empty());
 }
 
@@ -191,7 +197,8 @@ fn dispatcher_prefers_conventional_when_manifest_exists() {
     fs::create_dir_all(dir.path().join("nested")).unwrap();
     fs::write(dir.path().join("nested/SKILL.md"), "# nested").unwrap();
 
-    let items = discover_resolved_source(dir.path(), Some("demo")).unwrap();
+    let items = discover_resolved_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+        .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].source_path, PathBuf::from("skills/planning"));
 }
@@ -203,7 +210,9 @@ fn fallback_root_skill_does_not_override_convention_items() {
     fs::create_dir_all(dir.path().join("skills/planning")).unwrap();
     fs::write(dir.path().join("skills/planning/SKILL.md"), "# planning").unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.name.as_str(), "planning");
     assert_eq!(items[0].source_path, PathBuf::from("skills/planning"));
@@ -216,7 +225,7 @@ fn fallback_flat_root_skill_uses_package_basename_when_no_source_name() {
     fs::create_dir_all(&pkg).unwrap();
     fs::write(pkg.join("SKILL.md"), "# flat").unwrap();
 
-    let items = discover_manifestless_source(&pkg, None).unwrap();
+    let items = discover_manifestless_source(&pkg, None, &mut DiagnosticCollector::new()).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.name.as_str(), "my-pkg");
     assert_ne!(items[0].id.name.as_str(), "unknown-source");
@@ -230,7 +239,9 @@ fn fallback_flat_root_skill_uses_source_name_not_staged_dialect_dir() {
     fs::create_dir_all(&staged).unwrap();
     fs::write(staged.join("SKILL.md"), "# flat foreign skill").unwrap();
 
-    let items = discover_manifestless_source(&staged, Some("base")).unwrap();
+    let items =
+        discover_manifestless_source(&staged, Some("base"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.name.as_str(), "base");
     assert_eq!(items[0].source_path, PathBuf::from("."));
@@ -239,10 +250,10 @@ fn fallback_flat_root_skill_uses_source_name_not_staged_dialect_dir() {
 #[test]
 fn fallback_flat_root_skill_overlay_applies_under_source_name() {
     use crate::config::SkillOverlay;
-    use crate::diagnostic::DiagnosticCollector;
     use crate::dialect::Dialect;
     use crate::staging::stage_canonical_source;
     use crate::types::RenameMap;
+    use DiagnosticCollector;
     use indexmap::IndexMap;
 
     let source = TempDir::new().unwrap();
@@ -275,7 +286,9 @@ fn fallback_flat_root_skill_overlay_applies_under_source_name() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(&staged_root, Some("base")).unwrap();
+    let items =
+        discover_manifestless_source(&staged_root, Some("base"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.name.as_str(), "base");
 
@@ -289,10 +302,10 @@ fn fallback_flat_root_skill_overlay_applies_under_source_name() {
 #[test]
 fn fallback_flat_root_skill_overlay_applies_after_rename() {
     use crate::config::SkillOverlay;
-    use crate::diagnostic::DiagnosticCollector;
     use crate::dialect::Dialect;
     use crate::staging::stage_canonical_source;
     use crate::types::{ItemName, RenameMap};
+    use DiagnosticCollector;
     use indexmap::IndexMap;
 
     let source = TempDir::new().unwrap();
@@ -327,7 +340,9 @@ fn fallback_flat_root_skill_overlay_applies_after_rename() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(&staged_root, Some("base")).unwrap();
+    let items =
+        discover_manifestless_source(&staged_root, Some("base"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(
         items[0].id.name.as_str(),
@@ -355,7 +370,9 @@ fn fallback_root_skill_includes_manifest_bootstrap_docs() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
 
     assert_eq!(items.len(), 2);
     assert!(
@@ -384,7 +401,9 @@ fn manifestless_source_unions_conventions_with_manifest_declarations() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
 
     assert_eq!(items.len(), 3);
     assert!(items.iter().any(|item| {
@@ -412,7 +431,9 @@ fn manifestless_source_keeps_convention_and_different_named_manifest_item() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
 
     assert_eq!(items.len(), 2);
     assert!(items.iter().any(|item| {
@@ -437,7 +458,9 @@ fn manifest_name_collision_with_convention_item_is_reported() {
     )
     .unwrap();
 
-    let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
+    let err =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap_err();
 
     assert!(matches!(err, MarsError::DiscoveryCollision { .. }));
 }
@@ -456,7 +479,9 @@ fn manifest_name_collision_between_declared_paths_is_reported() {
     )
     .unwrap();
 
-    let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
+    let err =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap_err();
 
     assert!(matches!(err, MarsError::DiscoveryCollision { .. }));
 }
@@ -469,7 +494,9 @@ fn duplicate_names_at_same_grounded_layer_are_reported() {
     fs::write(dir.path().join("a/skills/foo/SKILL.md"), "# a").unwrap();
     fs::write(dir.path().join("b/skills/foo/SKILL.md"), "# b").unwrap();
 
-    let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
+    let err =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap_err();
 
     assert!(matches!(err, MarsError::DiscoveryCollision { .. }));
 }
@@ -482,7 +509,9 @@ fn manifestless_source_discovers_top_level_canonical_agents_and_skills() {
     fs::write(dir.path().join("agents/reviewer.md"), "# reviewer").unwrap();
     fs::write(dir.path().join("skills/review/SKILL.md"), "# review").unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
 
     assert_eq!(items.len(), 2);
     assert!(items.iter().any(|item| {
@@ -507,7 +536,9 @@ fn convention_walk_finds_items_at_max_depth_and_skips_deeper_items() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
 
     assert_eq!(items.len(), 1);
     assert_eq!(
@@ -525,7 +556,9 @@ fn fallback_walk_finds_nested_min_layer_and_skips_dot_dirs() {
     fs::write(dir.path().join("a/b/skills/bar/SKILL.md"), "# skill").unwrap();
     fs::write(dir.path().join(".claude/agents/hidden.md"), "# hidden").unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert!(items.iter().any(|item| {
         item.id.kind == ItemKind::Agent && item.source_path == Path::new("sub/agents/foo.md")
@@ -551,7 +584,12 @@ fn explicit_claude_subpath_root_imports_inner_convention_dirs() {
     fs::write(claude_root.join("agents/reviewer.md"), "# reviewer").unwrap();
     fs::write(claude_root.join("skills/research/SKILL.md"), "# research").unwrap();
 
-    let items = discover_manifestless_source(&claude_root, Some("foreign")).unwrap();
+    let items = discover_manifestless_source(
+        &claude_root,
+        Some("foreign"),
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert_eq!(items.len(), 2);
     assert!(
         items
@@ -577,7 +615,8 @@ fn conventional_root_skill_does_not_override_conventional_items() {
     fs::create_dir_all(dir.path().join("skills/planning")).unwrap();
     fs::write(dir.path().join("skills/planning/SKILL.md"), "# planning").unwrap();
 
-    let items = discover_resolved_source(dir.path(), Some("demo")).unwrap();
+    let items = discover_resolved_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+        .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].source_path, PathBuf::from("skills/planning"));
 }
@@ -598,7 +637,8 @@ fn conventional_root_skill_survives_bootstrap_only_discovery() {
     )
     .unwrap();
 
-    let items = discover_resolved_source(dir.path(), Some("demo")).unwrap();
+    let items = discover_resolved_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+        .unwrap();
 
     assert_eq!(items.len(), 2);
     assert!(items.iter().any(|item| {
@@ -627,7 +667,9 @@ fn manifest_declared_skill_path_is_honored() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].source_path, PathBuf::from("plugins/deep-skill"));
 }
@@ -644,7 +686,9 @@ fn fallback_dedupes_overlapping_manifest_and_container_paths() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].source_path, PathBuf::from("skills/planning"));
 }
@@ -661,7 +705,9 @@ fn manifest_ignores_nested_metadata_agent_keys() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].source_path, PathBuf::from("agents/reviewer.md"));
 }
@@ -678,7 +724,9 @@ fn fallback_manifest_declares_bootstrap_docs() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
     assert_eq!(items[0].id.name.as_str(), "global-auth");
@@ -697,7 +745,9 @@ fn fallback_manifest_declares_bootstrap_container() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
     assert_eq!(items[0].id.name.as_str(), "setup");
@@ -720,7 +770,9 @@ fn nested_bootstrap_dir_is_discovered() {
     )
     .unwrap();
 
-    let items = discover_manifestless_source(dir.path(), Some("demo")).unwrap();
+    let items =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
     assert_eq!(items[0].id.name.as_str(), "setup");
@@ -740,6 +792,8 @@ fn fallback_manifest_declared_escape_is_rejected() {
     )
     .unwrap();
 
-    let err = discover_manifestless_source(dir.path(), Some("demo")).unwrap_err();
+    let err =
+        discover_manifestless_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new())
+            .unwrap_err();
     assert!(matches!(err, MarsError::ManifestDeclaredPathEscape { .. }));
 }

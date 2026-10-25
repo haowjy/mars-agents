@@ -19,13 +19,15 @@ mars.toml + mars.lock (committed, project root)
 ## Dependency Direction
 
 ```
-cli → sync → compiler → target adapters
-              ↓              ↑
-           resolve ← source  |
-              ↓              |
-           config ←──────────┘
-              ↓
-           models → routing → harness registry
+cli ─┬→ sync ─────────→ compiler → target adapters
+     └→ build/plugin ─┬→ resolve
+                     ├→ sync target preparation
+                     └→ compiler lowering
+sync/build → resolve ← source
+               ↓
+            config
+               ↓
+            models → routing → harness registry
 ```
 
 - `cli/` dispatches commands, finds project root, formats output
@@ -51,7 +53,7 @@ cli → sync → compiler → target adapters
 - `curation/` authored display-only filters over Possible; never a routing input
 - `routing/` harness candidate evaluation — single evaluator for all routing
 - `harness/` canonical harness vocabulary (registry) + capability snapshot (host)
-- `build/` launch bundle construction (serializable artifact for harness runtime)
+- `build/` launch bundle construction and flattened publish-graph plugin builds
 - `content` layered lookup for primary and fallback canonical agent / skill files
 - `platform::fs` is the canonical layer for durable writes, copies, replacements, comparisons, and removals
 

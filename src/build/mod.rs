@@ -1,5 +1,6 @@
 pub mod bundle;
 pub mod inventory;
+pub mod plugin;
 pub mod policy;
 pub mod prompt;
 

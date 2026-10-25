@@ -4,6 +4,31 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `mars build plugin [PATH] --out <dir>` builds one Claude-format plugin (Codex installs the
+  same tree) holding what `mars sync` installs in the package's own checkout: its items plus its
+  dependencies under its own filters, renames and visibility, with exported hooks and MCP servers.
+  Skill and agent references are qualified as `<plugin>:<name>`. Output is deterministic and LF.
+  The output dir is Mars-owned: a `.mars-plugin.json` sentinel records the package version, an
+  offline input hash, dependency versions and per-file hashes; a non-empty dir without one is
+  refused; rebuilds swap the tree atomically and recover from an interrupted build.
+
+### Fixed
+- Hook order now follows shortest dependency depth, changing only when a direct dependency is
+  also reached transitively. Codex users may need to re-trust moved hooks once with `/hooks`.
+- Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
+  treated as local.
+- Discovery, MCP discovery and staging skip any directory holding a valid `.mars-plugin.json`
+  (generated plugin output) and report each skipped path, so a committed plugin tree is never
+  re-imported as package source.
+- Explicitly or automatically renamed agents and skills now carry their installed names in
+  frontmatter, and `subagents:` references follow explicit agent renames as well as collision
+  renames. Native agent sync also removes prior claims that are absent from the current emission
+  set, including outputs left by dependency removals and renames.
+- MCP server collisions now prefer the shallowest package, then dependency declaration order,
+  so a package's own server cannot lose to a transitive dependency.
+- Skill and hook copies now preserve source executable bits.
+
 ## [0.18.2] - 2026-10-25
 
 ### Fixed

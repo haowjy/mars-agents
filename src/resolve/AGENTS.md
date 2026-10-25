@@ -46,7 +46,9 @@ sources and versions appear in the final graph.
 2. Calls `staging::stage_rooted_source`, which lifts foreign frontmatter to canonical form and writes the staged tree to `<staging_root>/<source-name>/<dialect>/`
 3. Repoints `package_root` to the staged tree
 
-All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged.
+All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged. Plugin builds reuse the same
+`stage_rooted_package` operation only after graph resolution, so the root package's relative path
+dependencies are interpreted against its authored checkout rather than its staged copy.
 
 `ResolveOptions.source_overrides` applies project-local path overrides by source
 name to both direct and manifest-discovered transitive dependencies. Declared
@@ -74,12 +76,19 @@ unreadable-content exception.
 - `ResolverContext` — accumulates registry, visited items, version constraints
 - `VersionConstraint` — `Semver`, `Latest`, `RefPin`
 
+`ResolvedGraph::dependency_depths()` and `dependency_decl_orders()` derive traversal properties
+from the graph plus the consumer's ordered direct dependencies for compiler ordering; callers do
+not reconstruct them in sync or lowering. Depth is the shortest distance from a direct dependency.
+
 ## Production Lenses
 
 - `PublishLens` loads the consumer-facing config once: it ignores `mars.local.toml`
   and clears local dependencies while retaining the optional manifest and effective config.
   `resolve_publish_graph(&lens, diag)` resolves it with no lock or project staging;
   source fetches use `GlobalCache` and diagnostics belong to the caller.
+  `resolve_publish_graph_from_config` gives internal publish consumers the same provider and
+  no-lock boundary with a caller-built consumer view. Resolve relative package dependencies
+  before staging: staging changes the package root from which relative paths are interpreted.
 
 ## Version Policy
 

@@ -13,18 +13,18 @@ const SELF_SOURCE: &str = "_self";
 
 /// Resolve MCP name collisions for a single target root.
 ///
-/// Precedence: `_self` > dependency; earlier `decl_order` > later; equal
-/// declaration order breaks alphabetically by source package name.
+/// `items` must already be filtered for `target_root`; target selection belongs
+/// to `TargetState`, while this module owns only collision precedence.
+///
+/// Precedence: shallower package > earlier `decl_order`; equal graph position
+/// breaks alphabetically by source package name.
 pub fn resolve_mcp_collisions_for_target<'a>(
-    items: &'a [ParsedMcpItem],
+    items: impl IntoIterator<Item = &'a ParsedMcpItem>,
     target_root: &str,
     diag: &mut DiagnosticCollector,
 ) -> Vec<&'a ParsedMcpItem> {
     let mut groups: BTreeMap<&str, Vec<&ParsedMcpItem>> = BTreeMap::new();
-    for item in items
-        .iter()
-        .filter(|item| mcp_applies_to_target(item, target_root))
-    {
+    for item in items {
         groups.entry(item.name.as_str()).or_default().push(item);
     }
 
@@ -45,10 +45,8 @@ fn resolve_mcp_group<'a>(
     }
 
     group.sort_by(|a, b| {
-        let a_self = a.source_name == SELF_SOURCE;
-        let b_self = b.source_name == SELF_SOURCE;
-        b_self
-            .cmp(&a_self)
+        a.depth
+            .cmp(&b.depth)
             .then_with(|| a.decl_order.cmp(&b.decl_order))
             .then_with(|| a.source_name.cmp(&b.source_name))
     });
@@ -73,10 +71,6 @@ fn resolve_mcp_group<'a>(
         );
     }
     winner
-}
-
-fn mcp_applies_to_target(item: &ParsedMcpItem, target_root: &str) -> bool {
-    item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == target_root)
 }
 
 #[cfg(test)]
@@ -105,8 +99,11 @@ mod tests {
         make_mcp(local.path(), "context7", "local-cmd", None);
         make_mcp(dep.path(), "context7", "dep-cmd", None);
 
-        let mut items = discover_mcp_items(local.path(), "_self", 0).unwrap();
-        items.extend(discover_mcp_items(dep.path(), "dep", 1).unwrap());
+        let mut items =
+            discover_mcp_items(local.path(), "_self", 0, &mut DiagnosticCollector::new()).unwrap();
+        items.extend(
+            discover_mcp_items(dep.path(), "dep", 1, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
@@ -123,8 +120,11 @@ mod tests {
         make_mcp(first.path(), "context7", "first-cmd", None);
         make_mcp(second.path(), "context7", "second-cmd", None);
 
-        let mut items = discover_mcp_items(second.path(), "_self", 2).unwrap();
-        items.extend(discover_mcp_items(first.path(), "_self", 1).unwrap());
+        let mut items =
+            discover_mcp_items(second.path(), "_self", 2, &mut DiagnosticCollector::new()).unwrap();
+        items.extend(
+            discover_mcp_items(first.path(), "_self", 1, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
@@ -144,8 +144,11 @@ mod tests {
         make_mcp(early.path(), "context7", "early-cmd", None);
         make_mcp(late.path(), "context7", "late-cmd", None);
 
-        let mut items = discover_mcp_items(late.path(), "late", 2).unwrap();
-        items.extend(discover_mcp_items(early.path(), "early", 1).unwrap());
+        let mut items =
+            discover_mcp_items(late.path(), "late", 2, &mut DiagnosticCollector::new()).unwrap();
+        items.extend(
+            discover_mcp_items(early.path(), "early", 1, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
@@ -165,8 +168,11 @@ mod tests {
         make_mcp(alpha.path(), "context7", "alpha-cmd", None);
         make_mcp(zed.path(), "context7", "zed-cmd", None);
 
-        let mut items = discover_mcp_items(zed.path(), "zed", 1).unwrap();
-        items.extend(discover_mcp_items(alpha.path(), "alpha", 1).unwrap());
+        let mut items =
+            discover_mcp_items(zed.path(), "zed", 1, &mut DiagnosticCollector::new()).unwrap();
+        items.extend(
+            discover_mcp_items(alpha.path(), "alpha", 1, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
@@ -186,12 +192,28 @@ mod tests {
         make_mcp(claude.path(), "context7", "claude-cmd", Some(".claude"));
         make_mcp(codex.path(), "context7", "codex-cmd", Some(".codex"));
 
-        let mut items = discover_mcp_items(claude.path(), "claude", 1).unwrap();
-        items.extend(discover_mcp_items(codex.path(), "codex", 2).unwrap());
+        let mut items =
+            discover_mcp_items(claude.path(), "claude", 1, &mut DiagnosticCollector::new())
+                .unwrap();
+        items.extend(
+            discover_mcp_items(codex.path(), "codex", 2, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
-        let claude_resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
-        let codex_resolved = resolve_mcp_collisions_for_target(&items, ".codex", &mut diag);
+        let claude_resolved = resolve_mcp_collisions_for_target(
+            items.iter().filter(|item| {
+                item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == ".claude")
+            }),
+            ".claude",
+            &mut diag,
+        );
+        let codex_resolved = resolve_mcp_collisions_for_target(
+            items.iter().filter(|item| {
+                item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == ".codex")
+            }),
+            ".codex",
+            &mut diag,
+        );
 
         assert_eq!(claude_resolved.len(), 1);
         assert_eq!(claude_resolved[0].source_name, "claude");

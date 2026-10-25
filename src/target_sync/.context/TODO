@@ -1,0 +1,6 @@
+# Target sync TODO
+
+- **p9433 Low 2:** `src/target_sync/mod.rs:571` and
+  `src/compiler/native_agents.rs:570` clean stale managed outputs through different item-specific
+  paths, so removing a configured target prunes native agents but leaves skills. Define one
+  ownership-gated unmanaged-target cleanup rule for every item kind.

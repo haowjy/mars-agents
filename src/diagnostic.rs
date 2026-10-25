@@ -216,13 +216,26 @@ impl DiagnosticCollector {
     }
 
     pub fn info(&mut self, code: &'static str, message: impl Into<String>) {
+        let message = message.into();
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Info,
             code,
-            message: message.into(),
+            message,
             context: None,
             category: None,
         });
+    }
+
+    pub(crate) fn info_once(&mut self, code: &'static str, message: impl Into<String>) {
+        let message = message.into();
+        if self
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == code && diagnostic.message == message)
+        {
+            return;
+        }
+        self.info(code, message);
     }
 
     pub fn info_with_category(

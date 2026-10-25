@@ -1,0 +1,9 @@
+# Discovery TODO
+
+- Collapse the `*_with_hooks` entry points by making hook discovery an injected step. The current
+  split preserves the public no-hook discovery API while sync supplies already strict-parsed hook
+  items, avoiding a second lenient `hook.toml` parse.
+- **p9434 Low 1:** `src/discover/mod.rs:623`, `src/compiler/mcp/mod.rs:209`, and
+  `src/fs/mod.rs:186-245` duplicate generated-plugin-tree detection and reporting. Move the
+  predicate plus info diagnostic into one `plugin_metadata::skip_generated_tree(path, diag)`
+  operation, then delete the private discovery/MCP wrappers and `fs::report_generated_tree`.

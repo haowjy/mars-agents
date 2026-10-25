@@ -54,8 +54,7 @@ pub fn compute(
             lock_index.find_output(CANONICAL_TARGET_ROOT, &target_item.dest_path)
         {
             // Item exists in lock — compare checksums
-            let effective_installed = rewritten_installed_checksum(target_item)
-                .unwrap_or_else(|| target_item.source_hash.clone());
+            let effective_installed = target_item.expected_installed_hash()?;
             let source_changed = target_item.source_hash != locked_item.source_checksum
                 || effective_installed != locked_item.installed_checksum;
 
@@ -143,13 +142,6 @@ pub fn compute(
     }
 
     Ok(SyncDiff { items })
-}
-
-fn rewritten_installed_checksum(target_item: &TargetItem) -> Option<ContentHash> {
-    target_item
-        .rewritten_content
-        .as_ref()
-        .map(|content| ContentHash::from(hash::hash_bytes(content.as_bytes())))
 }
 
 fn hash_path_for_kind(path: &Path, kind: crate::lock::ItemKind) -> std::path::PathBuf {

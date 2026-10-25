@@ -9,7 +9,7 @@ use std::path::Path;
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ItemKind;
 use crate::sync::LoadedConfig;
-use crate::sync::target::{CollisionRename, ExplicitSkillRename, TargetState};
+use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::validate::ValidationWarning;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
@@ -82,16 +82,16 @@ fn validate_skill_frontmatter_at_source(
 }
 
 pub(crate) fn warn_config_dangles_after_rename(
-    explicit_skill_renames: &[ExplicitSkillRename],
+    explicit_renames: &[ExplicitRename],
     collision_renames: &[CollisionRename],
     target: &TargetState,
     loaded: &LoadedConfig,
     diag: &mut DiagnosticCollector,
 ) {
     let mut renamed: HashMap<(ItemKind, String), Vec<String>> = HashMap::new();
-    for r in explicit_skill_renames {
+    for r in explicit_renames {
         renamed
-            .entry((ItemKind::Skill, r.original_name.to_string()))
+            .entry((r.kind, r.original_name.to_string()))
             .or_default()
             .push(r.new_name.to_string());
     }

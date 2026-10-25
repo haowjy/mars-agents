@@ -339,6 +339,25 @@ fn strict_skill_diagnostics(
             ));
         }
     }
+    if !fm.has_frontmatter() {
+        diags.push(SchemaDiagnostic::new(
+            "skill.no-frontmatter",
+            Severity::Warning,
+            Vec::new(),
+            "body-only skill has no frontmatter",
+        ));
+    } else {
+        for key in ["name", "description"] {
+            if !matches!(fm.get(key), Some(Value::String(value)) if !value.trim().is_empty()) {
+                diags.push(SchemaDiagnostic::new(
+                    "field.required",
+                    Severity::Error,
+                    key_path(key),
+                    format!("`{key}` must be a non-empty string"),
+                ));
+            }
+        }
+    }
     for key in ["name", "description", "license", "compatibility"] {
         if let Some(value) = fm.get(key)
             && !value.is_string()

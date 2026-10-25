@@ -98,6 +98,14 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
             "package name must be a non-empty string",
         ));
     }
+    if !matches!(package.get("version"), Some(toml::Value::String(_))) {
+        diagnostics.push(SchemaDiagnostic::new(
+            "manifest.version-missing",
+            Severity::Warning,
+            key_path("package.version"),
+            "package version is missing",
+        ));
+    }
     let fields = toml::from_str::<PackageSection>(content)
         .ok()
         .and_then(|manifest| manifest.package);

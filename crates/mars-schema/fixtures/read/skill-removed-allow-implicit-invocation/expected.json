@@ -10,6 +10,22 @@
       "severity": "error"
     },
     {
+      "code": "field.required",
+      "message": "`name` must be a non-empty string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.required",
+      "message": "`description` must be a non-empty string",
+      "path": [
+        "description"
+      ],
+      "severity": "error"
+    },
+    {
       "code": "skill-schema-error",
       "message": "skill field `name` has invalid value `missing`; allowed: string",
       "path": [

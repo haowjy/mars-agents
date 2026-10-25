@@ -2,6 +2,14 @@
   "body": "body",
   "diagnostics": [
     {
+      "code": "field.required",
+      "message": "`name` must be a non-empty string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    },
+    {
       "code": "skill-schema-error",
       "message": "skill field `name` has invalid value `missing`; allowed: string",
       "path": [

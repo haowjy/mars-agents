@@ -1,6 +1,15 @@
 {
   "body": "body",
-  "diagnostics": [],
+  "diagnostics": [
+    {
+      "code": "field.required",
+      "message": "`description` must be a non-empty string",
+      "path": [
+        "description"
+      ],
+      "severity": "error"
+    }
+  ],
   "fields": {
     "compatibility": null,
     "description": null,

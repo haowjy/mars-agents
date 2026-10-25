@@ -29,7 +29,9 @@ rendering them through atomic writes into hash-checked files, preferring a priva
 per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
 exported graph hooks even when no requested tree selected a fragment, which is the input for plugin
 omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap
-counts never depend on one format's emitted components.
+counts never depend on one format's emitted components. Component support comes from each listed
+harness's tree profile plus Codex's agent and MCP loader exceptions; verification levels are the
+only hand-entered matrix cells, and those same answers render the README tables.
 
 The Cursor tree is a `TreeProfile`, not a second walk: it preserves the shared Cursor agent
 lowering as-is, has no native model aliases or extra agent allowlist, and delegates `mcp.json` and

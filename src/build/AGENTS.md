@@ -22,7 +22,9 @@ project config, a lockfile, `.mars/`, or host model state. The implicit target s
 set of built trees' sync roots. `TargetState` also retains every filtered exported graph hook,
 including hooks no built root selected. A source check before the tree loop emits authored-content
 diagnostics once; tree writing emits only lowering diagnostics. Support diagnostics consume the
-full `TargetState` for graph-wide counts rather than inferring them from one tree.
+full `TargetState` for graph-wide counts rather than inferring them from one tree. `support.rs`
+derives component support from each listed harness's tree profile plus Codex's two loader gaps;
+only per-cell verification evidence is hand-entered, and the same data renders the README tables.
 
 The Cursor profile lowers native Cursor agents without an additional plugin field filter, uses no
 native model aliases, and writes `.cursor-plugin/plugin.json`, `mcp.json`, and versioned

@@ -1,10 +1,10 @@
 //! Config-entry compiler lane for MCP servers and hooks.
 //!
-//! This module owns discovery, filtering, lowering, and target-adapter writes
-//! for package-defined MCP servers and hooks.
+//! This module owns MCP discovery and config-entry lowering/writes. Hook
+//! selection comes from the target build that also selects installed content.
 
 pub mod resolve;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::compiler::hooks::ParsedHookItem;
@@ -71,25 +71,15 @@ pub(crate) fn file_hook_output_preserve_paths(
 /// cannot leave canonical or target state partially mutated.
 pub(crate) fn preflight_config_entries(
     ctx: &MarsContext,
-    resolved: &crate::sync::ResolvedState,
+    targeted: &crate::sync::TargetedState,
     force: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), crate::error::MarsError> {
-    use crate::compiler::hooks::{discover_hook_items, load_file_fragment, load_merge_fragment};
+    use crate::compiler::hooks::{load_file_fragment, load_merge_fragment};
     use crate::error::{ConfigError, MarsError};
     use crate::target::{HookFragmentMode, TargetRegistry};
 
-    let mut hooks = discover_hook_items(&ctx.project_root, "_self", 0, 0)?;
-    for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
-        if let Some(node) = resolved.graph.nodes.get(source_name) {
-            hooks.extend(crate::compiler::hooks::discover_resolved_hook_items(
-                node,
-                source_name,
-                1,
-                decl_order,
-            )?);
-        }
-    }
+    let resolved = &targeted.resolved;
     let registry = TargetRegistry::new();
     let mut errors = Vec::new();
     let managed_targets = resolved.loaded.effective.settings.managed_targets();
@@ -99,17 +89,8 @@ pub(crate) fn preflight_config_entries(
         touch.0 |= records.keys().any(|key| key.starts_with("mcp:"));
         touch.1 |= records.keys().any(|key| key.starts_with("hook"));
     }
-    for hook in &hooks {
-        if hook.source_name == "_self" || hook.def.visibility == "exported" {
-            for target in hook
-                .def
-                .targets
-                .keys()
-                .filter(|target| managed_targets.contains(target))
-            {
-                touched_targets.entry(target.clone()).or_default().1 = true;
-            }
-        }
+    for (target, _) in targeted.target.selected_hooks() {
+        touched_targets.entry(target.to_string()).or_default().1 = true;
     }
     let mut mcp_items =
         match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0) {
@@ -200,71 +181,56 @@ pub(crate) fn preflight_config_entries(
             }
         }
     }
-    for item in hooks {
-        if item.source_name != "_self" && item.def.visibility != "exported" {
+    for (target_name, item) in targeted.target.selected_hooks() {
+        let adapter = registry.get(target_name);
+        let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
+        let installed = installed_hook_dir(&ctx.project_root, target_name, &item.def.name);
+        let hook_dir = portable_installed_hook_dir(&installed);
+        if let Err(error) = validate_destination_path(&ctx.project_root, &installed, true) {
+            errors.push(error);
             continue;
         }
-        for target_name in item.def.targets.keys() {
-            if !resolved
+        if !force
+            && installed.symlink_metadata().is_ok()
+            && !resolved
                 .loaded
-                .effective
-                .settings
-                .managed_targets()
-                .contains(target_name)
-            {
-                continue;
+                .old_lock
+                .contains_output(target_name, &format!("hooks/{}", item.def.name))
+        {
+            errors.push(format!(
+                "unmanaged target hook directory `{}` blocks hook `{}`",
+                installed.display(),
+                item.def.name
+            ));
+            continue;
+        }
+        let result = match mode {
+            Some(HookFragmentMode::MergeJson { events }) => {
+                load_merge_fragment(item, target_name, events, &hook_dir, diag, true).map(|_| ())
             }
-            let adapter = registry.get(target_name);
-            let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
-            let installed = installed_hook_dir(&ctx.project_root, target_name, &item.def.name);
-            let hook_dir = portable_installed_hook_dir(&installed);
-            if let Err(error) = validate_destination_path(&ctx.project_root, &installed, true) {
-                errors.push(error);
-                continue;
-            }
-            if !force
-                && installed.symlink_metadata().is_ok()
-                && !resolved
-                    .loaded
-                    .old_lock
-                    .contains_output(target_name, &format!("hooks/{}", item.def.name))
-            {
-                errors.push(format!(
-                    "unmanaged target hook directory `{}` blocks hook `{}`",
-                    installed.display(),
-                    item.def.name
-                ));
-                continue;
-            }
-            let result = match mode {
-                Some(HookFragmentMode::MergeJson { events }) => {
-                    load_merge_fragment(&item, target_name, events, &hook_dir, diag, true)
-                        .map(|_| ())
-                }
-                Some(HookFragmentMode::File) => {
-                    if let Some(relative) =
-                        adapter.and_then(|adapter| adapter.hook_file_dest_path(&item.def.name))
+            Some(HookFragmentMode::File) => {
+                if let Some(relative) =
+                    adapter.and_then(|adapter| adapter.hook_file_dest_path(&item.def.name))
+                {
+                    let destination = ctx.project_root.join(target_name).join(relative);
+                    if let Err(error) =
+                        validate_destination_path(&ctx.project_root, &destination, false)
                     {
-                        let destination = ctx.project_root.join(target_name).join(relative);
-                        if let Err(error) =
-                            validate_destination_path(&ctx.project_root, &destination, false)
-                        {
-                            errors.push(error);
-                            continue;
-                        }
+                        errors.push(error);
+                        continue;
                     }
-                    load_file_fragment(&item, target_name, &hook_dir).map(|_| ())
                 }
-                None => Err(MarsError::Config(ConfigError::Invalid {
-                    message: format!(
-                        "hook `{}`: target `{target_name}` has no hook fragment mechanism",
-                        item.def.name
-                    ),
-                })),
-            };
-            if let Err(error) = result {
-                errors.push(error.to_string());
+                load_file_fragment(item, target_name, &hook_dir).map(|_| ())
             }
+            None => Err(MarsError::Config(ConfigError::Invalid {
+                message: format!(
+                    "hook `{}`: target `{target_name}` has no hook fragment mechanism",
+                    item.def.name
+                ),
+            })),
+        };
+        if let Err(error) = result {
+            errors.push(error.to_string());
         }
     }
     if errors.is_empty() {
@@ -395,15 +361,14 @@ fn validate_destination_path(
 
 /// Post-target-sync config-entry compilation: MCP servers and hooks.
 ///
-/// For each package in the resolved graph:
-/// 1. Discover MCP items from `mcp/<name>/mcp.toml`
-/// 2. Discover hook items from `hooks/<name>/hook.toml`
+/// MCP servers are discovered from each package in the resolved graph. Hooks
+/// come from the target build's filter- and collision-resolved selection.
 ///
 /// Then:
-/// 3. Run env-ref preflight (warn on missing vars)
-/// 4. Detect per-target-root MCP name collisions
-/// 5. Order hooks deterministically
-/// 6. For each target root, lower items and write via adapter `write_config_entries()`
+/// 1. Run env-ref preflight (warn on missing vars)
+/// 2. Detect per-target-root MCP name collisions
+/// 3. Order hooks deterministically
+/// 4. For each target root, lower items and write via adapter `write_config_entries()`
 ///
 /// All errors are non-fatal — emitted as diagnostics and compilation continues.
 pub(crate) fn compile_config_entries(
@@ -414,8 +379,6 @@ pub(crate) fn compile_config_entries(
     force: bool,
     diag: &mut DiagnosticCollector,
 ) -> ConfigEntryCompilation {
-    use crate::compiler::config_entries::resolve::resolve_hook_items_for_target;
-    use crate::compiler::hooks::discover_hook_items;
     use crate::compiler::mcp::{check_env_refs, discover_mcp_items};
     use crate::target::TargetRegistry;
 
@@ -424,14 +387,12 @@ pub(crate) fn compile_config_entries(
     let target_roots: Vec<String> = effective.settings.managed_targets();
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
-    // Compute package depths from direct deps (depth 1; local = 0).
-    let depths = compute_depths(graph);
     // Compute declaration-order precedence from mars.toml insertion order.
-    let decl_orders = compute_decl_orders(graph, &effective.dependencies);
+    let decl_orders = crate::sync::target::dependency_decl_orders(graph, &effective.dependencies);
 
-    // Collect all MCP and hook items across all packages.
+    // Collect MCP items across all packages. Hook selection was completed by
+    // the target build and is carried in TargetState.
     let mut all_mcp: Vec<crate::compiler::mcp::ParsedMcpItem> = Vec::new();
-    let mut all_hooks: Vec<crate::compiler::hooks::ParsedHookItem> = Vec::new();
 
     // Local package (depth 0, decl_order 0).
     let local_mcp = match discover_mcp_items(&ctx.project_root, "_self", 0) {
@@ -445,18 +406,6 @@ pub(crate) fn compile_config_entries(
         }
     };
     all_mcp.extend(local_mcp);
-
-    let local_hooks = match discover_hook_items(&ctx.project_root, "_self", 0, 0) {
-        Ok(items) => items,
-        Err(e) => {
-            diag.error(
-                "hook-discover",
-                format!("failed to scan local hook items: {e}"),
-            );
-            Vec::new()
-        }
-    };
-    all_hooks.extend(local_hooks);
 
     // Dependency packages.
     for source_name in &graph.order {
@@ -480,25 +429,9 @@ pub(crate) fn compile_config_entries(
                 }
             }
         }
-
-        let depth = depths.get(source_name).copied().unwrap_or(1);
-        match crate::compiler::hooks::discover_resolved_hook_items(
-            node,
-            source_name,
-            depth,
-            decl_order,
-        ) {
-            Ok(items) => all_hooks.extend(items),
-            Err(e) => {
-                diag.error(
-                    "hook-discover",
-                    format!("failed to scan hook items in `{source_name}`: {e}"),
-                );
-            }
-        }
     }
 
-    // HIGH-3: Filter out hooks and MCP items from dependency packages where visibility is Local.
+    // Filter out MCP items from dependency packages where visibility is Local.
     {
         use crate::compiler::visibility::{can_cross_package_boundary, resolve_visibility};
         use crate::lock::ItemKind;
@@ -520,21 +453,6 @@ pub(crate) fn compile_config_entries(
             }
             // Emit warning for explicitly exported effectful items.
             true
-        });
-
-        all_hooks.retain(|item| {
-            // Local package items always pass.
-            if item.source_name == "_self" {
-                return true;
-            }
-            // Dependency item — check visibility.
-            let explicit = match item.def.visibility.as_str() {
-                "exported" => Some(true),
-                "local" => Some(false),
-                _ => None,
-            };
-            let vis = resolve_visibility(ItemKind::Hook, &item.def.name, explicit);
-            can_cross_package_boundary(&vis)
         });
     }
 
@@ -564,8 +482,11 @@ pub(crate) fn compile_config_entries(
             continue;
         };
         let mode = adapter.hook_fragment_mode();
-        let installed_hooks = resolve_hook_items_for_target(&all_hooks, target_root, diag)
-            .into_iter()
+        let installed_hooks = applied
+            .planned
+            .targeted
+            .target
+            .selected_hooks_for_target(target_root)
             .filter(|item| {
                 let installed =
                     installed_hook_dir(&ctx.project_root, target_root, &item.def.name);
@@ -1009,195 +930,4 @@ fn installed_hook_dir(project_root: &Path, target_root: &str, hook_name: &str) -
 
 fn portable_installed_hook_dir(installed: &std::path::Path) -> String {
     installed.to_string_lossy().replace('\\', "/")
-}
-
-/// Compute package depth for hook ordering.
-///
-/// Direct dependencies of the consumer project have depth 1.
-/// Their transitive dependencies have depth 2, etc.
-/// Packages at the leaf of the graph (no dependencies themselves) have the highest depth.
-///
-/// Returns a map from SourceName → depth.
-fn compute_depths(graph: &crate::resolve::ResolvedGraph) -> HashMap<SourceName, usize> {
-    // A dependency is ready only after every package that depends on it has
-    // contributed its depth. This is Kahn's topological algorithm over the
-    // reversed dependency edges, with graph.order as the deterministic tie
-    // breaker for direct dependencies.
-    let mut remaining_dependents: HashMap<SourceName, usize> = HashMap::new();
-    for name in &graph.order {
-        remaining_dependents.insert(name.clone(), 0);
-    }
-    for name in &graph.order {
-        let Some(node) = graph.nodes.get(name) else {
-            continue;
-        };
-        for dep in &node.deps {
-            if graph.nodes.contains_key(dep) {
-                *remaining_dependents.entry(dep.clone()).or_insert(0) += 1;
-            }
-        }
-    }
-
-    let mut depths: HashMap<SourceName, usize> = HashMap::new();
-    let mut queue: VecDeque<SourceName> = VecDeque::new();
-    for name in &graph.order {
-        if remaining_dependents.get(name) == Some(&0) {
-            depths.insert(name.clone(), 1);
-            queue.push_back(name.clone());
-        }
-    }
-
-    while let Some(current) = queue.pop_front() {
-        let current_depth = depths[&current];
-        if let Some(node) = graph.nodes.get(&current) {
-            for dep in &node.deps {
-                let Some(remaining) = remaining_dependents.get_mut(dep) else {
-                    continue;
-                };
-                depths
-                    .entry(dep.clone())
-                    .and_modify(|depth| *depth = (*depth).max(current_depth + 1))
-                    .or_insert(current_depth + 1);
-                *remaining -= 1;
-                if *remaining == 0 {
-                    queue.push_back(dep.clone());
-                }
-            }
-        }
-    }
-
-    depths
-}
-
-/// Compute declaration-order precedence for dependency config entries.
-///
-/// Direct dependencies use the insertion order from `effective.dependencies`.
-/// Transitive dependencies inherit the minimum declaration order of any direct
-/// sponsor that reaches them.
-fn compute_decl_orders(
-    graph: &crate::resolve::ResolvedGraph,
-    dependencies: &indexmap::IndexMap<SourceName, crate::config::EffectiveDependency>,
-) -> HashMap<SourceName, usize> {
-    let mut orders: HashMap<SourceName, usize> = HashMap::new();
-    let mut queue: VecDeque<SourceName> = VecDeque::new();
-
-    for (idx, source_name) in dependencies.keys().enumerate() {
-        if graph.nodes.contains_key(source_name) {
-            orders.insert(source_name.clone(), idx + 1);
-            queue.push_back(source_name.clone());
-        }
-    }
-
-    while let Some(current) = queue.pop_front() {
-        let current_order = orders[&current];
-        let Some(node) = graph.nodes.get(&current) else {
-            continue;
-        };
-
-        for dep in &node.deps {
-            if !graph.nodes.contains_key(dep) {
-                continue;
-            }
-            match orders.get_mut(dep) {
-                Some(existing) if current_order < *existing => {
-                    *existing = current_order;
-                    queue.push_back(dep.clone());
-                }
-                Some(_) => {}
-                None => {
-                    orders.insert(dep.clone(), current_order);
-                    queue.push_back(dep.clone());
-                }
-            }
-        }
-    }
-
-    orders
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::resolve::{ResolvedGraph, ResolvedNode, RootedSourceRef};
-    use crate::source::ResolvedRef;
-    use crate::types::SourceId;
-    use indexmap::IndexMap;
-    use std::path::PathBuf;
-
-    fn graph_node(name: &str, deps: &[&str]) -> ResolvedNode {
-        let root = PathBuf::from(format!("/tmp/{name}"));
-        ResolvedNode {
-            source_name: name.into(),
-            source_id: SourceId::Path {
-                canonical: root.clone(),
-                subpath: None,
-            },
-            rooted_ref: RootedSourceRef {
-                checkout_root: root.clone(),
-                package_root: root.clone(),
-            },
-            resolved_ref: ResolvedRef {
-                source_name: name.into(),
-                version: None,
-                version_tag: None,
-                commit: None,
-                tree_path: root,
-            },
-            manifest: None,
-            deps: deps.iter().map(|dep| (*dep).into()).collect(),
-        }
-    }
-
-    #[test]
-    fn hook_depths_are_stable_for_longer_path_discovered_after_shorter_path() {
-        let definitions = [
-            ("direct-short", vec!["shared"]),
-            ("shared", vec!["leaf"]),
-            ("leaf", vec![]),
-            ("direct-long", vec!["middle"]),
-            ("middle", vec!["shared"]),
-        ];
-        let graph_order: Vec<SourceName> =
-            ["direct-short", "shared", "leaf", "direct-long", "middle"]
-                .into_iter()
-                .map(SourceName::from)
-                .collect();
-        let expected_emission = vec![
-            "direct-long".to_string(),
-            "direct-short".to_string(),
-            "middle".to_string(),
-            "shared".to_string(),
-            "leaf".to_string(),
-        ];
-
-        for run in 0..128 {
-            let mut insertion_order = definitions.clone();
-            let definition_count = insertion_order.len();
-            insertion_order.rotate_left(run % definition_count);
-            if run % 2 == 1 {
-                insertion_order.reverse();
-            }
-            let nodes = insertion_order
-                .into_iter()
-                .map(|(name, deps)| (name.into(), graph_node(name, &deps)))
-                .collect::<IndexMap<_, _>>();
-            let graph = ResolvedGraph {
-                order: graph_order.clone(),
-                nodes,
-                filters: HashMap::new(),
-                version_constraints: HashMap::new(),
-                unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-            };
-            let depths = compute_depths(&graph);
-            let mut emitted_order = graph.order.clone();
-            emitted_order.sort_by_key(|name| (depths[name], name.clone()));
-            assert_eq!(
-                emitted_order
-                    .into_iter()
-                    .map(|name| name.to_string())
-                    .collect::<Vec<_>>(),
-                expected_emission,
-            );
-        }
-    }
 }

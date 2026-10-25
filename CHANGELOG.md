@@ -9,8 +9,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rather than the caller's working directory.
 - `mars check` and `mars init` now report publish-view configuration warnings instead of
   dropping them; `mars check` also reports dependency-resolution warnings.
-- Hook emission no longer warns that a shadowed dependency hook is not installed when a local
-  hook with the same name is the installed winner.
+- Hook emission now uses the same filter- and collision-selected hook as installation, so an
+  excluded hook no longer suppresses another dependency's installed hook or causes a false
+  not-installed warning; shadowed dependency hooks no longer cause that warning either.
 - `mars version` now changes only `[package].version`, preserving comments, formatting,
   ordering, and unrecognized tables in `mars.toml`.
 

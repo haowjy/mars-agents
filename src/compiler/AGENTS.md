@@ -164,11 +164,14 @@ Universal schema parsing and native lowering. Skills support variant layouts per
 
 ## Config Entries (`config_entries/`)
 
-MCP servers and hooks discovered from packages, validated, and written to target config files via adapters.
-Sync selects one hook per target and name before checking its installed directory, then passes the
-same winners to merge-mode lowering and file-mode emission. `lower_config_entries_for_target` owns
-per-target MCP collision resolution, native merge-fragment loading, and hook ordering. Callers
-supply the `${MARS_HOOK_DIR}` replacement through its hook-directory callback.
+MCP servers and selected hooks are validated and written to target config files via adapters.
+The target build carries each parsed hook and source package alongside the target-scoped canonical
+selection; preflight, merge-mode lowering, and file-mode emission consume that value instead of
+rediscovering hooks. Sync checks the selected hook's installed directory after target sync, while a
+plugin build can lower the same pure selection without an installed directory.
+`lower_config_entries_for_target` owns per-target MCP collision resolution, native merge-fragment
+loading, and hook ordering. Callers supply the `${MARS_HOOK_DIR}` replacement through its
+hook-directory callback.
 
 ## MCP Compilation (`mcp/`)
 
@@ -181,9 +184,8 @@ validates merge-mode event keys against per-target allowlists, unwraps copy-past
 wrappers, substitutes `${MARS_HOOK_DIR}` in all JSON string values and file-mode
 fragment text, and returns structured `HookFragment` or substituted file content.
 Placement and lock recording are handled by `config_entries/`.
-Dependency hook discovery is contextualized by
-`hooks::discover_resolved_hook_items` in both target construction and config
-preflight; callers must not expose derived staging paths in schema errors.
+Dependency hook discovery is contextualized by `hooks::discover_resolved_hook_items` during target
+construction; callers must not expose derived staging paths in schema errors.
 
 ## Variants (`variants/`)
 

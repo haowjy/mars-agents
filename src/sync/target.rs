@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -20,6 +20,71 @@ use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};
 pub struct TargetState {
     /// Keyed by dest_path (relative to `.mars/`).
     pub items: IndexMap<DestPath, TargetItem>,
+    // Selection is intent, not proof of installation. Keep it when an unmanaged
+    // canonical path prunes `items` so post-sync lowering can report the missing winner.
+    selected_hooks: IndexMap<DestPath, SelectedHook>,
+}
+
+#[derive(Debug, Clone)]
+struct SelectedHook {
+    target_root: String,
+    item: crate::compiler::hooks::ParsedHookItem,
+}
+
+impl TargetState {
+    pub(crate) fn selected_hooks(
+        &self,
+    ) -> impl Iterator<Item = (&str, &crate::compiler::hooks::ParsedHookItem)> {
+        self.selected_hooks
+            .values()
+            .map(|hook| (hook.target_root.as_str(), &hook.item))
+    }
+
+    pub(crate) fn selected_hooks_for_target(
+        &self,
+        target_root: &str,
+    ) -> impl Iterator<Item = &crate::compiler::hooks::ParsedHookItem> {
+        self.selected_hooks
+            .values()
+            .filter(move |hook| hook.target_root == target_root)
+            .map(|hook| &hook.item)
+    }
+
+    pub(crate) fn select_hook(
+        &mut self,
+        target_root: &str,
+        dest_path: DestPath,
+        parsed: crate::compiler::hooks::ParsedHookItem,
+    ) {
+        self.selected_hooks.insert(
+            dest_path,
+            SelectedHook {
+                target_root: target_root.to_string(),
+                item: parsed,
+            },
+        );
+    }
+
+    pub(crate) fn insert_hook(
+        &mut self,
+        target_root: &str,
+        target_item: TargetItem,
+        parsed: crate::compiler::hooks::ParsedHookItem,
+    ) {
+        debug_assert_eq!(target_item.id.kind, ItemKind::Hook);
+        debug_assert_eq!(target_item.source_name.as_str(), parsed.source_name);
+        let dest_path = target_item.dest_path.clone();
+        self.items.insert(dest_path.clone(), target_item);
+        self.select_hook(target_root, dest_path, parsed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_items(items: IndexMap<DestPath, TargetItem>) -> Self {
+        Self {
+            items,
+            selected_hooks: IndexMap::new(),
+        }
+    }
 }
 
 /// A single item in the desired target state.
@@ -61,8 +126,11 @@ pub fn build_with_collisions_and_diag(
     diag: &mut DiagnosticCollector,
 ) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
     let mut collected_items = Vec::new();
+    let mut selected_hooks = Vec::new();
     let mut explicit_skill_renames = Vec::new();
     let managed_targets: HashSet<String> = config.settings.managed_targets().into_iter().collect();
+    let hook_depths = dependency_depths(graph);
+    let decl_orders = dependency_decl_orders(graph, &config.dependencies);
 
     for source_name in &graph.order {
         let node = &graph.nodes[source_name];
@@ -71,6 +139,17 @@ pub fn build_with_collisions_and_diag(
         let discovered = discover::discover_resolved_source(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
+        )?;
+        // Removed hook schemas are a compatibility error even when dependency
+        // filters select no hook. Parse once here, then select only from `filtered`.
+        let parsed_hooks = crate::compiler::hooks::discover_resolved_hook_items(
+            node,
+            source_name,
+            hook_depths.get(source_name).copied().unwrap_or(1),
+            decl_orders
+                .get(source_name)
+                .copied()
+                .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1),
         )?;
 
         let Some(filters) = graph
@@ -90,22 +169,17 @@ pub fn build_with_collisions_and_diag(
             .unwrap_or_default();
 
         let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
-        let parsed_hooks =
-            crate::compiler::hooks::discover_resolved_hook_items(node, source_name, 1, 0)?;
 
         for item in filtered {
             if item.id.kind == ItemKind::Hook {
                 let hook_dir = node.rooted_ref.package_root.join(&item.source_path);
-                if !hook_is_exported(&hook_dir) {
-                    continue;
-                }
                 let parsed = parsed_hooks
                     .iter()
                     .find(|hook| hook.hook_dir == hook_dir)
-                    .ok_or_else(|| MarsError::Source {
-                        source_name: source_name.to_string(),
-                        message: format!("failed to resolve hook at `{}`", hook_dir.display()),
-                    })?;
+                    .expect("discovered hook directory has a parsed definition");
+                if parsed.def.visibility != "exported" {
+                    continue;
+                }
                 let source_hash = ContentHash::from(hash::compute_hash(&hook_dir, ItemKind::Hook)?);
                 for target_name in parsed
                     .def
@@ -114,6 +188,13 @@ pub fn build_with_collisions_and_diag(
                     .filter(|target| managed_targets.contains(*target))
                 {
                     let dest_path = hook_canonical_dest_path(target_name, &parsed.def.name);
+                    selected_hooks.push((
+                        dest_path.clone(),
+                        SelectedHook {
+                            target_root: target_name.clone(),
+                            item: parsed.clone(),
+                        },
+                    ));
                     collected_items.push(TargetItem {
                         id: ItemId {
                             kind: ItemKind::Hook,
@@ -196,8 +277,13 @@ pub fn build_with_collisions_and_diag(
         items.insert(target_item.dest_path.clone(), target_item);
     }
 
+    let selected_hooks = selected_hooks.into_iter().collect();
+
     Ok((
-        TargetState { items },
+        TargetState {
+            items,
+            selected_hooks,
+        },
         explicit_skill_renames,
         collision_renames,
     ))
@@ -225,19 +311,6 @@ pub fn hook_target_dest_path(canonical: &DestPath) -> Option<(&str, String)> {
         (Some("hooks"), Some(target), Some(name), None) => Some((target, format!("hooks/{name}"))),
         _ => None,
     }
-}
-
-fn hook_is_exported(hook_dir: &Path) -> bool {
-    std::fs::read_to_string(hook_dir.join("hook.toml"))
-        .ok()
-        .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
-        .and_then(|value| {
-            value
-                .get("visibility")
-                .and_then(toml::Value::as_str)
-                .map(str::to_owned)
-        })
-        .is_some_and(|visibility| visibility == "exported")
 }
 
 fn rename_destination_collisions(
@@ -328,6 +401,94 @@ fn apply_filter_union(
         })
         .cloned()
         .collect())
+}
+
+fn dependency_depths(graph: &ResolvedGraph) -> HashMap<SourceName, usize> {
+    let mut remaining_dependents: HashMap<SourceName, usize> = HashMap::new();
+    for name in &graph.order {
+        remaining_dependents.insert(name.clone(), 0);
+    }
+    for name in &graph.order {
+        let Some(node) = graph.nodes.get(name) else {
+            continue;
+        };
+        for dep in &node.deps {
+            if graph.nodes.contains_key(dep) {
+                *remaining_dependents.entry(dep.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut depths = HashMap::new();
+    let mut queue = VecDeque::new();
+    for name in &graph.order {
+        if remaining_dependents.get(name) == Some(&0) {
+            depths.insert(name.clone(), 1);
+            queue.push_back(name.clone());
+        }
+    }
+
+    while let Some(current) = queue.pop_front() {
+        let current_depth = depths[&current];
+        if let Some(node) = graph.nodes.get(&current) {
+            for dep in &node.deps {
+                let Some(remaining) = remaining_dependents.get_mut(dep) else {
+                    continue;
+                };
+                depths
+                    .entry(dep.clone())
+                    .and_modify(|depth| *depth = (*depth).max(current_depth + 1))
+                    .or_insert(current_depth + 1);
+                *remaining -= 1;
+                if *remaining == 0 {
+                    queue.push_back(dep.clone());
+                }
+            }
+        }
+    }
+
+    depths
+}
+
+pub(crate) fn dependency_decl_orders(
+    graph: &ResolvedGraph,
+    dependencies: &IndexMap<SourceName, crate::config::EffectiveDependency>,
+) -> HashMap<SourceName, usize> {
+    let mut orders = HashMap::new();
+    let mut queue = VecDeque::new();
+
+    for (idx, source_name) in dependencies.keys().enumerate() {
+        if graph.nodes.contains_key(source_name) {
+            orders.insert(source_name.clone(), idx + 1);
+            queue.push_back(source_name.clone());
+        }
+    }
+
+    while let Some(current) = queue.pop_front() {
+        let current_order = orders[&current];
+        let Some(node) = graph.nodes.get(&current) else {
+            continue;
+        };
+
+        for dep in &node.deps {
+            if !graph.nodes.contains_key(dep) {
+                continue;
+            }
+            match orders.get_mut(dep) {
+                Some(existing) if current_order < *existing => {
+                    *existing = current_order;
+                    queue.push_back(dep.clone());
+                }
+                Some(_) => {}
+                None => {
+                    orders.insert(dep.clone(), current_order);
+                    queue.push_back(dep.clone());
+                }
+            }
+        }
+    }
+
+    orders
 }
 
 /// Existing on-disk destination that is not lock-managed.
@@ -657,6 +818,83 @@ mod tests {
             skills: indexmap::IndexMap::new(),
         };
         (graph, config)
+    }
+
+    fn graph_node(name: &str, deps: &[&str]) -> ResolvedNode {
+        let root = PathBuf::from(format!("/tmp/{name}"));
+        ResolvedNode {
+            source_name: name.into(),
+            source_id: SourceId::Path {
+                canonical: root.clone(),
+                subpath: None,
+            },
+            rooted_ref: crate::resolve::RootedSourceRef {
+                checkout_root: root.clone(),
+                package_root: root.clone(),
+            },
+            resolved_ref: ResolvedRef {
+                source_name: name.into(),
+                version: None,
+                version_tag: None,
+                commit: None,
+                tree_path: root,
+            },
+            manifest: None,
+            deps: deps.iter().map(|dep| (*dep).into()).collect(),
+        }
+    }
+
+    #[test]
+    fn hook_depths_are_stable_for_longer_path_discovered_after_shorter_path() {
+        let definitions = [
+            ("direct-short", vec!["shared"]),
+            ("shared", vec!["leaf"]),
+            ("leaf", vec![]),
+            ("direct-long", vec!["middle"]),
+            ("middle", vec!["shared"]),
+        ];
+        let graph_order: Vec<SourceName> =
+            ["direct-short", "shared", "leaf", "direct-long", "middle"]
+                .into_iter()
+                .map(SourceName::from)
+                .collect();
+        let expected_emission = vec![
+            "direct-long".to_string(),
+            "direct-short".to_string(),
+            "middle".to_string(),
+            "shared".to_string(),
+            "leaf".to_string(),
+        ];
+
+        for run in 0..128 {
+            let mut insertion_order = definitions.clone();
+            let definition_count = insertion_order.len();
+            insertion_order.rotate_left(run % definition_count);
+            if run % 2 == 1 {
+                insertion_order.reverse();
+            }
+            let nodes = insertion_order
+                .into_iter()
+                .map(|(name, deps)| (name.into(), graph_node(name, &deps)))
+                .collect::<IndexMap<_, _>>();
+            let graph = ResolvedGraph {
+                order: graph_order.clone(),
+                nodes,
+                filters: HashMap::new(),
+                version_constraints: HashMap::new(),
+                unreadable_hook_surfaces: std::collections::BTreeMap::new(),
+            };
+            let depths = dependency_depths(&graph);
+            let mut emitted_order = graph.order.clone();
+            emitted_order.sort_by_key(|name| (depths[name], name.clone()));
+            assert_eq!(
+                emitted_order
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>(),
+                expected_emission,
+            );
+        }
     }
 
     // === Target build tests ===

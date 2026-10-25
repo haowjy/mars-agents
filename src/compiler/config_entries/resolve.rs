@@ -6,7 +6,6 @@
 
 use std::collections::BTreeMap;
 
-use crate::compiler::hooks::ParsedHookItem;
 use crate::compiler::mcp::ParsedMcpItem;
 use crate::diagnostic::DiagnosticCollector;
 
@@ -31,88 +30,35 @@ pub fn resolve_mcp_collisions_for_target<'a>(
 
     groups
         .into_values()
-        .map(|group| resolve_group(group, target_root, "MCP server", diag))
+        .map(|group| resolve_mcp_group(group, target_root, diag))
         .collect()
 }
 
-/// Pick the hook whose target-scoped canonical directory was installed for
-/// each name. The same winners feed merge-mode and file-mode lowering.
-pub fn resolve_hook_items_for_target<'a>(
-    items: &'a [ParsedHookItem],
+fn resolve_mcp_group<'a>(
+    mut group: Vec<&'a ParsedMcpItem>,
     target_root: &str,
     diag: &mut DiagnosticCollector,
-) -> Vec<&'a ParsedHookItem> {
-    let mut groups: BTreeMap<&str, Vec<&ParsedHookItem>> = BTreeMap::new();
-    for item in items
-        .iter()
-        .filter(|item| item.def.targets.contains_key(target_root))
-    {
-        groups.entry(item.def.name.as_str()).or_default().push(item);
-    }
-    groups
-        .into_values()
-        .map(|group| resolve_group(group, target_root, "file hook", diag))
-        .collect()
-}
-
-trait CollisionItem {
-    fn source_name(&self) -> &str;
-    fn decl_order(&self) -> usize;
-    fn display_name(&self) -> String;
-}
-
-impl CollisionItem for ParsedMcpItem {
-    fn source_name(&self) -> &str {
-        &self.source_name
-    }
-
-    fn decl_order(&self) -> usize {
-        self.decl_order
-    }
-
-    fn display_name(&self) -> String {
-        self.name.clone()
-    }
-}
-
-impl CollisionItem for ParsedHookItem {
-    fn source_name(&self) -> &str {
-        &self.source_name
-    }
-    fn decl_order(&self) -> usize {
-        self.decl_order
-    }
-    fn display_name(&self) -> String {
-        self.def.name.clone()
-    }
-}
-
-fn resolve_group<'a, T: CollisionItem>(
-    mut group: Vec<&'a T>,
-    target_root: &str,
-    kind: &str,
-    diag: &mut DiagnosticCollector,
-) -> &'a T {
+) -> &'a ParsedMcpItem {
     debug_assert!(!group.is_empty());
     if group.len() == 1 {
         return group[0];
     }
 
     group.sort_by(|a, b| {
-        let a_self = a.source_name() == SELF_SOURCE;
-        let b_self = b.source_name() == SELF_SOURCE;
+        let a_self = a.source_name == SELF_SOURCE;
+        let b_self = b.source_name == SELF_SOURCE;
         b_self
             .cmp(&a_self)
-            .then_with(|| a.decl_order().cmp(&b.decl_order()))
-            .then_with(|| a.source_name().cmp(b.source_name()))
+            .then_with(|| a.decl_order.cmp(&b.decl_order))
+            .then_with(|| a.source_name.cmp(&b.source_name))
     });
 
     let winner = group[0];
-    if winner.source_name() == SELF_SOURCE
+    if winner.source_name == SELF_SOURCE
         && group
             .iter()
             .skip(1)
-            .all(|loser| loser.source_name() != SELF_SOURCE)
+            .all(|loser| loser.source_name != SELF_SOURCE)
     {
         return winner;
     }
@@ -121,10 +67,8 @@ fn resolve_group<'a, T: CollisionItem>(
         diag.warn(
             "config-entry-collision",
             format!(
-                "{kind} `{}` collision in target `{target_root}`: `{}` wins over `{}`",
-                winner.display_name(),
-                winner.source_name(),
-                loser.source_name()
+                "MCP server `{}` collision in target `{target_root}`: `{}` wins over `{}`",
+                winner.name, winner.source_name, loser.source_name
             ),
         );
     }

@@ -687,6 +687,7 @@ pub(crate) fn build_target(
                     ),
                 );
             }
+            target_state.select_hook(target_name, dest_path.clone(), hook.clone());
             let disk_path = dest_path.resolve(managed_root);
             if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
                 && disk_path.symlink_metadata().is_ok()
@@ -694,8 +695,8 @@ pub(crate) fn build_target(
                 diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));
                 continue;
             }
-            target_state.items.insert(
-                dest_path.clone(),
+            target_state.insert_hook(
+                target_name,
                 TargetItem {
                     id: ItemId {
                         kind: ItemKind::Hook,
@@ -709,6 +710,7 @@ pub(crate) fn build_target(
                     is_flat_skill: false,
                     rewritten_content: None,
                 },
+                hook.clone(),
             );
         }
     }

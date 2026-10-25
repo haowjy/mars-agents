@@ -117,60 +117,10 @@ pub fn discover_hook_items(
     package_depth: usize,
     decl_order: usize,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
-    let mut items = Vec::new();
-    for hook_dir in crate::discover::discover_hook_directories(package_root)? {
-        let dir_name = hook_dir
-            .file_name()
-            .expect("discovered hook directory has a name")
-            .to_string_lossy()
-            .into_owned();
-        let toml_path = hook_dir.join("hook.toml");
-        let raw = std::fs::read_to_string(&toml_path)?;
-        let value: toml::Value = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
-        if uses_removed_schema(&value) {
-            return Err(ConfigError::RemovedHookSchema {
-                path: toml_path,
-                message: REMOVED_HOOK_SCHEMA_MESSAGE,
-            }
-            .into());
-        }
-        let raw_def: RawHookDef = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
-        if raw_def.targets.is_empty() {
-            return Err(invalid(&toml_path, "at least one target table is required"));
-        }
-        let name = raw_def.name.unwrap_or(dir_name);
-        if let Err(message) = validate_path_component(&name) {
-            return Err(invalid(
-                &toml_path,
-                &format!("invalid name `{name}`: {message}"),
-            ));
-        }
-        for (target, spec) in &raw_def.targets {
-            let fragment = spec
-                .fragment
-                .clone()
-                .unwrap_or_else(|| default_fragment_name(target));
-            if let Err(message) = validate_fragment_path(&fragment) {
-                return Err(invalid(
-                    &toml_path,
-                    &format!("target `{target}` has invalid fragment `{fragment}`: {message}"),
-                ));
-            }
-        }
-        items.push(ParsedHookItem {
-            def: HookDef {
-                name,
-                visibility: raw_def.visibility,
-                targets: raw_def.targets,
-                order: raw_def.order,
-            },
-            source_name: source_name.to_string(),
-            package_depth,
-            decl_order,
-            hook_dir,
-        });
-    }
-    Ok(items)
+    crate::discover::discover_hook_directories(package_root)?
+        .into_iter()
+        .map(|hook_dir| load_hook_item(&hook_dir, source_name, package_depth, decl_order))
+        .collect()
 }
 
 pub(crate) fn discover_resolved_hook_items(
@@ -186,6 +136,64 @@ pub(crate) fn discover_resolved_hook_items(
         decl_order,
     )
     .map_err(|error| contextualize_dependency_error(error, source_name, node))
+}
+
+fn load_hook_item(
+    hook_dir: &Path,
+    source_name: &str,
+    package_depth: usize,
+    decl_order: usize,
+) -> Result<ParsedHookItem, MarsError> {
+    let dir_name = hook_dir
+        .file_name()
+        .expect("discovered hook directory has a name")
+        .to_string_lossy()
+        .into_owned();
+    let toml_path = hook_dir.join("hook.toml");
+    let raw = std::fs::read_to_string(&toml_path)?;
+    let value: toml::Value = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
+    if uses_removed_schema(&value) {
+        return Err(ConfigError::RemovedHookSchema {
+            path: toml_path,
+            message: REMOVED_HOOK_SCHEMA_MESSAGE,
+        }
+        .into());
+    }
+    let raw_def: RawHookDef = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
+    if raw_def.targets.is_empty() {
+        return Err(invalid(&toml_path, "at least one target table is required"));
+    }
+    let name = raw_def.name.unwrap_or(dir_name);
+    if let Err(message) = validate_path_component(&name) {
+        return Err(invalid(
+            &toml_path,
+            &format!("invalid name `{name}`: {message}"),
+        ));
+    }
+    for (target, spec) in &raw_def.targets {
+        let fragment = spec
+            .fragment
+            .clone()
+            .unwrap_or_else(|| default_fragment_name(target));
+        if let Err(message) = validate_fragment_path(&fragment) {
+            return Err(invalid(
+                &toml_path,
+                &format!("target `{target}` has invalid fragment `{fragment}`: {message}"),
+            ));
+        }
+    }
+    Ok(ParsedHookItem {
+        def: HookDef {
+            name,
+            visibility: raw_def.visibility,
+            targets: raw_def.targets,
+            order: raw_def.order,
+        },
+        source_name: source_name.to_string(),
+        package_depth,
+        decl_order,
+        hook_dir: hook_dir.to_path_buf(),
+    })
 }
 
 fn contextualize_dependency_error(

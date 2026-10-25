@@ -88,7 +88,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     let base = prepared
         .as_ref()
         .map_or(authored_base.as_path(), |prepared| prepared.path());
-    let lens = crate::resolve::PublishLens::load(&base, &mut publish_diag)?;
+    let lens = crate::resolve::PublishLens::load(base, &mut publish_diag)?;
     let mut report = check_dir_with_lens(base, Ok(&lens), &mut publish_diag)?;
     report
         .warnings

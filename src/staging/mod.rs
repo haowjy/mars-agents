@@ -353,7 +353,7 @@ fn copy_and_lift_tree(
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
-    let native_definitions = if !matches!(preparation, DefinitionPreparation::Foreign(_)) {
+    let definitions =
         crate::discover::discover_definition_files(source_root, fallback_skill_name, diag)?
             .into_iter()
             .filter_map(|(path, kind)| {
@@ -361,10 +361,7 @@ fn copy_and_lift_tree(
                     .ok()
                     .map(|relative| (relative.to_path_buf(), kind))
             })
-            .collect::<std::collections::BTreeMap<_, _>>()
-    } else {
-        std::collections::BTreeMap::new()
-    };
+            .collect::<std::collections::BTreeMap<_, _>>();
     let entries = crate::fs::authored_tree_entries(
         source_root,
         excluded_paths,
@@ -388,12 +385,10 @@ fn copy_and_lift_tree(
             })?;
             legacy_changed |= upgraded.changed_from(&original);
             fs::write(&dest_path, upgraded.text)?;
-        } else if should_lift_markdown(&entry.relative)
-            && (matches!(preparation, DefinitionPreparation::Foreign(_))
-                || native_definitions.contains_key(&entry.relative))
+        } else if should_lift_markdown(&entry.relative) && definitions.contains_key(&entry.relative)
         {
             let src_path = entry.source;
-            let kind = native_definitions
+            let kind = definitions
                 .get(&entry.relative)
                 .map(|kind| match kind {
                     mars_schema::upgrade::DefinitionKind::Agent => ItemKind::Agent,
@@ -542,9 +537,7 @@ fn process_markdown_file(
     } else {
         fs::copy(src, dest)?;
     }
-    if !matches!(ctx.preparation, DefinitionPreparation::Foreign(_))
-        && matches!(kind, ItemKind::Agent | ItemKind::Skill)
-    {
+    if matches!(kind, ItemKind::Agent | ItemKind::Skill) {
         let prepared = fs::read_to_string(dest)?;
         let reading = if kind == ItemKind::Agent {
             mars_schema::agent::read(&prepared).diagnostics

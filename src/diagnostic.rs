@@ -131,7 +131,6 @@ impl DiagnosticCollector {
                 existing.code == code && existing.message.ends_with(&diagnostic.message)
             })
         {
-            return;
         } else {
             self.warn(code, message);
         }

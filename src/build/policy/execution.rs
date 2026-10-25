@@ -4,7 +4,6 @@ use crate::build::policy::PolicySource::{
 };
 use crate::build::policy::{
     MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
-    matched_policy_u8_override, matched_policy_u32_override,
 };
 use crate::compiler::agents::{ApprovalMode, EffortLevel, SandboxMode};
 use crate::config::AgentOverlay;
@@ -29,8 +28,8 @@ pub(super) fn resolve_execution_policy(
     let effort = resolve_effort(input, alias, overlay, matched_policy);
     let approval = resolve_approval(input, overlay, matched_policy);
     let sandbox = resolve_sandbox(input, overlay, matched_policy);
-    let autocompact = resolve_autocompact(input, alias, overlay, matched_policy);
-    let autocompact_pct = resolve_autocompact_pct(input, alias, overlay, matched_policy);
+    let autocompact = alias_field(alias.and_then(|entry| entry.autocompact));
+    let autocompact_pct = alias_field(alias.and_then(|entry| entry.autocompact_pct));
 
     ExecutionResolution {
         effort,
@@ -106,24 +105,9 @@ fn policy_string_override_by_source(
         .map(resolved_policy_field)
 }
 
-fn policy_u32_override_by_source(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-    source: PolicySource,
-) -> Option<ResolvedField<Option<u32>>> {
-    matched_policy_u32_override(matched_policy, key)
-        .filter(|decision| decision.source == source)
-        .map(resolved_policy_field)
-}
-
-fn policy_u8_override_by_source(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-    source: PolicySource,
-) -> Option<ResolvedField<Option<u8>>> {
-    matched_policy_u8_override(matched_policy, key)
-        .filter(|decision| decision.source == source)
-        .map(resolved_policy_field)
+fn alias_field<T>(value: Option<T>) -> ResolvedField<Option<T>> {
+    let source = if value.is_some() { Alias } else { Unset };
+    resolved_field(value, source)
 }
 
 fn resolve_effort(
@@ -201,51 +185,6 @@ fn resolve_sandbox(
                 .map(str::to_string),
             settings: None,
             alias: None,
-        },
-    )
-}
-
-fn resolve_autocompact(
-    input: &PolicyInput<'_>,
-    alias: Option<&ModelAlias>,
-    overlay: Option<&AgentOverlay>,
-    matched_policy: Option<&MatchedModelPolicy>,
-) -> ResolvedField<Option<u32>> {
-    resolve_policy_field(
-        "autocompact",
-        matched_policy,
-        policy_u32_override_by_source,
-        PolicyFieldLayers {
-            cli: None,
-            overlay: overlay
-                .and_then(|entry| entry.autocompact)
-                .and_then(|value| u32::try_from(value).ok()),
-            profile: input.profile.autocompact,
-            settings: None,
-            alias: alias.and_then(|entry| entry.autocompact),
-        },
-    )
-}
-
-fn resolve_autocompact_pct(
-    input: &PolicyInput<'_>,
-    alias: Option<&ModelAlias>,
-    overlay: Option<&AgentOverlay>,
-    matched_policy: Option<&MatchedModelPolicy>,
-) -> ResolvedField<Option<u8>> {
-    resolve_policy_field(
-        "autocompact_pct",
-        matched_policy,
-        policy_u8_override_by_source,
-        PolicyFieldLayers {
-            cli: None,
-            overlay: overlay
-                .and_then(|entry| entry.autocompact_pct)
-                .and_then(|value| u8::try_from(value).ok())
-                .filter(|value| (1..=100).contains(value)),
-            profile: input.profile.autocompact_pct,
-            settings: None,
-            alias: alias.and_then(|entry| entry.autocompact_pct),
         },
     )
 }

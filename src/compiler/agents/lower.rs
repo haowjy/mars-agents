@@ -131,7 +131,7 @@ mod tests {
         }));
     }
 
-        #[test]
+    #[test]
     fn claude_harness_override_does_not_replace_skills_before_lowering() {
         let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
@@ -213,7 +213,7 @@ mod tests {
 
     // --- 3.3: Codex lowering ---
 
-        #[test]
+    #[test]
     fn codex_harness_override_does_not_replace_execution_policy() {
         let content = "---\nname: r\nharness: codex\neffort: low\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: workspace-write\n---\n# body";
         let (profile, fm, _) = profile_from(content);

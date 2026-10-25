@@ -245,8 +245,6 @@ mod tests {
             approval: None,
             sandbox: None,
             effort: None,
-            autocompact: None,
-            autocompact_pct: None,
             skills: mars_schema::frontmatter::SkillsSpec::default(),
             subagents: Vec::new(),
             tools: Default::default(),

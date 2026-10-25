@@ -677,7 +677,7 @@ when_to_use: Use when git history matters
         );
     }
 
-            #[test]
+    #[test]
     fn claude_agent_lifts_task_tool_to_agent_in_every_tool_field() {
         let lifted = lift(
             Dialect::Claude,

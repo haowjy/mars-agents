@@ -510,8 +510,6 @@ pub fn resolve_policy(
         .or(execution_resolution.effort.matched_rule)
         .or(execution_resolution.approval.matched_rule)
         .or(execution_resolution.sandbox.matched_rule)
-        .or(execution_resolution.autocompact.matched_rule)
-        .or(execution_resolution.autocompact_pct.matched_rule)
         .or_else(|| {
             matched_policy
                 .as_ref()
@@ -628,65 +626,12 @@ pub(super) fn policy_override_string(rule: &ModelPolicyRule, key: &str) -> Optio
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-pub(super) fn policy_override_u32(rule: &ModelPolicyRule, key: &str) -> Option<u32> {
-    let value = rule
-        .overrides
-        .get(serde_yaml::Value::String(key.to_string()))?;
-    match value {
-        serde_yaml::Value::Number(number) => {
-            let parsed = number.as_u64()?;
-            u32::try_from(parsed).ok()
-        }
-        _ => None,
-    }
-}
-
-pub(super) fn policy_override_u8(rule: &ModelPolicyRule, key: &str) -> Option<u8> {
-    let value = rule
-        .overrides
-        .get(serde_yaml::Value::String(key.to_string()))?;
-    match value {
-        serde_yaml::Value::Number(number) => {
-            let parsed = number.as_u64()?;
-            let percent = u8::try_from(parsed).ok()?;
-            (1..=100).contains(&percent).then_some(percent)
-        }
-        _ => None,
-    }
-}
-
 pub(super) fn matched_policy_string_override(
     matched_policy: Option<&MatchedModelPolicy>,
     key: &str,
 ) -> Option<ResolvedField<String>> {
     let policy = matched_policy?;
     let value = policy_override_string(&policy.rule, key)?;
-    Some(ResolvedField {
-        value,
-        source: policy.layer.field_source(),
-        matched_rule: Some(policy.matched_rule_ref()),
-    })
-}
-
-pub(super) fn matched_policy_u32_override(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-) -> Option<ResolvedField<u32>> {
-    let policy = matched_policy?;
-    let value = policy_override_u32(&policy.rule, key)?;
-    Some(ResolvedField {
-        value,
-        source: policy.layer.field_source(),
-        matched_rule: Some(policy.matched_rule_ref()),
-    })
-}
-
-pub(super) fn matched_policy_u8_override(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-) -> Option<ResolvedField<u8>> {
-    let policy = matched_policy?;
-    let value = policy_override_u8(&policy.rule, key)?;
     Some(ResolvedField {
         value,
         source: policy.layer.field_source(),

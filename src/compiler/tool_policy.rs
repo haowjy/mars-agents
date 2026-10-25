@@ -612,7 +612,7 @@ mod tests {
         );
     }
 
-        #[test]
+    #[test]
     fn plugin_colon_server_names_preserve_verbatim_in_mcp_refs() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  mcp(plugin:context7:context7): allow\n---\n",
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(policy.describe(), vec!["ask:bash(git push *)", "ask:edit"]);
     }
 
-                #[test]
+    #[test]
     fn narrower_capability_wins_over_broader_for_the_natives_they_share() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n  notebook: deny\n---\n",
@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(natives("*", "claude"), (vec![], "none"));
     }
 
-        #[test]
+    #[test]
     fn malformed_mcp_in_disallowed_tools_is_validation_error() {
         let mut diags = Vec::new();
         let value = Value::Sequence(vec![Value::String("mcp()".into())]);

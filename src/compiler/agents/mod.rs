@@ -199,8 +199,6 @@ pub struct AgentProfile {
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
     pub effort: Option<EffortLevel>,
-    pub autocompact: Option<u32>,
-    pub autocompact_pct: Option<u8>,
 
     // --- Tool fields ---
     pub skills: SkillsSpec,
@@ -255,8 +253,7 @@ impl AgentDiagnostic {
         use mars_schema::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path};
 
         let field = match self {
-            Self::InvalidFieldValue { field, .. }
-            => field.as_str(),
+            Self::InvalidFieldValue { field, .. } => field.as_str(),
             Self::UnknownHarness { .. } => "harness",
             Self::UnknownHarnessOverride { .. } => "harness-overrides",
             Self::DeprecatedListFormTools => "tools",
@@ -315,7 +312,6 @@ impl AgentDiagnostic {
         }
     }
 }
-
 
 fn push_agent_tool_invalid(
     diags: &mut Vec<AgentDiagnostic>,
@@ -599,7 +595,6 @@ fn parse_invocability_field(
     (value, had_field)
 }
 
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -703,59 +698,6 @@ pub fn parse_agent_profile_legacy(
         }
     });
 
-    // autocompact:
-    let autocompact = match fm.get("autocompact") {
-        None => None,
-        Some(v) => {
-            if let Some(n) = v.as_u64() {
-                match u32::try_from(n) {
-                    Ok(v32) => Some(v32),
-                    Err(_) => {
-                        diags.push(AgentDiagnostic::InvalidFieldValue {
-                            field: "autocompact".to_string(),
-                            value: n.to_string(),
-                            allowed: "integer 0–4294967295",
-                        });
-                        None
-                    }
-                }
-            } else {
-                diags.push(AgentDiagnostic::InvalidFieldValue {
-                    field: "autocompact".to_string(),
-                    value: format!("{v:?}"),
-                    allowed: "integer (token count)",
-                });
-                None
-            }
-        }
-    };
-
-    // autocompact_pct:
-    let autocompact_pct = match fm.get("autocompact_pct") {
-        None => None,
-        Some(v) => {
-            if let Some(n) = v.as_u64() {
-                if (1..=100).contains(&n) {
-                    Some(n as u8)
-                } else {
-                    diags.push(AgentDiagnostic::InvalidFieldValue {
-                        field: "autocompact_pct".to_string(),
-                        value: n.to_string(),
-                        allowed: "integer 1–100",
-                    });
-                    None
-                }
-            } else {
-                diags.push(AgentDiagnostic::InvalidFieldValue {
-                    field: "autocompact_pct".to_string(),
-                    value: format!("{v:?}"),
-                    allowed: "integer 1–100",
-                });
-                None
-            }
-        }
-    };
-
     // skills/subagents/tools/disallowed-tools:
     let skills = fm.skills_structured();
     let subagents = fm
@@ -797,8 +739,6 @@ pub fn parse_agent_profile_legacy(
         approval,
         sandbox,
         effort,
-        autocompact,
-        autocompact_pct,
         skills,
         subagents,
         tools,

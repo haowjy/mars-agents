@@ -200,8 +200,6 @@ fn empty_agent_profile() -> AgentProfile {
         approval: None,
         sandbox: None,
         effort: None,
-        autocompact: None,
-        autocompact_pct: None,
         skills: SkillsSpec::default(),
         subagents: Vec::new(),
         tools: Default::default(),

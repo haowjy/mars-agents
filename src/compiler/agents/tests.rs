@@ -218,40 +218,6 @@ fn parses_sandbox_all_values() {
 }
 
 #[test]
-fn parses_autocompact() {
-    let (p, diags) = parse("---\nautocompact: 50\n---\n");
-    assert!(diags.is_empty());
-    assert_eq!(p.autocompact, Some(50));
-}
-
-#[test]
-fn parses_autocompact_pct() {
-    let (p, diags) = parse("---\nautocompact_pct: 80\n---\n");
-    assert!(diags.is_empty());
-    assert_eq!(p.autocompact_pct, Some(80));
-}
-
-#[test]
-fn autocompact_pct_out_of_range() {
-    let (p, diags) = parse("---\nautocompact_pct: 101\n---\n");
-    assert_eq!(p.autocompact_pct, None);
-    assert_eq!(diags.len(), 1);
-    assert!(
-        matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact_pct")
-    );
-}
-
-#[test]
-fn autocompact_pct_zero_out_of_range() {
-    let (p, diags) = parse("---\nautocompact_pct: 0\n---\n");
-    assert_eq!(p.autocompact_pct, None);
-    assert_eq!(diags.len(), 1);
-    assert!(
-        matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact_pct")
-    );
-}
-
-#[test]
 fn harness_override_autocompact_pct_is_passthrough() {
     let content = "---
 harness-overrides:
@@ -266,25 +232,6 @@ harness-overrides:
 }
 
 #[test]
-fn autocompact_string_produces_diagnostic() {
-    let (p, diags) = parse("---\nautocompact: \"50\"\n---\n");
-    assert_eq!(p.autocompact, None);
-    assert_eq!(diags.len(), 1);
-    assert!(
-        matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact")
-    );
-}
-
-#[test]
-fn autocompact_pct_string_produces_diagnostic() {
-    let (p, diags) = parse("---\nautocompact_pct: \"80\"\n---\n");
-    assert_eq!(p.autocompact_pct, None);
-    assert_eq!(diags.len(), 1);
-    assert!(
-        matches!(&diags[0], AgentDiagnostic::InvalidFieldValue { field, .. } if field == "autocompact_pct")
-    );
-}
-#[test]
 fn parses_tools_map_allow_and_deny_with_canonical_names() {
     let content =
         "---\ntools:\n  Bash: allow\n  \"Bash(meridian spawn *)\": allow\n  Agent: deny\n---\n";
@@ -294,7 +241,8 @@ fn parses_tools_map_allow_and_deny_with_canonical_names() {
         p.tools.describe(),
         ["allow:bash", "allow:bash(meridian spawn *)", "deny:agent"]
     );
-}#[test]
+}
+#[test]
 fn claude_native_agent_records_ask_rules_as_dropped_not_silently_lost() {
     let (_, out, diags) = lower_claude(
         "---\nname: a\nharness: claude\ntools:\n  read: allow\n  'bash(git push *)': ask\n---\n",

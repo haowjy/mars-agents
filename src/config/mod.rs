@@ -347,10 +347,6 @@ pub struct AgentOverlay {
     pub approval: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autocompact: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autocompact_pct: Option<i64>,
     #[serde(
         default,
         alias = "model-invocable",
@@ -723,7 +719,6 @@ pub struct EffectiveDependency {
 
 const CONFIG_FILE: &str = "mars.toml";
 const LOCAL_CONFIG_FILE: &str = "mars.local.toml";
-
 
 fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
     content: &str,
@@ -2060,8 +2055,6 @@ harness = "codex"
 effort = "medium"
 approval = "default"
 sandbox = "default"
-autocompact = 1200
-autocompact_pct = 80
 user_invocable = false
 model-invocable = true
 tools.disallowed = ["Bash(rm *)", "Write"]
@@ -2084,8 +2077,6 @@ override = { effort = "high" }
         assert_eq!(overlay.description.as_deref(), Some("Tech lead overlay"));
         assert_eq!(overlay.model.as_deref(), Some("gpt55"));
         assert_eq!(overlay.harness.as_deref(), Some("codex"));
-        assert_eq!(overlay.autocompact, Some(1200));
-        assert_eq!(overlay.autocompact_pct, Some(80));
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
         assert_eq!(
@@ -2106,7 +2097,7 @@ override = { effort = "high" }
         assert_eq!(config.settings.model_policies[0].match_value, "gpt-*");
     }
 
-            #[test]
+    #[test]
     fn parse_skill_overlay_tools_and_invocability() {
         let config: Config = toml::from_str(
             r#"
@@ -2498,7 +2489,7 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
         assert_eq!(merged["local-only"].harness.as_deref(), Some("pi"));
     }
 
-        #[test]
+    #[test]
     fn tool_overlay_warnings_follow_authored_plain_lists() {
         let dir = TempDir::new().unwrap();
         std::fs::write(

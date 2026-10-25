@@ -13,7 +13,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 ///
-/// Launch-time fields (approval, sandbox, mode where not emitted, autocompact, …) are
+/// Launch-time fields (approval, sandbox, mode where not emitted, …) are
 /// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
 /// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
 /// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly.
@@ -78,10 +78,6 @@ impl<'a> Effective<'a> {
 
     fn has_mcp_policy(&self) -> bool {
         self.tools.rules.iter().any(|rule| rule.is_mcp())
-    }
-
-    fn autocompact_pct(&self) -> Option<u8> {
-        self.profile.autocompact_pct
     }
 
     fn native_config(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
@@ -158,8 +154,7 @@ fn record_agent_invocation_lossiness(
 /// Per agent-compilation-mapping.md V0 §10:
 /// - Preserved: name, description, model, tools, disallowed-tools, body
 /// - Skills: load is native-preloaded where supported; other channels use designed body guidance
-/// - Meridian-only (launch-time): approval, sandbox, mode, autocompact,
-///   autocompact_pct, model-policies, fanout
+/// - Meridian-only (launch-time): approval, sandbox, mode,, model-policies, fanout
 /// - Dropped: harness, harness-overrides, legacy-models
 ///
 /// What model field a lowered native agent should carry. The native compiler is the
@@ -589,16 +584,6 @@ impl<'a> AgentLoweringCtx<'a> {
 
     fn record_meridian_only_fields(&mut self) {
         self.record_if_present(
-            "autocompact",
-            self.profile.autocompact.is_some(),
-            Lossiness::MeridianOnly,
-        );
-        self.record_if_present(
-            "autocompact_pct",
-            self.eff.autocompact_pct().is_some(),
-            Lossiness::MeridianOnly,
-        );
-        self.record_if_present(
             "model-policies",
             !self.profile.model_policies.is_empty(),
             Lossiness::MeridianOnly,
@@ -798,7 +783,7 @@ pub fn lower_to_claude(
 ///   (as developer_instructions)
 /// - Skills: designed body guidance (Codex has no native field)
 /// - Dropped: tools (no allowlist), disallowed-tools,
-///   mcp (approximate), mode, autocompact, model-policies, fanout
+///   mcp (approximate), mode, model-policies, fanout
 /// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
 pub fn lower_to_codex(
     profile: &AgentProfile,
@@ -851,20 +836,6 @@ pub fn lower_to_codex(
     if profile.mode.is_some() {
         lossy.push(LossyField {
             field: "mode".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if profile.autocompact.is_some() {
-        lossy.push(LossyField {
-            field: "autocompact".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.autocompact_pct().is_some() {
-        lossy.push(LossyField {
-            field: "autocompact_pct".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });

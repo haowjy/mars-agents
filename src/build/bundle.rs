@@ -54,7 +54,6 @@ pub struct ExecutionPolicy {
     pub native_config: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-
 #[derive(Debug, Clone, Serialize)]
 pub struct PromptSurface {
     pub system_instruction: String,

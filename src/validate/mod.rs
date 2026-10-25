@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::lock::ItemId;
 use crate::types::ItemName;
-use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
 
 /// Warning from dependency validation.
@@ -42,10 +41,10 @@ pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
 ///
 /// Defensive: returns empty vec on any parse failure.
 pub(crate) fn extract_skills_from_content(content: &str) -> Vec<String> {
-    match frontmatter::parse(content) {
-        Ok(fm) => fm.skills(),
-        Err(_) => Vec::new(),
-    }
+    mars_schema::agent::read(content)
+        .fields
+        .map(|profile| profile.skills.all())
+        .unwrap_or_default()
 }
 
 /// Check that agent→skill references resolve.

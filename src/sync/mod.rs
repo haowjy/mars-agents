@@ -150,6 +150,9 @@ pub(crate) struct ResolvedState {
     pub loaded: LoadedConfig,
     pub graph: ResolvedGraph,
     pub upgrades_available: usize,
+    /// Owns every normalized package tree until the compiler has passed its
+    /// complete diagnostic gate. Durable staging is published only afterward.
+    pub preparation: tempfile::TempDir,
 }
 
 /// Phase 3: Desired target state after discovery + filtering.
@@ -189,7 +192,6 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
     validate_request(request)?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     let ir = crate::reader::read(ctx, request, &mut diag)?;
-    diag.fail_on_errors()?;
     let unreadable_hook_surfaces = &ir.resolved.graph.unreadable_hook_surfaces;
     if request.recovery.defers_on_unreadable() && !unreadable_hook_surfaces.is_empty() {
         persist_pending_config_mutation(ctx, &ir.resolved.loaded, request)?;
@@ -210,6 +212,19 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
         });
     }
     crate::compiler::compile(ctx, ir, request, &mut diag)
+}
+
+/// Run the same preparation/compiler path while returning schema errors as
+/// report data. Validation is dry-run only, so it never authorizes mutations.
+pub(crate) fn execute_validation(
+    ctx: &MarsContext,
+    request: &SyncRequest,
+) -> Result<SyncReport, MarsError> {
+    validate_request(request)?;
+    debug_assert!(request.options.dry_run);
+    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
+    let ir = crate::reader::read(ctx, request, &mut diag)?;
+    crate::compiler::compile_reporting(ctx, ir, request, &mut diag)
 }
 
 fn build_recovery_halt(
@@ -328,9 +343,8 @@ pub(crate) fn load_config(
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
 
-    std::fs::create_dir_all(mars_dir.join("cache"))?;
-
-    // Acquire sync lock before any config reads/mutations.
+    // The lock is the sole project-state write allowed before preparation's
+    // complete diagnostic gate. All package trees live in owned scratch space.
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
@@ -343,6 +357,17 @@ pub(crate) fn load_config(
         },
         Err(err) => return Err(err),
     };
+    if config.package.is_some() {
+        let manifest_path = project_root.join("mars.toml");
+        let content = std::fs::read_to_string(&manifest_path)?;
+        for diagnostic in &mars_schema::manifest::read(&content).diagnostics {
+            diag.schema(
+                diagnostic,
+                &format!("manifest `{}`", manifest_path.display()),
+                false,
+            );
+        }
+    }
 
     // Apply config mutation.
     let dependency_changes = if let Some(m) = &request.mutation {
@@ -443,8 +468,9 @@ pub(crate) fn resolve_graph(
             (name.clone(), path)
         })
         .collect();
+    let preparation = tempfile::tempdir()?;
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
-        .with_staging_root(ctx.project_root.join(".mars/staging"))
+        .with_staging_root(preparation.path().to_path_buf())
         .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(
         &loaded.effective,
@@ -499,6 +525,7 @@ pub(crate) fn resolve_graph(
         loaded,
         graph,
         upgrades_available,
+        preparation,
     })
 }
 
@@ -602,14 +629,14 @@ pub(crate) fn build_target(
                 } else {
                     Vec::new()
                 };
-                let staging_root = ctx.project_root.join(".mars/staging");
+                let staging_root = resolved.preparation.path();
                 let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
                 let staged_path = crate::staging::stage_local_item(
                     &item.disk_path(),
                     item.discovered.id.kind,
                     item.preparation,
                     &resolved.loaded.effective.skills,
-                    &staging_root,
+                    staging_root,
                     &item_key,
                     (item.discovered.id.kind == ItemKind::Skill)
                         .then(|| item.discovered.id.name.as_str()),

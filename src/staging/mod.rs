@@ -8,7 +8,6 @@ mod lift;
 mod overlay;
 mod publish;
 
-pub(crate) use lift::cursor_manual_rule_shape;
 pub(crate) use publish::{
     PublishInput, discover_inputs as discover_publish_inputs,
     inputs_for_items as publish_inputs_for_items,
@@ -50,16 +49,6 @@ pub(crate) enum DefinitionPreparation {
     Schema1,
     Legacy,
     Foreign(Dialect),
-}
-
-impl DefinitionPreparation {
-    fn directory_name(self) -> &'static str {
-        match self {
-            Self::Schema1 => "schema-1",
-            Self::Legacy => "legacy",
-            Self::Foreign(dialect) => dialect.as_str(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,13 +112,11 @@ fn stage_rooted_source_with_policy(
     diag: &mut DiagnosticCollector,
     publish_inputs: Option<&[PublishInput]>,
 ) -> Result<StagedRootedSource, MarsError> {
-    let staged_package_root = staging_dir_for(staging_root, source_name, options.preparation);
-    if let Some(package_staging_root) = staged_package_root.parent()
-        && package_staging_root.exists()
-    {
-        fs::remove_dir_all(package_staging_root)?;
+    let staged_package_root = staging_dir_for(staging_root, source_name);
+    if staged_package_root.symlink_metadata().is_ok() {
+        crate::platform::fs::safe_remove(&staged_package_root)?;
     }
-    stage_canonical_source_with_policy(
+    let changed = stage_canonical_source_with_policy(
         &rooted.package_root,
         &staged_package_root,
         options.preparation,
@@ -139,6 +126,12 @@ fn stage_rooted_source_with_policy(
         diag,
         publish_inputs,
     )?;
+    if options.preparation == DefinitionPreparation::Legacy && changed {
+        diag.warn_once(
+            "legacy-package",
+            format!("package `{source_name}` uses the pre-v1 format; run `mars migrate`"),
+        );
+    }
     let hook_surface = detect_unreadable_hook_surface(&staged_package_root, diag)?;
     Ok(StagedRootedSource {
         rooted: RootedSourceRef {
@@ -202,7 +195,7 @@ pub(crate) fn stage_prepared_package(
     dest_root: &Path,
     preparation: DefinitionPreparation,
     diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     stage_canonical_source_with_policy(
         source_root,
         dest_root,
@@ -212,8 +205,7 @@ pub(crate) fn stage_prepared_package(
         None,
         diag,
         None,
-    )?;
-    Ok(())
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -268,16 +260,13 @@ pub(crate) fn stage_local_item(
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<PathBuf, MarsError> {
-    let dest = staging_root
-        .join("_local")
-        .join(safe_component(item_key))
-        .join(preparation.directory_name());
-    if dest.exists() {
-        fs::remove_dir_all(&dest)?;
+    let dest = staging_root.join("_local").join(safe_component(item_key));
+    if dest.symlink_metadata().is_ok() {
+        crate::platform::fs::safe_remove(&dest)?;
     }
     fs::create_dir_all(dest.parent().unwrap_or(&dest))?;
 
-    match kind {
+    let (path, changed) = match kind {
         ItemKind::Agent | ItemKind::McpServer => {
             fs::create_dir_all(&dest)?;
             let dest_file =
@@ -288,7 +277,7 @@ pub(crate) fn stage_local_item(
                         source_path.display()
                     ),
                 })?);
-            process_markdown_file(
+            let changed = process_markdown_file(
                 source_path,
                 source_path,
                 &dest_file,
@@ -303,11 +292,11 @@ pub(crate) fn stage_local_item(
                     diag,
                 },
             )?;
-            Ok(dest_file)
+            (dest_file, changed)
         }
         ItemKind::Skill | ItemKind::Hook | ItemKind::BootstrapDoc => {
             fs::create_dir_all(&dest)?;
-            copy_and_lift_tree(
+            let changed = copy_and_lift_tree(
                 source_path,
                 &dest,
                 preparation,
@@ -317,19 +306,20 @@ pub(crate) fn stage_local_item(
                 excluded_paths,
                 diag,
             )?;
-            Ok(dest)
+            (dest, changed)
         }
+    };
+    if preparation == DefinitionPreparation::Legacy && changed {
+        diag.warn_once(
+            "legacy-authored-content",
+            "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`",
+        );
     }
+    Ok(path)
 }
 
-fn staging_dir_for(
-    staging_root: &Path,
-    source_name: &SourceName,
-    preparation: DefinitionPreparation,
-) -> PathBuf {
-    staging_root
-        .join(safe_component(source_name.as_ref()))
-        .join(preparation.directory_name())
+fn staging_dir_for(staging_root: &Path, source_name: &SourceName) -> PathBuf {
+    staging_root.join(safe_component(source_name.as_ref()))
 }
 
 struct StageOverlayContext<'a> {

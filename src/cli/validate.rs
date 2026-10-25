@@ -87,7 +87,7 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
 
     // Run the pipeline in dry-run mode (no writes).
     // ValidationWarnings are included in report.diagnostics by finalize().
-    let report = crate::sync::execute(ctx, &request)?;
+    let report = crate::sync::execute_validation(ctx, &request)?;
 
     // Run compatibility preflight against the binary version and project setting.
     let binary_version = env!("CARGO_PKG_VERSION");

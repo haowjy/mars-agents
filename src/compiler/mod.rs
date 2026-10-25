@@ -55,9 +55,31 @@ pub fn compile(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<SyncReport, MarsError> {
+    compile_inner(ctx, ir, request, diag, true)
+}
+
+pub(crate) fn compile_reporting(
+    ctx: &MarsContext,
+    ir: ReaderIr,
+    request: &SyncRequest,
+    diag: &mut DiagnosticCollector,
+) -> Result<SyncReport, MarsError> {
+    compile_inner(ctx, ir, request, diag, false)
+}
+
+fn compile_inner(
+    ctx: &MarsContext,
+    ir: ReaderIr,
+    request: &SyncRequest,
+    diag: &mut DiagnosticCollector,
+    enforce_diagnostic_gate: bool,
+) -> Result<SyncReport, MarsError> {
     // Phase 3: assign dest paths, handle collisions, rewrite frontmatter refs.
     let targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
 
+    if enforce_diagnostic_gate {
+        diag.fail_on_errors()?;
+    }
     // Phase 4: diff + plan.
     let planned = create_plan(ctx, targeted, request, diag)?;
 
@@ -68,6 +90,16 @@ pub fn compile(
 
     // Hook schemas and native allowlists are resolved before any mutation.
     config_entries::preflight_config_entries(ctx, &planned.targeted, request.options.force, diag)?;
+
+    if enforce_diagnostic_gate {
+        diag.fail_on_errors()?;
+    }
+    if !request.options.dry_run {
+        crate::platform::fs::atomic_copy_dir(
+            planned.targeted.resolved.preparation.path(),
+            &ctx.project_root.join(".mars/staging"),
+        )?;
+    }
 
     // Phase 5: persist config mutations, apply plan to canonical store.
     let applied = apply_plan(ctx, planned, request)?;

@@ -11,10 +11,10 @@ discovery. Staging copies schema-v1 packages without schema rewrites, runs
 `RootedSourceRef.package_root` is repointed at the staged tree.
 
 Local discovery follows the same ordering: declared content is classified first, and
-`.mars-src` is inspected for pending legacy rewrites before discovery. Discovery keeps the
-authored tree's symlink topology; `sync/mod.rs` passes each selected item through the chosen
-schema preparation before compilation. `.mars-src` always uses the legacy upgrade and warns
-only when inspection found a definition that will change.
+`.mars-src` definitions are selected through discovery. Discovery keeps the authored tree's
+symlink topology; `sync/mod.rs` passes each selected item through the chosen schema preparation
+before compilation. `.mars-src` always uses the legacy upgrade and warns only when preparation
+actually changes a selected definition.
 
 Flat package skills filter control files, `.mars-src`, standard native roots, and configured or previously owned target paths
 (including existing resolved paths for aliases/absolute/dot-segment spellings)
@@ -37,12 +37,12 @@ Discovery runs from the staged/rooted package directory. Its convention walk ski
 
 ## Staging location
 
-Per-consumer under `<project>/.mars/staging/<source-name>/<preparation>/`, where preparation
-is `schema-1`, `legacy`, or a foreign dialect. Selected local items stage separately under
-`.mars/staging/_local/`.
+Preparation first writes an owned temporary tree. After every package and local item passes the
+diagnostic gate, sync atomically replaces `<project>/.mars/staging/`. Each package owns one
+`<source-name>/` directory; selected local items own one `_local/<item>/` directory.
 
-- Never mutates the global fetch cache (`ResolvedRef.tree_path`).
-- Dependency- and preparation-scoped paths make restaging deterministic for `--frozen`.
+- Never mutates project staging or the global fetch cache before the diagnostic gate.
+- Package-owned paths prevent stale classification siblings.
 - Same source bytes + same preparation + same overrides ⇒ byte-identical staged tree.
 
 ## `.mars/` store semantics
@@ -81,11 +81,9 @@ they become `allow` entries without the wildcard. Existing map actions stay inta
 agent tool fields are dropped because the Codex native agent format has no such policy field;
 Codex skill tool grants follow the skill rule.
 
-C-skills applies `[skills.<name>]` overrides after lift in the same staging hook
-(`staging/overlay.rs`). Tool overlays project into canonical `tools:` /
-`disallowed-tools:` (including inline `mcp(...)` grants). Lookup key is the **installed**
-skill name (after explicit rename), matching `[skills.<name>]` in mars.toml — not the
-source directory basename alone. Flat/root `SKILL.md` skills use the discovered item
+C-skills applies `[skills.<name>]` overrides after lift in `staging/overlay.rs`.
+Lookup uses the **installed** skill name (after explicit rename), matching
+`[skills.<name>]` in mars.toml rather than only the source directory basename. Flat/root `SKILL.md` skills use the discovered item
 name (dependency source name or configured fallback).
 
 ## Inbound MCP lift
@@ -114,7 +112,7 @@ Flat-root skill naming (`skill_source_name` in `src/skill_source_name.rs`) is th
 - `EffectiveDependency.dialect` — explicit `[dependencies.<dep>].dialect`
 - `EffectiveDependency.rename` — overlay lookup uses installed names after rename
 - `EffectiveConfig.skills` — `[skills.<name>]` overlays applied in `process_markdown_file`
-- `ResolveOptions.staging_root` — set by sync to `.mars/staging`
+- `ResolveOptions.staging_root` — an owned scratch directory during preparation
 - `fallback_skill_name` — threaded into `process_markdown_file` via `StageOverlayContext`; used for flat-root skill overlay lookup and diagnostic messages
 
 Dialect resolution (`crate::dialect::Dialect::resolve`):

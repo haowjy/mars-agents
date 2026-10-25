@@ -40,7 +40,7 @@ sources and versions appear in the final graph.
 ## Staging Seam
 
 `ResolveOptions.staging_root` enables per-dependency canonical source staging.
-`stage_rooted_package` runs **after** `apply_subpath` in both resolution paths
+`package_prepare::prepare_rooted` runs **after** `apply_subpath` in both resolution paths
 (first-resolve and re-resolution). It always calls `package_prepare::classify`
 before manifest reading or discovery; classification does not depend on materialization.
 When `staging_root` is set:
@@ -50,10 +50,9 @@ When `staging_root` is set:
 3. Manifest-free sources resolve their foreign dialect and use the foreign lift.
 4. The resolver repoints `package_root` to the staged tree.
 
-All downstream consumers read the prepared tree. A non-materializing resolver may read schema-v1
-or manifest-free content after classification; it refuses legacy packages with a `mars migrate`
-message. Plugin builds provide a temporary staging root during resolution, so legacy inputs are
-materialized before discovery and relative dependency paths remain present in the copied tree.
+All content-reading consumers provide an owned temporary staging root and read the prepared tree.
+Dependency origins remain the authored package roots, so relative path dependencies resolve before
+prepared bytes replace the content view.
 
 `ResolveOptions.source_overrides` applies project-local path overrides by source
 name to both direct and manifest-discovered transitive dependencies. Declared
@@ -89,8 +88,8 @@ not reconstruct them in sync or lowering. Depth is the shortest distance from a 
 
 - `PublishLens` loads the consumer-facing config once: it ignores `mars.local.toml`
   and clears local dependencies while retaining the optional manifest and effective config.
-  `resolve_publish_graph(&lens, diag)` resolves it with no lock or project staging;
-  source fetches use `GlobalCache` and diagnostics belong to the caller.
+  source fetches use `GlobalCache`; content-reading callers supply owned temporary staging and
+  diagnostics belong to the caller.
   `resolve_publish_graph_from_config` gives internal publish consumers the same provider and
   no-lock boundary with a caller-built consumer view. Resolve relative package dependencies
   before staging: staging changes the package root from which relative paths are interpreted.

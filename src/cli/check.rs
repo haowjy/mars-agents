@@ -14,7 +14,6 @@ use serde::Serialize;
 use crate::dialect::Dialect;
 use crate::discover;
 use crate::error::MarsError;
-use mars_schema::frontmatter;
 
 use super::output;
 
@@ -71,24 +70,25 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
             &mut publish_diag,
         )?
     };
-    let prepared = if preparation == crate::staging::DefinitionPreparation::Legacy {
-        let prepared = tempfile::tempdir()?;
-        // Legacy checks inspect the same in-memory upgrade that sync stages.
-        let mut staging_diag = crate::diagnostic::DiagnosticCollector::new();
-        crate::staging::stage_prepared_package(
-            &authored_base,
-            prepared.path(),
-            preparation,
-            &mut staging_diag,
-        )?;
-        Some(prepared)
-    } else {
-        None
-    };
-    let base = prepared
-        .as_ref()
-        .map_or(authored_base.as_path(), |prepared| prepared.path());
-    let lens = crate::resolve::PublishLens::load(base, &mut publish_diag)?;
+    let prepared = tempfile::tempdir()?;
+    let changed = crate::staging::stage_prepared_package(
+        &authored_base,
+        prepared.path(),
+        preparation,
+        &mut publish_diag,
+    )?;
+    if preparation == crate::staging::DefinitionPreparation::Legacy && changed {
+        publish_diag.warn_once(
+            "legacy-package",
+            "package `checked package` uses the pre-v1 format; run `mars migrate`",
+        );
+    }
+    let base = prepared.path();
+    let lens = crate::resolve::PublishLens::load_with_schema_root(
+        &authored_base,
+        base,
+        &mut publish_diag,
+    )?;
     let mut report = check_dir_with_lens(base, Ok(&lens), &mut publish_diag)?;
     report
         .warnings
@@ -243,7 +243,6 @@ fn check_dir_with_lens(
     }
 
     let discovered = discover::discover_resolved_source(base, None, diag)?;
-    let dialect = Dialect::resolve_local(None, base);
 
     // ── Validate discovered agents/skills ────────────────────────────
     let mut agent_names: HashMap<String, PathBuf> = HashMap::new();
@@ -272,46 +271,34 @@ fn check_dir_with_lens(
                     .to_string();
 
                 match std::fs::read_to_string(&path) {
-                    Ok(content) => match frontmatter::parse(&content) {
-                        Ok(fm) => {
-                            let name = fm
-                                .name()
-                                .map(str::to_string)
-                                .unwrap_or_else(|| filename.clone());
-
-                            let mut agent_diags = Vec::new();
-                            let _profile =
-                                mars_schema::agent::parse_agent_profile(&fm, &mut agent_diags);
-                            for diagnostic in agent_diags {
-                                let message = format!(
-                                    "agent `{}`: [{}] {}",
-                                    path.display(),
-                                    diagnostic.code,
-                                    diagnostic.message
-                                );
-                                if diagnostic.severity == mars_schema::diagnostic::Severity::Error {
-                                    errors.push(message);
-                                } else {
-                                    warnings.push(message);
-                                }
+                    Ok(content) => {
+                        let reading = mars_schema::agent::read(&content);
+                        for diagnostic in &reading.diagnostics {
+                            let message = format!(
+                                "agent `{}`: [{}] {}",
+                                path.display(),
+                                diagnostic.code,
+                                diagnostic.message
+                            );
+                            if diagnostic.is_error() {
+                                errors.push(message);
+                            } else {
+                                warnings.push(message);
                             }
-
-                            if fm.name().is_none() {
+                        }
+                        if let Some(profile) = reading.fields {
+                            let name = profile.name.clone().unwrap_or_else(|| filename.clone());
+                            if profile.name.is_none() {
                                 warnings.push(format!(
                                     "agent `{filename}` has no `name` in frontmatter"
                                 ));
                             }
-
-                            if fm.get("description").and_then(|v| v.as_str()).is_none() {
+                            if profile.description.is_none() {
                                 warnings.push(format!("agent `{name}` has no `description`"));
                             }
-
-                            if fm.name().is_some() && name != filename {
-                                warnings.push(format!(
-                                    "agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"
-                                ));
+                            if profile.name.is_some() && name != filename {
+                                warnings.push(format!("agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"));
                             }
-
                             if let Some(existing) = agent_names.get(&name) {
                                 errors.push(format!(
                                     "duplicate agent name `{name}` in {} and {}",
@@ -321,32 +308,13 @@ fn check_dir_with_lens(
                             } else {
                                 agent_names.insert(name.clone(), path.clone());
                             }
-
-                            let skills = fm.skills();
+                            let skills = profile.skills.all();
                             if !skills.is_empty() {
                                 agent_skill_refs.push((name, skills));
                             }
                         }
-                        Err(e) => {
-                            let diagnostics = mars_schema::agent::read(&content).diagnostics;
-                            for diagnostic in &diagnostics {
-                                errors.push(format!(
-                                    "agent `{}`: [{}] {}",
-                                    path.display(),
-                                    diagnostic.code,
-                                    diagnostic.message()
-                                ));
-                            }
-                            if diagnostics.is_empty() {
-                                errors.push(format!(
-                                    "agent `{filename}` has invalid frontmatter: {e}"
-                                ));
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        errors.push(format!("cannot read {}: {e}", path.display()));
                     }
+                    Err(e) => errors.push(format!("cannot read {}: {e}", path.display())),
                 }
             }
             mars_schema::item::ItemKind::Skill => {
@@ -376,106 +344,37 @@ fn check_dir_with_lens(
 
                 match std::fs::read_to_string(&skill_md) {
                     Ok(content) => {
-                        let mut skill_diags = Vec::new();
-                        match mars_schema::skill::parse_skill_content(&content, &mut skill_diags) {
-                            Ok((profile, fm)) => {
-                                if dialect == Dialect::MarsNative {
-                                    mars_schema::skill::push_authored_skill_schema_diags(
-                                        &fm,
-                                        &mut skill_diags,
-                                    );
-                                }
-
-                                let name = profile
-                                    .name
-                                    .clone()
-                                    .or_else(|| fm.name().map(str::to_string))
-                                    .unwrap_or_else(|| dirname.clone());
-
-                                let schema_missing_name = skill_diags.iter().any(|diagnostic| {
-                                    diagnostic.path
-                                        == [mars_schema::diagnostic::PathSegment::Key(
-                                            "name".to_string(),
-                                        )]
-                                        && diagnostic.message.contains("invalid value `missing`")
-                                });
-                                let schema_missing_description =
-                                    skill_diags.iter().any(|diagnostic| {
-                                        diagnostic.path
-                                            == [mars_schema::diagnostic::PathSegment::Key(
-                                                "description".to_string(),
-                                            )]
-                                            && diagnostic
-                                                .message
-                                                .contains("invalid value `missing`")
-                                    });
-
-                                for diagnostic in skill_diags {
-                                    let message = format!(
-                                        "skill `{}`: [{}] {}",
-                                        skill_md.display(),
-                                        diagnostic.code,
-                                        diagnostic.message()
-                                    );
-                                    if diagnostic.is_error() {
-                                        errors.push(message);
-                                    } else {
-                                        warnings.push(message);
-                                    }
-                                }
-
-                                if fm.name().is_none() && !schema_missing_name {
-                                    warnings.push(format!(
-                                        "skill `{dirname}` has no `name` in frontmatter"
-                                    ));
-                                }
-
-                                if fm.get("description").and_then(|v| v.as_str()).is_none()
-                                    && !schema_missing_description
-                                    && dialect != Dialect::MarsNative
-                                    && !(dialect == Dialect::Cursor
-                                        && crate::staging::cursor_manual_rule_shape(&fm))
-                                {
-                                    warnings.push(format!("skill `{name}` has no `description`"));
-                                }
-
-                                if fm.name().is_some() && name != dirname {
-                                    warnings.push(format!(
-                                        "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
-                                    ));
-                                }
-
-                                if let Some(existing) = skill_names.get(&name) {
-                                    errors.push(format!(
-                                        "duplicate skill name `{name}` in {} and {}",
-                                        existing.display(),
-                                        duplicate_path.display()
-                                    ));
-                                } else {
-                                    skill_names.insert(name, duplicate_path);
-                                }
+                        let reading = mars_schema::skill::read(&content);
+                        for diagnostic in &reading.diagnostics {
+                            let message = format!(
+                                "skill `{}`: [{}] {}",
+                                skill_md.display(),
+                                diagnostic.code,
+                                diagnostic.message()
+                            );
+                            if diagnostic.is_error() {
+                                errors.push(message);
+                            } else {
+                                warnings.push(message);
                             }
-                            Err(e) => {
-                                if skill_diags.is_empty() {
-                                    errors.push(format!(
-                                        "skill `{dirname}` has invalid frontmatter: {e}"
-                                    ));
-                                } else {
-                                    for diagnostic in skill_diags {
-                                        errors.push(format!(
-                                            "skill `{}`: [{}] {}",
-                                            skill_md.display(),
-                                            diagnostic.code,
-                                            diagnostic.message()
-                                        ));
-                                    }
-                                }
+                        }
+                        if let Some(profile) = reading.fields {
+                            let name = profile.name.clone().unwrap_or_else(|| dirname.clone());
+                            if profile.name.is_some() && name != dirname {
+                                warnings.push(format!("skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"));
+                            }
+                            if let Some(existing) = skill_names.get(&name) {
+                                errors.push(format!(
+                                    "duplicate skill name `{name}` in {} and {}",
+                                    existing.display(),
+                                    duplicate_path.display()
+                                ));
+                            } else {
+                                skill_names.insert(name, duplicate_path);
                             }
                         }
                     }
-                    Err(e) => {
-                        errors.push(format!("cannot read {}: {e}", skill_md.display()));
-                    }
+                    Err(e) => errors.push(format!("cannot read {}: {e}", skill_md.display())),
                 }
             }
             // New kinds not yet subject to source-package checks.
@@ -593,7 +492,11 @@ fn resolve_available_skills(
     lens: &crate::resolve::PublishLens,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<HashMap<String, (String, String)>, MarsError> {
-    let graph = crate::resolve::resolve_publish_graph(lens, diag)?;
+    let staging = tempfile::tempdir()?;
+    let options =
+        crate::resolve::ResolveOptions::default().with_staging_root(staging.path().to_path_buf());
+    let graph =
+        crate::resolve::resolve_publish_graph_from_config(lens, &lens.effective, &options, diag)?;
 
     let mut skills: HashMap<String, (String, String)> = HashMap::new();
     for (source_name, node) in &graph.nodes {

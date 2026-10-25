@@ -38,12 +38,6 @@ pub fn discover_local_items(
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<LocalDiscoveredItem>, MarsError> {
     let root = preferred_local_source_root(project_root);
-    if root.exists() && legacy_upgrade_changes(&root)? {
-        diag.warn_once(
-            "legacy-authored-content",
-            "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`",
-        );
-    }
     let mut selected: Vec<_> = discover::discover_source(&root, Some("_self"), diag)?
         .into_iter()
         .map(|discovered| LocalDiscoveredItem {
@@ -84,39 +78,6 @@ pub fn discover_local_items(
         }
     }
     Ok(selected)
-}
-
-fn legacy_upgrade_changes(root: &Path) -> Result<bool, MarsError> {
-    for entry in walkdir::WalkDir::new(root).follow_links(false) {
-        let entry = entry.map_err(|error| MarsError::InvalidRequest {
-            message: format!("failed to inspect {}: {error}", root.display()),
-        })?;
-        let path = entry.path();
-        let is_markdown = path
-            .extension()
-            .is_some_and(|extension| extension == "md" || extension == "mdc");
-        if !is_markdown {
-            continue;
-        }
-        match std::fs::metadata(path) {
-            Ok(metadata) if metadata.is_file() => {}
-            Ok(_) => continue,
-            Err(_) if entry.file_type().is_symlink() => continue,
-            Err(error) => return Err(error.into()),
-        }
-        let text = std::fs::read_to_string(path)?;
-        let kind = if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
-            mars_schema::upgrade::DefinitionKind::Skill
-        } else {
-            mars_schema::upgrade::DefinitionKind::Agent
-        };
-        if mars_schema::upgrade::upgrade_definition(kind, &text)
-            .is_ok_and(|result| result.changed_from(&text))
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// Resource exclusions for a flat self skill, relative to its source root.

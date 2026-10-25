@@ -33,9 +33,9 @@ sync/build → resolve ← source
 
 - `cli/` dispatches commands, finds project root, formats output
 - `sync/` orchestrates the pipeline (load → resolve → build → plan → apply → sync targets → finalize)
-- `package_prepare` classifies each rooted package before lift or discovery; it rejects invalid/newer schemas and selects schema-v1, legacy-upgrade, or foreign-dialect staging
-- `resolve/` resolves dependency graphs with semver constraints; rooted dependencies cross the package-preparation boundary after `apply_subpath`
-- `staging/` materializes prepared schema-v1 content before discover/hash, for dependencies and local authored content
+- `package_prepare` owns the classification boundary: schema-v1, legacy upgrade, or foreign lift
+- `resolve/` resolves dependency graphs from authored locations, then prepares rooted dependencies after `apply_subpath`
+- `staging/` materializes and validates every selected definition in owned scratch space; sync publishes the complete tree only after the diagnostic gate, with `sync.lock` as the sole pre-gate write
 - `discover/` owns source item discovery: a bounded convention walk over non-hidden
   package layers for agents, skills, and bootstrap docs; whole hook directories
   are discovered only under the package-root `hooks/`; see

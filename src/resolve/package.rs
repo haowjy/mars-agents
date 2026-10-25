@@ -7,7 +7,6 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
 use crate::error::{ConfigError, MarsError, ResolutionError};
 use crate::lock::LockFile;
-use crate::staging;
 use crate::types::{ItemName, SourceId, SourceName, SourceSubpath};
 use indexmap::IndexMap;
 
@@ -197,7 +196,7 @@ pub(crate) fn resolve_package_bottom_up(
                         &new_ref.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
-                    let staged = stage_rooted_package(
+                    let staged = crate::package_prepare::prepare_rooted(
                         &pending_src.name,
                         new_rooted,
                         effective_config,
@@ -289,7 +288,7 @@ pub(crate) fn resolve_package_bottom_up(
                         &ref_.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
-                    let staged = stage_rooted_package(
+                    let staged = crate::package_prepare::prepare_rooted(
                         &pending_src.name,
                         rooted,
                         effective_config,
@@ -583,47 +582,6 @@ fn engine_unsatisfiable_error(
         name: name.to_string(),
         message: format!("no compatible candidate remains:\n{candidates}"),
     })
-}
-
-pub(crate) fn stage_rooted_package(
-    source_name: &SourceName,
-    rooted: super::types::RootedSourceRef,
-    effective_config: &EffectiveConfig,
-    staging_root: Option<&Path>,
-    diag: &mut DiagnosticCollector,
-) -> Result<staging::StagedRootedSource, MarsError> {
-    let dep = effective_config.dependencies.get(source_name);
-    let preparation = crate::package_prepare::classify(
-        source_name.as_ref(),
-        &rooted.package_root,
-        dep.and_then(|entry| entry.dialect),
-        diag,
-    )?;
-    let Some(staging_root) = staging_root else {
-        if preparation == staging::DefinitionPreparation::Legacy {
-            return Err(MarsError::Source {
-                source_name: source_name.to_string(),
-                message: format!(
-                    "package `{source_name}` uses the pre-v1 format, but this operation does not materialize packages; run `mars migrate` in that package first"
-                ),
-            });
-        }
-        return Ok(staging::StagedRootedSource {
-            rooted,
-            hook_surface: staging::HookSurfaceState::Readable,
-        });
-    };
-    let empty_renames = crate::types::RenameMap::new();
-    let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
-    staging::stage_rooted_source(
-        source_name,
-        rooted,
-        staging::RootedStageOptions { preparation },
-        &effective_config.skills,
-        renames,
-        staging_root,
-        diag,
-    )
 }
 
 fn package_has_unfiltered_materialization_request(

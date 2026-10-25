@@ -222,7 +222,7 @@ pub fn load_merge_fragment(
     item: &ParsedHookItem,
     target_name: &str,
     known_events: &[&str],
-    hook_dir_token: &str,
+    hook_dir: &str,
     diag: &mut DiagnosticCollector,
     emit_unchecked_warning: bool,
 ) -> Result<HookFragment, MarsError> {
@@ -274,7 +274,7 @@ pub fn load_merge_fragment(
             event.clone(),
             array
                 .iter()
-                .map(|entry| substitute_json_strings(entry.clone(), hook_dir_token))
+                .map(|entry| substitute_json_strings(entry.clone(), hook_dir))
                 .collect(),
         );
     }
@@ -286,7 +286,7 @@ pub fn load_merge_fragment(
 pub fn load_file_fragment(
     item: &ParsedHookItem,
     target_name: &str,
-    hook_dir_token: &str,
+    hook_dir: &str,
 ) -> Result<String, MarsError> {
     let target = &item.def.targets[target_name];
     if target.unchecked.is_some() {
@@ -304,24 +304,24 @@ pub fn load_file_fragment(
     let path = item.hook_dir.join(fragment_name);
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| invalid(&path, &format!("failed to read fragment: {error}")))?;
-    Ok(substitute_hook_dir(&raw, hook_dir_token))
+    Ok(substitute_hook_dir(&raw, hook_dir))
 }
 
-fn substitute_hook_dir(text: &str, hook_dir_token: &str) -> String {
-    text.replace("${MARS_HOOK_DIR}", hook_dir_token)
+fn substitute_hook_dir(text: &str, hook_dir: &str) -> String {
+    text.replace("${MARS_HOOK_DIR}", hook_dir)
 }
 
-fn substitute_json_strings(mut value: Value, hook_dir_token: &str) -> Value {
+fn substitute_json_strings(mut value: Value, hook_dir: &str) -> Value {
     match &mut value {
-        Value::String(text) => *text = substitute_hook_dir(text, hook_dir_token),
+        Value::String(text) => *text = substitute_hook_dir(text, hook_dir),
         Value::Array(values) => {
             for value in values {
-                *value = substitute_json_strings(value.take(), hook_dir_token);
+                *value = substitute_json_strings(value.take(), hook_dir);
             }
         }
         Value::Object(values) => {
             for value in values.values_mut() {
-                *value = substitute_json_strings(value.take(), hook_dir_token);
+                *value = substitute_json_strings(value.take(), hook_dir);
             }
         }
         _ => {}
@@ -345,20 +345,16 @@ mod tests {
 
     #[test]
     fn hook_dir_substitution_uses_caller_provided_token_in_file_and_json_fragments() {
-        let hook_dir_token = "${CLAUDE_PLUGIN_ROOT}/hooks/audit";
-        let substituted = substitute_hook_dir(
-            r#"const SCRIPT = "${MARS_HOOK_DIR}/run.sh";"#,
-            hook_dir_token,
-        );
+        let hook_dir = "${CLAUDE_PLUGIN_ROOT}/hooks/audit";
+        let substituted =
+            substitute_hook_dir(r#"const SCRIPT = "${MARS_HOOK_DIR}/run.sh";"#, hook_dir);
         assert_eq!(
             substituted,
             r#"const SCRIPT = "${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh";"#
         );
 
-        let substituted = substitute_json_strings(
-            json!({"command": "${MARS_HOOK_DIR}/run.sh"}),
-            hook_dir_token,
-        );
+        let substituted =
+            substitute_json_strings(json!({"command": "${MARS_HOOK_DIR}/run.sh"}), hook_dir);
         assert_eq!(
             substituted,
             json!({"command": "${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh"})

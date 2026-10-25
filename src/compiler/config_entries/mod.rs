@@ -5,10 +5,14 @@
 
 pub mod resolve;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 
+use crate::compiler::hooks::ParsedHookItem;
+use crate::compiler::mcp::{ParsedMcpItem, TargetMcpEntry};
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ConfigEntryRecord;
 use crate::sync::AppliedState;
+use crate::target::{ConfigEntry, HookEntry, McpServerEntry, TargetAdapter};
 use crate::types::{MarsContext, SourceName};
 
 pub(crate) struct ConfigEntryCompilation {
@@ -212,12 +216,8 @@ pub(crate) fn preflight_config_entries(
             }
             let adapter = registry.get(target_name);
             let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
-            let installed = ctx
-                .project_root
-                .join(target_name)
-                .join("hooks")
-                .join(&item.def.name);
-            let hook_dir_token = portable_installed_hook_dir(&installed);
+            let installed = installed_hook_dir(&ctx.project_root, target_name, &item.def.name);
+            let hook_dir = portable_installed_hook_dir(&installed);
             if let Err(error) = validate_destination_path(&ctx.project_root, &installed, true) {
                 errors.push(error);
                 continue;
@@ -239,15 +239,10 @@ pub(crate) fn preflight_config_entries(
             let result = match mode {
                 Some(HookFragmentMode::MergeJson) => {
                     match adapter.and_then(|adapter| adapter.known_hook_events()) {
-                        Some(known) => load_merge_fragment(
-                            &item,
-                            target_name,
-                            known,
-                            &hook_dir_token,
-                            diag,
-                            true,
-                        )
-                        .map(|_| ()),
+                        Some(known) => {
+                            load_merge_fragment(&item, target_name, known, &hook_dir, diag, true)
+                                .map(|_| ())
+                        }
                         None => Err(MarsError::Config(ConfigError::Invalid {
                             message: format!(
                                 "hook `{}`: target `{target_name}` has no native event allowlist",
@@ -268,7 +263,7 @@ pub(crate) fn preflight_config_entries(
                             continue;
                         }
                     }
-                    load_file_fragment(&item, target_name, &hook_dir_token).map(|_| ())
+                    load_file_fragment(&item, target_name, &hook_dir).map(|_| ())
                 }
                 None => Err(MarsError::Config(ConfigError::Invalid {
                     message: format!(
@@ -289,6 +284,89 @@ pub(crate) fn preflight_config_entries(
             message: errors.join("\n"),
         }))
     }
+}
+
+/// Lower the mergeable MCP and hook entries for one target.
+///
+/// The caller owns target-specific eligibility checks, including whether a
+/// project-installed hook directory is current. `hook_dir` supplies the
+/// replacement for `${MARS_HOOK_DIR}` in each hook's native fragment.
+pub(crate) fn lower_config_entries_for_target(
+    hooks: &[ParsedHookItem],
+    mcp: &[ParsedMcpItem],
+    adapter: &dyn TargetAdapter,
+    hook_dir: impl Fn(&ParsedHookItem) -> String,
+    diag: &mut DiagnosticCollector,
+) -> Vec<ConfigEntry> {
+    use crate::compiler::config_entries::resolve::{
+        LoadedHookContribution, resolve_hook_collisions_for_target,
+        resolve_mcp_collisions_for_target,
+    };
+
+    let target_root = adapter.name();
+    let mut entries = Vec::new();
+    for parsed in resolve_mcp_collisions_for_target(mcp, target_root, diag) {
+        let entry = TargetMcpEntry::from_parsed(parsed);
+        entries.push(ConfigEntry::McpServer(McpServerEntry {
+            name: entry.name,
+            command: entry.command,
+            args: entry.args,
+            env: entry.env.into_iter().collect(),
+        }));
+    }
+
+    if adapter.hook_fragment_mode() != Some(crate::target::HookFragmentMode::MergeJson) {
+        return entries;
+    }
+    let Some(known_events) = adapter.known_hook_events() else {
+        return Vec::new();
+    };
+    let mut contributions = Vec::new();
+    for item in hooks
+        .iter()
+        .filter(|item| item.def.targets.contains_key(target_root))
+    {
+        match crate::compiler::hooks::load_merge_fragment(
+            item,
+            target_root,
+            known_events,
+            &hook_dir(item),
+            diag,
+            false,
+        ) {
+            Ok(fragment) => contributions.extend(
+                fragment
+                    .events
+                    .into_iter()
+                    .filter(|(_, entries)| !entries.is_empty())
+                    .map(|(event, entries)| LoadedHookContribution {
+                        item,
+                        event,
+                        entries,
+                    }),
+            ),
+            Err(error) => diag.error("hook-fragment", error.to_string()),
+        }
+    }
+
+    let mut hooks = resolve_hook_collisions_for_target(&contributions, target_root, diag);
+    hooks.sort_by_key(|hook| {
+        (
+            hook.item.package_depth,
+            hook.item.decl_order,
+            hook.item.def.order,
+            hook.item.def.name.as_str(),
+            hook.event.as_str(),
+        )
+    });
+    entries.extend(hooks.into_iter().map(|hook| {
+        ConfigEntry::Hook(HookEntry {
+            name: hook.item.def.name.clone(),
+            native_event: hook.event.clone(),
+            entries: hook.entries.clone(),
+        })
+    }));
+    entries
 }
 
 fn validate_destination_path(
@@ -342,13 +420,10 @@ pub(crate) fn compile_config_entries(
     force: bool,
     diag: &mut DiagnosticCollector,
 ) -> ConfigEntryCompilation {
-    use crate::compiler::config_entries::resolve::{
-        LoadedHookContribution, resolve_file_hook_collisions_for_target,
-        resolve_hook_collisions_for_target, resolve_mcp_collisions_for_target,
-    };
+    use crate::compiler::config_entries::resolve::resolve_file_hook_collisions_for_target;
     use crate::compiler::hooks::discover_hook_items;
-    use crate::compiler::mcp::{TargetMcpEntry, check_env_refs, discover_mcp_items};
-    use crate::target::{ConfigEntry, HookEntry, McpServerEntry, TargetRegistry};
+    use crate::compiler::mcp::{check_env_refs, discover_mcp_items};
+    use crate::target::TargetRegistry;
 
     let graph = &applied.planned.targeted.resolved.graph;
     let effective = &applied.planned.targeted.resolved.loaded.effective;
@@ -491,40 +566,20 @@ pub(crate) fn compile_config_entries(
     // is name-based across native events, so it must run before replacement
     // bindings with the same name are written.
     for target_root in &target_roots {
-        // Lower MCP items for this target.
-        let mut entries = Vec::new();
-
-        for parsed in resolve_mcp_collisions_for_target(&all_mcp, target_root, diag) {
-            let e = TargetMcpEntry::from_parsed(parsed);
-            entries.push(ConfigEntry::McpServer(McpServerEntry {
-                name: e.name,
-                command: e.command,
-                args: e.args,
-                env: e.env.into_iter().collect(),
-            }));
-        }
-
-        // Load opaque fragment arrays, then collision-resolve by (event, name).
         let Some(adapter) = registry.get(target_root) else {
             continue;
         };
         let mode = adapter.hook_fragment_mode();
-        let mut contributions = Vec::new();
-        if mode == Some(crate::target::HookFragmentMode::MergeJson) {
-            let Some(known_events) = adapter.known_hook_events() else {
-                continue;
-            };
-            for item in all_hooks
-                .iter()
-                .filter(|item| item.def.targets.contains_key(target_root))
-            {
-                let installed = ctx
-                    .project_root
-                    .join(target_root)
-                    .join("hooks")
-                    .join(&item.def.name);
-                let hook_dir_token = portable_installed_hook_dir(&installed);
-                if !dry_run && !hook_directory_is_installed(item, &installed) {
+        let installed_hooks = all_hooks
+            .iter()
+            .filter(|item| item.def.targets.contains_key(target_root))
+            .filter(|item| {
+                let installed =
+                    installed_hook_dir(&ctx.project_root, target_root, &item.def.name);
+                if mode.is_some()
+                    && !dry_run
+                    && !hook_directory_is_installed(item, &installed)
+                {
                     diag.warn(
                         "hook-not-installed",
                         format!(
@@ -533,77 +588,36 @@ pub(crate) fn compile_config_entries(
                             installed.display()
                         ),
                     );
-                    continue;
+                    return false;
                 }
-                match crate::compiler::hooks::load_merge_fragment(
-                    item,
-                    target_root,
-                    known_events,
-                    &hook_dir_token,
-                    diag,
-                    false,
-                ) {
-                    Ok(fragment) => contributions.extend(
-                        fragment
-                            .events
-                            .into_iter()
-                            .filter(|(_, entries)| !entries.is_empty())
-                            .map(|(event, entries)| LoadedHookContribution {
-                                item,
-                                event,
-                                entries,
-                            }),
-                    ),
-                    Err(error) => {
-                        diag.error("hook-fragment", error.to_string());
-                        continue;
-                    }
-                }
-            }
-        }
-        let mut target_hooks =
-            resolve_hook_collisions_for_target(&contributions, target_root, diag);
-        target_hooks.sort_by_key(|hook| {
-            (
-                hook.item.package_depth,
-                hook.item.decl_order,
-                hook.item.def.order,
-                hook.item.def.name.as_str(),
-                hook.event.as_str(),
-            )
-        });
-        let hook_entries = target_hooks.into_iter().map(|hook| {
-            ConfigEntry::Hook(HookEntry {
-                name: hook.item.def.name.clone(),
-                native_event: hook.event.clone(),
-                entries: hook.entries.clone(),
+                true
             })
-        });
-
-        // Combine all entries.
-        entries.extend(hook_entries);
+            .cloned()
+            .collect::<Vec<_>>();
+        let entries = lower_config_entries_for_target(
+            &installed_hooks,
+            &all_mcp,
+            adapter,
+            |item| {
+                portable_installed_hook_dir(&installed_hook_dir(
+                    &ctx.project_root,
+                    target_root,
+                    &item.def.name,
+                ))
+            },
+            diag,
+        );
 
         // Resolve and load whole-file hooks independently of merge ordering.
         let mut file_writes = Vec::new();
         if mode == Some(crate::target::HookFragmentMode::File) {
-            for item in resolve_file_hook_collisions_for_target(&all_hooks, target_root, diag) {
-                let installed = ctx
-                    .project_root
-                    .join(target_root)
-                    .join("hooks")
-                    .join(&item.def.name);
-                let hook_dir_token = portable_installed_hook_dir(&installed);
-                if !dry_run && !hook_directory_is_installed(item, &installed) {
-                    diag.warn(
-                        "hook-not-installed",
-                        format!(
-                            "not emitting hook `{}` for `{target_root}` because `{}` is not installed",
-                            item.def.name,
-                            installed.display()
-                        ),
-                    );
-                    continue;
-                }
+            for item in resolve_file_hook_collisions_for_target(&installed_hooks, target_root, diag)
+            {
+                let hook_dir = portable_installed_hook_dir(&installed_hook_dir(
+                    &ctx.project_root,
+                    target_root,
+                    &item.def.name,
+                ));
                 let Some(relative_dest) = adapter.hook_file_dest_path(&item.def.name) else {
                     diag.error(
                         "hook-fragment",
@@ -613,8 +627,7 @@ pub(crate) fn compile_config_entries(
                     );
                     continue;
                 };
-                match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir_token)
-                {
+                match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir) {
                     Ok(content) => {
                         let relative_dest = relative_dest.to_string_lossy().into_owned();
                         desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
@@ -997,6 +1010,10 @@ fn hook_directory_is_installed(
         .ok()
         .zip(crate::hash::compute_hash(&item.hook_dir, crate::lock::ItemKind::Hook).ok())
         .is_some_and(|(installed, desired)| installed == desired)
+}
+
+fn installed_hook_dir(project_root: &Path, target_root: &str, hook_name: &str) -> PathBuf {
+    project_root.join(target_root).join("hooks").join(hook_name)
 }
 
 fn portable_installed_hook_dir(installed: &std::path::Path) -> String {

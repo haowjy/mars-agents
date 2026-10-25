@@ -14,19 +14,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refused; rebuilds swap the tree atomically and recover from an interrupted build.
 
 ### Fixed
-- `mars check PATH` now resolves package path dependencies relative to the checked package,
-  rather than the caller's working directory.
-- `mars check` and `mars init` now report publish-view configuration warnings instead of
-  dropping them; `mars check` also reports dependency-resolution warnings.
-- Hook emission now uses the same filter- and collision-selected hook as installation, so an
-  excluded hook no longer suppresses another dependency's installed hook or causes a false
-  not-installed warning; shadowed dependency hooks no longer cause that warning either.
 - Hook order now follows shortest dependency depth, changing only when a direct dependency is
   also reached transitively. Codex users may need to re-trust moved hooks once with `/hooks`.
-- Hook fragments removed by a filter or shadowed by a local hook are no longer validated, so
-  a broken one no longer fails `mars sync`.
-- `mars version` now changes only `[package].version`, preserving comments, formatting,
-  ordering, and unrecognized tables in `mars.toml`.
 - Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
   treated as local.
 - Discovery, MCP discovery and staging skip any directory holding a valid `.mars-plugin.json`
@@ -39,6 +28,21 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - MCP server collisions now prefer the shallowest package, then dependency declaration order,
   so a package's own server cannot lose to a transitive dependency.
 - Skill and hook copies now preserve source executable bits.
+
+## [0.18.2] - 2026-10-25
+
+### Fixed
+- `mars check PATH` now resolves package path dependencies relative to the checked package,
+  rather than the caller's working directory.
+- `mars check` and `mars init` now report publish-view configuration warnings instead of
+  dropping them; `mars check` also reports dependency-resolution warnings.
+- Hook emission now uses the same filter- and collision-selected hook as installation, so an
+  excluded hook no longer suppresses another dependency's installed hook or causes a false
+  not-installed warning; shadowed dependency hooks no longer cause that warning either.
+- Hook fragments removed by a filter or shadowed by a local hook are no longer validated, so
+  a broken one no longer fails `mars sync`.
+- `mars version` now changes only `[package].version`, preserving comments, formatting,
+  ordering, and unrecognized tables in `mars.toml`.
 
 ## [0.18.1] - 2026-10-24
 

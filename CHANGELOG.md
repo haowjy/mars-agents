@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
+  treated as local.
+
 ## [0.18.2] - 2026-10-25
 
 ### Fixed

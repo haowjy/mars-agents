@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
@@ -41,7 +42,7 @@ fn default_visibility() -> String {
 #[derive(Debug, Clone)]
 pub struct HookDef {
     pub name: String,
-    pub visibility: String,
+    pub visibility: Visibility,
     pub targets: BTreeMap<String, HookTarget>,
     pub order: i32,
 }
@@ -53,6 +54,22 @@ pub struct ParsedHookItem {
     pub package_depth: usize,
     pub decl_order: usize,
     pub hook_dir: PathBuf,
+}
+
+impl ParsedHookItem {
+    pub(crate) fn discovered_item(&self, package_root: &Path) -> crate::discover::DiscoveredItem {
+        crate::discover::DiscoveredItem {
+            id: crate::lock::ItemId {
+                kind: crate::lock::ItemKind::Hook,
+                name: self.def.name.clone().into(),
+            },
+            source_path: self
+                .hook_dir
+                .strip_prefix(package_root)
+                .expect("parsed hook belongs to its package root")
+                .to_path_buf(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -116,10 +133,11 @@ pub fn discover_hook_items(
     source_name: &str,
     package_depth: usize,
     decl_order: usize,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
     crate::discover::discover_hook_directories(package_root)?
         .into_iter()
-        .map(|hook_dir| load_hook_item(&hook_dir, source_name, package_depth, decl_order))
+        .map(|hook_dir| load_hook_item(&hook_dir, source_name, package_depth, decl_order, diag))
         .collect()
 }
 
@@ -128,12 +146,14 @@ pub(crate) fn discover_resolved_hook_items(
     source_name: &crate::types::SourceName,
     package_depth: usize,
     decl_order: usize,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
     discover_hook_items(
         &node.rooted_ref.package_root,
         source_name.as_str(),
         package_depth,
         decl_order,
+        diag,
     )
     .map_err(|error| contextualize_dependency_error(error, source_name, node))
 }
@@ -143,6 +163,7 @@ fn load_hook_item(
     source_name: &str,
     package_depth: usize,
     decl_order: usize,
+    diag: &mut DiagnosticCollector,
 ) -> Result<ParsedHookItem, MarsError> {
     let dir_name = hook_dir
         .file_name()
@@ -182,10 +203,11 @@ fn load_hook_item(
             ));
         }
     }
+    let visibility = Visibility::parse(&raw_def.visibility, "hook", &name, source_name, diag);
     Ok(ParsedHookItem {
         def: HookDef {
             name,
-            visibility: raw_def.visibility,
+            visibility,
             targets: raw_def.targets,
             order: raw_def.order,
         },

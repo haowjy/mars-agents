@@ -40,11 +40,11 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `tool_natives.rs` — explicit per-harness native tool tables, pinned by a test against each harness's real tool list. Nothing is derived by naming convention.
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts
-- `config_entries/` — MCP servers and hooks from packages → target config files
+- `config_entries/` — selected MCP servers and hooks → target config files
 - `mcp/` — MCP server item discovery, env-ref validation, collision detection
 - `hooks/` — fragment-manifest discovery, merge-fragment validation/substitution, and ordering
 - `variants/` — skill variant layout validation, indexing, projection
-- `visibility/` — D1/D10 propagation rules
+- `visibility/` — typed `local` / `exported` parsing for effectful items
 
 ## Dual-Surface Compilation
 
@@ -164,11 +164,11 @@ Universal schema parsing and native lowering. Skills support variant layouts per
 
 ## Config Entries (`config_entries/`)
 
-MCP servers and selected hooks are validated and written to target config files via adapters.
-The target build carries each parsed hook and source package alongside the target-scoped canonical
-selection; preflight, merge-mode lowering, and file-mode emission consume that value instead of
-rediscovering hooks. Sync checks the selected hook's installed directory after target sync, while a
-plugin build can lower the same pure selection without an installed directory.
+MCP servers and hooks are selected during the target build, then validated and written to target
+config files via adapters. `TargetState` carries each parsed item and its managed targets; preflight
+and emission consume that value instead of rediscovering package config entries. Sync checks a
+selected hook's installed directory after target sync, while a plugin build can lower the same pure
+selection without an installed directory.
 `lower_config_entries_for_target` owns per-target MCP collision resolution, native merge-fragment
 loading, and hook ordering. Callers supply the `${MARS_HOOK_DIR}` replacement through its
 hook-directory callback.
@@ -185,7 +185,9 @@ wrappers, substitutes `${MARS_HOOK_DIR}` in all JSON string values and file-mode
 fragment text, and returns structured `HookFragment` or substituted file content.
 Placement and lock recording are handled by `config_entries/`.
 Dependency hook discovery is contextualized by `hooks::discover_resolved_hook_items` during target
-construction; callers must not expose derived staging paths in schema errors.
+construction; callers must not expose derived staging paths in schema errors. Target construction
+derives the filter-facing `DiscoveredItem` from that strict parse instead of parsing `hook.toml`
+again.
 
 ## Variants (`variants/`)
 
@@ -193,7 +195,8 @@ Skill variant layout validation, indexing, and projection per harness target.
 
 ## Visibility (`visibility/`)
 
-Propagation rules for passive vs effectful items (D1/D10).
+Hook and MCP manifests parse visibility once into `Visibility`. Unknown values warn and become
+`Local`; downstream selection only compares the enum with `Exported`.
 
 ## Patterns
 

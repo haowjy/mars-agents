@@ -1,7 +1,7 @@
 //! Config-entry compiler lane for MCP servers and hooks.
 //!
-//! This module owns MCP discovery and config-entry lowering/writes. Hook
-//! selection comes from the target build that also selects installed content.
+//! This module owns config-entry lowering and writes. MCP and hook selection
+//! come from the target build that also selects installed content.
 
 pub mod resolve;
 use std::collections::{BTreeMap, HashMap};
@@ -13,7 +13,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ConfigEntryRecord;
 use crate::sync::AppliedState;
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry, TargetAdapter};
-use crate::types::{MarsContext, SourceName};
+use crate::types::MarsContext;
 
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
@@ -82,7 +82,6 @@ pub(crate) fn preflight_config_entries(
     let resolved = &targeted.resolved;
     let registry = TargetRegistry::new();
     let mut errors = Vec::new();
-    let managed_targets = resolved.loaded.effective.settings.managed_targets();
     let mut touched_targets: BTreeMap<String, (bool, bool)> = BTreeMap::new();
     for (target, records) in &resolved.loaded.old_lock.config_entries {
         let touch = touched_targets.entry(target.clone()).or_default();
@@ -92,54 +91,11 @@ pub(crate) fn preflight_config_entries(
     for (target, _) in targeted.target.selected_hooks() {
         touched_targets.entry(target.to_string()).or_default().1 = true;
     }
-    let mut mcp_items =
-        match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0) {
-            Ok(items) => items,
-            Err(error) => {
-                diag.warn(
-                    "mcp-discover",
-                    format!("failed to scan local MCP items: {error}"),
-                );
-                Vec::new()
-            }
-        };
-    for (decl_order, source_name) in resolved.graph.order.iter().enumerate() {
-        let Some(node) = resolved.graph.nodes.get(source_name) else {
-            continue;
-        };
-        if !source_may_emit_mcp(&resolved.graph, source_name) {
-            continue;
-        }
-        match crate::compiler::mcp::discover_mcp_items(
-            &node.rooted_ref.package_root,
-            source_name.as_str(),
-            decl_order,
-        ) {
-            Ok(items) => mcp_items.extend(items),
-            Err(error) => diag.warn(
-                "mcp-discover",
-                format!("failed to scan MCP items in `{source_name}`: {error}"),
-            ),
-        }
+    for warning in targeted.target.mcp_discovery_warnings() {
+        diag.warn("mcp-discover", warning);
     }
-    for item in mcp_items {
-        if item.source_name != "_self" && item.def.visibility != "exported" {
-            continue;
-        }
-        if item.def.targets.is_empty() {
-            for target in &managed_targets {
-                touched_targets.entry(target.clone()).or_default().0 = true;
-            }
-        } else {
-            for target in item
-                .def
-                .targets
-                .iter()
-                .filter(|target| managed_targets.contains(target))
-            {
-                touched_targets.entry(target.clone()).or_default().0 = true;
-            }
-        }
+    for target in targeted.target.selected_mcp_targets() {
+        touched_targets.entry(target.to_string()).or_default().0 = true;
     }
     for (target_name, (touches_mcp, touches_hooks)) in &touched_targets {
         let target_dir = ctx.project_root.join(target_name);
@@ -249,7 +205,7 @@ pub(crate) fn preflight_config_entries(
 /// replacement for `${MARS_HOOK_DIR}` in each hook's native fragment.
 pub(crate) fn lower_config_entries_for_target(
     hooks: &[&ParsedHookItem],
-    mcp: &[ParsedMcpItem],
+    mcp: &[&ParsedMcpItem],
     adapter: &dyn TargetAdapter,
     hook_dir: impl Fn(&ParsedHookItem) -> String,
     diag: &mut DiagnosticCollector,
@@ -258,7 +214,7 @@ pub(crate) fn lower_config_entries_for_target(
 
     let target_root = adapter.name();
     let mut entries = Vec::new();
-    for parsed in resolve_mcp_collisions_for_target(mcp, target_root, diag) {
+    for parsed in resolve_mcp_collisions_for_target(mcp.iter().copied(), target_root, diag) {
         let entry = TargetMcpEntry::from_parsed(parsed);
         entries.push(ConfigEntry::McpServer(McpServerEntry {
             name: entry.name,
@@ -275,11 +231,7 @@ pub(crate) fn lower_config_entries_for_target(
         return entries;
     };
     let mut contributions = Vec::new();
-    for item in hooks
-        .iter()
-        .copied()
-        .filter(|item| item.def.targets.contains_key(target_root))
-    {
+    for item in hooks.iter().copied() {
         match crate::compiler::hooks::load_merge_fragment(
             item,
             target_root,
@@ -361,8 +313,8 @@ fn validate_destination_path(
 
 /// Post-target-sync config-entry compilation: MCP servers and hooks.
 ///
-/// MCP servers are discovered from each package in the resolved graph. Hooks
-/// come from the target build's filter- and collision-resolved selection.
+/// MCP servers and hooks come from the target build's filter- and
+/// collision-resolved selection.
 ///
 /// Then:
 /// 1. Run env-ref preflight (warn on missing vars)
@@ -379,85 +331,26 @@ pub(crate) fn compile_config_entries(
     force: bool,
     diag: &mut DiagnosticCollector,
 ) -> ConfigEntryCompilation {
-    use crate::compiler::mcp::{check_env_refs, discover_mcp_items};
+    use crate::compiler::mcp::check_env_refs;
     use crate::target::TargetRegistry;
 
-    let graph = &applied.planned.targeted.resolved.graph;
     let effective = &applied.planned.targeted.resolved.loaded.effective;
     let target_roots: Vec<String> = effective.settings.managed_targets();
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
-    // Compute declaration-order precedence from mars.toml insertion order.
-    let decl_orders = crate::sync::target::dependency_decl_orders(graph, &effective.dependencies);
-
-    // Collect MCP items across all packages. Hook selection was completed by
-    // the target build and is carried in TargetState.
-    let mut all_mcp: Vec<crate::compiler::mcp::ParsedMcpItem> = Vec::new();
-
-    // Local package (depth 0, decl_order 0).
-    let local_mcp = match discover_mcp_items(&ctx.project_root, "_self", 0) {
-        Ok(items) => items,
-        Err(e) => {
-            diag.warn(
-                "mcp-discover",
-                format!("failed to scan local MCP items: {e}"),
-            );
-            Vec::new()
-        }
-    };
-    all_mcp.extend(local_mcp);
-
-    // Dependency packages.
-    for source_name in &graph.order {
-        let Some(node) = graph.nodes.get(source_name) else {
-            continue;
-        };
-        let package_root = &node.rooted_ref.package_root;
-        let decl_order = decl_orders
-            .get(source_name)
-            .copied()
-            .unwrap_or(effective.dependencies.len() + graph.order.len() + 1);
-
-        if source_may_emit_mcp(graph, source_name) {
-            match discover_mcp_items(package_root, source_name.as_str(), decl_order) {
-                Ok(items) => all_mcp.extend(items),
-                Err(e) => {
-                    diag.warn(
-                        "mcp-discover",
-                        format!("failed to scan MCP items in `{source_name}`: {e}"),
-                    );
-                }
-            }
-        }
-    }
-
-    // Filter out MCP items from dependency packages where visibility is Local.
-    {
-        use crate::compiler::visibility::{can_cross_package_boundary, resolve_visibility};
-        use crate::lock::ItemKind;
-
-        all_mcp.retain(|item| {
-            // Local package items always pass.
-            if item.source_name == "_self" {
-                return true;
-            }
-            // Dependency item — check visibility.
-            let explicit = match item.def.visibility.as_str() {
-                "exported" => Some(true),
-                "local" => Some(false),
-                _ => None, // treat unknown as default (local)
-            };
-            let vis = resolve_visibility(ItemKind::McpServer, &item.name, explicit);
-            if !can_cross_package_boundary(&vis) {
-                return false;
-            }
-            // Emit warning for explicitly exported effectful items.
-            true
-        });
+    for warning in applied.planned.targeted.target.mcp_discovery_warnings() {
+        diag.warn("mcp-discover", warning);
     }
 
     // Env ref preflight (non-strict by default).
-    if let Err(e) = check_env_refs(&all_mcp, false, diag) {
+    let selected_mcp = applied
+        .planned
+        .targeted
+        .target
+        .selected_mcp()
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Err(e) = check_env_refs(&selected_mcp, false, diag) {
         diag.warn("mcp-env", format!("MCP env check failed: {e}"));
     }
 
@@ -487,12 +380,12 @@ pub(crate) fn compile_config_entries(
             .targeted
             .target
             .selected_hooks_for_target(target_root)
-            .filter(|item| {
+            .filter(|(item, source_hash)| {
                 let installed =
                     installed_hook_dir(&ctx.project_root, target_root, &item.def.name);
                 if mode.is_some()
                     && !dry_run
-                    && !hook_directory_is_installed(item, &installed)
+                    && !hook_directory_is_installed(source_hash, &installed)
                 {
                     diag.warn(
                         "hook-not-installed",
@@ -506,10 +399,17 @@ pub(crate) fn compile_config_entries(
                 }
                 true
             })
+            .map(|(item, _)| item)
+            .collect::<Vec<_>>();
+        let selected_mcp = applied
+            .planned
+            .targeted
+            .target
+            .selected_mcp_for_target(target_root)
             .collect::<Vec<_>>();
         let entries = lower_config_entries_for_target(
             &installed_hooks,
-            &all_mcp,
+            &selected_mcp,
             adapter,
             |item| {
                 portable_installed_hook_dir(&installed_hook_dir(
@@ -904,24 +804,13 @@ fn write_file_hook_outputs(
     }
 }
 
-fn source_may_emit_mcp(graph: &crate::resolve::ResolvedGraph, source_name: &SourceName) -> bool {
-    use crate::config::FilterMode;
-
-    graph.filters.get(source_name).is_none_or(|filters| {
-        filters
-            .iter()
-            .any(|filter| matches!(filter, FilterMode::All | FilterMode::Exclude(_)))
-    })
-}
-
 fn hook_directory_is_installed(
-    item: &crate::compiler::hooks::ParsedHookItem,
+    source_hash: &crate::types::ContentHash,
     installed: &std::path::Path,
 ) -> bool {
     crate::hash::compute_hash(installed, crate::lock::ItemKind::Hook)
         .ok()
-        .zip(crate::hash::compute_hash(&item.hook_dir, crate::lock::ItemKind::Hook).ok())
-        .is_some_and(|(installed, desired)| installed == desired)
+        .is_some_and(|installed| installed == source_hash.as_str())
 }
 
 fn installed_hook_dir(project_root: &Path, target_root: &str, hook_name: &str) -> PathBuf {

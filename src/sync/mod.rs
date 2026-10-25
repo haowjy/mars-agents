@@ -664,20 +664,14 @@ pub(crate) fn build_target(
 
     // Project-root hooks are authored outside `.mars-src`; materialize each whole
     // directory into the canonical store so target sync can use normal item ownership.
-    for hook in crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0)? {
-        let source_path = hook.hook_dir.clone();
-        let source_hash = ContentHash::from(hash::compute_hash(&source_path, ItemKind::Hook)?);
-        for target_name in hook.def.targets.keys().filter(|target| {
-            resolved
-                .loaded
-                .effective
-                .settings
-                .managed_targets()
-                .contains(target)
-        }) {
-            let dest_path = target::hook_canonical_dest_path(target_name, &hook.def.name);
+    let managed_targets = resolved.loaded.effective.settings.managed_targets();
+    for hook in crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0, diag)?
+    {
+        for (target_name, dest_path, target_item) in
+            target::hook_target_items(&hook, &local_source_name, &managed_targets)?
+        {
             if let Some(existing) = target_state.items.shift_remove(&dest_path)
-                && existing.source_hash != source_hash
+                && existing.source_hash != target_item.source_hash
             {
                 diag.warn(
                     "local-shadow",
@@ -687,7 +681,7 @@ pub(crate) fn build_target(
                     ),
                 );
             }
-            target_state.select_hook(target_name, dest_path.clone(), hook.clone());
+            target_state.select_hook(&target_name, &target_item, hook.clone());
             let disk_path = dest_path.resolve(managed_root);
             if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
                 && disk_path.symlink_metadata().is_ok()
@@ -695,24 +689,18 @@ pub(crate) fn build_target(
                 diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));
                 continue;
             }
-            target_state.insert_hook(
-                target_name,
-                TargetItem {
-                    id: ItemId {
-                        kind: ItemKind::Hook,
-                        name: format!("{}@{}", hook.def.name, target_name.trim_start_matches('.'))
-                            .into(),
-                    },
-                    source_name: local_source_name.clone(),
-                    source_path: source_path.clone(),
-                    dest_path,
-                    source_hash: source_hash.clone(),
-                    is_flat_skill: false,
-                    rewritten_content: None,
-                },
-                hook.clone(),
-            );
+            target_state.items.insert(dest_path, target_item);
         }
+    }
+
+    match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0, diag) {
+        Ok(items) => {
+            for item in items {
+                target_state.select_mcp(item, &managed_targets);
+            }
+        }
+        Err(error) => target_state
+            .record_mcp_discovery_warning(format!("failed to scan local MCP items: {error}"), true),
     }
 
     // Prevent managed installs from overwriting unmanaged files.

@@ -60,7 +60,15 @@ pub fn discover_source(
     tree_path: &Path,
     fallback_name: Option<&str>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    let items = discover_convention_items(tree_path, fallback_name)?;
+    discover_source_with_hooks(tree_path, fallback_name, None)
+}
+
+fn discover_source_with_hooks(
+    tree_path: &Path,
+    fallback_name: Option<&str>,
+    parsed_hooks: Option<&[DiscoveredItem]>,
+) -> Result<Vec<DiscoveredItem>, MarsError> {
+    let items = discover_convention_items(tree_path, fallback_name, parsed_hooks)?;
     finalize_items(fallback_name.unwrap_or("unknown-source"), items)
 }
 
@@ -69,8 +77,16 @@ pub fn discover_manifestless_source(
     package_root: &Path,
     source_name: Option<&str>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
+    discover_manifestless_source_with_hooks(package_root, source_name, None)
+}
+
+fn discover_manifestless_source_with_hooks(
+    package_root: &Path,
+    source_name: Option<&str>,
+    parsed_hooks: Option<&[DiscoveredItem]>,
+) -> Result<Vec<DiscoveredItem>, MarsError> {
     let label = source_name.unwrap_or("unknown-source");
-    let convention_items = discover_convention_items(package_root, source_name)?;
+    let convention_items = discover_convention_items(package_root, source_name, parsed_hooks)?;
 
     let mut items = convention_items;
     items.append(&mut discover_manifest_declared_items(package_root, label)?);
@@ -89,9 +105,23 @@ pub fn discover_resolved_source(
     }
 }
 
+/// Discover a rooted source while reusing hook definitions parsed by the compiler.
+pub(crate) fn discover_resolved_source_with_hooks(
+    package_root: &Path,
+    source_name: Option<&str>,
+    parsed_hooks: &[DiscoveredItem],
+) -> Result<Vec<DiscoveredItem>, MarsError> {
+    if package_root.join("mars.toml").is_file() {
+        discover_source_with_hooks(package_root, source_name, Some(parsed_hooks))
+    } else {
+        discover_manifestless_source_with_hooks(package_root, source_name, Some(parsed_hooks))
+    }
+}
+
 fn discover_convention_items(
     package_root: &Path,
     source_name: Option<&str>,
+    parsed_hooks: Option<&[DiscoveredItem]>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     if !package_root.is_dir() {
         return Ok(Vec::new());
@@ -122,7 +152,13 @@ fn discover_convention_items(
                 push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
             }
             Some(HOOKS_DIR_NAME) => {
-                scan_hook_dir(package_root, &base_rel, &mut scratch, &mut visited_hooks)?;
+                if base_rel == Path::new(HOOKS_DIR_NAME) {
+                    if let Some(parsed_hooks) = parsed_hooks {
+                        scratch.extend_from_slice(parsed_hooks);
+                    } else {
+                        scan_hook_dir(package_root, &base_rel, &mut scratch, &mut visited_hooks)?;
+                    }
+                }
                 push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
             }
             Some(BOOTSTRAP_DIR_NAME) => {

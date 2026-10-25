@@ -74,6 +74,9 @@ unreadable-content exception.
 - `ResolverContext` — accumulates registry, visited items, version constraints
 - `VersionConstraint` — `Semver`, `Latest`, `RefPin`
 
+`ResolvedGraph::dependency_depths()` and `dependency_decl_orders()` derive traversal properties
+from the graph for compiler ordering; callers do not reconstruct them in sync or lowering.
+
 ## Production Lenses
 
 - `PublishLens` loads the consumer-facing config once: it ignores `mars.local.toml`

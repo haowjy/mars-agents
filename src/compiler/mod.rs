@@ -28,7 +28,7 @@ pub(crate) mod tool_natives;
 pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
-/// Visibility propagation rules for passive vs effectful items (D1/D10).
+/// Typed visibility shared by hook and MCP manifests.
 pub mod visibility;
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;

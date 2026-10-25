@@ -9,8 +9,6 @@ mod lower_policy;
 pub use lower_policy::{NativeModel, lower_for_harness_with_model};
 
 #[cfg(test)]
-pub type LoweredOutput = crate::compiler::lossiness::LoweredOutput;
-
 #[cfg(test)]
 pub use lower_policy::{
     lower_to_claude, lower_to_codex, lower_to_cursor_with_model, lower_to_opencode, lower_to_pi,

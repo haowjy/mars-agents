@@ -46,7 +46,7 @@ pub enum ApprovalMode {
 }
 
 impl ApprovalMode {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "default" => Some(Self::Default),
             "auto" => Some(Self::Auto),
@@ -76,7 +76,7 @@ pub enum SandboxMode {
 }
 
 impl SandboxMode {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "default" => Some(Self::Default),
             "read-only" => Some(Self::ReadOnly),
@@ -107,7 +107,7 @@ pub enum EffortLevel {
 }
 
 impl EffortLevel {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "none" => Some(Self::None),
             "low" => Some(Self::Low),
@@ -668,7 +668,7 @@ pub fn parse_agent_profile_legacy(
 
     // approval:
     let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
-        if let Some(a) = ApprovalMode::from_str(s) {
+        if let Some(a) = ApprovalMode::parse(s) {
             Some(a)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {
@@ -682,7 +682,7 @@ pub fn parse_agent_profile_legacy(
 
     // sandbox:
     let sandbox = fm.get("sandbox").and_then(Value::as_str).and_then(|s| {
-        if let Some(sb) = SandboxMode::from_str(s) {
+        if let Some(sb) = SandboxMode::parse(s) {
             Some(sb)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {
@@ -696,7 +696,7 @@ pub fn parse_agent_profile_legacy(
 
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
-        if let Some(e) = EffortLevel::from_str(s) {
+        if let Some(e) = EffortLevel::parse(s) {
             Some(e)
         } else {
             diags.push(AgentDiagnostic::InvalidFieldValue {

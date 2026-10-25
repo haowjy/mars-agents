@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Plugin output trees now have deterministic sentinels, cross-process build
+  serialization, wipe-safety checks, and crash-recoverable whole-tree swaps.
+
 ### Fixed
 - `mars check PATH` now resolves package path dependencies relative to the checked package,
   rather than the caller's working directory.

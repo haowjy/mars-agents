@@ -1,6 +1,7 @@
-# src/build/ — Launch Bundle Construction
+# src/build/ — Build Artifacts
 
-Generates serializable launch bundles for harness runtimes. 6 files + `.context/`, ~2700 lines.
+Generates serializable launch bundles for harness runtimes and committed harness
+plugin trees.
 
 ## Mental Model
 
@@ -98,3 +99,11 @@ Alias `provider` → `harness_model` (bare native ids vs probe slugs): [`src/mod
 - `policy/AGENTS.md` — policy resolution pipeline, field independence, cross-field precedence
 - `src/routing/AGENTS.md` — harness candidate evaluation
 - `src/cli/build.rs` — CLI arg definitions
+
+## Plugin output ownership
+
+`plugin/output.rs` owns whole-tree publication, not plugin content. It writes to
+a sibling staging directory, records `.mars-plugin.json`, and publishes with a
+two-rename swap under a cross-process lock. A non-empty destination without a
+valid sentinel is never replaced. Recovery of `.mars-new` / `.mars-old` happens
+under the same lock before a new build writes anything.

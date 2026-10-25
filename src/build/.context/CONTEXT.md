@@ -1,9 +1,18 @@
 # src/build/
 
-Generates launch bundles — the serializable artifact that a harness runtime consumes to
-launch an agent with resolved routing, execution policy, tools, and prompt surface.
+Generates launch bundles consumed by harness runtimes and committed plugin trees consumed by
+harness plugin installers.
 
 ## Contracts
+
+### Plugin builds
+
+`build plugin` is a publish operation, not a project compilation. It constructs an implicit
+consumer over `PublishLens`, resolves before staging (so relative package dependencies retain
+their declared base), and reuses sync's `TargetState`/`RenameIndex` to flatten the graph. It
+must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configuration, model
+caches, or installed harnesses. `plugin::output::replace_owned_tree` alone owns destination
+replacement and sentinel publication.
 
 ### Two launch-bundle modes
 

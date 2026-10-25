@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `mars build plugin [PATH] --out <dir>` now builds one deterministic Claude-format plugin
+  containing the package and the same filtered, collision-resolved dependency graph a consumer
+  would receive from `mars sync`, including exported hooks and MCP servers.
+
 ### Fixed
 - `mars check PATH` now resolves package path dependencies relative to the checked package,
   rather than the caller's working directory.

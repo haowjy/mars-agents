@@ -855,7 +855,7 @@ pub(crate) fn compile_native_agents<'a>(
 ///
 /// Content/policy: optional overlay fields replace the corresponding profile values;
 /// absent/`None`/empty overlay slots leave the profile unchanged.
-fn effective_native_profile(
+pub(crate) fn effective_native_profile(
     profile: &crate::compiler::agents::AgentProfile,
     overlay: Option<&crate::config::AgentOverlay>,
 ) -> crate::compiler::agents::AgentProfile {

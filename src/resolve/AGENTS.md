@@ -83,6 +83,9 @@ from the graph for compiler ordering; callers do not reconstruct them in sync or
   and clears local dependencies while retaining the optional manifest and effective config.
   `resolve_publish_graph(&lens, diag)` resolves it with no lock or project staging;
   source fetches use `GlobalCache` and diagnostics belong to the caller.
+  `resolve_publish_graph_from_config` gives internal publish consumers the same provider and
+  no-lock boundary with a caller-built consumer view. Resolve relative package dependencies
+  before staging: staging changes the package root from which relative paths are interpreted.
 
 ## Version Policy
 

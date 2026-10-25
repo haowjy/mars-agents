@@ -575,8 +575,26 @@ Remove cached source trees (archives + git clones).
 Build artifacts from static project state.
 
 ```bash
-mars build <launch-bundle> ...
+mars build <launch-bundle|plugin> ...
 ```
+
+### `mars build plugin`
+
+Build one installable Claude-format plugin tree from a publishable package and the complete
+dependency graph a consumer of that package would receive from `mars sync`.
+
+```bash
+mars build plugin [PATH] --out <dir>
+```
+
+`PATH` defaults to the detected project root. With an explicit path the command can run outside
+a Mars project. The build uses only `mars.toml` publish state: it does not read `mars.local.toml`,
+`mars.lock`, `.mars/`, project target configuration, or installed harness model catalogs.
+
+The destination is a whole-tree generated artifact. Mars writes an ownership sentinel and
+refuses to replace a non-empty directory without one. The tree contains Claude-native agents,
+skills, exported hooks, exported MCP servers, and `.claude-plugin/plugin.json`. Codex can install
+the same tree and load its skills, but does not load its agents.
 
 ### `mars build launch-bundle`
 

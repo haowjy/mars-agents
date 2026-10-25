@@ -1,6 +1,19 @@
-# src/build/ — Launch Bundle Construction
+# src/build/ — Runtime and Distribution Artifacts
 
-Generates serializable launch bundles for harness runtimes. 6 files + `.context/`, ~2700 lines.
+Generates serializable launch bundles for harness runtimes and committed plugin trees for
+package distribution.
+
+## Plugin Builds
+
+`plugin/` builds one Claude-format tree from the consumer view of a package's complete
+publish graph. It resolves through `PublishLens`, stages every package, collects the flattened
+target with sync's collision and rewrite machinery, then lowers agents, skills, exported hooks,
+and exported MCP servers without reading project config, a lockfile, `.mars/`, or host model
+state. Codex shares that tree and contributes diagnostics only.
+
+The generated tree is handed to `plugin::output::replace_owned_tree`; the build core never
+mutates the destination itself. Reference qualification uses each source item's `RenameIndex`
+view before applying the building package's single plugin namespace.
 
 ## Mental Model
 

@@ -8,7 +8,7 @@ pub mod rewrite;
 pub mod target;
 pub mod types;
 mod upgrades;
-mod validate;
+pub(crate) mod validate;
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;

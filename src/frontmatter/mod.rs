@@ -142,6 +142,11 @@ impl Frontmatter {
         &self.body
     }
 
+    /// Replace the Markdown body while preserving the parsed frontmatter.
+    pub fn set_body(&mut self, body: String) {
+        self.body = body;
+    }
+
     /// Whether this document contains frontmatter delimiters.
     pub fn has_frontmatter(&self) -> bool {
         self.has_frontmatter

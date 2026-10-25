@@ -4,8 +4,8 @@ use mars_schema::mcp::{McpRef, McpSegment};
 
 #[cfg(test)]
 use mars_schema::mcp::{
-    ForeignMcpDialect, McpRefParseError, parse_foreign_mcp_token, parse_mcp_ref,
-    try_parse_mcp_tool_name,
+    ForeignMcpDialect, McpRefParseError, parse_foreign_mcp_token as parse_schema_mcp_token,
+    parse_mcp_ref, try_parse_mcp_tool_name,
 };
 
 fn segment_display(segment: &McpSegment) -> String {
@@ -13,6 +13,22 @@ fn segment_display(segment: &McpSegment) -> String {
         McpSegment::Any => "*".to_owned(),
         McpSegment::Named(name) => name.clone(),
     }
+}
+
+pub(crate) fn parse_foreign_mcp_token(
+    raw: &str,
+    dialect: crate::dialect::Dialect,
+) -> Option<McpRef> {
+    use mars_schema::mcp::ForeignMcpDialect;
+
+    let dialect = match dialect {
+        crate::dialect::Dialect::Claude => ForeignMcpDialect::Claude,
+        crate::dialect::Dialect::Cursor => ForeignMcpDialect::Cursor,
+        crate::dialect::Dialect::Codex
+        | crate::dialect::Dialect::OpenCode
+        | crate::dialect::Dialect::MarsNative => return None,
+    };
+    mars_schema::mcp::parse_foreign_mcp_token(raw, dialect)
 }
 
 /// Per-harness native MCP token projection from a canonical [`McpRef`].
@@ -218,7 +234,7 @@ mod tests {
         ];
 
         for (token, expected) in cases {
-            let parsed = parse_foreign_mcp_token(token, ForeignMcpDialect::Claude).unwrap();
+            let parsed = parse_schema_mcp_token(token, ForeignMcpDialect::Claude).unwrap();
             assert_eq!(parsed, expected, "token: {token}");
             assert_eq!(
                 try_parse_mcp_tool_name(&parsed.to_canonical()).unwrap(),
@@ -262,7 +278,7 @@ mod tests {
         ];
 
         for (token, expected) in cases {
-            let parsed = parse_foreign_mcp_token(token, ForeignMcpDialect::Cursor).unwrap();
+            let parsed = parse_schema_mcp_token(token, ForeignMcpDialect::Cursor).unwrap();
             assert_eq!(parsed, expected, "token: {token}");
         }
     }
@@ -271,18 +287,18 @@ mod tests {
     fn parse_foreign_mcp_token_rejects_non_mcp_and_canonical() {
         for token in ["Read", "Bash(git *)", "mcp(github/tool)", "not_mcp__x"] {
             assert!(
-                parse_foreign_mcp_token(token, ForeignMcpDialect::Claude).is_none(),
+                parse_schema_mcp_token(token, ForeignMcpDialect::Claude).is_none(),
                 "expected None for {token}"
             );
         }
-        assert!(parse_foreign_mcp_token("mcp__github__tool", ForeignMcpDialect::Cursor).is_none());
+        assert!(parse_schema_mcp_token("mcp__github__tool", ForeignMcpDialect::Cursor).is_none());
     }
 
     #[test]
     fn parse_claude_mcp_wire_token_rejects_non_ascii_near_prefix_without_panic() {
         for token in ["mcp_é", "ab🚀cd"] {
             assert!(
-                parse_foreign_mcp_token(token, ForeignMcpDialect::Claude).is_none(),
+                parse_schema_mcp_token(token, ForeignMcpDialect::Claude).is_none(),
                 "expected None for {token:?}"
             );
         }
@@ -291,7 +307,7 @@ mod tests {
     #[test]
     fn parse_foreign_cursor_mcp_token_namespaced_server() {
         let token = "Mcp(plugin:context7:context7:create_issue)";
-        let parsed = parse_foreign_mcp_token(token, ForeignMcpDialect::Cursor).unwrap();
+        let parsed = parse_schema_mcp_token(token, ForeignMcpDialect::Cursor).unwrap();
         assert_eq!(
             parsed,
             McpRef {

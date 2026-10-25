@@ -22,7 +22,10 @@ derive their harness kind, canonical id, variant key and target root from the co
 they add only plugin-specific agent policy, native model aliases, hook-root token, config writer
 and finish writer. Profiles also carry their typed `PluginTree` identity and apply a hook filter
 before copying, so files, counts and finish-writer inputs agree. `tree::write_tree` is the sole item
-loop. `tree::check_sources` scans authored agents, skills, hooks and the selected MCP union once;
+loop. The OpenCode finish writer emits an npm-shaped package with a fixed `index.mjs`; at runtime it
+registers the built skills and MCP servers and imports accepted default-export hooks only after
+rendering them through atomic writes into hash-checked files, preferring a private cache directory.
+`tree::check_sources` scans authored agents, skills, hooks and the selected MCP union once;
 per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
 exported graph hooks even when no requested tree selected a fragment, which is the input for plugin
 omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap

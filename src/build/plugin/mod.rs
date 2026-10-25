@@ -361,11 +361,11 @@ fn requested_tree_profiles(
         });
     }
 
-    PluginTree::ALL
+    Ok(PluginTree::ALL
         .into_iter()
         .filter(|tree| harnesses.iter().any(|harness| harness.tree() == *tree))
         .map(tree::profile)
-        .collect()
+        .collect())
 }
 
 fn implicit_consumer_config(

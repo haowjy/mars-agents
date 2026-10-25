@@ -1,7 +1,8 @@
-//! `mars version <bump|X.Y.Z> [--push]` — bump package version, commit, and tag.
+//! `mars version <bump|X.Y.Z> [--push] [--no-plugins]` — bump, commit, and tag.
 
+use std::collections::BTreeSet;
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,14 +26,22 @@ pub struct VersionArgs {
     /// Force version even if package check fails (bypass publish gate)
     #[arg(long)]
     pub force: bool,
+    /// Skip a configured plugin build for this release
+    #[arg(long)]
+    pub no_plugins: bool,
 }
 
 /// Run `mars version`.
 pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let config = crate::config::load(&ctx.project_root)?;
+    if let Some(plugin) = &config.plugin {
+        let output = crate::build::plugin::configured_output_path(&ctx.project_root, plugin)?;
+        crate::build::plugin::output::recover(&output)?;
+    }
+
     require_clean_working_tree(&ctx.project_root)?;
     require_package_check(&ctx.project_root, args.force)?;
 
-    let config = crate::config::load(&ctx.project_root)?;
     let package = config
         .package
         .as_ref()
@@ -67,7 +76,30 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     ensure_tag_not_exists(&ctx.project_root, &tag)?;
 
-    let snapshot = ReleaseSnapshot::capture(&ctx.project_root)?;
+    let staged_plugin = if let Some(plugin) = &config.plugin
+        && !args.no_plugins
+    {
+        Some(crate::build::plugin::stage_plugin(
+            &crate::build::plugin::PluginBuildRequest {
+                package_root: ctx.project_root.clone(),
+                destination: crate::build::plugin::PluginBuildDestination::Configured,
+                harnesses: plugin.harnesses.clone(),
+                version: Some(next_version.clone()),
+            },
+        )?)
+    } else {
+        None
+    };
+
+    let mut touched_paths = vec![PathBuf::from("mars.toml")];
+    if ctx.project_root.join("CHANGELOG.md").is_file() {
+        touched_paths.push(PathBuf::from("CHANGELOG.md"));
+    }
+    if let (Some(plugin), Some(staged)) = (&config.plugin, &staged_plugin) {
+        touched_paths.push(plugin.dir.clone());
+        touched_paths.extend(staged.touched_root_files());
+    }
+    let snapshot = ReleaseSnapshot::capture(&ctx.project_root, touched_paths)?;
     let review_filled_changelog = !json
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
@@ -77,18 +109,9 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
         update_package_version(&ctx.project_root, &next_version)?;
 
-        crate::platform::process::run_git(
-            &["add", "mars.toml"],
-            &ctx.project_root,
-            "git add mars.toml",
-        )?;
-        if snapshot.changelog.is_some() {
-            crate::platform::process::run_git(
-                &["add", "CHANGELOG.md"],
-                &ctx.project_root,
-                "git add CHANGELOG.md",
-            )?;
-        }
+        let plugin_report = staged_plugin.map(|staged| staged.publish()).transpose()?;
+
+        snapshot.git_add(&ctx.project_root)?;
         crate::platform::process::run_git(
             &["commit", "-m", &tag],
             &ctx.project_root,
@@ -100,18 +123,21 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             &format!("git tag -a {tag} -m {tag}"),
         )?;
 
-        Ok::<(), MarsError>(())
+        Ok::<_, MarsError>(plugin_report)
     })();
 
-    if let Err(error) = release_result {
-        if let Err(rollback) = snapshot.rollback(&ctx.project_root) {
-            return Err(MarsError::ReleaseRollback {
-                release: Box::new(error),
-                rollback,
-            });
+    let plugin_report = match release_result {
+        Ok(report) => report,
+        Err(error) => {
+            if let Err(rollback) = snapshot.rollback(&ctx.project_root) {
+                return Err(MarsError::ReleaseRollback {
+                    release: Box::new(error),
+                    rollback,
+                });
+            }
+            return Err(error);
         }
-        return Err(error);
-    }
+    };
 
     if args.push {
         let branch = current_branch(&ctx.project_root)?;
@@ -128,13 +154,26 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
 
     if json {
-        output::print_json(&serde_json::json!({
+        let mut result = serde_json::json!({
             "ok": true,
             "version": next_version,
             "tag": tag,
             "pushed": args.push,
-        }));
+        });
+        if let Some(report) = &plugin_report {
+            result["plugin"] = serde_json::json!({
+                "path": config.plugin.as_ref().expect("a plugin report needs plugin config").dir,
+                "trees": report.trees.iter().map(|tree| tree.tree.as_str()).collect::<Vec<_>>(),
+                "warnings": report.diagnostics.iter().filter(|diagnostic| {
+                    diagnostic.level == DiagnosticLevel::Warning
+                }).count(),
+            });
+        }
+        output::print_json(&result);
     } else {
+        if let Some(report) = &plugin_report {
+            output::print_diagnostics(&report.diagnostics);
+        }
         println!("{tag}");
     }
 
@@ -194,7 +233,9 @@ fn require_clean_working_tree(project_root: &Path) -> Result<(), MarsError> {
 
     if !output.is_empty() {
         return Err(ConfigError::Invalid {
-            message: "working tree must be clean before running `mars version`".to_string(),
+            message: format!(
+                "working tree must be clean before running `mars version`:\n{output}\nrestore tracked paths with `git restore --staged --worktree .`, remove untracked paths with `git clean -fd`, then rerun `mars version`"
+            ),
         }
         .into());
     }
@@ -383,29 +424,39 @@ fn current_branch(project_root: &Path) -> Result<String, MarsError> {
 
 struct ReleaseSnapshot {
     head: String,
-    mars_toml: Vec<u8>,
-    changelog: Option<Vec<u8>>,
+    touched_paths: Vec<PathBuf>,
 }
 
 impl ReleaseSnapshot {
-    fn capture(project_root: &Path) -> Result<Self, MarsError> {
+    fn capture(
+        project_root: &Path,
+        touched_paths: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<Self, MarsError> {
         let head = crate::platform::process::run_git(
             &["rev-parse", "HEAD"],
             project_root,
             "capture HEAD before release",
         )?;
-        let mars_toml = std::fs::read(project_root.join("mars.toml"))?;
-        let changelog_path = project_root.join("CHANGELOG.md");
-        let changelog = changelog_path
-            .is_file()
-            .then(|| std::fs::read(changelog_path))
-            .transpose()?;
+        let touched_paths = touched_paths
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
 
         Ok(Self {
             head,
-            mars_toml,
-            changelog,
+            touched_paths,
         })
+    }
+
+    fn git_add(&self, project_root: &Path) -> Result<(), MarsError> {
+        run_git_with_paths(
+            &["add", "--"],
+            &self.touched_paths,
+            project_root,
+            "git add release files",
+        )?;
+        Ok(())
     }
 
     fn rollback(&self, project_root: &Path) -> Result<(), String> {
@@ -429,22 +480,55 @@ impl ReleaseSnapshot {
             Err(error) => failures.push(error.to_string()),
         }
 
-        if let Err(error) = restore_snapshot_file(&project_root.join("mars.toml"), &self.mars_toml)
-        {
-            failures.push(format!("could not restore mars.toml: {error}"));
-        }
-        if let Some(changelog) = &self.changelog
-            && let Err(error) = restore_snapshot_file(&project_root.join("CHANGELOG.md"), changelog)
-        {
-            failures.push(format!("could not restore CHANGELOG.md: {error}"));
-        }
-
-        if let Err(error) = crate::platform::process::run_git(
-            &["reset", "-q", "--", "mars.toml", "CHANGELOG.md"],
+        if let Err(error) = run_git_with_paths(
+            &["reset", "-q", "--"],
+            &self.touched_paths,
             project_root,
             "unstage release files",
         ) {
             failures.push(error.to_string());
+        }
+
+        for relative in &self.touched_paths {
+            let path = project_root.join(relative);
+            if let Err(error) = crate::platform::fs::safe_remove(&path) {
+                failures.push(format!("could not remove {}: {error}", relative.display()));
+                continue;
+            }
+
+            let relative = relative
+                .to_str()
+                .expect("release paths are validated as Unicode");
+            match crate::platform::process::run_git(
+                &[
+                    "--literal-pathspecs",
+                    "ls-tree",
+                    "--name-only",
+                    &self.head,
+                    "--",
+                    relative,
+                ],
+                project_root,
+                &format!("inspect {relative} at release snapshot"),
+            ) {
+                Ok(tracked) if tracked.is_empty() => {}
+                Ok(_) => {
+                    if let Err(error) = crate::platform::process::run_git(
+                        &[
+                            "--literal-pathspecs",
+                            "checkout",
+                            &self.head,
+                            "--",
+                            relative,
+                        ],
+                        project_root,
+                        &format!("restore {relative} from release snapshot"),
+                    ) {
+                        failures.push(error.to_string());
+                    }
+                }
+                Err(error) => failures.push(error.to_string()),
+            }
         }
 
         if failures.is_empty() {
@@ -455,12 +539,22 @@ impl ReleaseSnapshot {
     }
 }
 
-fn restore_snapshot_file(path: &Path, snapshot: &[u8]) -> Result<(), MarsError> {
-    if matches!(std::fs::read(path), Ok(current) if current == snapshot) {
-        return Ok(());
+fn run_git_with_paths(
+    prefix: &[&str],
+    paths: &[PathBuf],
+    project_root: &Path,
+    context: &str,
+) -> Result<String, MarsError> {
+    let mut args = vec!["--literal-pathspecs".to_string()];
+    args.extend(prefix.iter().map(|arg| (*arg).to_string()));
+    for path in paths {
+        let path = path.to_str().ok_or_else(|| ConfigError::Invalid {
+            message: format!("release path must be valid Unicode: {}", path.display()),
+        })?;
+        args.push(path.to_string());
     }
-
-    crate::fs::atomic_write(path, snapshot)
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    crate::platform::process::run_git(&args, project_root, context)
 }
 
 fn update_changelog_if_present(
@@ -852,6 +946,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -885,6 +980,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -921,6 +1017,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -962,6 +1059,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -984,6 +1082,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1002,6 +1101,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1019,6 +1119,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1042,6 +1143,7 @@ mod tests {
             bump: "patch".to_string(),
             push: true,
             force: false,
+            no_plugins: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -1068,6 +1170,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1101,6 +1204,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: false,
+            no_plugins: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1131,6 +1235,7 @@ mod tests {
             bump: "patch".to_string(),
             push: false,
             force: true,
+            no_plugins: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();

@@ -185,7 +185,9 @@ wrappers, substitutes `${MARS_HOOK_DIR}` in all JSON string values and file-mode
 fragment text, and returns structured `HookFragment` or substituted file content.
 Placement and lock recording are handled by `config_entries/`.
 Dependency hook discovery is contextualized by `hooks::discover_resolved_hook_items` during target
-construction; callers must not expose derived staging paths in schema errors.
+construction; callers must not expose derived staging paths in schema errors. Target construction
+derives the filter-facing `DiscoveredItem` from that strict parse instead of parsing `hook.toml`
+again.
 
 ## Variants (`variants/`)
 

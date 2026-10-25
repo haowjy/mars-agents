@@ -231,11 +231,7 @@ pub(crate) fn lower_config_entries_for_target(
         return entries;
     };
     let mut contributions = Vec::new();
-    for item in hooks
-        .iter()
-        .copied()
-        .filter(|item| item.def.targets.contains_key(target_root))
-    {
+    for item in hooks.iter().copied() {
         match crate::compiler::hooks::load_merge_fragment(
             item,
             target_root,
@@ -384,12 +380,12 @@ pub(crate) fn compile_config_entries(
             .targeted
             .target
             .selected_hooks_for_target(target_root)
-            .filter(|item| {
+            .filter(|(item, source_hash)| {
                 let installed =
                     installed_hook_dir(&ctx.project_root, target_root, &item.def.name);
                 if mode.is_some()
                     && !dry_run
-                    && !hook_directory_is_installed(item, &installed)
+                    && !hook_directory_is_installed(source_hash, &installed)
                 {
                     diag.warn(
                         "hook-not-installed",
@@ -403,6 +399,7 @@ pub(crate) fn compile_config_entries(
                 }
                 true
             })
+            .map(|(item, _)| item)
             .collect::<Vec<_>>();
         let selected_mcp = applied
             .planned
@@ -808,13 +805,12 @@ fn write_file_hook_outputs(
 }
 
 fn hook_directory_is_installed(
-    item: &crate::compiler::hooks::ParsedHookItem,
+    source_hash: &crate::types::ContentHash,
     installed: &std::path::Path,
 ) -> bool {
     crate::hash::compute_hash(installed, crate::lock::ItemKind::Hook)
         .ok()
-        .zip(crate::hash::compute_hash(&item.hook_dir, crate::lock::ItemKind::Hook).ok())
-        .is_some_and(|(installed, desired)| installed == desired)
+        .is_some_and(|installed| installed == source_hash.as_str())
 }
 
 fn installed_hook_dir(project_root: &Path, target_root: &str, hook_name: &str) -> PathBuf {

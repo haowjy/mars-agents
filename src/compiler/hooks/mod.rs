@@ -56,6 +56,22 @@ pub struct ParsedHookItem {
     pub hook_dir: PathBuf,
 }
 
+impl ParsedHookItem {
+    pub(crate) fn discovered_item(&self, package_root: &Path) -> crate::discover::DiscoveredItem {
+        crate::discover::DiscoveredItem {
+            id: crate::lock::ItemId {
+                kind: crate::lock::ItemKind::Hook,
+                name: self.def.name.clone().into(),
+            },
+            source_path: self
+                .hook_dir
+                .strip_prefix(package_root)
+                .expect("parsed hook belongs to its package root")
+                .to_path_buf(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HookFragment {
     pub events: BTreeMap<String, Vec<Value>>,

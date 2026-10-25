@@ -1,12 +1,12 @@
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use indexmap::IndexMap;
 use semver::VersionReq;
 
 use super::compat::CompatibilityResult;
-use crate::config::{FilterMode, Manifest};
+use crate::config::{EffectiveDependency, FilterMode, Manifest};
 use crate::error::ResolutionError;
 use crate::lock::ItemKind;
 use crate::source::ResolvedRef;
@@ -31,6 +31,96 @@ pub struct ResolvedGraph {
     /// gate at the reader/compiler boundary.
     pub unreadable_hook_surfaces:
         std::collections::BTreeMap<SourceName, std::collections::BTreeSet<String>>,
+}
+
+impl ResolvedGraph {
+    pub(crate) fn dependency_depths(&self) -> HashMap<SourceName, usize> {
+        let mut remaining_dependents: HashMap<SourceName, usize> = HashMap::new();
+        for name in &self.order {
+            remaining_dependents.insert(name.clone(), 0);
+        }
+        for name in &self.order {
+            let Some(node) = self.nodes.get(name) else {
+                continue;
+            };
+            for dep in &node.deps {
+                if self.nodes.contains_key(dep) {
+                    *remaining_dependents.entry(dep.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut depths = HashMap::new();
+        let mut queue = VecDeque::new();
+        for name in &self.order {
+            if remaining_dependents.get(name) == Some(&0) {
+                depths.insert(name.clone(), 1);
+                queue.push_back(name.clone());
+            }
+        }
+
+        while let Some(current) = queue.pop_front() {
+            let current_depth = depths[&current];
+            if let Some(node) = self.nodes.get(&current) {
+                for dep in &node.deps {
+                    let Some(remaining) = remaining_dependents.get_mut(dep) else {
+                        continue;
+                    };
+                    depths
+                        .entry(dep.clone())
+                        .and_modify(|depth| *depth = (*depth).max(current_depth + 1))
+                        .or_insert(current_depth + 1);
+                    *remaining -= 1;
+                    if *remaining == 0 {
+                        queue.push_back(dep.clone());
+                    }
+                }
+            }
+        }
+
+        depths
+    }
+
+    pub(crate) fn dependency_decl_orders(
+        &self,
+        dependencies: &IndexMap<SourceName, EffectiveDependency>,
+    ) -> HashMap<SourceName, usize> {
+        let mut orders = HashMap::new();
+        let mut queue = VecDeque::new();
+
+        for (idx, source_name) in dependencies.keys().enumerate() {
+            if self.nodes.contains_key(source_name) {
+                orders.insert(source_name.clone(), idx + 1);
+                queue.push_back(source_name.clone());
+            }
+        }
+
+        while let Some(current) = queue.pop_front() {
+            let current_order = orders[&current];
+            let Some(node) = self.nodes.get(&current) else {
+                continue;
+            };
+
+            for dep in &node.deps {
+                if !self.nodes.contains_key(dep) {
+                    continue;
+                }
+                match orders.get_mut(dep) {
+                    Some(existing) if current_order < *existing => {
+                        *existing = current_order;
+                        queue.push_back(dep.clone());
+                    }
+                    Some(_) => {}
+                    None => {
+                        orders.insert(dep.clone(), current_order);
+                        queue.push_back(dep.clone());
+                    }
+                }
+            }
+        }
+
+        orders
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]

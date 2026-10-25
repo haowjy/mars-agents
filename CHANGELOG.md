@@ -26,6 +26,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   treated as local.
 - Plugin builds now report dependency MCP discovery failures instead of silently omitting those
   servers, and Codex-only hook warnings follow the same parsed target selection as sync.
+- Source discovery and flat-root skill projection now skip generated plugin trees marked by a
+  valid `.mars-plugin.json`, preventing rebuild output from becoming package input.
+- Explicitly or automatically renamed agents now carry their installed name in frontmatter, and
+  `subagents:` references follow explicit agent renames as well as collision renames.
+- MCP server collisions now prefer the shallowest package, then dependency declaration order,
+  so a package's own server cannot lose to a transitive dependency.
 
 ## [0.18.1] - 2026-10-24
 

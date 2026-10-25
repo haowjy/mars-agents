@@ -88,6 +88,8 @@ pub struct ParsedMcpItem {
     pub def: McpServerDef,
     /// Source package name this item came from.
     pub source_name: String,
+    /// Shortest dependency distance from the consumer package.
+    pub depth: usize,
     /// Declaration order of the source package in the consumer graph.
     pub decl_order: usize,
 }
@@ -103,6 +105,18 @@ pub struct ParsedMcpItem {
 pub fn discover_mcp_items(
     package_root: &Path,
     source_name: &str,
+    decl_order: usize,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<ParsedMcpItem>, MarsError> {
+    let depth = usize::from(source_name != "_self");
+    discover_mcp_items_at_depth(package_root, source_name, depth, decl_order, diag)
+}
+
+/// Discover MCP items with graph precedence supplied by the target builder.
+pub(crate) fn discover_mcp_items_at_depth(
+    package_root: &Path,
+    source_name: &str,
+    depth: usize,
     decl_order: usize,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedMcpItem>, MarsError> {
@@ -157,6 +171,7 @@ pub fn discover_mcp_items(
             name: resolved_name,
             def,
             source_name: source_name.to_string(),
+            depth,
             decl_order,
         });
     }

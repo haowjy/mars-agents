@@ -2,12 +2,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 use crate::error::MarsError;
-
-pub const SENTINEL_FILE: &str = ".mars-plugin.json";
-const SENTINEL_SCHEMA_VERSION: u32 = 1;
+use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE, SENTINEL_SCHEMA_VERSION};
 
 /// Build metadata recorded in the generated plugin tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,17 +11,6 @@ pub struct SentinelInfo {
     pub plugin_name: String,
     pub version: String,
     pub inputs_hash: String,
-}
-
-/// Persisted ownership and staleness metadata for a generated plugin tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginSentinel {
-    pub schema_version: u32,
-    pub mars_version: String,
-    pub plugin_name: String,
-    pub version: String,
-    pub inputs_hash: String,
-    pub tree_hash: String,
 }
 
 /// Replace a Mars-owned plugin tree as one crash-recoverable operation.
@@ -82,7 +67,7 @@ pub fn replace_owned_tree(
 }
 
 /// Read and validate a generated plugin tree's sentinel.
-pub fn read_sentinel(out_dir: &Path) -> Result<PluginSentinel, MarsError> {
+pub(crate) fn read_sentinel(out_dir: &Path) -> Result<PluginSentinel, MarsError> {
     let metadata = fs::symlink_metadata(out_dir)
         .map_err(|source| io_error("inspect plugin tree", out_dir, source))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -465,12 +450,7 @@ fn validate_stored_sentinel(path: &Path, sentinel: &PluginSentinel) -> Result<()
             path.display()
         )));
     }
-    if sentinel.mars_version.trim().is_empty()
-        || sentinel.plugin_name.trim().is_empty()
-        || sentinel.version.trim().is_empty()
-        || sentinel.inputs_hash.trim().is_empty()
-        || !is_sha256(&sentinel.tree_hash)
-    {
+    if !sentinel.is_valid() {
         return Err(invalid(format!(
             "plugin sentinel has invalid metadata: {}",
             path.display()
@@ -490,15 +470,6 @@ fn validate_sentinel_info(sentinel: &SentinelInfo) -> Result<(), MarsError> {
         return Err(invalid("plugin input hash cannot be empty"));
     }
     Ok(())
-}
-
-fn is_sha256(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    })
 }
 
 fn path_exists(path: &Path) -> Result<bool, MarsError> {

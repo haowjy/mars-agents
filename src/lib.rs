@@ -20,6 +20,7 @@ pub(crate) mod model;
 pub mod models;
 pub mod permission_set;
 pub mod platform;
+pub(crate) mod plugin_metadata;
 pub(crate) mod reader;
 pub mod resolve;
 pub mod routing;

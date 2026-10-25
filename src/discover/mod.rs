@@ -123,7 +123,7 @@ fn discover_convention_items(
     source_name: Option<&str>,
     parsed_hooks: Option<&[DiscoveredItem]>,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    if !package_root.is_dir() {
+    if !package_root.is_dir() || crate::plugin_metadata::has_valid_plugin_sentinel(package_root) {
         return Ok(Vec::new());
     }
 
@@ -188,6 +188,9 @@ fn discover_convention_items(
             // Consumers can still import a hidden foreign layout explicitly by rooting
             // the package at that directory with `subpath = ".claude"`.
             if name.starts_with('.') || RECURSIVE_SKIP_DIRS.contains(&name) {
+                continue;
+            }
+            if crate::plugin_metadata::has_valid_plugin_sentinel(&path) {
                 continue;
             }
             queue.push_back((path, depth + 1));
@@ -303,6 +306,9 @@ fn scan_hook_dir(
 /// Hooks are deliberately a package-root-only convention. Unlike agents and
 /// skills, nested `hooks/` containers are not independent package layers.
 pub(crate) fn discover_hook_directories(package_root: &Path) -> Result<Vec<PathBuf>, MarsError> {
+    if crate::plugin_metadata::has_valid_plugin_sentinel(package_root) {
+        return Ok(Vec::new());
+    }
     let hooks_dir = package_root.join(HOOKS_DIR_NAME);
     if !hooks_dir.is_dir() {
         return Ok(Vec::new());
@@ -379,6 +385,9 @@ fn scan_manifest_declared_path(
 ) -> Result<(), MarsError> {
     let mut visited = HashSet::new();
     let candidate = package_root.join(&declared_path.relative_path);
+    if path_is_in_generated_plugin_tree(package_root, &candidate) {
+        return Ok(());
+    }
     match declared_path.kind {
         ItemKind::Skill => {
             if candidate.join("SKILL.md").is_file() {
@@ -527,11 +536,32 @@ fn discover_manifest_declared_items(
     package_root: &Path,
     source_name: &str,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
+    if crate::plugin_metadata::has_valid_plugin_sentinel(package_root) {
+        return Ok(Vec::new());
+    }
     let mut items = Vec::new();
     for declared_path in collect_manifest_declared_paths(package_root, source_name)? {
         scan_manifest_declared_path(package_root, &declared_path, &mut items)?;
     }
     Ok(dedupe_items_by_path(items))
+}
+
+fn path_is_in_generated_plugin_tree(package_root: &Path, path: &Path) -> bool {
+    let mut current = if path.is_dir() {
+        Some(path)
+    } else {
+        path.parent()
+    };
+    while let Some(directory) = current {
+        if crate::plugin_metadata::has_valid_plugin_sentinel(directory) {
+            return true;
+        }
+        if directory == package_root {
+            break;
+        }
+        current = directory.parent();
+    }
+    false
 }
 
 fn ground_items_to_shallowest_layer(items: Vec<LayeredItem>) -> Vec<LayeredItem> {

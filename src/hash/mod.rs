@@ -88,6 +88,9 @@ fn collect_file_hashes(
         if is_excluded_top_level(rel_path, excluded_top_level) {
             continue;
         }
+        if file_type.is_dir() && crate::plugin_metadata::has_valid_plugin_sentinel(&path) {
+            continue;
+        }
 
         if file_type.is_dir() {
             collect_file_hashes(root, &path, entries, excluded_top_level)?;

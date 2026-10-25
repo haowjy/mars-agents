@@ -255,12 +255,12 @@ fn self_overlays_installed_names_after_explicit_and_collision_renames() {
                 project.path(),
                 &format!(".mars/agents/{dependency_agent}.md")
             ),
-            "# Dependency A"
+            format!("---\nname: {dependency_agent}\n---\n# Dependency A")
         );
         if collision {
             assert_eq!(
                 read(project.path(), ".mars/agents/writer__b.md"),
-                "# Dependency B"
+                "---\nname: writer__b\n---\n# Dependency B"
             );
         }
         project

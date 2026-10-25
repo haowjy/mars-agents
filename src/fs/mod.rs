@@ -137,6 +137,9 @@ fn copy_dir_recursive(
         if is_excluded_top_level(rel_path, excluded_top_level) {
             continue;
         }
+        if file_type.is_dir() && crate::plugin_metadata::has_valid_plugin_sentinel(&src_path) {
+            continue;
+        }
 
         if file_type.is_dir() {
             fs::create_dir_all(&dest_path)?;

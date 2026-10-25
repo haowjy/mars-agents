@@ -23,9 +23,9 @@ installed name:
 - `skills/planning` from `team` → `skills/planning__team`
 
 Mars emits an `auto-rename-collision` warning for each automatic rename. Agent
-frontmatter references are rewritten in scope: `skills:` references follow
-renamed skills, and `subagents:` references follow renamed agents from the same
-source or that source's dependency graph.
+frontmatter `name:` follows the installed filename. References are rewritten in
+scope: `skills:` references follow renamed skills, and `subagents:` references
+follow renamed agents from the same source or that source's dependency graph.
 
 To choose custom names or prevent auto-renaming, add an explicit dependency
 rename in `mars.toml`; explicit renames are applied before collision detection:
@@ -36,9 +36,9 @@ url = "https://github.com/meridian-flow/meridian-base"
 rename = { "agents/coder.md" = "agents/base-coder.md" }
 ```
 
-When an explicit skill rename changes the installed skill name, Mars also
-rewrites dependent agent frontmatter (the YAML metadata block at the top of an
-agent Markdown file) to reference the installed skill name.
+Explicit agent and skill renames receive the same treatment: dependent agent
+frontmatter uses the installed name, and a renamed agent's own `name:` matches
+its installed filename.
 
 ### Config references dangled by rename
 

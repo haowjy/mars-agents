@@ -504,7 +504,7 @@ pub(crate) fn resolve_graph(
 pub(crate) struct PreparedTarget {
     pub target: target::TargetState,
     pub rename_index: rewrite::RenameIndex,
-    pub explicit_renames: Vec<target::ExplicitSkillRename>,
+    pub explicit_renames: Vec<target::ExplicitRename>,
     pub collision_renames: Vec<target::CollisionRename>,
     pub warnings: Vec<crate::validate::ValidationWarning>,
 }

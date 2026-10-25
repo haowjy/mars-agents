@@ -13,8 +13,8 @@ const SELF_SOURCE: &str = "_self";
 
 /// Resolve MCP name collisions for a single target root.
 ///
-/// Precedence: `_self` > dependency; earlier `decl_order` > later; equal
-/// declaration order breaks alphabetically by source package name.
+/// Precedence: shallower package > earlier `decl_order`; equal graph position
+/// breaks alphabetically by source package name.
 pub fn resolve_mcp_collisions_for_target<'a>(
     items: impl IntoIterator<Item = &'a ParsedMcpItem>,
     target_root: &str,
@@ -45,10 +45,8 @@ fn resolve_mcp_group<'a>(
     }
 
     group.sort_by(|a, b| {
-        let a_self = a.source_name == SELF_SOURCE;
-        let b_self = b.source_name == SELF_SOURCE;
-        b_self
-            .cmp(&a_self)
+        a.depth
+            .cmp(&b.depth)
             .then_with(|| a.decl_order.cmp(&b.decl_order))
             .then_with(|| a.source_name.cmp(&b.source_name))
     });

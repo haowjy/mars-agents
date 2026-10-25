@@ -30,10 +30,10 @@ the occupied layer). `.mars-src` is discovered separately and wins matching
 `(kind, name)` definitions before staging. Removing shallower items can promote
 nested distribution items; there is no permanent `cw/` exclusion.
 
-Configured non-hidden output trees are not excluded from discovery. For example,
-`out/native/skills/demo/SKILL.md` can suppress the authored root `SKILL.md` fallback
-on the next run. Use hidden targets for authored-root convergence. Flat-resource
-staging exclusions cannot repair this earlier source-selection decision.
+Directories containing a valid `.mars-plugin.json` are generated plugin trees and are
+excluded at any depth. The same marker is excluded when a package-root flat skill is hashed or
+copied, so committed plugin output cannot feed the next sync or build. Other configured
+non-hidden output trees remain discoverable; use hidden targets for those authored-root flows.
 
 ## Hidden directories
 

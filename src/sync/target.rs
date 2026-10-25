@@ -158,10 +158,11 @@ pub struct TargetItem {
 
 /// Explicit skill rename that changes the installed skill name.
 #[derive(Debug, Clone)]
-pub struct ExplicitSkillRename {
+pub struct ExplicitRename {
     pub original_name: ItemName,
     pub new_name: ItemName,
     pub source_name: SourceName,
+    pub kind: ItemKind,
 }
 
 /// Automatic rename applied when multiple sources target the same destination.
@@ -176,14 +177,14 @@ pub fn build_with_collisions_and_diag(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
     diag: &mut DiagnosticCollector,
-) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
+) -> Result<(TargetState, Vec<ExplicitRename>, Vec<CollisionRename>), MarsError> {
     let mut collected_items = Vec::new();
     let mut target = TargetState {
         items: IndexMap::new(),
         selected_hooks: IndexMap::new(),
         selected_mcp: Vec::new(),
     };
-    let mut explicit_skill_renames = Vec::new();
+    let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
     let hook_depths = graph.dependency_depths();
     let decl_orders = graph.dependency_decl_orders(&config.dependencies);
@@ -220,9 +221,10 @@ pub fn build_with_collisions_and_diag(
                 .get(source_name)
                 .copied()
                 .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
-            match crate::compiler::mcp::discover_mcp_items(
+            match crate::compiler::mcp::discover_mcp_items_at_depth(
                 &node.rooted_ref.package_root,
                 source_name.as_str(),
+                hook_depths.get(source_name).copied().unwrap_or(1),
                 decl_order,
                 diag,
             ) {
@@ -301,11 +303,14 @@ pub fn build_with_collisions_and_diag(
                 );
                 continue;
             }
-            if item.id.kind == ItemKind::Skill && dest_name != item.id.name {
-                explicit_skill_renames.push(ExplicitSkillRename {
+            if matches!(item.id.kind, ItemKind::Agent | ItemKind::Skill)
+                && dest_name != item.id.name
+            {
+                explicit_renames.push(ExplicitRename {
                     original_name: item.id.name.clone(),
                     new_name: dest_name.clone(),
                     source_name: source_name.clone(),
+                    kind: item.id.kind,
                 });
             }
 
@@ -346,7 +351,7 @@ pub fn build_with_collisions_and_diag(
 
     target.items = items;
 
-    Ok((target, explicit_skill_renames, collision_renames))
+    Ok((target, explicit_renames, collision_renames))
 }
 
 fn mcp_target_roots(
@@ -988,7 +993,10 @@ mod tests {
         let (target, renames, _) =
             build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
                 .unwrap();
-        assert!(renames.is_empty());
+        assert_eq!(renames.len(), 1);
+        assert_eq!(renames[0].kind, ItemKind::Agent);
+        assert_eq!(renames[0].original_name.as_str(), "old-name");
+        assert_eq!(renames[0].new_name.as_str(), "new-name");
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/new-name.md"));
         assert_eq!(target.items["agents/new-name.md"].id.name, "new-name");

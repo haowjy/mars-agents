@@ -5,15 +5,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `mars build plugin [PATH] --out <dir>` builds one Claude-format plugin (Codex installs the
-  same tree) holding what `mars sync` installs in the package's own checkout: its items plus its
-  dependencies under its own filters, renames and visibility, with exported hooks and MCP servers.
-  Skill and agent references are qualified as `<plugin>:<name>`. Output is deterministic and LF.
-  The output dir is Mars-owned: a `.mars-plugin.json` sentinel records the package version, an
-  offline input hash, dependency versions and per-file hashes; a non-empty dir without one is
-  refused; rebuilds swap the tree atomically and recover from an interrupted build.
+- `mars build plugin [PATH] [--out <dir>]` builds owned Claude, Cursor, and OpenCode plugin trees
+  from a package's publish graph. Explicit output uses the nested
+  `<dir>/{claude,cursor,opencode}/` layout with a root `.mars-plugin.json` sentinel.
+- `[plugin]` configures committed output, identity, marketplace, description, and harnesses.
+  Configured builds also generate the Claude and Cursor catalogs and root OpenCode `package.json`;
+  `[package]` supplies author, homepage, and license metadata.
+- `mars check` reports stale, hand-edited, skipped, or root-conflicted configured plugin output and
+  warns when plugin packages do not require Mars 0.19.0 or newer.
+- Build and commit configured multi-harness plugin output during `mars version`, with rollback-safe
+  publication and a `--no-plugins` escape hatch.
+- Plugin builds refuse source symlinks that leave the package, and special files, so published
+  output never carries files from outside it. `[package].authors` takes `"Name <email>"` strings or
+  `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,
+  and malformed non-table `plugin` values survive config loading and saving so non-plugin commands
+  can continue while `mars check` and plugin builds report the invalid value.
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
   Cursor no longer preload available-only skills, while every target receives `/name` body
   guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a
@@ -21,8 +30,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hook order now follows shortest dependency depth, changing only when a direct dependency is
   also reached transitively. Codex users may need to re-trust moved hooks once with `/hooks`.
 - Discovery, MCP discovery and staging skip any directory holding a valid `.mars-plugin.json`
-  (generated plugin output) and report each skipped path, so a committed plugin tree is never
-  re-imported as package source.
+  (generated plugin output), so a committed plugin tree is never re-imported as package source.
+  A package's own configured `[plugin].dir` is excluded directly and silently from its `sync` and
+  `check`; other generated trees still report each skipped path.
 - Explicitly or automatically renamed agents and skills now carry their installed names in
   frontmatter, and `subagents:` references follow explicit agent renames as well as collision
   renames. Native agent sync also removes prior claims that are absent from the current emission

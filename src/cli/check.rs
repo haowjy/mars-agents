@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use semver::Version;
 use serde::Serialize;
 
 use crate::dialect::Dialect;
@@ -57,7 +58,10 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
     let lens = crate::resolve::PublishLens::load(&base, &mut publish_diag)?;
-    let report = check_dir_with_lens(&base, Ok(&lens), &mut publish_diag)?;
+    let mut report = check_dir_with_lens(&base, Ok(&lens), &mut publish_diag)?;
+    report
+        .warnings
+        .extend(plugin_warnings(&base, &lens, &mut publish_diag)?);
     let mut diagnostics = publish_diag.drain();
     diagnostics.extend(lossiness_diagnostics_for_check(&lens, args.verbose)?);
     let clean = report.errors.is_empty();
@@ -100,6 +104,62 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     if clean { Ok(0) } else { Ok(1) }
+}
+
+const PLUGIN_MARS_FLOOR: &str = "0.19.0";
+
+fn plugin_warnings(
+    base: &Path,
+    lens: &crate::resolve::PublishLens,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+) -> Result<Vec<String>, MarsError> {
+    let Some(config) = lens.manifest.as_ref() else {
+        return Ok(Vec::new());
+    };
+    if config.plugin.is_none() {
+        return Ok(Vec::new());
+    }
+    let mut warnings = Vec::new();
+    let metadata = match crate::build::plugin::validate_plugin_build(config) {
+        Ok(metadata) => Some(metadata),
+        Err(error) => {
+            warnings.push(error.to_string());
+            None
+        }
+    };
+    let Some(package) = config.package.as_ref() else {
+        return Ok(warnings);
+    };
+    if crate::resolve::validate_package_requirement_syntax(package).is_ok()
+        && !crate::resolve::requirement_has_floor(
+            package.requires_mars.as_deref(),
+            &Version::parse(PLUGIN_MARS_FLOOR).expect("plugin Mars floor is valid semver"),
+        )
+    {
+        warnings.push(format!(
+            "plugin packages should set [package] `requires-mars = \">={PLUGIN_MARS_FLOOR}\"` or a higher floor, then rebuild the plugin; older Mars versions may drop [plugin] during `mars version`"
+        ));
+    }
+
+    let Some(metadata) = metadata else {
+        return Ok(warnings);
+    };
+    let state = crate::build::plugin::inspect_validated(base, &metadata)?;
+    if let Some(message) = state.directory.message() {
+        if matches!(
+            state.directory,
+            crate::build::plugin::PluginDirectoryState::Missing { .. }
+        ) {
+            diag.info("plugin-output-missing", message);
+        } else {
+            warnings.push(message);
+        }
+    }
+    warnings.extend(state.inputs.iter().filter_map(|state| state.message()));
+    warnings.extend(state.version.iter().filter_map(|state| state.message()));
+    warnings.extend(state.root_files.iter().filter_map(|state| state.message()));
+
+    Ok(warnings)
 }
 
 fn lossiness_diagnostics_for_check(

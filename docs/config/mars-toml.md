@@ -95,6 +95,9 @@ To keep project-local agents and skills without publishing, use `.mars-src/` ins
 name = "meridian-base"
 version = "1.2.0"
 description = "Core agents and skills for meridian"  # optional
+authors = ["Example Maintainer <maintainer@example.com>"] # optional; table form also accepted
+homepage = "https://github.com/example/meridian-base" # optional
+license = "Apache-2.0"                                # optional
 requires-mars = ">=0.11.0"                           # optional
 requires-meridian = ">=0.20.0"                       # optional
 ```
@@ -104,6 +107,9 @@ requires-meridian = ">=0.20.0"                       # optional
 | `name` | string | yes | Package name, used for dependency resolution |
 | `version` | string | yes | Semver version of this package |
 | `description` | string | no | Human-readable description |
+| `authors` | string[] or table[] | no | Package authors as `"Name <email>"` strings or `{ name, email }` tables; the first author supplies generated plugin owner metadata |
+| `homepage` | string | no | Package or project homepage used in generated plugin manifests |
+| `license` | string | no | Package license identifier used in generated plugin manifests |
 | `requires-mars` | semver requirement | no | Mars versions that can consume this package |
 | `requires-meridian` | semver requirement | no | Meridian versions that can consume this package; skipped when Mars runs standalone |
 
@@ -119,6 +125,50 @@ corresponding check for `sync`, `upgrade`, `add`, and `repair`, and always emit
 a warning.
 
 Project-local items are read from `.mars-src/` during sync. With `[package]`, the current package also supplies its own agents and skills as Mars-native `_self` items. `.mars-src` overrides a matching package item before staging; self items then overlay matching dependency destinations after dependency renames. Source-package discovery walks the rooted package tree and includes convention folders named `agents/`, `skills/`, and `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, grounded to the shallowest discovered package layer. Duplicate `(kind, name)` items in one source fail with `DiscoveryCollision`.
+
+### `[plugin]` (optional)
+
+Adding `[plugin]` opts a package into committed plugin builds. Every field is optional:
+
+```toml
+[plugin]
+dir = "plugin"
+name = "meridian-base"
+marketplace = "meridian-base"
+description = "Core agents and skills for Meridian"
+harnesses = ["claude", "codex", "grok", "cursor", "opencode"]
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `dir` | relative path | `"plugin"` | Mars-owned output directory containing the generated harness trees |
+| `name` | string | `[package].name` | Plugin identifier and namespace |
+| `marketplace` | string | `[package].name` | Marketplace/catalog identifier used with `name@marketplace` installs |
+| `description` | string | `[package].description` | Plugin-facing description |
+| `harnesses` | string[] | all five | Harnesses the build serves: `claude`, `codex`, `grok`, `cursor`, and `opencode` |
+
+`dir` must stay inside the package and cannot be `.`, `..`, a dot directory, or an
+`agents`, `skills`, `hooks`, or `bootstrap` source directory. Absolute paths and parent
+components are rejected. Pi has no plugin format and cannot be listed.
+
+`name` must satisfy every listed harness. Cursor and Codex require lowercase identifiers
+made from letters, digits, dots, and hyphens; OpenCode requires an npm-compatible package
+name. Claude-compatible names cannot contain spaces, `@`, `:`, or path separators.
+
+Config loading preserves the raw `plugin` value and the plugin-only package fields `authors`,
+`homepage`, and `license` as raw TOML. Defaults and semantic checks run only when building a plugin
+or versioning a package that declares `plugin`: output containment, field types, non-empty author
+names, plugin and marketplace names for every selected harness, and the selected harness list.
+Invalid plugin metadata therefore does not block `sync`, `list`, `add`, `doctor`, or config loading.
+`mars check` reports the same validation message as a warning. Config-saving commands keep omitted
+plugin defaults omitted and retain authored metadata forms such as
+`authors = ["Name <email>"]`; even a non-table value is preserved until plugin validation reports
+that `[plugin]` must be a table.
+
+Run `mars build plugin` in the package to rebuild configured output. Running
+`mars build plugin --out <dir>` instead writes only the owned output directory, accepts packages without
+`[plugin]`, and uses the configured harness list when one exists. An explicit `--out` cannot
+resolve to `[plugin].dir`; omit `--out` for that build.
 
 ### `[dependencies]`
 

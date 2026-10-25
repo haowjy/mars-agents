@@ -90,7 +90,6 @@ enum LoweringStep {
 
 #[derive(Debug, Clone, Copy)]
 struct SkillLoweringPolicy {
-    target_name: &'static str,
     steps: &'static [LoweringStep],
     model_invocable: ModelInvocablePolicy,
     user_invocable: UserInvocablePolicy,
@@ -101,7 +100,6 @@ struct SkillLoweringPolicy {
 }
 
 const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    target_name: "Claude",
     steps: &[
         LoweringStep::Identity,
         LoweringStep::ModelInvocable,
@@ -124,7 +122,6 @@ const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    target_name: "Codex",
     steps: &[
         LoweringStep::Identity,
         LoweringStep::LicenseMetadata,
@@ -145,7 +142,6 @@ const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    target_name: "OpenCode",
     steps: &[
         LoweringStep::Identity,
         LoweringStep::LicenseMetadata,
@@ -168,7 +164,6 @@ const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    target_name: "Pi",
     steps: &[
         LoweringStep::Identity,
         LoweringStep::ModelInvocable,
@@ -191,7 +186,6 @@ const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
 };
 
 const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    target_name: "Cursor",
     steps: &[
         LoweringStep::Identity,
         LoweringStep::LicenseMetadata,
@@ -283,6 +277,7 @@ fn render(yaml: Mapping, body: &str) -> Vec<u8> {
 
 struct LoweringCtx<'a> {
     policy: &'static SkillLoweringPolicy,
+    target_name: &'static str,
     profile: &'a SkillProfile,
     /// The profile's tool rules spelled for `harness_kind`, resolved once per lowering.
     tools: PolicyProjection<'a>,
@@ -299,6 +294,7 @@ impl<'a> LoweringCtx<'a> {
     ) -> Self {
         Self {
             policy,
+            target_name: harness_descriptor::descriptor(harness_kind).display_name,
             profile,
             tools: profile.tools.project(harness_kind),
             yaml: Mapping::new(),
@@ -390,7 +386,7 @@ impl<'a> LoweringCtx<'a> {
     fn apply_user_invocable_lossiness(&mut self) {
         if user_invocation_disabled(self.profile) {
             self.lossy_fields
-                .push(dropped("user-invocable", self.policy.target_name));
+                .push(dropped("user-invocable", self.target_name));
         }
     }
 
@@ -399,7 +395,7 @@ impl<'a> LoweringCtx<'a> {
         // A skill's `allowed-tools` pre-approves tools; it has no way to say "ask".
         if self.profile.tools.has_rule(ToolAction::Ask, RuleKind::All) {
             self.lossy_fields
-                .push(dropped("tools (ask)", policy.target_name));
+                .push(dropped("tools (ask)", self.target_name));
         }
         match policy.allowed_tools {
             AllowedToolsPolicy::Emit {
@@ -409,7 +405,7 @@ impl<'a> LoweringCtx<'a> {
                     for note in self.tools.gaps(ToolAction::Allow, RuleKind::Builtin) {
                         self.lossy_fields.push(LossyField {
                             field: "tools".into(),
-                            target: policy.target_name.into(),
+                            target: self.target_name.into(),
                             classification: Lossiness::Approximate { note },
                         });
                     }
@@ -428,7 +424,7 @@ impl<'a> LoweringCtx<'a> {
                     .tools
                     .has_rule(ToolAction::Allow, RuleKind::Builtin)
                 {
-                    self.lossy_fields.push(dropped("tools", policy.target_name));
+                    self.lossy_fields.push(dropped("tools", self.target_name));
                 }
             }
         }
@@ -444,7 +440,7 @@ impl<'a> LoweringCtx<'a> {
                 for note in self.tools.gaps(ToolAction::Deny, RuleKind::All) {
                     self.lossy_fields.push(LossyField {
                         field: "disallowed-tools".into(),
-                        target: policy.target_name.into(),
+                        target: self.target_name.into(),
                         classification: Lossiness::Approximate { note },
                     });
                 }
@@ -458,7 +454,7 @@ impl<'a> LoweringCtx<'a> {
             }
             DisallowedToolsPolicy::Drop => {
                 self.lossy_fields
-                    .push(dropped("disallowed-tools", policy.target_name));
+                    .push(dropped("disallowed-tools", self.target_name));
             }
         }
     }
@@ -477,7 +473,7 @@ impl<'a> LoweringCtx<'a> {
                 for note in self.tools.gaps(ToolAction::Allow, RuleKind::Mcp) {
                     self.lossy_fields.push(LossyField {
                         field: "mcp".into(),
-                        target: policy.target_name.into(),
+                        target: self.target_name.into(),
                         classification: Lossiness::Approximate { note },
                     });
                 }
@@ -499,7 +495,7 @@ impl<'a> LoweringCtx<'a> {
                 );
                 self.lossy_fields.push(LossyField {
                     field: "mcp".into(),
-                    target: policy.target_name.into(),
+                    target: self.target_name.into(),
                     classification: Lossiness::Approximate {
                         note: "Claude skill allowed-tools grants MCP access; it does not restrict invocation",
                     },
@@ -508,12 +504,12 @@ impl<'a> LoweringCtx<'a> {
             McpToolsPolicy::Approximate(note) => {
                 self.lossy_fields.push(LossyField {
                     field: "mcp".into(),
-                    target: policy.target_name.into(),
+                    target: self.target_name.into(),
                     classification: Lossiness::Approximate { note },
                 });
             }
             McpToolsPolicy::Drop => {
-                self.lossy_fields.push(dropped("mcp", policy.target_name));
+                self.lossy_fields.push(dropped("mcp", self.target_name));
             }
         }
     }

@@ -21,7 +21,7 @@ use crate::types::ItemName;
 // rule to avoid slow walks and false-positive imports from dependency/build
 // outputs that sometimes contain docs shaped like agents or skills.
 const RECURSIVE_SKIP_DIRS: &[&str] = &["node_modules", ".git", "dist", "build", "__pycache__"];
-const PLUGIN_MANIFESTS: &[&str] = &[
+pub(crate) const SOURCE_MANIFEST_PATHS: &[&str] = &[
     ".claude-plugin/plugin.json",
     ".claude-plugin/marketplace.json",
 ];
@@ -150,6 +150,7 @@ fn discover_convention_items(
     let mut visited_hooks = HashSet::new();
     let mut visited_bootstrap = HashSet::new();
     let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
+    let configured_plugin_dir = configured_plugin_dir(package_root);
 
     while let Some((base_dir, depth)) = queue.pop_front() {
         let base_rel = if base_dir == package_root {
@@ -208,6 +209,9 @@ fn discover_convention_items(
 
         for path in read_dir_paths_sorted(&base_dir)? {
             if !path.is_dir() {
+                continue;
+            }
+            if configured_plugin_tree(configured_plugin_dir.as_deref(), &path) {
                 continue;
             }
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -428,13 +432,14 @@ fn scan_bootstrap_dir(
 
 fn scan_manifest_declared_path(
     package_root: &Path,
+    configured_plugin_dir: Option<&Path>,
     declared_path: &DeclaredPath,
     items: &mut Vec<DiscoveredItem>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut visited = HashSet::new();
     let candidate = package_root.join(&declared_path.relative_path);
-    if path_is_in_generated_plugin_tree(package_root, &candidate, diag) {
+    if path_is_in_generated_plugin_tree(package_root, configured_plugin_dir, &candidate, diag) {
         return Ok(());
     }
     match declared_path.kind {
@@ -592,17 +597,28 @@ fn discover_manifest_declared_items(
         return Ok(Vec::new());
     }
     let mut items = Vec::new();
+    let configured_plugin_dir = configured_plugin_dir(package_root);
     for declared_path in collect_manifest_declared_paths(package_root, source_name)? {
-        scan_manifest_declared_path(package_root, &declared_path, &mut items, diag)?;
+        scan_manifest_declared_path(
+            package_root,
+            configured_plugin_dir.as_deref(),
+            &declared_path,
+            &mut items,
+            diag,
+        )?;
     }
     Ok(dedupe_items_by_path(items))
 }
 
 fn path_is_in_generated_plugin_tree(
     package_root: &Path,
+    configured_plugin_dir: Option<&Path>,
     path: &Path,
     diag: &mut DiagnosticCollector,
 ) -> bool {
+    if configured_plugin_tree(configured_plugin_dir, path) {
+        return true;
+    }
     let mut current = if path.is_dir() {
         Some(path)
     } else {
@@ -618,6 +634,22 @@ fn path_is_in_generated_plugin_tree(
         current = directory.parent();
     }
     false
+}
+
+fn configured_plugin_tree(configured_plugin_dir: Option<&Path>, path: &Path) -> bool {
+    configured_plugin_dir.is_some_and(|dir| path.starts_with(dir))
+}
+
+fn configured_plugin_dir(package_root: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(package_root.join("mars.toml")).ok()?;
+    let manifest: toml::Value = toml::from_str(&content).ok()?;
+    let plugin = manifest.get("plugin")?.as_table()?;
+    let dir = match plugin.get("dir") {
+        None => PathBuf::from("plugin"),
+        Some(value) => PathBuf::from(value.as_str()?),
+    };
+    crate::config::validate_plugin_dir(&dir).ok()?;
+    Some(package_root.join(dir))
 }
 
 fn generated_plugin_tree(path: &Path, diag: &mut DiagnosticCollector) -> bool {
@@ -669,7 +701,7 @@ fn collect_manifest_declared_paths(
     source_name: &str,
 ) -> Result<Vec<DeclaredPath>, MarsError> {
     let mut declared = Vec::new();
-    for manifest in PLUGIN_MANIFESTS {
+    for manifest in SOURCE_MANIFEST_PATHS {
         let path = package_root.join(manifest);
         if !path.is_file() {
             continue;
@@ -821,6 +853,68 @@ fn parse_declared_paths(json: &Value) -> Vec<RawDeclaredPath> {
         }
     }
     declared
+}
+
+/// Remove manifest declarations that cannot contribute any selected item.
+///
+/// Publication staging uses this after discovery and filtering so rediscovery
+/// does not require excluded paths to be copied merely because the authored
+/// foreign manifest still names them.
+pub(crate) fn retain_selected_manifest_declarations(
+    json: &mut Value,
+    selected: &[(ItemKind, PathBuf)],
+) {
+    let Some(map) = json.as_object_mut() else {
+        return;
+    };
+    for (kind, keys) in [
+        (ItemKind::Skill, MANIFEST_SKILL_KEYS),
+        (ItemKind::Agent, MANIFEST_AGENT_KEYS),
+        (ItemKind::BootstrapDoc, MANIFEST_BOOTSTRAP_KEYS),
+    ] {
+        for key in keys {
+            let keep = map
+                .get_mut(*key)
+                .is_none_or(|value| retain_selected_declared_value(value, kind, selected));
+            if !keep {
+                map.remove(*key);
+            }
+        }
+    }
+}
+
+fn retain_selected_declared_value(
+    value: &mut Value,
+    kind: ItemKind,
+    selected: &[(ItemKind, PathBuf)],
+) -> bool {
+    match value {
+        Value::String(path) => declaration_can_select(path, kind, selected),
+        Value::Array(values) => {
+            values.retain_mut(|child| retain_selected_declared_value(child, kind, selected));
+            !values.is_empty()
+        }
+        Value::Object(map) => map
+            .get("path")
+            .and_then(Value::as_str)
+            .is_none_or(|path| declaration_can_select(path, kind, selected)),
+        // Discovery ignores unsupported shapes, so preserve them verbatim.
+        _ => true,
+    }
+}
+
+fn declaration_can_select(path: &str, kind: ItemKind, selected: &[(ItemKind, PathBuf)]) -> bool {
+    let raw = Path::new(path);
+    if !raw.starts_with("./") {
+        return true;
+    }
+    let Some(normalized) = normalize_manifest_declared_path(raw) else {
+        // Initial discovery reports malformed declarations before staging.
+        return true;
+    };
+    selected.iter().any(|(selected_kind, path)| {
+        *selected_kind == kind && (path.starts_with(&normalized) || normalized.starts_with(path))
+    })
 }
 
 fn collect_declared_paths_from_value(

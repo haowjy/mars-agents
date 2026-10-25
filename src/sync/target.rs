@@ -26,6 +26,9 @@ pub struct TargetState {
     // canonical path prunes `items` so post-sync lowering can report the missing winner.
     selected_hooks: IndexMap<DestPath, SelectedHook>,
     selected_mcp: Vec<SelectedMcp>,
+    // Keep exported graph hooks even when none of the managed targets select
+    // one of their fragments. Plugin diagnostics need to report that omission.
+    exported_hooks: Vec<crate::compiler::hooks::ParsedHookItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +45,10 @@ struct SelectedMcp {
 }
 
 impl TargetState {
+    pub(crate) fn exported_hooks(&self) -> &[crate::compiler::hooks::ParsedHookItem] {
+        &self.exported_hooks
+    }
+
     pub(crate) fn selected_hooks(
         &self,
     ) -> impl Iterator<Item = (&str, &crate::compiler::hooks::ParsedHookItem)> {
@@ -135,6 +142,7 @@ impl TargetState {
             items,
             selected_hooks: IndexMap::new(),
             selected_mcp: Vec::new(),
+            exported_hooks: Vec::new(),
         }
     }
 }
@@ -206,6 +214,7 @@ pub fn build_with_collisions_and_diag(
         items: IndexMap::new(),
         selected_hooks: IndexMap::new(),
         selected_mcp: Vec::new(),
+        exported_hooks: Vec::new(),
     };
     let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
@@ -269,12 +278,13 @@ pub fn build_with_collisions_and_diag(
             }
         }
 
-        let Some(filters) = graph
-            .filters
-            .get(source_name)
-            .filter(|filters| !filters.is_empty())
-            .cloned()
-            .or_else(|| source_config.map(|source| vec![source.filter.clone()]))
+        let Some(filtered) = apply_source_filters(
+            graph,
+            source_name,
+            source_config,
+            &discovered,
+            &node.rooted_ref.package_root,
+        )?
         else {
             // No materialization request reached this transitive source.
             continue;
@@ -284,8 +294,6 @@ pub fn build_with_collisions_and_diag(
             .map(|s| &s.rename)
             .cloned()
             .unwrap_or_default();
-
-        let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
 
         for item in filtered {
             if item.id.kind == ItemKind::Hook {
@@ -297,6 +305,7 @@ pub fn build_with_collisions_and_diag(
                 if parsed.def.visibility != crate::compiler::visibility::Visibility::Exported {
                     continue;
                 }
+                target.exported_hooks.push(parsed.clone());
                 for (target_name, _dest_path, target_item) in
                     hook_target_items(parsed, source_name, &managed_target_roots)?
                 {
@@ -394,12 +403,31 @@ fn mcp_target_roots(
         .collect()
 }
 
-fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
+pub(crate) fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
     graph.filters.get(source_name).is_none_or(|filters| {
         filters
             .iter()
             .any(|filter| matches!(filter, FilterMode::All | FilterMode::Exclude(_)))
     })
+}
+
+pub(crate) fn apply_source_filters(
+    graph: &ResolvedGraph,
+    source_name: &SourceName,
+    source_config: Option<&crate::config::EffectiveDependency>,
+    discovered: &[discover::DiscoveredItem],
+    package_root: &Path,
+) -> Result<Option<Vec<discover::DiscoveredItem>>, MarsError> {
+    let Some(filters) = graph
+        .filters
+        .get(source_name)
+        .filter(|filters| !filters.is_empty())
+        .cloned()
+        .or_else(|| source_config.map(|source| vec![source.filter.clone()]))
+    else {
+        return Ok(None);
+    };
+    apply_filter_union(discovered, &filters, package_root).map(Some)
 }
 
 pub(crate) fn hook_target_items(

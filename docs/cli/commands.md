@@ -496,6 +496,10 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Skill dependency references (warns about external deps)
 - Symlinks in source packages (warned as unsupported)
 - Missing `SKILL.md` in skill directories
+- Configured plugin output: missing/skipped builds, stale inputs or versions, hand-edited or
+  missing generated files, and conflicts at generated package-root paths
+- Plugin compatibility: unknown `[plugin].harnesses` values and a missing
+  `[package].requires-mars = ">=0.19.0"` (or higher) floor
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
 preview** (`collect_source_lossiness_diagnostics`) against the configured managed
@@ -506,6 +510,26 @@ agents and skills.
 mars check                   # Check current directory
 mars check ../my-agents      # Check another directory
 ```
+
+---
+
+## `mars version`
+
+Version and release a package repository.
+
+```bash
+mars version <patch|minor|major|X.Y.Z> [--push] [--force] [--no-plugins]
+```
+
+The command requires a clean Git worktree, runs the package publish checks, updates
+`[package].version` and `CHANGELOG.md`, commits the release, and creates the annotated version
+tag. `--push` pushes the current branch and tag after the local release succeeds.
+
+When `[plugin]` is configured, `mars version` first stages all selected plugin trees at the new
+version. It then publishes the plugin directory and generated root catalogs/`package.json` in the
+same release commit. Build or commit failure restores every release-touched path and the starting
+commit. `--no-plugins` skips this configured plugin build; use it only when intentionally
+releasing with unchanged plugin output. Plugin configuration is still validated.
 
 ---
 
@@ -580,22 +604,43 @@ mars build <launch-bundle|plugin> ...
 
 ### `mars build plugin`
 
-Build one installable Claude-format plugin tree from a publishable package and the complete
-graph that `mars sync` installs in that package's own checkout: its items plus dependencies under
-its own `[dependencies]` filters, renames, and visibility rules.
+Build installable plugin trees from a publishable package and the complete graph that `mars sync`
+installs in that package's own checkout: its items plus dependencies under its own
+`[dependencies]` filters, renames, and visibility rules.
 
 ```bash
-mars build plugin [PATH] --out <dir>
+mars build plugin [PATH] [--out <dir>]
 ```
 
 `PATH` defaults to the detected project root. With an explicit path the command can run outside
 a Mars project. The build uses only `mars.toml` publish state: it does not read `mars.local.toml`,
 `mars.lock`, `.mars/`, project target configuration, or installed harness model catalogs.
 
-The destination is a whole-tree generated artifact. Mars writes an ownership sentinel and
-refuses to replace a non-empty directory without one. The tree contains Claude-native agents,
-skills, exported hooks, exported MCP servers, and `.claude-plugin/plugin.json`. Codex can install
-the same tree and load its skills, but does not load its agents.
+Without `--out`, `[plugin]` is required and the command writes `[plugin].dir` (default `plugin`).
+The configured build also writes the Claude and Cursor marketplace catalogs plus the root OpenCode
+`package.json`. With `--out`, Mars writes only the output directory and accepts a package without
+`[plugin]`; an explicit destination cannot resolve to the configured directory.
+
+The output is an owned nested artifact:
+
+```text
+<dir>/
+  claude/    # Claude, Codex, and Grok
+  cursor/    # Cursor
+  opencode/  # OpenCode
+  .mars-plugin.json
+```
+
+Only trees selected by `[plugin].harnesses` are written. The shared Claude tree contains native
+agents, skills, exported hooks, exported MCP servers, and `.claude-plugin/plugin.json`; Codex
+loads its skills, hooks, and MCP servers but not its agents. Cursor receives its native tree.
+OpenCode receives an npm-shaped package that registers skills and MCP servers and composes
+default-export hook fragments.
+
+Mars records generated file hashes, input and dependency identities, version, and root-file
+ownership in the sentinel. It atomically replaces owned output, recovers interrupted staging, and
+refuses a non-empty directory or root file it does not own. See
+[Authoring harness plugins](../plugin-authoring.md).
 
 ### `mars build launch-bundle`
 

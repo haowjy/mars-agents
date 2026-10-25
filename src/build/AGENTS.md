@@ -5,19 +5,89 @@ package distribution.
 
 ## Plugin Builds
 
-`plugin/` builds one Claude-format tree matching what `mars sync` installs in the package's own
+`plugin/` builds selected harness trees matching what `mars sync` installs in the package's own
 checkout: its items plus dependencies under its own filters, renames, and visibility rules. It
-resolves through `PublishLens`, stages every package, collects the flattened target with sync's
-shared collect/rename/validate pipeline, then lowers agents, skills, exported hooks, and exported
-MCP servers without reading project config, a lockfile, `.mars/`, or host model state. The
-implicit target selection includes Claude and Codex so warnings about hooks that the shared tree
-cannot carry come from the parsed `TargetState`, not a second manifest scan.
+resolves through `PublishLens`, stages every package, collects the flattened target once with
+sync's shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
+`TreeProfile`. `plugin.rs` owns the two declarative format tables: one row per consumer harness and one per
+published tree. Harness rows select a tree and carry naming, loader capability, display, and
+verification policy; tree rows carry the directory key, generated root-file renderer, marketplace
+naming, dropped agent fields, and lossiness adjustment. Writer `TreeProfile`s reference those tree
+rows and add only compiler and emission functions. Harness identity, variant key, and sync root come
+from `compiler::harness_descriptor`; authored-hook checks run once before copying. `PluginTree::as_str()` is
+the single key for both staged directory names and reported output paths. Claude, Codex, and Grok
+share the Claude tree; Cursor and OpenCode have their own tree identities. The OpenCode tree is an
+npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and imports every
+targeted hook fragment as an in-memory TypeScript data URL. A build warning reports fragments with
+no recognizable default export, but runtime isolation decides whether each hook loads.
+Hook-directory substitution is JavaScript-string encoded, and one fragment's load or setup failure
+does not block later hooks.
 
-The generated tree is handed to `plugin::output::replace_owned_tree`; the build core never
-mutates the destination itself. The output layer stages in a sibling directory, records a
-`.mars-plugin.json` sentinel, and publishes with a two-rename swap under a cross-process lock.
-It recovers interrupted swaps before a new build and never replaces a non-empty destination
-without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
+Publication staging and input fingerprinting share a typed inventory of item roots and MCP
+definitions. Graph filters narrow each staged dependency to what target collection can publish,
+except that every hook root remains available for the strict pre-filter compatibility check. A
+single authored walker takes the policy: publication confines links to the package and rejects
+special files, while sync retains its historical follow behavior. Manifestless foreign sources
+separately copy manifest metadata with declarations rewritten to the selected typed inventory, so
+rediscovery does not require excluded paths. The root-package input fingerprint includes inventory
+kinds and authored bytes, but never Mars-generated catalog metadata. Repo tooling and filtered-out
+non-hook items are not staged. A flat-root skill retains authored root resources but its publication
+inventory excludes standard tooling directories and top-level special filesystem nodes. Installed
+skill frontmatter is written once into graph staging before every tree projects it; derived skill
+and hook trees then use the plain copier, with other-target hook fragments excluded.
+
+Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
+project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the
+set of built trees' sync roots. `TargetState` also retains every filtered exported graph hook,
+including hooks no built root selected. A source check before the tree loop emits authored-content
+diagnostics, including skill-schema findings, once; tree writing emits only lowering diagnostics.
+Support diagnostics consume the full `TargetState` for graph-wide counts rather than inferring
+them from one tree. `support.rs` derives component support from each listed harness's tree profile
+plus Codex's agent-loader gap; per-harness display copy and verification evidence live on the
+harness spec rows, and the same data renders the README tables. The Claude plugin MCP writer emits
+same-name environment pass-throughs as `env_vars` for Claude/Codex/Grok compatibility; renamed
+references retain Claude's `${VAR}` form and warn that Codex passes it literally. Sync continues to
+use the native Claude writer.
+
+The Cursor profile lowers native Cursor agents without an additional plugin field filter, uses no
+native model aliases, and writes `.cursor-plugin/plugin.json`, `mcp.json`, and versioned
+`hooks/hooks.json` with `${CURSOR_PLUGIN_ROOT}` hook paths. Its MCP and hook serializers are the
+same path-parameterized writers used by `.cursor` sync.
+
+`PluginBuildRequest` carries validated `PackageMetadata` plus destination intent. `Configured`
+resolves its validated `[plugin].dir` and enables the root-file plan, while `Out(path)` is the
+explicit CLI output and never writes repo-root files. Validation applies `[plugin]` defaults only at
+this boundary: directory `plugin`, identity and description from `[package]`, and all five harness
+specs. `Configured` still requires the table, and explicit output cannot resolve to the configured
+directory. The request's optional version overrides only generated metadata; `None` uses
+`[package].version`. The publish graph's root source continues to use `[package].name` because the
+plugin name may differ. Build reports contain one typed tree record and output path per generated
+tree; human output prints one success line per record.
+
+Config loading keeps the `plugin` value and package plugin metadata raw. `validate_plugin_build` is
+the one semantic conversion to typed authors, canonical configured directory, requested harness
+specs, plugin name, and catalog marketplace. The same rules therefore apply to configured and
+explicit `--out` builds without blocking sync or list; `mars version` invokes that validation for
+packages declaring `plugin` even when output is skipped, and `mars check` reports its error as a
+warning.
+
+The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
+core never mutates the destination itself. The staged build holds the output lock and root-file
+plan until publication applies the plan and calls `StagedPlugin::publish`. Configured builds plan
+the Claude/Cursor catalogs and OpenCode root package; explicit `--out` builds plan none. The shared
+offline `inspect` classifies the owned directory, its fingerprint/version, and every recorded or
+expected root file. Sentinel ownership is limited to the three generated root paths and records a
+catalog directory only when Mars created its previously missing parent. Root publication accepts an
+absent path, an unchanged recorded file, or bytes identical to the new build, and removes recorded
+files plus owned, now-empty catalog directories retired by a narrowed harness set. Configured-build
+planning also rejects final staged or root-file paths that remain ignored after gitignore negation.
+The output
+layer stages the whole output in a sibling directory, records one root
+`<out>/.mars-plugin.json` sentinel, and publishes with a two-rename swap under the lock.
+It recovers interrupted swaps before a new build, always removes the reserved real-directory
+staging sibling under the output lock, refuses a symlink or non-directory at that path, and never
+replaces a non-empty destination without a valid sentinel.
+Reference qualification uses each source item's `RenameIndex` view
 before applying the building package's single plugin namespace. Agent skill names are qualified
 before native lowering so generated guidance is born qualified; the fence-aware prose pass is
 only responsible for authored body references.
@@ -27,8 +97,8 @@ paths (including hook fragments and MCP definitions), with generated trees skipp
 endings normalized, plus `[package]` without `version` and the `[plugin]`, `[dependencies]`,
 `[models]`, `[skills]`, and `[agents]` tables. It never resolves. Builds compute it after output
 recovery while holding the output lock. The sentinel separately records resolved dependency
-version/commit identities and one SHA-256 per generated file; those file hashes are the only
-output-integrity source.
+version/commit identities, one SHA-256 per generated file, and the root-file ownership map; the
+generated-file hashes are the only output-integrity source.
 
 ## Mental Model
 

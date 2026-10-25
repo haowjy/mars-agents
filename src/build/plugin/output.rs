@@ -5,16 +5,16 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
-/// Replace a Mars-owned plugin tree as one crash-recoverable operation.
+/// Stage a Mars-owned plugin output directory without changing the live output.
 ///
-/// `write` receives an empty sibling staging directory. The existing output is
-/// not moved until `write`, hashing, and the sentinel write have all succeeded.
-pub(super) fn replace_owned_tree<T>(
+/// `write` receives an empty sibling staging directory. The returned value owns
+/// the output lock and removes the staging directory unless it is published.
+pub(super) fn stage<T>(
     out_dir: &Path,
     write: impl FnOnce(&Path) -> Result<(PluginSentinel, T), MarsError>,
-) -> Result<T, MarsError> {
+) -> Result<(StagedPlugin, T), MarsError> {
     let paths = OutputPaths::new(out_dir)?;
-    let _lock = crate::fs::FileLock::acquire(&paths.lock)?;
+    let lock = crate::fs::FileLock::acquire(&paths.lock)?;
 
     validate_destination(&paths.out)?;
     fs::create_dir_all(&paths.parent)
@@ -51,8 +51,45 @@ pub(super) fn replace_owned_tree<T>(
         }
     };
 
-    publish_staged_tree(&paths)?;
-    Ok(value)
+    Ok((StagedPlugin { paths, _lock: lock }, value))
+}
+
+/// Recover a plugin output after an interrupted stage or publish.
+pub fn recover(out_dir: &Path) -> Result<(), MarsError> {
+    let paths = OutputPaths::new(out_dir)?;
+    let _lock = crate::fs::FileLock::acquire(&paths.lock)?;
+
+    validate_destination(&paths.out)?;
+    fs::create_dir_all(&paths.parent)
+        .map_err(|source| io_error("create plugin output parent", &paths.parent, source))?;
+    recover_interrupted_swap(&paths)
+}
+
+pub(crate) fn recovery_staging_path(out_dir: &Path) -> Result<PathBuf, MarsError> {
+    Ok(OutputPaths::new(out_dir)?.new)
+}
+
+/// A complete plugin output waiting to replace the live directory.
+pub(super) struct StagedPlugin {
+    paths: OutputPaths,
+    _lock: crate::fs::FileLock,
+}
+
+impl StagedPlugin {
+    pub(super) fn publish(self) -> Result<(), MarsError> {
+        match publish_staged_tree_inner(&self.paths) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(clean_up_staging_after_error(&self.paths, error)),
+        }
+    }
+}
+
+impl Drop for StagedPlugin {
+    fn drop(&mut self) {
+        // Drop cannot report cleanup failures. A later stage runs recovery under
+        // the same lock and retries this removal before it reads live output.
+        let _ = crate::platform::fs::safe_remove(&self.paths.new);
+    }
 }
 
 /// Recompute every regular output file hash except the sentinel.
@@ -112,7 +149,7 @@ impl OutputPaths {
             })?
             .to_path_buf();
 
-        let identity = canonicalize_existing_prefix(&out)?;
+        let identity = crate::fs::canonicalize_existing_prefix(&out)?;
         let identity_text = identity.to_str().ok_or_else(|| {
             invalid(format!(
                 "plugin output path must be valid Unicode: {}",
@@ -132,7 +169,7 @@ impl OutputPaths {
         let cache_root = std::path::absolute(&cache_root)
             .map_err(|source| io_error("resolve Mars cache path", &cache_root, source))?;
         let lock = cache_root.join("plugin-output-locks").join(lock_name);
-        let lock_identity = canonicalize_existing_prefix(&lock)?;
+        let lock_identity = crate::fs::canonicalize_existing_prefix(&lock)?;
         if lock_identity.starts_with(&identity) {
             return Err(invalid(format!(
                 "plugin output {} cannot contain its own Mars cache lock",
@@ -157,35 +194,8 @@ fn sibling_name(file_name: &std::ffi::OsStr, suffix: &str) -> OsString {
     name
 }
 
-fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, MarsError> {
-    let mut existing = path;
-    let mut missing = Vec::new();
-    loop {
-        match dunce::canonicalize(existing) {
-            Ok(mut canonical) => {
-                for component in missing.iter().rev() {
-                    canonical.push(component);
-                }
-                return Ok(canonical);
-            }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                let component = existing
-                    .file_name()
-                    .ok_or_else(|| io_error("resolve plugin output path", existing, source))?;
-                missing.push(component.to_os_string());
-                existing = existing
-                    .parent()
-                    .ok_or_else(|| invalid(format!("cannot resolve path {}", path.display())))?;
-            }
-            Err(source) => {
-                return Err(io_error("resolve plugin output path", existing, source));
-            }
-        }
-    }
-}
-
 fn validate_destination(out_dir: &Path) -> Result<(), MarsError> {
-    let identity = canonicalize_existing_prefix(out_dir)?;
+    let identity = crate::fs::canonicalize_existing_prefix(out_dir)?;
     let cwd = std::env::current_dir()
         .and_then(dunce::canonicalize)
         .map_err(|source| io_error("resolve current directory", Path::new("."), source))?;
@@ -228,7 +238,7 @@ fn validate_destination(out_dir: &Path) -> Result<(), MarsError> {
 }
 
 fn recover_interrupted_swap(paths: &OutputPaths) -> Result<(), MarsError> {
-    crate::platform::fs::safe_remove(&paths.new)?;
+    remove_recovery_staging(&paths.new)?;
 
     let old = classify_tree(&paths.old)?;
     if matches!(old, TreeState::Missing) {
@@ -237,10 +247,10 @@ fn recover_interrupted_swap(paths: &OutputPaths) -> Result<(), MarsError> {
     let output = classify_tree(&paths.out)?;
 
     match (old, output) {
-        // A valid live tree proves the second rename completed. The rollback
-        // directory may be only partly removed, including loss of its sentinel.
-        (_, TreeState::Owned) => crate::platform::fs::safe_remove(&paths.old),
-        (TreeState::Empty | TreeState::Owned, TreeState::Missing) => {
+        (TreeState::Empty | TreeState::Owned(_), TreeState::Owned(_)) => {
+            crate::platform::fs::safe_remove(&paths.old)
+        }
+        (TreeState::Empty | TreeState::Owned(_), TreeState::Missing) => {
             fs::rename(&paths.old, &paths.out)
                 .map_err(|source| io_error("restore interrupted plugin output", &paths.old, source))
         }
@@ -253,11 +263,31 @@ fn recover_interrupted_swap(paths: &OutputPaths) -> Result<(), MarsError> {
     }
 }
 
+fn remove_recovery_staging(path: &Path) -> Result<(), MarsError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(io_error("inspect plugin staging path", path, source)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(invalid(format!(
+            "refusing plugin recovery because reserved staging path {} is {}; the path was preserved",
+            path.display(),
+            if metadata.file_type().is_symlink() {
+                "a symlink"
+            } else {
+                "not a directory"
+            }
+        )));
+    }
+    crate::platform::fs::safe_remove(path)
+}
+
 #[derive(Debug)]
-enum TreeState {
+pub(super) enum TreeState {
     Missing,
     Empty,
-    Owned,
+    Owned(PluginSentinel),
     Unowned(String),
 }
 
@@ -266,13 +296,13 @@ impl TreeState {
         match self {
             Self::Missing => "missing",
             Self::Empty => "empty",
-            Self::Owned => "Mars-owned",
+            Self::Owned(_) => "Mars-owned",
             Self::Unowned(reason) => reason,
         }
     }
 }
 
-fn classify_tree(path: &Path) -> Result<TreeState, MarsError> {
+pub(super) fn classify_tree(path: &Path) -> Result<TreeState, MarsError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
@@ -296,14 +326,14 @@ fn classify_tree(path: &Path) -> Result<TreeState, MarsError> {
     }
 
     Ok(match crate::plugin_metadata::read(path) {
-        Ok(_) => TreeState::Owned,
+        Ok(sentinel) => TreeState::Owned(sentinel),
         Err(error) => TreeState::Unowned(error.to_string()),
     })
 }
 
 fn ensure_replaceable(path: &Path, description: &str, state: &TreeState) -> Result<(), MarsError> {
     match state {
-        TreeState::Missing | TreeState::Empty | TreeState::Owned => Ok(()),
+        TreeState::Missing | TreeState::Empty | TreeState::Owned(_) => Ok(()),
         TreeState::Unowned(reason) => Err(invalid(format!(
             "refusing to replace non-empty {description} {} without a valid Mars sentinel: {reason}",
             path.display()
@@ -333,13 +363,6 @@ fn validate_staging_tree(staging: &Path) -> Result<(), MarsError> {
     }
 }
 
-fn publish_staged_tree(paths: &OutputPaths) -> Result<(), MarsError> {
-    match publish_staged_tree_inner(paths) {
-        Ok(()) => Ok(()),
-        Err(error) => Err(clean_up_staging_after_error(paths, error)),
-    }
-}
-
 fn publish_staged_tree_inner(paths: &OutputPaths) -> Result<(), MarsError> {
     let rollback = classify_tree(&paths.old)?;
     if !matches!(rollback, TreeState::Missing) {
@@ -354,7 +377,7 @@ fn publish_staged_tree_inner(paths: &OutputPaths) -> Result<(), MarsError> {
     ensure_replaceable(&paths.out, "plugin output", &output)?;
 
     match output {
-        TreeState::Empty | TreeState::Owned => {
+        TreeState::Empty | TreeState::Owned(_) => {
             fs::rename(&paths.out, &paths.old).map_err(|source| {
                 io_error("move current plugin output aside", &paths.out, source)
             })?;

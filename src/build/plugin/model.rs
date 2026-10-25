@@ -1,49 +1,62 @@
 use indexmap::IndexMap;
 
+use crate::compiler::agents::HarnessKind;
 use crate::compiler::agents::lower::NativeModel;
-use crate::diagnostic::DiagnosticCollector;
 use crate::harness::registry::HarnessId;
 use crate::models::{ModelAlias, ModelSpec};
 
-const CLAUDE_NATIVE_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ModelFallbackReason {
+    NotPackageAlias,
+    NoDeterministicId,
+}
+
+pub(super) struct ResolvedModel {
+    pub native: NativeModel,
+    pub fallback: Option<ModelFallbackReason>,
+}
 
 /// Resolve a package-authored model token without catalogs, caches, or host probes.
-pub(super) fn resolve_claude_model(
-    agent_name: &str,
+pub(super) fn resolve_model(
     token: Option<&str>,
+    harness: HarnessKind,
+    native_aliases: &[&str],
     aliases: &IndexMap<String, ModelAlias>,
-    diag: &mut DiagnosticCollector,
-) -> NativeModel {
+) -> ResolvedModel {
+    let descriptor = crate::compiler::harness_descriptor::descriptor(harness);
     let Some(token) = token else {
-        return NativeModel::Clear;
+        return ResolvedModel {
+            native: NativeModel::Clear,
+            fallback: None,
+        };
     };
     let Some(alias) = aliases.get(token) else {
-        diag.info(
-            "plugin-model-default",
-            format!(
-                "agent `{agent_name}`: model `{token}` is not a package alias for Claude; using the harness default"
-            ),
-        );
-        return NativeModel::Clear;
+        return ResolvedModel {
+            native: NativeModel::Clear,
+            fallback: Some(ModelFallbackReason::NotPackageAlias),
+        };
     };
 
     let target = alias_target(alias);
     if let Some(model) = alias.pinned_model_id()
-        && target == Some(HarnessId::Claude)
+        && target == Some(descriptor.id)
     {
-        return NativeModel::Set(model.to_string());
+        return ResolvedModel {
+            native: NativeModel::Set(model.to_string()),
+            fallback: None,
+        };
     }
-    if CLAUDE_NATIVE_ALIASES.contains(&token) && target == Some(HarnessId::Claude) {
-        return NativeModel::Set(token.to_string());
+    if native_aliases.contains(&token) && target == Some(descriptor.id) {
+        return ResolvedModel {
+            native: NativeModel::Set(token.to_string()),
+            fallback: None,
+        };
     }
 
-    diag.info(
-        "plugin-model-default",
-        format!(
-            "agent `{agent_name}`: model `{token}` has no deterministic Claude id; using the harness default"
-        ),
-    );
-    NativeModel::Clear
+    ResolvedModel {
+        native: NativeModel::Clear,
+        fallback: Some(ModelFallbackReason::NoDeterministicId),
+    }
 }
 
 fn alias_target(alias: &ModelAlias) -> Option<HarnessId> {

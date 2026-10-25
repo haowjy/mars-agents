@@ -99,13 +99,27 @@ pub(crate) fn strict_file_hashes(
     excluded_top_level: &[&str],
 ) -> Result<std::collections::BTreeMap<String, String>, MarsError> {
     let snapshot =
-        crate::platform::fs::strict_directory_tree_snapshot_filtered(root, excluded_top_level)?
-            .ok_or_else(|| MarsError::InvalidRequest {
-                message: format!(
-                    "directory tree must contain only directories and regular files: {}",
-                    root.display()
-                ),
-            })?;
+        match crate::platform::fs::directory_tree_snapshot_filtered(root, excluded_top_level)? {
+            crate::platform::fs::DirectoryTreeSnapshotResult::Snapshot(snapshot)
+                if snapshot.is_strict() =>
+            {
+                snapshot
+            }
+            crate::platform::fs::DirectoryTreeSnapshotResult::NonUnicode(path) => {
+                return Err(MarsError::InvalidRequest {
+                    message: format!("path must be valid Unicode: {}", path.display()),
+                });
+            }
+            crate::platform::fs::DirectoryTreeSnapshotResult::Snapshot(_)
+            | crate::platform::fs::DirectoryTreeSnapshotResult::Unavailable => {
+                return Err(MarsError::InvalidRequest {
+                    message: format!(
+                        "directory tree must contain only directories and regular files: {}",
+                        root.display()
+                    ),
+                });
+            }
+        };
     Ok(snapshot.file_hash_manifest_entries().into_iter().collect())
 }
 

@@ -1,4 +1,4 @@
-//! Shared metadata for Mars-owned generated plugin trees.
+//! Shared metadata for Mars-owned generated plugin output directories.
 
 use std::path::Path;
 
@@ -8,6 +8,17 @@ use crate::error::MarsError;
 
 pub(crate) const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
+pub(crate) fn generated_root_files() -> impl Iterator<Item = &'static str> {
+    crate::plugin::PLUGIN_TREE_SPECS
+        .iter()
+        .filter_map(|tree| tree.root_file.map(|root| root.path))
+}
+
+pub(crate) fn generated_root_directories() -> impl Iterator<Item = &'static str> {
+    crate::plugin::PLUGIN_TREE_SPECS
+        .iter()
+        .filter_map(|tree| tree.root_file.and_then(|root| root.catalog_directory))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PluginSentinel {
@@ -18,6 +29,10 @@ pub(crate) struct PluginSentinel {
     pub inputs_hash: String,
     pub dependencies: std::collections::BTreeMap<String, ResolvedDependency>,
     pub files: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub root_files: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub root_directories: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,16 +61,49 @@ impl PluginSentinel {
                         .is_some_and(|value| !value.trim().is_empty())
             })
             && !self.files.is_empty()
-            && self.files.iter().all(|(path, hash)| {
-                !path.is_empty()
-                    && !Path::new(path).is_absolute()
-                    && !path.split('/').any(|component| component == "..")
-                    && is_sha256(hash)
-            })
+            && self
+                .files
+                .iter()
+                .all(|(path, hash)| valid_entry(path, hash))
+            && self
+                .root_files
+                .iter()
+                .all(|(path, hash)| valid_entry(path, hash))
+            && self
+                .root_directories
+                .iter()
+                .all(|path| generated_root_directories().any(|allowed| allowed == path))
     }
 }
 
+fn valid_entry(path: &str, hash: &str) -> bool {
+    !path.is_empty()
+        && !Path::new(path).is_absolute()
+        && !path.split('/').any(|component| component == "..")
+        && is_sha256(hash)
+}
+
 pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), MarsError> {
+    if let Some(unsupported) = sentinel
+        .root_files
+        .keys()
+        .find(|recorded| !generated_root_files().any(|allowed| allowed == recorded.as_str()))
+    {
+        return Err(invalid(format!(
+            "plugin sentinel records unsupported generated root file `{unsupported}`: {}",
+            path.display()
+        )));
+    }
+    if let Some(unsupported) = sentinel
+        .root_directories
+        .iter()
+        .find(|recorded| !generated_root_directories().any(|allowed| allowed == recorded.as_str()))
+    {
+        return Err(invalid(format!(
+            "plugin sentinel records unsupported generated root directory `{unsupported}`: {}",
+            path.display()
+        )));
+    }
     if sentinel.is_valid() {
         Ok(())
     } else {
@@ -67,7 +115,7 @@ pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), Mar
     }
 }
 
-/// Read and validate a generated plugin tree's sentinel.
+/// Read and validate a generated plugin output directory's root sentinel.
 pub(crate) fn read(directory: &Path) -> Result<PluginSentinel, MarsError> {
     let metadata = std::fs::symlink_metadata(directory)
         .map_err(|source| io_error("inspect plugin tree", directory, source))?;
@@ -99,8 +147,8 @@ pub(crate) fn read(directory: &Path) -> Result<PluginSentinel, MarsError> {
     Ok(sentinel)
 }
 
-/// Whether `directory` is a generated plugin tree that authored-source walks
-/// must not treat as package input.
+/// Whether `directory` is generated plugin output that authored-source walks
+/// must not treat as package input. Harness trees live below this boundary.
 pub(crate) fn has_valid_plugin_sentinel(directory: &Path) -> bool {
     read(directory).is_ok()
 }

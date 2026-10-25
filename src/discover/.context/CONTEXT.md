@@ -32,10 +32,13 @@ nested distribution items; there is no permanent `cw/` exclusion.
 
 Directories containing a valid `.mars-plugin.json` are generated plugin trees and are
 excluded at any depth, including hook and MCP discovery, with one info diagnostic per skipped
-path. Canonical staging applies the same boundary before any downstream copy or hash; those
-lower-level primitives remain byte-faithful. The authored-tree filesystem walk also protects
-local-source installs that bypass whole-package staging. Other configured non-hidden output
-trees remain discoverable; use hidden targets for those authored-root flows.
+path. A valid package-relative `[plugin].dir` is a stronger source boundary: discovery excludes it
+by path without reporting it, even before a sentinel exists, so the package's own committed output
+never adds noise to `sync` or `check`. Canonical staging applies the sentinel boundary before any
+downstream copy or hash; those lower-level primitives remain byte-faithful. The authored-tree
+filesystem walk also protects local-source installs that bypass whole-package staging. Other
+configured non-hidden output trees remain discoverable; use hidden targets for those authored-root
+flows.
 
 ## Hidden directories
 

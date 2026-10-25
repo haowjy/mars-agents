@@ -98,9 +98,10 @@ does not change that path.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
 visibility, dependency collisions, and local shadowing therefore choose config entries once for
-both installation and config lowering. Hook selection survives an install skip so post-target-sync
-lowering can issue the genuine not-installed warning; it carries the selected `TargetItem` hash so
-the installed check does not re-hash the source. Config lowering must not rediscover items.
+both installation and config lowering. It separately retains every filtered, exported graph hook, selected or
+not; plugin builds read that list for omission diagnostics, and sync never reads it. Hook selection survives an install skip so post-target-sync lowering
+can issue the genuine not-installed warning; it carries the selected `TargetItem` hash so the
+installed check does not re-hash the source. Config lowering must not rediscover items.
 
 Plugin builds and sync both use `prepare_target_state` for graph collection, optional local
 extension, rename application, and validation. MCP discovery warnings enter the diagnostic

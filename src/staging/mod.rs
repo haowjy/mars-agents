@@ -124,6 +124,11 @@ fn stage_rooted_source_with_policy(
     publish_inputs: Option<&[PublishInput]>,
 ) -> Result<StagedRootedSource, MarsError> {
     let staged_package_root = staging_dir_for(staging_root, source_name, options.preparation);
+    if let Some(package_staging_root) = staged_package_root.parent()
+        && package_staging_root.exists()
+    {
+        fs::remove_dir_all(package_staging_root)?;
+    }
     stage_canonical_source_with_policy(
         &rooted.package_root,
         &staged_package_root,
@@ -186,6 +191,25 @@ pub(crate) fn stage_canonical_source(
         skill_overrides,
         renames,
         fallback_skill_name,
+        diag,
+        None,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn stage_prepared_package(
+    source_root: &Path,
+    dest_root: &Path,
+    preparation: DefinitionPreparation,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    stage_canonical_source_with_policy(
+        source_root,
+        dest_root,
+        preparation,
+        &IndexMap::new(),
+        &RenameMap::new(),
+        None,
         diag,
         None,
     )?;
@@ -329,6 +353,18 @@ fn copy_and_lift_tree(
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
+    let native_definitions = if !matches!(preparation, DefinitionPreparation::Foreign(_)) {
+        crate::discover::discover_definition_files(source_root, fallback_skill_name, diag)?
+            .into_iter()
+            .filter_map(|(path, kind)| {
+                path.strip_prefix(source_root)
+                    .ok()
+                    .map(|relative| (relative.to_path_buf(), kind))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    } else {
+        std::collections::BTreeMap::new()
+    };
     let entries = crate::fs::authored_tree_entries(
         source_root,
         excluded_paths,
@@ -352,9 +388,18 @@ fn copy_and_lift_tree(
             })?;
             legacy_changed |= upgraded.changed_from(&original);
             fs::write(&dest_path, upgraded.text)?;
-        } else if should_lift_markdown(&entry.relative) {
+        } else if should_lift_markdown(&entry.relative)
+            && (matches!(preparation, DefinitionPreparation::Foreign(_))
+                || native_definitions.contains_key(&entry.relative))
+        {
             let src_path = entry.source;
-            let kind = item_kind_for_markdown(&entry.relative);
+            let kind = native_definitions
+                .get(&entry.relative)
+                .map(|kind| match kind {
+                    mars_schema::upgrade::DefinitionKind::Agent => ItemKind::Agent,
+                    mars_schema::upgrade::DefinitionKind::Skill => ItemKind::Skill,
+                })
+                .unwrap_or_else(|| item_kind_for_markdown(&entry.relative));
             legacy_changed |= process_markdown_file(
                 &src_path,
                 &source_root.join(&entry.relative),
@@ -430,42 +475,6 @@ fn process_markdown_file(
     let original = fs::read_to_string(src)?;
     let mut legacy_changed = false;
     if let Ok(parsed) = Frontmatter::parse(&original) {
-        if !matches!(
-            ctx.preparation,
-            DefinitionPreparation::Foreign(dialect) if dialect != Dialect::MarsNative
-        ) && kind == ItemKind::Skill
-        {
-            let mut skill_diags = Vec::new();
-            mars_schema::skill::push_authored_skill_schema_diags(&parsed, &mut skill_diags);
-            if !skill_diags.is_empty() {
-                let skill_name = parsed
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned)
-                    .or_else(|| {
-                        skill_overlay_lookup_name(
-                            logical_src,
-                            ctx.package_root,
-                            ctx.renames,
-                            ctx.fallback_skill_name,
-                        )
-                    })
-                    .or_else(|| {
-                        logical_src
-                            .parent()
-                            .and_then(|p| p.file_name())
-                            .and_then(|n| n.to_str())
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_else(|| "unknown".to_string());
-                crate::compiler::skills::emit_skill_schema_diags(
-                    ctx.diag,
-                    &skill_name,
-                    &skill_diags,
-                );
-            }
-        }
-
         let (mut fm, mut changed, mut prepared_text) = match ctx.preparation {
             DefinitionPreparation::Schema1 => (parsed, false, None),
             DefinitionPreparation::Foreign(dialect) => {
@@ -532,6 +541,20 @@ fn process_markdown_file(
         }
     } else {
         fs::copy(src, dest)?;
+    }
+    if !matches!(ctx.preparation, DefinitionPreparation::Foreign(_))
+        && matches!(kind, ItemKind::Agent | ItemKind::Skill)
+    {
+        let prepared = fs::read_to_string(dest)?;
+        let reading = if kind == ItemKind::Agent {
+            mars_schema::agent::read(&prepared).diagnostics
+        } else {
+            mars_schema::skill::read(&prepared).diagnostics
+        };
+        let context = format!("{kind} `{}`", logical_src.display());
+        for diagnostic in &reading {
+            ctx.diag.schema(diagnostic, &context, false);
+        }
     }
     Ok(legacy_changed)
 }

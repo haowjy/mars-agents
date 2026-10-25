@@ -149,6 +149,18 @@ pub(super) fn copy_and_lift_inputs(
         }
     }
 
+    let native_definitions = if !matches!(preparation, DefinitionPreparation::Foreign(_)) {
+        crate::discover::discover_definition_files(source_root, fallback_skill_name, diag)?
+            .into_iter()
+            .filter_map(|(path, kind)| {
+                path.strip_prefix(source_root)
+                    .ok()
+                    .map(|relative| (relative.to_path_buf(), kind))
+            })
+            .collect::<BTreeMap<_, _>>()
+    } else {
+        BTreeMap::new()
+    };
     let mut ctx = StageOverlayContext {
         preparation,
         skill_overrides,
@@ -159,7 +171,8 @@ pub(super) fn copy_and_lift_inputs(
         diag,
     };
     for input in inputs {
-        legacy_changed |= copy_and_lift_path(source_root, input, dest_root, &mut ctx)?;
+        legacy_changed |=
+            copy_and_lift_path(source_root, input, dest_root, &native_definitions, &mut ctx)?;
     }
     Ok(legacy_changed)
 }
@@ -199,6 +212,7 @@ fn copy_and_lift_path(
     package_root: &Path,
     input: &PublishInput,
     dest_root: &Path,
+    native_definitions: &BTreeMap<PathBuf, mars_schema::upgrade::DefinitionKind>,
     ctx: &mut StageOverlayContext<'_>,
 ) -> Result<bool, MarsError> {
     let relative_root = &input.relative;
@@ -217,13 +231,19 @@ fn copy_and_lift_path(
             if entry.kind == crate::fs::AuthoredEntryKind::Directory {
                 fs::create_dir_all(destination)?;
             } else {
-                changed |= copy_and_lift_file(&entry.source, &relative, dest_root, ctx)?;
+                changed |= copy_and_lift_file(
+                    &entry.source,
+                    &relative,
+                    dest_root,
+                    native_definitions,
+                    ctx,
+                )?;
             }
         }
         Ok(changed)
     } else {
         let source = crate::fs::strict_authored_file(package_root, &logical_root)?;
-        copy_and_lift_file(&source, relative_root, dest_root, ctx)
+        copy_and_lift_file(&source, relative_root, dest_root, native_definitions, ctx)
     }
 }
 
@@ -231,15 +251,26 @@ fn copy_and_lift_file(
     source: &Path,
     relative: &Path,
     dest_root: &Path,
+    native_definitions: &BTreeMap<PathBuf, mars_schema::upgrade::DefinitionKind>,
     ctx: &mut StageOverlayContext<'_>,
 ) -> Result<bool, MarsError> {
     let destination = dest_root.join(relative);
-    if should_lift_markdown(relative) {
+    if should_lift_markdown(relative)
+        && (matches!(ctx.preparation, DefinitionPreparation::Foreign(_))
+            || native_definitions.contains_key(relative))
+    {
+        let kind = native_definitions
+            .get(relative)
+            .map(|kind| match kind {
+                mars_schema::upgrade::DefinitionKind::Agent => ItemKind::Agent,
+                mars_schema::upgrade::DefinitionKind::Skill => ItemKind::Skill,
+            })
+            .unwrap_or_else(|| item_kind_for_markdown(relative));
         process_markdown_file(
             source,
             &ctx.package_root.join(relative),
             &destination,
-            item_kind_for_markdown(relative),
+            kind,
             ctx,
         )
     } else {

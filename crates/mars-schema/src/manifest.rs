@@ -1,18 +1,6 @@
 //! Package-manifest reading owned by the schema boundary.
 
-use serde::Deserialize;
-
 use crate::package::PackageMetadata;
-
-#[derive(Deserialize)]
-struct PackageSection {
-    package: Option<PackageMetadata>,
-}
-
-/// Read the optional `[package]` section while ignoring consumer-only tables.
-pub fn read_package(content: &str) -> Result<Option<PackageMetadata>, toml::de::Error> {
-    toml::from_str::<PackageSection>(content).map(|manifest| manifest.package)
-}
 
 /// Read package identity while leaving consumer-only top-level tables outside the schema.
 pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
@@ -98,17 +86,35 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
             "package name must be a non-empty string",
         ));
     }
-    if !matches!(package.get("version"), Some(toml::Value::String(_))) {
-        diagnostics.push(SchemaDiagnostic::new(
+    match package.get("version") {
+        None => diagnostics.push(SchemaDiagnostic::new(
             "manifest.version-missing",
             Severity::Warning,
             key_path("package.version"),
             "package version is missing",
-        ));
+        )),
+        Some(toml::Value::String(_)) => {}
+        Some(_) => diagnostics.push(SchemaDiagnostic::new(
+            "field.type",
+            Severity::Error,
+            key_path("package.version"),
+            "`package.version` must be a string",
+        )),
     }
-    let fields = toml::from_str::<PackageSection>(content)
-        .ok()
-        .and_then(|manifest| manifest.package);
+    let fields = match toml::Value::Table(package.clone()).try_into::<PackageMetadata>() {
+        Ok(fields) => Some(fields),
+        Err(error) => {
+            if !diagnostics.iter().any(SchemaDiagnostic::is_error) {
+                diagnostics.push(SchemaDiagnostic::new(
+                    "manifest.invalid-field",
+                    Severity::Error,
+                    key_path("package"),
+                    format!("invalid package field: {error}"),
+                ));
+            }
+            None
+        }
+    };
     crate::read::DefinitionRead {
         fields,
         body: None,

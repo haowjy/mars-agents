@@ -248,6 +248,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<SkillProfile> {
     match Frontmatter::parse(content) {
         Ok(frontmatter) => {
             let fields = parse_skill_profile(&frontmatter, &mut diagnostics);
+            push_authored_skill_schema_diags(&frontmatter, &mut diagnostics);
             const KNOWN: &[&str] = &[
                 "name",
                 "description",

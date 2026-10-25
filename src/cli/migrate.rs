@@ -87,7 +87,7 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
 fn migrate_consumer(args: &MigrateArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
     let mut pending = Vec::new();
-    for (path, kind) in definition_files_in(&root.join(".mars-src"), true)? {
+    for (path, kind) in definition_files(&root.join(".mars-src"))? {
         let text = std::fs::read_to_string(&path)?;
         let upgraded = upgrade_definition(kind, &text).map_err(upgrade_error)?;
         push_if_changed(root, path, &text, upgraded, &mut pending);
@@ -171,51 +171,8 @@ fn push_if_changed(
 }
 
 fn definition_files(root: &Path) -> Result<Vec<(PathBuf, DefinitionKind)>, MarsError> {
-    let mut files = Vec::new();
-    for (base, authored_root) in [
-        (root.join("agents"), false),
-        (root.join("skills"), false),
-        (root.join(".mars-src"), true),
-    ] {
-        files.extend(definition_files_in(&base, authored_root)?);
-    }
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    files.dedup_by(|left, right| left.0 == right.0);
-    Ok(files)
-}
-
-fn definition_files_in(
-    base: &Path,
-    authored_root: bool,
-) -> Result<Vec<(PathBuf, DefinitionKind)>, MarsError> {
-    let mut files = Vec::new();
-    if base.exists() {
-        for entry in walkdir::WalkDir::new(base).follow_links(false) {
-            let entry = entry.map_err(|error| MarsError::InvalidRequest {
-                message: format!("failed to walk {}: {error}", base.display()),
-            })?;
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let path = entry.path();
-            let kind = if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
-                Some(DefinitionKind::Skill)
-            } else if path.extension().and_then(|extension| extension.to_str()) == Some("md")
-                && (!authored_root
-                    || path
-                        .components()
-                        .any(|component| component.as_os_str() == "agents"))
-            {
-                Some(DefinitionKind::Agent)
-            } else {
-                None
-            };
-            if let Some(kind) = kind {
-                files.push((path.to_path_buf(), kind));
-            }
-        }
-    }
-    Ok(files)
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    crate::discover::discover_definition_files(root, None, &mut diag)
 }
 
 fn upgrade_error(error: mars_schema::upgrade::UpgradeError) -> MarsError {

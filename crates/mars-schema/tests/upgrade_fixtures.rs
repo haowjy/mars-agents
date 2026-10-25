@@ -25,6 +25,11 @@ fn legacy_upgrade_fixtures() {
             "agent" => upgrade_definition(DefinitionKind::Agent, &input).unwrap(),
             "skill" => upgrade_definition(DefinitionKind::Skill, &input).unwrap(),
             "manifest" => upgrade_manifest(&input).unwrap(),
+            "payload" => mars_schema::upgrade::UpgradeResult {
+                text: input.clone(),
+                diagnostics: Vec::new(),
+                fully_rewritten: false,
+            },
             other => panic!("unknown fixture kind {other}"),
         };
         assert_eq!(result.text, expected, "fixture {}", case.display());
@@ -64,6 +69,11 @@ fn legacy_upgrade_fixtures() {
             "agent" => upgrade_definition(DefinitionKind::Agent, &result.text).unwrap(),
             "skill" => upgrade_definition(DefinitionKind::Skill, &result.text).unwrap(),
             "manifest" => upgrade_manifest(&result.text).unwrap(),
+            "payload" => mars_schema::upgrade::UpgradeResult {
+                text: result.text.clone(),
+                diagnostics: Vec::new(),
+                fully_rewritten: false,
+            },
             _ => unreachable!(),
         };
         assert_eq!(

@@ -116,6 +116,11 @@ impl DiagnosticCollector {
             "yaml.invalid" => "yaml.invalid",
             "skill.no-frontmatter" => "skill.no-frontmatter",
             "harness.unknown" => "harness.unknown",
+            "toml.invalid" => "toml.invalid",
+            "manifest.package-required" => "manifest.package-required",
+            "manifest.name-required" => "manifest.name-required",
+            "manifest.version-missing" => "manifest.version-missing",
+            "manifest.invalid-field" => "manifest.invalid-field",
             _ => "schema-diagnostic",
         };
         let message = format!("{context}: {}", diagnostic.message);
@@ -322,6 +327,23 @@ impl DiagnosticCollector {
 
     pub fn extend(&mut self, diagnostics: Vec<Diagnostic>) {
         self.diagnostics.extend(diagnostics);
+    }
+
+    pub(crate) fn fail_on_errors(&self) -> Result<(), crate::error::MarsError> {
+        let errors = self
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+            .map(|diagnostic| format!("[{}] {}", diagnostic.code, diagnostic.message))
+            .collect::<Vec<_>>();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::error::ConfigError::Invalid {
+                message: errors.join("\n"),
+            }
+            .into())
+        }
     }
 
     pub fn drain(&mut self) -> Vec<Diagnostic> {

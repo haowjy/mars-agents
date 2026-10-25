@@ -26,6 +26,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- Package preparation now uses the strict schema-v1 readers for checks and syncs, rejects
+  error-level definition and manifest diagnostics before installation, and replaces stale
+  classification-specific staging trees. Migration and legacy staging discover definitions
+  without rewriting supporting Markdown inside skills.
+- Schema-v1 readers now preserve UTF-8 BOMs, distinguish YAML structure from scalar text, and
+  report empty identities, malformed reference lists, metadata types, and zero-based policy paths.
 - `mars migrate` now preserves untouched frontmatter bytes, identifies rare full-frontmatter
   rewrites, and treats consumer configuration without authored `.mars-src` changes as a no-op.
 - Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,

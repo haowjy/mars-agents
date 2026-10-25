@@ -244,11 +244,19 @@ fn push_agent_invalid(
     } else {
         Severity::Error
     };
+    let display_field = if let Some(rest) = field.strip_prefix("model-policies[")
+        && let Some((index, suffix)) = rest.split_once(']')
+        && let Ok(index) = index.parse::<usize>()
+    {
+        format!("model-policies[{}]{suffix}", index + 1)
+    } else {
+        field.clone()
+    };
     diags.push(SchemaDiagnostic::new(
         "field.value",
         severity,
         key_path(&field),
-        format!("agent field `{field}` has invalid value `{value}`; allowed: {allowed}"),
+        format!("agent field `{display_field}` has invalid value `{value}`; allowed: {allowed}"),
     ));
 }
 
@@ -662,7 +670,7 @@ fn parse_agent_profile_inner(
         }
     });
 
-    // skills/subagents/tools/disallowed-tools:
+    // skills/subagents/tools:
     let skills = fm.skills_structured();
     let subagents = fm
         .get("subagents")

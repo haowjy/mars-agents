@@ -39,7 +39,7 @@ pub(crate) struct CheckReport {
 
 /// Run `mars check`.
 pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
-    let base = match &args.path {
+    let authored_base = match &args.path {
         Some(p) => {
             if p.is_absolute() {
                 p.clone()
@@ -50,20 +50,64 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         None => std::env::current_dir()?,
     };
 
-    if !base.is_dir() {
+    if !authored_base.is_dir() {
         return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{} is not a directory", base.display()),
+            message: format!("{} is not a directory", authored_base.display()),
         }));
     }
 
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
+    let consumer_config = std::fs::read_to_string(authored_base.join("mars.toml"))
+        .ok()
+        .and_then(|content| content.parse::<toml::Value>().ok())
+        .is_some_and(|manifest| manifest.get("package").is_none());
+    let preparation = if consumer_config {
+        crate::staging::DefinitionPreparation::Foreign(Dialect::resolve_local(None, &authored_base))
+    } else {
+        crate::package_prepare::classify(
+            "checked package",
+            &authored_base,
+            None,
+            &mut publish_diag,
+        )?
+    };
+    let prepared = if preparation == crate::staging::DefinitionPreparation::Legacy {
+        let prepared = tempfile::tempdir()?;
+        // Legacy checks inspect the same in-memory upgrade that sync stages.
+        let mut staging_diag = crate::diagnostic::DiagnosticCollector::new();
+        crate::staging::stage_prepared_package(
+            &authored_base,
+            prepared.path(),
+            preparation,
+            &mut staging_diag,
+        )?;
+        Some(prepared)
+    } else {
+        None
+    };
+    let base = prepared
+        .as_ref()
+        .map_or(authored_base.as_path(), |prepared| prepared.path());
     let lens = crate::resolve::PublishLens::load(&base, &mut publish_diag)?;
-    let mut report = check_dir_with_lens(&base, Ok(&lens), &mut publish_diag)?;
+    let mut report = check_dir_with_lens(base, Ok(&lens), &mut publish_diag)?;
     report
         .warnings
-        .extend(plugin_warnings(&base, &lens, &mut publish_diag)?);
+        .extend(plugin_warnings(base, &lens, &mut publish_diag)?);
     let mut diagnostics = publish_diag.drain();
     diagnostics.extend(lossiness_diagnostics_for_check(&lens, args.verbose)?);
+    let mut surfaced = Vec::new();
+    for diagnostic in diagnostics {
+        match diagnostic.level {
+            crate::diagnostic::DiagnosticLevel::Error => report
+                .errors
+                .push(format!("[{}] {}", diagnostic.code, diagnostic.message)),
+            crate::diagnostic::DiagnosticLevel::Warning => report
+                .warnings
+                .push(format!("[{}] {}", diagnostic.code, diagnostic.message)),
+            crate::diagnostic::DiagnosticLevel::Info => surfaced.push(diagnostic),
+        }
+    }
+    let diagnostics = surfaced;
     let clean = report.errors.is_empty();
 
     if json {
@@ -241,7 +285,12 @@ fn check_dir_with_lens(
                             let _profile =
                                 mars_schema::agent::parse_agent_profile(&fm, &mut agent_diags);
                             for diagnostic in agent_diags {
-                                let message = format!("agent `{name}`: {}", diagnostic.message);
+                                let message = format!(
+                                    "agent `{}`: [{}] {}",
+                                    path.display(),
+                                    diagnostic.code,
+                                    diagnostic.message
+                                );
                                 if diagnostic.severity == mars_schema::diagnostic::Severity::Error {
                                     errors.push(message);
                                 } else {
@@ -281,7 +330,20 @@ fn check_dir_with_lens(
                             }
                         }
                         Err(e) => {
-                            errors.push(format!("agent `{filename}` has invalid frontmatter: {e}"));
+                            let diagnostics = mars_schema::agent::read(&content).diagnostics;
+                            for diagnostic in &diagnostics {
+                                errors.push(format!(
+                                    "agent `{}`: [{}] {}",
+                                    path.display(),
+                                    diagnostic.code,
+                                    diagnostic.message()
+                                ));
+                            }
+                            if diagnostics.is_empty() {
+                                errors.push(format!(
+                                    "agent `{filename}` has invalid frontmatter: {e}"
+                                ));
+                            }
                         }
                     },
                     Err(e) => {
@@ -351,8 +413,12 @@ fn check_dir_with_lens(
                                     });
 
                                 for diagnostic in skill_diags {
-                                    let message =
-                                        format!("skill `{name}`: {}", diagnostic.message());
+                                    let message = format!(
+                                        "skill `{}`: [{}] {}",
+                                        skill_md.display(),
+                                        diagnostic.code,
+                                        diagnostic.message()
+                                    );
                                     if diagnostic.is_error() {
                                         errors.push(message);
                                     } else {
@@ -392,9 +458,20 @@ fn check_dir_with_lens(
                                 }
                             }
                             Err(e) => {
-                                errors.push(format!(
-                                    "skill `{dirname}` has invalid frontmatter: {e}"
-                                ));
+                                if skill_diags.is_empty() {
+                                    errors.push(format!(
+                                        "skill `{dirname}` has invalid frontmatter: {e}"
+                                    ));
+                                } else {
+                                    for diagnostic in skill_diags {
+                                        errors.push(format!(
+                                            "skill `{}`: [{}] {}",
+                                            skill_md.display(),
+                                            diagnostic.code,
+                                            diagnostic.message()
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }

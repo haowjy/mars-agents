@@ -117,6 +117,39 @@ pub fn discover_resolved_source(
     }
 }
 
+/// Discover the authored Agent and skill files that carry versioned frontmatter.
+/// Files contained by a skill are payload unless discovery identifies the file
+/// itself as the skill definition.
+pub(crate) fn discover_definition_files(
+    package_root: &Path,
+    source_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<(PathBuf, mars_schema::upgrade::DefinitionKind)>, MarsError> {
+    let mut definitions = Vec::new();
+    for item in discover_resolved_source(package_root, source_name, diag)? {
+        let (path, kind) = match item.id.kind {
+            ItemKind::Agent => (
+                package_root.join(item.source_path),
+                mars_schema::upgrade::DefinitionKind::Agent,
+            ),
+            ItemKind::Skill => {
+                let root = package_root.join(item.source_path);
+                let path = if root.is_dir() {
+                    root.join("SKILL.md")
+                } else {
+                    root
+                };
+                (path, mars_schema::upgrade::DefinitionKind::Skill)
+            }
+            _ => continue,
+        };
+        definitions.push((path, kind));
+    }
+    definitions.sort_by(|left, right| left.0.cmp(&right.0));
+    definitions.dedup_by(|left, right| left.0 == right.0);
+    Ok(definitions)
+}
+
 /// Discover a rooted source while reusing hook definitions parsed by the compiler.
 pub(crate) fn discover_resolved_source_with_hooks(
     package_root: &Path,

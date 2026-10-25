@@ -712,7 +712,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 /// path dependencies.
 pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let path = source_root.join(CONFIG_FILE);
-    let diagnostics = Vec::new();
+    let mut diagnostic_collector = crate::diagnostic::DiagnosticCollector::new();
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             // A package manifest may also contain consumer-only settings. They
@@ -723,13 +723,19 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
                     message: format!("failed to parse {}: {e}", path.display()),
                 })?;
             let Some(_package) = parsed.package else {
-                return Ok((None, diagnostics));
+                return Ok((None, diagnostic_collector.drain()));
             };
-            let package = mars_schema::manifest::read_package(&content)
-                .map_err(|e| crate::error::ConfigError::Invalid {
-                    message: format!("failed to parse {}: {e}", path.display()),
-                })?
-                .expect("package presence was checked");
+            let reading = mars_schema::manifest::read(&content);
+            for diagnostic in &reading.diagnostics {
+                diagnostic_collector.schema(
+                    diagnostic,
+                    &format!("manifest `{}`", path.display()),
+                    false,
+                );
+            }
+            let Some(package) = reading.fields else {
+                return Ok((None, diagnostic_collector.drain()));
+            };
             // Convert InstallDep → ManifestDep, preserving both URL and path deps
             let deps: IndexMap<String, ManifestDep> = parsed
                 .dependencies
@@ -753,10 +759,12 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
                     dependencies: deps,
                     models: parsed.models,
                 }),
-                diagnostics,
+                diagnostic_collector.drain(),
             ))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, diagnostics)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok((None, diagnostic_collector.drain()))
+        }
         Err(source) => Err(MarsError::Io {
             operation: "read manifest config".to_string(),
             path,
@@ -1901,6 +1909,7 @@ url = "https://github.com/org/base.git"
 [package]
 name = "pkg"
 version = "1.2.3"
+schema = 1
 
 [dependencies.base]
 url = "https://github.com/org/base.git"
@@ -3382,6 +3391,7 @@ url = "https://github.com/org/prompter.git"
 [package]
 name = "my-package"
 version = "1.0.0"
+schema = 1
 
 [dependencies.base]
 url = "https://github.com/org/base.git"

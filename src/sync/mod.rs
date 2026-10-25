@@ -189,6 +189,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
     validate_request(request)?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     let ir = crate::reader::read(ctx, request, &mut diag)?;
+    diag.fail_on_errors()?;
     let unreadable_hook_surfaces = &ir.resolved.graph.unreadable_hook_surfaces;
     if request.recovery.defers_on_unreadable() && !unreadable_hook_surfaces.is_empty() {
         persist_pending_config_mutation(ctx, &ir.resolved.loaded, request)?;

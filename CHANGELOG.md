@@ -5,13 +5,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `mars build plugin [PATH] --out <dir>` builds one Claude-format plugin (Codex installs the
-  same tree) holding what `mars sync` installs in the package's own checkout: its items plus its
-  dependencies under its own filters, renames and visibility, with exported hooks and MCP servers.
-  Skill and agent references are qualified as `<plugin>:<name>`. Output is deterministic and LF.
-  The output dir is Mars-owned: a `.mars-plugin.json` sentinel records the package version, an
-  offline input hash, dependency versions and per-file hashes; a non-empty dir without one is
-  refused; rebuilds swap the tree atomically and recover from an interrupted build.
+- `mars build plugin [PATH] --out <dir>` builds an owned plugin output containing a Claude-format
+  tree at `<dir>/claude` (also consumed by Codex and Grok) with what `mars sync` installs in the
+  package's own checkout: its items plus dependencies under its own filters, renames and visibility,
+  with exported hooks and MCP servers. Skill and agent references are qualified as
+  `<plugin>:<name>`. Output is deterministic and LF. A root `<dir>/.mars-plugin.json` sentinel
+  records the package version, an offline input hash, dependency versions and per-file hashes; a
+  non-empty dir without one is refused; rebuilds swap the whole output atomically and recover from
+  an interrupted build.
 
 ### Fixed
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and

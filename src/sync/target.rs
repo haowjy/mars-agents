@@ -26,6 +26,9 @@ pub struct TargetState {
     // canonical path prunes `items` so post-sync lowering can report the missing winner.
     selected_hooks: IndexMap<DestPath, SelectedHook>,
     selected_mcp: Vec<SelectedMcp>,
+    // Keep exported graph hooks even when none of the managed targets select
+    // one of their fragments. Plugin diagnostics need to report that omission.
+    exported_hooks: Vec<crate::compiler::hooks::ParsedHookItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +45,12 @@ struct SelectedMcp {
 }
 
 impl TargetState {
+    pub(crate) fn exported_hooks(
+        &self,
+    ) -> impl Iterator<Item = &crate::compiler::hooks::ParsedHookItem> {
+        self.exported_hooks.iter()
+    }
+
     pub(crate) fn selected_hooks(
         &self,
     ) -> impl Iterator<Item = (&str, &crate::compiler::hooks::ParsedHookItem)> {
@@ -135,6 +144,7 @@ impl TargetState {
             items,
             selected_hooks: IndexMap::new(),
             selected_mcp: Vec::new(),
+            exported_hooks: Vec::new(),
         }
     }
 }
@@ -206,6 +216,7 @@ pub fn build_with_collisions_and_diag(
         items: IndexMap::new(),
         selected_hooks: IndexMap::new(),
         selected_mcp: Vec::new(),
+        exported_hooks: Vec::new(),
     };
     let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
@@ -297,6 +308,7 @@ pub fn build_with_collisions_and_diag(
                 if parsed.def.visibility != crate::compiler::visibility::Visibility::Exported {
                     continue;
                 }
+                target.exported_hooks.push(parsed.clone());
                 for (target_name, _dest_path, target_item) in
                     hook_target_items(parsed, source_name, &managed_target_roots)?
                 {

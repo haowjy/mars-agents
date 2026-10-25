@@ -1,19 +1,22 @@
 use indexmap::IndexMap;
 
+use crate::compiler::agents::HarnessKind;
 use crate::compiler::agents::lower::NativeModel;
 use crate::diagnostic::DiagnosticCollector;
 use crate::harness::registry::HarnessId;
 use crate::models::{ModelAlias, ModelSpec};
 
-const CLAUDE_NATIVE_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
-
 /// Resolve a package-authored model token without catalogs, caches, or host probes.
-pub(super) fn resolve_claude_model(
+pub(super) fn resolve_model(
     agent_name: &str,
     token: Option<&str>,
+    harness: HarnessKind,
+    native_aliases: &[&str],
     aliases: &IndexMap<String, ModelAlias>,
     diag: &mut DiagnosticCollector,
 ) -> NativeModel {
+    let descriptor = crate::compiler::harness_descriptor::descriptor(harness);
+    let harness_name = display_name(harness);
     let Some(token) = token else {
         return NativeModel::Clear;
     };
@@ -21,7 +24,7 @@ pub(super) fn resolve_claude_model(
         diag.info(
             "plugin-model-default",
             format!(
-                "agent `{agent_name}`: model `{token}` is not a package alias for Claude; using the harness default"
+                "agent `{agent_name}`: model `{token}` is not a package alias for {harness_name}; using the harness default"
             ),
         );
         return NativeModel::Clear;
@@ -29,21 +32,31 @@ pub(super) fn resolve_claude_model(
 
     let target = alias_target(alias);
     if let Some(model) = alias.pinned_model_id()
-        && target == Some(HarnessId::Claude)
+        && target == Some(descriptor.id)
     {
         return NativeModel::Set(model.to_string());
     }
-    if CLAUDE_NATIVE_ALIASES.contains(&token) && target == Some(HarnessId::Claude) {
+    if native_aliases.contains(&token) && target == Some(descriptor.id) {
         return NativeModel::Set(token.to_string());
     }
 
     diag.info(
         "plugin-model-default",
         format!(
-            "agent `{agent_name}`: model `{token}` has no deterministic Claude id; using the harness default"
+            "agent `{agent_name}`: model `{token}` has no deterministic {harness_name} id; using the harness default"
         ),
     );
     NativeModel::Clear
+}
+
+pub(super) const fn display_name(harness: HarnessKind) -> &'static str {
+    match harness {
+        HarnessKind::Claude => "Claude",
+        HarnessKind::Codex => "Codex",
+        HarnessKind::OpenCode => "OpenCode",
+        HarnessKind::Cursor => "Cursor",
+        HarnessKind::Pi => "Pi",
+    }
 }
 
 fn alias_target(alias: &ModelAlias) -> Option<HarnessId> {

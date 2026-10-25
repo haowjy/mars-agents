@@ -5,17 +5,23 @@ package distribution.
 
 ## Plugin Builds
 
-`plugin/` builds one Claude-format tree matching what `mars sync` installs in the package's own
+`plugin/` builds selected harness trees matching what `mars sync` installs in the package's own
 checkout: its items plus dependencies under its own filters, renames, and visibility rules. It
-resolves through `PublishLens`, stages every package, collects the flattened target with sync's
-shared collect/rename/validate pipeline, then lowers agents, skills, exported hooks, and exported
-MCP servers without reading project config, a lockfile, `.mars/`, or host model state. The
-implicit target selection includes Claude and Codex so warnings about hooks that the shared tree
-cannot carry come from the parsed `TargetState`, not a second manifest scan.
+resolves through `PublishLens`, stages every package, collects the flattened target once with
+sync's shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
+`TreeProfile`. Profiles store only plugin-format policy; harness identity, variant key, and sync
+root come from `compiler::harness_descriptor`. Claude, Codex, and Grok share the Claude tree;
+Cursor and OpenCode have their own tree identities. An unavailable tree profile is an error.
 
-The generated tree is handed to `plugin::output::replace_owned_tree`; the build core never
-mutates the destination itself. The output layer stages in a sibling directory, records a
-`.mars-plugin.json` sentinel, and publishes with a two-rename swap under a cross-process lock.
+Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
+project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the
+set of built trees' sync roots. `TargetState` also retains every filtered exported graph hook,
+including hooks no built root selected, so support diagnostics do not rescan manifests.
+
+The generated trees are nested at `<out>/<tree>/` and handed to
+`plugin::output::replace_owned_tree`; the build core never mutates the destination itself. The
+output layer stages the whole output in a sibling directory, records one root
+`<out>/.mars-plugin.json` sentinel, and publishes with a two-rename swap under a cross-process lock.
 It recovers interrupted swaps before a new build and never replaces a non-empty destination
 without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
 before applying the building package's single plugin namespace. Agent skill names are qualified

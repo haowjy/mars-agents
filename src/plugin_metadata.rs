@@ -1,4 +1,4 @@
-//! Shared metadata for Mars-owned generated plugin trees.
+//! Shared metadata for Mars-owned generated plugin output directories.
 
 use std::path::Path;
 
@@ -67,7 +67,7 @@ pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), Mar
     }
 }
 
-/// Read and validate a generated plugin tree's sentinel.
+/// Read and validate a generated plugin output directory's root sentinel.
 pub(crate) fn read(directory: &Path) -> Result<PluginSentinel, MarsError> {
     let metadata = std::fs::symlink_metadata(directory)
         .map_err(|source| io_error("inspect plugin tree", directory, source))?;
@@ -99,8 +99,8 @@ pub(crate) fn read(directory: &Path) -> Result<PluginSentinel, MarsError> {
     Ok(sentinel)
 }
 
-/// Whether `directory` is a generated plugin tree that authored-source walks
-/// must not treat as package input.
+/// Whether `directory` is generated plugin output that authored-source walks
+/// must not treat as package input. Harness trees live below this boundary.
 pub(crate) fn has_valid_plugin_sentinel(directory: &Path) -> bool {
     read(directory).is_ok()
 }

@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
-/// Replace a Mars-owned plugin tree as one crash-recoverable operation.
+/// Replace a Mars-owned plugin output directory as one crash-recoverable operation.
 ///
 /// `write` receives an empty sibling staging directory. The existing output is
-/// not moved until `write`, hashing, and the sentinel write have all succeeded.
+/// not moved until every tree, its hashes, and the root sentinel have been written.
 pub(super) fn replace_owned_tree<T>(
     out_dir: &Path,
     write: impl FnOnce(&Path) -> Result<(PluginSentinel, T), MarsError>,

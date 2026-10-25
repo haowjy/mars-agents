@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
-use serde::Serialize;
 
 use crate::compiler::agents::HarnessKind;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
+use crate::compiler::harness_descriptor::{CompilerHarnessDescriptor, descriptor};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 use crate::lock::ItemKind;
@@ -14,10 +14,59 @@ use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::ConfigEntry;
 use crate::types::SourceName;
 
-use super::PluginComponents;
-use super::PluginProfile;
-use super::model::resolve_claude_model;
+use super::model::{display_name, resolve_model};
 use super::references::qualify_body_references;
+use super::{PackageMetadata, PluginComponents, PluginTree};
+
+mod claude;
+mod cursor;
+mod opencode;
+
+pub(super) type AgentPolicy = fn(
+    &str,
+    &crate::frontmatter::Frontmatter,
+    &TargetItem,
+    &mut DiagnosticCollector,
+) -> Result<String, MarsError>;
+
+pub(super) type ConfigWriter = fn(&Path, &[ConfigEntry]) -> Result<(), MarsError>;
+
+pub(super) type FinishWriter =
+    for<'a> fn(&Path, &PackageMetadata, &WrittenTreeContents<'a>) -> Result<(), MarsError>;
+
+pub(super) struct TreeProfile {
+    harness: HarnessKind,
+    pub(super) agents: Option<AgentPolicy>,
+    native_model_aliases: &'static [&'static str],
+    plugin_root_token: &'static str,
+    write_config: ConfigWriter,
+    finish: FinishWriter,
+}
+
+impl TreeProfile {
+    pub(super) fn descriptor(&self) -> &'static CompilerHarnessDescriptor {
+        descriptor(self.harness)
+    }
+}
+
+pub(super) struct WrittenTreeContents<'a> {
+    pub skills: &'a [String],
+    pub hooks: &'a [&'a crate::compiler::hooks::ParsedHookItem],
+    pub config_entries: &'a [ConfigEntry],
+}
+
+pub(super) struct BuiltTree {
+    pub profile: &'static TreeProfile,
+    pub components: PluginComponents,
+}
+
+pub(super) fn profile(tree: PluginTree) -> Result<&'static TreeProfile, MarsError> {
+    match tree {
+        PluginTree::Claude => Ok(&claude::PROFILE),
+        PluginTree::Cursor => cursor::profile(),
+        PluginTree::OpenCode => opencode::profile(),
+    }
+}
 
 pub(super) struct TermSet {
     terms: &'static [&'static str],
@@ -39,8 +88,7 @@ impl TermSet {
 }
 
 pub(super) struct TreeInput<'a> {
-    pub plugin_name: &'a str,
-    pub package: &'a crate::config::PackageInfo,
+    pub metadata: &'a PackageMetadata,
     pub root_source: &'a SourceName,
     pub agent_overlays: &'a IndexMap<String, crate::config::AgentOverlay>,
     pub aliases: &'a IndexMap<String, crate::models::ModelAlias>,
@@ -49,16 +97,16 @@ pub(super) struct TreeInput<'a> {
     pub rename_index: &'a RenameIndex,
     pub collision_renames: &'a [CollisionRename],
     pub dep_precedence: &'a [SourceName],
-    pub profile: &'a PluginProfile,
     pub terms: &'a TermSet,
 }
 
 pub(super) fn write_tree(
     root: &Path,
     input: &TreeInput<'_>,
+    profile: &'static TreeProfile,
     diag: &mut DiagnosticCollector,
-) -> Result<PluginComponents, MarsError> {
-    write_manifest(root, input.plugin_name, input.package)?;
+) -> Result<BuiltTree, MarsError> {
+    let descriptor = profile.descriptor();
 
     let installed_skills: IndexMap<String, String> = input
         .target
@@ -67,21 +115,31 @@ pub(super) fn write_tree(
         .filter(|item| item.id.kind == ItemKind::Skill)
         .map(|item| {
             let name = item.id.name.to_string();
-            (name.clone(), format!("{}:{name}", input.plugin_name))
+            (name.clone(), format!("{}:{name}", input.metadata.name))
         })
         .collect();
+    let skill_names = installed_skills.keys().cloned().collect::<Vec<_>>();
 
     let mut summary = PluginComponents::default();
     let mut skipped_bootstrap = false;
     for item in input.target.items.values() {
         match item.id.kind {
             ItemKind::Agent => {
-                write_agent(root, item, input, &installed_skills, diag)?;
-                summary.agents += 1;
+                if let Some(agent_policy) = profile.agents {
+                    write_agent(
+                        root,
+                        item,
+                        input,
+                        profile,
+                        agent_policy,
+                        &installed_skills,
+                        diag,
+                    )?;
+                    summary.agents += 1;
+                }
             }
             ItemKind::Skill => {
-                write_skill(root, item, input, &installed_skills, diag)?;
-                summary.skills += 1;
+                write_skill(root, item, input, profile, &installed_skills, diag)?;
             }
             ItemKind::BootstrapDoc => skipped_bootstrap = true,
             ItemKind::Hook | ItemKind::McpServer => {}
@@ -90,13 +148,16 @@ pub(super) fn write_tree(
     if skipped_bootstrap {
         diag.info(
             "plugin-bootstrap-skipped",
-            "bootstrap documents have no Claude plugin surface and were skipped",
+            format!(
+                "bootstrap documents have no {} plugin surface and were skipped",
+                display_name(profile.harness)
+            ),
         );
     }
 
     let hooks: Vec<_> = input
         .target
-        .selected_hooks_for_target(input.profile.target_root)
+        .selected_hooks_for_target(descriptor.target_dir)
         .map(|(hook, _)| hook)
         .collect();
     for hook in &hooks {
@@ -109,11 +170,9 @@ pub(super) fn write_tree(
             diag,
         )?;
     }
-    summary.hooks = hooks.len();
-
     let mcp: Vec<_> = input
         .target
-        .selected_mcp_for_target(input.profile.target_root)
+        .selected_mcp_for_target(descriptor.target_dir)
         .collect();
     for item in &mcp {
         let content = std::fs::read_to_string(&item.source_path)?;
@@ -125,32 +184,46 @@ pub(super) fn write_tree(
         );
     }
     warn_relative_mcp_args(&mcp, diag);
+    let registry = crate::target::TargetRegistry::new();
+    let adapter = registry
+        .get(descriptor.target_dir)
+        .expect("compiler harness descriptor names a registered target");
     let entries = crate::compiler::config_entries::lower_config_entries_for_target(
         &hooks,
         &mcp,
-        input.profile.adapter,
-        |hook| {
-            format!(
-                "{}/hooks/{}",
-                input.profile.plugin_root_token, hook.def.name
-            )
-        },
+        adapter,
+        |hook| format!("{}/hooks/{}", profile.plugin_root_token, hook.def.name),
         diag,
     );
-    write_config_entries(root, &entries)?;
-    summary.mcp_servers = entries
+    (profile.write_config)(root, &entries)?;
+    let contents = WrittenTreeContents {
+        skills: &skill_names,
+        hooks: &hooks,
+        config_entries: &entries,
+    };
+    summary.skills = contents.skills.len();
+    summary.hooks = contents.hooks.len();
+    summary.mcp_servers = contents
+        .config_entries
         .iter()
         .filter(|entry| matches!(entry, ConfigEntry::McpServer(_)))
         .count();
 
+    (profile.finish)(root, input.metadata, &contents)?;
+
     normalize_text_tree(root)?;
-    Ok(summary)
+    Ok(BuiltTree {
+        profile,
+        components: summary,
+    })
 }
 
 fn write_agent(
     root: &Path,
     item: &TargetItem,
     input: &TreeInput<'_>,
+    tree_profile: &TreeProfile,
+    agent_policy: AgentPolicy,
     installed_skills: &IndexMap<String, String>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
@@ -174,14 +247,16 @@ fn write_agent(
     let body_refs = body_reference_map(item, input, installed_skills);
     let mut effective = crate::compiler::effective_native_profile(&profile, overlay);
     qualify_agent_skills(&mut effective.skills, installed_skills);
-    let model = resolve_claude_model(
+    let model = resolve_model(
         item.id.name.as_str(),
         effective.model.as_deref(),
+        tree_profile.harness,
+        tree_profile.native_model_aliases,
         input.aliases,
         diag,
     );
     let lowered = lower_for_harness_with_model(
-        &HarnessKind::Claude,
+        &tree_profile.harness,
         &effective,
         &frontmatter,
         frontmatter.body(),
@@ -195,11 +270,12 @@ fn write_agent(
 
     let lowered = String::from_utf8(lowered.bytes).map_err(|error| {
         MarsError::Internal(format!(
-            "Claude agent lowering produced invalid UTF-8 for `{}`: {error}",
+            "{} agent lowering produced invalid UTF-8 for `{}`: {error}",
+            tree_profile.descriptor().canonical_id,
             item.id.name
         ))
     })?;
-    let lowered = apply_plugin_agent_policy(&lowered, &frontmatter, item, diag)?;
+    let lowered = agent_policy(&lowered, &frontmatter, item, diag)?;
     let qualified = qualify_body_references(&lowered, &body_refs)?;
 
     let path = root.join("agents").join(format!("{}.md", item.id.name));
@@ -217,54 +293,11 @@ fn qualify_agent_skills(
     }
 }
 
-fn apply_plugin_agent_policy(
-    lowered: &str,
-    source: &crate::frontmatter::Frontmatter,
-    item: &TargetItem,
-    diag: &mut DiagnosticCollector,
-) -> Result<String, MarsError> {
-    let mut plugin = crate::frontmatter::parse(lowered)
-        .map_err(|error| invalid_item("agent", item, error.to_string()))?;
-
-    // The universal agent schema does not interpret these Claude-native fields,
-    // but Claude plugins do. Preserve only the documented plugin-safe subset.
-    for field in [
-        "maxTurns",
-        "autoCompactWindow",
-        "memory",
-        "background",
-        "omitClaudeMd",
-        "isolation",
-        "color",
-    ] {
-        if let Some(value) = source.get(field) {
-            plugin.insert(field, value.clone());
-        }
-    }
-    if let Some(value) = plugin.remove("disallowed-tools") {
-        plugin.insert("disallowedTools", value);
-    }
-
-    for field in ["hooks", "mcpServers", "permissionMode", "initialPrompt"] {
-        if source.get(field).is_some() {
-            diag.warn(
-                "plugin-agent-field-dropped",
-                format!(
-                    "agent `{}`: `{field}` is ignored by Claude plugin agents and was dropped",
-                    item.id.name
-                ),
-            );
-        }
-        plugin.remove(field);
-    }
-
-    Ok(plugin.render())
-}
-
 fn write_skill(
     root: &Path,
     item: &TargetItem,
     input: &TreeInput<'_>,
+    profile: &TreeProfile,
     installed_skills: &IndexMap<String, String>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
@@ -287,7 +320,7 @@ fn write_skill(
     crate::compiler::variants::project_skill_for_target(
         &source,
         &destination,
-        Some(input.profile.variant_key),
+        Some(profile.descriptor().variant_key),
         diag,
         item.id.name.as_str(),
     )?;
@@ -382,58 +415,6 @@ fn emit_agent_parse_diagnostics(
     Ok(())
 }
 
-fn write_manifest(
-    root: &Path,
-    plugin_name: &str,
-    package: &crate::config::PackageInfo,
-) -> Result<(), MarsError> {
-    #[derive(Serialize)]
-    struct PluginManifest<'a> {
-        name: &'a str,
-        version: &'a str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        description: Option<&'a str>,
-    }
-
-    let manifest = PluginManifest {
-        name: plugin_name,
-        version: &package.version,
-        description: package.description.as_deref(),
-    };
-    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| {
-        MarsError::Internal(format!(
-            "failed to serialize Claude plugin manifest: {error}"
-        ))
-    })?;
-    bytes.push(b'\n');
-    crate::fs::atomic_write(&root.join(".claude-plugin/plugin.json"), &bytes)
-}
-
-fn write_config_entries(root: &Path, entries: &[ConfigEntry]) -> Result<(), MarsError> {
-    let mcp: Vec<_> = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            ConfigEntry::McpServer(entry) => Some(entry),
-            ConfigEntry::Hook(_) => None,
-        })
-        .collect();
-    let hooks: Vec<_> = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            ConfigEntry::Hook(entry) => Some(entry),
-            ConfigEntry::McpServer(_) => None,
-        })
-        .collect();
-
-    if !mcp.is_empty() {
-        crate::target::claude::write_mcp_json(&root.join(".mcp.json"), &mcp)?;
-    }
-    if !hooks.is_empty() {
-        crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), &hooks)?;
-    }
-    Ok(())
-}
-
 fn warn_relative_mcp_args(
     items: &[&crate::compiler::mcp::ParsedMcpItem],
     diag: &mut DiagnosticCollector,
@@ -453,27 +434,6 @@ fn warn_relative_mcp_args(
                 );
             }
         }
-    }
-}
-
-pub(super) fn emit_codex_warnings(summary: &PluginComponents, diag: &mut DiagnosticCollector) {
-    if summary.agents > 0 {
-        diag.warn(
-            "plugin-codex-agents-dropped",
-            format!(
-                "codex: {} agents are present in the shared Claude tree but are not loaded by Codex plugins",
-                summary.agents
-            ),
-        );
-    }
-    if summary.mcp_servers > 0 {
-        diag.warn(
-            "plugin-codex-mcp-unavailable",
-            format!(
-                "codex: {} MCP servers are listed from the shared Claude tree but are not callable in Codex 0.164.0",
-                summary.mcp_servers
-            ),
-        );
     }
 }
 

@@ -16,9 +16,17 @@ must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configura
 caches, or installed harnesses. `plugin::output::replace_owned_tree` alone owns destination
 replacement and sentinel publication.
 
-The output writer builds directly into an empty sibling staging directory. After it succeeds,
-the output layer hashes the files, writes `.mars-plugin.json`, and publishes the staged tree with a
-two-rename swap. Publication and startup recovery share a cross-process lock keyed by the
+The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three
+tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. Tree profiles
+derive their harness kind, canonical id, variant key and target root from the compiler descriptor;
+they add only plugin-specific agent policy, native model aliases, hook-root token, config writer
+and finish writer. `tree::write_tree` is the sole item loop. `TargetState::exported_hooks` retains
+filtered exported graph hooks even when no requested tree selected a fragment, which is the input
+for plugin omission diagnostics.
+
+The output writer builds `<tree>/` directories directly into an empty sibling staging directory.
+After it succeeds, the output layer hashes every tree, writes one root `.mars-plugin.json`, and
+publishes the staged output directory with a two-rename swap. Publication and startup recovery share a cross-process lock keyed by the
 absolute output path; non-empty trees without a valid sentinel are never replaced.
 The root-package input fingerprint is computed from discovered authored item paths after recovery
 and under that same lock, before the staging tree is populated, so crash leftovers and generated

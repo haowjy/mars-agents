@@ -1,8 +1,10 @@
-//! Build one installable Claude-format plugin from a package's publish graph.
+//! Build installable harness plugin trees from a package's publish graph.
 
 mod model;
 mod output;
 mod references;
+mod root_files;
+mod support;
 mod tree;
 
 use std::path::{Path, PathBuf};
@@ -11,19 +13,19 @@ use indexmap::IndexMap;
 use serde::Serialize;
 
 use crate::config::{
-    Config, EffectiveConfig, EffectiveDependency, FilterMode, LocalConfig, Settings, SourceSpec,
+    Config, EffectiveConfig, EffectiveDependency, FilterMode, LocalConfig, PluginHarness, Settings,
+    SourceSpec,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, LossinessMode};
 use crate::error::{ConfigError, MarsError};
 use crate::resolve::{PublishLens, ResolveOptions};
-use crate::target::TargetAdapter;
-use crate::target::claude::ClaudeAdapter;
 use crate::types::{RenameMap, SourceId, SourceName};
 
 #[derive(Debug)]
 pub struct PluginBuildRequest {
     pub package_root: PathBuf,
     pub out_dir: PathBuf,
+    pub harnesses: Vec<PluginHarness>,
 }
 
 #[derive(Debug, Serialize)]
@@ -36,7 +38,7 @@ pub struct PluginBuildReport {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct PluginComponents {
     pub agents: usize,
     pub skills: usize,
@@ -44,22 +46,58 @@ pub struct PluginComponents {
     pub mcp_servers: usize,
 }
 
-struct PluginProfile {
-    target_root: &'static str,
-    variant_key: &'static str,
-    plugin_root_token: &'static str,
-    adapter: &'static dyn TargetAdapter,
+#[derive(Debug, Serialize)]
+pub struct PackageAuthor {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
-static CLAUDE_ADAPTER: ClaudeAdapter = ClaudeAdapter;
+#[derive(Debug)]
+pub struct PackageMetadata {
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub author: Option<PackageAuthor>,
+    pub homepage: Option<String>,
+    pub license: Option<String>,
+}
 
-impl PluginProfile {
-    fn claude() -> Self {
-        Self {
-            target_root: ".claude",
-            variant_key: "claude",
-            plugin_root_token: "${CLAUDE_PLUGIN_ROOT}",
-            adapter: &CLAUDE_ADAPTER,
+impl PackageMetadata {
+    fn from(manifest: &Config) -> Result<Self, MarsError> {
+        let package = manifest.package.as_ref().ok_or_else(|| {
+            MarsError::Config(ConfigError::Invalid {
+                message: "mars.toml needs a [package] table to build a plugin".to_string(),
+            })
+        })?;
+        Ok(Self {
+            name: package.name.clone(),
+            version: package.version.clone(),
+            description: package.description.clone(),
+            author: None,
+            homepage: None,
+            license: None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PluginTree {
+    Claude,
+    Cursor,
+    OpenCode,
+}
+
+impl PluginTree {
+    const ALL: [Self; 3] = [Self::Claude, Self::Cursor, Self::OpenCode];
+}
+
+impl PluginHarness {
+    fn tree(self) -> PluginTree {
+        match self {
+            Self::Claude | Self::Codex | Self::Grok => PluginTree::Claude,
+            Self::Cursor => PluginTree::Cursor,
+            Self::OpenCode => PluginTree::OpenCode,
         }
     }
 }
@@ -83,16 +121,17 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
             ),
         })
     })?;
-    let package = manifest.package.as_ref().ok_or_else(|| {
-        MarsError::Config(ConfigError::Invalid {
-            message: "mars.toml needs a [package] table to build a plugin".to_string(),
-        })
-    })?;
-    let plugin_name = package.name.clone();
+    let metadata = PackageMetadata::from(manifest)?;
+    let package = manifest
+        .package
+        .as_ref()
+        .expect("PackageMetadata validates the package table");
+    let plugin_name = metadata.name.clone();
     let root_source = SourceName::from(plugin_name.clone());
+    let profiles = requested_tree_profiles(&request.harnesses)?;
 
     let graph_staging = tempfile::TempDir::new()?;
-    let effective = implicit_consumer_config(&lens, &root_source)?;
+    let effective = implicit_consumer_config(&lens, &root_source, &profiles)?;
     let mut graph = crate::resolve::resolve_publish_graph_from_config(
         &lens,
         &effective,
@@ -107,7 +146,6 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
     )?;
     let prepared_target =
         crate::sync::prepare_target_state(&graph, &effective, &mut diag, |_, _| Ok(()))?;
-    warn_hooks_without_claude_fragment(&prepared_target.target, &mut diag);
     emit_missing_skill_warnings(&prepared_target.warnings, &mut diag);
 
     let aliases = crate::models::merged_model_aliases(
@@ -117,11 +155,9 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         &LocalConfig::default(),
         &mut diag,
     );
-    let profile = PluginProfile::claude();
     let terms = tree::TermSet::new(package.requires_meridian.is_some());
     let tree_input = tree::TreeInput {
-        plugin_name: &plugin_name,
-        package,
+        metadata: &metadata,
         root_source: &root_source,
         agent_overlays: &manifest.agents,
         aliases: &aliases,
@@ -130,41 +166,80 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         rename_index: &prepared_target.rename_index,
         collision_renames: &prepared_target.collision_renames,
         dep_precedence: &prepared_target.dep_precedence,
-        profile: &profile,
         terms: &terms,
     };
     let (components, diagnostics) = output::replace_owned_tree(&out_dir, |staging| {
         let inputs_hash = plugin_inputs_hash(&package_root)?;
-        let built = tree::write_tree(staging, &tree_input, &mut diag)?;
-        tree::emit_codex_warnings(&built, &mut diag);
+        let mut built_trees = Vec::with_capacity(profiles.len());
+        for profile in &profiles {
+            let tree_root = staging.join(profile.descriptor().canonical_id);
+            built_trees.push(tree::write_tree(
+                &tree_root,
+                &tree_input,
+                profile,
+                &mut diag,
+            )?);
+        }
+        support::emit(
+            &request.harnesses,
+            &prepared_target.target,
+            &built_trees,
+            &mut diag,
+        );
         let collected = diag.drain();
         fail_on_diagnostic_errors(&collected)?;
+        let root_file_plan =
+            root_files::plan(&package_root, &out_dir, &metadata, &request.harnesses)?;
+        root_files::apply(&root_file_plan)?;
+        let components = built_trees
+            .iter()
+            .find(|tree| tree.profile.descriptor().canonical_id == "claude")
+            .or_else(|| built_trees.first())
+            .map(|tree| tree.components)
+            .unwrap_or_default();
         Ok((
             crate::plugin_metadata::PluginSentinel {
                 schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
                 mars_version: env!("CARGO_PKG_VERSION").to_string(),
                 plugin_name: plugin_name.clone(),
-                version: package.version.clone(),
+                version: metadata.version.clone(),
                 inputs_hash,
                 dependencies: resolved_dependency_identities(&graph, &root_source),
                 files: std::collections::BTreeMap::new(),
             },
-            (built, collected),
+            (components, collected),
         ))
     })?;
 
     Ok(PluginBuildReport {
         plugin_name,
-        version: package.version.clone(),
+        version: metadata.version,
         output: out_dir,
         components,
         diagnostics,
     })
 }
 
+fn requested_tree_profiles(
+    harnesses: &[PluginHarness],
+) -> Result<Vec<&'static tree::TreeProfile>, MarsError> {
+    if harnesses.is_empty() {
+        return Err(MarsError::InvalidRequest {
+            message: "a plugin build needs at least one harness".to_string(),
+        });
+    }
+
+    PluginTree::ALL
+        .into_iter()
+        .filter(|tree| harnesses.iter().any(|harness| harness.tree() == *tree))
+        .map(tree::profile)
+        .collect()
+}
+
 fn implicit_consumer_config(
     lens: &PublishLens,
     root_source: &SourceName,
+    profiles: &[&tree::TreeProfile],
 ) -> Result<EffectiveConfig, MarsError> {
     let package_root = dunce::canonicalize(lens.package_root())?;
     let source_id = SourceId::path_with_subpath(lens.package_root(), &package_root, None)?;
@@ -194,7 +269,12 @@ fn implicit_consumer_config(
     Ok(EffectiveConfig {
         dependencies,
         settings: Settings {
-            targets: Some(vec![".claude".to_string(), ".codex".to_string()]),
+            targets: Some(
+                profiles
+                    .iter()
+                    .map(|profile| profile.descriptor().target_dir.to_string())
+                    .collect(),
+            ),
             ..Settings::default()
         },
         skills: lens.effective.skills.clone(),
@@ -227,28 +307,6 @@ fn stage_graph(
         }
     }
     Ok(())
-}
-
-fn warn_hooks_without_claude_fragment(
-    target: &crate::sync::target::TargetState,
-    diag: &mut DiagnosticCollector,
-) {
-    let claude_hooks: std::collections::HashSet<_> = target
-        .selected_hooks_for_target(".claude")
-        .map(|(hook, _)| (hook.source_name.as_str(), hook.def.name.as_str()))
-        .collect();
-    for (hook, _) in target.selected_hooks_for_target(".codex") {
-        if claude_hooks.contains(&(hook.source_name.as_str(), hook.def.name.as_str())) {
-            continue;
-        }
-        diag.warn(
-            "plugin-hook-no-claude-fragment",
-            format!(
-                "hook `{}` from `{}` has no Claude fragment and is omitted from the shared plugin tree",
-                hook.def.name, hook.source_name
-            ),
-        );
-    }
 }
 
 fn emit_missing_skill_warnings(

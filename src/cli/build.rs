@@ -20,7 +20,7 @@ pub enum BuildCommand {
     /// Build a harness-targeted launch scaffold/bundle for an agent or ad-hoc launch.
     LaunchBundle(LaunchBundleArgs),
 
-    /// Build one Claude-format plugin from a package and its resolved dependency graph.
+    /// Build plugin trees from a package and its resolved dependency graph.
     Plugin(PluginArgs),
 }
 
@@ -29,7 +29,7 @@ pub struct PluginArgs {
     /// Package directory containing mars.toml (default: detected project root).
     pub path: Option<PathBuf>,
 
-    /// Destination for the generated plugin tree.
+    /// Destination for the generated plugin output.
     #[arg(long)]
     pub out: PathBuf,
 }
@@ -197,6 +197,14 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
     let report = crate::build::plugin::build_plugin(&crate::build::plugin::PluginBuildRequest {
         package_root,
         out_dir: args.out.clone(),
+        // `[plugin].harnesses` lands in the configuration lane. Until then,
+        // preserve the shipped Claude tree consumed by Claude and Codex; Grok
+        // consumes that same format too.
+        harnesses: vec![
+            crate::config::PluginHarness::Claude,
+            crate::config::PluginHarness::Codex,
+            crate::config::PluginHarness::Grok,
+        ],
     })?;
 
     if json {

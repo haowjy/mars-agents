@@ -87,6 +87,41 @@ pub struct PackageInfo {
     pub requires_meridian: Option<String>,
 }
 
+/// Harnesses that can consume a generated plugin artifact.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginHarness {
+    Claude,
+    Codex,
+    Grok,
+    Cursor,
+    OpenCode,
+}
+
+impl PluginHarness {
+    pub const DEFAULT: &'static [Self] = &[
+        Self::Claude,
+        Self::Codex,
+        Self::Grok,
+        Self::Cursor,
+        Self::OpenCode,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Grok => "grok",
+            Self::Cursor => "cursor",
+            Self::OpenCode => "opencode",
+        }
+    }
+}
+
+pub fn default_plugin_harnesses() -> Vec<PluginHarness> {
+    PluginHarness::DEFAULT.to_vec()
+}
+
 mod toml_path_serde {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::path::{Path, PathBuf};

@@ -33,9 +33,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `subagents:` references follow explicit agent renames as well as collision renames.
 - MCP server collisions now prefer the shallowest package, then dependency declaration order,
   so a package's own server cannot lose to a transitive dependency.
-- Plugin sentinels now carry an offline-recomputable hash of package-owned inputs, resolved
-  dependency identities, and hashes for each generated file; package version bumps do not make
-  the input hash stale.
+- Plugin sentinels now carry an offline-recomputable hash of the root package's discovered
+  authored inputs with normalized text line endings, resolved dependency identities, and hashes
+  for each generated file; unrelated checkout files, generated output, recovery leftovers, and
+  package version bumps do not make the input hash stale.
 - Plugin skill reference qualification now covers every Markdown resource, honors CommonMark
   fence delimiters, and leaves path suffixes such as `/skill/SKILL.md` unchanged.
 - Plugin text output now uses LF line endings and generated JSON ends with a newline while binary

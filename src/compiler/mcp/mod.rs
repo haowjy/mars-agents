@@ -122,40 +122,16 @@ pub(crate) fn discover_mcp_items_at_depth(
     decl_order: usize,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedMcpItem>, MarsError> {
-    if skip_generated_tree(package_root, diag) {
-        return Ok(Vec::new());
-    }
-    let mcp_dir = package_root.join("mcp");
-    if !mcp_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    if skip_generated_tree(&mcp_dir, diag) {
-        return Ok(Vec::new());
-    }
-
+    let definitions = discover_mcp_definition_paths(package_root, diag)?;
     let mut items = Vec::new();
-    let mut entries: Vec<_> = std::fs::read_dir(&mcp_dir)
-        .map_err(MarsError::from)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-
-    for entry in entries {
-        if skip_generated_tree(&entry.path(), diag) {
-            continue;
-        }
-        let dir_name = entry.file_name();
-        let server_name = dir_name.to_string_lossy();
-        // Skip hidden directories.
-        if server_name.starts_with('.') {
-            continue;
-        }
-
-        let toml_path = entry.path().join("mcp.toml");
-        if !toml_path.is_file() {
-            continue;
-        }
+    for toml_path in definitions {
+        let entry_dir = toml_path
+            .parent()
+            .expect("discovered MCP definition belongs to a server directory");
+        let server_name = entry_dir
+            .file_name()
+            .expect("discovered MCP server directory has a name")
+            .to_string_lossy();
 
         let raw = std::fs::read_to_string(&toml_path).map_err(MarsError::from)?;
         let raw_def: RawMcpServerDef = toml::from_str(&raw).map_err(|e| {
@@ -187,8 +163,51 @@ pub(crate) fn discover_mcp_items_at_depth(
             decl_order,
         });
     }
-
     Ok(items)
+}
+
+pub(crate) fn discover_mcp_definition_paths(
+    package_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<std::path::PathBuf>, MarsError> {
+    if skip_generated_tree(package_root, diag) {
+        return Ok(Vec::new());
+    }
+    let mcp_dir = package_root.join("mcp");
+    if !mcp_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    if skip_generated_tree(&mcp_dir, diag) {
+        return Ok(Vec::new());
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&mcp_dir)
+        .map_err(MarsError::from)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+
+    let mut definitions = Vec::new();
+    for entry in entries {
+        if skip_generated_tree(&entry.path(), diag) {
+            continue;
+        }
+        let dir_name = entry.file_name();
+        let server_name = dir_name.to_string_lossy();
+        // Skip hidden directories.
+        if server_name.starts_with('.') {
+            continue;
+        }
+
+        let toml_path = entry.path().join("mcp.toml");
+        if !toml_path.is_file() {
+            continue;
+        }
+
+        definitions.push(toml_path);
+    }
+    Ok(definitions)
 }
 
 fn skip_generated_tree(path: &Path, diag: &mut DiagnosticCollector) -> bool {

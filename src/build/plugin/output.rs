@@ -11,8 +11,7 @@ use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 /// not moved until `write`, hashing, and the sentinel write have all succeeded.
 pub(super) fn replace_owned_tree(
     out_dir: &Path,
-    sentinel: &PluginSentinel,
-    write: impl FnOnce(&Path) -> Result<(), MarsError>,
+    write: impl FnOnce(&Path) -> Result<PluginSentinel, MarsError>,
 ) -> Result<(), MarsError> {
     let paths = OutputPaths::new(out_dir)?;
     let _lock = crate::fs::FileLock::acquire(&paths.lock)?;
@@ -30,11 +29,10 @@ pub(super) fn replace_owned_tree(
         .map_err(|source| io_error("create plugin staging directory", &paths.new, source))?;
 
     let staged = (|| {
-        write(&paths.new)?;
+        let mut stored = write(&paths.new)?;
         validate_staging_tree(&paths.new)?;
 
         let files = compute_file_hashes(&paths.new)?;
-        let mut stored = sentinel.clone();
         stored.files = files;
         crate::plugin_metadata::validate(&stored, &paths.new.join(SENTINEL_FILE))?;
         write_sentinel(&paths.new, &stored)

@@ -18,6 +18,9 @@ The output writer builds directly into an empty sibling staging directory. After
 the output layer hashes the files, writes `.mars-plugin.json`, and publishes the staged tree with a
 two-rename swap. Publication and startup recovery share a cross-process lock keyed by the
 absolute output path; non-empty trees without a valid sentinel are never replaced.
+The root-package input fingerprint is computed from discovered authored item paths after recovery
+and under that same lock, before the staging tree is populated, so crash leftovers and generated
+catalog/output trees cannot make an otherwise clean checkout stale.
 
 The output API deliberately has no package-root parameter because explicit `--out` paths may
 live elsewhere. It independently rejects filesystem roots, the current directory and its

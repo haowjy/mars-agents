@@ -132,26 +132,25 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         dep_precedence: &dep_precedence,
         profile: &profile,
     };
-    let inputs_hash = plugin_inputs_hash(&package_root)?;
-    let sentinel = crate::plugin_metadata::PluginSentinel {
-        schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
-        mars_version: env!("CARGO_PKG_VERSION").to_string(),
-        plugin_name: plugin_name.clone(),
-        version: package.version.clone(),
-        inputs_hash,
-        dependencies: resolved_dependency_identities(&graph, &root_source),
-        files: std::collections::BTreeMap::new(),
-    };
     let mut summary = None;
     let mut diagnostics = None;
-    output::replace_owned_tree(&out_dir, &sentinel, |staging| {
+    output::replace_owned_tree(&out_dir, |staging| {
+        let inputs_hash = plugin_inputs_hash(&package_root)?;
         let built = tree::write_tree(staging, &tree_input, &mut diag)?;
         tree::emit_codex_warnings(&built, &mut diag);
         let collected = diag.drain();
         fail_on_diagnostic_errors(&collected)?;
         summary = Some(built);
         diagnostics = Some(collected);
-        Ok(())
+        Ok(crate::plugin_metadata::PluginSentinel {
+            schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
+            mars_version: env!("CARGO_PKG_VERSION").to_string(),
+            plugin_name: plugin_name.clone(),
+            version: package.version.clone(),
+            inputs_hash,
+            dependencies: resolved_dependency_identities(&graph, &root_source),
+            files: std::collections::BTreeMap::new(),
+        })
     })?;
     let summary = summary.expect("plugin writer completed before publication");
     let diagnostics = diagnostics.expect("plugin writer collected diagnostics");
@@ -311,7 +310,7 @@ fn fail_on_diagnostic_errors(diagnostics: &[Diagnostic]) -> Result<(), MarsError
 
 /// Hash package-owned build inputs without resolving or fetching dependencies.
 pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsError> {
-    let mut entries = Vec::new();
+    let mut entries = std::collections::BTreeMap::new();
     let manifest_path = package_root.join("mars.toml");
     let raw_manifest = std::fs::read_to_string(&manifest_path)?;
     let mut manifest: toml::Value = toml::from_str(&raw_manifest).map_err(ConfigError::Parse)?;
@@ -336,39 +335,97 @@ pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsErro
             let bytes = serde_json::to_vec(&canonical_json(value)).map_err(|error| {
                 MarsError::Internal(format!("failed to fingerprint [{table_name}]: {error}"))
             })?;
-            entries.push((
+            entries.insert(
                 format!("@config/{table_name}"),
                 crate::hash::hash_bytes(&bytes),
-            ));
+            );
         }
     }
 
-    let mut ignored_diagnostics = DiagnosticCollector::new();
-    let excluded = [PathBuf::from(".git"), PathBuf::from(".mars")];
-    for entry in
-        crate::fs::authored_tree_entries(package_root, &excluded, &mut ignored_diagnostics)?
-    {
-        if entry.kind != crate::fs::AuthoredEntryKind::File {
-            continue;
+    let mut diag = DiagnosticCollector::new();
+    for item in crate::discover::discover_resolved_source(package_root, None, &mut diag)? {
+        let source = package_root.join(&item.source_path);
+        match item.id.kind {
+            crate::lock::ItemKind::Agent | crate::lock::ItemKind::McpServer => {
+                fingerprint_authored_file(package_root, &source, &mut entries)?;
+            }
+            crate::lock::ItemKind::Skill
+            | crate::lock::ItemKind::Hook
+            | crate::lock::ItemKind::BootstrapDoc => {
+                let excluded = if item.id.kind == crate::lock::ItemKind::Skill
+                    && item.source_path == Path::new(".")
+                {
+                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
+                        .iter()
+                        .map(PathBuf::from)
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                fingerprint_authored_tree(
+                    package_root,
+                    &source,
+                    &excluded,
+                    &mut diag,
+                    &mut entries,
+                )?;
+            }
         }
-        let relative = entry
-            .relative
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        if matches!(
-            relative.as_str(),
-            "mars.toml" | "mars.local.toml" | "mars.lock"
-        ) {
-            continue;
-        }
-        entries.push((
-            format!("@source/{relative}"),
-            crate::hash::hash_bytes(&std::fs::read(entry.source)?),
-        ));
     }
-    Ok(crate::hash::hash_file_manifest(entries))
+    for path in crate::compiler::mcp::discover_mcp_definition_paths(package_root, &mut diag)? {
+        fingerprint_authored_file(package_root, &path, &mut entries)?;
+    }
+
+    Ok(crate::hash::hash_file_manifest(
+        entries.into_iter().collect(),
+    ))
+}
+
+fn fingerprint_authored_tree(
+    package_root: &Path,
+    source_root: &Path,
+    excluded_paths: &[PathBuf],
+    diag: &mut DiagnosticCollector,
+    entries: &mut std::collections::BTreeMap<String, String>,
+) -> Result<(), MarsError> {
+    for entry in crate::fs::authored_tree_entries(source_root, excluded_paths, diag)? {
+        if entry.kind == crate::fs::AuthoredEntryKind::File {
+            fingerprint_authored_file(package_root, &entry.source, entries)?;
+        }
+    }
+    Ok(())
+}
+
+fn fingerprint_authored_file(
+    package_root: &Path,
+    path: &Path,
+    entries: &mut std::collections::BTreeMap<String, String>,
+) -> Result<(), MarsError> {
+    let relative = crate::hash::portable_relative(package_root, path).ok_or_else(|| {
+        MarsError::InvalidRequest {
+            message: format!(
+                "plugin input path must be valid Unicode and remain under the package root: {}",
+                path.display()
+            ),
+        }
+    })?;
+    let bytes = std::fs::read(path)?;
+    let normalized = std::str::from_utf8(&bytes).map_or_else(
+        |_| std::borrow::Cow::Borrowed(bytes.as_slice()),
+        |content| {
+            std::borrow::Cow::Owned(
+                content
+                    .replace("\r\n", "\n")
+                    .replace('\r', "\n")
+                    .into_bytes(),
+            )
+        },
+    );
+    entries.insert(
+        format!("@source/{relative}"),
+        crate::hash::hash_bytes(&normalized),
+    );
+    Ok(())
 }
 
 fn canonical_json(value: serde_json::Value) -> serde_json::Value {

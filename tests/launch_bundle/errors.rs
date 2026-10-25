@@ -1,7 +1,4 @@
-use super::common::{
-    install_fake_harnesses, replace_path_with, setup_bundle_project,
-    setup_bundle_project_with_agents,
-};
+use super::common::{install_fake_harnesses, replace_path_with, setup_bundle_project};
 use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 

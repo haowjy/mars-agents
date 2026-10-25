@@ -3,12 +3,13 @@ use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 use std::path::{Path, PathBuf};
 
-use crate::compiler::agents::{AgentMode, ModelPolicyMatchType, parse_agent_content};
+use crate::compiler::agents::{AgentMode, parse_agent_content};
 use crate::compiler::native_agent_manifest::{
     agent_is_native_for_harness, read_native_agent_manifest,
 };
 use crate::content::ContentRoots;
 use crate::error::{ConfigError, MarsError};
+use mars_schema::model_policy::ModelPolicyMatchType;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedAgentInventory {

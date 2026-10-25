@@ -1,3 +1,4 @@
+use mars_schema::model_policy::{ModelPolicyMatchType, ModelPolicyRule};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
@@ -5,10 +6,7 @@ use indexmap::IndexMap;
 
 use crate::build::bundle::ExecutionPolicy;
 use crate::compiler::agents::AgentProfile;
-use crate::config::{
-    AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule, NetworkHost,
-    NetworkPolicy,
-};
+use crate::config::{AgentOverlay, EffectiveProjectConfig, NetworkHost, NetworkPolicy};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};

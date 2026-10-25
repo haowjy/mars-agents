@@ -8,11 +8,11 @@ use indexmap::IndexMap;
 
 use super::AgentSurfacePolicy;
 use super::agent_copy;
-use crate::config::ModelPolicyMatchType;
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::DiagnosticCollector;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{ModelAlias, ModelSpec, ModelsCache};
+use mars_schema::model_policy::ModelPolicyMatchType;
 
 /// Lock output paths removed by native agent reconcile (target_root, dest_path).
 pub(crate) type RemovedNativeOutput = (String, String);
@@ -224,7 +224,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
     fn policy_candidates(
         &self,
-        policy: &crate::config::ModelPolicyRule,
+        policy: &mars_schema::model_policy::ModelPolicyRule,
     ) -> Vec<NativeModelCandidate> {
         let value = policy.match_value.trim();
         if value.is_empty() {
@@ -1005,7 +1005,7 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
 }
 
 fn policy_override_harness(
-    policy: &crate::config::ModelPolicyRule,
+    policy: &mars_schema::model_policy::ModelPolicyRule,
 ) -> Option<mars_schema::HarnessId> {
     policy
         .overrides

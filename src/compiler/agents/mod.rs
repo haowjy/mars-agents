@@ -12,10 +12,11 @@ use std::collections::BTreeMap;
 use mars_schema::HarnessId;
 use serde_yaml::Value;
 
-pub use crate::config::{ModelPolicyMatchType, ModelPolicyRule, NetworkHost, NetworkPolicy};
+pub use crate::config::{NetworkHost, NetworkPolicy};
 use crate::permission_set::PermissionSet;
 use mars_schema::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
 use mars_schema::invocability::{find_invocability_field, parse_invocability_axis};
+use mars_schema::model_policy::ModelPolicyRule;
 use mars_schema::tool_policy::{self, EffectiveToolPolicy};
 
 // ---------------------------------------------------------------------------
@@ -524,14 +525,14 @@ fn push_model_policy_invalid(
 fn push_model_policy_parse_error(
     diags: &mut Vec<AgentDiagnostic>,
     position: usize,
-    error: crate::config::ModelPolicyRuleParseError,
+    error: mars_schema::model_policy::ModelPolicyRuleParseError,
 ) {
     let rule_field = format!("model-policies[{position}]");
     match error {
-        crate::config::ModelPolicyRuleParseError::RuleMustBeMapping { found } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::RuleMustBeMapping { found } => {
             push_model_policy_invalid(diags, rule_field, found, "mapping with match and override");
         }
-        crate::config::ModelPolicyRuleParseError::MatchMissing => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::MatchMissing => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.match"),
@@ -539,7 +540,7 @@ fn push_model_policy_parse_error(
                 "mapping with exactly one of model, alias, model-glob",
             );
         }
-        crate::config::ModelPolicyRuleParseError::MatchMustBeMapping { found } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::MatchMustBeMapping { found } => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.match"),
@@ -547,7 +548,9 @@ fn push_model_policy_parse_error(
                 "mapping with exactly one of model, alias, model-glob",
             );
         }
-        crate::config::ModelPolicyRuleParseError::MatchMustContainExactlyOne { found } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::MatchMustContainExactlyOne {
+            found,
+        } => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.match"),
@@ -555,7 +558,7 @@ fn push_model_policy_parse_error(
                 "exactly one of model, alias, model-glob",
             );
         }
-        crate::config::ModelPolicyRuleParseError::MatchKeyMustBeString { found } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::MatchKeyMustBeString { found } => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.match"),
@@ -563,7 +566,7 @@ fn push_model_policy_parse_error(
                 "model, alias, model-glob",
             );
         }
-        crate::config::ModelPolicyRuleParseError::UnknownMatchKey { key } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::UnknownMatchKey { key } => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.match"),
@@ -571,7 +574,10 @@ fn push_model_policy_parse_error(
                 "model, alias, model-glob",
             );
         }
-        crate::config::ModelPolicyRuleParseError::MatchValueMustBeString { key, found } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::MatchValueMustBeString {
+            key,
+            found,
+        } => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.match.{key}"),
@@ -579,7 +585,7 @@ fn push_model_policy_parse_error(
                 "non-empty string",
             );
         }
-        crate::config::ModelPolicyRuleParseError::MatchValueEmpty { key } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::MatchValueEmpty { key } => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.match.{key}"),
@@ -587,10 +593,10 @@ fn push_model_policy_parse_error(
                 "non-empty string",
             );
         }
-        crate::config::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.override"), found, "mapping");
         }
-        crate::config::ModelPolicyRuleParseError::NetworkOverrideInvalid { found } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::NetworkOverrideInvalid { found } => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.override.network"),
@@ -598,7 +604,7 @@ fn push_model_policy_parse_error(
                 NetworkPolicy::ALLOWED,
             );
         }
-        crate::config::ModelPolicyRuleParseError::NetworkHostsNotAllowed { key } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::NetworkHostsNotAllowed { key } => {
             push_model_policy_invalid(
                 diags,
                 format!("{rule_field}.override.{key}"),
@@ -606,7 +612,7 @@ fn push_model_policy_parse_error(
                 "network host sets on settings, profile, overlay, or CLI",
             );
         }
-        crate::config::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
+        mars_schema::model_policy::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.no-fallback"), found, "boolean");
         }
     }
@@ -626,7 +632,7 @@ fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<Mo
     let mut out = Vec::new();
     for (index, entry) in seq.iter().enumerate() {
         let position = index + 1;
-        match crate::config::parse_model_policy_rule_value(entry) {
+        match mars_schema::model_policy::parse_model_policy_rule_value(entry) {
             Ok(rule) => out.push(rule),
             Err(error) => push_model_policy_parse_error(diags, position, error),
         }

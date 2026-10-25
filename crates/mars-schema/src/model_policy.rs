@@ -11,6 +11,32 @@ pub enum ModelPolicyMatchType {
     ModelGlob,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPolicyOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<String>,
+}
+
+impl ModelPolicyOverride {
+    pub fn is_empty(&self) -> bool {
+        self.effort.is_none() && self.sandbox.is_none() && self.approval.is_none()
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        match key {
+            "effort" => self.effort.as_deref(),
+            "sandbox" => self.sandbox.as_deref(),
+            "approval" => self.approval.as_deref(),
+            _ => None,
+        }
+    }
+}
+
 /// Shared model-policy rule type used by profile frontmatter, agent overlays,
 /// and settings-level model policies.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,21 +44,48 @@ pub struct ModelPolicyRule {
     pub match_type: ModelPolicyMatchType,
     pub match_value: String,
     pub no_fallback: bool,
-    pub overrides: serde_yaml::Mapping,
+    pub overrides: ModelPolicyOverride,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelPolicyRuleParseError {
-    RuleMustBeMapping { found: String },
+    RuleMustBeMapping {
+        found: String,
+    },
     MatchMissing,
-    MatchMustBeMapping { found: String },
-    MatchMustContainExactlyOne { found: String },
-    MatchKeyMustBeString { found: String },
-    UnknownMatchKey { key: String },
-    MatchValueMustBeString { key: String, found: String },
-    MatchValueEmpty { key: String },
-    OverrideMustBeMapping { found: String },
-    NoFallbackMustBeBoolean { found: String },
+    MatchMustBeMapping {
+        found: String,
+    },
+    MatchMustContainExactlyOne {
+        found: String,
+    },
+    MatchKeyMustBeString {
+        found: String,
+    },
+    UnknownMatchKey {
+        key: String,
+    },
+    MatchValueMustBeString {
+        key: String,
+        found: String,
+    },
+    MatchValueEmpty {
+        key: String,
+    },
+    OverrideMustBeMapping {
+        found: String,
+    },
+    UnknownOverrideKey {
+        key: String,
+    },
+    OverrideValueInvalid {
+        key: String,
+        found: String,
+        allowed: &'static str,
+    },
+    NoFallbackMustBeBoolean {
+        found: String,
+    },
 }
 
 impl ModelPolicyRuleParseError {
@@ -59,6 +112,16 @@ impl ModelPolicyRuleParseError {
             Self::OverrideMustBeMapping { .. } => {
                 "model policy `override` must be a mapping".to_string()
             }
+            Self::UnknownOverrideKey { key } => format!(
+                "unknown model policy override `{key}`; expected effort, sandbox, or approval"
+            ),
+            Self::OverrideValueInvalid {
+                key,
+                found,
+                allowed,
+            } => format!(
+                "model policy override `{key}` has invalid value `{found}`; allowed: {allowed}"
+            ),
             Self::NoFallbackMustBeBoolean { .. } => {
                 "model policy `no-fallback` must be a boolean".to_string()
             }
@@ -113,7 +176,7 @@ pub fn parse_model_policy_rule_value(
                 key: key.to_string(),
                 found: format!("{match_value:?}"),
             })?;
-    let match_value = value.trim().to_string();
+    let match_value = value.to_string();
     if match_value.is_empty() {
         return Err(ModelPolicyRuleParseError::MatchValueEmpty {
             key: key.to_string(),
@@ -131,14 +194,7 @@ pub fn parse_model_policy_rule_value(
         }
     };
 
-    let overrides = match rule.get(serde_yaml::Value::String("override".to_string())) {
-        None | Some(serde_yaml::Value::Null) => serde_yaml::Mapping::new(),
-        Some(value) => value.as_mapping().cloned().ok_or_else(|| {
-            ModelPolicyRuleParseError::OverrideMustBeMapping {
-                found: format!("{value:?}"),
-            }
-        })?,
-    };
+    let overrides = parse_overrides(rule.get(serde_yaml::Value::String("override".to_string())))?;
 
     let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {
         None | Some(serde_yaml::Value::Null) => false,
@@ -156,6 +212,89 @@ pub fn parse_model_policy_rule_value(
         no_fallback,
         overrides,
     })
+}
+
+fn parse_overrides(
+    value: Option<&serde_yaml::Value>,
+) -> Result<ModelPolicyOverride, ModelPolicyRuleParseError> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(ModelPolicyOverride::default());
+    };
+    let mapping =
+        value
+            .as_mapping()
+            .ok_or_else(|| ModelPolicyRuleParseError::OverrideMustBeMapping {
+                found: format!("{value:?}"),
+            })?;
+    let mut overrides = ModelPolicyOverride::default();
+    for (key, value) in mapping {
+        let key = key
+            .as_str()
+            .ok_or_else(|| ModelPolicyRuleParseError::UnknownOverrideKey {
+                key: format!("{key:?}"),
+            })?;
+        let raw =
+            value
+                .as_str()
+                .ok_or_else(|| ModelPolicyRuleParseError::OverrideValueInvalid {
+                    key: key.to_string(),
+                    found: format!("{value:?}"),
+                    allowed: allowed_override_values(key),
+                })?;
+        match key {
+            "effort" => {
+                let normalized = raw.to_ascii_lowercase();
+                if !matches!(
+                    normalized.as_str(),
+                    "none" | "low" | "medium" | "high" | "xhigh" | "max"
+                ) {
+                    return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
+                        key: key.to_string(),
+                        found: raw.to_string(),
+                        allowed: allowed_override_values(key),
+                    });
+                }
+                overrides.effort = Some(if normalized == "max" {
+                    "xhigh".to_string()
+                } else {
+                    normalized
+                });
+            }
+            "sandbox"
+                if matches!(
+                    raw,
+                    "default" | "read-only" | "workspace-write" | "danger-full-access"
+                ) =>
+            {
+                overrides.sandbox = Some(raw.to_string());
+            }
+            "approval" if matches!(raw, "default" | "auto" | "confirm" | "never") => {
+                overrides.approval = Some(raw.to_string());
+            }
+            "sandbox" | "approval" => {
+                return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
+                    key: key.to_string(),
+                    found: raw.to_string(),
+                    allowed: allowed_override_values(key),
+                });
+            }
+            _ => {
+                return Err(ModelPolicyRuleParseError::UnknownOverrideKey {
+                    key: key.to_string(),
+                });
+            }
+        }
+    }
+    Ok(overrides)
+}
+
+fn allowed_override_values(key: &str) -> &'static str {
+    match key {
+        "effort" => "none, low, medium, high, xhigh",
+        "sandbox" => "default, read-only, workspace-write, danger-full-access",
+        "approval" => "default, auto, confirm, never",
+        _ => "effort, sandbox, approval",
+    }
 }
 
 impl<'de> Deserialize<'de> for ModelPolicyRule {

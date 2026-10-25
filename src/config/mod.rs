@@ -2042,7 +2042,7 @@ tools.disallowed = ["Bash(rm *)", "Write"]
 
 [[agents.tech-lead.model-policies]]
 match = { alias = "gpt55" }
-override = { harness = "opencode", effort = "low" }
+override = { effort = "low" }
 no-fallback = true
 
 [settings]
@@ -2132,7 +2132,7 @@ override = { effort = "high" }
                     match_type: ModelPolicyMatchType::Alias,
                     match_value: "project-policy".to_string(),
                     no_fallback: false,
-                    overrides: serde_yaml::Mapping::new(),
+                    overrides: Default::default(),
                 }]),
                 unknown: BTreeMap::from([(
                     "project_future".to_string(),
@@ -2279,13 +2279,13 @@ override = { effort = "high" }
             match_type: ModelPolicyMatchType::Alias,
             match_value: "gpt55".to_string(),
             no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
+            overrides: Default::default(),
         };
         let local_rule = ModelPolicyRule {
             match_type: ModelPolicyMatchType::Alias,
             match_value: "gptmini".to_string(),
             no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
+            overrides: Default::default(),
         };
         let settings = Settings {
             targets: Some(vec![".claude".to_string(), ".codex".to_string()]),

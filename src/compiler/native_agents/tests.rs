@@ -910,7 +910,7 @@ fn emit_all_consumes_overlay_model_policies() {
                 match_type: mars_schema::model_policy::ModelPolicyMatchType::Alias,
                 match_value: "opus".to_string(),
                 no_fallback: false,
-                overrides: serde_yaml::Mapping::new(),
+                overrides: Default::default(),
             }]),
             ..Default::default()
         },

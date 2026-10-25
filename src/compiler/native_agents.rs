@@ -230,13 +230,12 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         if value.is_empty() {
             return Vec::new();
         }
-        let harness_constraint = policy_override_harness(policy);
 
         match policy.match_type {
             ModelPolicyMatchType::Alias | ModelPolicyMatchType::Model => {
                 vec![NativeModelCandidate {
                     token: value.to_string(),
-                    harness_constraint,
+                    harness_constraint: None,
                 }]
             }
             ModelPolicyMatchType::ModelGlob => self
@@ -246,7 +245,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 .filter(|model| crate::models::glob_match(value, &model.id))
                 .map(|model| NativeModelCandidate {
                     token: model.id.clone(),
-                    harness_constraint,
+                    harness_constraint: None,
                 })
                 .collect(),
         }
@@ -992,16 +991,6 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
     }
     .map(|provider| provider.trim().to_ascii_lowercase())
     .filter(|provider| !provider.is_empty())
-}
-
-fn policy_override_harness(
-    policy: &mars_schema::model_policy::ModelPolicyRule,
-) -> Option<mars_schema::HarnessId> {
-    policy
-        .overrides
-        .get(serde_yaml::Value::String("harness".to_string()))
-        .and_then(|value| value.as_str())
-        .and_then(mars_schema::harness::parse)
 }
 
 fn native_acceptance_policy(

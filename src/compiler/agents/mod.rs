@@ -551,6 +551,26 @@ fn push_model_policy_parse_error(
         mars_schema::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.override"), found, "mapping");
         }
+        mars_schema::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.override.{key}"),
+                key,
+                "effort, sandbox, approval",
+            );
+        }
+        mars_schema::model_policy::ModelPolicyRuleParseError::OverrideValueInvalid {
+            key,
+            found,
+            allowed,
+        } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.override.{key}"),
+                found,
+                allowed,
+            );
+        }
         mars_schema::model_policy::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
             push_model_policy_invalid(diags, format!("{rule_field}.no-fallback"), found, "boolean");
         }

@@ -1,6 +1,4 @@
-use crate::build::policy::{
-    MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
-};
+use crate::build::policy::{MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField};
 use crate::config::AgentOverlay;
 use crate::error::{ConfigError, MarsError};
 use crate::models::ModelAlias;
@@ -29,7 +27,7 @@ pub(super) fn resolve_harness<F>(
     input: &PolicyInput<'_>,
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
-    matched_policy: Option<&MatchedModelPolicy>,
+    _matched_policy: Option<&MatchedModelPolicy>,
     evidence: HarnessEvidence<'_>,
     probe_resolver: &mut dyn routing::ProbeResolver,
     auth_check: F,
@@ -43,23 +41,10 @@ where
         .and_then(|entry| entry.harness.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let policy_harness = matched_policy_string_override(matched_policy, "harness");
     let mut preference = resolve_harness_preference(
         input,
         overlay_harness,
-        policy_harness
-            .as_ref()
-            .filter(|field| field.source == PolicySource::OverlayModelPolicy)
-            .cloned(),
         profile_harness,
-        policy_harness
-            .as_ref()
-            .filter(|field| field.source == PolicySource::ProfileModelPolicy)
-            .cloned(),
-        policy_harness
-            .as_ref()
-            .filter(|field| field.source == PolicySource::SettingsModelPolicy)
-            .cloned(),
         alias.and_then(|entry| entry.harness.as_deref()),
     );
     if let Some(field) = preference.as_mut() {
@@ -139,14 +124,10 @@ where
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_harness_preference(
     input: &PolicyInput<'_>,
     overlay_harness: Option<&str>,
-    overlay_policy_harness: Option<ResolvedField<String>>,
     profile_harness: Option<&str>,
-    profile_policy_harness: Option<ResolvedField<String>>,
-    settings_policy_harness: Option<ResolvedField<String>>,
     alias_harness: Option<&str>,
 ) -> Option<ResolvedField<String>> {
     if let Some(harness) = input.harness_override {
@@ -163,21 +144,12 @@ fn resolve_harness_preference(
             matched_rule: None,
         });
     }
-    if let Some(harness) = overlay_policy_harness {
-        return Some(harness);
-    }
     if let Some(harness) = profile_harness {
         return Some(ResolvedField {
             value: harness.to_string(),
             source: PolicySource::Profile,
             matched_rule: None,
         });
-    }
-    if let Some(harness) = profile_policy_harness {
-        return Some(harness);
-    }
-    if let Some(harness) = settings_policy_harness {
-        return Some(harness);
     }
     alias_harness.map(|harness| ResolvedField {
         value: harness.to_string(),
@@ -305,7 +277,6 @@ mod tests {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn evidence_for_model<'a>(
         model_id: &'a str,
         _model_token: &'a str,

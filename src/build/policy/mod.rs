@@ -618,12 +618,7 @@ pub fn resolve_policy(
 }
 
 pub(super) fn policy_override_string(rule: &ModelPolicyRule, key: &str) -> Option<String> {
-    let value = rule
-        .overrides
-        .get(serde_yaml::Value::String(key.to_string()))?
-        .as_str()?;
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
+    rule.overrides.get(key).map(str::to_string)
 }
 
 pub(super) fn matched_policy_string_override(

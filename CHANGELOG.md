@@ -12,7 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `<plugin>:<name>`. Output is deterministic and LF. A root `<dir>/.mars-plugin.json` sentinel
   records the package version, an offline input hash, dependency versions, per-file hashes, and
   root-file ownership; a non-empty dir without one is refused; rebuilds swap the whole output
-  atomically and recover from an interrupted build.
+  atomically and recover from an interrupted build. Build output reports each generated tree with
+  its own path and component counts.
 
 ### Fixed
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and

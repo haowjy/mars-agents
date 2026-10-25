@@ -8,19 +8,31 @@ use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
 
+use super::super::PluginTree;
 use super::super::metadata::{PackageAuthor, PackageMetadata};
 use super::{TreeProfile, WrittenTreeContents, invalid_item};
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
+pub(in crate::build::plugin) const DROPPED_AGENT_FIELDS: &[&str] =
+    &["hooks", "mcpServers", "permissionMode", "initialPrompt"];
 
 pub(super) static PROFILE: TreeProfile = TreeProfile {
+    tree: PluginTree::Claude,
     harness: HarnessKind::Claude,
     agents: Some(apply_agent_policy),
     native_model_aliases: NATIVE_MODEL_ALIASES,
-    plugin_root_token: "${CLAUDE_PLUGIN_ROOT}",
+    plugin_root_token: Some("${CLAUDE_PLUGIN_ROOT}"),
+    accept_hook,
     write_config: write_config_entries,
     finish: write_manifest,
 };
+
+fn accept_hook(
+    _hook: &crate::compiler::hooks::ParsedHookItem,
+    _diag: &mut DiagnosticCollector,
+) -> bool {
+    true
+}
 
 fn apply_agent_policy(
     lowered: &str,
@@ -50,7 +62,7 @@ fn apply_agent_policy(
         plugin.insert("disallowedTools", value);
     }
 
-    for field in ["hooks", "mcpServers", "permissionMode", "initialPrompt"] {
+    for &field in DROPPED_AGENT_FIELDS {
         if source.get(field).is_some() {
             diag.warn(
                 "plugin-agent-field-dropped",
@@ -70,6 +82,7 @@ fn write_manifest(
     root: &Path,
     metadata: &PackageMetadata,
     _contents: &WrittenTreeContents<'_>,
+    _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     #[derive(Serialize)]
     struct PluginManifest<'a> {
@@ -102,7 +115,11 @@ fn write_manifest(
     crate::fs::atomic_write(&root.join(".claude-plugin/plugin.json"), &bytes)
 }
 
-fn write_config_entries(root: &Path, entries: &[ConfigEntry]) -> Result<(), MarsError> {
+fn write_config_entries(
+    root: &Path,
+    entries: &[ConfigEntry],
+    _diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
     let mcp: Vec<_> = entries
         .iter()
         .filter_map(|entry| match entry {

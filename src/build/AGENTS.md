@@ -10,19 +10,25 @@ checkout: its items plus dependencies under its own filters, renames, and visibi
 resolves through `PublishLens`, stages every package, collects the flattened target once with
 sync's shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
 `TreeProfile`. Profiles store only plugin-format policy; harness identity, variant key, and sync
-root come from `compiler::harness_descriptor`. Claude, Codex, and Grok share the Claude tree;
-Cursor and OpenCode have their own tree identities. An unavailable tree profile is an error.
+root come from `compiler::harness_descriptor`. Each profile has a typed tree identity, an optional
+hook-root token, and a hook acceptance policy that runs before copying. Claude, Codex, and Grok
+share the Claude tree; Cursor and OpenCode have their own tree identities. An unavailable tree
+profile is an error.
 
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
 project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the
 set of built trees' sync roots. `TargetState` also retains every filtered exported graph hook,
-including hooks no built root selected, so support diagnostics do not rescan manifests.
+including hooks no built root selected. A source check before the tree loop emits authored-content
+diagnostics once; tree writing emits only lowering diagnostics. Support diagnostics consume the
+full `TargetState` for graph-wide counts rather than inferring them from one tree.
 
-`PluginBuildRequest` keeps destination intent: `Configured(dir)` resolves relative to the package
-root and enables the root-file plan, while `Out(path)` is the explicit CLI output and never writes
-repo-root files. Its optional version overrides only the generated package metadata; `None` uses
-`[package].version`. `PackageMetadata` is the authority for the plugin-facing name, while the
-publish graph's root source continues to use `[package].name`.
+`PluginBuildRequest` keeps destination intent: `Configured` resolves from `[plugin].dir` and
+enables the root-file plan, while `Out(path)` is the explicit CLI output and never writes repo-root
+files. The config schema does not expose `[plugin]` yet, so `Configured` currently returns a clear
+configuration error. Its optional version overrides only the generated package metadata; `None`
+uses `[package].version`. `PackageMetadata` is the authority for the plugin-facing name, while the
+publish graph's root source continues to use `[package].name`. Build reports contain one typed tree
+record and output path per generated tree; human output prints one success line per record.
 
 The generated trees are nested at `<out>/<tree>/` and handed to
 `plugin::output::replace_owned_tree`; the build core never mutates the destination itself. The

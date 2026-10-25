@@ -48,19 +48,22 @@ impl PluginSentinel {
                         .is_some_and(|value| !value.trim().is_empty())
             })
             && !self.files.is_empty()
-            && self.files.iter().all(|(path, hash)| {
-                !path.is_empty()
-                    && !Path::new(path).is_absolute()
-                    && !path.split('/').any(|component| component == "..")
-                    && is_sha256(hash)
-            })
-            && self.root_files.iter().all(|(path, hash)| {
-                !path.is_empty()
-                    && !Path::new(path).is_absolute()
-                    && !path.split('/').any(|component| component == "..")
-                    && is_sha256(hash)
-            })
+            && self
+                .files
+                .iter()
+                .all(|(path, hash)| valid_entry(path, hash))
+            && self
+                .root_files
+                .iter()
+                .all(|(path, hash)| valid_entry(path, hash))
     }
+}
+
+fn valid_entry(path: &str, hash: &str) -> bool {
+    !path.is_empty()
+        && !Path::new(path).is_absolute()
+        && !path.split('/').any(|component| component == "..")
+        && is_sha256(hash)
 }
 
 pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), MarsError> {

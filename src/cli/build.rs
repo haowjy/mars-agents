@@ -212,15 +212,18 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
         crate::cli::output::print_json(&report);
     } else {
         crate::cli::output::print_diagnostics(&report.diagnostics);
-        crate::cli::output::print_success(&format!(
-            "built plugin `{}` at {} ({} agents, {} skills, {} hooks, {} MCP servers)",
-            report.plugin_name,
-            report.output.display(),
-            report.components.agents,
-            report.components.skills,
-            report.components.hooks,
-            report.components.mcp_servers,
-        ));
+        for tree in &report.trees {
+            crate::cli::output::print_success(&format!(
+                "built plugin `{}` tree `{}` at {} ({} agents, {} skills, {} hooks, {} MCP servers)",
+                report.plugin_name,
+                tree.tree.as_str(),
+                tree.output.display(),
+                tree.components.agents,
+                tree.components.skills,
+                tree.components.hooks,
+                tree.components.mcp_servers,
+            ));
+        }
     }
     Ok(0)
 }

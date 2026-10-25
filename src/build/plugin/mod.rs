@@ -26,14 +26,20 @@ use metadata::PackageMetadata;
 
 #[derive(Debug)]
 pub enum PluginBuildDestination {
-    Configured(PathBuf),
+    Configured,
     Out(PathBuf),
 }
 
 impl PluginBuildDestination {
-    fn resolve(&self, package_root: &Path) -> Result<PathBuf, MarsError> {
+    fn resolve(&self, _package_root: &Path) -> Result<PathBuf, MarsError> {
         let path = match self {
-            Self::Configured(path) => package_root.join(path),
+            Self::Configured => {
+                return Err(MarsError::InvalidRequest {
+                    message:
+                        "a configured plugin build needs a [plugin] table with `dir` in mars.toml"
+                            .to_string(),
+                });
+            }
             Self::Out(path) => path.clone(),
         };
         Ok(std::path::absolute(path)?)
@@ -52,10 +58,16 @@ pub struct PluginBuildRequest {
 pub struct PluginBuildReport {
     pub plugin_name: String,
     pub version: String,
+    pub trees: Vec<PluginTreeReport>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PluginTreeReport {
+    pub tree: PluginTree,
     pub output: PathBuf,
     #[serde(flatten)]
     pub components: PluginComponents,
-    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]
@@ -66,8 +78,9 @@ pub struct PluginComponents {
     pub mcp_servers: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PluginTree {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginTree {
     Claude,
     Cursor,
     OpenCode,
@@ -75,6 +88,14 @@ pub(super) enum PluginTree {
 
 impl PluginTree {
     const ALL: [Self; 3] = [Self::Claude, Self::Cursor, Self::OpenCode];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Cursor => "cursor",
+            Self::OpenCode => "opencode",
+        }
+    }
 }
 
 impl PluginHarness {
@@ -94,8 +115,6 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
             path: request.package_root.clone(),
             source,
         })?;
-    let out_dir = request.destination.resolve(&package_root)?;
-
     let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
     let lens = PublishLens::load(&package_root, &mut diag)?;
     let manifest = lens.manifest.as_ref().ok_or_else(|| {
@@ -114,6 +133,7 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         .package
         .as_ref()
         .expect("PackageMetadata validates the package table");
+    let out_dir = request.destination.resolve(&package_root)?;
     let plugin_name = metadata.name.clone();
     let root_source = SourceName::from(package.name.clone());
     let profiles = requested_tree_profiles(&request.harnesses)?;
@@ -156,7 +176,8 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         dep_precedence: &prepared_target.dep_precedence,
         terms: &terms,
     };
-    let (components, diagnostics) = output::replace_owned_tree(&out_dir, |staging| {
+    tree::check_sources(&tree_input, &profiles, &mut diag)?;
+    let (built_trees, diagnostics) = output::replace_owned_tree(&out_dir, |staging| {
         let inputs_hash = plugin_inputs_hash(&package_root)?;
         let mut built_trees = Vec::with_capacity(profiles.len());
         for profile in &profiles {
@@ -170,7 +191,7 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         }
         support::emit(
             &request.harnesses,
-            prepared_target.target.exported_hooks(),
+            &prepared_target.target,
             &built_trees,
             &mut diag,
         );
@@ -184,12 +205,6 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
             &request.harnesses,
         )?;
         root_files::apply(&root_file_plan)?;
-        let components = built_trees
-            .iter()
-            .find(|tree| tree.profile.descriptor().canonical_id == "claude")
-            .or_else(|| built_trees.first())
-            .map(|tree| tree.components)
-            .unwrap_or_default();
         Ok((
             crate::plugin_metadata::PluginSentinel {
                 schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
@@ -201,15 +216,26 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
                 files: std::collections::BTreeMap::new(),
                 root_files: root_file_plan.root_files.clone(),
             },
-            (components, collected),
+            (built_trees, collected),
         ))
     })?;
+
+    let trees = built_trees
+        .into_iter()
+        .map(|built| {
+            let tree = built.tree();
+            PluginTreeReport {
+                tree,
+                output: out_dir.join(tree.as_str()),
+                components: built.components,
+            }
+        })
+        .collect();
 
     Ok(PluginBuildReport {
         plugin_name,
         version: metadata.version,
-        output: out_dir,
-        components,
+        trees,
         diagnostics,
     })
 }

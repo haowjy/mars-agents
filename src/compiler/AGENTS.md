@@ -38,6 +38,8 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
 - `tool_names.rs` — the capability vocabulary (canonical names + aliases), the `Capability` type and the `tool(pattern)` grammar
 - `tool_natives.rs` — explicit per-harness native tool tables, pinned by a test against each harness's real tool list. Nothing is derived by naming convention.
+- `harness_descriptor.rs` — typed compiler harness facts, including canonical and display names,
+  target roots, variant keys, and lowering-policy selectors
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — selected MCP servers and hooks → target config files

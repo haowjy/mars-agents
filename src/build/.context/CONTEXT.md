@@ -20,16 +20,23 @@ The flatten step uses the sync roots of the requested trees. Five plugin harness
 tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. Tree profiles
 derive their harness kind, canonical id, variant key and target root from the compiler descriptor;
 they add only plugin-specific agent policy, native model aliases, hook-root token, config writer
-and finish writer. `tree::write_tree` is the sole item loop. `TargetState::exported_hooks` retains
-filtered exported graph hooks even when no requested tree selected a fragment, which is the input
-for plugin omission diagnostics.
+and finish writer. Profiles also carry their typed `PluginTree` identity and apply a hook filter
+before copying, so files, counts and finish-writer inputs agree. `tree::write_tree` is the sole item
+loop. `tree::check_sources` scans authored agents, skills, hooks and the selected MCP union once;
+per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
+exported graph hooks even when no requested tree selected a fragment, which is the input for plugin
+omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap
+counts never depend on one format's emitted components.
 
-The build request carries the semantic destination instead of only a path. `Configured(dir)` is
-package-relative and includes the root-file plan; explicit `Out(path)` keeps today's cwd-relative
-CLI path semantics and excludes repo-root files. `version: None` takes `[package].version`; an
-override changes generated metadata and the sentinel without changing the manifest used for
-resolution. Plugin-facing identity comes from `PackageMetadata`, while `SourceName` must continue
-to come from `[package].name` because the plugin name may differ.
+The build request carries the semantic destination instead of only a path. `Configured` resolves
+`[plugin].dir` package-relative and includes the root-file plan; explicit `Out(path)` keeps today's
+cwd-relative CLI path semantics and excludes repo-root files. Until the config schema owns the
+`[plugin]` table, the configured form fails with a targeted error. `version: None` takes
+`[package].version`; an override changes generated metadata and the sentinel without changing the
+manifest used for resolution. Plugin-facing identity comes from `PackageMetadata`, while
+`SourceName` must continue to come from `[package].name` because the plugin name may differ. The
+report's `trees` array carries each typed tree's final output path and component counts rather than
+flattening one preferred tree into the top level.
 
 The output writer builds `<tree>/` directories directly into an empty sibling staging directory.
 After it succeeds, the output layer hashes every tree, writes one root `.mars-plugin.json`, and

@@ -225,7 +225,6 @@ enum AgentLossinessStep {
 
 #[derive(Debug, Clone, Copy)]
 struct AgentLoweringPolicy {
-    target_name: &'static str,
     description: DescriptionPolicy,
     mode_note: Option<&'static str>,
     skills: AgentSkillsPolicy,
@@ -257,7 +256,6 @@ enum DescriptionPolicy {
 }
 
 const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    target_name: "Claude",
     description: DescriptionPolicy::Preserve,
     mode_note: None,
     // Claude ignores `skills:` when this file is selected with `claude --agent`.
@@ -279,7 +277,6 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 };
 
 const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    target_name: "OpenCode",
     description: DescriptionPolicy::Preserve,
     mode_note: None,
     skills: AgentSkillsPolicy::BodyGuidance,
@@ -303,7 +300,6 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 };
 
 const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    target_name: "Cursor",
     description: DescriptionPolicy::CursorOneLine,
     mode_note: Some("Cursor may use the same mode concept"),
     skills: AgentSkillsPolicy::NativePreload,
@@ -328,7 +324,6 @@ const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 };
 
 const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    target_name: "Pi",
     description: DescriptionPolicy::Preserve,
     mode_note: Some("Pi may use the same mode concept"),
     skills: AgentSkillsPolicy::BodyGuidance,
@@ -403,6 +398,10 @@ impl<'a> AgentLoweringCtx<'a> {
         }
     }
 
+    fn target_name(&self) -> &'static str {
+        harness_descriptor::descriptor(self.harness).display_name
+    }
+
     fn insert_identity(&mut self) {
         if let Some(name) = &self.profile.name {
             self.yaml.insert(yk("name"), yv(name));
@@ -432,7 +431,7 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn insert_claude_tools(&mut self) {
-        let target = self.policy.target_name;
+        let target = self.target_name();
         let projection = self.eff.tools.project(self.harness);
         let allowed = native_tools_for_action(
             &projection,
@@ -500,7 +499,7 @@ impl<'a> AgentLoweringCtx<'a> {
             if let Some(note) = self.policy.mode_note {
                 self.lossy.push(LossyField {
                     field: "mode".into(),
-                    target: self.policy.target_name.into(),
+                    target: self.target_name().into(),
                     classification: Lossiness::Approximate { note },
                 });
             }
@@ -526,32 +525,27 @@ impl<'a> AgentLoweringCtx<'a> {
                 if self.eff.effort().is_some() {
                     self.lossy.push(LossyField {
                         field: "effort".into(),
-                        target: self.policy.target_name.into(),
+                        target: self.target_name().into(),
                         classification: Lossiness::Approximate { note },
                     });
                 }
             }
-            AgentLossinessStep::McpApproximate(note) => record_native_mcp_lossiness(
-                &self.eff,
-                self.policy.target_name,
-                note,
-                &mut self.lossy,
-            ),
+            AgentLossinessStep::McpApproximate(note) => {
+                record_native_mcp_lossiness(&self.eff, self.target_name(), note, &mut self.lossy)
+            }
             AgentLossinessStep::McpDropped => {
                 if self.eff.has_mcp_policy() {
                     self.lossy.push(LossyField {
                         field: "mcp".into(),
-                        target: self.policy.target_name.into(),
+                        target: self.target_name().into(),
                         classification: Lossiness::Dropped,
                     });
                 }
             }
             AgentLossinessStep::MeridianOnlyFields => self.record_meridian_only_fields(),
-            AgentLossinessStep::InvocationAxes => record_agent_invocation_lossiness(
-                self.profile,
-                self.policy.target_name,
-                &mut self.lossy,
-            ),
+            AgentLossinessStep::InvocationAxes => {
+                record_agent_invocation_lossiness(self.profile, self.target_name(), &mut self.lossy)
+            }
         }
     }
 
@@ -570,7 +564,7 @@ impl<'a> AgentLoweringCtx<'a> {
         };
         self.lossy.push(LossyField {
             field: "approval".into(),
-            target: self.policy.target_name.into(),
+            target: self.target_name().into(),
             classification,
         });
     }
@@ -590,7 +584,7 @@ impl<'a> AgentLoweringCtx<'a> {
         };
         self.lossy.push(LossyField {
             field: "sandbox".into(),
-            target: self.policy.target_name.into(),
+            target: self.target_name().into(),
             classification,
         });
     }
@@ -599,7 +593,7 @@ impl<'a> AgentLoweringCtx<'a> {
         if present {
             self.lossy.push(LossyField {
                 field: field.into(),
-                target: self.policy.target_name.into(),
+                target: self.target_name().into(),
                 classification,
             });
         }

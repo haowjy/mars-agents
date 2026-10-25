@@ -142,13 +142,10 @@ pub fn build_launch_bundle(
         _ => err,
     };
 
-    let effective_skills = resolve_effective_skills(&profile, &policy.routing.harness)
-        .map_err(with_selection_report)?;
-
     let prompt = compile_prompt_surface(
         &content_roots,
         agent_body.as_deref().unwrap_or(""),
-        &effective_skills,
+        &profile.skills,
         &request.extra_skills,
         &policy.routing.harness,
         &policy.routing.model_token,
@@ -274,14 +271,6 @@ fn resolve_bundle_tools(
         disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
         mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
     })
-}
-
-fn resolve_effective_skills(
-    profile: &mars_schema::agent::AgentProfile,
-    harness: &str,
-) -> Result<SkillsSpec, MarsError> {
-    let descriptor = parse_harness_descriptor(harness)?;
-    Ok(profile.effective_skills(&descriptor.kind).clone())
 }
 
 fn parse_harness_descriptor(

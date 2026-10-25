@@ -2,136 +2,10 @@
 
 use serde_yaml::{Mapping, Value};
 
-use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
+use crate::compiler::harness_descriptor::{self};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use mars_schema::HarnessId;
 use mars_schema::skill::SkillProfile;
-
-// ---------------------------------------------------------------------------
-// Policy axes
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ModelInvocablePolicy {
-    /// Emit `disable-model-invocation: true` when `model_invocable` is false.
-    EmitDisableWhenFalse,
-    /// Drop silently when `model_invocable` is false — no lossiness warning.
-    ///
-    /// Used for OpenCode, whose skill frontmatter exposes no model-invocation
-    /// gate: the canonical `model-invocable` axis is structurally unrepresentable
-    /// there. The drop is uniform across every non-model-invocable skill and not
-    /// actionable by the author, so surfacing it per-skill is pure noise — it is
-    /// treated as a known, accepted target limitation rather than per-item loss.
-    DropSilentlyWhenFalse,
-    /// Emit sibling `openai.yaml` when source explicitly set `model-invocable: false`.
-    /// Explicit `true` and absent are no-ops: Codex defaults `allow_implicit_invocation` to true.
-    EmitCodexOpenaiYamlWhenExplicitFalse,
-    /// Cursor: handled by [`LoweringStep::CursorRuleMode`], not this step.
-    CursorRuleMode,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum UserInvocablePolicy {
-    /// Emit `user-invocable: false` when user invocation is disabled.
-    EmitFalseWhenDisabled,
-    /// Warn-drop when user invocation is disabled.
-    DropWhenDisabled,
-}
-
-/// Ordered lowering phases — sequence differs per harness (lossiness order matters).
-#[derive(Debug, Clone, Copy)]
-enum LoweringStep {
-    Identity,
-    LicenseMetadata,
-    Passthrough,
-    ModelInvocable,
-    UserInvocable,
-    /// Pi records user-invocable lossiness after passthrough is inserted.
-    UserInvocableLossinessLate,
-    /// Cursor-only rule mode: `alwaysApply` + reconcile `description` for Manual vs Intelligent.
-    CursorRuleMode,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SkillLoweringPolicy {
-    steps: &'static [LoweringStep],
-    model_invocable: ModelInvocablePolicy,
-    user_invocable: UserInvocablePolicy,
-}
-
-const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    steps: &[
-        LoweringStep::Identity,
-        LoweringStep::ModelInvocable,
-        LoweringStep::UserInvocable,
-        LoweringStep::LicenseMetadata,
-        LoweringStep::Passthrough,
-    ],
-    model_invocable: ModelInvocablePolicy::EmitDisableWhenFalse,
-    user_invocable: UserInvocablePolicy::EmitFalseWhenDisabled,
-};
-
-const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    steps: &[
-        LoweringStep::Identity,
-        LoweringStep::LicenseMetadata,
-        LoweringStep::Passthrough,
-        LoweringStep::ModelInvocable,
-        LoweringStep::UserInvocable,
-    ],
-    model_invocable: ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse,
-    user_invocable: UserInvocablePolicy::DropWhenDisabled,
-};
-
-const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    steps: &[
-        LoweringStep::Identity,
-        LoweringStep::LicenseMetadata,
-        LoweringStep::Passthrough,
-        LoweringStep::ModelInvocable,
-        LoweringStep::UserInvocable,
-    ],
-    model_invocable: ModelInvocablePolicy::DropSilentlyWhenFalse,
-    user_invocable: UserInvocablePolicy::DropWhenDisabled,
-};
-
-const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    steps: &[
-        LoweringStep::Identity,
-        LoweringStep::ModelInvocable,
-        LoweringStep::LicenseMetadata,
-        LoweringStep::Passthrough,
-        LoweringStep::UserInvocableLossinessLate,
-    ],
-    model_invocable: ModelInvocablePolicy::EmitDisableWhenFalse,
-    user_invocable: UserInvocablePolicy::DropWhenDisabled,
-};
-
-const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
-    steps: &[
-        LoweringStep::Identity,
-        LoweringStep::LicenseMetadata,
-        LoweringStep::Passthrough,
-        LoweringStep::CursorRuleMode,
-        LoweringStep::UserInvocable,
-    ],
-    model_invocable: ModelInvocablePolicy::CursorRuleMode,
-    user_invocable: UserInvocablePolicy::DropWhenDisabled,
-};
-
-fn policy_for(harness: HarnessId) -> &'static SkillLoweringPolicy {
-    match harness_descriptor::descriptor(harness).skill_policy {
-        SkillLoweringPolicyKind::Claude => &CLAUDE_POLICY,
-        SkillLoweringPolicyKind::Codex => &CODEX_POLICY,
-        SkillLoweringPolicyKind::OpenCode => &OPENCODE_POLICY,
-        SkillLoweringPolicyKind::Pi => &PI_POLICY,
-        SkillLoweringPolicyKind::Cursor => &CURSOR_POLICY,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Shared pipeline
-// ---------------------------------------------------------------------------
 
 fn yk(s: &str) -> Value {
     Value::String(s.to_string())
@@ -178,134 +52,60 @@ fn render(yaml: Mapping, body: &str) -> Vec<u8> {
     out.into_bytes()
 }
 
-struct LoweringCtx<'a> {
-    policy: &'static SkillLoweringPolicy,
-    target_name: &'static str,
-    profile: &'a SkillProfile,
-    yaml: Mapping,
-    lossy_fields: Vec<LossyField>,
-    siblings: Vec<LoweredSibling>,
+fn insert_identity(yaml: &mut Mapping, profile: &SkillProfile) {
+    if let Some(name) = &profile.name {
+        yaml.insert(yk("name"), ys(name));
+    }
+    if let Some(description) = &profile.description {
+        yaml.insert(yk("description"), ys(description));
+    }
 }
 
-impl<'a> LoweringCtx<'a> {
-    fn new(
-        harness_kind: HarnessId,
-        policy: &'static SkillLoweringPolicy,
-        profile: &'a SkillProfile,
-    ) -> Self {
-        Self {
-            policy,
-            target_name: harness_descriptor::descriptor(harness_kind).display_name,
-            profile,
-            yaml: Mapping::new(),
-            lossy_fields: Vec::new(),
-            siblings: Vec::new(),
-        }
+fn insert_license_metadata(yaml: &mut Mapping, profile: &SkillProfile) {
+    if let Some(license) = &profile.license {
+        yaml.insert(yk("license"), ys(license));
     }
-
-    fn run_step(&mut self, step: LoweringStep) {
-        match step {
-            LoweringStep::Identity => self.insert_identity(),
-            LoweringStep::LicenseMetadata => self.insert_license_metadata(),
-            LoweringStep::Passthrough => self.insert_passthrough(),
-            LoweringStep::ModelInvocable => self.apply_model_invocable(),
-            LoweringStep::UserInvocable => self.apply_user_invocable(),
-            LoweringStep::UserInvocableLossinessLate => self.apply_user_invocable_lossiness(),
-            LoweringStep::CursorRuleMode => self.apply_cursor_rule_mode(),
-        }
+    if let Some(metadata) = &profile.metadata {
+        yaml.insert(yk("metadata"), metadata.clone());
     }
+}
 
-    fn insert_identity(&mut self) {
-        let profile = self.profile;
-        if let Some(name) = &profile.name {
-            self.yaml.insert(yk("name"), ys(name));
-        }
-        if let Some(description) = &profile.description {
-            self.yaml.insert(yk("description"), ys(description));
-        }
+fn insert_passthrough(yaml: &mut Mapping, profile: &SkillProfile) {
+    for (key, value) in &profile.passthrough_fields {
+        yaml.insert(yk(key), value.clone());
     }
+}
 
-    fn insert_license_metadata(&mut self) {
-        let profile = self.profile;
-        if let Some(license) = &profile.license {
-            self.yaml.insert(yk("license"), ys(license));
-        }
-        if let Some(metadata) = &profile.metadata {
-            self.yaml.insert(yk("metadata"), metadata.clone());
-        }
+fn insert_disable_model_invocation(yaml: &mut Mapping, profile: &SkillProfile) {
+    if !profile.model_invocable {
+        yaml.insert(yk("disable-model-invocation"), Value::Bool(true));
     }
+}
 
-    fn insert_passthrough(&mut self) {
-        for (key, value) in &self.profile.passthrough_fields {
-            self.yaml.insert(yk(key), value.clone());
-        }
+fn insert_user_invocation(yaml: &mut Mapping, profile: &SkillProfile) {
+    if user_invocation_disabled(profile) {
+        yaml.insert(yk("user-invocable"), Value::Bool(false));
     }
+}
 
-    fn apply_model_invocable(&mut self) {
-        let profile = self.profile;
-        let policy = self.policy;
-        match policy.model_invocable {
-            ModelInvocablePolicy::EmitDisableWhenFalse => {
-                if !profile.model_invocable {
-                    self.yaml
-                        .insert(yk("disable-model-invocation"), Value::Bool(true));
-                }
-            }
-            ModelInvocablePolicy::DropSilentlyWhenFalse => {
-                // OpenCode has no model-invocation gate; the axis is structurally
-                // unrepresentable. Drop without lossiness — see the variant doc.
-            }
-            ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse => {
-                // Codex skills are model-invocable by default; only explicit false needs
-                // the openai.yaml sibling to set allow_implicit_invocation: false.
-                if profile.had_model_invocable_field && !profile.model_invocable {
-                    self.siblings.push(codex_openai_yaml_sibling());
-                }
-            }
-            ModelInvocablePolicy::CursorRuleMode => {}
-        }
+fn record_user_invocation_loss(
+    lossy_fields: &mut Vec<LossyField>,
+    profile: &SkillProfile,
+    target_name: &str,
+) {
+    if user_invocation_disabled(profile) {
+        lossy_fields.push(dropped("user-invocable", target_name));
     }
+}
 
-    fn apply_user_invocable(&mut self) {
-        match self.policy.user_invocable {
-            UserInvocablePolicy::EmitFalseWhenDisabled => {
-                if user_invocation_disabled(self.profile) {
-                    self.yaml.insert(yk("user-invocable"), Value::Bool(false));
-                }
-            }
-            UserInvocablePolicy::DropWhenDisabled => {
-                self.apply_user_invocable_lossiness();
-            }
-        }
+fn apply_cursor_rule_mode(yaml: &mut Mapping, profile: &SkillProfile) {
+    if !profile.has_frontmatter {
+        return;
     }
-
-    fn apply_user_invocable_lossiness(&mut self) {
-        if user_invocation_disabled(self.profile) {
-            self.lossy_fields
-                .push(dropped("user-invocable", self.target_name));
-        }
-    }
-
-    fn apply_cursor_rule_mode(&mut self) {
-        if !self.profile.has_frontmatter {
-            return;
-        }
-        // Cursor rule modes (2026): alwaysApply + description/globs control activation.
-        // Never emit alwaysApply: true — that is Always-on, not model-invocable.
-        // Intelligent (default or explicit true): alwaysApply:false + description hook.
-        // Manual (explicit false): alwaysApply:false, strip description so Cursor won't auto-select.
-        self.yaml.insert(yk("alwaysApply"), Value::Bool(false));
-        if cursor_manual_mode(self.profile) {
-            self.yaml.remove(yk("description"));
-        }
-    }
-
-    fn finish(self, body: &str) -> LoweredOutput {
-        LoweredOutput {
-            bytes: render(self.yaml, body),
-            lossy_fields: self.lossy_fields,
-            siblings: self.siblings,
-        }
+    // Cursor's Manual and Intelligent modes both require alwaysApply:false.
+    yaml.insert(yk("alwaysApply"), Value::Bool(false));
+    if cursor_manual_mode(profile) {
+        yaml.remove(yk("description"));
     }
 }
 
@@ -336,10 +136,49 @@ pub(super) fn lower_skill_with_policy(
     profile: &SkillProfile,
     body: &str,
 ) -> LoweredOutput {
-    let policy = policy_for(harness);
-    let mut ctx = LoweringCtx::new(harness, policy, profile);
-    for &step in policy.steps {
-        ctx.run_step(step);
+    let mut yaml = Mapping::new();
+    let mut lossy_fields = Vec::new();
+    let mut siblings = Vec::new();
+    let target_name = harness_descriptor::descriptor(harness).display_name;
+
+    insert_identity(&mut yaml, profile);
+    match harness {
+        HarnessId::Claude => {
+            insert_disable_model_invocation(&mut yaml, profile);
+            insert_user_invocation(&mut yaml, profile);
+            insert_license_metadata(&mut yaml, profile);
+            insert_passthrough(&mut yaml, profile);
+        }
+        HarnessId::Codex => {
+            insert_license_metadata(&mut yaml, profile);
+            insert_passthrough(&mut yaml, profile);
+            if profile.had_model_invocable_field && !profile.model_invocable {
+                siblings.push(codex_openai_yaml_sibling());
+            }
+            record_user_invocation_loss(&mut lossy_fields, profile, target_name);
+        }
+        HarnessId::OpenCode => {
+            insert_license_metadata(&mut yaml, profile);
+            insert_passthrough(&mut yaml, profile);
+            record_user_invocation_loss(&mut lossy_fields, profile, target_name);
+        }
+        HarnessId::Pi => {
+            insert_disable_model_invocation(&mut yaml, profile);
+            insert_license_metadata(&mut yaml, profile);
+            insert_passthrough(&mut yaml, profile);
+            record_user_invocation_loss(&mut lossy_fields, profile, target_name);
+        }
+        HarnessId::Cursor => {
+            insert_license_metadata(&mut yaml, profile);
+            insert_passthrough(&mut yaml, profile);
+            apply_cursor_rule_mode(&mut yaml, profile);
+            record_user_invocation_loss(&mut lossy_fields, profile, target_name);
+        }
     }
-    ctx.finish(body)
+
+    LoweredOutput {
+        bytes: render(yaml, body),
+        lossy_fields,
+        siblings,
+    }
 }

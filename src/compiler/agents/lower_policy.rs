@@ -57,7 +57,7 @@ impl<'a> Effective<'a> {
     }
 
     fn skills(&self) -> &SkillsSpec {
-        self.profile.effective_skills(&self.harness)
+        &self.profile.skills
     }
 
     /// Whether the policy grants or asks about built-in tools, which only an allowlist

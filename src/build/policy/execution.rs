@@ -129,7 +129,7 @@ fn resolve_effort(
                 .profile
                 .effort
                 .as_ref()
-                .map(effort_level_to_str)
+                .map(EffortLevel::as_str)
                 .map(str::to_string),
             settings: None,
             alias: alias.and_then(|entry| entry.default_effort.clone()),
@@ -155,7 +155,7 @@ fn resolve_approval(
                 .profile
                 .approval
                 .as_ref()
-                .map(approval_mode_to_str)
+                .map(ApprovalMode::as_str)
                 .map(str::to_string),
             settings: None,
             alias: None,
@@ -181,38 +181,10 @@ fn resolve_sandbox(
                 .profile
                 .sandbox
                 .as_ref()
-                .map(sandbox_mode_to_str)
+                .map(SandboxMode::as_str)
                 .map(str::to_string),
             settings: None,
             alias: None,
         },
     )
-}
-
-fn effort_level_to_str(effort: &EffortLevel) -> &'static str {
-    match effort {
-        EffortLevel::None => "none",
-        EffortLevel::Low => "low",
-        EffortLevel::Medium => "medium",
-        EffortLevel::High => "high",
-        EffortLevel::XHigh => "xhigh",
-    }
-}
-
-fn approval_mode_to_str(mode: &ApprovalMode) -> &'static str {
-    match mode {
-        ApprovalMode::Default => "default",
-        ApprovalMode::Auto => "auto",
-        ApprovalMode::Confirm => "confirm",
-        ApprovalMode::Never => "never",
-    }
-}
-
-fn sandbox_mode_to_str(mode: &SandboxMode) -> &'static str {
-    match mode {
-        SandboxMode::Default => "default",
-        SandboxMode::ReadOnly => "read-only",
-        SandboxMode::WorkspaceWrite => "workspace-write",
-        SandboxMode::DangerFullAccess => "danger-full-access",
-    }
 }

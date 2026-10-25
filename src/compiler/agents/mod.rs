@@ -275,6 +275,36 @@ pub enum AgentDiagnostic {
 }
 
 impl AgentDiagnostic {
+    pub fn schema_diagnostic(&self) -> mars_schema::diagnostic::SchemaDiagnostic {
+        use mars_schema::diagnostic::{SchemaDiagnostic, Severity, key_path};
+
+        let field = match self {
+            Self::InvalidFieldValue { field, .. }
+            | Self::DuplicateField { field, .. }
+            | Self::UnknownNetworkField { field }
+            | Self::RemovedField { field } => field.as_str(),
+            Self::UnknownHarness { .. } => "harness",
+            Self::UnknownHarnessOverride { .. } => "harness-overrides",
+            Self::LegacyModelsField => "models",
+            Self::DeprecatedListFormTools => "tools",
+            Self::DeprecatedApprovalYolo => "approval",
+        };
+        SchemaDiagnostic::new(
+            if self.is_error() {
+                "agent-schema-error"
+            } else {
+                "agent-schema-warning"
+            },
+            if self.is_error() {
+                Severity::Error
+            } else {
+                Severity::Warning
+            },
+            key_path(field),
+            self.message(),
+        )
+    }
+
     pub fn is_error(&self) -> bool {
         match self {
             AgentDiagnostic::InvalidFieldValue { field, .. } => {

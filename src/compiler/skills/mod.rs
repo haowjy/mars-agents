@@ -61,6 +61,33 @@ pub enum SkillDiagnostic {
 }
 
 impl SkillDiagnostic {
+    pub fn schema_diagnostic(&self) -> mars_schema::diagnostic::SchemaDiagnostic {
+        use mars_schema::diagnostic::{SchemaDiagnostic, Severity, key_path};
+
+        let field = match self {
+            Self::InvalidFieldValue { field, .. }
+            | Self::InvalidFieldType { field, .. }
+            | Self::RemovedField { field }
+            | Self::NonCanonicalField { field, .. } => field.as_str(),
+            Self::DeprecatedListFormTools => "tools",
+            Self::MalformedFrontmatter { .. } => "frontmatter",
+        };
+        SchemaDiagnostic::new(
+            if self.is_error() {
+                "skill-schema-error"
+            } else {
+                "skill-schema-warning"
+            },
+            if self.is_error() {
+                Severity::Error
+            } else {
+                Severity::Warning
+            },
+            key_path(field),
+            self.message(),
+        )
+    }
+
     pub fn is_error(&self) -> bool {
         matches!(
             self,
@@ -153,16 +180,8 @@ pub(crate) fn emit_skill_schema_diags(
     skill_diags: &[SkillDiagnostic],
 ) {
     for d in skill_diags {
-        let message = format!("skill `{skill_name}`: {}", d.message());
-        if d.is_error() {
-            diag.error_with_category(
-                "skill-schema-error",
-                message,
-                DiagnosticCategory::Validation,
-            );
-        } else {
-            diag.warn("skill-schema-warning", message);
-        }
+        let schema = d.schema_diagnostic();
+        diag.schema(&schema, &format!("skill `{skill_name}`"), false);
     }
 }
 

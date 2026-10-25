@@ -19,3 +19,5 @@ pub mod tool_natives;
 pub mod tool_policy;
 
 pub mod model_policy;
+
+pub mod diagnostic;

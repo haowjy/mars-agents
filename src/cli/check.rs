@@ -240,8 +240,9 @@ fn check_dir_with_lens(
                             let _profile =
                                 crate::compiler::agents::parse_agent_profile(&fm, &mut agent_diags);
                             for diagnostic in agent_diags {
-                                let message = format!("agent `{name}`: {}", diagnostic.message());
-                                if diagnostic.is_error() {
+                                let diagnostic = diagnostic.schema_diagnostic();
+                                let message = format!("agent `{name}`: {}", diagnostic.message);
+                                if diagnostic.severity == mars_schema::diagnostic::Severity::Error {
                                     errors.push(message);
                                 } else {
                                     warnings.push(message);

@@ -89,6 +89,29 @@ impl DiagnosticCollector {
         }
     }
 
+    pub(crate) fn schema(
+        &mut self,
+        diagnostic: &mars_schema::diagnostic::SchemaDiagnostic,
+        context: &str,
+        errors_as_warnings: bool,
+    ) {
+        use mars_schema::diagnostic::Severity;
+
+        let code = match diagnostic.code.as_str() {
+            "agent-schema-error" => "agent-schema-error",
+            "agent-schema-warning" => "agent-schema-warning",
+            "skill-schema-error" => "skill-schema-error",
+            "skill-schema-warning" => "skill-schema-warning",
+            _ => "schema-diagnostic",
+        };
+        let message = format!("{context}: {}", diagnostic.message);
+        if diagnostic.severity == Severity::Error && !errors_as_warnings {
+            self.error_with_category(code, message, DiagnosticCategory::Validation);
+        } else {
+            self.warn(code, message);
+        }
+    }
+
     pub(crate) fn record_engine_fallback(&mut self, fallback: crate::resolve::EngineFallback) {
         if let Some(existing) = self
             .engine_fallbacks

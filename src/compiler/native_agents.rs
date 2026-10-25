@@ -544,17 +544,8 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             .unwrap_or(&canonical_file_stem)
             .to_string();
         for d in &agent_diags {
-            if d.is_error() {
-                diag.warn(
-                    "agent-schema-error",
-                    format!("agent `{agent_name}`: {}", d.message()),
-                );
-            } else {
-                diag.warn(
-                    "agent-schema-warning",
-                    format!("agent `{agent_name}`: {}", d.message()),
-                );
-            }
+            let schema = d.schema_diagnostic();
+            diag.schema(&schema, &format!("agent `{agent_name}`"), true);
         }
 
         agents.push(MarsCanonicalAgent {

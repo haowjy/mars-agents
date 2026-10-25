@@ -425,10 +425,8 @@ fn check_gitignored(
                     "unexpected verbose output while checking generated plugin paths".to_string(),
                 ));
             }
-            let ignored = fields.chunks_exact(4).find_map(|record| {
-                let [source, line, pattern, path] = record else {
-                    unreachable!("chunks_exact returns four fields")
-                };
+            let (records, _) = fields.as_chunks::<4>();
+            let ignored = records.iter().find_map(|[source, line, pattern, path]| {
                 (!pattern.starts_with(b"!")).then_some((*source, *line, *pattern, *path))
             });
             let Some((source, line, pattern, path)) = ignored else {

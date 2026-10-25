@@ -377,7 +377,8 @@ mod tests {
     fn readme_plugin_tables_match_renderer() {
         const START: &str = "<!-- BEGIN GENERATED PLUGIN SUPPORT -->\n";
         const END: &str = "<!-- END GENERATED PLUGIN SUPPORT -->";
-        let readme = include_str!("../../../README.md");
+        // Windows checkouts may convert the README to CRLF.
+        let readme = include_str!("../../../README.md").replace("\r\n", "\n");
         let actual = readme
             .split_once(START)
             .and_then(|(_, rest)| rest.split_once(END).map(|(tables, _)| tables))

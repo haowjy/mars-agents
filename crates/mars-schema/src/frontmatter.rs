@@ -137,6 +137,11 @@ impl Frontmatter {
         self.yaml.get(yaml_key(key))
     }
 
+    /// Mutably read a YAML field by key.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        self.yaml.get_mut(yaml_key(key))
+    }
+
     /// Markdown body after frontmatter.
     pub fn body(&self) -> &str {
         &self.body

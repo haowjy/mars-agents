@@ -15,6 +15,7 @@ use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
 use mars_schema::model_policy::ModelPolicyRule;
+pub use mars_schema::package::{PackageAuthor, PackageMetadata as PackageInfo};
 use mars_schema::tool_names::OverlayToolName;
 
 pub mod layering;
@@ -66,75 +67,6 @@ pub struct Config {
     pub agents: IndexMap<String, AgentOverlay>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub skills: IndexMap<String, SkillOverlay>,
-}
-
-/// Package metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct PackageInfo {
-    pub name: String,
-    pub version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub authors: Vec<PackageAuthor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub homepage: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub license: Option<String>,
-    #[serde(
-        default,
-        rename = "requires-mars",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub requires_mars: Option<String>,
-    #[serde(
-        default,
-        rename = "requires-meridian",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub requires_meridian: Option<String>,
-}
-
-/// Package author metadata used by generated plugin manifests and catalogs.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct PackageAuthor {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-}
-
-impl<'de> Deserialize<'de> for PackageAuthor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum AuthorValue {
-            Text(String),
-            Table {
-                name: String,
-                #[serde(default)]
-                email: Option<String>,
-            },
-        }
-
-        Ok(match AuthorValue::deserialize(deserializer)? {
-            AuthorValue::Table { name, email } => Self { name, email },
-            AuthorValue::Text(value) => {
-                let value = value.trim();
-                let (name, email) = value
-                    .strip_suffix('>')
-                    .and_then(|without_close| without_close.rsplit_once(" <"))
-                    .filter(|(name, email)| !name.trim().is_empty() && !email.trim().is_empty())
-                    .map_or_else(
-                        || (value.to_string(), None),
-                        |(name, email)| (name.trim().to_string(), Some(email.trim().to_string())),
-                    );
-                Self { name, email }
-            }
-        })
-    }
 }
 
 /// Configuration for committed, multi-harness plugin output.
@@ -352,6 +284,10 @@ struct SourceManifestSections {
 struct SourcePackageInfo {
     name: String,
     version: String,
+    #[serde(default)]
+    schema: Option<u64>,
+    #[serde(default, rename = "uses-providers")]
+    uses_providers: Vec<String>,
     #[serde(default, rename = "requires-mars")]
     requires_mars: Option<String>,
     #[serde(default, rename = "requires-meridian")]
@@ -367,6 +303,8 @@ impl From<SourcePackageInfo> for PackageInfo {
             authors: Vec::new(),
             homepage: None,
             license: None,
+            schema: package.schema,
+            uses_providers: package.uses_providers,
             requires_mars: package.requires_mars,
             requires_meridian: package.requires_meridian,
         }

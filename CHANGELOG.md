@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - The pure, WebAssembly-compatible `mars-schema` crate now owns shared package vocabulary and parsers.
+- Schema-v1 package classification and a deterministic legacy definition upgrade are available from
+  `mars-schema`; manifests can declare `schema = 1` and `uses-providers`.
 - `mars build plugin [PATH] [--out <dir>]` builds owned Claude, Cursor, and OpenCode plugin trees
   from a package's publish graph. Explicit output uses the nested
   `<dir>/{claude,cursor,opencode}/` layout with a root `.mars-plugin.json` sentinel.

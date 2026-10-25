@@ -241,6 +241,8 @@ mod tests {
             authors: Vec::new(),
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: requirement.map(str::to_string),
             requires_meridian: None,
         }

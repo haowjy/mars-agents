@@ -1,0 +1,5 @@
+# Compiler TODO
+
+- Decide whether a dependency `exclude = [...]` filter applies to MCP server names. Today
+  `Exclude` still selects every MCP server from that source; changing this is a user-facing
+  behavior decision and needs a changelog entry.

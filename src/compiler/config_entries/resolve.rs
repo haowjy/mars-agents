@@ -16,13 +16,13 @@ const SELF_SOURCE: &str = "_self";
 /// Precedence: `_self` > dependency; earlier `decl_order` > later; equal
 /// declaration order breaks alphabetically by source package name.
 pub fn resolve_mcp_collisions_for_target<'a>(
-    items: &'a [ParsedMcpItem],
+    items: impl IntoIterator<Item = &'a ParsedMcpItem>,
     target_root: &str,
     diag: &mut DiagnosticCollector,
 ) -> Vec<&'a ParsedMcpItem> {
     let mut groups: BTreeMap<&str, Vec<&ParsedMcpItem>> = BTreeMap::new();
     for item in items
-        .iter()
+        .into_iter()
         .filter(|item| mcp_applies_to_target(item, target_root))
     {
         groups.entry(item.name.as_str()).or_default().push(item);

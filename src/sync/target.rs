@@ -23,12 +23,20 @@ pub struct TargetState {
     // Selection is intent, not proof of installation. Keep it when an unmanaged
     // canonical path prunes `items` so post-sync lowering can report the missing winner.
     selected_hooks: IndexMap<DestPath, SelectedHook>,
+    selected_mcp: Vec<SelectedMcp>,
+    mcp_discovery_warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 struct SelectedHook {
     target_root: String,
     item: crate::compiler::hooks::ParsedHookItem,
+}
+
+#[derive(Debug, Clone)]
+struct SelectedMcp {
+    target_roots: Vec<String>,
+    item: crate::compiler::mcp::ParsedMcpItem,
 }
 
 impl TargetState {
@@ -65,6 +73,64 @@ impl TargetState {
         );
     }
 
+    pub(crate) fn selected_mcp(
+        &self,
+    ) -> impl Iterator<Item = &crate::compiler::mcp::ParsedMcpItem> {
+        self.selected_mcp.iter().map(|selected| &selected.item)
+    }
+
+    pub(crate) fn selected_mcp_targets(&self) -> impl Iterator<Item = &str> {
+        self.selected_mcp
+            .iter()
+            .flat_map(|selected| selected.target_roots.iter().map(String::as_str))
+    }
+
+    pub(crate) fn selected_mcp_for_target(
+        &self,
+        target_root: &str,
+    ) -> impl Iterator<Item = &crate::compiler::mcp::ParsedMcpItem> {
+        self.selected_mcp
+            .iter()
+            .filter(move |selected| {
+                selected
+                    .target_roots
+                    .iter()
+                    .any(|target| target == target_root)
+            })
+            .map(|selected| &selected.item)
+    }
+
+    pub(crate) fn select_mcp(
+        &mut self,
+        item: crate::compiler::mcp::ParsedMcpItem,
+        managed_targets: &[String],
+    ) {
+        let target_roots = mcp_target_roots(&item, managed_targets);
+        let selected = SelectedMcp { target_roots, item };
+        let insert_at = self
+            .selected_mcp
+            .iter()
+            .position(|existing| existing.item.source_name != "_self")
+            .unwrap_or(self.selected_mcp.len());
+        if selected.item.source_name == "_self" {
+            self.selected_mcp.insert(insert_at, selected);
+        } else {
+            self.selected_mcp.push(selected);
+        }
+    }
+
+    pub(crate) fn mcp_discovery_warnings(&self) -> impl Iterator<Item = &str> {
+        self.mcp_discovery_warnings.iter().map(String::as_str)
+    }
+
+    pub(crate) fn record_mcp_discovery_warning(&mut self, message: String, local: bool) {
+        if local {
+            self.mcp_discovery_warnings.insert(0, message);
+        } else {
+            self.mcp_discovery_warnings.push(message);
+        }
+    }
+
     pub(crate) fn insert_hook(
         &mut self,
         target_root: &str,
@@ -83,6 +149,8 @@ impl TargetState {
         Self {
             items,
             selected_hooks: IndexMap::new(),
+            selected_mcp: Vec::new(),
+            mcp_discovery_warnings: Vec::new(),
         }
     }
 }
@@ -127,8 +195,11 @@ pub fn build_with_collisions_and_diag(
 ) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
     let mut collected_items = Vec::new();
     let mut selected_hooks = Vec::new();
+    let mut selected_mcp = Vec::new();
+    let mut mcp_discovery_warnings = Vec::new();
     let mut explicit_skill_renames = Vec::new();
-    let managed_targets: HashSet<String> = config.settings.managed_targets().into_iter().collect();
+    let managed_target_roots = config.settings.managed_targets();
+    let managed_targets: HashSet<&str> = managed_target_roots.iter().map(String::as_str).collect();
     let hook_depths = dependency_depths(graph);
     let decl_orders = dependency_decl_orders(graph, &config.dependencies);
 
@@ -151,6 +222,28 @@ pub fn build_with_collisions_and_diag(
                 .copied()
                 .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1),
         )?;
+
+        if source_may_emit_mcp(graph, source_name) {
+            let decl_order = decl_orders
+                .get(source_name)
+                .copied()
+                .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
+            match crate::compiler::mcp::discover_mcp_items(
+                &node.rooted_ref.package_root,
+                source_name.as_str(),
+                decl_order,
+            ) {
+                Ok(items) => selected_mcp.extend(items.into_iter().filter_map(|item| {
+                    if item.def.visibility != "exported" {
+                        return None;
+                    }
+                    let target_roots = mcp_target_roots(&item, &managed_target_roots);
+                    Some(SelectedMcp { target_roots, item })
+                })),
+                Err(error) => mcp_discovery_warnings
+                    .push(format!("failed to scan MCP items in `{source_name}`: {error}")),
+            }
+        }
 
         let Some(filters) = graph
             .filters
@@ -185,7 +278,7 @@ pub fn build_with_collisions_and_diag(
                     .def
                     .targets
                     .keys()
-                    .filter(|target| managed_targets.contains(*target))
+                    .filter(|target| managed_targets.contains(target.as_str()))
                 {
                     let dest_path = hook_canonical_dest_path(target_name, &parsed.def.name);
                     selected_hooks.push((
@@ -283,10 +376,34 @@ pub fn build_with_collisions_and_diag(
         TargetState {
             items,
             selected_hooks,
+            selected_mcp,
+            mcp_discovery_warnings,
         },
         explicit_skill_renames,
         collision_renames,
     ))
+}
+
+fn mcp_target_roots(
+    item: &crate::compiler::mcp::ParsedMcpItem,
+    managed_targets: &[String],
+) -> Vec<String> {
+    if item.def.targets.is_empty() {
+        return managed_targets.to_vec();
+    }
+    managed_targets
+        .iter()
+        .filter(|target| item.def.targets.contains(target))
+        .cloned()
+        .collect()
+}
+
+fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
+    graph.filters.get(source_name).is_none_or(|filters| {
+        filters
+            .iter()
+            .any(|filter| matches!(filter, FilterMode::All | FilterMode::Exclude(_)))
+    })
 }
 
 /// Canonical hook directories are target-scoped so providers with the same

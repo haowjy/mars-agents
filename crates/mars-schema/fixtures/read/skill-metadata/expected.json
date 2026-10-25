@@ -1,0 +1,29 @@
+{
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "skill-schema-error",
+      "message": "skill field `name` has invalid value `missing`; allowed: string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "compatibility": null,
+    "description": null,
+    "had_model_invocable_field": false,
+    "has_frontmatter": true,
+    "license": null,
+    "metadata": {
+      "type": "coding"
+    },
+    "model_invocable": true,
+    "name": null,
+    "passthrough_fields": [],
+    "skill_type": "coding",
+    "user_invocable": true
+  },
+  "unknown": []
+}

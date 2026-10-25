@@ -191,6 +191,7 @@ fn resolve_sandbox(
 
 fn effort_level_to_str(effort: &EffortLevel) -> &'static str {
     match effort {
+        EffortLevel::None => "none",
         EffortLevel::Low => "low",
         EffortLevel::Medium => "medium",
         EffortLevel::High => "high",

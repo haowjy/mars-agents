@@ -1,0 +1,23 @@
+{
+  "body": null,
+  "diagnostics": [],
+  "fields": {
+    "authors": [
+      {
+        "name": "A"
+      }
+    ],
+    "description": "d",
+    "homepage": "https://x",
+    "license": "MIT",
+    "name": "pkg",
+    "requires-mars": ">=0.18",
+    "requires-meridian": ">=0.1",
+    "schema": 1,
+    "uses-providers": [
+      "meridian"
+    ],
+    "version": "0.1.0"
+  },
+  "unknown": []
+}

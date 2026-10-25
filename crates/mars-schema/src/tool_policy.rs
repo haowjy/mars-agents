@@ -23,7 +23,7 @@ impl ToolAction {
     }
 
     fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
+        match raw {
             "allow" => Some(Self::Allow),
             "deny" => Some(Self::Deny),
             "ask" => Some(Self::Ask),
@@ -93,7 +93,7 @@ impl Serialize for ToolRule {
 }
 
 /// The tool rules of an agent or skill.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct EffectiveToolPolicy {
     pub rules: Vec<ToolRule>,
 }
@@ -337,10 +337,7 @@ fn parse_tools_field(field: &str, val: &Value, on_invalid: OnInvalid<'_>) -> Vec
         }
         // `tools: allow` / `tools: deny` was a Meridian-side shorthand that never worked
         // here: it read as a tool named `allow`. Say so instead of guessing.
-        Value::String(raw)
-            if raw.trim().eq_ignore_ascii_case("allow")
-                || raw.trim().eq_ignore_ascii_case("deny") =>
-        {
+        Value::String(raw) if raw == "allow" || raw == "deny" => {
             on_invalid(
                 field,
                 raw,

@@ -613,14 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn ask_is_an_action() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  'bash(git push *)': ask\n  edit: Ask\n---\n",
-        );
-        assert_eq!(policy.describe(), vec!["ask:bash(git push *)", "ask:edit"]);
-    }
-
-    #[test]
     fn narrower_capability_wins_over_broader_for_the_natives_they_share() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n  notebook: deny\n---\n",

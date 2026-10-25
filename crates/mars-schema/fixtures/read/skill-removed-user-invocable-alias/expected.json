@@ -1,0 +1,45 @@
+{
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "message": "`user_invocable` was removed; use `user-invocable`",
+      "path": [
+        "user_invocable"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "skill-schema-error",
+      "message": "skill field `name` has invalid value `missing`; allowed: string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "compatibility": null,
+    "description": null,
+    "had_model_invocable_field": false,
+    "has_frontmatter": true,
+    "license": null,
+    "metadata": null,
+    "model_invocable": true,
+    "name": null,
+    "passthrough_fields": [
+      [
+        "user_invocable",
+        false
+      ]
+    ],
+    "skill_type": null,
+    "user_invocable": true
+  },
+  "unknown": [
+    [
+      "user_invocable",
+      false
+    ]
+  ]
+}

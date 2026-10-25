@@ -164,64 +164,6 @@ fn check_surfaces_lossiness_for_configured_targets() {
 }
 
 #[test]
-fn check_respects_skill_variant_selection_like_sync() {
-    let dir = TempDir::new().unwrap();
-    let source = dir.child("variant-skill");
-    let skill = source.child("foreign/skills/demo");
-    skill.create_dir_all().unwrap();
-    skill.child("variants/codex").create_dir_all().unwrap();
-    skill
-        .child("SKILL.md")
-        .write_str("---\nname: demo\ndescription: d\nwhen_to_use: planning\n---\n# Base body\n")
-        .unwrap();
-    skill
-        .child("variants/codex/SKILL.md")
-        .write_str("# Codex-only body\n")
-        .unwrap();
-    source
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n")
-        .unwrap();
-
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
-            source.path().join("foreign").display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-
-    let sync_out = mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(sync_out.status.success());
-    let sync_lossiness: Vec<String> = String::from_utf8_lossy(&sync_out.stderr)
-        .lines()
-        .filter(|line| line.contains("lossiness") || line.contains("when_to_use"))
-        .map(str::to_string)
-        .collect();
-
-    let check_out = mars()
-        .args(["check", source.path().to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(check_out.status.success());
-    let check_lossiness: Vec<String> = String::from_utf8_lossy(&check_out.stderr)
-        .lines()
-        .filter(|line| line.contains("lossiness") || line.contains("when_to_use"))
-        .map(str::to_string)
-        .collect();
-
-    assert_eq!(
-        sync_lossiness, check_lossiness,
-        "check must match sync skill variant lossiness"
-    );
-}
-
-#[test]
 fn check_skips_agent_lossiness_when_emission_suppressed() {
     let dir = TempDir::new().unwrap();
     let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);

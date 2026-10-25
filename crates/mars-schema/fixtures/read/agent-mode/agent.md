@@ -1,0 +1,4 @@
+---
+mode: primary
+---
+body

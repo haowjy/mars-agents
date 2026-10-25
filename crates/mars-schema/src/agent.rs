@@ -15,7 +15,7 @@ use crate::tool_policy::{self, EffectiveToolPolicy};
 // ---------------------------------------------------------------------------
 
 /// Agent execution mode — how the agent is launched.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum AgentMode {
     Primary,
     Subagent,
@@ -37,7 +37,7 @@ impl std::fmt::Display for AgentMode {
 }
 
 /// Approval policy field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum ApprovalMode {
     Default,
     Auto,
@@ -67,7 +67,7 @@ impl ApprovalMode {
 }
 
 /// Sandbox mode field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum SandboxMode {
     Default,
     ReadOnly,
@@ -97,8 +97,9 @@ impl SandboxMode {
 }
 
 /// Effort level field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum EffortLevel {
+    None,
     Low,
     Medium,
     High,
@@ -107,7 +108,8 @@ pub enum EffortLevel {
 
 impl EffortLevel {
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
+            "none" => Some(Self::None),
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
@@ -118,6 +120,7 @@ impl EffortLevel {
 
     pub fn as_str(&self) -> &str {
         match self {
+            Self::None => "none",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
@@ -142,7 +145,7 @@ impl EffortLevel {
 ///
 /// Mars validates only shape/serializability. Nested keys are owned by the
 /// target harness and are not interpreted as Mars semantic fields.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct HarnessOverrides {
     pub entries: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
 }
@@ -172,7 +175,7 @@ impl HarnessOverrides {
 /// - Compile-time validation (mode values, passthrough shape)
 /// - Dual-surface routing (harness → output target)
 /// - Per-target lowering (field lowering per agent-compilation-mapping.md)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentProfile {
     // --- Identity fields ---
     pub name: Option<String>,
@@ -619,7 +622,7 @@ pub fn parse_agent_profile_legacy(
     fm: &Frontmatter,
     diags: &mut Vec<AgentDiagnostic>,
 ) -> AgentProfile {
-    let name = fm.name().map(str::to_owned);
+    let name = fm.name().map(str::trim).map(str::to_owned);
     let description = fm
         .get("description")
         .and_then(Value::as_str)
@@ -693,10 +696,6 @@ pub fn parse_agent_profile_legacy(
 
     // effort:
     let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
-        if s == "none" {
-            // "none" is a valid sentinel meaning "no effort level" (same as omitting the field)
-            return None;
-        }
         if let Some(e) = EffortLevel::from_str(s) {
             Some(e)
         } else {
@@ -774,10 +773,123 @@ pub fn parse_agent_profile(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> AgentProfile {
+    strict_agent_diagnostics(fm, diags);
     let mut findings = Vec::new();
     let profile = parse_agent_profile_legacy(fm, &mut findings);
-    diags.extend(findings.iter().map(AgentDiagnostic::schema_diagnostic));
+    diags.extend(
+        findings
+            .iter()
+            .filter(|finding| !matches!(finding, AgentDiagnostic::DeprecatedListFormTools))
+            .map(AgentDiagnostic::schema_diagnostic),
+    );
     profile
+}
+
+fn strict_agent_diagnostics(
+    fm: &Frontmatter,
+    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+) {
+    use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
+    const KEPT: &[&str] = &[
+        "name",
+        "description",
+        "mode",
+        "model",
+        "effort",
+        "skills",
+        "subagents",
+        "tools",
+        "model-invocable",
+        "user-invocable",
+        "sandbox",
+        "approval",
+        "harness-overrides",
+        "model-policies",
+        "harness",
+    ];
+    const REMOVED: &[(&str, &str)] = &[
+        ("disallowed-tools", "use `tools: {<capability>: deny}`"),
+        ("fanout", "use consumer `[settings.meridian.fanout]`"),
+        ("models", "use `model-policies`"),
+        ("mcp-tools", "put MCP capability references in `tools`"),
+        ("model_invocable", "use `model-invocable`"),
+        ("user_invocable", "use `user-invocable`"),
+        ("network", "remove this unenforced field"),
+        ("network-allow", "remove this unenforced field"),
+        ("network-deny", "remove this unenforced field"),
+        ("autocompact", "configure compaction on the model alias"),
+        ("autocompact_pct", "configure compaction on the model alias"),
+        (
+            "permission",
+            "move it under `harness-overrides.flow.permission`",
+        ),
+    ];
+    for key in fm.keys() {
+        if let Some((_, replacement)) = REMOVED.iter().find(|(removed, _)| *removed == key) {
+            diags.push(SchemaDiagnostic::new(
+                "field.removed",
+                Severity::Error,
+                key_path(&key),
+                format!("`{key}` was removed; {replacement}"),
+            ));
+        } else if !KEPT.contains(&key.as_str()) {
+            diags.push(SchemaDiagnostic::new(
+                "field.unknown",
+                Severity::Warning,
+                key_path(&key),
+                format!("unknown field `{key}` is preserved"),
+            ));
+        }
+    }
+    if matches!(fm.get("tools"), Some(Value::Sequence(_))) {
+        diags.push(SchemaDiagnostic::new(
+            "tools.list-form",
+            Severity::Error,
+            key_path("tools"),
+            "`tools` must be an action map; list form was removed",
+        ));
+    }
+    if matches!(fm.get("approval"), Some(Value::String(value)) if value == "yolo") {
+        diags.push(SchemaDiagnostic::new(
+            "field.removed",
+            Severity::Error,
+            key_path("approval"),
+            "approval value `yolo` was removed; use `never`",
+        ));
+    }
+    for key in [
+        "name",
+        "description",
+        "model",
+        "mode",
+        "effort",
+        "sandbox",
+        "approval",
+        "harness",
+    ] {
+        if let Some(value) = fm.get(key)
+            && !value.is_string()
+        {
+            diags.push(SchemaDiagnostic::new(
+                "field.type",
+                Severity::Error,
+                key_path(key),
+                format!("`{key}` must be a string"),
+            ));
+        }
+    }
+    for key in ["model-invocable", "user-invocable"] {
+        if let Some(value) = fm.get(key)
+            && !value.is_bool()
+        {
+            diags.push(SchemaDiagnostic::new(
+                "field.type",
+                Severity::Error,
+                key_path(key),
+                format!("`{key}` must be true or false"),
+            ));
+        }
+    }
 }
 
 pub fn parse_agent_content(
@@ -787,4 +899,49 @@ pub fn parse_agent_content(
     let fm = Frontmatter::parse(content)?;
     let profile = parse_agent_profile(&fm, diags);
     Ok((profile, fm))
+}
+
+/// Read an Agent definition through the versioned schema contract.
+pub fn read(content: &str) -> crate::read::DefinitionRead<AgentProfile> {
+    let mut diagnostics = Vec::new();
+    match Frontmatter::parse(content) {
+        Ok(frontmatter) => {
+            let fields = parse_agent_profile(&frontmatter, &mut diagnostics);
+            const KNOWN: &[&str] = &[
+                "name",
+                "description",
+                "mode",
+                "model",
+                "effort",
+                "skills",
+                "subagents",
+                "tools",
+                "model-invocable",
+                "user-invocable",
+                "sandbox",
+                "approval",
+                "harness-overrides",
+                "model-policies",
+                "harness",
+            ];
+            let unknown = frontmatter
+                .keys()
+                .into_iter()
+                .filter(|key| !KNOWN.contains(&key.as_str()))
+                .filter_map(|key| frontmatter.get(&key).cloned().map(|value| (key, value)))
+                .collect();
+            crate::read::DefinitionRead {
+                fields: Some(fields),
+                body: Some(frontmatter.body().to_string()),
+                unknown,
+                diagnostics,
+            }
+        }
+        Err(error) => crate::read::DefinitionRead {
+            fields: None,
+            body: None,
+            unknown: Vec::new(),
+            diagnostics: vec![crate::diagnostic::frontmatter_error(&error)],
+        },
+    }
 }

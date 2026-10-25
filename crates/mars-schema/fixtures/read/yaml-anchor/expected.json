@@ -1,0 +1,13 @@
+{
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "yaml.anchor",
+      "message": "YAML anchors and aliases are not supported",
+      "path": [],
+      "severity": "error"
+    }
+  ],
+  "fields": null,
+  "unknown": []
+}

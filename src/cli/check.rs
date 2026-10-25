@@ -757,68 +757,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn check_accepts_snake_case_skill_tool_alias() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("skills").join("planning");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---
-name: planning
-description: plan
-tools:
-  ask_user: allow
----
-# Skill",
-        )
-        .unwrap();
-
-        let report = super::check_dir(dir.path()).unwrap();
-
-        assert!(
-            report.errors.is_empty(),
-            "unexpected errors: {:?}",
-            report.errors
-        );
-        assert!(
-            report.warnings.is_empty(),
-            "unexpected warnings: {:?}",
-            report.warnings
-        );
-    }
-
-    #[test]
-    fn check_passes_through_unseparated_skill_tool_name() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("skills").join("planning");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---
-name: planning
-description: plan
-tools:
-  askuser: allow
----
-# Skill",
-        )
-        .unwrap();
-
-        let report = super::check_dir(dir.path()).unwrap();
-
-        assert!(
-            report.errors.is_empty(),
-            "unexpected errors: {:?}",
-            report.errors
-        );
-        assert!(
-            report.warnings.is_empty(),
-            "unexpected warnings: {:?}",
-            report.warnings
-        );
-    }
-
     // ── P1 + P4 + P9: [dependencies] present, resolution fails → error with hint ─
 
     #[test]

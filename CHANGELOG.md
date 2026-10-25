@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Schema-v1 Agent, skill, and package readers now live in `mars-schema`, reject removed or ambiguous syntax, preserve unknown fields, and expose stable structured diagnostics.
 - The pure, WebAssembly-compatible `mars-schema` crate now owns shared package vocabulary and parsers.
 - Schema-v1 package classification and a deterministic legacy definition upgrade are available from
   `mars-schema`; manifests can declare `schema = 1` and `uses-providers`.

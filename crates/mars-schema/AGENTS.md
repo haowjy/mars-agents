@@ -16,3 +16,8 @@ Definition upgrades edit only changed top-level blocks and keep all other author
 non-block top-level mapping or failed semantic verification falls back to a reported full
 frontmatter rewrite. Unchanged definitions and schema-v1 manifests remain byte-identical. The
 fixtures under `fixtures/upgrade/` are the published upgrade contract.
+
+`agent`, `skill`, and `manifest` are the only readers for schema-v1 definitions. Their
+serialized reading and diagnostics are pinned by `fixtures/read/`; callers consume these
+types directly rather than reading owned frontmatter keys themselves. Unknown fields are
+preserved, while removed fields are errors.

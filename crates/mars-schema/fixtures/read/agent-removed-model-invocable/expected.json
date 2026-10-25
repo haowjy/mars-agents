@@ -1,0 +1,45 @@
+{
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "message": "`model_invocable` was removed; use `model-invocable`",
+      "path": [
+        "model_invocable"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "approval": null,
+    "description": null,
+    "effort": null,
+    "had_model_invocable_field": false,
+    "had_user_invocable_field": false,
+    "harness": null,
+    "harness_overrides": {
+      "entries": {}
+    },
+    "mode": null,
+    "model": null,
+    "model_invocable": true,
+    "model_policies": [],
+    "name": null,
+    "sandbox": null,
+    "skills": {
+      "available": [],
+      "load": []
+    },
+    "subagents": [],
+    "tools": {
+      "rules": []
+    },
+    "user_invocable": true
+  },
+  "unknown": [
+    [
+      "model_invocable",
+      false
+    ]
+  ]
+}

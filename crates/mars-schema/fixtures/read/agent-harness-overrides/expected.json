@@ -1,0 +1,44 @@
+{
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "agent-schema-warning",
+      "message": "unknown harness override `flow`; preserving passthrough block",
+      "path": [
+        "harness-overrides"
+      ],
+      "severity": "warning"
+    }
+  ],
+  "fields": {
+    "approval": null,
+    "description": null,
+    "effort": null,
+    "had_model_invocable_field": false,
+    "had_user_invocable_field": false,
+    "harness": null,
+    "harness_overrides": {
+      "entries": {
+        "flow": {
+          "permission": "read"
+        }
+      }
+    },
+    "mode": null,
+    "model": null,
+    "model_invocable": true,
+    "model_policies": [],
+    "name": null,
+    "sandbox": null,
+    "skills": {
+      "available": [],
+      "load": []
+    },
+    "subagents": [],
+    "tools": {
+      "rules": []
+    },
+    "user_invocable": true
+  },
+  "unknown": []
+}

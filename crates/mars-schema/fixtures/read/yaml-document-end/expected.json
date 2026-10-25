@@ -1,0 +1,13 @@
+{
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "yaml.document-end",
+      "message": "YAML document-end markers are not supported",
+      "path": [],
+      "severity": "error"
+    }
+  ],
+  "fields": null,
+  "unknown": []
+}

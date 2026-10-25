@@ -77,3 +77,21 @@ pub fn key_path(field: &str) -> Vec<PathSegment> {
     }
     path
 }
+
+pub fn frontmatter_error(error: &crate::frontmatter::FrontmatterError) -> SchemaDiagnostic {
+    let code = match error {
+        crate::frontmatter::FrontmatterError::Unclosed => "frontmatter.unclosed",
+        crate::frontmatter::FrontmatterError::Anchor => "yaml.anchor",
+        crate::frontmatter::FrontmatterError::DocumentEnd => "yaml.document-end",
+        crate::frontmatter::FrontmatterError::NotAMapping => "frontmatter.not-mapping",
+        crate::frontmatter::FrontmatterError::MalformedYaml(inner) => {
+            let message = inner.to_string();
+            if message.contains("duplicate entry") || message.contains("duplicate key") {
+                "yaml.duplicate-key"
+            } else {
+                "yaml.invalid"
+            }
+        }
+    };
+    SchemaDiagnostic::new(code, Severity::Error, Vec::new(), error.to_string())
+}

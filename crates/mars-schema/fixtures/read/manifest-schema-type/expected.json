@@ -1,0 +1,16 @@
+{
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "field.type",
+      "message": "`package.schema` must be the integer 1",
+      "path": [
+        "package",
+        "schema"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": null,
+  "unknown": []
+}

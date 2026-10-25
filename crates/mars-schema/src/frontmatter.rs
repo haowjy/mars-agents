@@ -36,6 +36,15 @@ pub enum FrontmatterError {
     #[error("malformed YAML frontmatter: {0}")]
     MalformedYaml(#[from] serde_yaml::Error),
 
+    #[error("frontmatter is not closed with an exact `---` line")]
+    Unclosed,
+
+    #[error("YAML anchors and aliases are not supported")]
+    Anchor,
+
+    #[error("YAML document-end markers are not supported")]
+    DocumentEnd,
+
     #[error("frontmatter is not a YAML mapping")]
     NotAMapping,
 }
@@ -68,14 +77,16 @@ impl Frontmatter {
         }
 
         let Some((yaml_len, closing_len)) = yaml_end else {
-            return Ok(Self {
-                yaml: Mapping::new(),
-                body: content.to_string(),
-                has_frontmatter: false,
-            });
+            return Err(FrontmatterError::Unclosed);
         };
 
         let yaml_text = &after_first_line[..yaml_len];
+        if yaml_text.lines().any(|line| line.trim() == "...") {
+            return Err(FrontmatterError::DocumentEnd);
+        }
+        if contains_yaml_anchor_or_alias(yaml_text) {
+            return Err(FrontmatterError::Anchor);
+        }
         let body_start = yaml_len + closing_len;
         let body = after_first_line[body_start..].to_string();
 
@@ -334,7 +345,41 @@ fn split_first_line(content: &str) -> (&str, &str) {
 }
 
 fn is_delimiter_line(line: &str) -> bool {
-    line.trim_end() == "---"
+    line.strip_suffix('\n')
+        .unwrap_or(line)
+        .strip_suffix('\r')
+        .unwrap_or(line.strip_suffix('\n').unwrap_or(line))
+        == "---"
+}
+
+fn contains_yaml_anchor_or_alias(text: &str) -> bool {
+    for line in text.lines() {
+        let mut single = false;
+        let mut double = false;
+        let chars: Vec<char> = line.chars().collect();
+        for (index, ch) in chars.iter().copied().enumerate() {
+            match ch {
+                '\'' if !double => single = !single,
+                '"' if !single && (index == 0 || chars[index - 1] != '\\') => double = !double,
+                '#' if !single && !double => break,
+                '&' | '*' if !single && !double => {
+                    let previous_syntax = chars[..index]
+                        .iter()
+                        .rev()
+                        .copied()
+                        .find(|value| !value.is_whitespace());
+                    if matches!(
+                        previous_syntax,
+                        Some(':') | Some('-') | Some('[') | Some('{') | Some(',')
+                    ) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 fn yaml_key(key: &str) -> Value {

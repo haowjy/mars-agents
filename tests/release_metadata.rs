@@ -342,9 +342,12 @@ fn release_workflow_cargo_publish_only_ignores_already_uploaded_errors() {
     let workflow = read(".github/workflows/release.yml");
 
     assert!(workflow.contains("publish_stderr=\"$(mktemp)\""));
-    assert!(workflow.contains("if cargo publish 2> >(tee \"${publish_stderr}\" >&2); then"));
+    assert!(workflow.contains("if cargo publish --locked -p \"${package}\""));
     assert!(workflow.contains("grep -Eiq 'already (uploaded|published)|already exists'"));
-    assert!(workflow.contains("Crate version already published on crates.io; continuing."));
-    assert!(workflow.contains("cargo publish failed with an unexpected error."));
+    assert!(workflow.contains("${package} version already published on crates.io; continuing."));
+    assert!(workflow.contains("cargo publish failed for ${package} with an unexpected error."));
+    let schema = workflow.find("publish_crate mars-schema").unwrap();
+    let cli = workflow.find("publish_crate mars-agents").unwrap();
+    assert!(schema < cli, "mars-schema must publish before mars-agents");
     assert!(!workflow.contains("cargo publish || true"));
 }

@@ -883,7 +883,7 @@ subpath = "plugins\\foo"
     /// config-load → merge step.
     #[test]
     fn effective_dependency_subpath_preserved_through_merge() {
-        use crate::config::{Config, merge};
+        use crate::config::{Config, merge_with_root};
 
         let toml_str = r#"
 [dependencies.dep]
@@ -891,7 +891,12 @@ url = "https://github.com/org/repo.git"
 subpath = "plugins/foo"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        let effective = merge(config, crate::config::LocalConfig::default()).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            crate::config::LocalConfig::default(),
+            std::path::Path::new("."),
+        )
+        .unwrap();
         assert_eq!(
             effective.dependencies["dep"]
                 .subpath

@@ -33,8 +33,7 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `skill_variant_key()` | Which `variants/<key>/` directory this target consumes |
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `write_config_entries(permit, entries, target_dir)` | MCP/hook config file writes |
-| `known_hook_events()` | Native merge-fragment event allowlist, or `None` when unsupported |
-| `hook_fragment_mode()` | Declares `MergeJson` or `File` fragment placement |
+| `hook_fragment_mode()` | Declares `MergeJson { events }` or `File` fragment placement |
 | `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
 | `mcp_config_file_names()` | Config files mutated by MCP entries |
 | `hook_config_file_names()` | Config files mutated by merge-mode hook entries |

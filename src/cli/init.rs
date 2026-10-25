@@ -127,12 +127,17 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
         }
     }
 
-    let lossiness = crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
-        &project_root,
-        crate::diagnostic::LossinessMode::Surface,
-    )?;
-    if !json && !lossiness.is_empty() {
-        output::print_diagnostics(&lossiness);
+    let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
+    let lens = crate::resolve::PublishLens::load(&project_root, &mut publish_diag)?;
+    let mut diagnostics = publish_diag.drain();
+    diagnostics.extend(
+        crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
+            &lens,
+            crate::diagnostic::LossinessMode::Surface,
+        )?,
+    );
+    if !json && !diagnostics.is_empty() {
+        output::print_diagnostics(&diagnostics);
     }
 
     if json {

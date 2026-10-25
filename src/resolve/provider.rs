@@ -1,6 +1,7 @@
-//! Real source provider implementation for the resolver.
+//! Real source provider implementation for dependency resolution.
 //!
-//! Bridges the resolver's trait-based interface to the concrete source module.
+//! Bridges the resolver's trait-based interface to the concrete source module
+//! for sync and other production resolution lenses.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

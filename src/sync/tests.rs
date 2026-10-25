@@ -1086,7 +1086,7 @@ fn validate_skill_refs_uses_rewritten_content() {
             rewritten_content: None,
         },
     );
-    let target = TargetState { items };
+    let target = TargetState::from_items(items);
 
     let warnings = validate::validate_skill_refs(&target);
 

@@ -424,7 +424,7 @@ mod tests {
             },
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![ExplicitSkillRename {
             original_name: "plan".into(),
             new_name: "plan__org_base".into(),
@@ -472,7 +472,7 @@ mod tests {
             },
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![ExplicitSkillRename {
             original_name: "plan".into(),
             new_name: "plan__org_base".into(),
@@ -556,7 +556,7 @@ mod tests {
             },
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![
             ExplicitSkillRename {
                 original_name: "planning".into(),
@@ -662,7 +662,7 @@ mod tests {
             ),
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![
             CollisionRename {
                 original_name: "web-researcher".into(),
@@ -748,7 +748,7 @@ mod tests {
             ),
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![
             CollisionRename {
                 original_name: "planning".into(),
@@ -827,7 +827,7 @@ mod tests {
             ),
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let explicit_renames = vec![ExplicitSkillRename {
             original_name: "planning".into(),
             new_name: "shared".into(),
@@ -917,7 +917,7 @@ mod tests {
             ),
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![
             CollisionRename {
                 original_name: "planning".into(),
@@ -1002,7 +1002,7 @@ mod tests {
             ),
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![
             CollisionRename {
                 original_name: "planning".into(),
@@ -1087,7 +1087,7 @@ mod tests {
             ),
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![
             CollisionRename {
                 original_name: "planning".into(),
@@ -1153,7 +1153,7 @@ mod tests {
             ),
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![CollisionRename {
             original_name: "planning".into(),
             new_name: "planning__source-b".into(),
@@ -1231,7 +1231,7 @@ mod tests {
             ),
         );
 
-        let mut target = TargetState { items };
+        let mut target = TargetState::from_items(items);
         let renames = vec![
             CollisionRename {
                 original_name: "planning".into(),

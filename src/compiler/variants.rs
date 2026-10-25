@@ -408,17 +408,8 @@ fn lower_projected_skill_for_harness(
     let mut skill_diags = Vec::new();
     let (profile, _) = match parse_skill_content(&base_content, &mut skill_diags) {
         Ok(parsed) => parsed,
-        Err(_) => {
-            if emit_schema_diags {
-                crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
-            }
-            return Ok(None);
-        }
+        Err(_) => return Ok(None),
     };
-
-    if emit_schema_diags {
-        crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
-    }
 
     if !profile.has_frontmatter {
         return Ok(None);

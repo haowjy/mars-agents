@@ -163,6 +163,7 @@ fn record_agent_invocation_lossiness(
 #[derive(Debug, Clone)]
 pub enum NativeModel {
     /// Emit the profile's own model verbatim (unpinned alias / fanout token).
+    #[cfg(test)]
     Inherit,
     /// Emit this resolved model id.
     Set(String),
@@ -173,7 +174,10 @@ pub enum NativeModel {
 impl NativeModel {
     /// The concrete model string to render for `profile`, or `None` for "no model".
     fn resolve<'a>(&'a self, profile: &'a AgentProfile) -> Option<&'a str> {
+        #[cfg(not(test))]
+        let _ = profile;
         match self {
+            #[cfg(test)]
             NativeModel::Inherit => profile.model.as_deref(),
             NativeModel::Set(model) => Some(model),
             NativeModel::Clear => None,

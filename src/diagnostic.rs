@@ -126,6 +126,12 @@ impl DiagnosticCollector {
         let message = format!("{context}: {}", diagnostic.message);
         if diagnostic.severity == Severity::Error && !errors_as_warnings {
             self.error_with_category(code, message, DiagnosticCategory::Validation);
+        } else if diagnostic.code == "field.unknown"
+            && self.diagnostics.iter().any(|existing| {
+                existing.code == code && existing.message.ends_with(&diagnostic.message)
+            })
+        {
+            return;
         } else {
             self.warn(code, message);
         }

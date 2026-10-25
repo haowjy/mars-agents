@@ -1,5 +1,5 @@
-//! Target-state validation: skill reference checks, frontmatter schema checks,
-//! and config-side dangle detection after renames.
+//! Target-state validation: skill reference checks and config-side dangle
+//! detection after renames.
 //!
 //! Called from `build_target` against the post-prune, post-rewrite target state.
 
@@ -47,27 +47,6 @@ pub(crate) fn validate_skill_refs(target: &TargetState) -> Vec<ValidationWarning
     }
 
     warnings
-}
-
-pub(crate) fn validate_skill_frontmatter_in_target(
-    target: &TargetState,
-    diag: &mut DiagnosticCollector,
-) {
-    for item in target
-        .items
-        .values()
-        .filter(|item| item.id.kind == ItemKind::Skill)
-    {
-        validate_skill_frontmatter_at_source(&item.source_path, item.id.name.as_str(), diag);
-    }
-}
-
-fn validate_skill_frontmatter_at_source(
-    source_path: &std::path::Path,
-    skill_name: &str,
-    diag: &mut DiagnosticCollector,
-) {
-    crate::compiler::skills::emit_skill_schema_diags_from_source(source_path, skill_name, diag);
 }
 
 pub(crate) fn warn_config_dangles_after_rename(

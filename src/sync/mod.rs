@@ -784,8 +784,6 @@ pub(crate) fn build_target(
         },
     )?;
 
-    validate::validate_skill_frontmatter_in_target(&target_state, diag);
-
     validate::warn_config_dangles_after_rename(
         &renames,
         &collision_renames,

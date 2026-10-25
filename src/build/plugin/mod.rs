@@ -5,8 +5,6 @@ pub mod output;
 mod references;
 mod tree;
 
-pub use output::{SentinelInfo, replace_owned_tree};
-
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -175,11 +173,12 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
 
     let diagnostics = diag.drain();
     fail_on_diagnostic_errors(&diagnostics)?;
-    let inputs_hash = semantic_inputs_fingerprint(prepared.path(), &graph)?;
+    let inputs_hash = plugin_inputs_hash(&package_root)?;
     let sentinel = output::SentinelInfo {
         plugin_name: plugin_name.clone(),
         version: package.version.clone(),
         inputs_hash,
+        dependencies: resolved_dependency_identities(&graph, &root_source),
     };
     output::replace_owned_tree(&out_dir, &sentinel, |staging| {
         copy_tree_contents(prepared.path(), staging)
@@ -338,54 +337,122 @@ fn fail_on_diagnostic_errors(diagnostics: &[Diagnostic]) -> Result<(), MarsError
     }
 }
 
-fn semantic_inputs_fingerprint(
-    root: &Path,
-    graph: &crate::resolve::ResolvedGraph,
-) -> Result<String, MarsError> {
+/// Hash package-owned build inputs without resolving or fetching dependencies.
+pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsError> {
     let mut entries = Vec::new();
-    for entry in walkdir::WalkDir::new(root).sort_by_file_name() {
+    let manifest_path = package_root.join("mars.toml");
+    let raw_manifest = std::fs::read_to_string(&manifest_path)?;
+    let mut manifest: toml::Value = toml::from_str(&raw_manifest).map_err(ConfigError::Parse)?;
+    if let Some(package) = manifest
+        .get_mut("package")
+        .and_then(toml::Value::as_table_mut)
+    {
+        package.remove("version");
+    }
+    for table_name in [
+        "package",
+        "plugin",
+        "dependencies",
+        "models",
+        "skills",
+        "agents",
+    ] {
+        if let Some(value) = manifest.get(table_name) {
+            let value = serde_json::to_value(value).map_err(|error| {
+                MarsError::Internal(format!("failed to fingerprint [{table_name}]: {error}"))
+            })?;
+            let bytes = serde_json::to_vec(&canonical_json(value)).map_err(|error| {
+                MarsError::Internal(format!("failed to fingerprint [{table_name}]: {error}"))
+            })?;
+            entries.push((
+                format!("@config/{table_name}"),
+                crate::hash::hash_bytes(&bytes),
+            ));
+        }
+    }
+
+    let walker = walkdir::WalkDir::new(package_root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| include_fingerprint_entry(package_root, entry.path()));
+    for entry in walker {
         let entry = entry.map_err(|error| MarsError::Internal(error.to_string()))?;
         if !entry.file_type().is_file() {
             continue;
         }
-        let relative = portable_relative(root, entry.path());
-        let mut bytes = std::fs::read(entry.path())?;
-        if relative == ".claude-plugin/plugin.json" {
-            let mut manifest: serde_json::Value =
-                serde_json::from_slice(&bytes).map_err(|error| {
-                    MarsError::Internal(format!("generated plugin manifest is invalid: {error}"))
-                })?;
-            if let Some(object) = manifest.as_object_mut() {
-                object.remove("version");
-            }
-            bytes = serde_json::to_vec(&manifest).map_err(|error| {
-                MarsError::Internal(format!("failed to fingerprint plugin manifest: {error}"))
-            })?;
-        }
-        entries.push((relative, crate::hash::hash_bytes(&bytes)));
-    }
-    for source_name in &graph.order {
-        let resolved = &graph.nodes[source_name].resolved_ref;
-        if resolved.version.is_none() && resolved.version_tag.is_none() && resolved.commit.is_none()
-        {
+        let relative = portable_relative(package_root, entry.path());
+        if matches!(
+            relative.as_str(),
+            "mars.toml" | "mars.local.toml" | "mars.lock"
+        ) {
             continue;
         }
-        let identity = serde_json::to_vec(&serde_json::json!({
-            "version": resolved.version.as_ref().map(ToString::to_string),
-            "version_tag": resolved.version_tag,
-            "commit": resolved.commit.as_ref().map(ToString::to_string),
-        }))
-        .map_err(|error| {
-            MarsError::Internal(format!(
-                "failed to fingerprint resolved dependency: {error}"
-            ))
-        })?;
         entries.push((
-            format!("@resolved/{source_name}"),
-            crate::hash::hash_bytes(&identity),
+            format!("@source/{relative}"),
+            crate::hash::hash_bytes(&std::fs::read(entry.path())?),
         ));
     }
     Ok(crate::hash::hash_file_manifest(entries))
+}
+
+fn include_fingerprint_entry(package_root: &Path, path: &Path) -> bool {
+    if path == package_root {
+        return true;
+    }
+    let Ok(relative) = path.strip_prefix(package_root) else {
+        return false;
+    };
+    if relative
+        .components()
+        .next()
+        .is_some_and(|component| matches!(component.as_os_str().to_str(), Some(".git" | ".mars")))
+    {
+        return false;
+    }
+    !path.is_dir() || !crate::plugin_metadata::has_valid_plugin_sentinel(path)
+}
+
+fn canonical_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonical_json).collect())
+        }
+        serde_json::Value::Object(values) => {
+            let sorted: std::collections::BTreeMap<_, _> = values
+                .into_iter()
+                .map(|(key, value)| (key, canonical_json(value)))
+                .collect();
+            serde_json::to_value(sorted).expect("JSON values serialize infallibly")
+        }
+        scalar => scalar,
+    }
+}
+
+fn resolved_dependency_identities(
+    graph: &crate::resolve::ResolvedGraph,
+    root_source: &SourceName,
+) -> std::collections::BTreeMap<String, crate::plugin_metadata::ResolvedDependency> {
+    let mut dependencies = std::collections::BTreeMap::new();
+    for source_name in &graph.order {
+        if source_name == root_source {
+            continue;
+        }
+        let resolved = &graph.nodes[source_name].resolved_ref;
+        let version = resolved
+            .version
+            .as_ref()
+            .map(ToString::to_string)
+            .or_else(|| resolved.version_tag.clone());
+        let commit = resolved.commit.as_ref().map(ToString::to_string);
+        if version.is_none() && commit.is_none() {
+            continue;
+        }
+        dependencies.insert(
+            source_name.to_string(),
+            crate::plugin_metadata::ResolvedDependency { version, commit },
+        );
+    }
+    dependencies
 }
 
 fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), MarsError> {

@@ -88,6 +88,8 @@ pub struct ParsedMcpItem {
     pub def: McpServerDef,
     /// Source package name this item came from.
     pub source_name: String,
+    /// Authored definition used for content diagnostics.
+    pub source_path: std::path::PathBuf,
     /// Shortest dependency distance from the consumer package.
     pub depth: usize,
     /// Declaration order of the source package in the consumer graph.
@@ -171,6 +173,7 @@ pub(crate) fn discover_mcp_items_at_depth(
             name: resolved_name,
             def,
             source_name: source_name.to_string(),
+            source_path: toml_path,
             depth,
             decl_order,
         });

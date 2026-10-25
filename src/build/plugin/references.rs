@@ -41,19 +41,42 @@ fn rewrite_body(body: &str, references: &IndexMap<String, String>) -> String {
     names.sort_by_key(|name| std::cmp::Reverse(name.len()));
 
     let mut output = String::with_capacity(body.len());
-    let mut fenced = false;
+    let mut fence: Option<(char, usize)> = None;
     for line in body.split_inclusive('\n') {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
+        if let Some((character, length)) = fence {
+            if is_closing_fence(trimmed, character, length) {
+                fence = None;
+            }
             output.push_str(line);
-        } else if fenced {
+        } else if let Some(opened) = opening_fence(trimmed) {
+            fence = Some(opened);
             output.push_str(line);
         } else {
             output.push_str(&rewrite_line(line, &names, references));
         }
     }
     output
+}
+
+fn opening_fence(line: &str) -> Option<(char, usize)> {
+    let character = line.chars().next()?;
+    if !matches!(character, '`' | '~') {
+        return None;
+    }
+    let length = line
+        .chars()
+        .take_while(|candidate| *candidate == character)
+        .count();
+    (length >= 3).then_some((character, length))
+}
+
+fn is_closing_fence(line: &str, character: char, opener_length: usize) -> bool {
+    let length = line
+        .chars()
+        .take_while(|candidate| *candidate == character)
+        .count();
+    length >= opener_length && line[length..].trim().is_empty()
 }
 
 fn rewrite_line(line: &str, names: &[&str], references: &IndexMap<String, String>) -> String {
@@ -76,8 +99,12 @@ fn rewrite_line(line: &str, names: &[&str], references: &IndexMap<String, String
 
         let tail = &line[slash + 1..];
         let matched = names.iter().find(|name| {
-            tail.strip_prefix(**name)
-                .is_some_and(|after| after.chars().next().is_none_or(|ch| !is_name_character(ch)))
+            tail.strip_prefix(**name).is_some_and(|after| {
+                after
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| ch != '/' && !is_name_character(ch))
+            })
         });
         let Some(name) = matched else {
             let end = slash + 1;

@@ -14,7 +14,16 @@ pub(crate) struct PluginSentinel {
     pub plugin_name: String,
     pub version: String,
     pub inputs_hash: String,
-    pub tree_hash: String,
+    pub dependencies: std::collections::BTreeMap<String, ResolvedDependency>,
+    pub files: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ResolvedDependency {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
 }
 
 impl PluginSentinel {
@@ -24,7 +33,23 @@ impl PluginSentinel {
             && !self.plugin_name.trim().is_empty()
             && !self.version.trim().is_empty()
             && !self.inputs_hash.trim().is_empty()
-            && is_sha256(&self.tree_hash)
+            && self.dependencies.values().all(|dependency| {
+                dependency
+                    .version
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty())
+                    || dependency
+                        .commit
+                        .as_deref()
+                        .is_some_and(|value| !value.trim().is_empty())
+            })
+            && !self.files.is_empty()
+            && self.files.iter().all(|(path, hash)| {
+                !path.is_empty()
+                    && !Path::new(path).is_absolute()
+                    && !path.split('/').any(|component| component == "..")
+                    && is_sha256(hash)
+            })
     }
 }
 
@@ -44,7 +69,7 @@ pub(crate) fn has_valid_plugin_sentinel(directory: &Path) -> bool {
         .is_some_and(|sentinel| sentinel.is_valid())
 }
 
-fn is_sha256(value: &str) -> bool {
+pub(crate) fn is_sha256(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|hex| {
         hex.len() == 64
             && hex

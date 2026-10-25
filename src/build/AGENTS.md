@@ -19,6 +19,11 @@ It recovers interrupted swaps before a new build and never replaces a non-empty 
 without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
 before applying the building package's single plugin namespace.
 
+`plugin_inputs_hash` is the offline F3 seam: package-owned source bytes plus `[package]` without
+`version` and the `[plugin]`, `[dependencies]`, `[models]`, `[skills]`, and `[agents]` tables.
+It never resolves. The sentinel separately records resolved dependency version/commit identities
+and one SHA-256 per generated file; those file hashes are the only output-integrity source.
+
 ## Mental Model
 
 ```

@@ -331,7 +331,8 @@ fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsErr
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o644))?;
+                let mode = 0o644 | (metadata.permissions().mode() & 0o111);
+                fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))?;
             }
         } else {
             return Err(std::io::Error::new(

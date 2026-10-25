@@ -87,9 +87,13 @@ pub(super) fn write_tree(
         .map(|(hook, _)| hook)
         .collect();
     for hook in &hooks {
-        crate::platform::fs::atomic_copy_dir(
-            &hook.hook_dir,
-            &root.join("hooks").join(&hook.def.name),
+        let destination = root.join("hooks").join(&hook.def.name);
+        crate::platform::fs::atomic_copy_dir(&hook.hook_dir, &destination)?;
+        warn_terms_in_tree(
+            &destination,
+            &format!("hooks/{}", hook.def.name),
+            input.package.requires_meridian.is_some(),
+            diag,
         )?;
     }
     summary.hooks = hooks.len();
@@ -98,6 +102,15 @@ pub(super) fn write_tree(
         .target
         .selected_mcp_for_target(input.profile.target_root)
         .collect();
+    for item in &mcp {
+        let content = std::fs::read_to_string(&item.source_path)?;
+        warn_terms_in_content(
+            &format!("mcp/{}/mcp.toml", item.name),
+            &content,
+            input.package.requires_meridian.is_some(),
+            diag,
+        );
+    }
     warn_relative_mcp_args(&mcp, diag);
     let entries = crate::compiler::config_entries::lower_config_entries_for_target(
         &hooks,
@@ -118,7 +131,7 @@ pub(super) fn write_tree(
         .count();
 
     emit_shared_codex_warnings(&summary, diag);
-    warn_terms(root, input.package.requires_meridian.is_some(), diag)?;
+    normalize_text_tree(root)?;
     Ok(summary)
 }
 
@@ -129,11 +142,14 @@ fn write_agent(
     installed_skills: &IndexMap<String, String>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let content = item
-        .rewritten_content
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| std::fs::read_to_string(&item.source_path))?;
+    let authored_content = std::fs::read_to_string(&item.source_path)?;
+    warn_terms_in_content(
+        &format!("agents/{}.md", item.id.name),
+        &authored_content,
+        input.package.requires_meridian.is_some(),
+        diag,
+    );
+    let content = item.rewritten_content.clone().unwrap_or(authored_content);
     let mut parse_diags = Vec::new();
     let (profile, frontmatter) =
         crate::compiler::agents::parse_agent_content(&content, &mut parse_diags)
@@ -230,20 +246,57 @@ fn write_skill(
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let destination = root.join("skills").join(item.id.name.as_str());
+    let flat_source = item
+        .is_flat_skill
+        .then(tempfile::TempDir::new)
+        .transpose()?;
+    let source = if let Some(temp) = &flat_source {
+        let filtered = temp.path().join("skill");
+        crate::fs::atomic_install_dir_filtered(
+            &item.source_path,
+            &filtered,
+            crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
+        )?;
+        filtered
+    } else {
+        item.source_path.clone()
+    };
     crate::compiler::variants::project_skill_for_target(
-        &item.source_path,
+        &source,
         &destination,
         Some(input.profile.variant_key),
         diag,
         item.id.name.as_str(),
     )?;
 
-    let skill_md = destination.join("SKILL.md");
-    let content = std::fs::read_to_string(&skill_md)?;
-    let body_refs = body_reference_map(item, input, installed_skills);
-    let qualified = qualify_body_references(&content, &body_refs)?;
-    crate::fs::atomic_write(&skill_md, qualified.as_bytes())?;
+    warn_terms_in_tree(
+        &destination,
+        &format!("skills/{}", item.id.name),
+        input.package.requires_meridian.is_some(),
+        diag,
+    )?;
 
+    let body_refs = body_reference_map(item, input, installed_skills);
+    for entry in walkdir::WalkDir::new(&destination).sort_by_file_name() {
+        let entry = entry.map_err(|error| MarsError::Internal(error.to_string()))?;
+        if !entry.file_type().is_file()
+            || entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                != Some("md")
+        {
+            continue;
+        }
+        let content = std::fs::read_to_string(entry.path())?;
+        let qualified = qualify_body_references(&content, &body_refs)?;
+        if qualified != content {
+            std::fs::write(entry.path(), qualified)?;
+        }
+    }
+
+    let skill_md = destination.join("SKILL.md");
+    let qualified = std::fs::read_to_string(&skill_md)?;
     crate::frontmatter::parse(&qualified)
         .map_err(|error| invalid_item("skill", item, error.to_string()))?;
     Ok(())
@@ -394,8 +447,9 @@ fn emit_shared_codex_warnings(summary: &TreeSummary, diag: &mut DiagnosticCollec
     }
 }
 
-fn warn_terms(
+fn warn_terms_in_tree(
     root: &Path,
+    display_prefix: &str,
     requires_meridian: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
@@ -418,23 +472,80 @@ fn warn_terms(
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
         };
-        for (index, line) in content.lines().enumerate() {
-            let lower = line.to_lowercase();
-            if let Some((position, _)) = terms_lower
-                .iter()
-                .enumerate()
-                .find(|(_, term)| lower.contains(term.as_str()))
-            {
-                diag.warn(
-                    "plugin-term",
-                    format!(
-                        "{}:{} mentions {:?}",
-                        portable_relative(root, &path),
-                        index + 1,
-                        terms[position]
-                    ),
-                );
-            }
+        let relative = portable_relative(root, &path);
+        let display = if relative.is_empty() {
+            display_prefix.to_string()
+        } else {
+            format!("{display_prefix}/{relative}")
+        };
+        warn_terms_in_content_with_terms(&display, &content, terms, &terms_lower, diag);
+    }
+    Ok(())
+}
+
+fn warn_terms_in_content(
+    display_path: &str,
+    content: &str,
+    requires_meridian: bool,
+    diag: &mut DiagnosticCollector,
+) {
+    let terms: &[&str] = if requires_meridian {
+        &["mars sync", "mars add", ".mars/"]
+    } else {
+        &["meridian", "mars sync", "mars add", ".mars/"]
+    };
+    let terms_lower: Vec<String> = terms.iter().map(|term| term.to_lowercase()).collect();
+    warn_terms_in_content_with_terms(display_path, content, terms, &terms_lower, diag);
+}
+
+fn warn_terms_in_content_with_terms(
+    display_path: &str,
+    content: &str,
+    terms: &[&str],
+    terms_lower: &[String],
+    diag: &mut DiagnosticCollector,
+) {
+    for (index, line) in content.lines().enumerate() {
+        let lower = line.to_lowercase();
+        if let Some((position, _)) = terms_lower
+            .iter()
+            .enumerate()
+            .find(|(_, term)| lower.contains(term.as_str()))
+        {
+            diag.warn(
+                "plugin-term",
+                format!(
+                    "{display_path}:{} mentions {:?}",
+                    index + 1,
+                    terms[position]
+                ),
+            );
+        }
+    }
+}
+
+fn normalize_text_tree(root: &Path) -> Result<(), MarsError> {
+    for entry in walkdir::WalkDir::new(root).sort_by_file_name() {
+        let entry = entry.map_err(|error| MarsError::Internal(error.to_string()))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(entry.path())?;
+        let Ok(content) = String::from_utf8(bytes) else {
+            continue;
+        };
+        let mut normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+        if entry
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("json")
+            && !normalized.ends_with('\n')
+        {
+            normalized.push('\n');
+        }
+        if normalized != content {
+            std::fs::write(entry.path(), normalized)?;
         }
     }
     Ok(())

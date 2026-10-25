@@ -7,17 +7,19 @@ use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE, SENTINEL_SCHEMA_VERS
 
 /// Build metadata recorded in the generated plugin tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SentinelInfo {
+pub(crate) struct SentinelInfo {
     pub plugin_name: String,
     pub version: String,
     pub inputs_hash: String,
+    pub dependencies:
+        std::collections::BTreeMap<String, crate::plugin_metadata::ResolvedDependency>,
 }
 
 /// Replace a Mars-owned plugin tree as one crash-recoverable operation.
 ///
 /// `write` receives an empty sibling staging directory. The existing output is
 /// not moved until `write`, hashing, and the sentinel write have all succeeded.
-pub fn replace_owned_tree(
+pub(crate) fn replace_owned_tree(
     out_dir: &Path,
     sentinel: &SentinelInfo,
     write: impl FnOnce(&Path) -> Result<(), MarsError>,
@@ -42,14 +44,15 @@ pub fn replace_owned_tree(
         write(&paths.new)?;
         validate_staging_tree(&paths.new)?;
 
-        let tree_hash = compute_tree_hash(&paths.new)?;
+        let files = compute_file_hashes(&paths.new)?;
         let stored = PluginSentinel {
             schema_version: SENTINEL_SCHEMA_VERSION,
             mars_version: env!("CARGO_PKG_VERSION").to_string(),
             plugin_name: sentinel.plugin_name.clone(),
             version: sentinel.version.clone(),
             inputs_hash: sentinel.inputs_hash.clone(),
-            tree_hash,
+            dependencies: sentinel.dependencies.clone(),
+            files,
         };
         write_sentinel(&paths.new, &stored)
     })();
@@ -79,8 +82,10 @@ pub(crate) fn read_sentinel(out_dir: &Path) -> Result<PluginSentinel, MarsError>
     read_sentinel_file(&out_dir.join(SENTINEL_FILE))
 }
 
-/// Recompute the deterministic hash of every regular output file except the sentinel.
-pub fn compute_tree_hash(out_dir: &Path) -> Result<String, MarsError> {
+/// Recompute every regular output file hash except the sentinel.
+pub(crate) fn compute_file_hashes(
+    out_dir: &Path,
+) -> Result<std::collections::BTreeMap<String, String>, MarsError> {
     let metadata = fs::symlink_metadata(out_dir)
         .map_err(|source| io_error("inspect plugin tree", out_dir, source))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -92,7 +97,7 @@ pub fn compute_tree_hash(out_dir: &Path) -> Result<String, MarsError> {
 
     let mut entries = Vec::new();
     collect_tree_hashes(out_dir, out_dir, &mut entries)?;
-    Ok(crate::hash::hash_file_manifest(entries))
+    Ok(entries.into_iter().collect())
 }
 
 struct OutputPaths {
@@ -107,6 +112,15 @@ impl OutputPaths {
     fn new(out_dir: &Path) -> Result<Self, MarsError> {
         if out_dir.as_os_str().is_empty() {
             return Err(invalid("plugin output path cannot be empty"));
+        }
+        if matches!(
+            out_dir.components().next_back(),
+            Some(std::path::Component::ParentDir)
+        ) {
+            return Err(invalid(format!(
+                "plugin output cannot end in `..`; choose a dedicated output directory instead of {}",
+                out_dir.display()
+            )));
         }
 
         let out = std::path::absolute(out_dir)
@@ -468,6 +482,12 @@ fn validate_sentinel_info(sentinel: &SentinelInfo) -> Result<(), MarsError> {
     }
     if sentinel.inputs_hash.trim().is_empty() {
         return Err(invalid("plugin input hash cannot be empty"));
+    }
+    if sentinel.dependencies.values().any(|dependency| {
+        dependency.version.as_deref().is_none_or(str::is_empty)
+            && dependency.commit.as_deref().is_none_or(str::is_empty)
+    }) {
+        return Err(invalid("plugin dependency identity cannot be empty"));
     }
     Ok(())
 }

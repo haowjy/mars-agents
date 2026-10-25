@@ -14,6 +14,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refused; rebuilds swap the tree atomically and recover from an interrupted build.
 
 ### Fixed
+- Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
+  Cursor no longer preload available-only skills, while every target receives `/name` body
+  guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a
+  reminder for `--agent`, whose session path does not honor the native preload field.
 - Hook order now follows shortest dependency depth, changing only when a direct dependency is
   also reached transitively. Codex users may need to re-trust moved hooks once with `/hooks`.
 - Unknown hook and MCP `visibility` values now warn and remain local instead of being silently

@@ -171,7 +171,9 @@ fn write_agent(
     let overlay = (item.source_name == *input.root_source)
         .then(|| agent_overlay_name(item, input.collision_renames))
         .and_then(|name| input.agent_overlays.get(name));
-    let effective = crate::compiler::effective_native_profile(&profile, overlay);
+    let body_refs = body_reference_map(item, input, installed_skills);
+    let mut effective = crate::compiler::effective_native_profile(&profile, overlay);
+    qualify_agent_skills(&mut effective.skills, installed_skills);
     let model = resolve_claude_model(
         item.id.name.as_str(),
         effective.model.as_deref(),
@@ -198,14 +200,21 @@ fn write_agent(
         ))
     })?;
     let lowered = apply_plugin_agent_policy(&lowered, &frontmatter, item, diag)?;
-    let qualified = crate::frontmatter::rewrite_content_skills(&lowered, installed_skills)
-        .map_err(|error| invalid_item("agent", item, error.to_string()))?
-        .unwrap_or(lowered);
-    let body_refs = body_reference_map(item, input, installed_skills);
-    let qualified = qualify_body_references(&qualified, &body_refs)?;
+    let qualified = qualify_body_references(&lowered, &body_refs)?;
 
     let path = root.join("agents").join(format!("{}.md", item.id.name));
     crate::fs::atomic_write(&path, qualified.as_bytes())
+}
+
+fn qualify_agent_skills(
+    skills: &mut crate::frontmatter::SkillsSpec,
+    references: &IndexMap<String, String>,
+) {
+    for skill in skills.load.iter_mut().chain(&mut skills.available) {
+        if let Some(qualified) = references.get(skill) {
+            *skill = qualified.clone();
+        }
+    }
 }
 
 fn apply_plugin_agent_policy(

@@ -18,7 +18,9 @@ mutates the destination itself. The output layer stages in a sibling directory, 
 `.mars-plugin.json` sentinel, and publishes with a two-rename swap under a cross-process lock.
 It recovers interrupted swaps before a new build and never replaces a non-empty destination
 without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
-before applying the building package's single plugin namespace.
+before applying the building package's single plugin namespace. Agent skill names are qualified
+before native lowering so generated guidance is born qualified; the fence-aware prose pass is
+only responsible for authored body references.
 
 `plugin_inputs_hash` is the offline F3 seam: bytes under the root package's discovered own-item
 paths (including hook fragments and MCP definitions), with generated trees skipped and text line

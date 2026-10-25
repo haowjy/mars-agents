@@ -24,6 +24,10 @@ The root-package input fingerprint is computed from discovered authored item pat
 and under that same lock, before the staging tree is populated, so crash leftovers and generated
 catalog/output trees cannot make an otherwise clean checkout stale.
 
+Agent `skills` references receive the plugin namespace before native lowering. Generated body
+guidance therefore does not depend on the later fence-aware authored-prose rewrite to become
+qualified.
+
 The output API deliberately has no package-root parameter because explicit `--out` paths may
 live elsewhere. It independently rejects filesystem roots, the current directory and its
 ancestors, package roots, symlinks, and non-empty unowned trees.

@@ -84,6 +84,39 @@ Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. 
 
 ## Per-Target Field Mapping
 
+### Skill references in native agents
+
+Native agent files preserve the `skills.load` / `skills.available` distinction instead of
+copying the raw field:
+
+- Claude and Cursor subagents preload only `skills.load` through their native `skills:` field.
+  `skills.available` is never put in that field.
+- Every available-only `skills.available` entry is named in a generated body instruction.
+  Harnesses without a per-agent preload field (Codex, OpenCode, and Pi) receive the same kind of
+  instruction for `skills.load`. If a name occurs in both channels, `load` takes precedence just
+  as it does in a launch bundle.
+- Claude also receives the load instruction because one file serves both native subagents, which
+  preload `skills:`, and `claude --agent` sessions, which do not. The instruction says "unless
+  they are already in your context" so the subagent path does not reload them.
+
+Mars appends one paragraph after a blank line at the end of the authored body:
+
+```text
+Load these skills before starting, unless they are already in your context: /review. Load these skills when the task fits: /diagnose.
+```
+
+Keeping the guidance last leaves the authored instructions intact and gives every harness a
+native `/name` reference to resolve. Mars does not inline skill bodies: doing so would duplicate
+content and break resources resolved relative to the skill directory. In plugin builds, the
+plugin passes qualified names into lowering so generated references are born qualified (for
+example, `/meridian-dev-workflow:review`); the normal prose pass separately qualifies authored
+references.
+Native preload fields are exact. Body guidance preserves the requested names and intent, but the
+harness may not act on a prose instruction, so the tables classify it as approximate rather than
+dropped. It is the designed per-target representation and does not emit a lossiness warning.
+Claude `skills.load` is exact for native subagents but approximate for the dual-use
+`claude --agent` path.
+
 ### `.mars/agents/<name>.md` (Canonical)
 
 Full fidelity — all source frontmatter preserved after compilation. No fields are stripped. Body unchanged.
@@ -97,7 +130,8 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `name` | `name:` | exact |
 | `description` | `description:` | exact |
 | `model` | `model:` | exact |
-| `skills` | `skills:` | exact |
+| `skills.load` | `skills:` plus the end-of-body reminder used by `claude --agent` | exact for subagents; approximate for `--agent` |
+| `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
 | `tools` | `tools:` (+ projected `mcp__…` MCP tokens), only for a map-form `'*': deny` allowlist | Claude's `tools:` restricts the agent to what it lists. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost); `ask` rules and an allowlist with nothing allowed have no field, and Mars records each as dropped lossiness |
 | `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
 | `effort` | `effort:` (`xhigh` → `max`) | exact |
@@ -243,7 +277,8 @@ TOML format. Codex reads this for native agent invocation.
 | `network` | dropped | dropped |
 | `network-allow`, `network-deny` | dropped | dropped |
 | body | `developer_instructions` | exact |
-| `skills` | dropped | dropped |
+| `skills.load` | end-of-body `/name` guidance | approximate |
+| `skills.available` | end-of-body `/name` guidance | approximate |
 | `tools` | dropped | dropped |
 | `disallowed-tools` | dropped | dropped |
 | `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness); enable servers via `mcp/<name>/mcp.toml` | approximate |
@@ -293,7 +328,8 @@ YAML frontmatter + markdown body.
 | `model` | `model:` | exact |
 | `mode` | `mode:` | approximate |
 | body | body | exact |
-| `skills` | dropped | dropped |
+| `skills.load` | end-of-body `/name` guidance | approximate |
+| `skills.available` | end-of-body `/name` guidance | approximate |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
 | `network` | dropped | meridian-only |
@@ -307,7 +343,8 @@ YAML frontmatter + markdown body.
 | `model-policies` | dropped | meridian-only |
 | `fanout` | dropped | meridian-only |
 
-`skills` are not emitted into the OpenCode agent artifact. Skill availability comes from separate skill-surface compilation to `.opencode/skills/`.
+OpenCode has no per-agent skill preload field. Its separate `.opencode/skills/` surface makes the
+generated `/name` references resolvable.
 
 `effort` on OpenCode subprocess maps to `--variant`; on streaming/TUI launches it's dropped.
 
@@ -320,7 +357,8 @@ YAML frontmatter + markdown body.
 | `name` | `name:` | exact |
 | `description` | one physical line (`description:` with collapsed whitespace) | exact |
 | `model` | `model:` (internally adapted when deterministic mapping exists) | exact |
-| `skills` | `skills:` | exact |
+| `skills.load` | `skills:` | exact |
+| `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
 | `mode` | `mode:` | approximate |
 | body | body | exact |
 | `approval` | runtime-only (meridian projects `--force`/`--yolo`) | approximate |
@@ -373,6 +411,8 @@ YAML frontmatter + markdown body.
 | `model` | `model:` | exact |
 | `mode` | `mode:` | approximate |
 | body | body | exact |
+| `skills.load` | end-of-body `/name` guidance | approximate |
+| `skills.available` | end-of-body `/name` guidance | approximate |
 | `effort` | dropped | approximate |
 | `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness) | approximate |
 | `network` | dropped | meridian-only |
@@ -442,11 +482,12 @@ Every field lowering is classified as one of four categories:
 | **dropped** | No native equivalent; value is discarded in the native artifact (preserved in `.mars/`) |
 | **meridian-only** | Consumed exclusively by Meridian; never lowered to any harness-native format |
 
-Mars emits diagnostics for dropped and approximate fields during `mars sync`:
+Mars emits grouped diagnostics for actionable dropped and approximate fields during `mars sync`.
+Expected body-guided skill channels are documented mappings and do not emit warnings:
 
 ```
-warning[agent-field-dropped]: agent `coder`: field `sandbox` dropped in Claude native artifact
-warning[agent-field-approximate]: agent `reviewer`: field `mode` approximately mapped in OpenCode (OpenCode uses the same mode concept)
+warning[agent-field-dropped]: agent `coder`: 2 fields dropped for .codex (disallowed-tools, tools)
+warning[agent-field-approximate]: agent `reviewer`: 2 fields approximately mapped for .cursor (mode: Cursor may use the same mode concept; sandbox: Cursor only supports enabled/disabled)
 ```
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
@@ -474,7 +515,8 @@ Compact per-field, per-target classification:
 | `effort` | preserved | exact | exact | approximate | approximate | approximate |
 | `autocompact` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `autocompact_pct` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
-| `skills` | preserved | exact | dropped | dropped | exact | dropped |
+| `skills.load` | preserved | exact for subagents; approximate for `--agent` | approximate | approximate | exact | approximate |
+| `skills.available` | preserved | approximate | approximate | approximate | approximate | approximate |
 | matched `harness-overrides.<target>` passthrough | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `harness-overrides` | preserved | passthrough | passthrough | passthrough | passthrough | passthrough |

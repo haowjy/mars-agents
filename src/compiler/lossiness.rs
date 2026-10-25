@@ -97,6 +97,7 @@ fn emit_item_lossiness_warnings(
     diag: &mut DiagnosticCollector,
 ) {
     let mut dropped_by_target: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut approximate_by_target: BTreeMap<String, Vec<(String, &'static str)>> = BTreeMap::new();
     let mut meridian_by_target: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for lf in lossy_fields {
@@ -114,14 +115,10 @@ fn emit_item_lossiness_warnings(
                     .push(lf.field.clone());
             }
             Lossiness::Approximate { note } => {
-                diag.warn_with_category(
-                    approximate_code,
-                    format!(
-                        "{item_kind} `{item_name}`: field `{}` approximately mapped in {} ({note})",
-                        lf.field, lf.target
-                    ),
-                    DiagnosticCategory::Lossiness,
-                );
+                approximate_by_target
+                    .entry(lf.target.clone())
+                    .or_default()
+                    .push((lf.field.clone(), note));
             }
         }
     }
@@ -134,10 +131,45 @@ fn emit_item_lossiness_warnings(
         dropped_by_target,
         diag,
     );
+    emit_grouped_approximate_warnings(
+        item_kind,
+        item_name,
+        approximate_code,
+        approximate_by_target,
+        diag,
+    );
     for (target, fields) in meridian_by_target {
         for field in fields {
             diag.record_meridian_only_field(item_kind, item_name, &target, &field);
         }
+    }
+}
+
+fn emit_grouped_approximate_warnings(
+    item_kind: &str,
+    item_name: &str,
+    code: &'static str,
+    grouped: BTreeMap<String, Vec<(String, &'static str)>>,
+    diag: &mut DiagnosticCollector,
+) {
+    for (target, mut fields) in grouped {
+        fields.sort_unstable();
+        fields.dedup();
+        let count = fields.len();
+        let noun = if count == 1 { "field" } else { "fields" };
+        let details = fields
+            .iter()
+            .map(|(field, note)| format!("{field}: {note}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        diag.warn_with_category(
+            code,
+            format!(
+                "{item_kind} `{item_name}`: {count} {noun} approximately mapped for {} ({details})",
+                target_label(&target)
+            ),
+            DiagnosticCategory::Lossiness,
+        );
     }
 }
 
@@ -238,19 +270,35 @@ mod tests {
     }
 
     #[test]
-    fn approximate_warnings_remain_per_field() {
-        let lossy = vec![LossyField {
-            field: "tools".into(),
-            target: "Claude".into(),
-            classification: Lossiness::Approximate {
-                note: "unknown tool name passed through verbatim",
+    fn approximate_warnings_are_summarized_per_target() {
+        let lossy = vec![
+            LossyField {
+                field: "tools".into(),
+                target: "Claude".into(),
+                classification: Lossiness::Approximate {
+                    note: "unknown tool name passed through verbatim",
+                },
             },
-        }];
+            LossyField {
+                field: "mode".into(),
+                target: "Claude".into(),
+                classification: Lossiness::Approximate {
+                    note: "native mode has different semantics",
+                },
+            },
+        ];
         let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
         emit_agent_lossiness_warnings("coder", &lossy, &mut diag);
         let warnings = diag.drain();
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "agent-field-approximate");
+        assert!(
+            warnings[0]
+                .message
+                .contains("2 fields approximately mapped for .claude")
+        );
+        assert!(warnings[0].message.contains("mode:"));
+        assert!(warnings[0].message.contains("tools:"));
     }
 
     #[test]

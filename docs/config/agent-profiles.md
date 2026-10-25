@@ -359,7 +359,8 @@ instruction.
 Codex, OpenCode, and Pi have no per-agent preload field, so both channels become body guidance
 without inlining skill text. Claude also repeats `load` as guidance because `claude --agent`
 does not honor the subagent-only `skills:` preload. Body guidance preserves references but is an
-approximation because the harness might not act on prose. See
+approximation because the harness might not act on prose; as the designed target representation,
+it does not produce a lossiness warning. See
 [Agent Compilation](agent-compilation.md#skill-references-in-native-agents).
 
 ---

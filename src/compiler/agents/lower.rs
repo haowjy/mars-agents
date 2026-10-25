@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn claude_lowering_preserves_name_description_model_skills_tools_body() {
-        let content = "---\nname: coder\ndescription: Code impl agent\nmodel: gpt55\nharness: claude\nskills:\n  load: [dev-principles]\n  available: [review]\ntools:\n  '*': deny\n  Bash: allow\n  Write: allow\n---\n# Coder\nYou write code.";
+        let content = "---\r\nname: coder\r\ndescription: Code impl agent\r\nmodel: gpt55\r\nharness: claude\r\nskills:\r\n  load: [dev-principles, dev-principles]\r\n  available: [review, review, dev-principles]\r\ntools:\r\n  '*': deny\r\n  Bash: allow\r\n  Write: allow\r\n---\r\n# Coder\r\n```text\r\nYou write code.";
         let (profile, fm, _) = profile_from(content);
         let body = fm.body();
         let out = lower_to_claude(&profile, &fm, body, &NativeModel::Inherit);
@@ -58,16 +58,22 @@ mod tests {
         assert!(text.contains("# Coder"), "body missing");
         assert!(
             lowered.body().ends_with(
-                "Load these skills before starting, unless they are already in your context: /dev-principles. Load these skills when the task fits: /review.\n"
+                "\r\n```\r\n\r\nLoad these skills before starting, unless they are already in your context: /dev-principles. Load these skills when the task fits: /review.\r\n"
             ),
             "skill guidance missing: {text}"
         );
-        for field in ["skills.load", "skills.available"] {
-            assert!(out.lossy_fields.iter().any(|lossy| {
-                lossy.field == field
-                    && matches!(lossy.classification, Lossiness::Approximate { .. })
-            }));
-        }
+        assert_eq!(lowered.body().matches("/dev-principles").count(), 1);
+        assert_eq!(lowered.body().matches("/review").count(), 1);
+        assert!(
+            !out.lossy_fields
+                .iter()
+                .any(|lossy| lossy.field.starts_with("skills")),
+            "designed skill guidance must not warn: {:?}",
+            out.lossy_fields
+                .iter()
+                .map(|lossy| &lossy.field)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -388,7 +394,7 @@ mod tests {
 
     #[test]
     fn codex_lowering_carries_skills_in_body_and_drops_tools() {
-        let content = "---\nname: r\nharness: codex\nskills:\n  load: [review]\n  available: [diagnose]\ntools:\n  Bash: allow\ndisallowed-tools: [Agent]\n---\n# body";
+        let content = "---\nname: r\nharness: codex\nskills:\n  load: [review, review]\n  available: [diagnose, diagnose, review]\ntools:\n  Bash: allow\ndisallowed-tools: [Agent]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes.clone()).unwrap();
@@ -401,18 +407,20 @@ mod tests {
         assert!(!dropped.iter().any(|field| field.starts_with("skills")));
         assert!(dropped.contains(&"tools"));
         assert!(dropped.contains(&"disallowed-tools"));
-        for field in ["skills.load", "skills.available"] {
-            assert!(out.lossy_fields.iter().any(|lossy| {
-                lossy.field == field
-                    && matches!(lossy.classification, Lossiness::Approximate { .. })
-            }));
-        }
+        assert!(
+            !out.lossy_fields
+                .iter()
+                .any(|lossy| lossy.field.starts_with("skills")),
+            "designed skill guidance must not warn"
+        );
         assert!(
             text.contains(
                 "Load these skills before starting, unless they are already in your context: /review. Load these skills when the task fits: /diagnose."
             ),
             "skill guidance missing: {text}"
         );
+        assert_eq!(text.matches("/review").count(), 1);
+        assert_eq!(text.matches("/diagnose").count(), 1);
     }
 
     #[test]
@@ -620,6 +628,11 @@ mod tests {
                 .body()
                 .ends_with("Load these skills when the task fits: /diagnose.\n")
         );
+        assert!(
+            !out.lossy_fields
+                .iter()
+                .any(|lossy| lossy.field.starts_with("skills"))
+        );
     }
 
     #[test]
@@ -703,6 +716,11 @@ mod tests {
         assert!(lowered.body().contains(
             "Load these skills before starting, unless they are already in your context: /review. Load these skills when the task fits: /diagnose."
         ));
+        assert!(
+            !out.lossy_fields
+                .iter()
+                .any(|lossy| lossy.field.starts_with("skills"))
+        );
     }
 
     #[test]

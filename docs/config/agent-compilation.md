@@ -108,12 +108,14 @@ Load these skills before starting, unless they are already in your context: /rev
 Keeping the guidance last leaves the authored instructions intact and gives every harness a
 native `/name` reference to resolve. Mars does not inline skill bodies: doing so would duplicate
 content and break resources resolved relative to the skill directory. In plugin builds, the
-normal reference pass qualifies these generated references (for example,
-`/meridian-dev-workflow:review`).
+plugin passes qualified names into lowering so generated references are born qualified (for
+example, `/meridian-dev-workflow:review`); the normal prose pass separately qualifies authored
+references.
 Native preload fields are exact. Body guidance preserves the requested names and intent, but the
-harness may not act on a prose instruction, so Mars reports body-guided channels as approximate
-rather than dropped. Claude `skills.load` is exact for native subagents but approximate for the
-dual-use `claude --agent` path; its diagnostic records that session-agent limitation.
+harness may not act on a prose instruction, so the tables classify it as approximate rather than
+dropped. It is the designed per-target representation and does not emit a lossiness warning.
+Claude `skills.load` is exact for native subagents but approximate for the dual-use
+`claude --agent` path.
 
 ### `.mars/agents/<name>.md` (Canonical)
 
@@ -480,11 +482,12 @@ Every field lowering is classified as one of four categories:
 | **dropped** | No native equivalent; value is discarded in the native artifact (preserved in `.mars/`) |
 | **meridian-only** | Consumed exclusively by Meridian; never lowered to any harness-native format |
 
-Mars emits diagnostics for dropped and approximate fields during `mars sync`:
+Mars emits grouped diagnostics for actionable dropped and approximate fields during `mars sync`.
+Expected body-guided skill channels are documented mappings and do not emit warnings:
 
 ```
-warning[agent-field-dropped]: agent `coder`: field `sandbox` dropped in Claude native artifact
-warning[agent-field-approximate]: agent `reviewer`: field `mode` approximately mapped in OpenCode (OpenCode uses the same mode concept)
+warning[agent-field-dropped]: agent `coder`: 2 fields dropped for .codex (disallowed-tools, tools)
+warning[agent-field-approximate]: agent `reviewer`: 2 fields approximately mapped for .cursor (mode: Cursor may use the same mode concept; sandbox: Cursor only supports enabled/disabled)
 ```
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.

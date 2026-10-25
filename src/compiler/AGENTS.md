@@ -91,8 +91,9 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 - `lower_policy.rs` owns capability-aware agent skill lowering. Claude and Cursor native
   `skills:` fields receive `skills.load` only; body guidance carries `skills.available`, plus
   `skills.load` on targets without per-agent preload and on Claude's dual-use
-  subagent/session-agent file. Body-guided channels record approximate lossiness. Plugin builds
-  call this same path before qualifying `/name` references.
+  subagent/session-agent file. This guidance is a designed mapping, not warning-tier lossiness.
+  Plugin builds pass qualified skill names into the same lowering path; their prose rewriter
+  handles authored references separately.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
 - `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
   lowerers omit them; Codex records all three as dropped, while other targets record them as

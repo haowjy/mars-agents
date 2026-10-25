@@ -169,7 +169,7 @@ fn record_agent_invocation_lossiness(
 ///
 /// Per agent-compilation-mapping.md V0 §10:
 /// - Preserved: name, description, model, tools, disallowed-tools, body
-/// - Skills: load is native-preloaded; body-guided channels are approximate
+/// - Skills: load is native-preloaded where supported; other channels use designed body guidance
 /// - Meridian-only (launch-time): approval, sandbox, network, mode, autocompact,
 ///   autocompact_pct, model-policies, fanout
 /// - Dropped: harness, harness-overrides, legacy-models
@@ -203,6 +203,7 @@ impl NativeModel {
 enum AgentMarkdownField {
     Identity,
     Model,
+    Skills,
     ClaudeTools,
     ClaudeEffort,
     Mode,
@@ -227,6 +228,7 @@ struct AgentLoweringPolicy {
     target_name: &'static str,
     description: DescriptionPolicy,
     mode_note: Option<&'static str>,
+    skills: AgentSkillsPolicy,
     fields: &'static [AgentMarkdownField],
     lossiness: &'static [AgentLossinessStep],
 }
@@ -248,17 +250,6 @@ impl AgentSkillsPolicy {
     }
 }
 
-fn agent_skills_policy(harness: HarnessKind) -> AgentSkillsPolicy {
-    match harness {
-        // Claude ignores `skills:` when this file is selected with `claude --agent`.
-        HarnessKind::Claude => AgentSkillsPolicy::NativePreloadWithReminder,
-        HarnessKind::Cursor => AgentSkillsPolicy::NativePreload,
-        HarnessKind::Codex | HarnessKind::OpenCode | HarnessKind::Pi => {
-            AgentSkillsPolicy::BodyGuidance
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 enum DescriptionPolicy {
     Preserve,
@@ -269,9 +260,12 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     target_name: "Claude",
     description: DescriptionPolicy::Preserve,
     mode_note: None,
+    // Claude ignores `skills:` when this file is selected with `claude --agent`.
+    skills: AgentSkillsPolicy::NativePreloadWithReminder,
     fields: &[
         AgentMarkdownField::Identity,
         AgentMarkdownField::Model,
+        AgentMarkdownField::Skills,
         AgentMarkdownField::ClaudeTools,
         AgentMarkdownField::ClaudeEffort,
     ],
@@ -288,6 +282,7 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     target_name: "OpenCode",
     description: DescriptionPolicy::Preserve,
     mode_note: None,
+    skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
         AgentMarkdownField::Identity,
         AgentMarkdownField::Model,
@@ -311,9 +306,11 @@ const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     target_name: "Cursor",
     description: DescriptionPolicy::CursorOneLine,
     mode_note: Some("Cursor may use the same mode concept"),
+    skills: AgentSkillsPolicy::NativePreload,
     fields: &[
         AgentMarkdownField::Identity,
         AgentMarkdownField::Model,
+        AgentMarkdownField::Skills,
         AgentMarkdownField::Mode,
     ],
     lossiness: &[
@@ -334,6 +331,7 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     target_name: "Pi",
     description: DescriptionPolicy::Preserve,
     mode_note: Some("Pi may use the same mode concept"),
+    skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
         AgentMarkdownField::Identity,
         AgentMarkdownField::Model,
@@ -380,7 +378,7 @@ impl<'a> AgentLoweringCtx<'a> {
         model_field: &'a NativeModel,
     ) -> Self {
         let eff = Effective::new(profile, harness);
-        let lowered_skills = lower_agent_skills(eff.skills(), agent_skills_policy(harness), body);
+        let lowered_skills = lower_agent_skills(eff.skills(), policy.skills, body);
         Self {
             harness,
             policy,
@@ -390,7 +388,7 @@ impl<'a> AgentLoweringCtx<'a> {
             body: lowered_skills.body,
             native_skills: lowered_skills.native_preload,
             yaml: serde_yaml::Mapping::new(),
-            lossy: Vec::new(),
+            lossy: lowered_skills.lossy,
         }
     }
 
@@ -398,6 +396,7 @@ impl<'a> AgentLoweringCtx<'a> {
         match field {
             AgentMarkdownField::Identity => self.insert_identity(),
             AgentMarkdownField::Model => self.insert_model(),
+            AgentMarkdownField::Skills => self.insert_skills(),
             AgentMarkdownField::ClaudeTools => self.insert_claude_tools(),
             AgentMarkdownField::ClaudeEffort => self.insert_claude_effort(),
             AgentMarkdownField::Mode => self.insert_mode(),
@@ -649,10 +648,7 @@ impl<'a> AgentLoweringCtx<'a> {
         );
     }
 
-    fn finish(mut self) -> LoweredOutput {
-        // Skill emission follows the harness capability policy, independent of the
-        // target-specific field list above.
-        self.insert_skills();
+    fn finish(self) -> LoweredOutput {
         LoweredOutput {
             bytes: render_markdown(self.yaml, &self.body),
             lossy_fields: self.lossy,
@@ -664,6 +660,7 @@ impl<'a> AgentLoweringCtx<'a> {
 struct LoweredAgentSkills {
     native_preload: Vec<String>,
     body: String,
+    lossy: Vec<LossyField>,
 }
 
 fn lower_agent_skills(
@@ -671,21 +668,21 @@ fn lower_agent_skills(
     policy: AgentSkillsPolicy,
     body: &str,
 ) -> LoweredAgentSkills {
+    let load = dedupe_skill_names(&skills.load);
     let native_preload = if policy.native_preload() {
-        skills.load.clone()
+        load.clone()
     } else {
         Vec::new()
     };
 
     // A skill named in both channels is loaded, matching launch-bundle semantics.
-    let available = skills
-        .available
-        .iter()
-        .filter(|skill| !skills.load.contains(skill))
+    let available = dedupe_skill_names(&skills.available)
+        .into_iter()
+        .filter(|skill| !load.contains(skill))
         .collect::<Vec<_>>();
     let body_load = policy
         .load_guidance()
-        .then_some(skills.load.as_slice())
+        .then_some(load.as_slice())
         .filter(|skills| !skills.is_empty());
 
     let mut guidance = Vec::new();
@@ -698,73 +695,101 @@ fn lower_agent_skills(
     if !available.is_empty() {
         guidance.push(format!(
             "Load these skills when the task fits: {}.",
-            format_skill_references(available.iter().map(|skill| skill.as_str()))
+            format_skill_references(available.iter().map(String::as_str))
         ));
     }
 
     let body = if guidance.is_empty() {
         body.to_string()
     } else {
-        let mut lowered = body.to_string();
-        if !lowered.ends_with("\n\n") {
-            if lowered.ends_with('\n') {
-                lowered.push('\n');
-            } else if !lowered.is_empty() {
-                lowered.push_str("\n\n");
-            }
-        }
-        lowered.push_str(&guidance.join(" "));
-        lowered.push('\n');
-        lowered
+        append_guidance(body, &guidance.join(" "))
     };
 
     LoweredAgentSkills {
         native_preload,
         body,
+        // Body guidance is the designed representation on these targets, not an
+        // actionable lowering loss. Keep diagnostics owned by this pass without
+        // turning the expected result into a warning on every sync.
+        lossy: Vec::new(),
     }
 }
 
-fn record_agent_skill_lossiness(
-    skills: &SkillsSpec,
-    policy: AgentSkillsPolicy,
-    target: &str,
-    lossy: &mut Vec<LossyField>,
-) {
-    const BODY_GUIDANCE_NOTE: &str =
-        "skill names are preserved as body guidance, but native loading is not guaranteed";
-    const DUAL_USE_NOTE: &str = concat!(
-        "native preload is exact for subagents, but body guidance used by ",
-        "session agents is not guaranteed"
-    );
+fn dedupe_skill_names(skills: &[String]) -> Vec<String> {
+    let mut deduped = Vec::with_capacity(skills.len());
+    for skill in skills {
+        if !deduped.contains(skill) {
+            deduped.push(skill.clone());
+        }
+    }
+    deduped
+}
 
-    if policy.load_guidance() && !skills.load.is_empty() {
-        lossy.push(LossyField {
-            field: "skills.load".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: if policy.native_preload() {
-                    DUAL_USE_NOTE
-                } else {
-                    BODY_GUIDANCE_NOTE
-                },
-            },
-        });
+fn append_guidance(body: &str, guidance: &str) -> String {
+    let line_ending = body_line_ending(body);
+    let mut lowered = body.to_string();
+
+    // An unclosed authored fence would otherwise turn the generated instruction into code.
+    if let Some((character, length)) = unclosed_fence(body) {
+        if !lowered.ends_with(line_ending) {
+            lowered.push_str(line_ending);
+        }
+        lowered.extend(std::iter::repeat_n(character, length));
+        lowered.push_str(line_ending);
     }
 
-    // A name in both channels is loaded, matching launch-bundle semantics.
-    if skills
-        .available
-        .iter()
-        .any(|skill| !skills.load.contains(skill))
-    {
-        lossy.push(LossyField {
-            field: "skills.available".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate {
-                note: BODY_GUIDANCE_NOTE,
-            },
-        });
+    let blank_line = format!("{line_ending}{line_ending}");
+    if !lowered.ends_with(&blank_line) {
+        if lowered.ends_with(line_ending) {
+            lowered.push_str(line_ending);
+        } else if !lowered.is_empty() {
+            lowered.push_str(&blank_line);
+        }
     }
+    lowered.push_str(guidance);
+    lowered.push_str(line_ending);
+    lowered
+}
+
+fn body_line_ending(body: &str) -> &'static str {
+    body.find('\n')
+        .map(|newline| {
+            if body[..newline].ends_with('\r') {
+                "\r\n"
+            } else {
+                "\n"
+            }
+        })
+        .unwrap_or("\n")
+}
+
+fn unclosed_fence(body: &str) -> Option<(char, usize)> {
+    let mut fence = None;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if let Some((character, length)) = fence {
+            let closing_length = trimmed
+                .chars()
+                .take_while(|candidate| *candidate == character)
+                .count();
+            if closing_length >= length && trimmed[closing_length..].trim().is_empty() {
+                fence = None;
+            }
+            continue;
+        }
+
+        let Some(character @ ('`' | '~')) = trimmed.chars().next() else {
+            continue;
+        };
+        let length = trimmed
+            .chars()
+            .take_while(|candidate| *candidate == character)
+            .count();
+        if length >= 3 {
+            fence = Some((character, length));
+        }
+    }
+    fence
 }
 
 fn format_skill_references<'a>(skills: impl Iterator<Item = &'a str>) -> String {
@@ -803,12 +828,6 @@ fn lower_markdown_agent(
     model_field: &NativeModel,
 ) -> LoweredOutput {
     let mut ctx = AgentLoweringCtx::new(harness, policy, profile, body, model_field);
-    record_agent_skill_lossiness(
-        ctx.eff.skills(),
-        agent_skills_policy(harness),
-        policy.target_name,
-        &mut ctx.lossy,
-    );
     for &field in policy.fields {
         ctx.apply_field(field);
     }
@@ -854,15 +873,8 @@ pub fn lower_to_codex(
 ) -> LoweredOutput {
     let eff = Effective::new(profile, HarnessKind::Codex);
     let target = "Codex";
-    let lowered_skills =
-        lower_agent_skills(eff.skills(), agent_skills_policy(HarnessKind::Codex), body);
-    let mut lossy = Vec::new();
-    record_agent_skill_lossiness(
-        eff.skills(),
-        agent_skills_policy(HarnessKind::Codex),
-        target,
-        &mut lossy,
-    );
+    let lowered_skills = lower_agent_skills(eff.skills(), AgentSkillsPolicy::BodyGuidance, body);
+    let mut lossy = lowered_skills.lossy;
 
     // Effort — exact (lowered to model_reasoning_effort)
     let effort_str = eff.effort().map(|e| e.as_str());

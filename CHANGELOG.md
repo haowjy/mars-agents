@@ -16,7 +16,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
   Cursor no longer preload available-only skills, while every target receives `/name` body
-  guidance for skills its per-agent format cannot preload.
+  guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a
+  reminder for `--agent`, whose session path does not honor the native preload field.
 - `mars check PATH` now resolves package path dependencies relative to the checked package,
   rather than the caller's working directory.
 - `mars check` and `mars init` now report publish-view configuration warnings instead of

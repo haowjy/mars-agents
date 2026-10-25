@@ -1,26 +1,27 @@
 # src/build/
 
-Generates launch bundles — the serializable artifact that a harness runtime consumes to
-launch an agent with resolved routing, execution policy, tools, and prompt surface — and
-committed harness plugin trees.
+Generates launch bundles consumed by harness runtimes and committed plugin trees consumed by
+harness plugin installers.
 
 ## Contracts
 
-### Plugin tree publication
+### Plugin builds and publication
 
-`plugin/output.rs` owns publication and recovery, while its caller owns the
-contents of the staged tree. The writer sees an empty `.<dir>.mars-new`
-directory; only after it succeeds does the output layer hash the files, write
-`.mars-plugin.json`, and rename the existing tree aside before publishing the
-new one. The deterministic sibling names are safe because the entire operation
-and startup recovery hold a cross-process lock keyed by the absolute output
-path.
+`build plugin` is a publish operation, not a project compilation. It constructs an implicit
+consumer over `PublishLens`, resolves before staging (so relative package dependencies retain
+their declared base), and reuses sync's `TargetState`/`RenameIndex` to flatten the graph. It
+must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configuration, model
+caches, or installed harnesses. `plugin::output::replace_owned_tree` alone owns destination
+replacement and sentinel publication.
 
-The output API deliberately has no package-root parameter because explicit
-`--out` paths may live elsewhere. Configured in-place paths must be validated as
-relative and package-contained before this layer; this layer independently
-rejects filesystem roots, the current directory and its ancestors, package
-roots, symlinks, and non-empty trees without a valid sentinel.
+The output writer receives an empty sibling staging directory. After it succeeds, the output
+layer hashes the files, writes `.mars-plugin.json`, and publishes the staged tree with a
+two-rename swap. Publication and startup recovery share a cross-process lock keyed by the
+absolute output path; non-empty trees without a valid sentinel are never replaced.
+
+The output API deliberately has no package-root parameter because explicit `--out` paths may
+live elsewhere. It independently rejects filesystem roots, the current directory and its
+ancestors, package roots, symlinks, and non-empty unowned trees.
 
 ### Two launch-bundle modes
 

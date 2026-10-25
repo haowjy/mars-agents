@@ -84,6 +84,37 @@ impl RenameIndex {
     pub fn is_empty(&self) -> bool {
         self.skill_renames.is_empty() && self.subagent_renames.is_empty()
     }
+
+    /// Installed-name rewrites visible from one source package.
+    ///
+    /// This is the same own-package-first, then dependency-order rule used by
+    /// `apply_renames`. Plugin builds also need it for markdown body references,
+    /// which are outside sync's canonical frontmatter rewrite.
+    pub(crate) fn visible_renames(
+        &self,
+        target: &TargetState,
+        graph: &ResolvedGraph,
+        dep_precedence: &[SourceName],
+        source_name: &SourceName,
+    ) -> (IndexMap<String, String>, IndexMap<String, String>) {
+        let source_deps = ordered_agent_deps(graph, source_name, dep_precedence);
+        (
+            renames_for_agent(
+                target,
+                source_name,
+                &source_deps,
+                ItemKind::Skill,
+                &self.skill_renames,
+            ),
+            renames_for_agent(
+                target,
+                source_name,
+                &source_deps,
+                ItemKind::Agent,
+                &self.subagent_renames,
+            ),
+        )
+    }
 }
 
 /// Apply explicit and collision renames to each agent in one content update.

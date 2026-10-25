@@ -30,6 +30,7 @@ use indexmap::IndexMap;
 pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
 pub(crate) use provider::RealSourceProvider;
+pub(crate) use publish::resolve_publish_graph_from_config;
 pub use publish::{PublishLens, resolve_publish_graph};
 pub(crate) use requires::{
     check_consumer_package_requirements, validate_package_requirement_syntax,

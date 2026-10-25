@@ -19,6 +19,19 @@ pub struct BuildArgs {
 pub enum BuildCommand {
     /// Build a harness-targeted launch scaffold/bundle for an agent or ad-hoc launch.
     LaunchBundle(LaunchBundleArgs),
+
+    /// Build one Claude-format plugin from a package and its resolved dependency graph.
+    Plugin(PluginArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct PluginArgs {
+    /// Package directory containing mars.toml (default: detected project root).
+    pub path: Option<PathBuf>,
+
+    /// Destination for the generated plugin tree.
+    #[arg(long)]
+    pub out: PathBuf,
 }
 
 fn parse_harness(value: &str) -> Result<HarnessId, String> {
@@ -168,10 +181,39 @@ pub struct LaunchBundleArgs {
     pub no_refresh_models: bool,
 }
 
-pub fn run(args: &BuildArgs, ctx: &MarsContext, _json: bool) -> Result<i32, MarsError> {
+pub fn run(args: &BuildArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         BuildCommand::LaunchBundle(subargs) => run_launch_bundle(subargs, ctx),
+        BuildCommand::Plugin(subargs) => run_plugin(subargs, ctx, json),
     }
+}
+
+fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+    let package_root = match &args.path {
+        Some(path) if path.is_absolute() => path.clone(),
+        Some(path) => std::env::current_dir()?.join(path),
+        None => ctx.project_root.clone(),
+    };
+    let report = crate::build::plugin::build_plugin(&crate::build::plugin::PluginBuildRequest {
+        package_root,
+        out_dir: args.out.clone(),
+    })?;
+
+    if json {
+        crate::cli::output::print_json(&report);
+    } else {
+        crate::cli::output::print_diagnostics(&report.diagnostics);
+        crate::cli::output::print_success(&format!(
+            "built plugin `{}` at {} ({} agents, {} skills, {} hooks, {} MCP servers)",
+            report.plugin_name,
+            report.output.display(),
+            report.components.agents,
+            report.components.skills,
+            report.components.hooks,
+            report.components.mcp_servers,
+        ));
+    }
+    Ok(0)
 }
 
 fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, MarsError> {

@@ -5,8 +5,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Plugin output trees now have deterministic sentinels, cross-process build
-  serialization, wipe-safety checks, and crash-recoverable whole-tree swaps.
+- `mars build plugin [PATH] --out <dir>` now builds one deterministic Claude-format plugin
+  containing the package and the same filtered, collision-resolved dependency graph a consumer
+  would receive from `mars sync`, including exported hooks and MCP servers. Rebuilds safely
+  replace only Mars-owned output trees using deterministic sentinels and crash-recoverable swaps.
 
 ### Fixed
 - `mars check PATH` now resolves package path dependencies relative to the checked package,

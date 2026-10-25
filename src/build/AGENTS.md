@@ -1,7 +1,22 @@
-# src/build/ — Build Artifacts
+# src/build/ — Runtime and Distribution Artifacts
 
-Generates serializable launch bundles for harness runtimes and committed harness
-plugin trees.
+Generates serializable launch bundles for harness runtimes and committed plugin trees for
+package distribution.
+
+## Plugin Builds
+
+`plugin/` builds one Claude-format tree from the consumer view of a package's complete
+publish graph. It resolves through `PublishLens`, stages every package, collects the flattened
+target with sync's collision and rewrite machinery, then lowers agents, skills, exported hooks,
+and exported MCP servers without reading project config, a lockfile, `.mars/`, or host model
+state. Codex shares that tree and contributes diagnostics only.
+
+The generated tree is handed to `plugin::output::replace_owned_tree`; the build core never
+mutates the destination itself. The output layer stages in a sibling directory, records a
+`.mars-plugin.json` sentinel, and publishes with a two-rename swap under a cross-process lock.
+It recovers interrupted swaps before a new build and never replaces a non-empty destination
+without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
+before applying the building package's single plugin namespace.
 
 ## Mental Model
 
@@ -99,11 +114,3 @@ Alias `provider` → `harness_model` (bare native ids vs probe slugs): [`src/mod
 - `policy/AGENTS.md` — policy resolution pipeline, field independence, cross-field precedence
 - `src/routing/AGENTS.md` — harness candidate evaluation
 - `src/cli/build.rs` — CLI arg definitions
-
-## Plugin output ownership
-
-`plugin/output.rs` owns whole-tree publication, not plugin content. It writes to
-a sibling staging directory, records `.mars-plugin.json`, and publishes with a
-two-rename swap under a cross-process lock. A non-empty destination without a
-valid sentinel is never replaced. Recovery of `.mars-new` / `.mars-old` happens
-under the same lock before a new build writes anything.

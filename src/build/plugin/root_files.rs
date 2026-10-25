@@ -11,6 +11,16 @@ pub(super) struct RootFilePlan {
     pub(super) root_files: BTreeMap<String, String>,
 }
 
+impl RootFilePlan {
+    /// Package-relative root files this plan will write or delete.
+    pub(super) fn touched_paths(&self) -> Vec<std::path::PathBuf> {
+        self.root_files
+            .keys()
+            .map(std::path::PathBuf::from)
+            .collect()
+    }
+}
+
 pub(super) fn plan(
     _package_root: &Path,
     _out_dir: &Path,

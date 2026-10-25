@@ -30,10 +30,11 @@ uses `[package].version`. `PackageMetadata` is the authority for the plugin-faci
 publish graph's root source continues to use `[package].name`. Build reports contain one typed tree
 record and output path per generated tree; human output prints one success line per record.
 
-The generated trees are nested at `<out>/<tree>/` and handed to
-`plugin::output::replace_owned_tree`; the build core never mutates the destination itself. The
-output layer stages the whole output in a sibling directory, records one root
-`<out>/.mars-plugin.json` sentinel, and publishes with a two-rename swap under a cross-process lock.
+The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
+core never mutates the destination itself. The staged build holds the output lock and root-file
+plan until publication applies the plan and calls `StagedPlugin::publish`. The output layer stages
+the whole output in a sibling directory, records one root `<out>/.mars-plugin.json` sentinel, and
+publishes with a two-rename swap under the lock.
 It recovers interrupted swaps before a new build and never replaces a non-empty destination
 without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
 before applying the building package's single plugin namespace. Agent skill names are qualified

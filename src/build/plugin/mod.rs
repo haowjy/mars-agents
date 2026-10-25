@@ -2,7 +2,7 @@
 
 mod metadata;
 mod model;
-mod output;
+pub mod output;
 mod references;
 mod root_files;
 mod support;
@@ -70,6 +70,25 @@ pub struct PluginTreeReport {
     pub components: PluginComponents,
 }
 
+pub struct StagedPluginBuild {
+    output: output::StagedPlugin,
+    root_files: root_files::RootFilePlan,
+    report: PluginBuildReport,
+}
+
+impl StagedPluginBuild {
+    /// Package-relative root files publication will write or delete.
+    pub fn touched_root_files(&self) -> Vec<PathBuf> {
+        self.root_files.touched_paths()
+    }
+
+    pub fn publish(self) -> Result<PluginBuildReport, MarsError> {
+        root_files::apply(&self.root_files)?;
+        self.output.publish()?;
+        Ok(self.report)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct PluginComponents {
     pub agents: usize,
@@ -109,6 +128,10 @@ impl PluginHarness {
 }
 
 pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, MarsError> {
+    stage_plugin(request)?.publish()
+}
+
+pub fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, MarsError> {
     let package_root =
         dunce::canonicalize(&request.package_root).map_err(|source| MarsError::Io {
             operation: "resolve plugin package root".to_string(),
@@ -177,48 +200,48 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         terms: &terms,
     };
     tree::check_sources(&tree_input, &profiles, &mut diag)?;
-    let (built_trees, diagnostics) = output::replace_owned_tree(&out_dir, |staging| {
-        let inputs_hash = plugin_inputs_hash(&package_root)?;
-        let mut built_trees = Vec::with_capacity(profiles.len());
-        for profile in &profiles {
-            let tree_root = staging.join(profile.descriptor().canonical_id);
-            built_trees.push(tree::write_tree(
-                &tree_root,
-                &tree_input,
-                profile,
+    let (staged_output, (built_trees, diagnostics, root_file_plan)) =
+        output::stage(&out_dir, |staging| {
+            let inputs_hash = plugin_inputs_hash(&package_root)?;
+            let mut built_trees = Vec::with_capacity(profiles.len());
+            for profile in &profiles {
+                let tree_root = staging.join(profile.descriptor().canonical_id);
+                built_trees.push(tree::write_tree(
+                    &tree_root,
+                    &tree_input,
+                    profile,
+                    &mut diag,
+                )?);
+            }
+            support::emit(
+                &request.harnesses,
+                &prepared_target.target,
+                &built_trees,
                 &mut diag,
-            )?);
-        }
-        support::emit(
-            &request.harnesses,
-            &prepared_target.target,
-            &built_trees,
-            &mut diag,
-        );
-        let collected = diag.drain();
-        fail_on_diagnostic_errors(&collected)?;
-        let root_file_plan = root_files::plan(
-            &package_root,
-            &out_dir,
-            &request.destination,
-            &metadata,
-            &request.harnesses,
-        )?;
-        root_files::apply(&root_file_plan)?;
-        Ok((
-            crate::plugin_metadata::PluginSentinel {
-                schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
-                mars_version: env!("CARGO_PKG_VERSION").to_string(),
-                plugin_name: plugin_name.clone(),
-                version: metadata.version.clone(),
-                inputs_hash,
-                dependencies: resolved_dependency_identities(&graph, &root_source),
-                files: std::collections::BTreeMap::new(),
-                root_files: root_file_plan.root_files.clone(),
-            },
-            (built_trees, collected),
-        ))
-    })?;
+            );
+            let collected = diag.drain();
+            fail_on_diagnostic_errors(&collected)?;
+            let root_file_plan = root_files::plan(
+                &package_root,
+                &out_dir,
+                &request.destination,
+                &metadata,
+                &request.harnesses,
+            )?;
+            Ok((
+                crate::plugin_metadata::PluginSentinel {
+                    schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
+                    mars_version: env!("CARGO_PKG_VERSION").to_string(),
+                    plugin_name: plugin_name.clone(),
+                    version: metadata.version.clone(),
+                    inputs_hash,
+                    dependencies: resolved_dependency_identities(&graph, &root_source),
+                    files: std::collections::BTreeMap::new(),
+                    root_files: root_file_plan.root_files.clone(),
+                },
+                (built_trees, collected, root_file_plan),
+            ))
+        })?;
 
     let trees = built_trees
         .into_iter()
@@ -232,11 +255,15 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         })
         .collect();
 
-    Ok(PluginBuildReport {
-        plugin_name,
-        version: metadata.version,
-        trees,
-        diagnostics,
+    Ok(StagedPluginBuild {
+        output: staged_output,
+        root_files: root_file_plan,
+        report: PluginBuildReport {
+            plugin_name,
+            version: metadata.version,
+            trees,
+            diagnostics,
+        },
     })
 }
 

@@ -13,8 +13,8 @@ their declared base), stages through resolve's shared rooted-package operation, 
 `TargetState`/`RenameIndex` to flatten the graph. `PreparedTarget` carries the dependency
 precedence used during rename application so tree writing cannot reconstruct a different order. It
 must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configuration, model
-caches, or installed harnesses. `plugin::output::replace_owned_tree` alone owns destination
-replacement and sentinel publication.
+caches, or installed harnesses. `plugin::output::stage` owns staging and sentinel publication;
+its lock-owning `StagedPlugin` alone replaces the destination when published.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three
 tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. Tree profiles

@@ -5,16 +5,16 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
-/// Replace a Mars-owned plugin output directory as one crash-recoverable operation.
+/// Stage a Mars-owned plugin output directory without changing the live output.
 ///
-/// `write` receives an empty sibling staging directory. The existing output is
-/// not moved until every tree, its hashes, and the root sentinel have been written.
-pub(super) fn replace_owned_tree<T>(
+/// `write` receives an empty sibling staging directory. The returned value owns
+/// the output lock and removes the staging directory unless it is published.
+pub(super) fn stage<T>(
     out_dir: &Path,
     write: impl FnOnce(&Path) -> Result<(PluginSentinel, T), MarsError>,
-) -> Result<T, MarsError> {
+) -> Result<(StagedPlugin, T), MarsError> {
     let paths = OutputPaths::new(out_dir)?;
-    let _lock = crate::fs::FileLock::acquire(&paths.lock)?;
+    let lock = crate::fs::FileLock::acquire(&paths.lock)?;
 
     validate_destination(&paths.out)?;
     fs::create_dir_all(&paths.parent)
@@ -51,8 +51,41 @@ pub(super) fn replace_owned_tree<T>(
         }
     };
 
-    publish_staged_tree(&paths)?;
-    Ok(value)
+    Ok((StagedPlugin { paths, _lock: lock }, value))
+}
+
+/// Recover a plugin output after an interrupted stage or publish.
+pub fn recover(out_dir: &Path) -> Result<(), MarsError> {
+    let paths = OutputPaths::new(out_dir)?;
+    let _lock = crate::fs::FileLock::acquire(&paths.lock)?;
+
+    validate_destination(&paths.out)?;
+    fs::create_dir_all(&paths.parent)
+        .map_err(|source| io_error("create plugin output parent", &paths.parent, source))?;
+    recover_interrupted_swap(&paths)
+}
+
+/// A complete plugin output waiting to replace the live directory.
+pub(super) struct StagedPlugin {
+    paths: OutputPaths,
+    _lock: crate::fs::FileLock,
+}
+
+impl StagedPlugin {
+    pub(super) fn publish(self) -> Result<(), MarsError> {
+        match publish_staged_tree_inner(&self.paths) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(clean_up_staging_after_error(&self.paths, error)),
+        }
+    }
+}
+
+impl Drop for StagedPlugin {
+    fn drop(&mut self) {
+        // Drop cannot report cleanup failures. A later stage runs recovery under
+        // the same lock and retries this removal before it reads live output.
+        let _ = crate::platform::fs::safe_remove(&self.paths.new);
+    }
 }
 
 /// Recompute every regular output file hash except the sentinel.
@@ -330,13 +363,6 @@ fn validate_staging_tree(staging: &Path) -> Result<(), MarsError> {
             &staging.join(SENTINEL_FILE),
             source,
         )),
-    }
-}
-
-fn publish_staged_tree(paths: &OutputPaths) -> Result<(), MarsError> {
-    match publish_staged_tree_inner(paths) {
-        Ok(()) => Ok(()),
-        Err(error) => Err(clean_up_staging_after_error(paths, error)),
     }
 }
 

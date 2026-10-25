@@ -76,21 +76,19 @@
       "entries": {}
     },
     "mode": null,
-    "model": "",
+    "model": null,
     "model_invocable": true,
     "model_policies": [],
-    "name": "",
+    "name": null,
     "sandbox": null,
     "skills": {
       "available": [],
       "load": [
-        "ok",
-        ""
+        "ok"
       ]
     },
     "subagents": [
-      "ok",
-      ""
+      "ok"
     ],
     "tools": {
       "rules": []

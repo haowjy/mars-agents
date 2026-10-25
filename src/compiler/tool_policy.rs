@@ -473,9 +473,7 @@ mod tests {
     use mars_schema::agent::{parse_agent_content, parse_agent_profile};
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
-    use mars_schema::tool_policy::{
-        append_mcp_server_entries_to_tools, parse_tool_policy, yaml_str_list,
-    };
+    use mars_schema::tool_policy::{append_mcp_server_entries_to_tools, yaml_str_list};
     use serde_yaml::Value;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
@@ -817,35 +815,6 @@ mod tests {
     #[test]
     fn the_any_capability_names_no_tool_and_has_no_status() {
         assert_eq!(natives("*", "claude"), (vec![], "none"));
-    }
-
-    #[test]
-    fn malformed_mcp_in_disallowed_tools_is_validation_error() {
-        let mut diags = Vec::new();
-        let value = Value::Sequence(vec![Value::String("mcp()".into())]);
-        let mut push = |field: &str, value: &str, _: &'static str| {
-            diags.push((field.to_string(), value.to_string()));
-        };
-        let policy = parse_tool_policy(None, Some(&value), &mut push);
-        assert!(policy.rules.is_empty());
-        assert_eq!(
-            diags,
-            [("disallowed-tools[0]".to_string(), "mcp()".to_string())]
-        );
-    }
-
-    #[test]
-    fn a_bare_mcp_tool_is_invalid_not_an_unknown_tool() {
-        for raw in ["mcp", "MCP"] {
-            let mut diags = Vec::new();
-            let value = Value::Sequence(vec![Value::String(raw.into())]);
-            let mut push = |field: &str, value: &str, _: &'static str| {
-                diags.push((field.to_string(), value.to_string()));
-            };
-            let policy = parse_tool_policy(Some(&value), None, &mut push);
-            assert!(policy.rules.is_empty(), "{raw}");
-            assert_eq!(diags.len(), 1, "{raw}");
-        }
     }
 
     #[test]

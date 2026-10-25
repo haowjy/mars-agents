@@ -230,32 +230,15 @@ pub fn yaml_str_list(val: &Value) -> Vec<String> {
     }
 }
 
-type OnInvalid<'a> = &'a mut dyn FnMut(&str, &str, &'static str);
+type OnInvalid<'a> = &'a mut dyn FnMut(Vec<crate::diagnostic::PathSegment>, &str, &'static str);
 
-/// Read a profile's `tools:` and `disallowed-tools:` into one policy.
+/// Read a v1 profile's `tools:` action map into one policy.
 ///
 /// `on_invalid` gets `(field, value, allowed)` for each entry Mars rejects.
-pub fn parse_tool_policy(
-    tools: Option<&Value>,
-    disallowed: Option<&Value>,
-    on_invalid: OnInvalid<'_>,
-) -> EffectiveToolPolicy {
+pub fn parse_tool_policy(tools: Option<&Value>, on_invalid: OnInvalid<'_>) -> EffectiveToolPolicy {
     let mut policy = EffectiveToolPolicy::default();
     if let Some(value) = tools {
-        for rule in parse_tools_field("tools", value, on_invalid) {
-            policy.push_unique(rule);
-        }
-    }
-    if let Some(value) = disallowed {
-        if permission_replace_entries(value).is_some() {
-            on_invalid(
-                "disallowed-tools",
-                &serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
-                "plain list; package profiles cannot replace a deny set",
-            );
-            return policy;
-        }
-        for rule in parse_entries("disallowed-tools", value, ToolAction::Deny, on_invalid) {
+        for rule in parse_tools_field(value, on_invalid) {
             policy.push_unique(rule);
         }
     }
@@ -263,7 +246,7 @@ pub fn parse_tool_policy(
 }
 
 fn parse_tool_rule(
-    field: &str,
+    path: Vec<crate::diagnostic::PathSegment>,
     raw: &str,
     action: ToolAction,
     on_invalid: OnInvalid<'_>,
@@ -271,33 +254,19 @@ fn parse_tool_rule(
     match parse_mars_tool_name(raw) {
         Ok(parsed) => Some(ToolRule::from_parsed(parsed, action)),
         Err(err) => {
-            on_invalid(field, raw, err.allowed());
+            on_invalid(path, raw, err.allowed());
             None
         }
     }
 }
 
-/// Parse a list of tool names into `action` rules.
-fn parse_entries(
-    field: &str,
-    val: &Value,
-    action: ToolAction,
-    on_invalid: OnInvalid<'_>,
-) -> Vec<ToolRule> {
-    tool_entries(val)
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, tool)| {
-            parse_tool_rule(&format!("{field}[{idx}]"), tool, action, on_invalid)
-        })
-        .collect()
-}
-
-/// Parse `tools:`: a list of tools to allow, or a map of tool to `allow` / `deny` / `ask`.
-fn parse_tools_field(field: &str, val: &Value, on_invalid: OnInvalid<'_>) -> Vec<ToolRule> {
+/// Parse the v1 `tools:` action map.
+fn parse_tools_field(val: &Value, on_invalid: OnInvalid<'_>) -> Vec<ToolRule> {
+    use crate::diagnostic::{PathSegment, key_path};
+    let field = key_path("tools");
     if permission_replace_entries(val).is_some() {
         on_invalid(
-            field,
+            field.clone(),
             &serde_json::to_string(val).unwrap_or_else(|_| format!("{val:?}")),
             "plain list or mapping of tool to allow|deny|ask; package profiles cannot replace a permission set",
         );
@@ -308,20 +277,21 @@ fn parse_tools_field(field: &str, val: &Value, on_invalid: OnInvalid<'_>) -> Vec
             let mut rules = Vec::new();
             for (key, value) in mapping {
                 let Some(tool_name) = key.as_str() else {
-                    on_invalid(field, &format!("{key:?}"), "string tool keys");
+                    on_invalid(field.clone(), &format!("{key:?}"), "string tool keys");
                     continue;
                 };
 
-                let entry_field = format!("{field}.{tool_name}");
+                let mut entry_path = field.clone();
+                entry_path.push(PathSegment::Key(tool_name.to_owned()));
                 let Some(policy) = value.as_str() else {
-                    on_invalid(&entry_field, &format!("{value:?}"), ACTIONS_ALLOWED);
+                    on_invalid(entry_path, &format!("{value:?}"), ACTIONS_ALLOWED);
                     continue;
                 };
                 let Some(action) = ToolAction::parse(policy) else {
-                    on_invalid(&entry_field, policy, ACTIONS_ALLOWED);
+                    on_invalid(entry_path, policy, ACTIONS_ALLOWED);
                     continue;
                 };
-                if let Some(rule) = parse_tool_rule(&entry_field, tool_name, action, on_invalid) {
+                if let Some(rule) = parse_tool_rule(entry_path, tool_name, action, on_invalid) {
                     rules.push(rule);
                 }
             }
@@ -337,7 +307,14 @@ fn parse_tools_field(field: &str, val: &Value, on_invalid: OnInvalid<'_>) -> Vec
             );
             Vec::new()
         }
-        _ => parse_entries(field, val, ToolAction::Allow, on_invalid),
+        _ => {
+            on_invalid(
+                field,
+                &serde_json::to_string(val).unwrap_or_else(|_| format!("{val:?}")),
+                "mapping of tool to allow|deny|ask",
+            );
+            Vec::new()
+        }
     }
 }
 

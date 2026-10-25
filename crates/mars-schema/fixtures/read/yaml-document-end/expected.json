@@ -1,5 +1,5 @@
 {
-  "body": null,
+  "body": "",
   "diagnostics": [
     {
       "code": "yaml.document-end",
@@ -8,6 +8,31 @@
       "severity": "error"
     }
   ],
-  "fields": null,
+  "fields": {
+    "approval": null,
+    "description": null,
+    "effort": null,
+    "had_model_invocable_field": false,
+    "had_user_invocable_field": false,
+    "harness": null,
+    "harness_overrides": {
+      "entries": {}
+    },
+    "mode": null,
+    "model": null,
+    "model_invocable": true,
+    "model_policies": [],
+    "name": "x",
+    "sandbox": null,
+    "skills": {
+      "available": [],
+      "load": []
+    },
+    "subagents": [],
+    "tools": {
+      "rules": []
+    },
+    "user_invocable": true
+  },
   "unknown": []
 }

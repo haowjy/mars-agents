@@ -2,14 +2,6 @@
   "body": "",
   "diagnostics": [
     {
-      "code": "field.type",
-      "message": "`model-invocable` must be true or false",
-      "path": [
-        "model-invocable"
-      ],
-      "severity": "error"
-    },
-    {
       "code": "field.value",
       "message": "agent field `model-invocable` has invalid value `true`; allowed: boolean",
       "path": [

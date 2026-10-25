@@ -4,7 +4,7 @@ use crate::package::PackageMetadata;
 
 /// Read package identity while leaving consumer-only top-level tables outside the schema.
 pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
-    use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
+    use crate::diagnostic::{SchemaDiagnostic, Severity, child_path, key_path};
     let value: toml::Value = match toml::from_str(content) {
         Ok(value) => value,
         Err(error) => {
@@ -53,14 +53,14 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
             diagnostics.push(SchemaDiagnostic::new(
                 "field.removed",
                 Severity::Error,
-                key_path("package.visibility"),
+                child_path("package", "visibility"),
                 "`package.visibility` was removed; remove it",
             ));
         } else if !known.contains(&key.as_str()) {
             diagnostics.push(SchemaDiagnostic::new(
                 "field.unknown",
                 Severity::Warning,
-                key_path(&format!("package.{key}")),
+                child_path("package", key),
                 format!("unknown package field `{key}` is preserved"),
             ));
             unknown.push((
@@ -73,7 +73,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         diagnostics.push(SchemaDiagnostic::new(
             "field.type",
             Severity::Error,
-            key_path("package.schema"),
+            child_path("package", "schema"),
             "`package.schema` must be the integer 1",
         ));
     }
@@ -82,7 +82,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         diagnostics.push(SchemaDiagnostic::new(
             "manifest.name-required",
             Severity::Error,
-            key_path("package.name"),
+            child_path("package", "name"),
             "package name must be a non-empty string",
         ));
     }
@@ -90,14 +90,14 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         None => diagnostics.push(SchemaDiagnostic::new(
             "manifest.version-missing",
             Severity::Warning,
-            key_path("package.version"),
+            child_path("package", "version"),
             "package version is missing",
         )),
         Some(toml::Value::String(_)) => {}
         Some(_) => diagnostics.push(SchemaDiagnostic::new(
             "field.type",
             Severity::Error,
-            key_path("package.version"),
+            child_path("package", "version"),
             "`package.version` must be a string",
         )),
     }

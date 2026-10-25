@@ -213,7 +213,7 @@ fn strict_skill_diagnostics(
         diags.push(SchemaDiagnostic::new(
             "field.type",
             Severity::Error,
-            key_path("metadata.type"),
+            crate::diagnostic::child_path("metadata", "type"),
             "`metadata.type` must be a string",
         ));
     }

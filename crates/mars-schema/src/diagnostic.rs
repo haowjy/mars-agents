@@ -58,24 +58,34 @@ impl SchemaDiagnostic {
     }
 }
 
-pub fn key_path(field: &str) -> Vec<PathSegment> {
-    let mut path = Vec::new();
-    for part in field.split('.') {
-        if let Some(open) = part.find('[') {
-            if open > 0 {
-                path.push(PathSegment::Key(part[..open].to_owned()));
+pub fn key_path(field: impl Into<String>) -> Vec<PathSegment> {
+    vec![PathSegment::Key(field.into())]
+}
+
+pub fn child_path(parent: impl Into<String>, child: impl Into<String>) -> Vec<PathSegment> {
+    vec![
+        PathSegment::Key(parent.into()),
+        PathSegment::Key(child.into()),
+    ]
+}
+
+pub fn display_path(path: &[PathSegment]) -> String {
+    let mut display = String::new();
+    for segment in path {
+        match segment {
+            PathSegment::Key(key) => {
+                if !display.is_empty() {
+                    display.push('.');
+                }
+                display.push_str(key);
             }
-            if let Some(index) = part[open + 1..]
-                .strip_suffix(']')
-                .and_then(|value| value.parse().ok())
-            {
-                path.push(PathSegment::Index(index));
+            PathSegment::Index(index) => {
+                use std::fmt::Write;
+                let _ = write!(display, "[{}]", index + 1);
             }
-        } else if !part.is_empty() {
-            path.push(PathSegment::Key(part.to_owned()));
         }
     }
-    path
+    display
 }
 
 pub fn frontmatter_error(error: &crate::frontmatter::FrontmatterError) -> SchemaDiagnostic {
@@ -83,6 +93,7 @@ pub fn frontmatter_error(error: &crate::frontmatter::FrontmatterError) -> Schema
         crate::frontmatter::FrontmatterError::Unclosed => "frontmatter.unclosed",
         crate::frontmatter::FrontmatterError::Anchor => "yaml.anchor",
         crate::frontmatter::FrontmatterError::DocumentEnd => "yaml.document-end",
+        crate::frontmatter::FrontmatterError::UnsupportedSyntax(_) => "yaml.unsupported-syntax",
         crate::frontmatter::FrontmatterError::NotAMapping => "frontmatter.not-mapping",
         crate::frontmatter::FrontmatterError::MalformedYaml(inner) => {
             let message = inner.to_string();

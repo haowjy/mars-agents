@@ -46,6 +46,11 @@ pub enum FrontmatterError {
     #[error("YAML document-end markers are not supported")]
     DocumentEnd,
 
+    #[error(
+        "YAML syntax accepted by the semantic parser is unsupported by the structural scanner: {0}"
+    )]
+    UnsupportedSyntax(String),
+
     #[error("frontmatter is not a YAML mapping")]
     NotAMapping,
 }
@@ -58,17 +63,35 @@ pub fn parse(content: &str) -> Result<Frontmatter, FrontmatterError> {
 impl Frontmatter {
     /// Parse a markdown document into frontmatter + body.
     pub fn parse(content: &str) -> Result<Self, FrontmatterError> {
+        let (frontmatter, mut structural_errors) = Self::parse_preserving_structure(content)?;
+        if structural_errors.is_empty() {
+            Ok(frontmatter)
+        } else {
+            Err(structural_errors.remove(0))
+        }
+    }
+
+    /// Parse semantic content while returning every structural refusal found.
+    ///
+    /// Schema readers use this to avoid losing an anchor diagnostic when the
+    /// structural parser later encounters syntax it cannot scan.
+    pub(crate) fn parse_preserving_structure(
+        content: &str,
+    ) -> Result<(Self, Vec<FrontmatterError>), FrontmatterError> {
         let (has_bom, document) = content
             .strip_prefix('\u{feff}')
             .map_or((false, content), |document| (true, document));
         let (first_line, after_first_line) = split_first_line(document);
         if !is_delimiter_line(first_line) {
-            return Ok(Self {
-                yaml: Mapping::new(),
-                body: content.to_string(),
-                has_frontmatter: false,
-                has_bom: false,
-            });
+            return Ok((
+                Self {
+                    yaml: Mapping::new(),
+                    body: content.to_string(),
+                    has_frontmatter: false,
+                    has_bom: false,
+                },
+                Vec::new(),
+            ));
         }
 
         let mut yaml_end = None;
@@ -90,28 +113,34 @@ impl Frontmatter {
         let body = after_first_line[body_start..].to_string();
 
         if yaml_text.trim().is_empty() {
-            return Ok(Self {
-                yaml: Mapping::new(),
-                body,
-                has_frontmatter: true,
-                has_bom,
-            });
+            return Ok((
+                Self {
+                    yaml: Mapping::new(),
+                    body,
+                    has_frontmatter: true,
+                    has_bom,
+                },
+                Vec::new(),
+            ));
         }
 
         let value: Value = serde_yaml::from_str(yaml_text)?;
-        validate_yaml_structure(yaml_text)?;
+        let structural_errors = validate_yaml_structure(yaml_text);
         let yaml = match value {
             Value::Mapping(mapping) => mapping,
             Value::Null => Mapping::new(),
             _ => return Err(FrontmatterError::NotAMapping),
         };
 
-        Ok(Self {
-            yaml,
-            body,
-            has_frontmatter: true,
-            has_bom,
-        })
+        Ok((
+            Self {
+                yaml,
+                body,
+                has_frontmatter: true,
+                has_bom,
+            },
+            structural_errors,
+        ))
     }
 
     /// Read all referenced skills as a flat list (`load` followed by `available`).
@@ -358,7 +387,7 @@ fn is_delimiter_line(line: &str) -> bool {
         == "---"
 }
 
-fn validate_yaml_structure(text: &str) -> Result<(), FrontmatterError> {
+fn validate_yaml_structure(text: &str) -> Vec<FrontmatterError> {
     use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
     use yaml_rust2::scanner::Marker;
 
@@ -367,6 +396,7 @@ fn validate_yaml_structure(text: &str) -> Result<(), FrontmatterError> {
         anchor_or_alias: bool,
         document_end: bool,
         source: String,
+        char_to_byte: Vec<usize>,
     }
     impl MarkedEventReceiver for StructuralEvents {
         fn on_event(&mut self, event: Event, marker: Marker) {
@@ -375,30 +405,38 @@ fn validate_yaml_structure(text: &str) -> Result<(), FrontmatterError> {
                 Event::SequenceStart(1.., _) | Event::MappingStart(1.., _) => {
                     self.anchor_or_alias = true;
                 }
-                Event::DocumentEnd if self.source[marker.index()..].starts_with("...") => {
-                    self.document_end = true;
+                Event::DocumentEnd => {
+                    let byte = self.char_to_byte.get(marker.index()).copied();
+                    if byte.is_some_and(|byte| self.source[byte..].starts_with("...")) {
+                        self.document_end = true;
+                    }
                 }
                 _ => {}
             }
         }
     }
 
+    let mut char_to_byte: Vec<usize> = text.char_indices().map(|(byte, _)| byte).collect();
+    char_to_byte.push(text.len());
     let mut events = StructuralEvents {
         source: text.to_owned(),
+        char_to_byte,
         ..StructuralEvents::default()
     };
     // serde_yaml already accepted the document. The event parser is used only
     // to distinguish YAML structure from identical text inside scalar values.
-    if Parser::new_from_str(text).load(&mut events, true).is_err() {
-        return Ok(());
+    let parse_error = Parser::new_from_str(text).load(&mut events, true).err();
+    let mut errors = Vec::new();
+    if events.anchor_or_alias {
+        errors.push(FrontmatterError::Anchor);
     }
     if events.document_end {
-        Err(FrontmatterError::DocumentEnd)
-    } else if events.anchor_or_alias {
-        Err(FrontmatterError::Anchor)
-    } else {
-        Ok(())
+        errors.push(FrontmatterError::DocumentEnd);
     }
+    if let Some(error) = parse_error {
+        errors.push(FrontmatterError::UnsupportedSyntax(error.to_string()));
+    }
+    errors
 }
 
 fn yaml_key(key: &str) -> Value {

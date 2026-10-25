@@ -44,7 +44,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `mcp/` — MCP server item discovery, env-ref validation, collision detection
 - `hooks/` — fragment-manifest discovery, merge-fragment validation/substitution, and ordering
 - `variants/` — skill variant layout validation, indexing, projection
-- `visibility/` — D1/D10 propagation rules
+- `visibility/` — typed `local` / `exported` parsing for effectful items
 
 ## Dual-Surface Compilation
 
@@ -193,7 +193,8 @@ Skill variant layout validation, indexing, and projection per harness target.
 
 ## Visibility (`visibility/`)
 
-Propagation rules for passive vs effectful items (D1/D10).
+Hook and MCP manifests parse visibility once into `Visibility`. Unknown values warn and become
+`Local`; downstream selection only compares the enum with `Exported`.
 
 ## Patterns
 

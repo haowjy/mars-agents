@@ -28,8 +28,7 @@ pub(crate) mod tool_natives;
 pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
-/// Legacy visibility rules retained until hook and MCP manifests parse typed visibility.
-#[cfg(test)]
+/// Typed visibility shared by hook and MCP manifests.
 pub mod visibility;
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;

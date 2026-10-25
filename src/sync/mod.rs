@@ -664,7 +664,8 @@ pub(crate) fn build_target(
 
     // Project-root hooks are authored outside `.mars-src`; materialize each whole
     // directory into the canonical store so target sync can use normal item ownership.
-    for hook in crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0)? {
+    for hook in crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0, diag)?
+    {
         let source_path = hook.hook_dir.clone();
         let source_hash = ContentHash::from(hash::compute_hash(&source_path, ItemKind::Hook)?);
         for target_name in hook.def.targets.keys().filter(|target| {
@@ -716,7 +717,7 @@ pub(crate) fn build_target(
     }
 
     let managed_targets = resolved.loaded.effective.settings.managed_targets();
-    match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0) {
+    match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0, diag) {
         Ok(items) => {
             for item in items {
                 target_state.select_mcp(item, &managed_targets);

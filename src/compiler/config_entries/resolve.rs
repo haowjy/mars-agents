@@ -105,8 +105,11 @@ mod tests {
         make_mcp(local.path(), "context7", "local-cmd", None);
         make_mcp(dep.path(), "context7", "dep-cmd", None);
 
-        let mut items = discover_mcp_items(local.path(), "_self", 0).unwrap();
-        items.extend(discover_mcp_items(dep.path(), "dep", 1).unwrap());
+        let mut items =
+            discover_mcp_items(local.path(), "_self", 0, &mut DiagnosticCollector::new()).unwrap();
+        items.extend(
+            discover_mcp_items(dep.path(), "dep", 1, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
@@ -123,8 +126,11 @@ mod tests {
         make_mcp(first.path(), "context7", "first-cmd", None);
         make_mcp(second.path(), "context7", "second-cmd", None);
 
-        let mut items = discover_mcp_items(second.path(), "_self", 2).unwrap();
-        items.extend(discover_mcp_items(first.path(), "_self", 1).unwrap());
+        let mut items =
+            discover_mcp_items(second.path(), "_self", 2, &mut DiagnosticCollector::new()).unwrap();
+        items.extend(
+            discover_mcp_items(first.path(), "_self", 1, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
@@ -144,8 +150,11 @@ mod tests {
         make_mcp(early.path(), "context7", "early-cmd", None);
         make_mcp(late.path(), "context7", "late-cmd", None);
 
-        let mut items = discover_mcp_items(late.path(), "late", 2).unwrap();
-        items.extend(discover_mcp_items(early.path(), "early", 1).unwrap());
+        let mut items =
+            discover_mcp_items(late.path(), "late", 2, &mut DiagnosticCollector::new()).unwrap();
+        items.extend(
+            discover_mcp_items(early.path(), "early", 1, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
@@ -165,8 +174,11 @@ mod tests {
         make_mcp(alpha.path(), "context7", "alpha-cmd", None);
         make_mcp(zed.path(), "context7", "zed-cmd", None);
 
-        let mut items = discover_mcp_items(zed.path(), "zed", 1).unwrap();
-        items.extend(discover_mcp_items(alpha.path(), "alpha", 1).unwrap());
+        let mut items =
+            discover_mcp_items(zed.path(), "zed", 1, &mut DiagnosticCollector::new()).unwrap();
+        items.extend(
+            discover_mcp_items(alpha.path(), "alpha", 1, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
@@ -186,8 +198,12 @@ mod tests {
         make_mcp(claude.path(), "context7", "claude-cmd", Some(".claude"));
         make_mcp(codex.path(), "context7", "codex-cmd", Some(".codex"));
 
-        let mut items = discover_mcp_items(claude.path(), "claude", 1).unwrap();
-        items.extend(discover_mcp_items(codex.path(), "codex", 2).unwrap());
+        let mut items =
+            discover_mcp_items(claude.path(), "claude", 1, &mut DiagnosticCollector::new())
+                .unwrap();
+        items.extend(
+            discover_mcp_items(codex.path(), "codex", 2, &mut DiagnosticCollector::new()).unwrap(),
+        );
         let mut diag = DiagnosticCollector::new();
 
         let claude_resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);

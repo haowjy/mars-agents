@@ -67,7 +67,8 @@ fn load_publish_preview_config(base: &Path) -> Result<PublishPreviewConfig, Mars
     let Some(config) = config else {
         return Ok(PublishPreviewConfig::default());
     };
-    let effective = crate::config::merge(config.clone(), LocalConfig::default())?;
+    let (effective, _diagnostics) =
+        crate::config::merge_with_root(config.clone(), LocalConfig::default(), base)?;
     Ok(PublishPreviewConfig {
         settings: effective.settings,
         skills: effective.skills,

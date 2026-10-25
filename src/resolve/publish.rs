@@ -19,7 +19,8 @@ use super::{ResolveOptions, ResolvedGraph, resolve};
 pub fn resolve_publish_graph(package_root: &Path) -> Result<ResolvedGraph, MarsError> {
     let mut config = crate::config::load(package_root)?;
     config.local_dependencies.clear();
-    let effective = crate::config::merge(config, LocalConfig::default())?;
+    let (effective, _diagnostics) =
+        crate::config::merge_with_root(config, LocalConfig::default(), package_root)?;
 
     let cache = GlobalCache::new()?;
     let provider = RealSourceProvider::new(&cache, package_root);

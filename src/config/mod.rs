@@ -1324,18 +1324,13 @@ pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectCon
     })
 }
 
-/// Merge config + local overrides into EffectiveConfig.
+/// Merge config + local overrides into `EffectiveConfig`, resolving path dependencies
+/// relative to `root`.
 ///
 /// Validates:
 /// - Each source has `url` XOR `path` (not both, not neither)
 /// - Each source uses either include filters (`agents`/`skills`) or `exclude`, not both
 /// - Collects diagnostics if an override references a source name not in config
-pub fn merge(config: Config, local: LocalConfig) -> Result<EffectiveConfig, MarsError> {
-    let (effective, _diagnostics) = merge_with_root(config, local, Path::new("."))?;
-    Ok(effective)
-}
-
-/// Same as `merge`, but uses an explicit root for path-based SourceId canonicalization.
 pub fn merge_with_root(
     config: Config,
     local: LocalConfig,
@@ -1874,7 +1869,7 @@ skills = ["review"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let effective = merge(config, local).unwrap();
+        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         match &source.filter {
             FilterMode::Include { agents, skills } => {
@@ -1894,7 +1889,7 @@ exclude = ["experimental", "deprecated"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let effective = merge(config, local).unwrap();
+        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         match &source.filter {
             FilterMode::Exclude(items) => {
@@ -1914,7 +1909,7 @@ exclude = ["reviewer"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1931,7 +1926,7 @@ version = "v1.0"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1949,7 +1944,7 @@ path = "/local/path"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("both"), "error should mention 'both': {err}");
@@ -2902,7 +2897,7 @@ future_key = "allowed"
             ..Config::default()
         };
         let local = LocalConfig::default();
-        let effective = merge(config, local).unwrap();
+        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
         assert_eq!(effective.dependencies.len(), 1);
         let source = &effective.dependencies["base"];
         match &source.spec {
@@ -2948,7 +2943,7 @@ future_key = "allowed"
             },
             ..LocalConfig::default()
         };
-        let effective = merge(config, local).unwrap();
+        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         match &source.spec {
             SourceSpec::Path(p) => assert_eq!(p, &PathBuf::from("/home/dev/local-base")),
@@ -3035,7 +3030,8 @@ future_key = "allowed"
             settings: Settings::default(),
             ..Config::default()
         };
-        let effective = merge(config, LocalConfig::default()).unwrap();
+        let (effective, _) =
+            merge_with_root(config, LocalConfig::default(), Path::new(".")).unwrap();
         assert!(matches!(
             effective.dependencies["base"].filter,
             FilterMode::All
@@ -3052,7 +3048,8 @@ url = "https://github.com/org/base.git"
 old-name = "new-name"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        let effective = merge(config, LocalConfig::default()).unwrap();
+        let (effective, _) =
+            merge_with_root(config, LocalConfig::default(), Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         assert_eq!(source.rename.get("old-name").unwrap(), "new-name");
     }
@@ -3065,7 +3062,7 @@ url = "https://github.com/org/base.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3252,7 +3249,7 @@ only_skills = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let effective = merge(config, local).unwrap();
+        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         assert!(matches!(source.filter, FilterMode::OnlySkills));
     }
@@ -3266,7 +3263,7 @@ only_agents = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let effective = merge(config, local).unwrap();
+        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         assert!(matches!(source.filter, FilterMode::OnlyAgents));
     }
@@ -3281,7 +3278,7 @@ only_agents = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3300,7 +3297,7 @@ agents = ["coder"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3319,7 +3316,7 @@ skills = ["planning"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
     }
 
@@ -3333,7 +3330,7 @@ exclude = ["deprecated"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
     }
 
@@ -3762,7 +3759,7 @@ url = "https://github.com/org/prompter.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let effective = merge(config, local).unwrap();
+        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
 
         // Both deps should be in effective config
         assert_eq!(effective.dependencies.len(), 2);
@@ -3810,7 +3807,7 @@ url = "https://github.com/org/base-local.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge(config, local);
+        let result = merge_with_root(config, local, Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(

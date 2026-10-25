@@ -221,6 +221,7 @@ pub fn build_with_collisions_and_diag(
                 .get(source_name)
                 .copied()
                 .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1),
+            diag,
         )?;
 
         if source_may_emit_mcp(graph, source_name) {
@@ -232,9 +233,10 @@ pub fn build_with_collisions_and_diag(
                 &node.rooted_ref.package_root,
                 source_name.as_str(),
                 decl_order,
+                diag,
             ) {
                 Ok(items) => selected_mcp.extend(items.into_iter().filter_map(|item| {
-                    if item.def.visibility != "exported" {
+                    if item.def.visibility != crate::compiler::visibility::Visibility::Exported {
                         return None;
                     }
                     let target_roots = mcp_target_roots(&item, &managed_target_roots);
@@ -270,7 +272,7 @@ pub fn build_with_collisions_and_diag(
                     .iter()
                     .find(|hook| hook.hook_dir == hook_dir)
                     .expect("discovered hook directory has a parsed definition");
-                if parsed.def.visibility != "exported" {
+                if parsed.def.visibility != crate::compiler::visibility::Visibility::Exported {
                     continue;
                 }
                 let source_hash = ContentHash::from(hash::compute_hash(&hook_dir, ItemKind::Hook)?);

@@ -16,6 +16,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a broken one no longer fails `mars sync`.
 - `mars version` now changes only `[package].version`, preserving comments, formatting,
   ordering, and unrecognized tables in `mars.toml`.
+- Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
+  treated as local.
 
 ## [0.18.1] - 2026-10-24
 

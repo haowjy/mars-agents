@@ -209,9 +209,8 @@ pub fn build_with_collisions_and_diag(
     };
     let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
-    // Hooks and MCP share one graph-distance definition. Hook depth is
-    // provenance today; keeping it identical prevents a second precedence
-    // meaning if hook collision policy later consumes it.
+    // Hooks and MCP share shortest graph distance as their precedence key.
+    // Keeping one definition avoids a second meaning of dependency depth.
     let dependency_depths = graph.dependency_depths(&config.dependencies);
     let decl_orders = graph.dependency_decl_orders(&config.dependencies);
 

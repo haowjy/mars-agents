@@ -73,7 +73,7 @@ pub fn compile(
     config_entries::preflight_config_entries(ctx, &planned.targeted, request.options.force, diag)?;
 
     // Phase 5: persist config mutations, apply plan to canonical store.
-    let applied = apply_plan(ctx, planned, request, diag)?;
+    let applied = apply_plan(ctx, planned, request)?;
 
     // Phase 3.2 / 3.3: Native agent surfaces — scan once; reconcile + compile after target sync.
     let effective_settings = &applied.planned.targeted.resolved.loaded.effective.settings;
@@ -107,7 +107,7 @@ pub fn compile(
                 routing_settings,
             )
         });
-    let mars_agents = native_agents::scan_mars_agents(&mars_dir, diag);
+    let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
 
     // Phase 6: install canonical content before emitting config that refers to it.
     let mut synced = sync_targets(ctx, applied, request, agent_surface_policy.clone(), diag);
@@ -171,7 +171,7 @@ pub fn compile(
     ) = native_agents::run_native_agent_post_sync_lifecycle(
         &native_reconcile_ctx,
         &agent_surface_policy,
-        &mars_agents,
+        &mars_agent_scan,
         &agent_overlays,
         native_compile_ctx.as_ref(),
         native_model_router.as_mut(),

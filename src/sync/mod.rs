@@ -863,7 +863,6 @@ pub(crate) fn apply_plan(
     ctx: &MarsContext,
     planned: PlannedState,
     request: &SyncRequest,
-    diag: &mut DiagnosticCollector,
 ) -> Result<AppliedState, MarsError> {
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
@@ -884,7 +883,7 @@ pub(crate) fn apply_plan(
             &planned.targeted.resolved.loaded.old_lock,
         )?;
     }
-    let applied = apply::execute(&mars_dir, &planned.plan, &request.options, diag)?;
+    let applied = apply::execute(&mars_dir, &planned.plan, &request.options)?;
 
     Ok(AppliedState { planned, applied })
 }

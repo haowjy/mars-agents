@@ -64,7 +64,10 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
 
     if json {
         let mut json_report = report;
-        for diag in &diagnostics {
+        for diag in diagnostics
+            .iter()
+            .filter(|diag| diag.level != crate::diagnostic::DiagnosticLevel::Info)
+        {
             json_report.warnings.push(diag.to_string());
         }
         output::print_json(&json_report);
@@ -75,7 +78,11 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         );
         println!();
 
-        if clean && report.warnings.is_empty() && diagnostics.is_empty() {
+        let has_non_info_diagnostics = diagnostics
+            .iter()
+            .any(|diag| diag.level != crate::diagnostic::DiagnosticLevel::Info);
+        if clean && report.warnings.is_empty() && !has_non_info_diagnostics {
+            output::print_diagnostics(&diagnostics);
             output::print_success("all checks passed");
         } else {
             for e in &report.errors {

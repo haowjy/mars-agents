@@ -18,6 +18,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hook emission now uses the same filter- and collision-selected hook as installation, so an
   excluded hook no longer suppresses another dependency's installed hook or causes a false
   not-installed warning; shadowed dependency hooks no longer cause that warning either.
+- Hook order now follows shortest dependency depth, changing only when a direct dependency is
+  also reached transitively. Codex users may need to re-trust moved hooks once with `/hooks`.
 - Hook fragments removed by a filter or shadowed by a local hook are no longer validated, so
   a broken one no longer fails `mars sync`.
 - `mars version` now changes only `[package].version`, preserving comments, formatting,

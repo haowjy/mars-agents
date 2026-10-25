@@ -92,41 +92,6 @@ pub fn atomic_install_dir_filtered(
     atomic_install_dir_impl(src, dest, excluded_top_level)
 }
 
-/// Atomic directory install from an authored source tree.
-///
-/// Unlike the byte-faithful copy primitives, this skips generated plugin trees
-/// at any depth and reports each skipped path. It is the install seam for local
-/// sources that have not already passed through canonical staging.
-pub(crate) fn atomic_install_authored_dir_filtered(
-    src: &Path,
-    dest: &Path,
-    excluded_top_level: &[&str],
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    let parent = dest.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(parent)?;
-
-    let excluded_paths = excluded_top_level
-        .iter()
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
-    let entries = authored_tree_entries(src, &excluded_paths, diag)?;
-    let tmp_dir = tempfile::TempDir::new_in(parent)?;
-    for entry in entries {
-        let dest_path = tmp_dir.path().join(&entry.relative);
-        match entry.kind {
-            AuthoredEntryKind::Directory => fs::create_dir_all(&dest_path)?,
-            AuthoredEntryKind::File => {
-                if let Some(parent) = dest_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::copy(&entry.source, dest_path)?;
-            }
-        }
-    }
-    install_prepared_temp_dir(tmp_dir, dest)
-}
-
 fn atomic_install_dir_impl(
     src: &Path,
     dest: &Path,

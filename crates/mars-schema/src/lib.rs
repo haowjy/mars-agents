@@ -3,7 +3,10 @@
 /// The schema crate version, kept in lockstep with the Mars CLI.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod agent;
 pub mod harness;
+pub mod manifest;
+pub mod skill;
 
 pub use harness::HarnessId;
 

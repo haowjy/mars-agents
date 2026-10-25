@@ -256,45 +256,11 @@ pub struct Manifest {
 /// the source belong to that source's project, not to its dependents.
 #[derive(Deserialize)]
 struct SourceManifestSections {
-    package: Option<SourcePackageInfo>,
+    package: Option<toml::Value>,
     #[serde(default)]
     dependencies: IndexMap<SourceName, InstallDep>,
     #[serde(default)]
     models: IndexMap<String, crate::models::ModelAlias>,
-}
-
-/// Dependency consumers need only package identity and compatibility floors.
-/// Plugin publishing metadata is intentionally ignored here, even when a
-/// newer package writes a form this Mars build does not understand.
-#[derive(Deserialize)]
-struct SourcePackageInfo {
-    name: String,
-    version: String,
-    #[serde(default)]
-    schema: Option<u64>,
-    #[serde(default, rename = "uses-providers")]
-    uses_providers: Vec<String>,
-    #[serde(default, rename = "requires-mars")]
-    requires_mars: Option<String>,
-    #[serde(default, rename = "requires-meridian")]
-    requires_meridian: Option<String>,
-}
-
-impl From<SourcePackageInfo> for PackageInfo {
-    fn from(package: SourcePackageInfo) -> Self {
-        Self {
-            name: package.name,
-            version: package.version,
-            description: None,
-            authors: Vec::new(),
-            homepage: None,
-            license: None,
-            schema: package.schema,
-            uses_providers: package.uses_providers,
-            requires_mars: package.requires_mars,
-            requires_meridian: package.requires_meridian,
-        }
-    }
 }
 
 /// Shared include/exclude/rename filter configuration for a source.
@@ -818,10 +784,14 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
                 toml::from_str(&content).map_err(|e| crate::error::ConfigError::Invalid {
                     message: format!("failed to parse {}: {e}", path.display()),
                 })?;
-            let Some(package) = parsed.package else {
+            let Some(_package) = parsed.package else {
                 return Ok((None, diagnostics));
             };
-            let package = package.into();
+            let package = mars_schema::manifest::read_package(&content)
+                .map_err(|e| crate::error::ConfigError::Invalid {
+                    message: format!("failed to parse {}: {e}", path.display()),
+                })?
+                .expect("package presence was checked");
             // Convert InstallDep → ManifestDep, preserving both URL and path deps
             let deps: IndexMap<String, ManifestDep> = parsed
                 .dependencies

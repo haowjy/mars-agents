@@ -1,0 +1,790 @@
+//! Agent definition reader.
+
+use std::collections::BTreeMap;
+
+use crate::HarnessId;
+use serde_yaml::Value;
+
+use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
+use crate::invocability::parse_invocability_axis;
+use crate::model_policy::ModelPolicyRule;
+use crate::tool_policy::{self, EffectiveToolPolicy};
+
+// ---------------------------------------------------------------------------
+// Field enums
+// ---------------------------------------------------------------------------
+
+/// Agent execution mode — how the agent is launched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentMode {
+    Primary,
+    Subagent,
+}
+
+impl AgentMode {
+    pub fn as_str(&self) -> &str {
+        match self {
+            AgentMode::Primary => "primary",
+            AgentMode::Subagent => "subagent",
+        }
+    }
+}
+
+impl std::fmt::Display for AgentMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Approval policy field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalMode {
+    Default,
+    Auto,
+    Confirm,
+    Never,
+}
+
+impl ApprovalMode {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "default" => Some(Self::Default),
+            "auto" => Some(Self::Auto),
+            "confirm" => Some(Self::Confirm),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::Auto => "auto",
+            Self::Confirm => "confirm",
+            Self::Never => "never",
+        }
+    }
+}
+
+/// Sandbox mode field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxMode {
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl SandboxMode {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "default" => Some(Self::Default),
+            "read-only" => Some(Self::ReadOnly),
+            "workspace-write" => Some(Self::WorkspaceWrite),
+            "danger-full-access" => Some(Self::DangerFullAccess),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+            Self::DangerFullAccess => "danger-full-access",
+        }
+    }
+}
+
+/// Effort level field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EffortLevel {
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+
+impl EffortLevel {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "xhigh" | "max" => Some(Self::XHigh),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+        }
+    }
+
+    /// Normalized value for Claude ("xhigh" → "max").
+    pub fn claude_str(&self) -> &str {
+        match self {
+            Self::XHigh => "max",
+            other => other.as_str(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Harness-native passthrough overrides
+// ---------------------------------------------------------------------------
+
+/// Per-harness target-native passthrough blocks (`harness-overrides:`).
+///
+/// Mars validates only shape/serializability. Nested keys are owned by the
+/// target harness and are not interpreted as Mars semantic fields.
+#[derive(Debug, Clone, Default)]
+pub struct HarnessOverrides {
+    pub entries: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
+}
+
+fn mars_schema_harness_known(value: &str) -> Option<HarnessId> {
+    crate::harness::parse(value)
+}
+
+fn harness_key(harness: &HarnessId) -> &'static str {
+    harness.as_str()
+}
+
+impl HarnessOverrides {
+    pub fn get(&self, harness: &HarnessId) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.entries.get(harness_key(harness))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AgentProfile — the fully parsed frontmatter
+// ---------------------------------------------------------------------------
+
+/// Strongly-typed representation of an agent profile's frontmatter.
+///
+/// Parsed from YAML frontmatter by [`parse_agent_profile`].
+/// Used for:
+/// - Compile-time validation (mode values, passthrough shape)
+/// - Dual-surface routing (harness → output target)
+/// - Per-target lowering (field lowering per agent-compilation-mapping.md)
+#[derive(Debug, Clone)]
+pub struct AgentProfile {
+    // --- Identity fields ---
+    pub name: Option<String>,
+    pub description: Option<String>,
+
+    // --- Routing fields ---
+    pub harness: Option<HarnessId>,
+
+    // --- Model fields ---
+    pub model: Option<String>,
+
+    // --- Runtime policy fields ---
+    pub mode: Option<AgentMode>,
+    pub model_invocable: bool,
+    /// Whether the user can invoke this agent directly (slash command, picker, etc.).
+    pub user_invocable: bool,
+    /// `true` when source frontmatter explicitly set `model-invocable`.
+    pub had_model_invocable_field: bool,
+    /// `true` when source frontmatter explicitly set `user-invocable`.
+    pub had_user_invocable_field: bool,
+    pub approval: Option<ApprovalMode>,
+    pub sandbox: Option<SandboxMode>,
+    pub effort: Option<EffortLevel>,
+
+    // --- Tool fields ---
+    pub skills: SkillsSpec,
+    pub subagents: Vec<String>,
+    /// `tools:` and `disallowed-tools:` as one rule list. An allowlist has an explicit
+    /// `'*': deny`; deprecated list form only grants its entries.
+    pub tools: EffectiveToolPolicy,
+
+    // --- Override tables ---
+    pub harness_overrides: HarnessOverrides,
+    pub model_policies: Vec<ModelPolicyRule>,
+}
+
+impl AgentProfile {
+    pub fn effective_skills(&self, _harness: &HarnessId) -> &SkillsSpec {
+        &self.skills
+    }
+
+    pub fn effective_native_config(
+        &self,
+        harness: &HarnessId,
+    ) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.harness_overrides
+            .get(harness)
+            .filter(|map| !map.is_empty())
+    }
+}
+// ---------------------------------------------------------------------------
+// Validation warnings/errors
+// ---------------------------------------------------------------------------
+
+/// A validation finding from agent profile parsing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentDiagnostic {
+    /// Field value is not in the allowed set.
+    InvalidFieldValue {
+        field: String,
+        value: String,
+        allowed: &'static str,
+    },
+    /// Deprecated list-form `tools: [read, grep]`: it grants the listed tools and restricts
+    /// nothing, which readers often take for "only these tools".
+    DeprecatedListFormTools,
+    /// Unknown top-level harness name — not one of claude/codex/opencode/cursor/pi.
+    UnknownHarness { value: String },
+    /// Unknown harness key under `harness-overrides`; preserved for forward compatibility.
+    UnknownHarnessOverride { value: String },
+}
+
+impl AgentDiagnostic {
+    pub fn schema_diagnostic(&self) -> crate::diagnostic::SchemaDiagnostic {
+        use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path};
+
+        let field = match self {
+            Self::InvalidFieldValue { field, .. } => field.as_str(),
+            Self::UnknownHarness { .. } => "harness",
+            Self::UnknownHarnessOverride { .. } => "harness-overrides",
+            Self::DeprecatedListFormTools => "tools",
+        };
+        let mut path = key_path(field);
+        if matches!(path.first(), Some(PathSegment::Key(key)) if key == "model-policies")
+            && let Some(PathSegment::Index(index)) = path.get_mut(1)
+        {
+            *index = index.saturating_sub(1);
+        }
+        SchemaDiagnostic::new(
+            if self.is_error() {
+                "agent-schema-error"
+            } else {
+                "agent-schema-warning"
+            },
+            if self.is_error() {
+                Severity::Error
+            } else {
+                Severity::Warning
+            },
+            path,
+            self.message(),
+        )
+    }
+
+    pub fn is_error(&self) -> bool {
+        match self {
+            AgentDiagnostic::InvalidFieldValue { field, .. } => {
+                !field.starts_with("harness-overrides")
+            }
+            AgentDiagnostic::UnknownHarness { .. } => true,
+            AgentDiagnostic::DeprecatedListFormTools
+            | AgentDiagnostic::UnknownHarnessOverride { .. } => false,
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            AgentDiagnostic::InvalidFieldValue {
+                field,
+                value,
+                allowed,
+            } => {
+                format!("agent field `{field}` has invalid value `{value}`; allowed: {allowed}")
+            }
+            AgentDiagnostic::DeprecatedListFormTools => {
+                "agent `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string()
+            }
+            AgentDiagnostic::UnknownHarness { value } => {
+                format!("unknown harness `{value}`; known: claude, codex, opencode, cursor, pi")
+            }
+            AgentDiagnostic::UnknownHarnessOverride { value } => {
+                format!("unknown harness override `{value}`; preserving passthrough block")
+            }
+        }
+    }
+}
+
+fn push_agent_tool_invalid(
+    diags: &mut Vec<AgentDiagnostic>,
+    field: &str,
+    value: &str,
+    allowed: &'static str,
+) {
+    diags.push(AgentDiagnostic::InvalidFieldValue {
+        field: field.to_string(),
+        value: value.to_string(),
+        allowed,
+    });
+}
+
+fn parse_native_config_value(
+    field: &str,
+    value: &Value,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> Option<serde_json::Value> {
+    match value {
+        Value::Null => {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: field.to_string(),
+                value: "null".to_string(),
+                allowed: "non-null scalar, array, or map value",
+            });
+            None
+        }
+        Value::Bool(v) => Some(serde_json::Value::Bool(*v)),
+        Value::String(v) => Some(serde_json::Value::String(v.clone())),
+        Value::Number(v) => {
+            if let Some(number) = v.as_i64().map(serde_json::Number::from) {
+                Some(serde_json::Value::Number(number))
+            } else if let Some(number) = v.as_u64().map(serde_json::Number::from) {
+                Some(serde_json::Value::Number(number))
+            } else if let Some(float) = v.as_f64() {
+                match serde_json::Number::from_f64(float) {
+                    Some(number) => Some(serde_json::Value::Number(number)),
+                    None => {
+                        diags.push(AgentDiagnostic::InvalidFieldValue {
+                            field: field.to_string(),
+                            value: float.to_string(),
+                            allowed: "finite JSON number",
+                        });
+                        None
+                    }
+                }
+            } else {
+                diags.push(AgentDiagnostic::InvalidFieldValue {
+                    field: field.to_string(),
+                    value: format!("{value:?}"),
+                    allowed: "JSON number",
+                });
+                None
+            }
+        }
+        Value::Sequence(seq) => {
+            let mut out = Vec::with_capacity(seq.len());
+            for (index, entry) in seq.iter().enumerate() {
+                let child_field = format!("{field}[{index}]");
+                if let Some(parsed) = parse_native_config_value(&child_field, entry, diags) {
+                    out.push(parsed);
+                }
+            }
+            Some(serde_json::Value::Array(out))
+        }
+        Value::Mapping(mapping) => {
+            let mut out = serde_json::Map::new();
+            for (key, entry) in mapping {
+                let Some(key_text) = key.as_str() else {
+                    diags.push(AgentDiagnostic::InvalidFieldValue {
+                        field: field.to_string(),
+                        value: format!("{key:?}"),
+                        allowed: "string keys",
+                    });
+                    continue;
+                };
+                let child_field = format!("{field}.{key_text}");
+                if let Some(parsed) = parse_native_config_value(&child_field, entry, diags) {
+                    out.insert(key_text.to_string(), parsed);
+                }
+            }
+            Some(serde_json::Value::Object(out))
+        }
+        _ => {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: field.to_string(),
+                value: format!("{value:?}"),
+                allowed: "YAML/TOML/JSON-serializable value",
+            });
+            None
+        }
+    }
+}
+
+fn parse_harness_overrides(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> HarnessOverrides {
+    let mut out = HarnessOverrides::default();
+    let Some(mapping) = val.as_mapping() else {
+        diags.push(AgentDiagnostic::InvalidFieldValue {
+            field: "harness-overrides".to_string(),
+            value: format!("{val:?}"),
+            allowed: "mapping of harness name to target-native config mapping",
+        });
+        return out;
+    };
+
+    for (k, v) in mapping {
+        let Some(harness_name) = k.as_str() else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "harness-overrides".to_string(),
+                value: format!("{k:?}"),
+                allowed: "string harness keys",
+            });
+            continue;
+        };
+        let Some(sub_mapping) = v.as_mapping() else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: format!("harness-overrides.{harness_name}"),
+                value: format!("{v:?}"),
+                allowed: "mapping of target-native keys",
+            });
+            continue;
+        };
+        if mars_schema_harness_known(harness_name).is_none() {
+            diags.push(AgentDiagnostic::UnknownHarnessOverride {
+                value: harness_name.to_string(),
+            });
+        }
+        let mut parsed = serde_json::Map::new();
+        for (target_key, target_value) in sub_mapping {
+            let Some(key_text) = target_key.as_str() else {
+                diags.push(AgentDiagnostic::InvalidFieldValue {
+                    field: format!("harness-overrides.{harness_name}"),
+                    value: format!("{target_key:?}"),
+                    allowed: "string target-native keys",
+                });
+                continue;
+            };
+            let value_field = format!("harness-overrides.{harness_name}.{key_text}");
+            if let Some(value) = parse_native_config_value(&value_field, target_value, diags) {
+                parsed.insert(key_text.to_string(), value);
+            }
+        }
+        if !parsed.is_empty() {
+            out.entries.insert(harness_name.to_string(), parsed);
+        }
+    }
+
+    out
+}
+
+fn push_model_policy_invalid(
+    diags: &mut Vec<AgentDiagnostic>,
+    field: impl Into<String>,
+    value: impl Into<String>,
+    allowed: &'static str,
+) {
+    diags.push(AgentDiagnostic::InvalidFieldValue {
+        field: field.into(),
+        value: value.into(),
+        allowed,
+    });
+}
+
+fn push_model_policy_parse_error(
+    diags: &mut Vec<AgentDiagnostic>,
+    position: usize,
+    error: crate::model_policy::ModelPolicyRuleParseError,
+) {
+    let rule_field = format!("model-policies[{position}]");
+    match error {
+        crate::model_policy::ModelPolicyRuleParseError::RuleMustBeMapping { found } => {
+            push_model_policy_invalid(diags, rule_field, found, "mapping with match and override");
+        }
+        crate::model_policy::ModelPolicyRuleParseError::MatchMissing => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                "<missing>",
+                "mapping with exactly one of model, alias, model-glob",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::MatchMustBeMapping { found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                found,
+                "mapping with exactly one of model, alias, model-glob",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::MatchMustContainExactlyOne { found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                found,
+                "exactly one of model, alias, model-glob",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::MatchKeyMustBeString { found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                found,
+                "model, alias, model-glob",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::UnknownMatchKey { key } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match"),
+                key,
+                "model, alias, model-glob",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::MatchValueMustBeString { key, found } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match.{key}"),
+                found,
+                "non-empty string",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::MatchValueEmpty { key } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.match.{key}"),
+                "<empty>",
+                "non-empty string",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
+            push_model_policy_invalid(diags, format!("{rule_field}.override"), found, "mapping");
+        }
+        crate::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.override.{key}"),
+                key,
+                "effort, sandbox, approval",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::OverrideValueInvalid {
+            key,
+            found,
+            allowed,
+        } => {
+            push_model_policy_invalid(
+                diags,
+                format!("{rule_field}.override.{key}"),
+                found,
+                allowed,
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
+            push_model_policy_invalid(diags, format!("{rule_field}.no-fallback"), found, "boolean");
+        }
+    }
+}
+
+fn parse_model_policies(val: &Value, diags: &mut Vec<AgentDiagnostic>) -> Vec<ModelPolicyRule> {
+    let Some(seq) = val.as_sequence() else {
+        push_model_policy_invalid(
+            diags,
+            "model-policies",
+            format!("{val:?}"),
+            "sequence of rules",
+        );
+        return vec![];
+    };
+
+    let mut out = Vec::new();
+    for (index, entry) in seq.iter().enumerate() {
+        let position = index + 1;
+        match crate::model_policy::parse_model_policy_rule_value(entry) {
+            Ok(rule) => out.push(rule),
+            Err(error) => push_model_policy_parse_error(diags, position, error),
+        }
+    }
+    out
+}
+
+fn parse_invocability_field(
+    field: &str,
+    raw: Option<&Value>,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> (bool, bool) {
+    let (value, had_field, invalid) = parse_invocability_axis(raw);
+    if let Some(invalid) = invalid {
+        diags.push(AgentDiagnostic::InvalidFieldValue {
+            field: field.to_string(),
+            value: invalid,
+            allowed: "boolean",
+        });
+    }
+    (value, had_field)
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Parse an agent profile from a [`Frontmatter`].
+///
+/// Collects diagnostics without failing — the caller decides whether errors
+/// are fatal. The parsed [`AgentProfile`] is always returned even when there
+/// are validation errors; invalid fields are skipped (omitted from the profile).
+pub fn parse_agent_profile_legacy(
+    fm: &Frontmatter,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> AgentProfile {
+    let name = fm.name().map(str::to_owned);
+    let description = fm
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    // harness:
+    let harness = fm.get("harness").and_then(Value::as_str).and_then(|s| {
+        if let Some(h) = crate::harness::parse(s) {
+            Some(h)
+        } else {
+            diags.push(AgentDiagnostic::UnknownHarness {
+                value: s.to_string(),
+            });
+            None
+        }
+    });
+
+    // model:
+    let model = fm.get("model").and_then(Value::as_str).map(str::to_owned);
+
+    // mode:
+    let mode = fm
+        .get("mode")
+        .and_then(Value::as_str)
+        .and_then(|s| match s {
+            "primary" => Some(AgentMode::Primary),
+            "subagent" => Some(AgentMode::Subagent),
+            other => {
+                diags.push(AgentDiagnostic::InvalidFieldValue {
+                    field: "mode".to_string(),
+                    value: other.to_string(),
+                    allowed: "primary, subagent",
+                });
+                None
+            }
+        });
+
+    // model-invocable / user-invocable:
+    let (model_invocable, had_model_invocable_field) =
+        parse_invocability_field("model-invocable", fm.get("model-invocable"), diags);
+    let (user_invocable, had_user_invocable_field) =
+        parse_invocability_field("user-invocable", fm.get("user-invocable"), diags);
+
+    // approval:
+    let approval = fm.get("approval").and_then(Value::as_str).and_then(|s| {
+        if let Some(a) = ApprovalMode::from_str(s) {
+            Some(a)
+        } else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "approval".to_string(),
+                value: s.to_string(),
+                allowed: "default, auto, confirm, never",
+            });
+            None
+        }
+    });
+
+    // sandbox:
+    let sandbox = fm.get("sandbox").and_then(Value::as_str).and_then(|s| {
+        if let Some(sb) = SandboxMode::from_str(s) {
+            Some(sb)
+        } else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "sandbox".to_string(),
+                value: s.to_string(),
+                allowed: "default, read-only, workspace-write, danger-full-access",
+            });
+            None
+        }
+    });
+
+    // effort:
+    let effort = fm.get("effort").and_then(Value::as_str).and_then(|s| {
+        if s == "none" {
+            // "none" is a valid sentinel meaning "no effort level" (same as omitting the field)
+            return None;
+        }
+        if let Some(e) = EffortLevel::from_str(s) {
+            Some(e)
+        } else {
+            diags.push(AgentDiagnostic::InvalidFieldValue {
+                field: "effort".to_string(),
+                value: s.to_string(),
+                allowed: "low, medium, high, xhigh, none",
+            });
+            None
+        }
+    });
+
+    // skills/subagents/tools/disallowed-tools:
+    let skills = fm.skills_structured();
+    let subagents = fm
+        .get("subagents")
+        .map(tool_policy::yaml_str_list)
+        .unwrap_or_default();
+    if tool_policy::is_list_form(fm.get("tools")) {
+        diags.push(AgentDiagnostic::DeprecatedListFormTools);
+    }
+    let tools = {
+        let mut invalid = |field: &str, value: &str, allowed: &'static str| {
+            push_agent_tool_invalid(diags, field, value, allowed);
+        };
+        tool_policy::parse_tool_policy(fm.get("tools"), None, &mut invalid)
+    };
+
+    // harness-overrides:
+    let harness_overrides = fm
+        .get("harness-overrides")
+        .map(|v| parse_harness_overrides(v, diags))
+        .unwrap_or_default();
+
+    // model-policies:
+    let model_policies = fm
+        .get("model-policies")
+        .map(|value| parse_model_policies(value, diags))
+        .unwrap_or_default();
+
+    AgentProfile {
+        name,
+        description,
+        harness,
+        model,
+        mode,
+        model_invocable,
+        user_invocable,
+        had_model_invocable_field,
+        had_user_invocable_field,
+        approval,
+        sandbox,
+        effort,
+        skills,
+        subagents,
+        tools,
+        harness_overrides,
+        model_policies,
+    }
+}
+
+/// Parse an agent profile from raw markdown content.
+///
+/// Convenience wrapper over [`parse_agent_profile`].
+pub fn parse_agent_content_legacy(
+    content: &str,
+    diags: &mut Vec<AgentDiagnostic>,
+) -> Result<(AgentProfile, Frontmatter), FrontmatterError> {
+    let fm = Frontmatter::parse(content)?;
+    let profile = parse_agent_profile_legacy(&fm, diags);
+    Ok((profile, fm))
+}
+
+pub fn parse_agent_profile(
+    fm: &Frontmatter,
+    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+) -> AgentProfile {
+    let mut findings = Vec::new();
+    let profile = parse_agent_profile_legacy(fm, &mut findings);
+    diags.extend(findings.iter().map(AgentDiagnostic::schema_diagnostic));
+    profile
+}
+
+pub fn parse_agent_content(
+    content: &str,
+    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+) -> Result<(AgentProfile, Frontmatter), FrontmatterError> {
+    let fm = Frontmatter::parse(content)?;
+    let profile = parse_agent_profile(&fm, diags);
+    Ok((profile, fm))
+}

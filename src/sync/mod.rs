@@ -715,6 +715,17 @@ pub(crate) fn build_target(
         }
     }
 
+    let managed_targets = resolved.loaded.effective.settings.managed_targets();
+    match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0) {
+        Ok(items) => {
+            for item in items {
+                target_state.select_mcp(item, &managed_targets);
+            }
+        }
+        Err(error) => target_state
+            .record_mcp_discovery_warning(format!("failed to scan local MCP items: {error}"), true),
+    }
+
     // Prevent managed installs from overwriting unmanaged files.
     let unmanaged_collisions = target::check_unmanaged_collisions(
         managed_root,

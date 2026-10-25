@@ -76,8 +76,6 @@ pub(crate) fn inputs_for_items(
 
 fn flat_skill_excluded_paths(package_root: &Path) -> Result<Vec<PathBuf>, MarsError> {
     const TOOLING_DIRECTORIES: &[&str] = &[
-        crate::plugin_metadata::CLAUDE_CATALOG_DIR,
-        crate::plugin_metadata::CURSOR_CATALOG_DIR,
         ".direnv",
         ".venv",
         "__pycache__",
@@ -90,8 +88,9 @@ fn flat_skill_excluded_paths(package_root: &Path) -> Result<Vec<PathBuf>, MarsEr
         .iter()
         .chain(TOOLING_DIRECTORIES)
         .map(PathBuf::from)
+        .chain(crate::plugin_metadata::generated_root_directories().map(PathBuf::from))
+        .chain(crate::plugin_metadata::generated_root_files().map(PathBuf::from))
         .collect::<Vec<_>>();
-    excluded.push(PathBuf::from(crate::plugin_metadata::OPENCODE_PACKAGE));
     for entry in fs::read_dir(package_root)? {
         let entry = entry?;
         let file_type = entry.file_type()?;

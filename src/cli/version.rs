@@ -35,7 +35,7 @@ pub struct VersionArgs {
 pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let config = crate::config::load(&ctx.project_root)?;
     if let Some(plugin) = &config.plugin {
-        crate::config::validate_plugin_build(&config, &plugin.harnesses)?;
+        crate::build::plugin::validate_plugin_build(&config, &plugin.harnesses)?;
         let output = crate::build::plugin::configured_output_path(&ctx.project_root, plugin)?;
         crate::build::plugin::output::recover(&output)?;
     }

@@ -172,42 +172,10 @@ fn default_plugin_dir() -> PathBuf {
     PathBuf::from("plugin")
 }
 
-/// Harnesses that can consume a generated plugin artifact.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum PluginHarness {
-    Claude,
-    Codex,
-    Grok,
-    Cursor,
-    OpenCode,
-    #[serde(other)]
-    Unknown,
-}
-
-impl PluginHarness {
-    pub const DEFAULT: &'static [Self] = &[
-        Self::Claude,
-        Self::Codex,
-        Self::Grok,
-        Self::Cursor,
-        Self::OpenCode,
-    ];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Grok => "grok",
-            Self::Cursor => "cursor",
-            Self::OpenCode => "opencode",
-            Self::Unknown => "unknown",
-        }
-    }
-}
+pub use crate::plugin::PluginHarness;
 
 pub fn default_plugin_harnesses() -> Vec<PluginHarness> {
-    PluginHarness::DEFAULT.to_vec()
+    PluginHarness::specs().map(|spec| spec.harness).collect()
 }
 
 fn validate_plugin_config_shape(config: &Config) -> Result<(), MarsError> {
@@ -221,131 +189,6 @@ fn validate_plugin_config_shape(config: &Config) -> Result<(), MarsError> {
         .into());
     }
 
-    Ok(())
-}
-
-fn validate_package_authors(config: &Config) -> Result<(), MarsError> {
-    let Some((index, _)) = config.package.as_ref().and_then(|package| {
-        package
-            .authors
-            .iter()
-            .enumerate()
-            .find(|(_, author)| author.name.trim().is_empty())
-    }) else {
-        return Ok(());
-    };
-    Err(ConfigError::Invalid {
-        message: format!("mars.toml [package].authors[{index}].name cannot be empty"),
-    }
-    .into())
-}
-
-pub(crate) fn validate_plugin_build(
-    config: &Config,
-    harnesses: &[PluginHarness],
-) -> Result<(), MarsError> {
-    let package = config
-        .package
-        .as_ref()
-        .ok_or_else(|| ConfigError::Invalid {
-            message: "mars.toml needs a [package] table to build a plugin".to_string(),
-        })?;
-    if harnesses.is_empty() {
-        return Err(ConfigError::Invalid {
-            message: "a plugin build needs at least one harness".to_string(),
-        }
-        .into());
-    }
-    if harnesses.contains(&PluginHarness::Unknown) {
-        return Err(ConfigError::Invalid {
-            message: "mars.toml [plugin].harnesses contains an unknown harness name".to_string(),
-        }
-        .into());
-    }
-    validate_package_authors(config)?;
-
-    let name = config
-        .plugin
-        .as_ref()
-        .map_or(package.name.as_str(), |plugin| plugin.name(package));
-    let name_field = if config
-        .plugin
-        .as_ref()
-        .is_some_and(|plugin| plugin.name.is_some())
-    {
-        "[plugin].name"
-    } else {
-        "[package].name"
-    };
-    for harness in harnesses {
-        let valid = match harness {
-            PluginHarness::Claude | PluginHarness::Grok => valid_claude_plugin_name(name),
-            PluginHarness::Codex => valid_codex_plugin_name(name),
-            PluginHarness::Cursor => valid_cursor_plugin_name(name),
-            PluginHarness::OpenCode => valid_npm_package_name(name),
-            PluginHarness::Unknown => unreachable!("unknown harnesses were rejected above"),
-        };
-        if !valid {
-            let rule = match harness {
-                PluginHarness::Claude => {
-                    "Claude names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters"
-                }
-                PluginHarness::Grok => {
-                    "Grok reads the Claude tree, whose names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters"
-                }
-                PluginHarness::Codex => {
-                    "Codex names must be 1-64 lowercase letters, digits, dots, or hyphens, start and end with a letter or digit, and contain neither `--` nor `..`"
-                }
-                PluginHarness::Cursor => {
-                    "Cursor names must contain only lowercase letters, digits, dots, or hyphens and start and end with a letter or digit"
-                }
-                PluginHarness::OpenCode => {
-                    "OpenCode names must be valid lowercase npm package names"
-                }
-                PluginHarness::Unknown => unreachable!("unknown harnesses were rejected above"),
-            };
-            return Err(ConfigError::Invalid {
-                message: format!("mars.toml {name_field} `{name}` is invalid: {rule}"),
-            }
-            .into());
-        }
-    }
-
-    let marketplace = config
-        .plugin
-        .as_ref()
-        .map_or(package.name.as_str(), |plugin| plugin.marketplace(package));
-    let marketplace_field = if config
-        .plugin
-        .as_ref()
-        .is_some_and(|plugin| plugin.marketplace.is_some())
-    {
-        "[plugin].marketplace"
-    } else {
-        "[package].name"
-    };
-    if harnesses.iter().any(|harness| {
-        matches!(
-            harness,
-            PluginHarness::Claude | PluginHarness::Codex | PluginHarness::Grok
-        )
-    }) && !valid_claude_plugin_name(marketplace)
-    {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "mars.toml {marketplace_field} `{marketplace}` is invalid as a marketplace: Claude marketplace names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters"
-            ),
-        }
-        .into());
-    }
-    if harnesses.contains(&PluginHarness::Cursor) && !valid_cursor_plugin_name(marketplace) {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "mars.toml {marketplace_field} `{marketplace}` is invalid as a marketplace: Cursor marketplace names must contain only lowercase letters, digits, dots, or hyphens and start and end with a letter or digit"
-            ),
-        }
-        .into());
-    }
     Ok(())
 }
 
@@ -391,73 +234,6 @@ pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), MarsError> {
         }
     }
     Ok(())
-}
-
-fn valid_claude_plugin_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.chars().any(|character| {
-            character.is_whitespace()
-                || character.is_control()
-                || matches!(character, '@' | ':' | '/' | '\\')
-                || matches!(
-                    character,
-                    '\u{061c}'
-                        | '\u{200e}'
-                        | '\u{200f}'
-                        | '\u{202a}'..='\u{202e}'
-                        | '\u{2066}'..='\u{2069}'
-                )
-        })
-}
-
-fn valid_cursor_plugin_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    !bytes.is_empty()
-        && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
-        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
-        && bytes
-            .iter()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b".-".contains(byte))
-}
-
-fn valid_codex_plugin_name(name: &str) -> bool {
-    name.len() <= 64
-        && !name.contains("--")
-        && !name.contains("..")
-        && valid_cursor_plugin_name(name)
-}
-
-fn valid_npm_package_name(name: &str) -> bool {
-    if name.is_empty()
-        || name.len() > 214
-        || name != name.to_ascii_lowercase()
-        || matches!(name, "node_modules" | "favicon.ico")
-    {
-        return false;
-    }
-    let segments: Vec<_> = if let Some(scoped) = name.strip_prefix('@') {
-        let Some((scope, package)) = scoped.split_once('/') else {
-            return false;
-        };
-        if package.contains('/') {
-            return false;
-        }
-        vec![scope, package]
-    } else {
-        if name.contains('/') {
-            return false;
-        }
-        vec![name]
-    };
-    segments.into_iter().all(|segment| {
-        !segment.is_empty()
-            && !segment.starts_with(['.', '_'])
-            && segment.bytes().all(|byte| {
-                byte.is_ascii_lowercase()
-                    || byte.is_ascii_digit()
-                    || matches!(byte, b'-' | b'_' | b'.' | b'~')
-            })
-    })
 }
 
 mod toml_path_serde {
@@ -2396,7 +2172,7 @@ harnesses = ["claude", "cursor"]
 
             let config = load(dir.path()).unwrap();
             let harnesses = config.plugin.as_ref().unwrap().harnesses.clone();
-            let error = validate_plugin_build(&config, &harnesses)
+            let error = crate::build::plugin::validate_plugin_build(&config, &harnesses)
                 .unwrap_err()
                 .to_string();
             assert!(
@@ -2426,7 +2202,7 @@ harnesses = ["claude", "cursor"]
 
             let config = load(dir.path()).unwrap();
             let harnesses = config.plugin.as_ref().unwrap().harnesses.clone();
-            let error = validate_plugin_build(&config, &harnesses)
+            let error = crate::build::plugin::validate_plugin_build(&config, &harnesses)
                 .unwrap_err()
                 .to_string();
             assert!(

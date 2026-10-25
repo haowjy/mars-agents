@@ -9,9 +9,12 @@ package distribution.
 checkout: its items plus dependencies under its own filters, renames, and visibility rules. It
 resolves through `PublishLens`, stages every package, collects the flattened target once with
 sync's shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
-`TreeProfile`. Profiles store only plugin-format policy; harness identity, variant key, and sync
-root come from `compiler::harness_descriptor`. Each profile has a typed tree identity, an optional
-hook-root token, and an authored-hook check that runs once before copying. `PluginTree::as_str()` is
+`TreeProfile`. `plugin.rs` owns the two declarative format tables: one row per consumer harness and one per
+published tree. Harness rows select a tree and carry naming, loader capability, display, and
+verification policy; tree rows carry the directory key, generated root-file renderer, marketplace
+naming, dropped agent fields, and lossiness adjustment. Writer `TreeProfile`s reference those tree
+rows and add only compiler and emission functions. Harness identity, variant key, and sync root come
+from `compiler::harness_descriptor`; authored-hook checks run once before copying. `PluginTree::as_str()` is
 the single key for both staged directory names and reported output paths. Claude, Codex, and Grok
 share the Claude tree; Cursor and OpenCode have their own tree identities. The OpenCode tree is an
 npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and imports every

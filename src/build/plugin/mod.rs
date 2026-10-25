@@ -25,6 +25,7 @@ use crate::config::{
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, LossinessMode};
 use crate::error::{ConfigError, MarsError};
+pub use crate::plugin::PluginTree;
 use crate::resolve::{PublishLens, ResolveOptions};
 use crate::types::{RenameMap, SourceId, SourceName};
 
@@ -152,35 +153,100 @@ pub struct PluginComponents {
     pub mcp_servers: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PluginTree {
-    Claude,
-    Cursor,
-    OpenCode,
-}
+pub(crate) fn validate_plugin_build(
+    config: &Config,
+    harnesses: &[PluginHarness],
+) -> Result<(), MarsError> {
+    let package = config
+        .package
+        .as_ref()
+        .ok_or_else(|| ConfigError::Invalid {
+            message: "mars.toml needs a [package] table to build a plugin".to_string(),
+        })?;
+    if harnesses.is_empty() {
+        return Err(ConfigError::Invalid {
+            message: "a plugin build needs at least one harness".to_string(),
+        }
+        .into());
+    }
+    let specs = harnesses
+        .iter()
+        .map(|harness| {
+            harness.spec().ok_or_else(|| ConfigError::Invalid {
+                message: "mars.toml [plugin].harnesses contains an unknown harness name"
+                    .to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some((index, _)) = package
+        .authors
+        .iter()
+        .enumerate()
+        .find(|(_, author)| author.name.trim().is_empty())
+    {
+        return Err(ConfigError::Invalid {
+            message: format!("mars.toml [package].authors[{index}].name cannot be empty"),
+        }
+        .into());
+    }
 
-impl PluginTree {
-    const ALL: [Self; 3] = [Self::Claude, Self::Cursor, Self::OpenCode];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Cursor => "cursor",
-            Self::OpenCode => "opencode",
+    let name = config
+        .plugin
+        .as_ref()
+        .map_or(package.name.as_str(), |plugin| plugin.name(package));
+    let name_field = if config
+        .plugin
+        .as_ref()
+        .is_some_and(|plugin| plugin.name.is_some())
+    {
+        "[plugin].name"
+    } else {
+        "[package].name"
+    };
+    for spec in &specs {
+        if !spec.name_rule.accepts(name) {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "mars.toml {name_field} `{name}` is invalid: {}",
+                    spec.name_rule.message
+                ),
+            }
+            .into());
         }
     }
-}
 
-impl PluginHarness {
-    fn tree(self) -> PluginTree {
-        match self {
-            Self::Claude | Self::Codex | Self::Grok => PluginTree::Claude,
-            Self::Cursor => PluginTree::Cursor,
-            Self::OpenCode => PluginTree::OpenCode,
-            Self::Unknown => unreachable!("plugin build validation rejects unknown harnesses"),
+    let marketplace = config
+        .plugin
+        .as_ref()
+        .map_or(package.name.as_str(), |plugin| plugin.marketplace(package));
+    let marketplace_field = if config
+        .plugin
+        .as_ref()
+        .is_some_and(|plugin| plugin.marketplace.is_some())
+    {
+        "[plugin].marketplace"
+    } else {
+        "[package].name"
+    };
+    let mut checked = std::collections::BTreeSet::new();
+    for spec in specs {
+        if !checked.insert(spec.tree.as_str()) {
+            continue;
+        }
+        let Some(rule) = spec.tree.spec().marketplace_name_rule else {
+            continue;
+        };
+        if !rule.accepts(marketplace) {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "mars.toml {marketplace_field} `{marketplace}` is invalid as a marketplace: {}",
+                    rule.message
+                ),
+            }
+            .into());
         }
     }
+    Ok(())
 }
 
 pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, MarsError> {
@@ -224,7 +290,7 @@ fn stage_plugin_inner(
             ),
         })
     })?;
-    crate::config::validate_plugin_build(manifest, &request.harnesses)?;
+    validate_plugin_build(manifest, &request.harnesses)?;
     let mut metadata = PackageMetadata::from(manifest)?;
     if let Some(version) = &request.version {
         metadata.version.clone_from(version);
@@ -370,10 +436,14 @@ fn materialize_rewritten_skills(
 }
 
 fn requested_tree_profiles(harnesses: &[PluginHarness]) -> Vec<&'static tree::TreeProfile> {
-    PluginTree::ALL
-        .into_iter()
-        .filter(|tree| harnesses.iter().any(|harness| harness.tree() == *tree))
-        .map(tree::profile)
+    tree::profiles()
+        .filter(|profile| {
+            harnesses.iter().any(|harness| {
+                harness
+                    .spec()
+                    .is_some_and(|spec| spec.tree == profile.tree())
+            })
+        })
         .collect()
 }
 

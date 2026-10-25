@@ -9,7 +9,6 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::target::ConfigEntry;
 
-use super::super::PluginTree;
 use super::super::metadata::PackageMetadata;
 use super::{TreeProfile, WrittenTreeContents};
 
@@ -18,12 +17,13 @@ const INDEX_TEMPLATE: &str = include_str!("../opencode/index.mjs");
 const DATA_PLACEHOLDER: &str = "/*__MARS_PLUGIN_DATA__*/";
 
 pub(super) static PROFILE: TreeProfile = TreeProfile {
-    tree: PluginTree::OpenCode,
+    format: &crate::plugin::OPENCODE_TREE_SPEC,
     harness: HarnessKind::OpenCode,
     agents: None,
     native_model_aliases: &[],
     plugin_root_token: None,
     check_hook,
+    standard_output: None,
     write_config: write_config_entries,
     finish: write_package,
 };
@@ -106,6 +106,7 @@ struct McpServer {
 }
 
 fn write_config_entries(
+    _profile: &TreeProfile,
     root: &Path,
     entries: &[ConfigEntry],
     _diag: &mut DiagnosticCollector,
@@ -134,7 +135,7 @@ fn write_config_entries(
         return Ok(());
     }
 
-    write_json(
+    super::write_pretty_json(
         &root.join("mcp.json"),
         &servers,
         "OpenCode MCP configuration",
@@ -171,6 +172,7 @@ struct HookData {
 }
 
 fn write_package(
+    _profile: &TreeProfile,
     root: &Path,
     metadata: &PackageMetadata,
     contents: &WrittenTreeContents<'_>,
@@ -181,7 +183,7 @@ fn write_package(
         version: &metadata.version,
         main: "index.mjs",
     };
-    write_json(
+    super::write_pretty_json(
         &root.join("package.json"),
         &manifest,
         "OpenCode plugin manifest",
@@ -262,12 +264,4 @@ fn skill_data(root: &Path, directory: &str) -> Result<SkillData, MarsError> {
             .and_then(serde_yaml::Value::as_str)
             .map(str::to_owned),
     })
-}
-
-fn write_json(path: &Path, value: &impl Serialize, description: &str) -> Result<(), MarsError> {
-    let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| {
-        MarsError::Internal(format!("failed to serialize {description}: {error}"))
-    })?;
-    bytes.push(b'\n');
-    crate::fs::atomic_write(path, &bytes)
 }

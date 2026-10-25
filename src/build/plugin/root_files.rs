@@ -81,35 +81,29 @@ pub(super) fn plan(
 
     let expected = inspect::expected_root_paths(harnesses);
     let mut writes = BTreeMap::new();
-    if expected.contains(".claude-plugin/marketplace.json") {
-        insert_catalog(
-            &mut writes,
-            ".claude-plugin",
-            &format!("./{output_relative}/claude"),
-            &metadata.marketplace,
-            metadata,
-        )?;
-    }
-    if expected.contains(".cursor-plugin/marketplace.json") {
-        insert_catalog(
-            &mut writes,
-            ".cursor-plugin",
-            &format!("{output_relative}/cursor"),
-            &metadata.marketplace,
-            metadata,
-        )?;
-    }
-    if expected.contains("package.json") {
+    for tree in crate::plugin::PLUGIN_TREE_SPECS {
+        let Some(root_file) = tree.root_file else {
+            continue;
+        };
+        if !expected.contains(root_file.path) {
+            continue;
+        }
         writes.insert(
-            "package.json".to_string(),
-            opencode_package_bytes(metadata, &output_relative)?,
+            root_file.path.to_string(),
+            render_root_file(root_file, tree.key, &output_relative, metadata)?,
         );
     }
 
     if metadata.author.is_none()
-        && expected
-            .iter()
-            .any(|path| path.ends_with("marketplace.json"))
+        && crate::plugin::PLUGIN_TREE_SPECS.iter().any(|tree| {
+            tree.root_file.is_some_and(|root| {
+                expected.contains(root.path)
+                    && matches!(
+                        root.renderer,
+                        crate::plugin::RootFileRenderer::Marketplace { .. }
+                    )
+            })
+        })
     {
         diag.warn(
             "plugin-catalog-owner-fallback",
@@ -252,11 +246,11 @@ fn remove_empty_catalog_directory(package_root: &Path, relative: &str) -> Result
 }
 
 fn catalog_directory(path: &str) -> Option<&'static str> {
-    match path {
-        crate::plugin_metadata::CLAUDE_CATALOG => Some(crate::plugin_metadata::CLAUDE_CATALOG_DIR),
-        crate::plugin_metadata::CURSOR_CATALOG => Some(crate::plugin_metadata::CURSOR_CATALOG_DIR),
-        _ => None,
-    }
+    crate::plugin::PLUGIN_TREE_SPECS
+        .iter()
+        .filter_map(|tree| tree.root_file)
+        .find(|root| root.path == path)
+        .and_then(|root| root.catalog_directory)
 }
 
 fn path_exists(path: &Path) -> Result<bool, MarsError> {
@@ -293,63 +287,53 @@ struct CatalogPlugin<'a> {
     description: Option<&'a str>,
 }
 
-fn insert_catalog(
-    writes: &mut BTreeMap<String, Vec<u8>>,
-    directory: &str,
-    source: &str,
-    marketplace: &str,
-    metadata: &PackageMetadata,
-) -> Result<(), MarsError> {
-    let owner = metadata.author.as_ref();
-    let catalog = Catalog {
-        name: marketplace,
-        owner: CatalogOwner {
-            name: owner.map_or(metadata.name.as_str(), |author| author.name.as_str()),
-            email: owner.and_then(|author| author.email.as_deref()),
-        },
-        plugins: [CatalogPlugin {
-            name: &metadata.name,
-            source,
-            description: metadata.description.as_deref(),
-        }],
-    };
-    writes.insert(
-        format!("{directory}/marketplace.json"),
-        pretty_json(&catalog, "plugin marketplace")?,
-    );
-    Ok(())
-}
-
-fn opencode_package_bytes(
-    metadata: &PackageMetadata,
+fn render_root_file(
+    spec: crate::plugin::RootFileSpec,
+    tree_key: &str,
     output_relative: &str,
+    metadata: &PackageMetadata,
 ) -> Result<Vec<u8>, MarsError> {
-    #[derive(Serialize)]
-    struct RootPackage<'a> {
-        name: &'a str,
-        version: &'a str,
-        main: String,
-        files: [String; 1],
+    match spec.renderer {
+        crate::plugin::RootFileRenderer::Marketplace { source_prefix } => {
+            let owner = metadata.author.as_ref();
+            let source = format!("{source_prefix}{output_relative}/{tree_key}");
+            super::tree::pretty_json_bytes(
+                &Catalog {
+                    name: &metadata.marketplace,
+                    owner: CatalogOwner {
+                        name: owner.map_or(metadata.name.as_str(), |author| author.name.as_str()),
+                        email: owner.and_then(|author| author.email.as_deref()),
+                    },
+                    plugins: [CatalogPlugin {
+                        name: &metadata.name,
+                        source: &source,
+                        description: metadata.description.as_deref(),
+                    }],
+                },
+                "plugin marketplace",
+            )
+        }
+        crate::plugin::RootFileRenderer::OpenCodePackage => {
+            let tree = format!("{output_relative}/{tree_key}");
+            super::tree::pretty_json_bytes(
+                &RootPackage {
+                    name: &metadata.name,
+                    version: &metadata.version,
+                    main: format!("{tree}/index.mjs"),
+                    files: [tree],
+                },
+                "root OpenCode package",
+            )
+        }
     }
-
-    let opencode = format!("{output_relative}/opencode");
-    pretty_json(
-        &RootPackage {
-            name: &metadata.name,
-            version: &metadata.version,
-            main: format!("{opencode}/index.mjs"),
-            files: [opencode],
-        },
-        "root OpenCode package",
-    )
 }
 
-fn pretty_json(value: &impl Serialize, description: &str) -> Result<Vec<u8>, MarsError> {
-    let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| {
-        MarsError::Internal(format!("failed to serialize {description}: {error}"))
-    })?;
-    bytes.push(b'\n');
-    Ok(bytes)
+#[derive(Serialize)]
+struct RootPackage<'a> {
+    name: &'a str,
+    version: &'a str,
+    main: String,
+    files: [String; 1],
 }
 
 fn root_file_refusal(state: &PluginRootFileState, action: &str) -> MarsError {

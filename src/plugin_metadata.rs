@@ -8,14 +8,17 @@ use crate::error::MarsError;
 
 pub(crate) const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
-pub(crate) const CLAUDE_CATALOG: &str = ".claude-plugin/marketplace.json";
-pub(crate) const CURSOR_CATALOG: &str = ".cursor-plugin/marketplace.json";
-pub(crate) const OPENCODE_PACKAGE: &str = "package.json";
-pub(crate) const GENERATED_ROOT_FILES: &[&str] =
-    &[CLAUDE_CATALOG, CURSOR_CATALOG, OPENCODE_PACKAGE];
-pub(crate) const CLAUDE_CATALOG_DIR: &str = ".claude-plugin";
-pub(crate) const CURSOR_CATALOG_DIR: &str = ".cursor-plugin";
-pub(crate) const GENERATED_ROOT_DIRECTORIES: &[&str] = &[CLAUDE_CATALOG_DIR, CURSOR_CATALOG_DIR];
+pub(crate) fn generated_root_files() -> impl Iterator<Item = &'static str> {
+    crate::plugin::PLUGIN_TREE_SPECS
+        .iter()
+        .filter_map(|tree| tree.root_file.map(|root| root.path))
+}
+
+pub(crate) fn generated_root_directories() -> impl Iterator<Item = &'static str> {
+    crate::plugin::PLUGIN_TREE_SPECS
+        .iter()
+        .filter_map(|tree| tree.root_file.and_then(|root| root.catalog_directory))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PluginSentinel {
@@ -69,7 +72,7 @@ impl PluginSentinel {
             && self
                 .root_directories
                 .iter()
-                .all(|path| GENERATED_ROOT_DIRECTORIES.contains(&path.as_str()))
+                .all(|path| generated_root_directories().any(|allowed| allowed == path))
     }
 }
 
@@ -84,7 +87,7 @@ pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), Mar
     if let Some(unsupported) = sentinel
         .root_files
         .keys()
-        .find(|recorded| !GENERATED_ROOT_FILES.contains(&recorded.as_str()))
+        .find(|recorded| !generated_root_files().any(|allowed| allowed == recorded.as_str()))
     {
         return Err(invalid(format!(
             "plugin sentinel records unsupported generated root file `{unsupported}`: {}",
@@ -94,7 +97,7 @@ pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), Mar
     if let Some(unsupported) = sentinel
         .root_directories
         .iter()
-        .find(|recorded| !GENERATED_ROOT_DIRECTORIES.contains(&recorded.as_str()))
+        .find(|recorded| !generated_root_directories().any(|allowed| allowed == recorded.as_str()))
     {
         return Err(invalid(format!(
             "plugin sentinel records unsupported generated root directory `{unsupported}`: {}",

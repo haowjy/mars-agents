@@ -30,11 +30,11 @@ before native projection, and plain derived-tree copies omit hook fragment paths
 other targets.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three
-tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. Tree profiles
-derive their harness kind, variant key and target root from the compiler descriptor; they add only
-plugin-specific agent policy, native model aliases, hook-root token, config writer and finish
-writer. Profiles also carry their typed `PluginTree` identity; `PluginTree::as_str()` is the sole
-directory and report key. Their authored-hook check runs once before the item loop; every selected
+tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. The harness and tree format facts live in the two tables in `plugin.rs`; consumers select rows
+instead of matching identities. Tree writer profiles derive their harness kind, variant key and
+target root from the compiler descriptor, reference one format row, and add only plugin-specific
+agent policy, native model aliases, hook-root token, config writer and finish writer.
+`PluginTree::as_str()` reads the format row and is the sole directory and report key. Their authored-hook check runs once before the item loop; every selected
 hook is copied. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits an
 npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
 servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
@@ -46,9 +46,8 @@ selected MCP union once;
 per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
 exported graph hooks even when no requested tree selected a fragment, which is the input for plugin
 omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap
-counts never depend on one format's emitted components. Component support comes from each listed
-harness's tree profile plus Codex's agent and MCP loader exceptions; verification levels are the
-only hand-entered matrix cells, and those same answers render the README tables.
+counts never depend on one format's emitted components. Component support and verification come from each selected harness row plus its tree profile;
+the same verification rows render the README tables.
 
 The Cursor tree is a `TreeProfile`, not a second walk: it preserves the shared Cursor agent
 lowering as-is, has no native model aliases or extra agent allowlist, and delegates `mcp.json` and

@@ -11,7 +11,7 @@ use crate::lock::ItemKind;
 use crate::resolve::ResolvedGraph;
 use crate::sync::rewrite::RenameIndex;
 use crate::sync::target::{CollisionRename, TargetItem, TargetState};
-use crate::target::ConfigEntry;
+use crate::target::{ConfigEntry, HookEntry, McpServerEntry};
 use crate::types::SourceName;
 
 use super::metadata::PackageMetadata;
@@ -31,9 +31,10 @@ pub(super) type AgentPolicy = fn(
 ) -> Result<String, MarsError>;
 
 pub(super) type ConfigWriter =
-    fn(&Path, &[ConfigEntry], &mut DiagnosticCollector) -> Result<(), MarsError>;
+    fn(&TreeProfile, &Path, &[ConfigEntry], &mut DiagnosticCollector) -> Result<(), MarsError>;
 
 pub(super) type FinishWriter = for<'a> fn(
+    &TreeProfile,
     &Path,
     &PackageMetadata,
     &WrittenTreeContents<'a>,
@@ -43,12 +44,13 @@ pub(super) type FinishWriter = for<'a> fn(
 pub(super) type HookCheck = fn(&crate::compiler::hooks::ParsedHookItem, &mut DiagnosticCollector);
 
 pub(super) struct TreeProfile {
-    tree: PluginTree,
+    format: &'static crate::plugin::PluginTreeSpec,
     harness: HarnessKind,
     pub(super) agents: Option<AgentPolicy>,
     native_model_aliases: &'static [&'static str],
     plugin_root_token: Option<&'static str>,
     check_hook: HookCheck,
+    standard_output: Option<StandardTreeOutput>,
     write_config: ConfigWriter,
     finish: FinishWriter,
 }
@@ -59,7 +61,11 @@ impl TreeProfile {
     }
 
     pub(super) fn tree(&self) -> PluginTree {
-        self.tree
+        self.format.tree
+    }
+
+    pub(super) fn dropped_agent_fields(&self) -> &'static [&'static str] {
+        self.format.dropped_agent_fields
     }
 }
 
@@ -80,12 +86,138 @@ impl BuiltTree {
     }
 }
 
+static PROFILES: [&TreeProfile; 3] = [&claude::PROFILE, &cursor::PROFILE, &opencode::PROFILE];
+
+pub(super) fn profiles() -> impl Iterator<Item = &'static TreeProfile> {
+    PROFILES.into_iter()
+}
+
 pub(super) fn profile(tree: PluginTree) -> &'static TreeProfile {
-    match tree {
-        PluginTree::Claude => &claude::PROFILE,
-        PluginTree::Cursor => &cursor::PROFILE,
-        PluginTree::OpenCode => &opencode::PROFILE,
+    profiles()
+        .find(|profile| profile.tree() == tree)
+        .expect("every plugin tree has a writer profile")
+}
+
+#[derive(serde::Serialize)]
+struct StandardPluginManifest<'a> {
+    name: &'a str,
+    version: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<&'a super::metadata::PackageAuthor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    homepage: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    license: Option<&'a str>,
+}
+
+pub(super) fn pretty_json_bytes(
+    value: &impl serde::Serialize,
+    description: &str,
+) -> Result<Vec<u8>, MarsError> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| {
+        MarsError::Internal(format!("failed to serialize {description}: {error}"))
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+pub(super) fn write_pretty_json(
+    path: &Path,
+    value: &impl serde::Serialize,
+    description: &str,
+) -> Result<(), MarsError> {
+    crate::fs::atomic_write(path, &pretty_json_bytes(value, description)?)
+}
+
+pub(super) fn finish_standard_tree(
+    profile: &TreeProfile,
+    root: &Path,
+    metadata: &PackageMetadata,
+    _contents: &WrittenTreeContents<'_>,
+    _diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let output = profile
+        .standard_output
+        .expect("standard tree has output policy");
+    write_pretty_json(
+        &root.join(output.manifest_path),
+        &StandardPluginManifest {
+            name: &metadata.name,
+            version: &metadata.version,
+            description: metadata.description.as_deref(),
+            author: metadata.author.as_ref(),
+            homepage: metadata.homepage.as_deref(),
+            license: metadata.license.as_deref(),
+        },
+        output.manifest_description,
+    )
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct StandardTreeOutput {
+    manifest_path: &'static str,
+    manifest_description: &'static str,
+    config_format: StandardConfigFormat,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum StandardConfigFormat {
+    Claude,
+    Cursor,
+}
+
+pub(super) fn write_standard_config(
+    profile: &TreeProfile,
+    root: &Path,
+    entries: &[ConfigEntry],
+    _diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let format = profile
+        .standard_output
+        .expect("standard tree has output policy")
+        .config_format;
+    let mcp: Vec<&McpServerEntry> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ConfigEntry::McpServer(entry) => Some(entry),
+            ConfigEntry::Hook(_) => None,
+        })
+        .collect();
+    let hooks: Vec<&HookEntry> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ConfigEntry::Hook(entry) => Some(entry),
+            ConfigEntry::McpServer(_) => None,
+        })
+        .collect();
+
+    match format {
+        StandardConfigFormat::Claude => {
+            if !mcp.is_empty() {
+                crate::target::claude::write_mcp_json(&root.join(".mcp.json"), &mcp)?;
+            }
+            if !hooks.is_empty() {
+                crate::target::claude::write_hooks_settings(
+                    &root.join("hooks/hooks.json"),
+                    &hooks,
+                )?;
+            }
+        }
+        StandardConfigFormat::Cursor => {
+            if !mcp.is_empty() {
+                crate::target::cursor::write_cursor_mcp_json(&root.join("mcp.json"), &mcp)?;
+            }
+            if !hooks.is_empty() {
+                crate::target::cursor::write_cursor_hooks_json(
+                    &root.join("hooks/hooks.json"),
+                    &hooks,
+                )?;
+            }
+        }
     }
+    Ok(())
 }
 
 pub(super) struct TermSet {
@@ -294,7 +426,7 @@ pub(super) fn write_tree(
         },
         diag,
     );
-    (profile.write_config)(root, &entries, diag)?;
+    (profile.write_config)(profile, root, &entries, diag)?;
     let contents = WrittenTreeContents {
         skills: &skill_names,
         hooks: &hooks,
@@ -308,7 +440,7 @@ pub(super) fn write_tree(
         .filter(|entry| matches!(entry, ConfigEntry::McpServer(_)))
         .count();
 
-    (profile.finish)(root, input.metadata, &contents, diag)?;
+    (profile.finish)(profile, root, input.metadata, &contents, diag)?;
 
     normalize_text_tree(root)?;
     Ok(BuiltTree {
@@ -397,7 +529,7 @@ fn write_agent(
         &model.native,
     );
     let plugin_lossy_fields;
-    let lossy_fields = if tree_profile.tree() == PluginTree::Cursor {
+    let lossy_fields = if tree_profile.format.approximate_lowers_to_dropped {
         plugin_lossy_fields = lowered
             .lossy_fields
             .iter()

@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::PluginHarness;
 use crate::error::MarsError;
-use crate::plugin_metadata::{
-    CLAUDE_CATALOG, CURSOR_CATALOG, OPENCODE_PACKAGE, PluginSentinel, SENTINEL_FILE,
-};
+use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
 use super::{configured_output_path, plugin_inputs_hash};
 
@@ -238,22 +236,12 @@ pub fn inspect(package_root: &Path) -> Result<PluginOutputState, MarsError> {
 }
 
 pub(super) fn expected_root_paths(harnesses: &[PluginHarness]) -> BTreeSet<&'static str> {
-    let mut paths = BTreeSet::new();
-    if harnesses.iter().any(|harness| {
-        matches!(
-            harness,
-            PluginHarness::Claude | PluginHarness::Codex | PluginHarness::Grok
-        )
-    }) {
-        paths.insert(CLAUDE_CATALOG);
-    }
-    if harnesses.contains(&PluginHarness::Cursor) {
-        paths.insert(CURSOR_CATALOG);
-    }
-    if harnesses.contains(&PluginHarness::OpenCode) {
-        paths.insert(OPENCODE_PACKAGE);
-    }
-    paths
+    harnesses
+        .iter()
+        .filter_map(|harness| harness.spec())
+        .filter_map(|harness| harness.tree.spec().root_file)
+        .map(|root| root.path)
+        .collect()
 }
 
 pub(super) fn inspect_output(
@@ -478,16 +466,18 @@ fn root_file_conflict_message(path: &Path, reason: &str) -> String {
     )
 }
 
-fn root_file_harness(path: &Path) -> &'static str {
-    if path == Path::new(CLAUDE_CATALOG) {
-        "Claude/Codex/Grok"
-    } else if path == Path::new(CURSOR_CATALOG) {
-        "Cursor"
-    } else if path == Path::new(OPENCODE_PACKAGE) {
-        "OpenCode"
-    } else {
-        "requested"
-    }
+fn root_file_harness(path: &Path) -> String {
+    let Some(tree) = crate::plugin::PLUGIN_TREE_SPECS.iter().find(|tree| {
+        tree.root_file
+            .is_some_and(|root| Path::new(root.path) == path)
+    }) else {
+        return "requested".to_string();
+    };
+    crate::plugin::PluginHarness::specs()
+        .filter(|harness| harness.tree == tree.tree)
+        .map(|harness| harness.display_name)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn display_paths(paths: &[PathBuf]) -> String {

@@ -3,8 +3,8 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ItemKind;
 use crate::sync::target::TargetState;
 
-use super::PluginTree;
 use super::tree::{self, BuiltTree, TreeProfile};
+use crate::plugin::{Verification, VerificationLevel};
 
 const CODEX_PROBED_VERSION: &str = "0.164.0";
 
@@ -26,36 +26,6 @@ enum SupportState {
     Supported,
     DroppedWithWarning,
     Impossible,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum VerificationLevel {
-    Live,
-    // The support model permits this level even though no current cell uses it.
-    #[allow(dead_code)]
-    InstallOnly,
-    DocsOnly,
-}
-
-#[cfg(test)]
-impl VerificationLevel {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Live => "live",
-            Self::InstallOnly => "install-only",
-            Self::DocsOnly => "docs-only",
-        }
-    }
-}
-
-impl PluginHarness {
-    const fn loads_agents(self) -> bool {
-        !matches!(self, Self::Codex)
-    }
-
-    const fn mcp_callable(self) -> bool {
-        !matches!(self, Self::Codex)
-    }
 }
 
 pub(super) fn emit(
@@ -96,9 +66,8 @@ pub(super) fn emit(
 }
 
 fn selected_harnesses(harnesses: &[PluginHarness]) -> impl Iterator<Item = PluginHarness> + '_ {
-    PluginHarness::DEFAULT
-        .iter()
-        .copied()
+    PluginHarness::specs()
+        .map(|spec| spec.harness)
         .filter(|harness| harnesses.contains(harness))
 }
 
@@ -116,18 +85,20 @@ fn support_state(
 ) -> SupportState {
     match component {
         Component::Skills => SupportState::Supported,
-        Component::Agents if profile.agents.is_none() || !harness.loads_agents() => {
+        Component::Agents
+            if profile.agents.is_none()
+                || !harness.spec().expect("validated harness").loads_agents =>
+        {
             SupportState::Impossible
         }
-        Component::Agents
-            if profile.tree() == PluginTree::Claude
-                && !tree::claude::DROPPED_AGENT_FIELDS.is_empty() =>
-        {
+        Component::Agents if !profile.dropped_agent_fields().is_empty() => {
             SupportState::DroppedWithWarning
         }
         Component::Agents => SupportState::Supported,
         Component::Hooks => SupportState::DroppedWithWarning,
-        Component::Mcp if !harness.mcp_callable() => SupportState::DroppedWithWarning,
+        Component::Mcp if !harness.spec().expect("validated harness").mcp_callable => {
+            SupportState::DroppedWithWarning
+        }
         Component::Mcp => SupportState::Supported,
         Component::BootstrapDocs => SupportState::Impossible,
     }
@@ -291,79 +262,35 @@ fn list(items: &[&str]) -> String {
 }
 
 fn harness_display_name(harness: PluginHarness) -> &'static str {
-    match harness {
-        PluginHarness::Claude => "Claude",
-        PluginHarness::Codex => "Codex",
-        PluginHarness::Grok => "Grok",
-        PluginHarness::Cursor => "Cursor",
-        PluginHarness::OpenCode => "OpenCode",
-        PluginHarness::Unknown => unreachable!("plugin build validation rejects unknown harnesses"),
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Verification {
-    level: VerificationLevel,
-    #[cfg(test)]
-    detail: &'static str,
-}
-
-const fn verified(level: VerificationLevel, _detail: &'static str) -> Verification {
-    Verification {
-        level,
-        #[cfg(test)]
-        detail: _detail,
-    }
+    harness
+        .spec()
+        .expect("validated plugin harness")
+        .display_name
 }
 
 fn verification(harness: PluginHarness, component: Component) -> Verification {
-    use Component::{Agents, Hooks, Mcp, Skills};
-    use PluginHarness::{Claude, Codex, Cursor, Grok, OpenCode};
-    use VerificationLevel::{DocsOnly, Live};
-
-    match (harness, component) {
-        (Claude, Skills | Mcp) => verified(Live, ""),
-        (Claude, Agents) => verified(Live, " (subagent preload)"),
-        (Claude, Hooks) => verified(Live, " (`${CLAUDE_PLUGIN_ROOT}`)"),
-        (Codex, Skills) => verified(Live, ""),
-        (Codex, Hooks) => verified(
-            Live,
-            " on a hand-built Claude-format tree (p9291); V re-runs it on the built tree",
-        ),
-        (Codex, Mcp) => verified(Live, ": listed, not callable"),
-        (Grok, Skills) => verified(Live, ", with `resources/` (p9479)"),
-        (Grok, Agents) => verified(Live, ": subagent, native preload, skills line (p9479)"),
-        (Grok, Hooks) => verified(
-            Live,
-            ": `SessionEnd`, `SubagentStop`, `CLAUDE_PLUGIN_ROOT` (p9479)",
-        ),
-        (Grok, Mcp) => verified(DocsOnly, " (no server in any fixture)"),
-        (Cursor, Skills | Agents | Hooks | Mcp) => verified(DocsOnly, ""),
-        (OpenCode, Skills) => verified(Live, ", with `resources/`"),
-        (OpenCode, Hooks) => verified(Live, " (composed fragment from a local path, p9477)"),
-        (OpenCode, Mcp) => verified(Live, " (`<plugin>:<server>`, p9477)"),
-        (Codex | OpenCode, Agents) | (_, Component::BootstrapDocs) => {
-            unreachable!("impossible components have no verification level")
-        }
-        (PluginHarness::Unknown, _) => {
-            unreachable!("plugin build validation rejects unknown harnesses")
-        }
+    let row = &harness
+        .spec()
+        .expect("validated plugin harness")
+        .verification;
+    match component {
+        Component::Skills => row.skills,
+        Component::Agents => row
+            .agents
+            .expect("supported agents have verification evidence"),
+        Component::Hooks => row.hooks,
+        Component::Mcp => row.mcp,
+        Component::BootstrapDocs => unreachable!("bootstrap documents have no plugin surface"),
     }
 }
 
 #[cfg(test)]
 fn install_verification(harness: PluginHarness) -> Verification {
-    use PluginHarness::{Claude, Codex, Cursor, Grok, OpenCode};
-    use VerificationLevel::{DocsOnly, Live};
-
-    match harness {
-        Claude | Codex | Grok => verified(Live, ""),
-        Cursor => verified(DocsOnly, ""),
-        OpenCode => verified(Live, " (git)"),
-        PluginHarness::Unknown => {
-            unreachable!("plugin build validation rejects unknown harnesses")
-        }
-    }
+    harness
+        .spec()
+        .expect("validated plugin harness")
+        .verification
+        .install
 }
 
 #[cfg(test)]
@@ -469,7 +396,8 @@ fn component_support_cell(harness: PluginHarness, component: Component) -> Strin
         }
         (Component::Agents, SupportState::DroppedWithWarning, _) => format!(
             "supported; {} dropped with warning",
-            tree::claude::DROPPED_AGENT_FIELDS
+            profile
+                .dropped_agent_fields()
                 .iter()
                 .map(|field| format!("`{field}`"))
                 .collect::<Vec<_>>()
@@ -482,6 +410,10 @@ fn component_support_cell(harness: PluginHarness, component: Component) -> Strin
         (Component::Agents, SupportState::Impossible, PluginHarness::OpenCode) => {
             "**impossible**: no API adds an agent".to_string()
         }
+        (Component::Agents, SupportState::Impossible, _) => format!(
+            "**impossible**: {} plugins don't load agents",
+            harness_display_name(harness)
+        ),
         (Component::Hooks, SupportState::DroppedWithWarning, PluginHarness::Codex) => {
             "as Claude (reads the Claude tree's `hooks/hooks.json`)".to_string()
         }
@@ -502,6 +434,9 @@ fn component_support_cell(harness: PluginHarness, component: Component) -> Strin
         (Component::Mcp, SupportState::DroppedWithWarning, PluginHarness::Codex) => {
             format!("dropped with warning: listed, not callable in {CODEX_PROBED_VERSION}")
         }
+        (Component::Mcp, SupportState::DroppedWithWarning, _) => {
+            "dropped with warning: listed, not callable".to_string()
+        }
         (Component::Mcp, SupportState::Supported, PluginHarness::Grok) => {
             "supported (same file as Claude)".to_string()
         }
@@ -521,14 +456,11 @@ fn render_verification(verification: Verification) -> String {
 
 #[cfg(test)]
 fn evidence(harness: PluginHarness) -> &'static str {
-    match harness {
-        PluginHarness::Claude => "p9291, p9305, p9329, p9478",
-        PluginHarness::Codex => "p9291, p9478",
-        PluginHarness::Grok => "p9473, p9478, p9479",
-        PluginHarness::Cursor => "p9474",
-        PluginHarness::OpenCode => "p9475, p9477",
-        PluginHarness::Unknown => unreachable!("plugin build validation rejects unknown harnesses"),
-    }
+    harness
+        .spec()
+        .expect("validated plugin harness")
+        .verification
+        .evidence
 }
 
 #[cfg(test)]

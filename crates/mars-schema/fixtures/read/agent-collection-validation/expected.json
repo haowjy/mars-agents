@@ -1,0 +1,101 @@
+{
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "message": "`name` must be a non-empty string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.value",
+      "message": "`model` must be a non-empty string",
+      "path": [
+        "model"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.type",
+      "message": "`skills.load` entry 2 must be a non-empty string",
+      "path": [
+        "skills",
+        "load",
+        1
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.value",
+      "message": "`skills.load` entry 3 must be a non-empty string",
+      "path": [
+        "skills",
+        "load",
+        2
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.type",
+      "message": "`skills.available` must be a list of non-empty strings",
+      "path": [
+        "skills",
+        "available"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.type",
+      "message": "`subagents` entry 2 must be a non-empty string",
+      "path": [
+        "subagents",
+        1
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.value",
+      "message": "`subagents` entry 3 must be a non-empty string",
+      "path": [
+        "subagents",
+        2
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "approval": null,
+    "description": null,
+    "effort": null,
+    "had_model_invocable_field": false,
+    "had_user_invocable_field": false,
+    "harness": null,
+    "harness_overrides": {
+      "entries": {}
+    },
+    "mode": null,
+    "model": "",
+    "model_invocable": true,
+    "model_policies": [],
+    "name": "",
+    "sandbox": null,
+    "skills": {
+      "available": [],
+      "load": [
+        "ok",
+        ""
+      ]
+    },
+    "subagents": [
+      "ok",
+      ""
+    ],
+    "tools": {
+      "rules": []
+    },
+    "user_invocable": true
+  },
+  "unknown": []
+}

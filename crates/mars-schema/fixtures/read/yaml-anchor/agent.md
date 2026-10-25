@@ -1,4 +1,4 @@
 ---
-name: &n x
-description: *n
+x:
+  &anchor hello
 ---

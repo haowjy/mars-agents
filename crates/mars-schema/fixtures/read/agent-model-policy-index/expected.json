@@ -1,0 +1,43 @@
+{
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "message": "agent field `model-policies[0].override.effort` has invalid value `impossible`; allowed: none, low, medium, high, xhigh",
+      "path": [
+        "model-policies",
+        0,
+        "override",
+        "effort"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "approval": null,
+    "description": null,
+    "effort": null,
+    "had_model_invocable_field": false,
+    "had_user_invocable_field": false,
+    "harness": null,
+    "harness_overrides": {
+      "entries": {}
+    },
+    "mode": null,
+    "model": null,
+    "model_invocable": true,
+    "model_policies": [],
+    "name": null,
+    "sandbox": null,
+    "skills": {
+      "available": [],
+      "load": []
+    },
+    "subagents": [],
+    "tools": {
+      "rules": []
+    },
+    "user_invocable": true
+  },
+  "unknown": []
+}

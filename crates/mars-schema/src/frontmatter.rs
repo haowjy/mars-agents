@@ -7,6 +7,7 @@ pub struct Frontmatter {
     yaml: Mapping,
     body: String,
     has_frontmatter: bool,
+    has_bom: bool,
 }
 
 /// Structured agent skill references.
@@ -57,12 +58,16 @@ pub fn parse(content: &str) -> Result<Frontmatter, FrontmatterError> {
 impl Frontmatter {
     /// Parse a markdown document into frontmatter + body.
     pub fn parse(content: &str) -> Result<Self, FrontmatterError> {
-        let (first_line, after_first_line) = split_first_line(content);
+        let (has_bom, document) = content
+            .strip_prefix('\u{feff}')
+            .map_or((false, content), |document| (true, document));
+        let (first_line, after_first_line) = split_first_line(document);
         if !is_delimiter_line(first_line) {
             return Ok(Self {
                 yaml: Mapping::new(),
                 body: content.to_string(),
                 has_frontmatter: false,
+                has_bom: false,
             });
         }
 
@@ -81,12 +86,6 @@ impl Frontmatter {
         };
 
         let yaml_text = &after_first_line[..yaml_len];
-        if yaml_text.lines().any(|line| line.trim() == "...") {
-            return Err(FrontmatterError::DocumentEnd);
-        }
-        if contains_yaml_anchor_or_alias(yaml_text) {
-            return Err(FrontmatterError::Anchor);
-        }
         let body_start = yaml_len + closing_len;
         let body = after_first_line[body_start..].to_string();
 
@@ -95,10 +94,12 @@ impl Frontmatter {
                 yaml: Mapping::new(),
                 body,
                 has_frontmatter: true,
+                has_bom,
             });
         }
 
         let value: Value = serde_yaml::from_str(yaml_text)?;
+        validate_yaml_structure(yaml_text)?;
         let yaml = match value {
             Value::Mapping(mapping) => mapping,
             Value::Null => Mapping::new(),
@@ -109,6 +110,7 @@ impl Frontmatter {
             yaml,
             body,
             has_frontmatter: true,
+            has_bom,
         })
     }
 
@@ -198,7 +200,11 @@ impl Frontmatter {
             return self.body.clone();
         }
 
-        let mut out = String::from("---\n");
+        let mut out = if self.has_bom {
+            String::from("\u{feff}---\n")
+        } else {
+            String::from("---\n")
+        };
         if !self.yaml.is_empty() {
             let mut yaml = serde_yaml::to_string(&self.yaml)
                 .expect("serializing frontmatter mapping should succeed");
@@ -352,34 +358,47 @@ fn is_delimiter_line(line: &str) -> bool {
         == "---"
 }
 
-fn contains_yaml_anchor_or_alias(text: &str) -> bool {
-    for line in text.lines() {
-        let mut single = false;
-        let mut double = false;
-        let chars: Vec<char> = line.chars().collect();
-        for (index, ch) in chars.iter().copied().enumerate() {
-            match ch {
-                '\'' if !double => single = !single,
-                '"' if !single && (index == 0 || chars[index - 1] != '\\') => double = !double,
-                '#' if !single && !double => break,
-                '&' | '*' if !single && !double => {
-                    let previous_syntax = chars[..index]
-                        .iter()
-                        .rev()
-                        .copied()
-                        .find(|value| !value.is_whitespace());
-                    if matches!(
-                        previous_syntax,
-                        Some(':') | Some('-') | Some('[') | Some('{') | Some(',')
-                    ) {
-                        return true;
-                    }
+fn validate_yaml_structure(text: &str) -> Result<(), FrontmatterError> {
+    use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
+    use yaml_rust2::scanner::Marker;
+
+    #[derive(Default)]
+    struct StructuralEvents {
+        anchor_or_alias: bool,
+        document_end: bool,
+        source: String,
+    }
+    impl MarkedEventReceiver for StructuralEvents {
+        fn on_event(&mut self, event: Event, marker: Marker) {
+            match event {
+                Event::Alias(_) | Event::Scalar(_, _, 1.., _) => self.anchor_or_alias = true,
+                Event::SequenceStart(1.., _) | Event::MappingStart(1.., _) => {
+                    self.anchor_or_alias = true;
+                }
+                Event::DocumentEnd if self.source[marker.index()..].starts_with("...") => {
+                    self.document_end = true;
                 }
                 _ => {}
             }
         }
     }
-    false
+
+    let mut events = StructuralEvents {
+        source: text.to_owned(),
+        ..StructuralEvents::default()
+    };
+    // serde_yaml already accepted the document. The event parser is used only
+    // to distinguish YAML structure from identical text inside scalar values.
+    if Parser::new_from_str(text).load(&mut events, true).is_err() {
+        return Ok(());
+    }
+    if events.document_end {
+        Err(FrontmatterError::DocumentEnd)
+    } else if events.anchor_or_alias {
+        Err(FrontmatterError::Anchor)
+    } else {
+        Ok(())
+    }
 }
 
 fn yaml_key(key: &str) -> Value {

@@ -172,7 +172,12 @@ fn render_block(key: &str, value: &Value) -> String {
 
 fn frontmatter_source(text: &str) -> Option<(&str, &str, &str)> {
     let first_end = text.find('\n').map_or(text.len(), |offset| offset + 1);
-    if text[..first_end].trim_end() != "---" {
+    if text[..first_end]
+        .strip_prefix('\u{feff}')
+        .unwrap_or(&text[..first_end])
+        .trim_end()
+        != "---"
+    {
         return None;
     }
     let mut offset = first_end;

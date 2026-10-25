@@ -546,10 +546,9 @@ fn parse_model_policies(
 
     let mut out = Vec::new();
     for (index, entry) in seq.iter().enumerate() {
-        let position = index + 1;
         match crate::model_policy::parse_model_policy_rule_value(entry) {
             Ok(rule) => out.push(rule),
-            Err(error) => push_model_policy_parse_error(diags, position, error),
+            Err(error) => push_model_policy_parse_error(diags, index, error),
         }
     }
     out
@@ -810,6 +809,18 @@ fn strict_agent_diagnostics(
             ));
         }
     }
+    for key in ["name", "model"] {
+        if matches!(fm.get(key), Some(Value::String(value)) if value.trim().is_empty()) {
+            diags.push(SchemaDiagnostic::new(
+                "field.value",
+                Severity::Error,
+                key_path(key),
+                format!("`{key}` must be a non-empty string"),
+            ));
+        }
+    }
+    validate_skills(fm.get("skills"), diags);
+    validate_string_list("subagents", fm.get("subagents"), diags);
     for key in ["model-invocable", "user-invocable"] {
         if let Some(value) = fm.get(key)
             && !value.is_bool()
@@ -819,6 +830,55 @@ fn strict_agent_diagnostics(
                 Severity::Error,
                 key_path(key),
                 format!("`{key}` must be true or false"),
+            ));
+        }
+    }
+}
+
+fn validate_skills(value: Option<&Value>, diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>) {
+    let Some(value) = value else { return };
+    if let Value::Mapping(mapping) = value {
+        for field in ["load", "available"] {
+            validate_string_list(
+                &format!("skills.{field}"),
+                mapping.get(Value::String(field.to_string())),
+                diags,
+            );
+        }
+    } else {
+        validate_string_list("skills", Some(value), diags);
+    }
+}
+
+fn validate_string_list(
+    field: &str,
+    value: Option<&Value>,
+    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+) {
+    use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path};
+    let Some(value) = value else { return };
+    let Some(values) = value.as_sequence() else {
+        diags.push(SchemaDiagnostic::new(
+            "field.type",
+            Severity::Error,
+            key_path(field),
+            format!("`{field}` must be a list of non-empty strings"),
+        ));
+        return;
+    };
+    for (index, value) in values.iter().enumerate() {
+        if !matches!(value, Value::String(text) if !text.trim().is_empty()) {
+            let mut path = key_path(field);
+            path.push(PathSegment::Index(index));
+            diags.push(SchemaDiagnostic::new(
+                if value.is_string() {
+                    "field.value"
+                } else {
+                    "field.type"
+                },
+                Severity::Error,
+                path,
+                format!("`{field}` entry {} must be a non-empty string", index + 1),
             ));
         }
     }

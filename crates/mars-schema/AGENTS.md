@@ -21,3 +21,5 @@ fixtures under `fixtures/upgrade/` are the published upgrade contract.
 serialized reading and diagnostics are pinned by `fixtures/read/`; callers consume these
 types directly rather than reading owned frontmatter keys themselves. Unknown fields are
 preserved, while removed fields are errors.
+
+`yaml-rust2` (with default features disabled) supplies the event scan that distinguishes YAML anchors, aliases, and explicit document-end markers from identical text inside scalars. `serde_yaml` remains the semantic parser and validity authority; the event scan does not produce field values.

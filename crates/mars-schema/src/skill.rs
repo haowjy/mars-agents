@@ -204,6 +204,19 @@ fn strict_skill_diagnostics(
             "`metadata` must be a map",
         ));
     }
+    if let Some(value) = fm
+        .get("metadata")
+        .and_then(Value::as_mapping)
+        .and_then(|metadata| metadata.get(Value::String("type".to_string())))
+        && !value.is_string()
+    {
+        diags.push(SchemaDiagnostic::new(
+            "field.type",
+            Severity::Error,
+            key_path("metadata.type"),
+            "`metadata.type` must be a string",
+        ));
+    }
     for key in ["model-invocable", "user-invocable"] {
         if let Some(value) = fm.get(key)
             && !value.is_bool()

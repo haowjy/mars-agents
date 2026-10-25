@@ -1,5 +1,6 @@
 //! Build installable harness plugin trees from a package's publish graph.
 
+mod inspect;
 mod metadata;
 mod model;
 pub mod output;
@@ -7,6 +8,11 @@ mod references;
 mod root_files;
 mod support;
 mod tree;
+
+pub use inspect::{
+    PluginDirectoryState, PluginInputsState, PluginOutputState, PluginRootFileState,
+    PluginVersionState, inspect,
+};
 
 use std::path::{Path, PathBuf};
 
@@ -309,15 +315,17 @@ pub fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, M
                 &built_trees,
                 &mut diag,
             );
-            let collected = diag.drain();
-            fail_on_diagnostic_errors(&collected)?;
             let root_file_plan = root_files::plan(
                 &package_root,
                 &out_dir,
+                staging,
                 &request.destination,
                 &metadata,
                 &request.harnesses,
+                &mut diag,
             )?;
+            let collected = diag.drain();
+            fail_on_diagnostic_errors(&collected)?;
             Ok((
                 crate::plugin_metadata::PluginSentinel {
                     schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,

@@ -51,9 +51,13 @@ name may differ. The report's `trees` array carries each typed tree's final outp
 counts rather than flattening one preferred tree into the top level.
 
 The output writer builds `<tree>/` directories directly into an empty sibling staging directory.
-After it succeeds, the output layer hashes every tree, writes one root `.mars-plugin.json`, and
-publishes the staged output directory with a two-rename swap. Publication and startup recovery share a cross-process lock keyed by the
-absolute output path; non-empty trees without a valid sentinel are never replaced.
+For configured builds, the root-file plan generates both marketplace catalogs and the OpenCode
+root package, uses `inspect` to enforce recorded-or-identical ownership and plan retired-file
+deletes, and rejects gitignored final paths. Explicit `--out` builds have no root files. After the
+tree and root-file plan succeed, the output layer hashes every tree and writes one root
+`.mars-plugin.json`; publication applies root writes/deletes and then swaps the staged output with
+two renames. Publication and startup recovery share a cross-process lock keyed by the absolute
+output path; non-empty trees without a valid sentinel are never replaced.
 The root-package input fingerprint is computed from discovered authored item paths after recovery
 and under that same lock, before the staging tree is populated, so crash leftovers and generated
 catalog/output trees cannot make an otherwise clean checkout stale.

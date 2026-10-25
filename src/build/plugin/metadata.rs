@@ -6,6 +6,7 @@ pub(super) use crate::config::PackageAuthor;
 #[derive(Debug)]
 pub(super) struct PackageMetadata {
     pub name: String,
+    pub marketplace: String,
     pub version: String,
     pub description: Option<String>,
     pub author: Option<PackageAuthor>,
@@ -22,6 +23,10 @@ impl PackageMetadata {
         })?;
         let plugin = manifest.plugin.as_ref();
         Ok(Self {
+            marketplace: plugin
+                .map(|plugin| plugin.marketplace(package))
+                .unwrap_or(&package.name)
+                .to_string(),
             name: plugin
                 .map(|plugin| plugin.name(package))
                 .unwrap_or(&package.name)

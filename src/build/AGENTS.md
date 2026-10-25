@@ -45,9 +45,14 @@ tree; human output prints one success line per record.
 
 The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
 core never mutates the destination itself. The staged build holds the output lock and root-file
-plan until publication applies the plan and calls `StagedPlugin::publish`. The output layer stages
-the whole output in a sibling directory, records one root `<out>/.mars-plugin.json` sentinel, and
-publishes with a two-rename swap under the lock.
+plan until publication applies the plan and calls `StagedPlugin::publish`. Configured builds plan
+the Claude/Cursor catalogs and OpenCode root package; explicit `--out` builds plan none. The shared
+offline `inspect` classifies the owned directory, its fingerprint/version, and every recorded or
+expected root file. Root publication accepts an absent path, an unchanged recorded file, or bytes
+identical to the new build, and removes recorded files retired by a narrowed harness set. Planning
+also rejects any final staged or root-file path reported by `git check-ignore --stdin`. The output
+layer stages the whole output in a sibling directory, records one root
+`<out>/.mars-plugin.json` sentinel, and publishes with a two-rename swap under the lock.
 It recovers interrupted swaps before a new build and never replaces a non-empty destination
 without a valid sentinel. Reference qualification uses each source item's `RenameIndex` view
 before applying the building package's single plugin namespace. Agent skill names are qualified

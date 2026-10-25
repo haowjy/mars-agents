@@ -16,6 +16,9 @@ Hooks are the exception to the layered walk: only direct children of the
 package-root `hooks/` directory are discovered. The compiler and general item
 discovery share that directory enumerator, so a hook cannot be listed and then
 fail resolution because a second scanner searched a different root.
+During target construction, strict hook parsing supplies the corresponding
+`DiscoveredItem`s back to the convention walk, preserving grounding and collision
+checks without parsing `hook.toml` twice.
 
 After convention scanning, discovery is globally grounded to the shallowest logical layer that contains convention items. Agents, skills, and bootstrap docs are treated as one package layer: if `skills/foo` exists at the package layer, deeper `examples/skills/bar` or vendored nested containers are ignored. If the only convention items are nested, that nested layer becomes the grounded package layer and is still discovered.
 

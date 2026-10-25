@@ -28,7 +28,7 @@ pub(crate) mod tool_natives;
 pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
-/// Visibility propagation rules for passive vs effectful items (D1/D10).
+/// Typed visibility shared by hook and MCP manifests.
 pub mod visibility;
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
@@ -69,12 +69,7 @@ pub fn compile(
     }
 
     // Hook schemas and native allowlists are resolved before any mutation.
-    config_entries::preflight_config_entries(
-        ctx,
-        &planned.targeted.resolved,
-        request.options.force,
-        diag,
-    )?;
+    config_entries::preflight_config_entries(ctx, &planned.targeted, request.options.force, diag)?;
 
     // Phase 5: persist config mutations, apply plan to canonical store.
     let applied = apply_plan(ctx, planned, request)?;

@@ -25,43 +25,41 @@ impl TargetAdapter for ClaudeAdapter {
         ".claude"
     }
 
-    fn known_hook_events(&self) -> Option<&'static [&'static str]> {
-        // https://code.claude.com/docs/en/hooks — verified 2026-07-24.
-        Some(&[
-            "SessionStart",
-            "Setup",
-            "UserPromptSubmit",
-            "UserPromptExpansion",
-            "PreToolUse",
-            "PermissionRequest",
-            "PermissionDenied",
-            "PostToolUse",
-            "PostToolUseFailure",
-            "PostToolBatch",
-            "SubagentStart",
-            "SubagentStop",
-            "TaskCreated",
-            "TaskCompleted",
-            "Stop",
-            "StopFailure",
-            "TeammateIdle",
-            "PreCompact",
-            "PostCompact",
-            "Elicitation",
-            "ElicitationResult",
-            "Notification",
-            "ConfigChange",
-            "InstructionsLoaded",
-            "CwdChanged",
-            "FileChanged",
-            "WorktreeCreate",
-            "WorktreeRemove",
-            "SessionEnd",
-        ])
-    }
-
     fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
-        Some(HookFragmentMode::MergeJson)
+        // https://code.claude.com/docs/en/hooks — verified 2026-07-24.
+        Some(HookFragmentMode::MergeJson {
+            events: &[
+                "SessionStart",
+                "Setup",
+                "UserPromptSubmit",
+                "UserPromptExpansion",
+                "PreToolUse",
+                "PermissionRequest",
+                "PermissionDenied",
+                "PostToolUse",
+                "PostToolUseFailure",
+                "PostToolBatch",
+                "SubagentStart",
+                "SubagentStop",
+                "TaskCreated",
+                "TaskCompleted",
+                "Stop",
+                "StopFailure",
+                "TeammateIdle",
+                "PreCompact",
+                "PostCompact",
+                "Elicitation",
+                "ElicitationResult",
+                "Notification",
+                "ConfigChange",
+                "InstructionsLoaded",
+                "CwdChanged",
+                "FileChanged",
+                "WorktreeCreate",
+                "WorktreeRemove",
+                "SessionEnd",
+            ],
+        })
     }
 
     fn skill_variant_key(&self) -> Option<&str> {
@@ -107,12 +105,14 @@ impl TargetAdapter for ClaudeAdapter {
             .collect();
 
         if !mcp_servers.is_empty() {
-            let path = (write_mcp_json)(&target_dir, &mcp_servers)?;
+            let path = target_dir.join(".mcp.json");
+            write_mcp_json(&path, &mcp_servers)?;
             written.push(path);
         }
 
         if !hooks.is_empty() {
-            let path = (write_hooks_settings)(&target_dir, &hooks)?;
+            let path = target_dir.join("settings.local.json");
+            write_hooks_settings(&path, &hooks)?;
             written.push(path);
         }
 
@@ -160,7 +160,7 @@ impl TargetAdapter for ClaudeAdapter {
 // MCP JSON — `.mcp.json` format
 // ---------------------------------------------------------------------------
 
-/// Write (or merge) MCP servers into `<target_dir>/.mcp.json`.
+/// Write (or merge) MCP servers into `path`.
 ///
 /// The file format is:
 /// ```json
@@ -176,12 +176,10 @@ impl TargetAdapter for ClaudeAdapter {
 /// ```
 ///
 /// Existing entries with other names are preserved (merge, not replace).
-fn write_mcp_json(target_dir: &Path, servers: &[&McpServerEntry]) -> Result<PathBuf, MarsError> {
-    let path = target_dir.join(".mcp.json");
-
+pub(crate) fn write_mcp_json(path: &Path, servers: &[&McpServerEntry]) -> Result<(), MarsError> {
     // Load existing config or start fresh.
     let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(&path)?
+        super::parse_json_file(path)?
     } else {
         serde_json::json!({})
     };
@@ -226,9 +224,9 @@ fn write_mcp_json(target_dir: &Path, servers: &[&McpServerEntry]) -> Result<Path
             message: format!("failed to serialize {}: {e}", path.display()),
         })
     })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
+    crate::fs::atomic_write(path, content.as_bytes())?;
 
-    Ok(path)
+    Ok(())
 }
 
 /// Remove MCP server entries by key from `.mcp.json`.
@@ -267,11 +265,11 @@ fn remove_mcp_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Result
 // Hooks — `settings.local.json` format
 // ---------------------------------------------------------------------------
 
-/// Write (or merge) hook bindings into `<target_dir>/settings.local.json`.
+/// Write (or merge) Claude hook bindings into `path`.
 ///
-/// Hooks go to `settings.local.json` (gitignored) rather than `settings.json`
-/// because hook commands embed machine-local cache paths that change on every
-/// sync and every machine.
+/// Project `settings.local.json` and plugin `hooks/hooks.json` use the same
+/// top-level `hooks` object, so the caller chooses the destination while this
+/// writer owns the shared shape and merge behavior.
 ///
 /// Claude hooks live in the `hooks` section:
 /// ```json
@@ -283,11 +281,9 @@ fn remove_mcp_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Result
 ///   }
 /// }
 /// ```
-fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, MarsError> {
-    let path = target_dir.join("settings.local.json");
-
+pub(crate) fn write_hooks_settings(path: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
     let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(&path)?
+        super::parse_json_file(path)?
     } else {
         serde_json::json!({})
     };
@@ -309,7 +305,7 @@ fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathB
     })?;
 
     for hook in hooks {
-        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, &path)?;
+        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, path)?;
     }
 
     let content = serde_json::to_string_pretty(&root).map_err(|e| {
@@ -317,9 +313,9 @@ fn write_hooks_settings(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathB
             message: format!("failed to serialize {}: {e}", path.display()),
         })
     })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
+    crate::fs::atomic_write(path, content.as_bytes())?;
 
-    Ok(path)
+    Ok(())
 }
 
 fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name: &str) {

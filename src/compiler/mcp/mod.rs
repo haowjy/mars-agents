@@ -13,6 +13,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 
@@ -44,27 +45,33 @@ impl EnvRef {
     }
 }
 
-/// Parsed content of a single `mcp/<name>/mcp.toml`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct McpServerDef {
-    /// Server name — matches the directory name by convention but can be
-    /// overridden in the TOML file.
+#[derive(Debug, Deserialize)]
+struct RawMcpServerDef {
     #[serde(default)]
-    pub name: Option<String>,
+    name: Option<String>,
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: indexmap::IndexMap<String, EnvRef>,
+    #[serde(default = "default_visibility")]
+    visibility: String,
+    #[serde(default)]
+    targets: Vec<String>,
+}
+
+/// Parsed content of a single `mcp/<name>/mcp.toml`.
+#[derive(Debug, Clone)]
+pub struct McpServerDef {
     /// Command to launch the MCP server.
     pub command: String,
     /// Arguments to pass to the command.
-    #[serde(default)]
     pub args: Vec<String>,
     /// Symbolic environment references.
-    #[serde(default)]
     pub env: indexmap::IndexMap<String, EnvRef>,
-    /// Visibility: "local" (default) or "exported".
-    /// Exported MCP servers propagate to transitive consumers.
-    #[serde(default = "default_visibility")]
-    pub visibility: String,
+    /// Whether this server crosses package boundaries.
+    pub visibility: Visibility,
     /// Optional target filter — if absent, applies to all targets.
-    #[serde(default)]
     pub targets: Vec<String>,
 }
 
@@ -97,6 +104,7 @@ pub fn discover_mcp_items(
     package_root: &Path,
     source_name: &str,
     decl_order: usize,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedMcpItem>, MarsError> {
     let mcp_dir = package_root.join("mcp");
     if !mcp_dir.is_dir() {
@@ -125,14 +133,25 @@ pub fn discover_mcp_items(
         }
 
         let raw = std::fs::read_to_string(&toml_path).map_err(MarsError::from)?;
-        let def: McpServerDef = toml::from_str(&raw).map_err(|e| {
+        let raw_def: RawMcpServerDef = toml::from_str(&raw).map_err(|e| {
             MarsError::Config(ConfigError::Invalid {
                 message: format!("failed to parse {}: {e}", toml_path.display()),
             })
         })?;
-
-        // Resolved name: TOML override wins, else directory name.
-        let resolved_name = def.name.as_deref().unwrap_or(&server_name).to_string();
+        let resolved_name = raw_def.name.as_deref().unwrap_or(&server_name).to_string();
+        let def = McpServerDef {
+            command: raw_def.command,
+            args: raw_def.args,
+            env: raw_def.env,
+            visibility: Visibility::parse(
+                &raw_def.visibility,
+                "MCP server",
+                &resolved_name,
+                source_name,
+                diag,
+            ),
+            targets: raw_def.targets,
+        };
 
         items.push(ParsedMcpItem {
             name: resolved_name,
@@ -239,7 +258,8 @@ args = ["-y", "@upstash/context7-mcp@latest"]
 "#,
         );
 
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "context7");
         assert_eq!(items[0].def.command, "npx");
@@ -249,7 +269,8 @@ args = ["-y", "@upstash/context7-mcp@latest"]
     #[test]
     fn discover_empty_when_no_mcp_dir() {
         let tmp = TempDir::new().unwrap();
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert!(items.is_empty());
     }
 
@@ -257,7 +278,8 @@ args = ["-y", "@upstash/context7-mcp@latest"]
     fn discover_skips_dir_without_mcp_toml() {
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("mcp/no-toml")).unwrap();
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert!(items.is_empty());
     }
 
@@ -272,7 +294,8 @@ name = "custom-name"
 command = "node"
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items[0].name, "custom-name");
     }
 
@@ -288,7 +311,8 @@ command = "npx"
 API_KEY = { from = "env", var = "MY_API_KEY" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items[0].def.env.len(), 1);
         let env_ref = &items[0].def.env["API_KEY"];
         assert_eq!(env_ref.var_name(), "MY_API_KEY");
@@ -306,7 +330,8 @@ command = "npx"
 KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ123" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         let mut diag = DiagnosticCollector::new();
         check_env_refs(&items, false, &mut diag).unwrap();
         let collected = diag.drain();
@@ -330,7 +355,8 @@ command = "npx"
 KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ456" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         let mut diag = DiagnosticCollector::new();
         let result = check_env_refs(&items, true, &mut diag);
         assert!(result.is_err());
@@ -348,7 +374,8 @@ command = "npx"
 TOKEN = { from = "env", var = "SECRET_TOKEN" }
 "#,
         );
-        let items = discover_mcp_items(tmp.path(), "base", 0).unwrap();
+        let items =
+            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
         let entry = TargetMcpEntry::from_parsed(&items[0]);
         // The env map carries the variable name, not the resolved value.
         assert_eq!(entry.env["TOKEN"], "SECRET_TOKEN");

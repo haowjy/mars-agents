@@ -7,6 +7,27 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Agent inventory prompts no longer include Meridian prompt-file and parallel-spawn usage tips;
   Meridian's injected guidance owns command usage.
+  
+## [0.18.3] - 2026-10-25
+
+### Fixed
+- Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
+  treated as local.
+
+## [0.18.2] - 2026-10-25
+
+### Fixed
+- `mars check PATH` now resolves package path dependencies relative to the checked package,
+  rather than the caller's working directory.
+- `mars check` and `mars init` now report publish-view configuration warnings instead of
+  dropping them; `mars check` also reports dependency-resolution warnings.
+- Hook emission now uses the same filter- and collision-selected hook as installation, so an
+  excluded hook no longer suppresses another dependency's installed hook or causes a false
+  not-installed warning; shadowed dependency hooks no longer cause that warning either.
+- Hook fragments removed by a filter or shadowed by a local hook are no longer validated, so
+  a broken one no longer fails `mars sync`.
+- `mars version` now changes only `[package].version`, preserving comments, formatting,
+  ordering, and unrecognized tables in `mars.toml`.
 
 ## [0.18.1] - 2026-10-24
 

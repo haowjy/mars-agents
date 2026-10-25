@@ -1,6 +1,6 @@
 [package]
 name = "mars-agents"
-version = "0.18.1"
+version = "0.18.3"
 edition = "2024"
 description = "Agent package manager for .agents/ directories"
 license = "MIT"
@@ -36,6 +36,7 @@ walkdir = "2"
 which = "7"
 dunce = "1.0.5"
 wait-timeout = "0.2"
+toml_edit = "0.22.27"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_System_IO", "Win32_System_Threading"] }

@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "mars-agents"
-version = "0.18.1"
+version = "0.18.3"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -1313,6 +1313,7 @@ dependencies = [
  "termcolor",
  "thiserror 2.0.18",
  "toml 0.8.23",
+ "toml_edit",
  "trybuild",
  "ureq",
  "wait-timeout",

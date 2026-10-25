@@ -19,7 +19,7 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 |---|---|---|
 | 1 | `LoadedConfig` | Config, LocalConfig, EffectiveConfig, old_lock, sync_lock |
 | 2 | `ResolvedState` | LoadedConfig + ResolvedGraph |
-| 3 | `TargetedState` | ResolvedState + TargetState + validation warnings |
+| 3 | `TargetedState` | ResolvedState + TargetState (canonical items and selected hooks/MCP) + validation warnings |
 | 4 | `PlannedState` | TargetedState + SyncPlan |
 | 5 | `AppliedState` | PlannedState + ApplyResult |
 | 6 | `SyncedState` | AppliedState + TargetSyncOutcomes + ConfigEntries |
@@ -95,6 +95,12 @@ agents/skills from the current package only with `[package]`. It selects local
 overrides before staging. Project-root hooks keep their separate discovery and
 warning-based collision path in `build_target`; the selected-item hard refusal
 does not change that path.
+
+`TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
+visibility, dependency collisions, and local shadowing therefore choose config entries once for
+both installation and config lowering. Hook selection survives an install skip so post-target-sync
+lowering can issue the genuine not-installed warning; it carries the selected `TargetItem` hash so
+the installed check does not re-hash the source. Config lowering must not rediscover items.
 
 ## Lossiness Gating
 

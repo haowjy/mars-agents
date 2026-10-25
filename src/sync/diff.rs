@@ -243,9 +243,7 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         let lock = LockFile::empty();
         let diff = compute(root.path(), &lock, &target, false).unwrap();
@@ -270,9 +268,7 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         let mut lock_items = IndexMap::new();
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &hash, &hash);
@@ -308,9 +304,7 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &new_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         // Lock has old hash
         let mut lock_items = IndexMap::new();
@@ -347,9 +341,7 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &original_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         // Lock also has original hash
         let mut lock_items = IndexMap::new();
@@ -386,9 +378,7 @@ mod tests {
         let target_item = make_target_item("coder", ItemKind::Agent, &new_source_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         // Lock has original hash
         let mut lock_items = IndexMap::new();
@@ -412,9 +402,7 @@ mod tests {
         let root = TempDir::new().unwrap();
 
         // Empty target — no items wanted
-        let target = TargetState {
-            items: IndexMap::new(),
-        };
+        let target = TargetState::from_items(IndexMap::new());
 
         // Lock has an item
         let mut lock_items = IndexMap::new();
@@ -457,9 +445,7 @@ mod tests {
             Some(String::from_utf8(installed_content.to_vec()).unwrap());
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         // Lock has different source_checksum and installed_checksum
         let mut lock_items = IndexMap::new();
@@ -522,9 +508,7 @@ mod tests {
                 source_path_c,
             ),
         );
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         let mut lock_items = IndexMap::new();
         let (k, v) = make_v2_item("stable", ItemKind::Agent, &hash_a, &hash_a);
@@ -595,9 +579,7 @@ mod tests {
         target_item.rewritten_content =
             Some(String::from_utf8(conflicted_content.to_vec()).unwrap());
         target_items.insert("agents/coder.md".into(), target_item);
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         let mut lock_items = IndexMap::new();
         lock_items.insert(
@@ -650,9 +632,7 @@ mod tests {
                 PathBuf::from("/tmp/source/agents/coder.md"),
             ),
         );
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         let mut lock_items = IndexMap::new();
         lock_items.insert(
@@ -724,9 +704,7 @@ mod tests {
                 rewritten_content: Some(rewritten_content.to_string()),
             },
         );
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         let mut lock_items = IndexMap::new();
         lock_items.insert(
@@ -781,9 +759,7 @@ mod tests {
                 PathBuf::from("/tmp/source/agents/orchestrator.md"),
             ),
         );
-        let target = TargetState {
-            items: target_items,
-        };
+        let target = TargetState::from_items(target_items);
 
         let mut lock_items = IndexMap::new();
         let (key, item) = make_v2_item(

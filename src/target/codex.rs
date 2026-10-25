@@ -21,27 +21,25 @@ impl TargetAdapter for CodexAdapter {
         ".codex"
     }
 
-    fn known_hook_events(&self) -> Option<&'static [&'static str]> {
-        // https://developers.openai.com/codex/hooks — verified 2026-07-24.
-        Some(&[
-            "SessionStart",
-            // SessionEnd is documented at developers.openai.com/codex/hooks but was
-            // runtime-verified non-firing in codex-cli 0.144.4 (2026-07-24). Re-add
-            // once verified functional; authors can use `unchecked = true` meanwhile.
-            "UserPromptSubmit",
-            "PreToolUse",
-            "PermissionRequest",
-            "PostToolUse",
-            "PreCompact",
-            "PostCompact",
-            "SubagentStart",
-            "SubagentStop",
-            "Stop",
-        ])
-    }
-
     fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
-        Some(HookFragmentMode::MergeJson)
+        // https://developers.openai.com/codex/hooks — verified 2026-07-24.
+        Some(HookFragmentMode::MergeJson {
+            events: &[
+                "SessionStart",
+                // SessionEnd is documented at developers.openai.com/codex/hooks but was
+                // runtime-verified non-firing in codex-cli 0.144.4 (2026-07-24). Re-add
+                // once verified functional; authors can use `unchecked = true` meanwhile.
+                "UserPromptSubmit",
+                "PreToolUse",
+                "PermissionRequest",
+                "PostToolUse",
+                "PreCompact",
+                "PostCompact",
+                "SubagentStart",
+                "SubagentStop",
+                "Stop",
+            ],
+        })
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

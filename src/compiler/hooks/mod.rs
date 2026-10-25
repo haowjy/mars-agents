@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
@@ -41,7 +42,7 @@ fn default_visibility() -> String {
 #[derive(Debug, Clone)]
 pub struct HookDef {
     pub name: String,
-    pub visibility: String,
+    pub visibility: Visibility,
     pub targets: BTreeMap<String, HookTarget>,
     pub order: i32,
 }
@@ -53,6 +54,22 @@ pub struct ParsedHookItem {
     pub package_depth: usize,
     pub decl_order: usize,
     pub hook_dir: PathBuf,
+}
+
+impl ParsedHookItem {
+    pub(crate) fn discovered_item(&self, package_root: &Path) -> crate::discover::DiscoveredItem {
+        crate::discover::DiscoveredItem {
+            id: crate::lock::ItemId {
+                kind: crate::lock::ItemKind::Hook,
+                name: self.def.name.clone().into(),
+            },
+            source_path: self
+                .hook_dir
+                .strip_prefix(package_root)
+                .expect("parsed hook belongs to its package root")
+                .to_path_buf(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -116,61 +133,12 @@ pub fn discover_hook_items(
     source_name: &str,
     package_depth: usize,
     decl_order: usize,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
-    let mut items = Vec::new();
-    for hook_dir in crate::discover::discover_hook_directories(package_root)? {
-        let dir_name = hook_dir
-            .file_name()
-            .expect("discovered hook directory has a name")
-            .to_string_lossy()
-            .into_owned();
-        let toml_path = hook_dir.join("hook.toml");
-        let raw = std::fs::read_to_string(&toml_path)?;
-        let value: toml::Value = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
-        if uses_removed_schema(&value) {
-            return Err(ConfigError::RemovedHookSchema {
-                path: toml_path,
-                message: REMOVED_HOOK_SCHEMA_MESSAGE,
-            }
-            .into());
-        }
-        let raw_def: RawHookDef = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
-        if raw_def.targets.is_empty() {
-            return Err(invalid(&toml_path, "at least one target table is required"));
-        }
-        let name = raw_def.name.unwrap_or(dir_name);
-        if let Err(message) = validate_path_component(&name) {
-            return Err(invalid(
-                &toml_path,
-                &format!("invalid name `{name}`: {message}"),
-            ));
-        }
-        for (target, spec) in &raw_def.targets {
-            let fragment = spec
-                .fragment
-                .clone()
-                .unwrap_or_else(|| default_fragment_name(target));
-            if let Err(message) = validate_fragment_path(&fragment) {
-                return Err(invalid(
-                    &toml_path,
-                    &format!("target `{target}` has invalid fragment `{fragment}`: {message}"),
-                ));
-            }
-        }
-        items.push(ParsedHookItem {
-            def: HookDef {
-                name,
-                visibility: raw_def.visibility,
-                targets: raw_def.targets,
-                order: raw_def.order,
-            },
-            source_name: source_name.to_string(),
-            package_depth,
-            decl_order,
-            hook_dir,
-        });
-    }
-    Ok(items)
+    crate::discover::discover_hook_directories(package_root)?
+        .into_iter()
+        .map(|hook_dir| load_hook_item(&hook_dir, source_name, package_depth, decl_order, diag))
+        .collect()
 }
 
 pub(crate) fn discover_resolved_hook_items(
@@ -178,14 +146,76 @@ pub(crate) fn discover_resolved_hook_items(
     source_name: &crate::types::SourceName,
     package_depth: usize,
     decl_order: usize,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
     discover_hook_items(
         &node.rooted_ref.package_root,
         source_name.as_str(),
         package_depth,
         decl_order,
+        diag,
     )
     .map_err(|error| contextualize_dependency_error(error, source_name, node))
+}
+
+fn load_hook_item(
+    hook_dir: &Path,
+    source_name: &str,
+    package_depth: usize,
+    decl_order: usize,
+    diag: &mut DiagnosticCollector,
+) -> Result<ParsedHookItem, MarsError> {
+    let dir_name = hook_dir
+        .file_name()
+        .expect("discovered hook directory has a name")
+        .to_string_lossy()
+        .into_owned();
+    let toml_path = hook_dir.join("hook.toml");
+    let raw = std::fs::read_to_string(&toml_path)?;
+    let value: toml::Value = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
+    if uses_removed_schema(&value) {
+        return Err(ConfigError::RemovedHookSchema {
+            path: toml_path,
+            message: REMOVED_HOOK_SCHEMA_MESSAGE,
+        }
+        .into());
+    }
+    let raw_def: RawHookDef = toml::from_str(&raw).map_err(|e| invalid_parse(&toml_path, e))?;
+    if raw_def.targets.is_empty() {
+        return Err(invalid(&toml_path, "at least one target table is required"));
+    }
+    let name = raw_def.name.unwrap_or(dir_name);
+    if let Err(message) = validate_path_component(&name) {
+        return Err(invalid(
+            &toml_path,
+            &format!("invalid name `{name}`: {message}"),
+        ));
+    }
+    for (target, spec) in &raw_def.targets {
+        let fragment = spec
+            .fragment
+            .clone()
+            .unwrap_or_else(|| default_fragment_name(target));
+        if let Err(message) = validate_fragment_path(&fragment) {
+            return Err(invalid(
+                &toml_path,
+                &format!("target `{target}` has invalid fragment `{fragment}`: {message}"),
+            ));
+        }
+    }
+    let visibility = Visibility::parse(&raw_def.visibility, "hook", &name, source_name, diag);
+    Ok(ParsedHookItem {
+        def: HookDef {
+            name,
+            visibility,
+            targets: raw_def.targets,
+            order: raw_def.order,
+        },
+        source_name: source_name.to_string(),
+        package_depth,
+        decl_order,
+        hook_dir: hook_dir.to_path_buf(),
+    })
 }
 
 fn contextualize_dependency_error(
@@ -222,7 +252,7 @@ pub fn load_merge_fragment(
     item: &ParsedHookItem,
     target_name: &str,
     known_events: &[&str],
-    installed_hook_dir: &Path,
+    hook_dir: &str,
     diag: &mut DiagnosticCollector,
     emit_unchecked_warning: bool,
 ) -> Result<HookFragment, MarsError> {
@@ -274,7 +304,7 @@ pub fn load_merge_fragment(
             event.clone(),
             array
                 .iter()
-                .map(|entry| substitute_json_strings(entry.clone(), installed_hook_dir))
+                .map(|entry| substitute_json_strings(entry.clone(), hook_dir))
                 .collect(),
         );
     }
@@ -286,7 +316,7 @@ pub fn load_merge_fragment(
 pub fn load_file_fragment(
     item: &ParsedHookItem,
     target_name: &str,
-    installed_hook_dir: &Path,
+    hook_dir: &str,
 ) -> Result<String, MarsError> {
     let target = &item.def.targets[target_name];
     if target.unchecked.is_some() {
@@ -304,25 +334,24 @@ pub fn load_file_fragment(
     let path = item.hook_dir.join(fragment_name);
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| invalid(&path, &format!("failed to read fragment: {error}")))?;
-    Ok(substitute_hook_dir(&raw, installed_hook_dir))
+    Ok(substitute_hook_dir(&raw, hook_dir))
 }
 
-fn substitute_hook_dir(text: &str, installed_hook_dir: &Path) -> String {
-    let portable_hook_dir = installed_hook_dir.to_string_lossy().replace('\\', "/");
-    text.replace("${MARS_HOOK_DIR}", &portable_hook_dir)
+fn substitute_hook_dir(text: &str, hook_dir: &str) -> String {
+    text.replace("${MARS_HOOK_DIR}", hook_dir)
 }
 
-fn substitute_json_strings(mut value: Value, installed_hook_dir: &Path) -> Value {
+fn substitute_json_strings(mut value: Value, hook_dir: &str) -> Value {
     match &mut value {
-        Value::String(text) => *text = substitute_hook_dir(text, installed_hook_dir),
+        Value::String(text) => *text = substitute_hook_dir(text, hook_dir),
         Value::Array(values) => {
             for value in values {
-                *value = substitute_json_strings(value.take(), installed_hook_dir);
+                *value = substitute_json_strings(value.take(), hook_dir);
             }
         }
         Value::Object(values) => {
             for value in values.values_mut() {
-                *value = substitute_json_strings(value.take(), installed_hook_dir);
+                *value = substitute_json_strings(value.take(), hook_dir);
             }
         }
         _ => {}
@@ -343,23 +372,22 @@ fn invalid(path: &Path, message: &str) -> MarsError {
 mod tests {
     use super::{substitute_hook_dir, substitute_json_strings};
     use serde_json::json;
-    use std::path::Path;
 
     #[test]
-    fn hook_dir_substitution_uses_escape_safe_separators_in_file_and_json_fragments() {
-        let windows_path = Path::new(r"C:\temp\Users\hooks\audit");
+    fn hook_dir_substitution_uses_caller_provided_token_in_file_and_json_fragments() {
+        let hook_dir = "${CLAUDE_PLUGIN_ROOT}/hooks/audit";
         let substituted =
-            substitute_hook_dir(r#"const SCRIPT = "${MARS_HOOK_DIR}/run.sh";"#, windows_path);
+            substitute_hook_dir(r#"const SCRIPT = "${MARS_HOOK_DIR}/run.sh";"#, hook_dir);
         assert_eq!(
             substituted,
-            r#"const SCRIPT = "C:/temp/Users/hooks/audit/run.sh";"#
+            r#"const SCRIPT = "${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh";"#
         );
 
         let substituted =
-            substitute_json_strings(json!({"command": "${MARS_HOOK_DIR}/run.sh"}), windows_path);
+            substitute_json_strings(json!({"command": "${MARS_HOOK_DIR}/run.sh"}), hook_dir);
         assert_eq!(
             substituted,
-            json!({"command": "C:/temp/Users/hooks/audit/run.sh"})
+            json!({"command": "${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh"})
         );
     }
 }

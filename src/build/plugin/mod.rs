@@ -539,10 +539,20 @@ fn stage_graph(
             include_mcp,
             diag,
         )?;
-        let staged = crate::resolve::stage_rooted_package_for_publish_inputs(
+        let empty_renames = RenameMap::new();
+        let renames = effective
+            .dependencies
+            .get(&source_name)
+            .map(|dependency| &dependency.rename)
+            .unwrap_or(&empty_renames);
+        let staged = crate::staging::stage_rooted_source_for_publish_inputs(
             &source_name,
             rooted,
-            effective,
+            crate::staging::RootedStageOptions {
+                preparation: crate::staging::DefinitionPreparation::Schema1,
+            },
+            &effective.skills,
+            renames,
             staging_root,
             &inputs,
             diag,

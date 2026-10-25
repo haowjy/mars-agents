@@ -626,35 +626,6 @@ pub(crate) fn stage_rooted_package(
     )
 }
 
-pub(crate) fn stage_rooted_package_for_publish_inputs(
-    source_name: &SourceName,
-    rooted: super::types::RootedSourceRef,
-    effective_config: &EffectiveConfig,
-    staging_root: &Path,
-    inputs: &[staging::PublishInput],
-    diag: &mut DiagnosticCollector,
-) -> Result<staging::StagedRootedSource, MarsError> {
-    let dep = effective_config.dependencies.get(source_name);
-    let preparation = crate::package_prepare::classify(
-        source_name.as_ref(),
-        &rooted.package_root,
-        dep.and_then(|entry| entry.dialect),
-        diag,
-    )?;
-    let empty_renames = crate::types::RenameMap::new();
-    let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
-    staging::stage_rooted_source_for_publish_inputs(
-        source_name,
-        rooted,
-        staging::RootedStageOptions { preparation },
-        &effective_config.skills,
-        renames,
-        staging_root,
-        inputs,
-        diag,
-    )
-}
-
 fn package_has_unfiltered_materialization_request(
     ctx: &ResolverContext,
     package: &SourceName,

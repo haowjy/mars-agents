@@ -1,5 +1,6 @@
 //! Build installable harness plugin trees from a package's publish graph.
 
+mod metadata;
 mod model;
 mod output;
 mod references;
@@ -21,11 +22,30 @@ use crate::error::{ConfigError, MarsError};
 use crate::resolve::{PublishLens, ResolveOptions};
 use crate::types::{RenameMap, SourceId, SourceName};
 
+use metadata::PackageMetadata;
+
+#[derive(Debug)]
+pub enum PluginBuildDestination {
+    Configured(PathBuf),
+    Out(PathBuf),
+}
+
+impl PluginBuildDestination {
+    fn resolve(&self, package_root: &Path) -> Result<PathBuf, MarsError> {
+        let path = match self {
+            Self::Configured(path) => package_root.join(path),
+            Self::Out(path) => path.clone(),
+        };
+        Ok(std::path::absolute(path)?)
+    }
+}
+
 #[derive(Debug)]
 pub struct PluginBuildRequest {
     pub package_root: PathBuf,
-    pub out_dir: PathBuf,
+    pub destination: PluginBuildDestination,
     pub harnesses: Vec<PluginHarness>,
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,41 +64,6 @@ pub struct PluginComponents {
     pub skills: usize,
     pub hooks: usize,
     pub mcp_servers: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PackageAuthor {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct PackageMetadata {
-    pub name: String,
-    pub version: String,
-    pub description: Option<String>,
-    pub author: Option<PackageAuthor>,
-    pub homepage: Option<String>,
-    pub license: Option<String>,
-}
-
-impl PackageMetadata {
-    fn from(manifest: &Config) -> Result<Self, MarsError> {
-        let package = manifest.package.as_ref().ok_or_else(|| {
-            MarsError::Config(ConfigError::Invalid {
-                message: "mars.toml needs a [package] table to build a plugin".to_string(),
-            })
-        })?;
-        Ok(Self {
-            name: package.name.clone(),
-            version: package.version.clone(),
-            description: package.description.clone(),
-            author: None,
-            homepage: None,
-            license: None,
-        })
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +94,7 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
             path: request.package_root.clone(),
             source,
         })?;
-    let out_dir = std::path::absolute(&request.out_dir)?;
+    let out_dir = request.destination.resolve(&package_root)?;
 
     let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
     let lens = PublishLens::load(&package_root, &mut diag)?;
@@ -121,13 +106,16 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
             ),
         })
     })?;
-    let metadata = PackageMetadata::from(manifest)?;
+    let mut metadata = PackageMetadata::from(manifest)?;
+    if let Some(version) = &request.version {
+        metadata.version.clone_from(version);
+    }
     let package = manifest
         .package
         .as_ref()
         .expect("PackageMetadata validates the package table");
     let plugin_name = metadata.name.clone();
-    let root_source = SourceName::from(plugin_name.clone());
+    let root_source = SourceName::from(package.name.clone());
     let profiles = requested_tree_profiles(&request.harnesses)?;
 
     let graph_staging = tempfile::TempDir::new()?;
@@ -182,14 +170,19 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         }
         support::emit(
             &request.harnesses,
-            &prepared_target.target,
+            prepared_target.target.exported_hooks(),
             &built_trees,
             &mut diag,
         );
         let collected = diag.drain();
         fail_on_diagnostic_errors(&collected)?;
-        let root_file_plan =
-            root_files::plan(&package_root, &out_dir, &metadata, &request.harnesses)?;
+        let root_file_plan = root_files::plan(
+            &package_root,
+            &out_dir,
+            &request.destination,
+            &metadata,
+            &request.harnesses,
+        )?;
         root_files::apply(&root_file_plan)?;
         let components = built_trees
             .iter()
@@ -206,6 +199,7 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
                 inputs_hash,
                 dependencies: resolved_dependency_identities(&graph, &root_source),
                 files: std::collections::BTreeMap::new(),
+                root_files: root_file_plan.root_files.clone(),
             },
             (components, collected),
         ))

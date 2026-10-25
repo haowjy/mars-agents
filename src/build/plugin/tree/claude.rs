@@ -8,8 +8,8 @@ use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
 
+use super::super::metadata::{PackageAuthor, PackageMetadata};
 use super::{TreeProfile, WrittenTreeContents, invalid_item};
-use crate::build::plugin::PackageMetadata;
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
 
@@ -78,7 +78,7 @@ fn write_manifest(
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        author: Option<&'a super::super::PackageAuthor>,
+        author: Option<&'a PackageAuthor>,
         #[serde(skip_serializing_if = "Option::is_none")]
         homepage: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]

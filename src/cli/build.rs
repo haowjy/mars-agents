@@ -196,7 +196,7 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
     };
     let report = crate::build::plugin::build_plugin(&crate::build::plugin::PluginBuildRequest {
         package_root,
-        out_dir: args.out.clone(),
+        destination: crate::build::plugin::PluginBuildDestination::Out(args.out.clone()),
         // `[plugin].harnesses` lands in the configuration lane. Until then,
         // preserve the shipped Claude tree consumed by Claude and Codex; Grok
         // consumes that same format too.
@@ -205,6 +205,7 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
             crate::config::PluginHarness::Codex,
             crate::config::PluginHarness::Grok,
         ],
+        version: None,
     })?;
 
     if json {

@@ -45,10 +45,8 @@ struct SelectedMcp {
 }
 
 impl TargetState {
-    pub(crate) fn exported_hooks(
-        &self,
-    ) -> impl Iterator<Item = &crate::compiler::hooks::ParsedHookItem> {
-        self.exported_hooks.iter()
+    pub(crate) fn exported_hooks(&self) -> &[crate::compiler::hooks::ParsedHookItem] {
+        &self.exported_hooks
     }
 
     pub(crate) fn selected_hooks(

@@ -14,9 +14,10 @@ use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::ConfigEntry;
 use crate::types::SourceName;
 
+use super::metadata::PackageMetadata;
 use super::model::{display_name, resolve_model};
 use super::references::qualify_body_references;
-use super::{PackageMetadata, PluginComponents, PluginTree};
+use super::{PluginComponents, PluginTree};
 
 mod claude;
 mod cursor;

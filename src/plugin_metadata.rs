@@ -18,6 +18,8 @@ pub(crate) struct PluginSentinel {
     pub inputs_hash: String,
     pub dependencies: std::collections::BTreeMap<String, ResolvedDependency>,
     pub files: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub root_files: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +49,12 @@ impl PluginSentinel {
             })
             && !self.files.is_empty()
             && self.files.iter().all(|(path, hash)| {
+                !path.is_empty()
+                    && !Path::new(path).is_absolute()
+                    && !path.split('/').any(|component| component == "..")
+                    && is_sha256(hash)
+            })
+            && self.root_files.iter().all(|(path, hash)| {
                 !path.is_empty()
                     && !Path::new(path).is_absolute()
                     && !path.split('/').any(|component| component == "..")

@@ -24,6 +24,13 @@ and finish writer. `tree::write_tree` is the sole item loop. `TargetState::expor
 filtered exported graph hooks even when no requested tree selected a fragment, which is the input
 for plugin omission diagnostics.
 
+The build request carries the semantic destination instead of only a path. `Configured(dir)` is
+package-relative and includes the root-file plan; explicit `Out(path)` keeps today's cwd-relative
+CLI path semantics and excludes repo-root files. `version: None` takes `[package].version`; an
+override changes generated metadata and the sentinel without changing the manifest used for
+resolution. Plugin-facing identity comes from `PackageMetadata`, while `SourceName` must continue
+to come from `[package].name` because the plugin name may differ.
+
 The output writer builds `<tree>/` directories directly into an empty sibling staging directory.
 After it succeeds, the output layer hashes every tree, writes one root `.mars-plugin.json`, and
 publishes the staged output directory with a two-rename swap. Publication and startup recovery share a cross-process lock keyed by the

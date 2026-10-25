@@ -18,6 +18,12 @@ project config, a lockfile, `.mars/`, or host model state. The implicit target s
 set of built trees' sync roots. `TargetState` also retains every filtered exported graph hook,
 including hooks no built root selected, so support diagnostics do not rescan manifests.
 
+`PluginBuildRequest` keeps destination intent: `Configured(dir)` resolves relative to the package
+root and enables the root-file plan, while `Out(path)` is the explicit CLI output and never writes
+repo-root files. Its optional version overrides only the generated package metadata; `None` uses
+`[package].version`. `PackageMetadata` is the authority for the plugin-facing name, while the
+publish graph's root source continues to use `[package].name`.
+
 The generated trees are nested at `<out>/<tree>/` and handed to
 `plugin::output::replace_owned_tree`; the build core never mutates the destination itself. The
 output layer stages the whole output in a sibling directory, records one root
@@ -33,8 +39,8 @@ paths (including hook fragments and MCP definitions), with generated trees skipp
 endings normalized, plus `[package]` without `version` and the `[plugin]`, `[dependencies]`,
 `[models]`, `[skills]`, and `[agents]` tables. It never resolves. Builds compute it after output
 recovery while holding the output lock. The sentinel separately records resolved dependency
-version/commit identities and one SHA-256 per generated file; those file hashes are the only
-output-integrity source.
+version/commit identities, one SHA-256 per generated file, and the root-file ownership map; the
+generated-file hashes are the only output-integrity source.
 
 ## Mental Model
 

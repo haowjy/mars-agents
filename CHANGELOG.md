@@ -10,9 +10,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   package's own checkout: its items plus dependencies under its own filters, renames and visibility,
   with exported hooks and MCP servers. Skill and agent references are qualified as
   `<plugin>:<name>`. Output is deterministic and LF. A root `<dir>/.mars-plugin.json` sentinel
-  records the package version, an offline input hash, dependency versions and per-file hashes; a
-  non-empty dir without one is refused; rebuilds swap the whole output atomically and recover from
-  an interrupted build.
+  records the package version, an offline input hash, dependency versions, per-file hashes, and
+  root-file ownership; a non-empty dir without one is refused; rebuilds swap the whole output
+  atomically and recover from an interrupted build.
 
 ### Fixed
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and

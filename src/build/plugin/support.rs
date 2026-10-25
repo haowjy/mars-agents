@@ -1,12 +1,12 @@
+use crate::compiler::hooks::ParsedHookItem;
 use crate::config::PluginHarness;
 use crate::diagnostic::DiagnosticCollector;
-use crate::sync::target::TargetState;
 
 use super::tree::BuiltTree;
 
 pub(super) fn emit(
     harnesses: &[PluginHarness],
-    target: &TargetState,
+    exported_hooks: &[ParsedHookItem],
     built_trees: &[BuiltTree],
     diag: &mut DiagnosticCollector,
 ) {
@@ -14,7 +14,7 @@ pub(super) fn emit(
         .iter()
         .find(|tree| tree.profile.descriptor().canonical_id == "claude");
     if claude.is_some() {
-        warn_hooks_without_claude_fragment(target, diag);
+        warn_hooks_without_claude_fragment(exported_hooks, diag);
     }
     if harnesses.contains(&PluginHarness::Codex)
         && let Some(claude) = claude
@@ -23,8 +23,11 @@ pub(super) fn emit(
     }
 }
 
-fn warn_hooks_without_claude_fragment(target: &TargetState, diag: &mut DiagnosticCollector) {
-    for hook in target.exported_hooks() {
+fn warn_hooks_without_claude_fragment(
+    exported_hooks: &[ParsedHookItem],
+    diag: &mut DiagnosticCollector,
+) {
+    for hook in exported_hooks {
         if hook.def.targets.contains_key(".claude") {
             continue;
         }

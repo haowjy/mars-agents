@@ -64,11 +64,12 @@ directory. The request's optional version overrides only generated metadata; `No
 plugin name may differ. Build reports contain one typed tree record and output path per generated
 tree; human output prints one success line per record.
 
-Config loading keeps `[plugin]` and package plugin metadata raw. `validate_plugin_build` is the one
-semantic conversion to typed authors, canonical configured directory, requested harness specs,
-plugin name, and catalog marketplace. The same rules therefore apply to configured and explicit
-`--out` builds without blocking sync or list; `mars version` invokes that validation even when
-output is skipped, and `mars check` reports its error as a warning.
+Config loading keeps the `plugin` value and package plugin metadata raw. `validate_plugin_build` is
+the one semantic conversion to typed authors, canonical configured directory, requested harness
+specs, plugin name, and catalog marketplace. The same rules therefore apply to configured and
+explicit `--out` builds without blocking sync or list; `mars version` invokes that validation for
+packages declaring `plugin` even when output is skipped, and `mars check` reports its error as a
+warning.
 
 The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
 core never mutates the destination itself. The staged build holds the output lock and root-file

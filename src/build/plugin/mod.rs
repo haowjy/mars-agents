@@ -162,10 +162,6 @@ pub(crate) fn validate_plugin_build(config: &Config) -> Result<PackageMetadata, 
     metadata::validate(config)
 }
 
-pub(crate) fn validate_plugin_release_metadata(config: &Config) -> Result<(), ConfigError> {
-    metadata::validate_package_values(config)
-}
-
 pub(crate) fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, MarsError> {
     stage_plugin(request)?.publish()
 }

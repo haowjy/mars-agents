@@ -38,7 +38,15 @@ pub(crate) fn validate(config: &Config) -> Result<PackageMetadata, ConfigError> 
         .package
         .as_ref()
         .ok_or_else(|| invalid("mars.toml needs a [package] table to build a plugin"))?;
-    let plugin = config.plugin.as_ref();
+    let plugin = config
+        .plugin
+        .as_ref()
+        .map(|value| {
+            value
+                .as_table()
+                .ok_or_else(|| invalid_value("[plugin]", value, "a table"))
+        })
+        .transpose()?;
 
     let dir = plugin
         .and_then(|plugin| plugin.get("dir"))
@@ -113,16 +121,6 @@ pub(crate) fn validate(config: &Config) -> Result<PackageMetadata, ConfigError> 
         dir,
         harnesses,
     })
-}
-
-pub(crate) fn validate_package_values(config: &Config) -> Result<(), ConfigError> {
-    let Some(package) = config.package.as_ref() else {
-        return Ok(());
-    };
-    parse_authors(package.authors.as_ref())?;
-    optional_string("[package].homepage", package.homepage.as_ref())?;
-    optional_string("[package].license", package.license.as_ref())?;
-    Ok(())
 }
 
 fn parse_harnesses(

@@ -39,9 +39,6 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         .as_ref()
         .map(|_| crate::build::plugin::validate_plugin_build(&config))
         .transpose()?;
-    if plugin_metadata.is_none() {
-        crate::build::plugin::validate_plugin_release_metadata(&config)?;
-    }
 
     let plugin_recovery = if let Some(metadata) = &plugin_metadata {
         let output =

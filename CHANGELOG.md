@@ -20,6 +20,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,
+  and malformed non-table `plugin` values survive config loading and saving so non-plugin commands
+  can continue while `mars check` and plugin builds report the invalid value.
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
   Cursor no longer preload available-only skills, while every target receives `/name` body
   guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a

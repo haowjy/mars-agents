@@ -18,7 +18,7 @@ pipeline operates on EffectiveConfig only
 | Type | Role |
 |---|---|
 | `Config` | Full mars.toml: package, plugin, dependencies, local-dependencies, settings, models, agents |
-| `PluginConfig` | Raw `[plugin]` table, preserved without applying publish defaults |
+| `Config.plugin` | Raw `plugin` TOML value, preserved without applying publish defaults |
 | `LocalConfig` | Gitignored dev overrides: source path swaps, local agent overlays |
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
@@ -26,7 +26,7 @@ pipeline operates on EffectiveConfig only
 | `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
 | `NetworkPolicy` / `NetworkHost` | Shared typed parsers for every mode and host surface |
 
-`load()` parses `[plugin]` and the plugin-only `[package]` fields `authors`, `homepage`, and
+`load()` parses `plugin` and the plugin-only `[package]` fields `authors`, `homepage`, and
 `license` as raw TOML values. It applies no publish defaults and validates none of their content,
 so config-saving commands round-trip authored values without making publish metadata a sync
 boundary. Typed plugin metadata and harness specs live in `build/plugin/metadata.rs`; plugin build

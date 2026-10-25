@@ -46,7 +46,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<PackageInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<PluginConfig>,
+    pub plugin: Option<toml::Value>,
     #[serde(default)]
     pub dependencies: IndexMap<SourceName, InstallDep>,
     /// Local-only dependencies — installed when syncing this repo but NOT
@@ -93,17 +93,6 @@ pub struct PackageInfo {
         skip_serializing_if = "Option::is_none"
     )]
     pub requires_meridian: Option<String>,
-}
-
-/// Raw `[plugin]` values. Plugin publishing validates these at its own boundary.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(transparent)]
-pub struct PluginConfig(pub toml::Table);
-
-impl PluginConfig {
-    pub(crate) fn get(&self, key: &str) -> Option<&toml::Value> {
-        self.0.get(key)
-    }
 }
 
 pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), ConfigError> {
@@ -1975,7 +1964,7 @@ license = "MIT"
         let config = load(dir.path()).unwrap();
         let package = config.package.as_ref().unwrap();
         let plugin = config.plugin.as_ref().unwrap();
-        assert!(plugin.0.is_empty());
+        assert!(plugin.as_table().is_some_and(toml::Table::is_empty));
         assert_eq!(
             package.authors.as_ref().and_then(toml::Value::as_array),
             Some(&vec![toml::Value::Table(toml::Table::from_iter([
@@ -2036,7 +2025,10 @@ harnesses = ["claude", "cursor"]
         let config = load(dir.path()).unwrap();
         let plugin = config.plugin.as_ref().unwrap();
         assert_eq!(
-            plugin.get("dir").and_then(toml::Value::as_str),
+            plugin
+                .as_table()
+                .and_then(|plugin| plugin.get("dir"))
+                .and_then(toml::Value::as_str),
             Some("generated/plugin")
         );
         let metadata = crate::build::plugin::validate_plugin_build(&config).unwrap();

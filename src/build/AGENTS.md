@@ -22,6 +22,11 @@ including hooks no built root selected. A source check before the tree loop emit
 diagnostics once; tree writing emits only lowering diagnostics. Support diagnostics consume the
 full `TargetState` for graph-wide counts rather than inferring them from one tree.
 
+The Cursor profile lowers native Cursor agents without an additional plugin field filter, uses no
+native model aliases, and writes `.cursor-plugin/plugin.json`, `mcp.json`, and versioned
+`hooks/hooks.json` with `${CURSOR_PLUGIN_ROOT}` hook paths. Its MCP and hook serializers are the
+same path-parameterized writers used by `.cursor` sync.
+
 `PluginBuildRequest` keeps destination intent: `Configured` resolves from `[plugin].dir` and
 enables the root-file plan, while `Out(path)` is the explicit CLI output and never writes repo-root
 files. `[plugin]` defaults its directory to `plugin`, its identity and description from `[package]`,

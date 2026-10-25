@@ -84,7 +84,7 @@ impl BuiltTree {
 pub(super) fn profile(tree: PluginTree) -> Result<&'static TreeProfile, MarsError> {
     match tree {
         PluginTree::Claude => Ok(&claude::PROFILE),
-        PluginTree::Cursor => cursor::profile(),
+        PluginTree::Cursor => Ok(&cursor::PROFILE),
         PluginTree::OpenCode => opencode::profile(),
     }
 }

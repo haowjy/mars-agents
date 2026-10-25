@@ -44,7 +44,7 @@ fn accept_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) -> bool {
             return false;
         }
     };
-    if content.contains("export default") {
+    if has_default_export(&content) {
         return true;
     }
 
@@ -56,6 +56,122 @@ fn accept_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) -> bool {
         ),
     );
     false
+}
+
+fn has_default_export(content: &str) -> bool {
+    #[derive(Clone, Copy)]
+    enum State {
+        Code,
+        BlockComment,
+        SingleQuote,
+        DoubleQuote,
+        Template,
+    }
+
+    let bytes = content.as_bytes();
+    let mut state = State::Code;
+    let mut line_start = true;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match state {
+            State::Code => {
+                if byte == b'\n' {
+                    line_start = true;
+                    index += 1;
+                    continue;
+                }
+                if line_start {
+                    let mut token = index;
+                    while bytes
+                        .get(token)
+                        .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
+                    {
+                        token += 1;
+                    }
+                    if default_export_at(bytes, token) {
+                        return true;
+                    }
+                    index = token;
+                    if index >= bytes.len() {
+                        break;
+                    }
+                    line_start = false;
+                }
+                if bytes[index..].starts_with(b"//") {
+                    index = bytes[index..]
+                        .iter()
+                        .position(|byte| *byte == b'\n')
+                        .map_or(bytes.len(), |offset| index + offset);
+                    continue;
+                }
+                if bytes[index..].starts_with(b"/*") {
+                    state = State::BlockComment;
+                    index += 2;
+                    continue;
+                }
+                state = match byte {
+                    b'\'' => State::SingleQuote,
+                    b'"' => State::DoubleQuote,
+                    b'`' => State::Template,
+                    _ => State::Code,
+                };
+                escaped = false;
+            }
+            State::BlockComment => {
+                if bytes[index..].starts_with(b"*/") {
+                    state = State::Code;
+                    index += 2;
+                    continue;
+                }
+                if byte == b'\n' {
+                    line_start = true;
+                }
+            }
+            State::SingleQuote | State::DoubleQuote | State::Template => {
+                if byte == b'\n' {
+                    line_start = true;
+                }
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if matches!(
+                    (state, byte),
+                    (State::SingleQuote, b'\'')
+                        | (State::DoubleQuote, b'"')
+                        | (State::Template, b'`')
+                ) {
+                    state = State::Code;
+                }
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+fn default_export_at(bytes: &[u8], start: usize) -> bool {
+    let Some(after_export) = bytes
+        .get(start..)
+        .and_then(|rest| rest.strip_prefix(b"export"))
+    else {
+        return false;
+    };
+    let whitespace = after_export
+        .iter()
+        .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
+        .count();
+    if whitespace == 0 {
+        return false;
+    }
+    let Some(after_default) = after_export[whitespace..].strip_prefix(b"default") else {
+        return false;
+    };
+    after_default
+        .first()
+        .is_none_or(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'$'))
 }
 
 fn fragment_name(hook: &ParsedHookItem) -> String {

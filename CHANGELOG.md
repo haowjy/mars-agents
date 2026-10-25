@@ -23,6 +23,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   component counts.
 
 ### Fixed
+- Plugin builds now reject source symlinks that leave their package and special files instead of
+  copying their contents into published output; safe in-package links become regular files. Builds
+  also lower renamed skills before projection, ship only each tree's hook fragment, validate the
+  requested plugin identities for configured and `--out` builds, and retain warnings on failure.
+- `[package].authors` accepts both `"Name <email>"` strings and `{ name, email }` tables, while
+  dependency consumers ignore malformed plugin-only package metadata for compatibility.
 - Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
   Cursor no longer preload available-only skills, while every target receives `/name` body
   guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a

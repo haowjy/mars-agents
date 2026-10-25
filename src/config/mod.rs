@@ -96,11 +96,45 @@ pub struct PackageInfo {
 }
 
 /// Package author metadata used by generated plugin manifests and catalogs.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PackageAuthor {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for PackageAuthor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum AuthorValue {
+            Text(String),
+            Table {
+                name: String,
+                #[serde(default)]
+                email: Option<String>,
+            },
+        }
+
+        Ok(match AuthorValue::deserialize(deserializer)? {
+            AuthorValue::Table { name, email } => Self { name, email },
+            AuthorValue::Text(value) => {
+                let value = value.trim();
+                let (name, email) = value
+                    .strip_suffix('>')
+                    .and_then(|without_close| without_close.rsplit_once(" <"))
+                    .filter(|(name, email)| !name.trim().is_empty() && !email.trim().is_empty())
+                    .map_or_else(
+                        || (value.to_string(), None),
+                        |(name, email)| (name.trim().to_string(), Some(email.trim().to_string())),
+                    );
+                Self { name, email }
+            }
+        })
+    }
 }
 
 /// Configuration for committed, multi-harness plugin output.
@@ -116,18 +150,6 @@ pub struct PluginConfig {
     pub description: Option<String>,
     #[serde(default = "default_plugin_harnesses")]
     pub harnesses: Vec<PluginHarness>,
-}
-
-impl Default for PluginConfig {
-    fn default() -> Self {
-        Self {
-            dir: default_plugin_dir(),
-            name: None,
-            marketplace: None,
-            description: None,
-            harnesses: default_plugin_harnesses(),
-        }
-    }
 }
 
 impl PluginConfig {
@@ -185,27 +207,51 @@ pub fn default_plugin_harnesses() -> Vec<PluginHarness> {
     PluginHarness::DEFAULT.to_vec()
 }
 
-fn validate_plugin_config(config: &Config) -> Result<(), MarsError> {
-    let Some(plugin) = &config.plugin else {
+fn validate_plugin_config_shape(config: &Config) -> Result<(), MarsError> {
+    if config.plugin.is_none() {
         return Ok(());
-    };
-    let package = config
-        .package
-        .as_ref()
-        .ok_or_else(|| ConfigError::Invalid {
-            message: "mars.toml [plugin] requires a [package] table".to_string(),
-        })?;
-
-    validate_plugin_dir(&plugin.dir)?;
-    if plugin.harnesses.is_empty() {
+    }
+    if config.package.is_none() {
         return Err(ConfigError::Invalid {
-            message: "mars.toml [plugin].harnesses must list at least one harness".to_string(),
+            message: "mars.toml [plugin] requires a [package] table".to_string(),
         }
         .into());
     }
 
-    let name = plugin.name(package);
-    for harness in &plugin.harnesses {
+    Ok(())
+}
+
+pub(crate) fn validate_plugin_build(
+    config: &Config,
+    harnesses: &[PluginHarness],
+) -> Result<(), MarsError> {
+    let package = config
+        .package
+        .as_ref()
+        .ok_or_else(|| ConfigError::Invalid {
+            message: "mars.toml needs a [package] table to build a plugin".to_string(),
+        })?;
+    if harnesses.is_empty() {
+        return Err(ConfigError::Invalid {
+            message: "a plugin build needs at least one harness".to_string(),
+        }
+        .into());
+    }
+
+    let name = config
+        .plugin
+        .as_ref()
+        .map_or(package.name.as_str(), |plugin| plugin.name(package));
+    let name_field = if config
+        .plugin
+        .as_ref()
+        .is_some_and(|plugin| plugin.name.is_some())
+    {
+        "[plugin].name"
+    } else {
+        "[package].name"
+    };
+    for harness in harnesses {
         let valid = match harness {
             PluginHarness::Claude | PluginHarness::Grok => valid_claude_plugin_name(name),
             PluginHarness::Codex => valid_codex_plugin_name(name),
@@ -231,10 +277,46 @@ fn validate_plugin_config(config: &Config) -> Result<(), MarsError> {
                 }
             };
             return Err(ConfigError::Invalid {
-                message: format!("mars.toml [plugin].name `{name}` is invalid: {rule}"),
+                message: format!("mars.toml {name_field} `{name}` is invalid: {rule}"),
             }
             .into());
         }
+    }
+
+    let marketplace = config
+        .plugin
+        .as_ref()
+        .map_or(package.name.as_str(), |plugin| plugin.marketplace(package));
+    let marketplace_field = if config
+        .plugin
+        .as_ref()
+        .is_some_and(|plugin| plugin.marketplace.is_some())
+    {
+        "[plugin].marketplace"
+    } else {
+        "[package].name"
+    };
+    if harnesses.iter().any(|harness| {
+        matches!(
+            harness,
+            PluginHarness::Claude | PluginHarness::Codex | PluginHarness::Grok
+        )
+    }) && !valid_claude_plugin_name(marketplace)
+    {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "mars.toml {marketplace_field} `{marketplace}` is invalid as a marketplace: Claude marketplace names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters"
+            ),
+        }
+        .into());
+    }
+    if harnesses.contains(&PluginHarness::Cursor) && !valid_cursor_plugin_name(marketplace) {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "mars.toml {marketplace_field} `{marketplace}` is invalid as a marketplace: Cursor marketplace names must contain only lowercase letters, digits, dots, or hyphens and start and end with a letter or digit"
+            ),
+        }
+        .into());
     }
     Ok(())
 }
@@ -450,11 +532,39 @@ pub struct Manifest {
 /// the source belong to that source's project, not to its dependents.
 #[derive(Deserialize)]
 struct SourceManifestSections {
-    package: Option<PackageInfo>,
+    package: Option<SourcePackageInfo>,
     #[serde(default)]
     dependencies: IndexMap<SourceName, InstallDep>,
     #[serde(default)]
     models: IndexMap<String, crate::models::ModelAlias>,
+}
+
+/// Dependency consumers need only package identity and compatibility floors.
+/// Plugin publishing metadata is intentionally ignored here, even when a
+/// newer package writes a form this Mars build does not understand.
+#[derive(Deserialize)]
+struct SourcePackageInfo {
+    name: String,
+    version: String,
+    #[serde(default, rename = "requires-mars")]
+    requires_mars: Option<String>,
+    #[serde(default, rename = "requires-meridian")]
+    requires_meridian: Option<String>,
+}
+
+impl From<SourcePackageInfo> for PackageInfo {
+    fn from(package: SourcePackageInfo) -> Self {
+        Self {
+            name: package.name,
+            version: package.version,
+            description: None,
+            authors: Vec::new(),
+            homepage: None,
+            license: None,
+            requires_mars: package.requires_mars,
+            requires_meridian: package.requires_meridian,
+        }
+    }
 }
 
 /// Shared include/exclude/rename filter configuration for a source.
@@ -1275,7 +1385,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
     })?;
     let mut config: Config = parse_without_removed_visibility(&content, &path)?;
     migrate_legacy_source_urls(&mut config);
-    validate_plugin_config(&config)?;
+    validate_plugin_config_shape(&config)?;
     Ok(config)
 }
 
@@ -1301,6 +1411,7 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
             let Some(package) = parsed.package else {
                 return Ok((None, diagnostics));
             };
+            let package = package.into();
             // Convert InstallDep → ManifestDep, preserving both URL and path deps
             let deps: IndexMap<String, ManifestDep> = parsed
                 .dependencies
@@ -1858,7 +1969,7 @@ fn should_upgrade_legacy_git_url(url: &str) -> bool {
 
 /// Write mars.toml atomically.
 pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
-    validate_plugin_config(config)?;
+    validate_plugin_config_shape(config)?;
     let path = root.join(CONFIG_FILE);
     let content = toml::to_string_pretty(config).map_err(|e| ConfigError::Invalid {
         message: format!("failed to serialize config: {e}"),
@@ -2179,6 +2290,7 @@ license = "MIT"
 name = "example-package"
 version = "1.2.3"
 description = "Package description"
+authors = ["Example Author <author@example.com>"]
 
 [plugin]
 dir = "generated/plugin"
@@ -2197,6 +2309,11 @@ harnesses = ["claude", "cursor"]
         assert_eq!(plugin.name(package), "custom-plugin");
         assert_eq!(plugin.marketplace(package), "custom-marketplace");
         assert_eq!(plugin.description(package), Some("Plugin description"));
+        assert_eq!(package.authors[0].name, "Example Author");
+        assert_eq!(
+            package.authors[0].email.as_deref(),
+            Some("author@example.com")
+        );
         assert_eq!(
             plugin.harnesses,
             vec![PluginHarness::Claude, PluginHarness::Cursor]
@@ -2208,7 +2325,7 @@ harnesses = ["claude", "cursor"]
     }
 
     #[test]
-    fn plugin_config_rejects_unsafe_directories() {
+    fn plugin_build_rejects_unsafe_directories() {
         for (plugin_dir, expected) in [
             ("", "cannot be empty"),
             ("/tmp/plugin", "must be a relative path"),
@@ -2227,7 +2344,9 @@ harnesses = ["claude", "cursor"]
             )
             .unwrap();
 
-            let error = load(dir.path()).unwrap_err().to_string();
+            let config = load(dir.path()).unwrap();
+            let plugin = config.plugin.as_ref().unwrap();
+            let error = validate_plugin_dir(&plugin.dir).unwrap_err().to_string();
             assert!(
                 error.contains(expected),
                 "dir {plugin_dir:?} should report {expected:?}, got: {error}"
@@ -2256,7 +2375,7 @@ harnesses = ["claude", "cursor"]
     }
 
     #[test]
-    fn plugin_config_validates_name_for_each_listed_harness() {
+    fn plugin_build_validates_name_for_each_listed_harness() {
         for (harness, name, expected) in [
             ("claude", "bad:name", "Claude names"),
             ("codex", "bad--name", "Codex names"),
@@ -2273,7 +2392,11 @@ harnesses = ["claude", "cursor"]
             )
             .unwrap();
 
-            let error = load(dir.path()).unwrap_err().to_string();
+            let config = load(dir.path()).unwrap();
+            let harnesses = config.plugin.as_ref().unwrap().harnesses.clone();
+            let error = validate_plugin_build(&config, &harnesses)
+                .unwrap_err()
+                .to_string();
             assert!(
                 error.contains(expected),
                 "name {name:?} for {harness} should report {expected:?}, got: {error}"

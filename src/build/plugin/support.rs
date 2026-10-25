@@ -65,7 +65,7 @@ pub(super) fn emit(
     diag: &mut DiagnosticCollector,
 ) {
     for built in built_trees {
-        warn_hooks_without_tree_fragment(built, target.exported_hooks(), diag);
+        warn_hooks_without_tree_fragment(harnesses, built, target.exported_hooks(), diag);
     }
 
     for harness in selected_harnesses(harnesses) {
@@ -142,6 +142,7 @@ fn count_items(target: &TargetState, kind: ItemKind) -> usize {
 }
 
 fn warn_hooks_without_tree_fragment(
+    harnesses: &[PluginHarness],
     built: &BuiltTree,
     exported_hooks: &[crate::compiler::hooks::ParsedHookItem],
     diag: &mut DiagnosticCollector,
@@ -149,7 +150,11 @@ fn warn_hooks_without_tree_fragment(
     let profile = tree::profile(built.tree());
     let target_dir = profile.descriptor().target_dir;
     let fragment = target_dir.trim_start_matches('.');
-    let tree = built.tree().as_str();
+    let affected = selected_harnesses(harnesses)
+        .filter(|harness| harness.tree() == built.tree())
+        .map(harness_display_name)
+        .collect::<Vec<_>>();
+    let affected = human_list(&affected);
 
     for hook in exported_hooks {
         if hook.def.targets.contains_key(target_dir) {
@@ -158,10 +163,23 @@ fn warn_hooks_without_tree_fragment(
         diag.warn(
             "plugin-hook-fragment-dropped",
             format!(
-                "hook `{}` from `{}` has no `{fragment}` fragment; not in the `{tree}` tree",
+                "hook `{}` from `{}` has no `{fragment}` fragment; {affected} won't get it",
                 hook.def.name, hook.source_name
             ),
         );
+    }
+}
+
+fn human_list(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [item] => (*item).to_string(),
+        [left, right] => format!("{left} and {right}"),
+        _ => format!(
+            "{} and {}",
+            items[..items.len() - 1].join(", "),
+            items[items.len() - 1]
+        ),
     }
 }
 

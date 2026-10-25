@@ -261,7 +261,7 @@ fn validate_destination(out_dir: &Path) -> Result<(), MarsError> {
 }
 
 fn recover_interrupted_swap(paths: &OutputPaths) -> Result<(), MarsError> {
-    crate::platform::fs::safe_remove(&paths.new)?;
+    remove_recovery_staging(&paths.new)?;
 
     let old = classify_tree(&paths.old)?;
     if matches!(old, TreeState::Missing) {
@@ -270,9 +270,9 @@ fn recover_interrupted_swap(paths: &OutputPaths) -> Result<(), MarsError> {
     let output = classify_tree(&paths.out)?;
 
     match (old, output) {
-        // A valid live tree proves the second rename completed. The rollback
-        // directory may be only partly removed, including loss of its sentinel.
-        (_, TreeState::Owned) => crate::platform::fs::safe_remove(&paths.old),
+        (TreeState::Empty | TreeState::Owned, TreeState::Owned) => {
+            crate::platform::fs::safe_remove(&paths.old)
+        }
         (TreeState::Empty | TreeState::Owned, TreeState::Missing) => {
             fs::rename(&paths.old, &paths.out)
                 .map_err(|source| io_error("restore interrupted plugin output", &paths.old, source))
@@ -284,6 +284,21 @@ fn recover_interrupted_swap(paths: &OutputPaths) -> Result<(), MarsError> {
             output.description()
         ))),
     }
+}
+
+fn remove_recovery_staging(path: &Path) -> Result<(), MarsError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(io_error("inspect plugin recovery staging", path, source)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(invalid(format!(
+            "refusing plugin recovery because staging path {} is not a regular directory",
+            path.display()
+        )));
+    }
+    crate::platform::fs::safe_remove(path)
 }
 
 #[derive(Debug)]

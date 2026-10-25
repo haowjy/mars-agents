@@ -262,7 +262,15 @@ pub(super) fn write_tree(
         .collect();
     for hook in &hooks {
         let destination = root.join("hooks").join(&hook.def.name);
-        crate::platform::fs::atomic_copy_dir(&hook.hook_dir, &destination)?;
+        let package_root = &input
+            .graph
+            .nodes
+            .get(hook.source_name.as_str())
+            .expect("selected hook names a resolved package")
+            .rooted_ref
+            .package_root;
+        let excluded = other_hook_fragments(hook, descriptor.target_dir);
+        super::published_tree::copy(package_root, &hook.hook_dir, &destination, &excluded, diag)?;
     }
     let mcp: Vec<_> = input
         .target
@@ -389,9 +397,29 @@ fn write_agent(
         frontmatter.body(),
         &model.native,
     );
+    let plugin_lossy_fields;
+    let lossy_fields = if tree_profile.tree() == PluginTree::Cursor {
+        plugin_lossy_fields = lowered
+            .lossy_fields
+            .iter()
+            .cloned()
+            .map(|mut field| {
+                if matches!(
+                    field.classification,
+                    crate::compiler::lossiness::Lossiness::Approximate { .. }
+                ) {
+                    field.classification = crate::compiler::lossiness::Lossiness::Dropped;
+                }
+                field
+            })
+            .collect::<Vec<_>>();
+        plugin_lossy_fields.as_slice()
+    } else {
+        lowered.lossy_fields.as_slice()
+    };
     crate::compiler::lossiness::emit_agent_lossiness_warnings(
         item.id.name.as_str(),
-        &lowered.lossy_fields,
+        lossy_fields,
         diag,
     );
 
@@ -430,7 +458,8 @@ fn write_skill(
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let destination = root.join("skills").join(item.id.name.as_str());
-    let source = SkillSource::prepare(item)?;
+    let package_root = &input.graph.nodes[&item.source_name].rooted_ref.package_root;
+    let source = SkillSource::prepare(item, package_root, diag)?;
     crate::compiler::variants::project_skill_for_target_with_checked_schema(
         &source.path,
         &destination,
@@ -438,13 +467,6 @@ fn write_skill(
         diag,
         item.id.name.as_str(),
     )?;
-    if let Some(content) = &item.rewritten_content {
-        crate::fs::atomic_write_preserving_permissions(
-            &destination.join("SKILL.md"),
-            content.as_bytes(),
-        )?;
-    }
-
     let body_refs = body_reference_map(item, input, installed_skills);
     for entry in walkdir::WalkDir::new(&destination).sort_by_file_name() {
         let entry = entry.map_err(|error| MarsError::Internal(error.to_string()))?;
@@ -458,7 +480,8 @@ fn write_skill(
             continue;
         }
         let content = std::fs::read_to_string(entry.path())?;
-        let qualified = qualify_body_references(&content, &body_refs)?;
+        let qualified = qualify_body_references(&content, &body_refs)
+            .map_err(|error| invalid_item("skill", item, error.to_string()))?;
         if qualified != content {
             std::fs::write(entry.path(), qualified)?;
         }
@@ -477,24 +500,56 @@ struct SkillSource {
 }
 
 impl SkillSource {
-    fn prepare(item: &TargetItem) -> Result<Self, MarsError> {
-        let temp = item
-            .is_flat_skill
-            .then(tempfile::TempDir::new)
-            .transpose()?;
-        let path = if let Some(temp) = &temp {
-            let filtered = temp.path().join("skill");
-            crate::fs::atomic_install_dir_filtered(
-                &item.source_path,
-                &filtered,
-                crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
-            )?;
-            filtered
+    fn prepare(
+        item: &TargetItem,
+        package_root: &Path,
+        diag: &mut DiagnosticCollector,
+    ) -> Result<Self, MarsError> {
+        let temp = tempfile::TempDir::new()?;
+        let path = temp.path().join("skill");
+        let excluded = if item.is_flat_skill {
+            crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
         } else {
-            item.source_path.clone()
+            Vec::new()
         };
-        Ok(Self { path, _temp: temp })
+        super::published_tree::copy(package_root, &item.source_path, &path, &excluded, diag)?;
+        if let Some(content) = &item.rewritten_content {
+            crate::fs::atomic_write_preserving_permissions(
+                &path.join("SKILL.md"),
+                content.as_bytes(),
+            )?;
+        }
+        Ok(Self {
+            path,
+            _temp: Some(temp),
+        })
     }
+}
+
+fn other_hook_fragments(
+    hook: &crate::compiler::hooks::ParsedHookItem,
+    target_dir: &str,
+) -> Vec<PathBuf> {
+    let current = hook.def.targets[target_dir]
+        .fragment
+        .clone()
+        .unwrap_or_else(|| crate::compiler::hooks::default_fragment_name(target_dir));
+    hook.def
+        .targets
+        .iter()
+        .filter(|(target, _)| target.as_str() != target_dir)
+        .map(|(target, config)| {
+            config
+                .fragment
+                .clone()
+                .unwrap_or_else(|| crate::compiler::hooks::default_fragment_name(target))
+        })
+        .filter(|fragment| fragment != &current)
+        .map(PathBuf::from)
+        .collect()
 }
 
 fn body_reference_map(

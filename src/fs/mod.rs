@@ -198,6 +198,174 @@ pub(crate) fn authored_tree_entries(
     Ok(entries)
 }
 
+/// Walk authored content for a published artifact without allowing filesystem
+/// indirection to escape the package that owns it.
+///
+/// In-package symlinks are dereferenced into regular entries. The ordinary
+/// authored walker intentionally keeps its historical behavior for sync.
+pub(crate) fn strict_authored_tree_entries(
+    package_root: &Path,
+    source_root: &Path,
+    excluded_paths: &[PathBuf],
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<AuthoredTreeEntry>, MarsError> {
+    let package_root = dunce::canonicalize(package_root).map_err(|source| MarsError::Io {
+        operation: "resolve published package root".to_string(),
+        path: package_root.to_path_buf(),
+        source,
+    })?;
+    let resolved_source = resolve_published_path(&package_root, source_root)?;
+    let metadata = fs::metadata(&resolved_source)?;
+    if !metadata.is_dir() {
+        return Err(invalid_published_entry(
+            source_root,
+            "source tree is not a directory",
+        ));
+    }
+    if crate::plugin_metadata::has_valid_plugin_sentinel(&resolved_source) {
+        report_generated_tree(source_root, diag);
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    let mut ancestors = std::collections::HashSet::from([resolved_source.clone()]);
+    collect_strict_authored_tree_entries(
+        &package_root,
+        source_root,
+        &resolved_source,
+        Path::new(""),
+        excluded_paths,
+        diag,
+        &mut ancestors,
+        &mut entries,
+    )?;
+    Ok(entries)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_strict_authored_tree_entries(
+    package_root: &Path,
+    logical_root: &Path,
+    actual_dir: &Path,
+    relative_dir: &Path,
+    excluded_paths: &[PathBuf],
+    diag: &mut DiagnosticCollector,
+    ancestors: &mut std::collections::HashSet<PathBuf>,
+    entries: &mut Vec<AuthoredTreeEntry>,
+) -> Result<(), MarsError> {
+    let mut children = fs::read_dir(actual_dir)?.collect::<Result<Vec<_>, _>>()?;
+    children.sort_by_key(|entry| entry.file_name());
+    for child in children {
+        let relative = relative_dir.join(child.file_name());
+        if excluded_paths
+            .iter()
+            .any(|excluded| relative.starts_with(excluded))
+        {
+            continue;
+        }
+
+        let logical_path = logical_root.join(&relative);
+        let file_type = child.file_type()?;
+        let actual_path = if file_type.is_symlink() {
+            resolve_published_path(package_root, &logical_path)?
+        } else {
+            child.path()
+        };
+        let metadata = if file_type.is_symlink() {
+            fs::metadata(&actual_path)?
+        } else {
+            child.metadata()?
+        };
+
+        if metadata.is_dir() {
+            if crate::plugin_metadata::has_valid_plugin_sentinel(&actual_path) {
+                report_generated_tree(&logical_path, diag);
+                continue;
+            }
+            let canonical_dir =
+                dunce::canonicalize(&actual_path).map_err(|source| MarsError::Io {
+                    operation: "resolve published source directory".to_string(),
+                    path: logical_path.clone(),
+                    source,
+                })?;
+            if !ancestors.insert(canonical_dir.clone()) {
+                return Err(invalid_published_entry(
+                    &logical_path,
+                    "directory symlink creates a cycle",
+                ));
+            }
+            entries.push(AuthoredTreeEntry {
+                source: canonical_dir.clone(),
+                relative: relative.clone(),
+                kind: AuthoredEntryKind::Directory,
+            });
+            collect_strict_authored_tree_entries(
+                package_root,
+                logical_root,
+                &canonical_dir,
+                &relative,
+                excluded_paths,
+                diag,
+                ancestors,
+                entries,
+            )?;
+            ancestors.remove(&canonical_dir);
+        } else if metadata.is_file() {
+            entries.push(AuthoredTreeEntry {
+                source: actual_path,
+                relative,
+                kind: AuthoredEntryKind::File,
+            });
+        } else {
+            return Err(invalid_published_entry(
+                &logical_path,
+                "entry is not a regular file or directory",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_published_path(package_root: &Path, path: &Path) -> Result<PathBuf, MarsError> {
+    let resolved = dunce::canonicalize(path).map_err(|source| {
+        if path
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            invalid_published_entry(
+                path,
+                &format!("symlink target cannot be resolved: {source}"),
+            )
+        } else {
+            MarsError::Io {
+                operation: "resolve published source path".to_string(),
+                path: path.to_path_buf(),
+                source,
+            }
+        }
+    })?;
+    if !resolved.starts_with(package_root) {
+        return Err(invalid_published_entry(
+            path,
+            &format!(
+                "symlink target {} leaves package root {}",
+                resolved.display(),
+                package_root.display()
+            ),
+        ));
+    }
+    Ok(resolved)
+}
+
+fn invalid_published_entry(path: &Path, reason: &str) -> MarsError {
+    MarsError::InvalidRequest {
+        message: format!(
+            "published source path {} is unsafe: {reason}",
+            path.display()
+        ),
+    }
+}
+
 fn collect_authored_tree_entries(
     source_root: &Path,
     current: &Path,

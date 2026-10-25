@@ -18,6 +18,12 @@ npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and 
 default-export hook fragments through atomic writes into hash-checked files before importing them,
 preferring a private cache directory.
 
+Publication staging, input fingerprinting, and the plugin-only source-tree copier share the strict
+authored walker: an out-of-package symlink or special file fails the build, while an in-package
+symlink is materialized as regular output. Sync keeps its existing copy policy. Skills are copied
+to a prepared source tree and renamed before projection, so lowering sees installed frontmatter;
+hook copies exclude fragment files owned only by other tree targets.
+
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
 project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the
 set of built trees' sync roots. `TargetState` also retains every filtered exported graph hook,
@@ -42,6 +48,10 @@ metadata; `None` uses `[package].version`. `PackageMetadata` is the authority fo
 name and package author/homepage/license metadata, while the publish graph's root source continues
 to use `[package].name`. Build reports contain one typed tree record and output path per generated
 tree; human output prints one success line per record.
+
+Config loading validates only `[plugin]` shape. `stage_plugin` is the semantic boundary for the
+canonical configured directory, requested harness set, plugin name, and catalog marketplace. The
+same rules therefore apply to configured and explicit `--out` builds without blocking sync.
 
 The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
 core never mutates the destination itself. The staged build holds the output lock and root-file

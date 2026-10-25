@@ -16,6 +16,12 @@ must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configura
 caches, or installed harnesses. `plugin::output::stage` owns staging and sentinel publication;
 its lock-owning `StagedPlugin` alone replaces the destination when published.
 
+The publish variant of rooted-package staging uses the same strict authored-entry walker as the
+input fingerprint and the sole raw plugin-tree copier. It dereferences only links whose canonical
+targets remain inside the owning package and rejects special files; sync deliberately retains the
+ordinary walker. Skill rename content is written into a strict-copied prepared source before native
+projection, and hook copies omit fragment paths belonging only to other targets.
+
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three
 tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. Tree profiles
 derive their harness kind, variant key and target root from the compiler descriptor; they add only
@@ -58,6 +64,8 @@ tree and root-file plan succeed, the output layer hashes every tree and writes o
 `.mars-plugin.json`; publication applies root writes/deletes and then swaps the staged output with
 two renames. Publication and startup recovery share a cross-process lock keyed by the absolute
 output path; non-empty trees without a valid sentinel are never replaced.
+Recovery refuses symlink/non-directory staging siblings and preserves an unowned rollback
+directory even when the live output is valid; ambiguous evidence is never deleted.
 The root-package input fingerprint is computed from discovered authored item paths after recovery
 and under that same lock, before the staging tree is populated, so crash leftovers and generated
 catalog/output trees cannot make an otherwise clean checkout stale.

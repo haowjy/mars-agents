@@ -55,8 +55,54 @@ pub(crate) fn stage_rooted_source(
     staging_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<StagedRootedSource, MarsError> {
+    stage_rooted_source_with_policy(
+        source_name,
+        rooted,
+        options,
+        skill_overrides,
+        renames,
+        staging_root,
+        diag,
+        SourceWalk::Standard,
+    )
+}
+
+/// Stage a package for publication, rejecting source indirection that leaves
+/// the package boundary. Sync continues to use [`stage_rooted_source`].
+pub(crate) fn stage_rooted_source_for_publish(
+    source_name: &SourceName,
+    rooted: RootedSourceRef,
+    options: RootedStageOptions,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    staging_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<StagedRootedSource, MarsError> {
+    stage_rooted_source_with_policy(
+        source_name,
+        rooted,
+        options,
+        skill_overrides,
+        renames,
+        staging_root,
+        diag,
+        SourceWalk::Publish,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_rooted_source_with_policy(
+    source_name: &SourceName,
+    rooted: RootedSourceRef,
+    options: RootedStageOptions,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    staging_root: &Path,
+    diag: &mut DiagnosticCollector,
+    walk: SourceWalk,
+) -> Result<StagedRootedSource, MarsError> {
     let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
-    stage_canonical_source(
+    stage_canonical_source_with_policy(
         &rooted.package_root,
         &staged_package_root,
         options.dialect,
@@ -64,6 +110,7 @@ pub(crate) fn stage_rooted_source(
         renames,
         Some(source_name.as_ref()),
         diag,
+        walk,
     )?;
     let hook_surface = detect_unreadable_hook_surface(&staged_package_root, diag)?;
     Ok(StagedRootedSource {
@@ -73,6 +120,12 @@ pub(crate) fn stage_rooted_source(
         },
         hook_surface,
     })
+}
+
+#[derive(Clone, Copy)]
+enum SourceWalk {
+    Standard,
+    Publish,
 }
 
 fn detect_unreadable_hook_surface(
@@ -110,6 +163,29 @@ pub(crate) fn stage_canonical_source(
     fallback_skill_name: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
+    stage_canonical_source_with_policy(
+        source_root,
+        dest_root,
+        dialect,
+        skill_overrides,
+        renames,
+        fallback_skill_name,
+        diag,
+        SourceWalk::Standard,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_canonical_source_with_policy(
+    source_root: &Path,
+    dest_root: &Path,
+    dialect: Dialect,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    fallback_skill_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
+    walk: SourceWalk,
+) -> Result<(), MarsError> {
     if dest_root.exists() {
         fs::remove_dir_all(dest_root)?;
     }
@@ -123,6 +199,7 @@ pub(crate) fn stage_canonical_source(
         fallback_skill_name,
         &[],
         diag,
+        walk,
     )
 }
 
@@ -161,6 +238,7 @@ pub(crate) fn stage_local_item(
                 })?);
             process_markdown_file(
                 source_path,
+                source_path,
                 &dest_file,
                 kind,
                 &mut StageOverlayContext {
@@ -186,6 +264,7 @@ pub(crate) fn stage_local_item(
                 skill_overlay_key,
                 excluded_paths,
                 diag,
+                SourceWalk::Standard,
             )?;
             Ok(dest)
         }
@@ -218,17 +297,26 @@ fn copy_and_lift_tree(
     fallback_skill_name: Option<&str>,
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
+    walk: SourceWalk,
 ) -> Result<(), MarsError> {
-    let entries = crate::fs::authored_tree_entries(source_root, excluded_paths, diag)?;
+    let entries = match walk {
+        SourceWalk::Standard => {
+            crate::fs::authored_tree_entries(source_root, excluded_paths, diag)?
+        }
+        SourceWalk::Publish => {
+            crate::fs::strict_authored_tree_entries(source_root, source_root, excluded_paths, diag)?
+        }
+    };
     for entry in entries {
         let dest_path = dest_root.join(&entry.relative);
         if entry.kind == crate::fs::AuthoredEntryKind::Directory {
             fs::create_dir_all(&dest_path)?;
-        } else if should_lift_markdown(&entry.source) {
+        } else if should_lift_markdown(&entry.relative) {
             let src_path = entry.source;
-            let kind = item_kind_for_markdown(&src_path);
+            let kind = item_kind_for_markdown(&entry.relative);
             process_markdown_file(
                 &src_path,
+                &source_root.join(&entry.relative),
                 &dest_path,
                 kind,
                 &mut StageOverlayContext {
@@ -271,6 +359,7 @@ fn item_kind_for_markdown(path: &Path) -> ItemKind {
 
 fn process_markdown_file(
     src: &Path,
+    logical_src: &Path,
     dest: &Path,
     kind: ItemKind,
     ctx: &mut StageOverlayContext<'_>,
@@ -283,7 +372,7 @@ fn process_markdown_file(
         .then(|| {
             ctx.skill_overlay_key.map(str::to_owned).or_else(|| {
                 skill_overlay_lookup_name(
-                    src,
+                    logical_src,
                     ctx.package_root,
                     ctx.renames,
                     ctx.fallback_skill_name,
@@ -310,14 +399,15 @@ fn process_markdown_file(
                     .map(str::to_owned)
                     .or_else(|| {
                         skill_overlay_lookup_name(
-                            src,
+                            logical_src,
                             ctx.package_root,
                             ctx.renames,
                             ctx.fallback_skill_name,
                         )
                     })
                     .or_else(|| {
-                        src.parent()
+                        logical_src
+                            .parent()
                             .and_then(|p| p.file_name())
                             .and_then(|n| n.to_str())
                             .map(str::to_owned)

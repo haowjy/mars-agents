@@ -45,7 +45,8 @@ pub fn replace_owned_tree(
     fs::create_dir_all(&paths.parent)
         .map_err(|source| io_error("create plugin output parent", &paths.parent, source))?;
     recover_interrupted_swap(&paths)?;
-    validate_owned_or_empty(&paths.out, "plugin output")?;
+    let output = classify_tree(&paths.out)?;
+    ensure_replaceable(&paths.out, "plugin output", &output)?;
 
     // Recovery removes this path. Removing it again here would hide a race or
     // an invariant violation inside this process.
@@ -268,61 +269,85 @@ fn validate_destination(out_dir: &Path) -> Result<(), MarsError> {
 fn recover_interrupted_swap(paths: &OutputPaths) -> Result<(), MarsError> {
     crate::platform::fs::safe_remove(&paths.new)?;
 
-    let old_metadata = match fs::symlink_metadata(&paths.old) {
-        Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => {
-            return Err(io_error(
-                "inspect plugin rollback directory",
-                &paths.old,
-                source,
-            ));
-        }
-    };
-    if old_metadata.file_type().is_symlink() || !old_metadata.is_dir() {
-        return Err(invalid(format!(
-            "plugin rollback path is not a directory: {}",
-            paths.old.display()
-        )));
+    let old = classify_tree(&paths.old)?;
+    if matches!(old, TreeState::Missing) {
+        return Ok(());
     }
-    validate_owned_or_empty(&paths.old, "plugin rollback directory")?;
+    let output = classify_tree(&paths.out)?;
 
-    if path_exists(&paths.out)? {
-        crate::platform::fs::safe_remove(&paths.old)?;
-    } else {
-        fs::rename(&paths.old, &paths.out)
-            .map_err(|source| io_error("restore interrupted plugin output", &paths.old, source))?;
+    match (old, output) {
+        // A valid live tree proves the second rename completed. The rollback
+        // directory may be only partly removed, including loss of its sentinel.
+        (_, TreeState::Owned) => crate::platform::fs::safe_remove(&paths.old),
+        (TreeState::Empty | TreeState::Owned, TreeState::Missing) => {
+            fs::rename(&paths.old, &paths.out)
+                .map_err(|source| io_error("restore interrupted plugin output", &paths.old, source))
+        }
+        (old, output) => Err(invalid(format!(
+            "refusing ambiguous plugin recovery at {}: rollback is {}, output is {}; both paths were preserved",
+            paths.out.display(),
+            old.description(),
+            output.description()
+        ))),
     }
-    Ok(())
 }
 
-fn validate_owned_or_empty(path: &Path, description: &str) -> Result<(), MarsError> {
+#[derive(Debug)]
+enum TreeState {
+    Missing,
+    Empty,
+    Owned,
+    Unowned(String),
+}
+
+impl TreeState {
+    fn description(&self) -> &str {
+        match self {
+            Self::Missing => "missing",
+            Self::Empty => "empty",
+            Self::Owned => "Mars-owned",
+            Self::Unowned(reason) => reason,
+        }
+    }
+}
+
+fn classify_tree(path: &Path) -> Result<TreeState, MarsError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(TreeState::Missing);
+        }
         Err(source) => return Err(io_error("inspect plugin directory", path, source)),
     };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(invalid(format!(
-            "{description} must be a directory: {}",
-            path.display()
-        )));
+    if metadata.file_type().is_symlink() {
+        return Ok(TreeState::Unowned("a symlink".to_string()));
+    }
+    if !metadata.is_dir() {
+        return Ok(TreeState::Unowned("not a directory".to_string()));
     }
 
     let mut entries =
         fs::read_dir(path).map_err(|source| io_error("read plugin directory", path, source))?;
     match entries.next() {
-        None => return Ok(()),
+        None => return Ok(TreeState::Empty),
         Some(Ok(_)) => {}
         Some(Err(source)) => return Err(io_error("read plugin directory", path, source)),
     }
 
-    read_sentinel(path).map(|_| ()).map_err(|error| {
-        invalid(format!(
-            "refusing to replace non-empty {description} {} without a valid Mars sentinel: {error}",
-            path.display()
-        ))
+    Ok(match read_sentinel(path) {
+        Ok(_) => TreeState::Owned,
+        Err(error) => TreeState::Unowned(error.to_string()),
     })
+}
+
+fn ensure_replaceable(path: &Path, description: &str, state: &TreeState) -> Result<(), MarsError> {
+    match state {
+        TreeState::Missing | TreeState::Empty | TreeState::Owned => Ok(()),
+        TreeState::Unowned(reason) => Err(invalid(format!(
+            "refusing to replace non-empty {description} {} without a valid Mars sentinel: {reason}",
+            path.display()
+        ))),
+    }
 }
 
 fn validate_staging_tree(staging: &Path) -> Result<(), MarsError> {
@@ -348,34 +373,49 @@ fn validate_staging_tree(staging: &Path) -> Result<(), MarsError> {
 }
 
 fn publish_staged_tree(paths: &OutputPaths) -> Result<(), MarsError> {
-    if path_exists(&paths.out)? {
-        if let Err(source) = fs::rename(&paths.out, &paths.old) {
-            let error = io_error("move current plugin output aside", &paths.out, source);
-            return Err(clean_up_staging_after_error(paths, error));
-        }
+    match publish_staged_tree_inner(paths) {
+        Ok(()) => Ok(()),
+        Err(error) => Err(clean_up_staging_after_error(paths, error)),
+    }
+}
 
-        if let Err(source) = fs::rename(&paths.new, &paths.out) {
-            let restore = fs::rename(&paths.old, &paths.out);
-            let cleanup = crate::platform::fs::safe_remove(&paths.new);
-            if let Err(restore_error) = restore {
-                return Err(MarsError::Internal(format!(
-                    "failed to publish plugin tree at {}: {source}; restoring the previous tree also failed: {restore_error}",
-                    paths.out.display()
-                )));
-            }
-            if let Err(cleanup_error) = cleanup {
-                return Err(MarsError::Internal(format!(
-                    "failed to publish plugin tree at {}: {source}; staging cleanup also failed: {cleanup_error}",
-                    paths.out.display()
-                )));
-            }
-            return Err(io_error("publish plugin output", &paths.new, source));
-        }
+fn publish_staged_tree_inner(paths: &OutputPaths) -> Result<(), MarsError> {
+    let rollback = classify_tree(&paths.old)?;
+    if !matches!(rollback, TreeState::Missing) {
+        return Err(invalid(format!(
+            "refusing to publish plugin output {} because rollback path {} is {}",
+            paths.out.display(),
+            paths.old.display(),
+            rollback.description()
+        )));
+    }
+    let output = classify_tree(&paths.out)?;
+    ensure_replaceable(&paths.out, "plugin output", &output)?;
 
-        crate::platform::fs::safe_remove(&paths.old)?;
-    } else if let Err(source) = fs::rename(&paths.new, &paths.out) {
-        let error = io_error("publish plugin output", &paths.new, source);
-        return Err(clean_up_staging_after_error(paths, error));
+    match output {
+        TreeState::Empty | TreeState::Owned => {
+            fs::rename(&paths.out, &paths.old).map_err(|source| {
+                io_error("move current plugin output aside", &paths.out, source)
+            })?;
+
+            if let Err(source) = fs::rename(&paths.new, &paths.out) {
+                let restore = fs::rename(&paths.old, &paths.out);
+                if let Err(restore_error) = restore {
+                    return Err(MarsError::Internal(format!(
+                        "failed to publish plugin tree at {}: {source}; restoring the previous tree also failed: {restore_error}",
+                        paths.out.display()
+                    )));
+                }
+                return Err(io_error("publish plugin output", &paths.new, source));
+            }
+
+            crate::platform::fs::safe_remove(&paths.old)?;
+        }
+        TreeState::Missing => {
+            fs::rename(&paths.new, &paths.out)
+                .map_err(|source| io_error("publish plugin output", &paths.new, source))?;
+        }
+        TreeState::Unowned(_) => unreachable!("ensure_replaceable rejected unowned output"),
     }
     Ok(())
 }

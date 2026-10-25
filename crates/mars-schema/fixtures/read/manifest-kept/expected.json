@@ -3,9 +3,7 @@
   "diagnostics": [],
   "fields": {
     "authors": [
-      {
-        "name": "A"
-      }
+      "A"
     ],
     "description": "d",
     "homepage": "https://x",

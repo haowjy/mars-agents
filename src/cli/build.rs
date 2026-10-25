@@ -165,11 +165,7 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
         None => ctx.project_root.clone(),
     };
     let manifest = crate::config::load(&package_root)?;
-    let harnesses = manifest
-        .plugin
-        .as_ref()
-        .map(|plugin| plugin.harnesses.clone())
-        .unwrap_or_else(crate::config::default_plugin_harnesses);
+    let metadata = crate::build::plugin::validate_plugin_build(&manifest)?;
     let destination = args
         .out
         .clone()
@@ -178,7 +174,7 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
     let report = crate::build::plugin::build_plugin(&crate::build::plugin::PluginBuildRequest {
         package_root,
         destination,
-        harnesses,
+        metadata,
         version: None,
     })?;
 

@@ -238,7 +238,7 @@ mod tests {
             name: "pkg".into(),
             version: "1.0.0".into(),
             description: None,
-            authors: Vec::new(),
+            authors: None,
             homepage: None,
             license: None,
             schema: None,

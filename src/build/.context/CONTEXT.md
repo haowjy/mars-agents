@@ -58,15 +58,17 @@ lowering as-is, has no native model aliases or extra agent allowlist, and delega
 the versioned `hooks/hooks.json` to the path-parameterized `.cursor` target writers. Plugin hook
 paths substitute `${CURSOR_PLUGIN_ROOT}` before those writers run.
 
-The build request carries the semantic destination instead of only a path. `Configured` resolves
-`[plugin].dir` package-relative and includes the root-file plan; explicit `Out(path)` keeps today's
-cwd-relative CLI path semantics and excludes repo-root files. `Configured` requires `[plugin]`, and
-an explicit output that resolves to the configured directory is refused. `version: None` takes
-`[package].version`; an override changes generated metadata and the sentinel without changing the
-manifest used for resolution. Plugin-facing identity and package author/homepage/license come from
-`PackageMetadata`, while `SourceName` must continue to come from `[package].name` because the plugin
-name may differ. The report's `trees` array carries each typed tree's final output path and component
-counts rather than flattening one preferred tree into the top level.
+The build request carries validated `PackageMetadata` and the semantic destination instead of only
+a path. Validation is the boundary where raw `[plugin]` and package author/homepage/license values
+become typed values, omitted defaults become concrete, and harness names become spec references.
+`Configured` resolves the validated directory package-relative and includes the root-file plan;
+explicit `Out(path)` keeps today's cwd-relative CLI path semantics and excludes repo-root files.
+`Configured` requires `[plugin]`, and an explicit output that resolves to the configured directory
+is refused. `version: None` takes `[package].version`; an override changes generated metadata and
+the sentinel without changing the manifest used for resolution. `SourceName` must continue to come
+from `[package].name` because the plugin name may differ. The report's `trees` array carries each
+typed tree's final output path and component counts rather than flattening one preferred tree into
+the top level.
 
 The output writer builds `<tree>/` directories directly into an empty sibling staging directory.
 For configured builds, the root-file plan generates both marketplace catalogs and the OpenCode
@@ -221,7 +223,7 @@ marks effort consumed (cleared from execution policy output).
 `build_launch_bundle()` resolves project config once, then passes it into policy resolution.
 
 ```
-LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, network_allow, network_deny, extra_skills}
+LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_skills}
     │
     ├─ [agent mode] read + parse .mars/agents/<name>.md → AgentProfile + body
     ├─ [ad-hoc mode] empty_agent_profile() + "" body
@@ -234,7 +236,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, 
            ├─ models::ensure_fresh()                   (catalog for native slug + probes)
            ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)
-           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, network, autocompact)
+           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, alias compaction)
            └─ runnable::resolve_routing()              (populate Routing with aggregate report)
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)

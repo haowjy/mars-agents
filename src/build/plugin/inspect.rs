@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::PluginHarness;
 use crate::error::MarsError;
 use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
@@ -216,29 +215,33 @@ pub fn inspect(package_root: &Path) -> Result<PluginOutputState, MarsError> {
         source,
     })?;
     let manifest = crate::config::load(&package_root)?;
-    let plugin = manifest
-        .plugin
-        .as_ref()
-        .ok_or_else(|| MarsError::InvalidRequest {
+    if manifest.plugin.is_none() {
+        return Err(MarsError::InvalidRequest {
             message: "inspecting plugin output needs a [plugin] table in mars.toml".to_string(),
-        })?;
-    let package = manifest
-        .package
-        .as_ref()
-        .expect("plugin config validation requires a package table");
-    let output = configured_output_path(&package_root, plugin)?;
+        });
+    }
+    let metadata = super::validate_plugin_build(&manifest)?;
+    inspect_validated(&package_root, &metadata)
+}
+
+pub(crate) fn inspect_validated(
+    package_root: &Path,
+    metadata: &super::metadata::PackageMetadata,
+) -> Result<PluginOutputState, MarsError> {
+    let output = configured_output_path(package_root, &metadata.dir)?;
     inspect_output(
-        &package_root,
+        package_root,
         &output,
-        &package.version,
-        expected_root_paths(&plugin.harnesses),
+        &metadata.version,
+        expected_root_paths(&metadata.harnesses),
     )
 }
 
-pub(super) fn expected_root_paths(harnesses: &[PluginHarness]) -> BTreeSet<&'static str> {
+pub(super) fn expected_root_paths(
+    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
+) -> BTreeSet<&'static str> {
     harnesses
         .iter()
-        .filter_map(|harness| harness.spec())
         .filter_map(|harness| harness.tree.spec().root_file)
         .map(|root| root.path)
         .collect()
@@ -251,7 +254,15 @@ pub(super) fn inspect_output(
     expected_root_files: BTreeSet<&'static str>,
 ) -> Result<PluginOutputState, MarsError> {
     let sentinel = match super::output::classify_tree(output)? {
-        super::output::TreeState::Missing => None,
+        super::output::TreeState::Missing => {
+            return without_sentinel(
+                package_root,
+                expected_root_files,
+                PluginDirectoryState::Missing {
+                    path: output.to_path_buf(),
+                },
+            );
+        }
         super::output::TreeState::Empty => {
             return without_sentinel(
                 package_root,
@@ -272,17 +283,7 @@ pub(super) fn inspect_output(
                 },
             );
         }
-        super::output::TreeState::Owned(sentinel) => Some(sentinel),
-    };
-
-    let Some(sentinel) = sentinel else {
-        return without_sentinel(
-            package_root,
-            expected_root_files,
-            PluginDirectoryState::Missing {
-                path: output.to_path_buf(),
-            },
-        );
+        super::output::TreeState::Owned(sentinel) => sentinel,
     };
 
     let changed_paths = changed_output_paths(output, &sentinel)?;
@@ -487,7 +488,7 @@ fn root_file_harness(path: &Path) -> String {
     }) else {
         return "requested".to_string();
     };
-    crate::plugin::PluginHarness::specs()
+    crate::plugin::harness_specs()
         .filter(|harness| harness.tree == tree.tree)
         .map(|harness| harness.display_name)
         .collect::<Vec<_>>()

@@ -34,13 +34,47 @@ pub struct VersionArgs {
 /// Run `mars version`.
 pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let config = crate::config::load(&ctx.project_root)?;
-    if let Some(plugin) = &config.plugin {
-        crate::build::plugin::validate_plugin_build(&config, &plugin.harnesses)?;
-        let output = crate::build::plugin::configured_output_path(&ctx.project_root, plugin)?;
-        crate::build::plugin::output::recover(&output)?;
-    }
+    let plugin_metadata = config
+        .plugin
+        .as_ref()
+        .map(|_| crate::build::plugin::validate_plugin_build(&config))
+        .transpose()?;
 
-    require_clean_working_tree(&ctx.project_root)?;
+    let plugin_recovery = if let Some(metadata) = &plugin_metadata {
+        let output =
+            crate::build::plugin::configured_output_path(&ctx.project_root, &metadata.dir)?;
+        let staging = crate::build::plugin::output::recovery_staging_path(&output)?;
+        let staging_relative = staging.strip_prefix(&ctx.project_root).map_err(|_| {
+            MarsError::Internal(format!(
+                "configured plugin staging path is outside the package: {}",
+                staging.display()
+            ))
+        })?;
+        Some((output, staging_relative.to_path_buf()))
+    } else {
+        None
+    };
+
+    // An untracked recovery directory is interrupted Mars state, not package
+    // dirt. Check every other path before recovery mutates the filesystem.
+    require_clean_working_tree(
+        &ctx.project_root,
+        plugin_recovery
+            .as_ref()
+            .map(|(_, staging)| staging.as_path()),
+    )?;
+    if let Some((output, staging_relative)) = &plugin_recovery {
+        if path_tracked_at(&ctx.project_root, "HEAD", staging_relative)? {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "refusing release because reserved plugin staging path {} is tracked by git",
+                    staging_relative.display()
+                ),
+            }
+            .into());
+        }
+        crate::build::plugin::output::recover(output)?;
+    }
     require_package_check(&ctx.project_root, args.force)?;
 
     let package = config
@@ -77,14 +111,14 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     ensure_tag_not_exists(&ctx.project_root, &tag)?;
 
-    let staged_plugin = if let Some(plugin) = &config.plugin
+    let staged_plugin = if let Some(metadata) = &plugin_metadata
         && !args.no_plugins
     {
         Some(crate::build::plugin::stage_plugin(
             &crate::build::plugin::PluginBuildRequest {
                 package_root: ctx.project_root.clone(),
                 destination: crate::build::plugin::PluginBuildDestination::Configured,
-                harnesses: plugin.harnesses.clone(),
+                metadata: metadata.clone(),
                 version: Some(next_version.clone()),
             },
         )?)
@@ -96,8 +130,8 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     if ctx.project_root.join("CHANGELOG.md").is_file() {
         touched_paths.push(PathBuf::from("CHANGELOG.md"));
     }
-    if let (Some(plugin), Some(staged)) = (&config.plugin, &staged_plugin) {
-        touched_paths.push(plugin.dir.clone());
+    if let (Some(metadata), Some(staged)) = (&plugin_metadata, &staged_plugin) {
+        touched_paths.push(metadata.dir.clone());
         let deleted = staged
             .deleted_root_files()
             .into_iter()
@@ -113,9 +147,18 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
     let plugin_dir = staged_plugin
         .as_ref()
-        .and(config.plugin.as_ref())
-        .map(|plugin| plugin.dir.as_path());
-    let snapshot = ReleaseSnapshot::capture(&ctx.project_root, touched_paths, plugin_dir)?;
+        .and(plugin_metadata.as_ref())
+        .map(|metadata| metadata.dir.as_path());
+    let created_root_directories = staged_plugin
+        .as_ref()
+        .map(|staged| staged.created_root_directories())
+        .unwrap_or_default();
+    let snapshot = ReleaseSnapshot::capture(
+        &ctx.project_root,
+        touched_paths,
+        plugin_dir,
+        created_root_directories,
+    )?;
     let review_filled_changelog = !json
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
@@ -178,7 +221,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         });
         if let Some(report) = &plugin_report {
             result["plugin"] = serde_json::json!({
-                "path": config.plugin.as_ref().expect("a plugin report needs plugin config").dir,
+                "path": plugin_metadata.as_ref().expect("a plugin report needs plugin config").dir,
                 "trees": report.trees.iter().map(|tree| tree.tree.as_str()).collect::<Vec<_>>(),
                 "warnings": report.diagnostics.iter().filter(|diagnostic| {
                     diagnostic.level == DiagnosticLevel::Warning
@@ -240,12 +283,32 @@ fn update_package_version(project_root: &Path, next_version: &str) -> Result<(),
     crate::fs::atomic_write(&path, content.as_bytes())
 }
 
-fn require_clean_working_tree(project_root: &Path) -> Result<(), MarsError> {
-    let output = crate::platform::process::run_git(
-        &["status", "--porcelain"],
-        project_root,
-        "git status --porcelain",
-    )?;
+fn require_clean_working_tree(
+    project_root: &Path,
+    recovery_staging: Option<&Path>,
+) -> Result<(), MarsError> {
+    let mut args = vec![
+        "status".to_string(),
+        "--porcelain".to_string(),
+        "--untracked-files=all".to_string(),
+    ];
+    if let Some(recovery_staging) = recovery_staging {
+        let recovery_staging = recovery_staging
+            .to_str()
+            .ok_or_else(|| ConfigError::Invalid {
+                message: format!(
+                    "reserved plugin staging path must be valid Unicode: {}",
+                    recovery_staging.display()
+                ),
+            })?;
+        args.extend([
+            "--".to_string(),
+            ".".to_string(),
+            format!(":(exclude,literal){recovery_staging}"),
+        ]);
+    }
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = crate::platform::process::run_git(&args, project_root, "git status --porcelain")?;
 
     if !output.is_empty() {
         return Err(ConfigError::Invalid {
@@ -441,6 +504,7 @@ fn current_branch(project_root: &Path) -> Result<String, MarsError> {
 struct ReleaseSnapshot {
     head: String,
     touched_paths: Vec<PathBuf>,
+    created_directories: Vec<PathBuf>,
 }
 
 impl ReleaseSnapshot {
@@ -448,6 +512,7 @@ impl ReleaseSnapshot {
         project_root: &Path,
         touched_paths: impl IntoIterator<Item = PathBuf>,
         allowed_untracked: Option<&Path>,
+        created_directories: Vec<PathBuf>,
     ) -> Result<Self, MarsError> {
         let head = crate::platform::process::run_git(
             &["rev-parse", "HEAD"],
@@ -479,6 +544,7 @@ impl ReleaseSnapshot {
         Ok(Self {
             head,
             touched_paths,
+            created_directories,
         })
     }
 
@@ -561,6 +627,22 @@ impl ReleaseSnapshot {
                     }
                 }
                 Err(error) => failures.push(error.to_string()),
+            }
+        }
+
+        for relative in self.created_directories.iter().rev() {
+            let path = project_root.join(relative);
+            match std::fs::remove_dir(&path) {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                    ) => {}
+                Err(error) => failures.push(format!(
+                    "could not remove created plugin catalog directory {}: {error}",
+                    relative.display()
+                )),
             }
         }
 

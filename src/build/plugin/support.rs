@@ -1,10 +1,9 @@
-use crate::config::PluginHarness;
 use crate::diagnostic::DiagnosticCollector;
 use crate::sync::target::TargetState;
 use mars_schema::item::ItemKind;
 
 use super::tree::{self, BuiltTree, TreeProfile};
-use crate::plugin::{Verification, VerificationLevel};
+use crate::plugin::{PluginHarnessSpec, Verification, VerificationLevel};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Component {
@@ -27,7 +26,7 @@ enum SupportState {
 }
 
 pub(super) fn emit(
-    harnesses: &[PluginHarness],
+    harnesses: &[&'static PluginHarnessSpec],
     target: &TargetState,
     built_trees: &[BuiltTree],
     diag: &mut DiagnosticCollector,
@@ -37,7 +36,7 @@ pub(super) fn emit(
     }
 
     for harness in selected_harnesses(harnesses) {
-        let profile = tree::profile(harness.tree());
+        let profile = tree::profile(harness.tree);
 
         if support_state(harness, profile, Component::Agents) == SupportState::Impossible {
             emit_agents_impossible(harness, count_items(target, ItemKind::Agent), diag);
@@ -48,7 +47,7 @@ pub(super) fn emit(
     // Bootstrap docs have no slot in any plugin tree, so report the omission
     // once rather than repeating the same package-wide fact for every harness.
     let bootstrap_is_impossible = selected_harnesses(harnesses).all(|harness| {
-        let profile = tree::profile(harness.tree());
+        let profile = tree::profile(harness.tree);
         support_state(harness, profile, Component::BootstrapDocs) == SupportState::Impossible
     });
     if bootstrap_is_impossible && count_items(target, ItemKind::BootstrapDoc) > 0 {
@@ -59,25 +58,20 @@ pub(super) fn emit(
     }
 }
 
-fn selected_harnesses(
-    harnesses: &[PluginHarness],
-) -> impl Iterator<Item = &'static PluginHarness> + '_ {
-    PluginHarness::specs()
-        .map(|spec| &spec.harness)
-        .filter(|harness| harnesses.contains(harness))
+fn selected_harnesses<'a>(
+    harnesses: &'a [&'static PluginHarnessSpec],
+) -> impl Iterator<Item = &'static PluginHarnessSpec> + 'a {
+    harnesses.iter().copied()
 }
 
 fn support_state(
-    harness: &PluginHarness,
+    harness: &PluginHarnessSpec,
     profile: &TreeProfile,
     component: Component,
 ) -> SupportState {
     match component {
         Component::Skills => SupportState::Supported,
-        Component::Agents
-            if profile.agents.is_none()
-                || !harness.spec().expect("validated harness").loads_agents =>
-        {
+        Component::Agents if profile.agents.is_none() || !harness.loads_agents => {
             SupportState::Impossible
         }
         Component::Agents if !profile.dropped_agent_fields().is_empty() => {
@@ -99,7 +93,7 @@ fn count_items(target: &TargetState, kind: ItemKind) -> usize {
 }
 
 fn warn_hooks_without_tree_fragment(
-    harnesses: &[PluginHarness],
+    harnesses: &[&'static PluginHarnessSpec],
     built: &BuiltTree,
     exported_hooks: &[crate::compiler::hooks::ParsedHookItem],
     diag: &mut DiagnosticCollector,
@@ -108,7 +102,7 @@ fn warn_hooks_without_tree_fragment(
     let target_dir = profile.descriptor().target_dir;
     let fragment = target_dir.trim_start_matches('.');
     let affected = selected_harnesses(harnesses)
-        .filter(|harness| harness.tree() == built.tree())
+        .filter(|harness| harness.tree == built.tree())
         .map(harness_display_name)
         .collect::<Vec<_>>();
     let affected = human_list(&affected);
@@ -140,7 +134,11 @@ fn human_list(items: &[&str]) -> String {
     }
 }
 
-fn emit_agents_impossible(harness: &PluginHarness, agents: usize, diag: &mut DiagnosticCollector) {
+fn emit_agents_impossible(
+    harness: &PluginHarnessSpec,
+    agents: usize,
+    diag: &mut DiagnosticCollector,
+) {
     if agents == 0 {
         return;
     }
@@ -153,14 +151,14 @@ fn emit_agents_impossible(harness: &PluginHarness, agents: usize, diag: &mut Dia
         "plugin-agents-impossible",
         format!(
             "{}: {agents} {noun} not loaded by {} plugins",
-            harness.as_str(),
+            harness.key,
             harness_display_name(harness)
         ),
     );
 }
 
 fn emit_verification_info(
-    harness: &PluginHarness,
+    harness: &PluginHarnessSpec,
     profile: &TreeProfile,
     diag: &mut DiagnosticCollector,
 ) {
@@ -187,7 +185,7 @@ fn emit_verification_info(
         "plugin-verification-below-live",
         format!(
             "{}: {}; not run on the {} binary",
-            harness.as_str(),
+            harness.key,
             state,
             harness_display_name(harness)
         ),
@@ -216,18 +214,12 @@ fn list(items: &[&str]) -> String {
     }
 }
 
-fn harness_display_name(harness: &PluginHarness) -> &'static str {
-    harness
-        .spec()
-        .expect("validated plugin harness")
-        .display_name
+fn harness_display_name(harness: &PluginHarnessSpec) -> &'static str {
+    harness.display_name
 }
 
-fn verification(harness: &PluginHarness, component: Component) -> Verification {
-    let row = &harness
-        .spec()
-        .expect("validated plugin harness")
-        .verification;
+fn verification(harness: &PluginHarnessSpec, component: Component) -> Verification {
+    let row = &harness.verification;
     match component {
         Component::Skills => row.skills,
         Component::Agents => row
@@ -239,23 +231,17 @@ fn verification(harness: &PluginHarness, component: Component) -> Verification {
     }
 }
 
-fn install_verification(harness: &PluginHarness) -> Verification {
-    harness
-        .spec()
-        .expect("validated plugin harness")
-        .verification
-        .install
+fn install_verification(harness: &PluginHarnessSpec) -> Verification {
+    harness.verification.install
 }
 
 /// Render the generated README component-support and verification tables.
 pub fn render_readme_tables() -> String {
-    let harnesses = PluginHarness::specs()
-        .map(|spec| &spec.harness)
-        .collect::<Vec<_>>();
+    let harnesses = crate::plugin::harness_specs().collect::<Vec<_>>();
     let mut rendered = String::from("### Component support\n\n");
     render_header(&mut rendered, &harnesses);
     render_row(&mut rendered, "Tree", &harnesses, |harness| {
-        harness.tree().as_str().to_string()
+        harness.tree.as_str().to_string()
     });
     for component in [
         Component::Skills,
@@ -286,7 +272,7 @@ pub fn render_readme_tables() -> String {
             component_table_label(component),
             &harnesses,
             |harness| {
-                let profile = tree::profile(harness.tree());
+                let profile = tree::profile(harness.tree);
                 if support_state(harness, profile, component) == SupportState::Impossible {
                     "n/a (impossible)".to_string()
                 } else {
@@ -295,13 +281,10 @@ pub fn render_readme_tables() -> String {
             },
         );
     }
-    render_row(&mut rendered, "Evidence", &harnesses, |harness| {
-        evidence(harness).to_string()
-    });
     rendered
 }
 
-fn render_header(rendered: &mut String, harnesses: &[&PluginHarness]) {
+fn render_header(rendered: &mut String, harnesses: &[&PluginHarnessSpec]) {
     rendered.push_str("| |");
     for harness in harnesses {
         rendered.push_str(&format!(" {} |", harness_display_name(harness)));
@@ -316,8 +299,8 @@ fn render_header(rendered: &mut String, harnesses: &[&PluginHarness]) {
 fn render_row(
     rendered: &mut String,
     label: &str,
-    harnesses: &[&PluginHarness],
-    mut cell: impl FnMut(&PluginHarness) -> String,
+    harnesses: &[&PluginHarnessSpec],
+    mut cell: impl FnMut(&PluginHarnessSpec) -> String,
 ) {
     rendered.push_str(&format!("| {label} |"));
     for harness in harnesses {
@@ -336,8 +319,8 @@ fn component_table_label(component: Component) -> &'static str {
     }
 }
 
-fn component_support_cell(harness: &PluginHarness, component: Component) -> String {
-    let profile = tree::profile(harness.tree());
+fn component_support_cell(harness: &PluginHarnessSpec, component: Component) -> String {
+    let profile = tree::profile(harness.tree);
     let state = support_state(harness, profile, component);
     if let Some(cell) = support_cell_override(harness, component) {
         return cell.to_string();
@@ -368,8 +351,11 @@ fn component_support_cell(harness: &PluginHarness, component: Component) -> Stri
     }
 }
 
-fn support_cell_override(harness: &PluginHarness, component: Component) -> Option<&'static str> {
-    let cells = harness.spec().expect("validated plugin harness").support;
+fn support_cell_override(
+    harness: &PluginHarnessSpec,
+    component: Component,
+) -> Option<&'static str> {
+    let cells = harness.support;
     match component {
         Component::Skills => cells.skills,
         Component::Agents => cells.agents,
@@ -383,14 +369,6 @@ fn render_verification(verification: Verification) -> String {
     format!("{}{}", verification.level.as_str(), verification.detail)
 }
 
-fn evidence(harness: &PluginHarness) -> &'static str {
-    harness
-        .spec()
-        .expect("validated plugin harness")
-        .verification
-        .evidence
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,7 +377,8 @@ mod tests {
     fn readme_plugin_tables_match_renderer() {
         const START: &str = "<!-- BEGIN GENERATED PLUGIN SUPPORT -->\n";
         const END: &str = "<!-- END GENERATED PLUGIN SUPPORT -->";
-        let readme = include_str!("../../../README.md");
+        // Windows checkouts may convert the README to CRLF.
+        let readme = include_str!("../../../README.md").replace("\r\n", "\n");
         let actual = readme
             .split_once(START)
             .and_then(|(_, rest)| rest.split_once(END).map(|(tables, _)| tables))

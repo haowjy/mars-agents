@@ -1,5 +1,5 @@
 use crate::diagnostic::DiagnosticCollector;
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::{ConfigEntry, McpServerEntry};
 use mars_schema::HarnessId;
@@ -28,12 +28,13 @@ fn write_config_entries(
     _profile: &TreeProfile,
     root: &std::path::Path,
     entries: &[ConfigEntry],
+    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let (mcp, hooks) = super::standard_config_entries(entries);
 
     if !mcp.is_empty() {
-        write_plugin_mcp_json(&root.join(".mcp.json"), &mcp, diag)?;
+        write_plugin_mcp_json(&root.join(".mcp.json"), &mcp, harnesses, diag)?;
     }
     if !hooks.is_empty() {
         crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), &hooks)?;
@@ -44,6 +45,7 @@ fn write_config_entries(
 fn write_plugin_mcp_json(
     path: &std::path::Path,
     servers: &[&McpServerEntry],
+    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut root = serde_json::json!({ "mcpServers": {} });
@@ -76,7 +78,7 @@ fn write_plugin_mcp_json(
         if !env_vars.is_empty() {
             entry["env_vars"] = serde_json::json!(env_vars);
         }
-        if !renamed.is_empty() {
+        if !renamed.is_empty() && harnesses.iter().any(|harness| harness.key == "codex") {
             diag.warn(
                 "plugin-codex-mcp-env-rename",
                 format!(
@@ -89,12 +91,10 @@ fn write_plugin_mcp_json(
         mcp_servers.insert(server.name.clone(), entry);
     }
 
-    let content = serde_json::to_string_pretty(&root).map_err(|error| {
-        MarsError::Config(ConfigError::Invalid {
-            message: format!("failed to serialize {}: {error}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(path, content.as_bytes())
+    crate::fs::atomic_write(
+        path,
+        &super::pretty_json_bytes(&root, &format!("plugin MCP file {}", path.display()))?,
+    )
 }
 
 fn apply_agent_policy(
@@ -125,7 +125,7 @@ fn apply_agent_policy(
         plugin.insert("disallowedTools", value);
     }
 
-    for &field in crate::plugin::CLAUDE_TREE_SPEC.dropped_agent_fields {
+    for &field in PROFILE.dropped_agent_fields() {
         if source.get(field).is_some() {
             diag.warn(
                 "plugin-agent-field-dropped",

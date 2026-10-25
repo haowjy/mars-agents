@@ -65,6 +65,10 @@ pub fn recover(out_dir: &Path) -> Result<(), MarsError> {
     recover_interrupted_swap(&paths)
 }
 
+pub(crate) fn recovery_staging_path(out_dir: &Path) -> Result<PathBuf, MarsError> {
+    Ok(OutputPaths::new(out_dir)?.new)
+}
+
 /// A complete plugin output waiting to replace the live directory.
 pub(super) struct StagedPlugin {
     paths: OutputPaths,

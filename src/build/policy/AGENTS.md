@@ -11,7 +11,7 @@ in `mod.rs`:
 resolve_policy()
   ├─ model::resolve_model()             → model_id, provider, model_token
   ├─ harness::resolve_harness()         → harness, route trace
-  ├─ execution::resolve_execution_policy() → effort, approval, sandbox, network, autocompact
+  ├─ execution::resolve_execution_policy() → effort, approval, sandbox, alias compaction
   └─ runnable::resolve_routing()        → final Routing struct
 ```
 

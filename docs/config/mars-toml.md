@@ -155,10 +155,15 @@ components are rejected. Pi has no plugin format and cannot be listed.
 made from letters, digits, dots, and hyphens; OpenCode requires an npm-compatible package
 name. Claude-compatible names cannot contain spaces, `@`, `:`, or path separators.
 
-Config loading checks the table's shape and preserves unknown harness values so commands can
-name them. Semantic checks run when building or versioning: output containment, non-empty author
+Config loading preserves the raw `plugin` value and the plugin-only package fields `authors`,
+`homepage`, and `license` as raw TOML. Defaults and semantic checks run only when building a plugin
+or versioning a package that declares `plugin`: output containment, field types, non-empty author
 names, plugin and marketplace names for every selected harness, and the selected harness list.
-`mars check` reports an unknown harness as a warning and lists the valid values.
+Invalid plugin metadata therefore does not block `sync`, `list`, `add`, `doctor`, or config loading.
+`mars check` reports the same validation message as a warning. Config-saving commands keep omitted
+plugin defaults omitted and retain authored metadata forms such as
+`authors = ["Name <email>"]`; even a non-table value is preserved until plugin validation reports
+that `[plugin]` must be a table.
 
 Run `mars build plugin` in the package to rebuild configured output. Running
 `mars build plugin --out <dir>` instead writes only the owned output directory, accepts packages without

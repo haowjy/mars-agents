@@ -45,7 +45,6 @@ where a cell explicitly says docs-only.
 | Agents | live (subagent preload) | n/a (impossible) | live (subagent with native skill preload) | docs-only (schema validation only) | n/a (impossible) |
 | Hooks | live (`${CLAUDE_PLUGIN_ROOT}`, CommonJS script) | live (built tree, CommonJS script) | live (`CLAUDE_PLUGIN_ROOT`) | docs-only (schema validation only) | live (git install, CommonJS script) |
 | MCP | live (`env_vars` pass-through) | live (`env_vars` pass-through) | live (`env_vars` pass-through) | docs-only (schema validation only) | live (`<plugin>:<server>`) |
-| Evidence | p9533, p9535 | p9533, p9535 | p9473, p9478, p9533, p9535 | p9533 | p9533 |
 <!-- END GENERATED PLUGIN SUPPORT -->
 
 ### Install commands

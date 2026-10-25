@@ -163,7 +163,7 @@ mod tests {
                 name: name.to_string(),
                 version: "1.0.0".to_string(),
                 description: None,
-                authors: Vec::new(),
+                authors: None,
                 homepage: None,
                 license: None,
                 schema: None,

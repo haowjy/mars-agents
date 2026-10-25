@@ -97,19 +97,15 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   Plugin builds pass qualified skill names into the same lowering path; their prose rewriter
   handles authored references separately.
 - `mars_schema::HarnessId` — Claude, Codex, OpenCode, Cursor, Pi
-- `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
-  lowerers omit them; Codex records all three as dropped, while other targets record them as
-  Meridian-only.
-
 ### Harness Override Passthrough
 
 `harness-overrides.<harness>` blocks are target-native passthrough. Mars validates only the outer mapping shape and serializability; nested keys do not replace top-level Mars semantic fields. Unknown override harness keys are warnings and are preserved for forward compatibility.
 
 ## Shared Tool Policy (`tool_policy.rs`)
 
-`EffectiveToolPolicy` is the one tool-gating model of **agents**, **skills** and the **launch
-bundle**: a list of `ToolRule { capability, pattern, action }`, parsed once into
-`AgentProfile.tools` / `SkillProfile.tools` by `parse_tool_policy`. `capability` is a
+`EffectiveToolPolicy` is the one tool-gating model of **agents** and the **launch bundle**: a list
+of `ToolRule { capability, pattern, action }`, parsed once into `AgentProfile.tools` by the schema
+reader. `capability` is a
 `Capability` (`Any` for `*`, `Mcp(McpRef)`, a vocabulary `Builtin`, or the author's `Unknown`
 spelling), never a string with reserved values.
 

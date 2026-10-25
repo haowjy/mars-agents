@@ -6,7 +6,6 @@ use std::process::{Command, Stdio};
 
 use serde::Serialize;
 
-use crate::config::PluginHarness;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::plugin_metadata::SENTINEL_FILE;
@@ -22,6 +21,7 @@ pub(super) struct RootFilePlan {
     writes: BTreeMap<String, Vec<u8>>,
     deletes: BTreeSet<String>,
     directory_deletes: BTreeSet<String>,
+    created_directories: BTreeSet<String>,
     ownership: BTreeMap<String, PluginRootFileState>,
 }
 
@@ -40,6 +40,10 @@ impl RootFilePlan {
     pub(super) fn deleted_paths(&self) -> Vec<PathBuf> {
         self.deletes.iter().map(PathBuf::from).collect()
     }
+
+    pub(super) fn created_directories(&self) -> Vec<PathBuf> {
+        self.created_directories.iter().map(PathBuf::from).collect()
+    }
 }
 
 pub(super) fn plan(
@@ -48,7 +52,7 @@ pub(super) fn plan(
     staging: &Path,
     destination: &PluginBuildDestination,
     metadata: &PackageMetadata,
-    harnesses: &[PluginHarness],
+    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<RootFilePlan, MarsError> {
     let package_root = dunce::canonicalize(package_root).map_err(|source| MarsError::Io {
@@ -65,6 +69,7 @@ pub(super) fn plan(
             writes: BTreeMap::new(),
             deletes: BTreeSet::new(),
             directory_deletes: BTreeSet::new(),
+            created_directories: BTreeSet::new(),
             ownership: BTreeMap::new(),
         });
     }
@@ -94,7 +99,7 @@ pub(super) fn plan(
         );
     }
 
-    if metadata.author.is_none()
+    if metadata.author().is_none()
         && crate::plugin::PLUGIN_TREE_SPECS.iter().any(|tree| {
             tree.root_file.is_some_and(|root| {
                 expected.contains(root.path)
@@ -142,14 +147,17 @@ pub(super) fn plan(
     }
 
     let mut root_directories = BTreeSet::new();
+    let mut created_directories = BTreeSet::new();
     for path in writes.keys() {
         let Some(directory) = catalog_directory(path) else {
             continue;
         };
-        if state.root_directories.contains(directory)
-            || !path_exists(&package_root.join(directory))?
-        {
+        let exists = path_exists(&package_root.join(directory))?;
+        if state.root_directories.contains(directory) || !exists {
             root_directories.insert(directory.to_string());
+        }
+        if !exists {
+            created_directories.insert(directory.to_string());
         }
     }
 
@@ -167,6 +175,7 @@ pub(super) fn plan(
         writes,
         deletes,
         directory_deletes,
+        created_directories,
         ownership,
     })
 }
@@ -295,7 +304,7 @@ fn render_root_file(
 ) -> Result<Vec<u8>, MarsError> {
     match spec.renderer {
         crate::plugin::RootFileRenderer::Marketplace { source_prefix } => {
-            let owner = metadata.author.as_ref();
+            let owner = metadata.author();
             let source = format!("{source_prefix}{output_relative}/{tree_key}");
             super::tree::pretty_json_bytes(
                 &Catalog {
@@ -416,10 +425,8 @@ fn check_gitignored(
                     "unexpected verbose output while checking generated plugin paths".to_string(),
                 ));
             }
-            let ignored = fields.chunks_exact(4).find_map(|record| {
-                let [source, line, pattern, path] = record else {
-                    unreachable!("chunks_exact returns four fields")
-                };
+            let (records, _) = fields.as_chunks::<4>();
+            let ignored = records.iter().find_map(|[source, line, pattern, path]| {
                 (!pattern.starts_with(b"!")).then_some((*source, *line, *pattern, *path))
             });
             let Some((source, line, pattern, path)) = ignored else {

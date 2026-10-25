@@ -36,6 +36,7 @@ fn write_config_entries(
     _profile: &TreeProfile,
     root: &std::path::Path,
     entries: &[ConfigEntry],
+    _harnesses: &[&'static crate::plugin::PluginHarnessSpec],
     _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let (mcp, hooks) = super::standard_config_entries(entries);

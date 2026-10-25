@@ -80,7 +80,7 @@ reports configured plugin output that is missing, stale, hand-edited, skipped, o
 conflict with a package-root generated file. It also warns when:
 
 - `[package].requires-mars` does not require Mars 0.19.0 or newer;
-- `[plugin].harnesses` contains an unknown value;
+- plugin-only package or `[plugin]` metadata is invalid, including an unknown harness;
 - generated output records a different package version.
 
 `mars check` does not rebuild output. Use `mars build plugin`, review the resulting diff,

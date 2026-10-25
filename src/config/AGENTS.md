@@ -1,7 +1,6 @@
 # src/config/ — Config Loading & Routing Settings
 
-User network defaults plus mars.toml + mars.local.toml schemas, load/save, and merge to
-EffectiveConfig.
+mars.toml + mars.local.toml schemas, load/save, and merge to EffectiveConfig.
 
 ## Mental Model
 
@@ -19,27 +18,25 @@ pipeline operates on EffectiveConfig only
 |---|---|
 | `Config` | Full mars.toml: package, plugin, dependencies, local-dependencies, settings, models, agents |
 | `mars_schema::package::PackageMetadata` | Versioned `[package]` metadata, including `schema` and `uses-providers` |
-| `PluginConfig` | Committed plugin output directory, identity, description, and selected harnesses |
-| `PluginHarness` | The five harness names accepted by plugin builds; its default set is all five |
+| `Config.plugin` | Raw `plugin` TOML value, preserved without applying publish defaults |
 | `LocalConfig` | Gitignored dev overrides: source path swaps, local agent overlays |
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
-| `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`) |
-| `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
-| `NetworkPolicy` / `NetworkHost` | Shared typed parsers for every mode and host surface |
+| `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, and `user_invocable` |
+| `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, invocability, tools, and model policies |
 
-`load()` checks only the structural relationship that `[plugin]` needs `[package]`; plugin author,
-dir, identity, marketplace, and requested-harness semantics belong to
-`build::plugin::stage_plugin` so a bad publish configuration cannot block `sync` or `list`.
-Unknown requested harness spellings deserialize to a typed `Unknown(String)` value that retains the
-author's spelling for build errors and `mars check` warnings, and are rejected at the build
-boundary. Dependency `load_manifest()` uses a narrow package view
-(identity and engine floors) and ignores plugin-only metadata even when its shape is invalid for the
-package being built.
+`load()` parses `plugin` and the plugin-only `[package]` fields `authors`, `homepage`, and
+`license` as raw TOML values. It applies no publish defaults and validates none of their content,
+so config-saving commands round-trip authored values without making publish metadata a sync
+boundary. Typed plugin metadata and harness specs live in `build/plugin/metadata.rs`; plugin build
+validation owns their defaults and semantics, while `mars check` converts the same validation
+error into a warning. Dependency `load_manifest()` reads package metadata through `mars-schema`;
+raw plugin-only values cannot block dependency consumption even when their shape is invalid for a
+plugin build.
 
 `AgentOverlayTools` holds permission sets of `OverlayToolName`s (`mars_schema::tool_names`, a
-leaf grammar module): a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the
-profile grammar as the config loads, and a malformed one fails the load. It keeps the author's
+leaf grammar module): a tool name in `[agents.x.tools]` parses with the profile grammar as the
+config loads, and a malformed one fails the load. It keeps the author's
 spelling, so `save` does not rewrite it. This is the one place `config` reaches into `compiler`.
 Plain `tools.allowed` / `tools.disallowed` lists add to profile rules; a
 `{ replace = [...] }` table clears that action's lower rules, including `'*': allow`. Plain lists
@@ -52,15 +49,12 @@ list from the raw project/local config; empty lists and replacement tables are s
 ## Layering (`layering.rs`)
 
 - `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
-- Network host permission sets compose across user, project, and local settings; other settings
-  lists retain replacement semantics.
 - Model aliases are **replace-by-key**. Agent and skill overlays also replace the whole keyed
-  entry, except their four network/tool permission sets compose across project and local entries.
+  entry, except agent tool permission sets compose across project and local entries.
 - Composition means a project tool list survives a matching local block that omits the list. A
-  local block that adds only a network set still replaces project scalars; repeat any project
-  scalar the local entry must retain.
-- Unknown project settings and agent-overlay keys remain forward-compatible. Network-looking
-  unknowns are retained and warned because silently dropping a deny would fail open.
+  local block that adds only a tool set still replaces project scalars; repeat any project scalar
+  the local entry must retain.
+- Unknown project settings and agent-overlay keys remain forward-compatible.
   `mars.local.toml [settings]` remains strict and rejects unknown keys.
 - Removed `[settings.model_visibility]` is an error only for the consumer's
   project `mars.toml` and `mars.local.toml`. `load_manifest` parses only

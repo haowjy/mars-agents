@@ -9,6 +9,7 @@ mod root_files;
 pub mod support;
 mod tree;
 
+pub(crate) use inspect::inspect_validated;
 pub use inspect::{
     PluginDirectoryState, PluginInputsState, PluginOutputState, PluginRootFileState,
     PluginVersionState, inspect,
@@ -20,8 +21,7 @@ use indexmap::IndexMap;
 use serde::Serialize;
 
 use crate::config::{
-    Config, EffectiveConfig, EffectiveDependency, FilterMode, LocalConfig, PluginHarness, Settings,
-    SourceSpec,
+    Config, EffectiveConfig, EffectiveDependency, FilterMode, LocalConfig, Settings, SourceSpec,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, LossinessMode};
 use crate::error::{ConfigError, MarsError};
@@ -38,11 +38,13 @@ pub enum PluginBuildDestination {
 }
 
 impl PluginBuildDestination {
-    fn resolve(&self, package_root: &Path, manifest: &Config) -> Result<PathBuf, MarsError> {
-        let configured = manifest
-            .plugin
-            .as_ref()
-            .map(|plugin| configured_output_path(package_root, plugin))
+    fn resolve(
+        &self,
+        package_root: &Path,
+        configured_dir: Option<&Path>,
+    ) -> Result<PathBuf, MarsError> {
+        let configured = configured_dir
+            .map(|dir| configured_output_path(package_root, dir))
             .transpose()?;
         match self {
             Self::Configured => configured.ok_or_else(|| MarsError::InvalidRequest {
@@ -72,17 +74,17 @@ impl PluginBuildDestination {
 
 pub(crate) fn configured_output_path(
     package_root: &Path,
-    plugin: &crate::config::PluginConfig,
+    dir: &Path,
 ) -> Result<PathBuf, MarsError> {
-    crate::config::validate_plugin_dir(&plugin.dir)?;
+    crate::config::validate_plugin_dir(dir)?;
     let package_root = crate::fs::canonicalize_existing_prefix(package_root)?;
-    let output = std::path::absolute(package_root.join(&plugin.dir))?;
+    let output = std::path::absolute(package_root.join(dir))?;
     let identity = crate::fs::canonicalize_existing_prefix(&output)?;
     if identity == package_root || !identity.starts_with(&package_root) {
         return Err(MarsError::InvalidRequest {
             message: format!(
                 "[plugin].dir `{}` must resolve inside the package root",
-                plugin.dir.display()
+                dir.display()
             ),
         });
     }
@@ -98,11 +100,10 @@ fn paths_resolve_equal(left: &Path, right: &Path) -> Result<bool, MarsError> {
         == crate::fs::canonicalize_existing_prefix(right)?)
 }
 
-#[derive(Debug)]
-pub struct PluginBuildRequest {
+pub(crate) struct PluginBuildRequest {
     pub package_root: PathBuf,
     pub destination: PluginBuildDestination,
-    pub harnesses: Vec<PluginHarness>,
+    pub metadata: PackageMetadata,
     pub version: Option<String>,
 }
 
@@ -138,6 +139,10 @@ impl StagedPluginBuild {
         self.root_files.deleted_paths()
     }
 
+    pub(crate) fn created_root_directories(&self) -> Vec<PathBuf> {
+        self.root_files.created_directories()
+    }
+
     pub fn publish(self) -> Result<PluginBuildReport, MarsError> {
         root_files::apply(&self.root_files)?;
         self.output.publish()?;
@@ -153,108 +158,15 @@ pub struct PluginComponents {
     pub mcp_servers: usize,
 }
 
-pub(crate) fn validate_plugin_build(
-    config: &Config,
-    harnesses: &[PluginHarness],
-) -> Result<(), MarsError> {
-    let package = config
-        .package
-        .as_ref()
-        .ok_or_else(|| ConfigError::Invalid {
-            message: "mars.toml needs a [package] table to build a plugin".to_string(),
-        })?;
-    if harnesses.is_empty() {
-        return Err(ConfigError::Invalid {
-            message: "a plugin build needs at least one harness".to_string(),
-        }
-        .into());
-    }
-    if let Some(message) = crate::plugin::unknown_plugin_harness_messages(harnesses)
-        .into_iter()
-        .next()
-    {
-        return Err(ConfigError::Invalid { message }.into());
-    }
-    let specs = harnesses
-        .iter()
-        .map(|harness| harness.spec().expect("unknown harnesses were rejected"))
-        .collect::<Vec<_>>();
-    if let Some((index, _)) = package
-        .authors
-        .iter()
-        .enumerate()
-        .find(|(_, author)| author.name.trim().is_empty())
-    {
-        return Err(ConfigError::Invalid {
-            message: format!("mars.toml [package].authors[{index}].name cannot be empty"),
-        }
-        .into());
-    }
-
-    let name = config
-        .plugin
-        .as_ref()
-        .map_or(package.name.as_str(), |plugin| plugin.name(package));
-    let name_field = if config
-        .plugin
-        .as_ref()
-        .is_some_and(|plugin| plugin.name.is_some())
-    {
-        "[plugin].name"
-    } else {
-        "[package].name"
-    };
-    for spec in &specs {
-        if !spec.name_rule.accepts(name) {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "mars.toml {name_field} `{name}` is invalid: {}",
-                    spec.name_rule.message
-                ),
-            }
-            .into());
-        }
-    }
-
-    let marketplace = config
-        .plugin
-        .as_ref()
-        .map_or(package.name.as_str(), |plugin| plugin.marketplace(package));
-    let marketplace_field = if config
-        .plugin
-        .as_ref()
-        .is_some_and(|plugin| plugin.marketplace.is_some())
-    {
-        "[plugin].marketplace"
-    } else {
-        "[package].name"
-    };
-    let mut checked = std::collections::BTreeSet::new();
-    for spec in specs {
-        if !checked.insert(spec.tree.as_str()) {
-            continue;
-        }
-        let Some(rule) = spec.tree.spec().marketplace_name_rule else {
-            continue;
-        };
-        if !rule.accepts(marketplace) {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "mars.toml {marketplace_field} `{marketplace}` is invalid as a marketplace: {}",
-                    rule.message
-                ),
-            }
-            .into());
-        }
-    }
-    Ok(())
+pub(crate) fn validate_plugin_build(config: &Config) -> Result<PackageMetadata, ConfigError> {
+    metadata::validate(config)
 }
 
-pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, MarsError> {
+pub(crate) fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, MarsError> {
     stage_plugin(request)?.publish()
 }
 
-pub fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, MarsError> {
+pub(crate) fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, MarsError> {
     let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
     match stage_plugin_inner(request, &mut diag) {
         Ok(staged) => Ok(staged),
@@ -291,8 +203,7 @@ fn stage_plugin_inner(
             ),
         })
     })?;
-    validate_plugin_build(manifest, &request.harnesses)?;
-    let mut metadata = PackageMetadata::from(manifest)?;
+    let mut metadata = request.metadata.clone();
     if let Some(version) = &request.version {
         metadata.version.clone_from(version);
     }
@@ -300,10 +211,13 @@ fn stage_plugin_inner(
         .package
         .as_ref()
         .expect("PackageMetadata validates the package table");
-    let out_dir = request.destination.resolve(&package_root, manifest)?;
+    let out_dir = request.destination.resolve(
+        &package_root,
+        manifest.plugin.as_ref().map(|_| metadata.dir.as_path()),
+    )?;
     let plugin_name = metadata.name.clone();
     let root_source = SourceName::from(package.name.clone());
-    let profiles = requested_tree_profiles(&request.harnesses);
+    let profiles = requested_tree_profiles(&metadata.harnesses);
 
     let graph_staging = tempfile::TempDir::new()?;
     let effective = implicit_consumer_config(&lens, &root_source, &profiles)?;
@@ -345,6 +259,7 @@ fn stage_plugin_inner(
         collision_renames: &prepared_target.collision_renames,
         dep_precedence: &prepared_target.dep_precedence,
         terms: &terms,
+        harnesses: &metadata.harnesses,
     };
     tree::check_sources(&tree_input, &profiles, diag)?;
     let (staged_output, (built_trees, diagnostics, root_file_plan)) =
@@ -356,7 +271,7 @@ fn stage_plugin_inner(
                 built_trees.push(tree::write_tree(&tree_root, &tree_input, profile, diag)?);
             }
             support::emit(
-                &request.harnesses,
+                &metadata.harnesses,
                 &prepared_target.target,
                 &built_trees,
                 diag,
@@ -367,7 +282,7 @@ fn stage_plugin_inner(
                 staging,
                 &request.destination,
                 &metadata,
-                &request.harnesses,
+                &metadata.harnesses,
                 diag,
             )?;
             let collected = diag.drain();
@@ -438,14 +353,14 @@ fn materialize_rewritten_skills(
     Ok(())
 }
 
-fn requested_tree_profiles(harnesses: &[PluginHarness]) -> Vec<&'static tree::TreeProfile> {
+fn requested_tree_profiles(
+    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
+) -> Vec<&'static tree::TreeProfile> {
     tree::profiles()
         .filter(|profile| {
-            harnesses.iter().any(|harness| {
-                harness
-                    .spec()
-                    .is_some_and(|spec| spec.tree == profile.tree())
-            })
+            harnesses
+                .iter()
+                .any(|harness| harness.tree == profile.tree())
         })
         .collect()
 }

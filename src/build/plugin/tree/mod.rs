@@ -85,7 +85,7 @@ pub(super) fn profile(tree: PluginTree) -> Result<&'static TreeProfile, MarsErro
     match tree {
         PluginTree::Claude => Ok(&claude::PROFILE),
         PluginTree::Cursor => cursor::profile(),
-        PluginTree::OpenCode => opencode::profile(),
+        PluginTree::OpenCode => Ok(&opencode::PROFILE),
     }
 }
 

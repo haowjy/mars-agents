@@ -5,6 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Plugin builds can emit an npm-shaped OpenCode tree that registers dependency-flattened skills
+  and MCP servers, composes default-export hook fragments at runtime, and keeps CommonJS hook
+  scripts working.
 - `mars build plugin [PATH] --out <dir>` builds an owned plugin output containing a Claude-format
   tree at `<dir>/claude` (also consumed by Codex and Grok) with what `mars sync` installs in the
   package's own checkout: its items plus dependencies under its own filters, renames and visibility,

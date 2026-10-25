@@ -581,7 +581,8 @@ mars build <launch-bundle|plugin> ...
 ### `mars build plugin`
 
 Build one installable Claude-format plugin tree from a publishable package and the complete
-dependency graph a consumer of that package would receive from `mars sync`.
+graph that `mars sync` installs in that package's own checkout: its items plus dependencies under
+its own `[dependencies]` filters, renames, and visibility rules.
 
 ```bash
 mars build plugin [PATH] --out <dir>

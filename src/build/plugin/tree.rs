@@ -18,7 +18,7 @@ use super::PluginProfile;
 use super::model::resolve_claude_model;
 use super::references::{qualify_agent_frontmatter, qualify_body_references};
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default)]
 pub(super) struct TreeSummary {
     pub agents: usize,
     pub skills: usize,
@@ -130,7 +130,6 @@ pub(super) fn write_tree(
         .filter(|entry| matches!(entry, ConfigEntry::McpServer(_)))
         .count();
 
-    emit_shared_codex_warnings(&summary, diag);
     normalize_text_tree(root)?;
     Ok(summary)
 }
@@ -426,7 +425,7 @@ fn warn_relative_mcp_args(
     }
 }
 
-fn emit_shared_codex_warnings(summary: &TreeSummary, diag: &mut DiagnosticCollector) {
+pub(super) fn emit_codex_warnings(summary: &TreeSummary, diag: &mut DiagnosticCollector) {
     if summary.agents > 0 {
         diag.warn(
             "plugin-codex-agents-dropped",
@@ -466,13 +465,14 @@ fn warn_terms_in_tree(
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| entry.into_path())
         .collect();
-    files.sort_by_key(|path| portable_relative(root, path));
+    files.sort_by_key(|path| crate::hash::portable_relative(root, path));
 
     for path in files {
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let relative = portable_relative(root, &path);
+        let relative = crate::hash::portable_relative(root, &path)
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
         let display = if relative.is_empty() {
             display_prefix.to_string()
         } else {
@@ -549,15 +549,6 @@ fn normalize_text_tree(root: &Path) -> Result<(), MarsError> {
         }
     }
     Ok(())
-}
-
-fn portable_relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 fn invalid_item(kind: &str, item: &TargetItem, message: String) -> MarsError {

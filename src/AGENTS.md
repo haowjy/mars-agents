@@ -19,13 +19,15 @@ mars.toml + mars.lock (committed, project root)
 ## Dependency Direction
 
 ```
-cli → sync → compiler → target adapters
-              ↓              ↑
-           resolve ← source  |
-              ↓              |
-           config ←──────────┘
-              ↓
-           models → routing → harness registry
+cli ─┬→ sync ─────────→ compiler → target adapters
+     └→ build/plugin ─┬→ resolve
+                     ├→ sync target preparation
+                     └→ compiler lowering
+sync/build → resolve ← source
+               ↓
+            config
+               ↓
+            models → routing → harness registry
 ```
 
 - `cli/` dispatches commands, finds project root, formats output

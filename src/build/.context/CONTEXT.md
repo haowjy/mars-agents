@@ -14,8 +14,8 @@ must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configura
 caches, or installed harnesses. `plugin::output::replace_owned_tree` alone owns destination
 replacement and sentinel publication.
 
-The output writer receives an empty sibling staging directory. After it succeeds, the output
-layer hashes the files, writes `.mars-plugin.json`, and publishes the staged tree with a
+The output writer builds directly into an empty sibling staging directory. After it succeeds,
+the output layer hashes the files, writes `.mars-plugin.json`, and publishes the staged tree with a
 two-rename swap. Publication and startup recovery share a cross-process lock keyed by the
 absolute output path; non-empty trees without a valid sentinel are never replaced.
 
@@ -30,7 +30,7 @@ ancestors, package roots, symlinks, and non-empty unowned trees.
      harness and leaves `routing.model`, `routing.model_token`, and
      `routing.harness_model` empty so the harness can use its own default model
    - Works from a plain directory with **no `mars.toml`** — `can_run_without_project()`
-     in `src/cli/mod.rs:248` supplies a synthetic `MarsContext` when project
+     in `src/cli/mod.rs:280` supplies a synthetic `MarsContext` when project
      discovery fails and the exact ad-hoc condition is met
    - `empty_agent_profile()` is used (no agent file read, no skills, no profile tool rules)
    - Skills loading skipped (no `.mars/` store needed); profile tool resolution yields empty
@@ -63,27 +63,10 @@ Examples that are NOT warnings (they go to routing/provenance fields):
 
 ### `can_run_without_project` guard
 
-```rust
-// src/cli/mod.rs:248
-fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
-    matches!(
-        (cmd, err),
-        (
-            Command::Build(build::BuildArgs {
-                command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs {
-                    agent: None,
-                    ..
-                })
-            }),
-            MarsError::Config(ConfigError::ProjectRootNotFound { .. })
-        )
-    )
-}
-```
-
-Only ad-hoc launch-bundle (`--agent` absent) bypasses project discovery. Every
-other command — including agent-mode launch-bundle — requires `mars.toml` in an
-ancestor directory.
+The guard applies only after project-root discovery returns `ProjectRootNotFound`. It permits
+three explicit routes: ad-hoc launch-bundle (`--agent` absent), `build plugin` with an explicit
+package path, and `models refresh-catalog`. Agent-mode launch-bundle and pathless plugin builds
+still require `mars.toml` in an ancestor directory.
 
 ### Warning accumulation pipeline
 

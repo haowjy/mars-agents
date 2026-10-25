@@ -1,7 +1,7 @@
 //! Build one installable Claude-format plugin from a package's publish graph.
 
 mod model;
-pub mod output;
+pub(crate) mod output;
 mod references;
 mod tree;
 
@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 use serde::Serialize;
 
-use crate::compiler::agents::HarnessKind;
 use crate::config::{
     Config, EffectiveConfig, EffectiveDependency, FilterMode, LocalConfig, Settings, SourceSpec,
 };
@@ -45,15 +44,7 @@ pub struct PluginComponents {
     pub mcp_servers: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PluginTree {
-    Own,
-    SharesWith(HarnessKind),
-}
-
 struct PluginProfile {
-    harness: HarnessKind,
-    tree: PluginTree,
     target_root: &'static str,
     variant_key: &'static str,
     plugin_root_token: &'static str,
@@ -65,19 +56,6 @@ static CLAUDE_ADAPTER: ClaudeAdapter = ClaudeAdapter;
 impl PluginProfile {
     fn claude() -> Self {
         Self {
-            harness: HarnessKind::Claude,
-            tree: PluginTree::Own,
-            target_root: ".claude",
-            variant_key: "claude",
-            plugin_root_token: "${CLAUDE_PLUGIN_ROOT}",
-            adapter: &CLAUDE_ADAPTER,
-        }
-    }
-
-    fn codex() -> Self {
-        Self {
-            harness: HarnessKind::Codex,
-            tree: PluginTree::SharesWith(HarnessKind::Claude),
             target_root: ".claude",
             variant_key: "claude",
             plugin_root_token: "${CLAUDE_PLUGIN_ROOT}",
@@ -140,39 +118,20 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         &mut diag,
     );
     let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
-    let profiles = [PluginProfile::claude(), PluginProfile::codex()];
-    let profile = profiles
-        .iter()
-        .find(|profile| profile.tree == PluginTree::Own)
-        .expect("Claude owns the v1 plugin tree");
-    debug_assert_eq!(profile.harness, HarnessKind::Claude);
-    debug_assert!(profiles.iter().any(|candidate| {
-        candidate.harness == HarnessKind::Codex
-            && candidate.tree == PluginTree::SharesWith(HarnessKind::Claude)
-            && candidate.target_root == profile.target_root
-    }));
-
-    let prepared = tempfile::TempDir::new()?;
-    let summary = tree::write_tree(
-        prepared.path(),
-        &tree::TreeInput {
-            plugin_name: &plugin_name,
-            package,
-            root_source: &root_source,
-            agent_overlays: &manifest.agents,
-            aliases: &aliases,
-            graph: &graph,
-            target: &prepared_target.target,
-            rename_index: &prepared_target.rename_index,
-            collision_renames: &prepared_target.collision_renames,
-            dep_precedence: &dep_precedence,
-            profile,
-        },
-        &mut diag,
-    )?;
-
-    let diagnostics = diag.drain();
-    fail_on_diagnostic_errors(&diagnostics)?;
+    let profile = PluginProfile::claude();
+    let tree_input = tree::TreeInput {
+        plugin_name: &plugin_name,
+        package,
+        root_source: &root_source,
+        agent_overlays: &manifest.agents,
+        aliases: &aliases,
+        graph: &graph,
+        target: &prepared_target.target,
+        rename_index: &prepared_target.rename_index,
+        collision_renames: &prepared_target.collision_renames,
+        dep_precedence: &dep_precedence,
+        profile: &profile,
+    };
     let inputs_hash = plugin_inputs_hash(&package_root)?;
     let sentinel = output::SentinelInfo {
         plugin_name: plugin_name.clone(),
@@ -180,9 +139,19 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         inputs_hash,
         dependencies: resolved_dependency_identities(&graph, &root_source),
     };
+    let mut summary = None;
+    let mut diagnostics = None;
     output::replace_owned_tree(&out_dir, &sentinel, |staging| {
-        copy_tree_contents(prepared.path(), staging)
+        let built = tree::write_tree(staging, &tree_input, &mut diag)?;
+        tree::emit_codex_warnings(&built, &mut diag);
+        let collected = diag.drain();
+        fail_on_diagnostic_errors(&collected)?;
+        summary = Some(built);
+        diagnostics = Some(collected);
+        Ok(())
     })?;
+    let summary = summary.expect("plugin writer completed before publication");
+    let diagnostics = diagnostics.expect("plugin writer collected diagnostics");
 
     Ok(PluginBuildReport {
         plugin_name,
@@ -380,7 +349,8 @@ pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsErro
         if !entry.file_type().is_file() {
             continue;
         }
-        let relative = portable_relative(package_root, entry.path());
+        let relative = crate::hash::portable_relative(package_root, entry.path())
+            .unwrap_or_else(|| entry.path().to_string_lossy().into_owned());
         if matches!(
             relative.as_str(),
             "mars.toml" | "mars.local.toml" | "mars.lock"
@@ -455,48 +425,10 @@ fn resolved_dependency_identities(
     dependencies
 }
 
-fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), MarsError> {
-    for entry in walkdir::WalkDir::new(source)
-        .sort_by_file_name()
-        .min_depth(1)
-    {
-        let entry = entry.map_err(|error| MarsError::Internal(error.to_string()))?;
-        let relative = entry.path().strip_prefix(source).map_err(|error| {
-            MarsError::Internal(format!("prepared plugin path escaped its root: {error}"))
-        })?;
-        let target = destination.join(relative);
-        if entry.file_type().is_dir() {
-            std::fs::create_dir_all(&target)?;
-        } else if entry.file_type().is_file() {
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::copy(entry.path(), &target)?;
-        } else {
-            return Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "generated plugin contains unsupported filesystem entry `{}`",
-                    entry.path().display()
-                ),
-            }));
-        }
-    }
-    Ok(())
-}
-
 fn absolute_from_current_dir(path: &Path) -> Result<PathBuf, MarsError> {
     if path.is_absolute() {
         Ok(path.to_path_buf())
     } else {
         Ok(std::env::current_dir()?.join(path))
     }
-}
-
-fn portable_relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
 }

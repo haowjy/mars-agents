@@ -6,8 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - `mars build plugin [PATH] --out <dir>` now builds one deterministic Claude-format plugin
-  containing the package and the same filtered, collision-resolved dependency graph a consumer
-  would receive from `mars sync`, including exported hooks and MCP servers. Rebuilds safely
+  containing what `mars sync` installs in the package's own checkout: its items plus dependencies
+  under its own filters, renames, and visibility rules, including exported hooks and MCP servers. Rebuilds safely
   replace only Mars-owned output trees using deterministic sentinels and crash-recoverable swaps.
 
 ### Fixed

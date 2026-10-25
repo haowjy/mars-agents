@@ -72,6 +72,67 @@ pub(crate) fn hash_file_manifest(mut entries: Vec<(String, String)>) -> String {
     hash_bytes(manifest.as_bytes())
 }
 
+/// Hash every regular file below `root`, rejecting indirection and special files.
+pub(crate) fn strict_file_hashes(
+    root: &Path,
+    excluded_top_level: &[&str],
+) -> Result<std::collections::BTreeMap<String, String>, MarsError> {
+    let mut entries = std::collections::BTreeMap::new();
+    collect_strict_file_hashes(root, root, excluded_top_level, &mut entries)?;
+    Ok(entries)
+}
+
+fn collect_strict_file_hashes(
+    root: &Path,
+    current: &Path,
+    excluded_top_level: &[&str],
+    entries: &mut std::collections::BTreeMap<String, String>,
+) -> Result<(), MarsError> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        let relative = path.strip_prefix(root).expect("path is always under root");
+        if is_excluded_top_level(relative, excluded_top_level) {
+            continue;
+        }
+        if file_type.is_symlink() {
+            return Err(MarsError::InvalidRequest {
+                message: format!("directory tree cannot contain symlinks: {}", path.display()),
+            });
+        }
+        if file_type.is_dir() {
+            collect_strict_file_hashes(root, &path, excluded_top_level, entries)?;
+            continue;
+        }
+        if !file_type.is_file() {
+            return Err(MarsError::InvalidRequest {
+                message: format!(
+                    "directory tree contains an unsupported filesystem entry: {}",
+                    path.display()
+                ),
+            });
+        }
+        let relative = portable_relative(root, &path).ok_or_else(|| MarsError::InvalidRequest {
+            message: format!(
+                "directory tree path must be valid Unicode: {}",
+                path.display()
+            ),
+        })?;
+        entries.insert(relative, hash_bytes(&fs::read(path)?));
+    }
+    Ok(())
+}
+
+pub(crate) fn portable_relative(root: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(root)
+        .ok()?
+        .components()
+        .map(|component| component.as_os_str().to_str().map(str::to_owned))
+        .collect::<Option<Vec<_>>>()
+        .map(|components| components.join("/"))
+}
+
 /// Recursively collect (relative_path, hash) pairs for all files in a directory.
 fn collect_file_hashes(
     root: &Path,
@@ -96,11 +157,8 @@ fn collect_file_hashes(
             collect_file_hashes(root, &path, entries, excluded_top_level)?;
         } else {
             // Build forward-slash relative path from components for cross-platform determinism
-            let rel_path: String = rel_path
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
+            let rel_path = portable_relative(root, &path)
+                .unwrap_or_else(|| rel_path.to_string_lossy().replace('\\', "/"));
             let content = fs::read(&path)?;
             let hash = hash_bytes(&content);
             entries.push((rel_path, hash));

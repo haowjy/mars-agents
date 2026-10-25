@@ -5,12 +5,13 @@ package distribution.
 
 ## Plugin Builds
 
-`plugin/` builds one Claude-format tree from the consumer view of a package's complete
-publish graph. It resolves through `PublishLens`, stages every package, collects the flattened
-target with sync's shared collect/rename/validate pipeline, then lowers agents, skills, exported
-hooks, and exported MCP servers without reading project config, a lockfile, `.mars/`, or host
-model state. The implicit target selection includes Claude and Codex so warnings about hooks that
-the shared tree cannot carry come from the parsed `TargetState`, not a second manifest scan.
+`plugin/` builds one Claude-format tree matching what `mars sync` installs in the package's own
+checkout: its items plus dependencies under its own filters, renames, and visibility rules. It
+resolves through `PublishLens`, stages every package, collects the flattened target with sync's
+shared collect/rename/validate pipeline, then lowers agents, skills, exported hooks, and exported
+MCP servers without reading project config, a lockfile, `.mars/`, or host model state. The
+implicit target selection includes Claude and Codex so warnings about hooks that the shared tree
+cannot carry come from the parsed `TargetState`, not a second manifest scan.
 
 The generated tree is handed to `plugin::output::replace_owned_tree`; the build core never
 mutates the destination itself. The output layer stages in a sibling directory, records a

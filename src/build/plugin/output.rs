@@ -7,7 +7,7 @@ use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE, SENTINEL_SCHEMA_VERS
 
 /// Build metadata recorded in the generated plugin tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SentinelInfo {
+pub(super) struct SentinelInfo {
     pub plugin_name: String,
     pub version: String,
     pub inputs_hash: String,
@@ -19,7 +19,7 @@ pub(crate) struct SentinelInfo {
 ///
 /// `write` receives an empty sibling staging directory. The existing output is
 /// not moved until `write`, hashing, and the sentinel write have all succeeded.
-pub(crate) fn replace_owned_tree(
+pub(super) fn replace_owned_tree(
     out_dir: &Path,
     sentinel: &SentinelInfo,
     write: impl FnOnce(&Path) -> Result<(), MarsError>,
@@ -95,9 +95,7 @@ pub(crate) fn compute_file_hashes(
         )));
     }
 
-    let mut entries = Vec::new();
-    collect_tree_hashes(out_dir, out_dir, &mut entries)?;
-    Ok(entries.into_iter().collect())
+    crate::hash::strict_file_hashes(out_dir, &[SENTINEL_FILE])
 }
 
 struct OutputPaths {
@@ -498,66 +496,6 @@ fn path_exists(path: &Path) -> Result<bool, MarsError> {
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(source) => Err(io_error("inspect plugin path", path, source)),
     }
-}
-
-fn collect_tree_hashes(
-    root: &Path,
-    current: &Path,
-    entries: &mut Vec<(String, String)>,
-) -> Result<(), MarsError> {
-    let children =
-        fs::read_dir(current).map_err(|source| io_error("read plugin tree", current, source))?;
-    for child in children {
-        let child = child.map_err(|source| io_error("read plugin tree", current, source))?;
-        let path = child.path();
-        let file_type = child
-            .file_type()
-            .map_err(|source| io_error("inspect plugin tree entry", &path, source))?;
-        let relative = path
-            .strip_prefix(root)
-            .expect("plugin tree traversal remains below its root");
-
-        if relative == Path::new(SENTINEL_FILE) {
-            continue;
-        }
-        if file_type.is_symlink() {
-            return Err(invalid(format!(
-                "plugin output cannot contain symlinks: {}",
-                path.display()
-            )));
-        }
-        if file_type.is_dir() {
-            collect_tree_hashes(root, &path, entries)?;
-            continue;
-        }
-        if !file_type.is_file() {
-            return Err(invalid(format!(
-                "plugin output contains an unsupported filesystem entry: {}",
-                path.display()
-            )));
-        }
-
-        let relative = relative
-            .components()
-            .map(|component| {
-                component
-                    .as_os_str()
-                    .to_str()
-                    .ok_or_else(|| {
-                        invalid(format!(
-                            "plugin output path must be valid Unicode: {}",
-                            path.display()
-                        ))
-                    })
-                    .map(str::to_owned)
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .join("/");
-        let contents =
-            fs::read(&path).map_err(|source| io_error("read plugin output file", &path, source))?;
-        entries.push((relative, crate::hash::hash_bytes(&contents)));
-    }
-    Ok(())
 }
 
 fn invalid(message: impl Into<String>) -> MarsError {

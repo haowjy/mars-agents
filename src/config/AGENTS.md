@@ -36,7 +36,7 @@ boundary. Dependency `load_manifest()` uses a narrow package view
 (identity and engine floors) and ignores plugin-only metadata even when its shape is invalid for the
 package being built.
 
-`AgentOverlayTools` holds permission sets of `OverlayToolName`s (`compiler/tool_names.rs`, a
+`AgentOverlayTools` holds permission sets of `OverlayToolName`s (`mars_schema::tool_names`, a
 leaf grammar module): a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the
 profile grammar as the config loads, and a malformed one fails the load. It keeps the author's
 spelling, so `save` does not rewrite it. This is the one place `config` reaches into `compiler`.
@@ -93,7 +93,7 @@ Invalid harness names produce diagnostics (not hard errors) so commands continue
 
 ## Model Policies
 
-`ModelPolicyRule` — match by `model`, `alias`, or `model-glob` with optional overrides and `no-fallback` flag. Used in agent overlays, settings, and profile frontmatter.
+`mars_schema::model_policy::ModelPolicyRule` — match by `model`, `alias`, or `model-glob` with optional overrides and `no-fallback` flag. The schema crate defines and validates it for agent overlays, settings, and profile frontmatter.
 
 ## Save Roundtrip Validation
 

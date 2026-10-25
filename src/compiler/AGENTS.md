@@ -32,12 +32,12 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
   emit, link-materialize. Extracted from `mod.rs` (was 1522 lines). Coexists with `native_agents/tests.rs`.
 - `native_agent_manifest.rs` — lock-then-native-agent-manifest persistence
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
-- `tool_policy.rs` — tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into one typed `EffectiveToolPolicy` of `ToolRule`s, the `mars.toml` overlay edit, and `EffectiveToolPolicy::project`, the one place a rule becomes harness-native names. Used by `agents/`, `skills/` and the launch bundle (`build/`).
+- `tool_policy.rs` — runtime projection, overlay merging and specificity over schema-owned tool rules. Authored parsing, vocabulary, aliases and native tables live in `mars-schema`.
 - `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
 - `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
-- `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
-- `tool_names.rs` — the capability vocabulary (canonical names + aliases), the `Capability` type and the `tool(pattern)` grammar
-- `tool_natives.rs` — explicit per-harness native tool tables, pinned by a test against each harness's real tool list. Nothing is derived by naming convention.
+- `mars-schema::invocability` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
+- `mars-schema::tool_names` — the capability vocabulary, aliases and `tool(pattern)` grammar
+- `mars-schema::tool_natives` — explicit per-harness native tool tables. Nothing is derived by naming convention.
 - `harness_descriptor.rs` — typed compiler harness facts, including canonical and display names,
   target roots, variant keys, and lowering-policy selectors
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
@@ -96,7 +96,7 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   subagent/session-agent file. This guidance is a designed mapping, not warning-tier lossiness.
   Plugin builds pass qualified skill names into the same lowering path; their prose rewriter
   handles authored references separately.
-- `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
+- `mars_schema::HarnessId` — Claude, Codex, OpenCode, Cursor, Pi
 - `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
   lowerers omit them; Codex records all three as dropped, while other targets record them as
   Meridian-only.

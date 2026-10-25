@@ -27,7 +27,7 @@ sync/build → resolve ← source
                ↓
             config
                ↓
-            models → routing → harness registry
+            models → routing → harness runtime descriptors
 ```
 
 - `cli/` dispatches commands, finds project root, formats output
@@ -42,7 +42,8 @@ sync/build → resolve ← source
 - `skill_source_name` — single flat-root skill naming rule shared by discovery and staging overlay lookup
 - `source/` fetches git/path sources, manages global cache
 - `config/` parses mars.toml + mars.local.toml, merges to EffectiveConfig
-- `compiler/` compiles IR into target state, handles dual-surface emission
+- `mars-schema` owns pure package-file vocabulary, parsing and validation; callers import it directly
+- `compiler/` compiles schema values into target state and handles dual-surface emission
 - `target/` per-target compilation adapters (`.claude`, `.codex`, etc.)
 - `target_sync/` copies from `.mars/` to configured target directories
 - `surface_ownership/` gates linked-target deletes and copy/install on per-target lock records
@@ -52,7 +53,7 @@ sync/build → resolve ← source
   `platform::process` owns detached launches for catalog and probe workers
 - `curation/` authored display-only filters over Possible; never a routing input
 - `routing/` harness candidate evaluation — single evaluator for all routing
-- `harness/` canonical harness vocabulary (registry) + capability snapshot (host)
+- `harness/` runtime harness descriptors and capability snapshot (host); harness ids live in `mars-schema`
 - `build/` launch bundle construction and flattened publish-graph plugin builds
 - `content` layered lookup for primary and fallback canonical agent / skill files
 - `platform::fs` is the canonical layer for durable writes, copies, replacements, comparisons, and removals
@@ -69,12 +70,12 @@ sync/build → resolve ← source
 | Catalog refresh | `models/catalog_cache.rs`, `platform/process.rs` |
 | Possible/Curated display | `models/possible.rs`, `curation/` |
 | Routing logic | `routing/mod.rs` only — single evaluator invariant |
-| Tool capability / native tool name | `compiler/tool_names.rs` (vocabulary), `compiler/tool_natives.rs` (per-harness tables + real-tool pin); profile rules and both lowerers follow via `EffectiveToolPolicy::project`, while bundle platform metadata uses the same builtin projection via `project_platform_capability` |
+| Tool capability / native tool name | `crates/mars-schema/src/tool_names.rs` (vocabulary), `crates/mars-schema/src/tool_natives.rs` (per-harness tables + real-tool pin); binary projection remains in `compiler/tool_policy.rs` |
 
 ## Anti-Patterns
 
 - **Never add a second candidate evaluator** — `routing::evaluate_candidates()` is the only one. Both `mars models` and `mars build` call it.
-- **Never validate harness names outside `harness::registry`** — `registry::parse()` and `registry::is_known()` are the only authorities.
+- **Never validate harness names outside `mars_schema::harness`** — its parser is the authored-name authority.
 - **Never scan-and-delete unknown files in targets** — only remove paths tracked in the lock for that target; see `target_sync/.context/CONTEXT.md`.
 - **Never use `eprintln!` in library code** — all diagnostics go through `DiagnosticCollector`.
 - **Never hardcode model aliases in the binary** — all aliases come from packages or consumer config.

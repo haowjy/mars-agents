@@ -16,6 +16,7 @@ pub mod harness;
 pub mod hash;
 pub mod local_source;
 pub mod lock;
+pub(crate) mod markdown;
 pub(crate) mod model;
 pub mod models;
 pub mod permission_set;

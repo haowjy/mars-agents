@@ -19,6 +19,7 @@ pub mod export;
 pub mod init;
 pub mod link;
 pub mod list;
+pub mod migrate;
 pub mod models;
 mod models_common;
 mod models_inventory;
@@ -134,8 +135,11 @@ pub enum Command {
     /// Sync: resolve + install (make reality match config).
     Sync(sync::SyncArgs),
 
-    /// Upgrade dependencies to newest compatible versions.
+    /// Upgrade dependency versions to newest compatible releases.
     Upgrade(upgrade::UpgradeArgs),
+
+    /// Upgrade the package's authored definition format to schema v1.
+    Migrate(migrate::MigrateArgs),
 
     /// Show available updates without applying.
     Outdated(outdated::OutdatedArgs),
@@ -307,6 +311,7 @@ fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i3
         Command::Remove(args) => remove::run(args, ctx, json),
         Command::Sync(args) => sync::run(args, ctx, json),
         Command::Upgrade(args) => upgrade::run(args, ctx, json),
+        Command::Migrate(args) => migrate::run(args, ctx, json),
         Command::Outdated(args) => outdated::run(args, ctx, json),
         Command::Version(args) => version::run(args, ctx, json),
         Command::List(args) => list::run(args, ctx, json),

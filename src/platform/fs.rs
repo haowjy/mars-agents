@@ -134,6 +134,11 @@ pub fn atomic_copy_file(source: &Path, dest: &Path) -> Result<(), MarsError> {
     atomic_write(dest, &content)
 }
 
+/// Atomically replace one durable text or binary file.
+pub fn atomic_write_file(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
+    atomic_write(dest, content)
+}
+
 /// Atomic directory copy: deep copy source tree (following symlinks) to tmp, rename to dest.
 pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));

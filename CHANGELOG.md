@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-10-25
+
 ### Fixed
 - `mars check PATH` now resolves package path dependencies relative to the checked package,
   rather than the caller's working directory.

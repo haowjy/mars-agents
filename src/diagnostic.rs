@@ -220,6 +220,18 @@ impl DiagnosticCollector {
         });
     }
 
+    pub(crate) fn warn_once(&mut self, code: &'static str, message: impl Into<String>) {
+        let message = message.into();
+        if self
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == code && diagnostic.message == message)
+        {
+            return;
+        }
+        self.warn(code, message);
+    }
+
     pub fn warn_with_category(
         &mut self,
         code: &'static str,

@@ -4,7 +4,6 @@ use std::path::Path;
 
 use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
-use crate::dialect::Dialect;
 use crate::discover;
 use crate::error::{ConfigError, MarsError, ResolutionError};
 use crate::lock::LockFile;
@@ -593,20 +592,33 @@ pub(crate) fn stage_rooted_package(
     staging_root: Option<&Path>,
     diag: &mut DiagnosticCollector,
 ) -> Result<staging::StagedRootedSource, MarsError> {
+    let dep = effective_config.dependencies.get(source_name);
+    let preparation = crate::package_prepare::classify(
+        source_name.as_ref(),
+        &rooted.package_root,
+        dep.and_then(|entry| entry.dialect),
+        diag,
+    )?;
     let Some(staging_root) = staging_root else {
+        if preparation == staging::DefinitionPreparation::Legacy {
+            return Err(MarsError::Source {
+                source_name: source_name.to_string(),
+                message: format!(
+                    "package `{source_name}` uses the pre-v1 format, but this operation does not materialize packages; run `mars migrate` in that package first"
+                ),
+            });
+        }
         return Ok(staging::StagedRootedSource {
             rooted,
             hook_surface: staging::HookSurfaceState::Readable,
         });
     };
-    let dep = effective_config.dependencies.get(source_name);
-    let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
     let empty_renames = crate::types::RenameMap::new();
     let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
     staging::stage_rooted_source(
         source_name,
         rooted,
-        staging::RootedStageOptions { dialect },
+        staging::RootedStageOptions { preparation },
         &effective_config.skills,
         renames,
         staging_root,
@@ -623,13 +635,18 @@ pub(crate) fn stage_rooted_package_for_publish_inputs(
     diag: &mut DiagnosticCollector,
 ) -> Result<staging::StagedRootedSource, MarsError> {
     let dep = effective_config.dependencies.get(source_name);
-    let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
+    let preparation = crate::package_prepare::classify(
+        source_name.as_ref(),
+        &rooted.package_root,
+        dep.and_then(|entry| entry.dialect),
+        diag,
+    )?;
     let empty_renames = crate::types::RenameMap::new();
     let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
     staging::stage_rooted_source_for_publish_inputs(
         source_name,
         rooted,
-        staging::RootedStageOptions { dialect },
+        staging::RootedStageOptions { preparation },
         &effective_config.skills,
         renames,
         staging_root,

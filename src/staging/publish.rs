@@ -6,13 +6,13 @@ use indexmap::IndexMap;
 
 use crate::config::SkillOverlay;
 use crate::diagnostic::DiagnosticCollector;
-use crate::dialect::Dialect;
 use crate::error::MarsError;
 use crate::types::RenameMap;
 use mars_schema::item::ItemKind;
 
 use super::{
-    StageOverlayContext, item_kind_for_markdown, process_markdown_file, should_lift_markdown,
+    DefinitionPreparation, StageOverlayContext, item_kind_for_markdown, process_markdown_file,
+    should_lift_markdown,
 };
 
 #[derive(Debug, Clone)]
@@ -107,19 +107,33 @@ fn flat_skill_excluded_paths(package_root: &Path) -> Result<Vec<PathBuf>, MarsEr
 pub(super) fn copy_and_lift_inputs(
     source_root: &Path,
     dest_root: &Path,
-    dialect: Dialect,
+    preparation: DefinitionPreparation,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
     inputs: &[PublishInput],
     diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     // These files decide how the staged tree is rediscovered. Validate them
     // before discovery follows any symlink they may contain.
     let mars_manifest = source_root.join("mars.toml");
+    let mut legacy_changed = false;
     if mars_manifest.is_file() {
         let source = crate::fs::strict_authored_file(source_root, &mars_manifest)?;
-        fs::copy(source, dest_root.join("mars.toml"))?;
+        let destination = dest_root.join("mars.toml");
+        if preparation == DefinitionPreparation::Legacy {
+            let original = fs::read_to_string(&source)?;
+            let upgraded = mars_schema::upgrade::upgrade_manifest(&original).map_err(|error| {
+                MarsError::Source {
+                    source_name: "legacy package".to_string(),
+                    message: format!("failed to upgrade {}: {error}", source.display()),
+                }
+            })?;
+            legacy_changed |= upgraded.changed_from(&original);
+            fs::write(destination, upgraded.text)?;
+        } else {
+            fs::copy(&source, destination)?;
+        }
     } else {
         let selected = inputs
             .iter()
@@ -136,7 +150,7 @@ pub(super) fn copy_and_lift_inputs(
     }
 
     let mut ctx = StageOverlayContext {
-        dialect,
+        preparation,
         skill_overrides,
         renames,
         package_root: source_root,
@@ -145,9 +159,9 @@ pub(super) fn copy_and_lift_inputs(
         diag,
     };
     for input in inputs {
-        copy_and_lift_path(source_root, input, dest_root, &mut ctx)?;
+        legacy_changed |= copy_and_lift_path(source_root, input, dest_root, &mut ctx)?;
     }
-    Ok(())
+    Ok(legacy_changed)
 }
 
 fn copy_filtered_source_manifest(
@@ -186,11 +200,12 @@ fn copy_and_lift_path(
     input: &PublishInput,
     dest_root: &Path,
     ctx: &mut StageOverlayContext<'_>,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     let relative_root = &input.relative;
     let logical_root = package_root.join(relative_root);
     if fs::metadata(&logical_root)?.is_dir() {
         fs::create_dir_all(dest_root.join(relative_root))?;
+        let mut changed = false;
         for entry in crate::fs::authored_tree_entries(
             &logical_root,
             &input.excluded_paths,
@@ -202,14 +217,14 @@ fn copy_and_lift_path(
             if entry.kind == crate::fs::AuthoredEntryKind::Directory {
                 fs::create_dir_all(destination)?;
             } else {
-                copy_and_lift_file(&entry.source, &relative, dest_root, ctx)?;
+                changed |= copy_and_lift_file(&entry.source, &relative, dest_root, ctx)?;
             }
         }
+        Ok(changed)
     } else {
         let source = crate::fs::strict_authored_file(package_root, &logical_root)?;
-        copy_and_lift_file(&source, relative_root, dest_root, ctx)?;
+        copy_and_lift_file(&source, relative_root, dest_root, ctx)
     }
-    Ok(())
 }
 
 fn copy_and_lift_file(
@@ -217,7 +232,7 @@ fn copy_and_lift_file(
     relative: &Path,
     dest_root: &Path,
     ctx: &mut StageOverlayContext<'_>,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     let destination = dest_root.join(relative);
     if should_lift_markdown(relative) {
         process_markdown_file(
@@ -232,6 +247,6 @@ fn copy_and_lift_file(
             fs::create_dir_all(parent)?;
         }
         fs::copy(source, destination)?;
-        Ok(())
+        Ok(false)
     }
 }

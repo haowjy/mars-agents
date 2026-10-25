@@ -137,7 +137,13 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
         }
     }
 
-    for key in ["tools", "disallowed-tools", "allowed-tools"] {
+    for key in [
+        "tools",
+        "disallowed-tools",
+        "allowed-tools",
+        "disallowed_tools",
+        "allowed_tools",
+    ] {
         if fm.remove(key).is_some() {
             diagnostics.push(SchemaDiagnostic::new(
                 "skill.tools-dropped",
@@ -150,6 +156,7 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
 }
 
 fn upgrade_tools(fm: &mut Frontmatter) {
+    rename_field(fm, "disallowed_tools", "disallowed-tools");
     if let Some(Value::Sequence(entries)) = fm.get("tools").cloned()
         && entries.iter().all(|entry| entry.as_str().is_some())
     {

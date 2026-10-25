@@ -46,8 +46,25 @@ pub(crate) struct StagedRootedSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DefinitionPreparation {
+    Schema1,
+    Legacy,
+    Foreign(Dialect),
+}
+
+impl DefinitionPreparation {
+    fn directory_name(self) -> &'static str {
+        match self {
+            Self::Schema1 => "schema-1",
+            Self::Legacy => "legacy",
+            Self::Foreign(dialect) => dialect.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RootedStageOptions {
-    pub dialect: Dialect,
+    pub preparation: DefinitionPreparation,
 }
 
 /// Stage a package tree and repoint `package_root` at the staged output.
@@ -106,11 +123,11 @@ fn stage_rooted_source_with_policy(
     diag: &mut DiagnosticCollector,
     publish_inputs: Option<&[PublishInput]>,
 ) -> Result<StagedRootedSource, MarsError> {
-    let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
+    let staged_package_root = staging_dir_for(staging_root, source_name, options.preparation);
     stage_canonical_source_with_policy(
         &rooted.package_root,
         &staged_package_root,
-        options.dialect,
+        options.preparation,
         skill_overrides,
         renames,
         Some(source_name.as_ref()),
@@ -165,10 +182,30 @@ pub(crate) fn stage_canonical_source(
     stage_canonical_source_with_policy(
         source_root,
         dest_root,
-        dialect,
+        DefinitionPreparation::Foreign(dialect),
         skill_overrides,
         renames,
         fallback_skill_name,
+        diag,
+        None,
+    )?;
+    Ok(())
+}
+
+/// Materialize authored content after applying one schema preparation mode.
+pub(crate) fn stage_authored_content(
+    source_root: &Path,
+    dest_root: &Path,
+    preparation: DefinitionPreparation,
+    diag: &mut DiagnosticCollector,
+) -> Result<bool, MarsError> {
+    stage_canonical_source_with_policy(
+        source_root,
+        dest_root,
+        preparation,
+        &IndexMap::new(),
+        &RenameMap::new(),
+        None,
         diag,
         None,
     )
@@ -178,13 +215,13 @@ pub(crate) fn stage_canonical_source(
 fn stage_canonical_source_with_policy(
     source_root: &Path,
     dest_root: &Path,
-    dialect: Dialect,
+    preparation: DefinitionPreparation,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
     diag: &mut DiagnosticCollector,
     publish_inputs: Option<&[PublishInput]>,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     if dest_root.exists() {
         fs::remove_dir_all(dest_root)?;
     }
@@ -193,7 +230,7 @@ fn stage_canonical_source_with_policy(
         None => copy_and_lift_tree(
             source_root,
             dest_root,
-            dialect,
+            preparation,
             skill_overrides,
             renames,
             fallback_skill_name,
@@ -203,7 +240,7 @@ fn stage_canonical_source_with_policy(
         Some(inputs) => publish::copy_and_lift_inputs(
             source_root,
             dest_root,
-            dialect,
+            preparation,
             skill_overrides,
             renames,
             fallback_skill_name,
@@ -218,7 +255,7 @@ fn stage_canonical_source_with_policy(
 pub(crate) fn stage_local_item(
     source_path: &Path,
     kind: ItemKind,
-    dialect: Dialect,
+    preparation: DefinitionPreparation,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     staging_root: &Path,
     item_key: &str,
@@ -229,7 +266,7 @@ pub(crate) fn stage_local_item(
     let dest = staging_root
         .join("_local")
         .join(safe_component(item_key))
-        .join(dialect.as_str());
+        .join(preparation.directory_name());
     if dest.exists() {
         fs::remove_dir_all(&dest)?;
     }
@@ -252,7 +289,7 @@ pub(crate) fn stage_local_item(
                 &dest_file,
                 kind,
                 &mut StageOverlayContext {
-                    dialect,
+                    preparation,
                     skill_overrides,
                     renames: &RenameMap::new(),
                     package_root: source_path.parent().unwrap_or(source_path),
@@ -268,7 +305,7 @@ pub(crate) fn stage_local_item(
             copy_and_lift_tree(
                 source_path,
                 &dest,
-                dialect,
+                preparation,
                 skill_overrides,
                 &RenameMap::new(),
                 skill_overlay_key,
@@ -280,14 +317,18 @@ pub(crate) fn stage_local_item(
     }
 }
 
-fn staging_dir_for(staging_root: &Path, source_name: &SourceName, dialect: Dialect) -> PathBuf {
+fn staging_dir_for(
+    staging_root: &Path,
+    source_name: &SourceName,
+    preparation: DefinitionPreparation,
+) -> PathBuf {
     staging_root
         .join(safe_component(source_name.as_ref()))
-        .join(dialect.as_str())
+        .join(preparation.directory_name())
 }
 
 struct StageOverlayContext<'a> {
-    dialect: Dialect,
+    preparation: DefinitionPreparation,
     skill_overrides: &'a IndexMap<String, SkillOverlay>,
     renames: &'a RenameMap,
     package_root: &'a Path,
@@ -300,33 +341,46 @@ struct StageOverlayContext<'a> {
 fn copy_and_lift_tree(
     source_root: &Path,
     dest_root: &Path,
-    dialect: Dialect,
+    preparation: DefinitionPreparation,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     let entries = crate::fs::authored_tree_entries(
         source_root,
         excluded_paths,
         crate::fs::AuthoredSymlinkPolicy::Follow,
         diag,
     )?;
+    let mut legacy_changed = false;
     for entry in entries {
         let dest_path = dest_root.join(&entry.relative);
         if entry.kind == crate::fs::AuthoredEntryKind::Directory {
             fs::create_dir_all(&dest_path)?;
+        } else if preparation == DefinitionPreparation::Legacy
+            && entry.relative == Path::new("mars.toml")
+        {
+            let original = fs::read_to_string(&entry.source)?;
+            let upgraded = mars_schema::upgrade::upgrade_manifest(&original).map_err(|error| {
+                MarsError::Source {
+                    source_name: "legacy package".to_string(),
+                    message: format!("failed to upgrade {}: {error}", entry.source.display()),
+                }
+            })?;
+            legacy_changed |= upgraded.changed_from(&original);
+            fs::write(&dest_path, upgraded.text)?;
         } else if should_lift_markdown(&entry.relative) {
             let src_path = entry.source;
             let kind = item_kind_for_markdown(&entry.relative);
-            process_markdown_file(
+            legacy_changed |= process_markdown_file(
                 &src_path,
                 &source_root.join(&entry.relative),
                 &dest_path,
                 kind,
                 &mut StageOverlayContext {
-                    dialect,
+                    preparation,
                     skill_overrides,
                     renames,
                     package_root: source_root,
@@ -342,7 +396,7 @@ fn copy_and_lift_tree(
             fs::copy(&entry.source, &dest_path)?;
         }
     }
-    Ok(())
+    Ok(legacy_changed)
 }
 
 fn should_lift_markdown(path: &Path) -> bool {
@@ -369,7 +423,7 @@ fn process_markdown_file(
     dest: &Path,
     kind: ItemKind,
     ctx: &mut StageOverlayContext<'_>,
-) -> Result<(), MarsError> {
+) -> Result<bool, MarsError> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -393,8 +447,10 @@ fn process_markdown_file(
         });
 
     let original = fs::read_to_string(src)?;
+    let mut legacy_changed = false;
     if let Ok(parsed) = Frontmatter::parse(&original) {
-        if ctx.dialect == Dialect::MarsNative && kind == ItemKind::Skill {
+        if !matches!(ctx.preparation, DefinitionPreparation::Foreign(_)) && kind == ItemKind::Skill
+        {
             let mut skill_diags = Vec::new();
             crate::compiler::skills::push_authored_skill_schema_diags(&parsed, &mut skill_diags);
             crate::compiler::skills::push_non_canonical_tool_field_diags(&parsed, &mut skill_diags);
@@ -427,7 +483,51 @@ fn process_markdown_file(
             }
         }
 
-        let (mut fm, mut changed) = lift_frontmatter_with_change(ctx.dialect, kind, &parsed);
+        let (mut fm, mut changed) = match ctx.preparation {
+            DefinitionPreparation::Schema1 => (parsed, false),
+            DefinitionPreparation::Foreign(dialect) => {
+                lift_frontmatter_with_change(dialect, kind, &parsed)
+            }
+            DefinitionPreparation::Legacy => {
+                let definition_kind = match kind {
+                    ItemKind::Skill | ItemKind::BootstrapDoc => {
+                        Some(mars_schema::upgrade::DefinitionKind::Skill)
+                    }
+                    ItemKind::Agent => Some(mars_schema::upgrade::DefinitionKind::Agent),
+                    ItemKind::Hook | ItemKind::McpServer => None,
+                };
+                if let Some(definition_kind) = definition_kind {
+                    let upgraded =
+                        mars_schema::upgrade::upgrade_definition(definition_kind, &original)
+                            .map_err(|error| MarsError::Source {
+                                source_name: "legacy package".to_string(),
+                                message: format!(
+                                    "failed to upgrade {}: {error}",
+                                    logical_src.display()
+                                ),
+                            })?;
+                    if upgraded.changed_from(&original) {
+                        legacy_changed = true;
+                        (
+                            Frontmatter::parse(&upgraded.text).map_err(|error| {
+                                MarsError::Source {
+                                    source_name: "legacy package".to_string(),
+                                    message: format!(
+                                        "failed to read upgraded {}: {error}",
+                                        logical_src.display()
+                                    ),
+                                }
+                            })?,
+                            true,
+                        )
+                    } else {
+                        (parsed, false)
+                    }
+                } else {
+                    (parsed, false)
+                }
+            }
+        };
 
         if let Some((_skill_name, overlay)) = skill_overlay
             && !overlay.is_empty()
@@ -445,7 +545,7 @@ fn process_markdown_file(
     } else {
         fs::copy(src, dest)?;
     }
-    Ok(())
+    Ok(legacy_changed)
 }
 
 #[cfg(test)]
@@ -460,20 +560,21 @@ mod tests {
     fn stage_source(
         source_root: &Path,
         dest_root: &Path,
-        dialect: Dialect,
+        preparation: DefinitionPreparation,
         skill_overrides: &IndexMap<String, SkillOverlay>,
         renames: &RenameMap,
         fallback_skill_name: Option<&str>,
     ) -> DiagnosticCollector {
         let mut diag = DiagnosticCollector::new();
-        stage_canonical_source(
+        stage_canonical_source_with_policy(
             source_root,
             dest_root,
-            dialect,
+            preparation,
             skill_overrides,
             renames,
             fallback_skill_name,
             &mut diag,
+            None,
         )
         .unwrap();
         diag
@@ -515,7 +616,7 @@ mod tests {
         stage_source(
             source.path(),
             dest.path(),
-            Dialect::Claude,
+            DefinitionPreparation::Foreign(Dialect::Claude),
             &overrides,
             &RenameMap::new(),
             None,
@@ -548,7 +649,7 @@ mod tests {
         stage_source(
             source.path(),
             dest.path(),
-            Dialect::Claude,
+            DefinitionPreparation::Foreign(Dialect::Claude),
             &overrides,
             &RenameMap::new(),
             None,
@@ -572,7 +673,7 @@ mod tests {
         stage_source(
             source.path(),
             dest.path(),
-            Dialect::Claude,
+            DefinitionPreparation::Foreign(Dialect::Claude),
             &IndexMap::new(),
             &RenameMap::new(),
             None,
@@ -605,7 +706,7 @@ mod tests {
         stage_source(
             source.path(),
             native.path(),
-            Dialect::MarsNative,
+            DefinitionPreparation::Schema1,
             &IndexMap::new(),
             &RenameMap::new(),
             None,
@@ -615,7 +716,7 @@ mod tests {
         stage_source(
             source.path(),
             claude.path(),
-            Dialect::Claude,
+            DefinitionPreparation::Foreign(Dialect::Claude),
             &IndexMap::new(),
             &RenameMap::new(),
             None,
@@ -664,7 +765,7 @@ mod tests {
         stage_source(
             source.path(),
             dest.path(),
-            Dialect::Claude,
+            DefinitionPreparation::Foreign(Dialect::Claude),
             &overrides,
             &renames,
             None,
@@ -696,7 +797,7 @@ mod tests {
         stage_source(
             source.path(),
             dest.path(),
-            Dialect::Claude,
+            DefinitionPreparation::Foreign(Dialect::Claude),
             &overrides,
             &RenameMap::new(),
             Some("my-flat-skill"),
@@ -721,7 +822,7 @@ mod tests {
         let mut diag = stage_source(
             source.path(),
             dest.path(),
-            Dialect::MarsNative,
+            DefinitionPreparation::Legacy,
             &IndexMap::new(),
             &RenameMap::new(),
             None,
@@ -756,7 +857,7 @@ mod tests {
         let mut diag = stage_source(
             source.path(),
             dest.path(),
-            Dialect::MarsNative,
+            DefinitionPreparation::Legacy,
             &IndexMap::new(),
             &RenameMap::new(),
             None,
@@ -791,7 +892,7 @@ mod tests {
         let mut diag = stage_source(
             source.path(),
             dest.path(),
-            Dialect::MarsNative,
+            DefinitionPreparation::Schema1,
             &IndexMap::new(),
             &RenameMap::new(),
             None,
@@ -824,7 +925,7 @@ mod tests {
         let staged = stage_local_item(
             &skill,
             ItemKind::Skill,
-            Dialect::MarsNative,
+            DefinitionPreparation::Legacy,
             &IndexMap::new(),
             &root.path().join("staging"),
             "skill:bad-allowed",
@@ -865,7 +966,7 @@ mod tests {
         let staged = stage_local_item(
             &skill,
             ItemKind::Skill,
-            Dialect::MarsNative,
+            DefinitionPreparation::Schema1,
             &IndexMap::new(),
             &root.path().join("staging"),
             "skill:demo",
@@ -901,7 +1002,7 @@ mod tests {
         let staged = stage_local_item(
             &skill,
             ItemKind::Skill,
-            Dialect::Claude,
+            DefinitionPreparation::Foreign(Dialect::Claude),
             &IndexMap::new(),
             &root.path().join("staging"),
             "skill:demo",

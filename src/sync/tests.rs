@@ -889,7 +889,9 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 package_root: tree_path.clone(),
             },
             crate::staging::RootedStageOptions {
-                dialect: cfg.dependencies["base"].dialect.unwrap(),
+                preparation: crate::staging::DefinitionPreparation::Foreign(
+                    cfg.dependencies["base"].dialect.unwrap(),
+                ),
             },
             &cfg.skills,
             &cfg.dependencies["base"].rename,

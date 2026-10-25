@@ -6,7 +6,7 @@ use mars_agents::discover;
 use mars_schema::frontmatter::Frontmatter;
 use std::{fs, path::Path};
 
-const PACKAGE: &str = "[package]\nname = 'demo'\nversion = '1.0.0'\n";
+const PACKAGE: &str = "[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n";
 const SETTINGS: &str = "[settings]\ntargets = ['.codex']\nagent_emission = 'never'\n";
 
 fn sync(root: &Path) -> assert_cmd::Command {

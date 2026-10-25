@@ -7,9 +7,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::DiagnosticCollector;
-use crate::dialect::Dialect;
 use crate::discover::{self, DiscoveredItem};
 use crate::error::MarsError;
+use crate::staging::DefinitionPreparation;
 use mars_schema::item::ItemKind;
 
 pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
@@ -18,7 +18,8 @@ pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
 pub struct LocalDiscoveredItem {
     pub discovered: DiscoveredItem,
     pub root: PathBuf,
-    pub dialect: Dialect,
+    pub(crate) preparation: DefinitionPreparation,
+    pub(crate) declared_package: bool,
 }
 
 impl LocalDiscoveredItem {
@@ -38,18 +39,44 @@ pub fn discover_local_items(
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<LocalDiscoveredItem>, MarsError> {
     let root = preferred_local_source_root(project_root);
-    let dialect = Dialect::resolve_local(None, &root);
-    let mut selected: Vec<_> = discover::discover_source(&root, Some("_self"), diag)?
+    let staged_root = project_root.join(".mars/staging/_authored/undeclared");
+    let discovery_root = if root.exists() {
+        let changed = crate::staging::stage_authored_content(
+            &root,
+            &staged_root,
+            DefinitionPreparation::Legacy,
+            diag,
+        )?;
+        if changed {
+            diag.warn_once(
+                "legacy-authored-content",
+                "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`",
+            );
+        }
+        staged_root
+    } else {
+        root
+    };
+    let mut selected: Vec<_> = discover::discover_source(&discovery_root, Some("_self"), diag)?
         .into_iter()
         .map(|discovered| LocalDiscoveredItem {
             discovered,
-            root: root.clone(),
-            dialect,
+            root: discovery_root.clone(),
+            preparation: DefinitionPreparation::Schema1,
+            declared_package: false,
         })
         .collect();
 
     if let Some(name) = package_name {
-        for discovered in discover::discover_source(project_root, Some(name), diag)? {
+        let preparation = crate::package_prepare::classify(name, project_root, None, diag)?;
+        let package_root = if preparation == DefinitionPreparation::Legacy {
+            let destination = project_root.join(".mars/staging/_authored/package");
+            crate::staging::stage_authored_content(project_root, &destination, preparation, diag)?;
+            destination
+        } else {
+            project_root.to_path_buf()
+        };
+        for discovered in discover::discover_source(&package_root, Some(name), diag)? {
             if !matches!(discovered.id.kind, ItemKind::Agent | ItemKind::Skill) {
                 continue;
             }
@@ -64,15 +91,16 @@ pub fn discover_local_items(
                         discovered.id.kind,
                         discovered.id.name,
                         winner.disk_path().display(),
-                        project_root.join(&discovered.source_path).display(),
+                        package_root.join(&discovered.source_path).display(),
                     ),
                 );
                 continue;
             }
             selected.push(LocalDiscoveredItem {
                 discovered,
-                root: project_root.to_path_buf(),
-                dialect: Dialect::MarsNative,
+                root: package_root.clone(),
+                preparation: DefinitionPreparation::Schema1,
+                declared_package: true,
             });
         }
     }
@@ -84,6 +112,7 @@ pub fn discover_local_items(
 pub(crate) fn flat_skill_excluded_paths(
     project_root: &Path,
     source_root: &Path,
+    declared_package: bool,
     targets: &[String],
 ) -> Result<Vec<PathBuf>, MarsError> {
     let mut excluded: Vec<_> = crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
@@ -92,7 +121,7 @@ pub(crate) fn flat_skill_excluded_paths(
         .collect();
     let source_root = dunce::canonicalize(source_root)?;
     let project_root = dunce::canonicalize(project_root)?;
-    if source_root == project_root {
+    if source_root == project_root || declared_package {
         // These are project output/control roots, not reserved names inside
         // an authored `.mars-src` resource tree.
         excluded.extend([PathBuf::from(LOCAL_SOURCE_DIR), PathBuf::from(".agents")]);
@@ -102,15 +131,20 @@ pub(crate) fn flat_skill_excluded_paths(
                 .map(|h| PathBuf::from(crate::harness::registry::descriptor(*h).default_target)),
         );
     }
+    let output_base = if declared_package {
+        project_root.as_path()
+    } else {
+        source_root.as_path()
+    };
     for target in targets {
         let path = std::path::absolute(project_root.join(target))?;
-        if let Ok(relative) = path.strip_prefix(&source_root) {
+        if let Ok(relative) = path.strip_prefix(output_base) {
             excluded.push(relative.to_path_buf());
         }
         // Missing targets have no resources to exclude yet. Resolve existing
         // paths too so parent segments and aliases cannot hide generated trees.
         if let Ok(real_path) = dunce::canonicalize(&path)
-            && let Ok(relative) = real_path.strip_prefix(&source_root)
+            && let Ok(relative) = real_path.strip_prefix(output_base)
         {
             excluded.push(relative.to_path_buf());
         }
@@ -176,6 +210,9 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].discovered.id.kind, ItemKind::Skill);
         assert_eq!(items[0].discovered.id.name.as_str(), "planning");
-        assert_eq!(items[0].root, preferred_local_source_root(project_root));
+        assert_eq!(
+            items[0].root,
+            project_root.join(".mars/staging/_authored/undeclared")
+        );
     }
 }

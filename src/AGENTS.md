@@ -6,6 +6,7 @@ Agent package manager. Installs agent profiles and skills from git/local sources
 
 ```
 mars.toml + mars.lock (committed, project root)
+        ↓ classify and prepare definitions
         ↓ mars sync
     .mars/ (canonical store, gitignored)
         ↓ copy to each target
@@ -32,8 +33,9 @@ sync/build → resolve ← source
 
 - `cli/` dispatches commands, finds project root, formats output
 - `sync/` orchestrates the pipeline (load → resolve → build → plan → apply → sync targets → finalize)
-- `resolve/` resolves dependency graph with semver constraints; runs `staging::stage_rooted_package` after `apply_subpath` when `staging_root` is set
-- `staging/` lifts foreign-dialect frontmatter → canonical before discover/hash, in both resolve (dependencies) and sync (local items)
+- `package_prepare` classifies each rooted package before lift or discovery; it rejects invalid/newer schemas and selects schema-v1, legacy-upgrade, or foreign-dialect staging
+- `resolve/` resolves dependency graphs with semver constraints; rooted dependencies cross the package-preparation boundary after `apply_subpath`
+- `staging/` materializes prepared schema-v1 content before discover/hash, for dependencies and local authored content
 - `discover/` owns source item discovery: a bounded convention walk over non-hidden
   package layers for agents, skills, and bootstrap docs; whole hook directories
   are discovered only under the package-root `hooks/`; see

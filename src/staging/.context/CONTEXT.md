@@ -1,15 +1,19 @@
 # src/staging/ — Canonical Source Staging
 
-Lift foreign-dialect package trees into a derived canonical source tree before
-discovery, validation, hash, and apply.
+Materialize classified package trees as schema-v1 content before discovery,
+validation, hash, and apply.
 
 ## Placement
 
-Staging runs in `resolve/package.rs` immediately after `apply_subpath` (and on
-version-override replay / restart). `RootedSourceRef.package_root` is repointed at
-the staged tree. Local project items stage in `sync/mod.rs` `build_target` after `.mars-src`
-has won over matching declared-package definitions. Declared-package items
-carry Mars-native dialect; `.mars-src` retains local inference.
+`package_prepare::classify` runs immediately after `apply_subpath`, before staging and
+discovery. Staging copies schema-v1 packages without schema rewrites, runs
+`mars_schema::upgrade` for legacy packages, or lifts manifest-free foreign content.
+`RootedSourceRef.package_root` is repointed at the staged tree.
+
+Local discovery follows the same ordering. Declared content is classified first and legacy
+content is staged before discovery. Undeclared `.mars-src` always passes through the legacy
+upgrade and warns only when a definition changed. Items from either prepared tree are schema-v1
+when `sync/mod.rs` later stages each selected item.
 
 Flat package skills filter control files, `.mars-src`, standard native roots, and configured or previously owned target paths
 (including existing resolved paths for aliases/absolute/dot-segment spellings)
@@ -32,23 +36,26 @@ Discovery runs from the staged/rooted package directory. Its convention walk ski
 
 ## Staging location
 
-Per-consumer under `<project>/.mars/staging/<source-name>/<dialect>/`.
+Per-consumer under `<project>/.mars/staging/<source-name>/<preparation>/`, where preparation
+is `schema-1`, `legacy`, or a foreign dialect. Local prepared roots live under
+`.mars/staging/_authored/`.
 
 - Never mutates the global fetch cache (`ResolvedRef.tree_path`).
-- Dependency- and dialect-scoped paths make restaging deterministic for `--frozen`.
-- Same source bytes + same resolved dialect + same overrides ⇒ byte-identical staged tree.
+- Dependency- and preparation-scoped paths make restaging deterministic for `--frozen`.
+- Same source bytes + same preparation + same overrides ⇒ byte-identical staged tree.
 
 ## `.mars/` store semantics
 
-The canonical store (`.mars/`) is installed from the **staged** tree, not raw
-fetched bytes. For inferred/default dialects with identity lift, content matches
-the source. With explicit non-`mars-native` dialect, foreign frontmatter is lifted to
-canonical mars fields per `staging/lift.rs`. Default/inferred `Claude` lift is
-idempotent on already-canonical map-form tool policies.
+The canonical store (`.mars/`) is installed from the **prepared** tree, never raw legacy
+bytes. Schema-v1 definitions stay byte-identical unless a consumer overlay changes them.
+Legacy definitions use the same pure conversion as `mars migrate`. Foreign frontmatter is
+lifted through `staging/lift.rs`.
 
-## Non-canonical allowed-tools handling (MarsNative skills only)
+## Non-canonical skill tool handling
 
-In `process_markdown_file` (mod.rs:271–312), MarsNative skills parse **RAW** frontmatter (before any lift) and call `push_non_canonical_tool_field_diags` → `"skill-schema-warning"` diagnostic. This runs BEFORE `lift_frontmatter_with_change` (lift.rs:41–55) strips the non-canonical aliases via `strip_non_canonical_tool_aliases`. The diagnostic inspects the original pre-mutation frontmatter; the strip operates on a separate clone. Both `.mars/` and `.claude/` end up clean (aliases removed from canonical store).
+Legacy skills parse raw frontmatter before upgrade and emit the existing schema diagnostics.
+The pure upgrade then drops skill tool keys because schema v1 gives them no meaning. Schema-v1
+content is not rewritten here; strict rejection belongs to its parser.
 
 Non-canonical aliases detected: `allowed-tools`, `allowed_tools` (→ `tools:`), plus `disallowed_tools` (→ `disallowed-tools:`).
 
@@ -62,7 +69,8 @@ pub fn lift_frontmatter(
 ) -> Frontmatter
 ```
 
-For `Dialect::MarsNative`, lift is limited to stripping non-canonical tool aliases. All other dialects apply their own key mapping (Claude, Codex, Cursor, OpenCode).
+`lift_frontmatter` now serves only manifest-free foreign inputs. Schema-v1 and legacy Mars
+packages bypass it; legacy conversion belongs to `mars_schema::upgrade`.
 
 Foreign scalar/list tool fields become canonical maps so imports never author deprecated
 list-form `tools:`. Claude agent `tools:` is restrictive, so it becomes `'*': deny` plus an

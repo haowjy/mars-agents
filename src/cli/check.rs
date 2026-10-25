@@ -625,7 +625,7 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
         std::fs::write(
             path.join("mars.toml"),
-            format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\n\n[dependencies]\n"),
+            format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\nschema = 1\n\n[dependencies]\n"),
         )
         .unwrap();
         for skill_name in skills {

@@ -167,7 +167,7 @@ fn check_surfaces_lossiness_for_configured_targets() {
 fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
     let dir = TempDir::new().unwrap();
     let source = dir.child("claude-skill");
-    let skill = source.child("skills/demo");
+    let skill = source.child("foreign/skills/demo");
     skill.create_dir_all().unwrap();
     skill
         .child("SKILL.md")
@@ -184,7 +184,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
         .child("mars.toml")
         .write_str(&format!(
             "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
-            source.path().display().to_string().replace('\\', "/")
+            source.path().join("foreign").display().to_string().replace('\\', "/")
         ))
         .unwrap();
 
@@ -223,7 +223,7 @@ fn check_and_sync_agree_on_foreign_claude_skill_lossiness() {
 fn check_respects_skill_variant_selection_like_sync() {
     let dir = TempDir::new().unwrap();
     let source = dir.child("variant-skill");
-    let skill = source.child("skills/demo");
+    let skill = source.child("foreign/skills/demo");
     skill.create_dir_all().unwrap();
     skill.child("variants/codex").create_dir_all().unwrap();
     skill
@@ -245,7 +245,7 @@ fn check_respects_skill_variant_selection_like_sync() {
         .child("mars.toml")
         .write_str(&format!(
             "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
-            source.path().display().to_string().replace('\\', "/")
+            source.path().join("foreign").display().to_string().replace('\\', "/")
         ))
         .unwrap();
 

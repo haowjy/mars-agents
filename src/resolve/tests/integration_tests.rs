@@ -924,17 +924,17 @@ fn local_path_source_resolves_transitive_path_dependencies() {
 
     std::fs::write(
         app.join("mars.toml"),
-        "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n[dependencies.shared]\npath = \"../shared\"\n",
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\nschema = 1\n\n[dependencies.shared]\npath = \"../shared\"\n",
     )
     .unwrap();
     std::fs::write(
         shared.join("mars.toml"),
-        "[package]\nname = \"shared\"\nversion = \"1.0.0\"\n\n[dependencies.planning]\npath = \"../planning\"\n",
+        "[package]\nname = \"shared\"\nversion = \"1.0.0\"\nschema = 1\n\n[dependencies.planning]\npath = \"../planning\"\n",
     )
     .unwrap();
     std::fs::write(
         planning.join("mars.toml"),
-        "[package]\nname = \"planning\"\nversion = \"1.0.0\"\n",
+        "[package]\nname = \"planning\"\nversion = \"1.0.0\"\nschema = 1\n",
     )
     .unwrap();
 

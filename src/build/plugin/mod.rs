@@ -307,10 +307,12 @@ fn stage_plugin_inner(
 
     let graph_staging = tempfile::TempDir::new()?;
     let effective = implicit_consumer_config(&lens, &root_source, &profiles)?;
+    let resolve_options =
+        ResolveOptions::default().with_staging_root(graph_staging.path().join("resolve"));
     let mut graph = crate::resolve::resolve_publish_graph_from_config(
         &lens,
         &effective,
-        &ResolveOptions::default(),
+        &resolve_options,
         diag,
     )?;
     stage_graph(

@@ -476,7 +476,7 @@ fn resolve_with_report_details(
 fn write_minimal_package_marker(tree: &Path) {
     std::fs::write(
         tree.join("mars.toml"),
-        "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n",
+        "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nschema = 1\n",
     )
     .expect("write mars.toml");
 }

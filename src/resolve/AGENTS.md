@@ -39,16 +39,21 @@ sources and versions appear in the final graph.
 
 ## Staging Seam
 
-`ResolveOptions.staging_root` (resolve/types.rs:304) enables per-dependency canonical source staging.
-`stage_rooted_package` (package.rs:384–408) runs **after** `apply_subpath` in both resolution paths (first-resolve and re-resolution). When `staging_root` is set:
+`ResolveOptions.staging_root` enables per-dependency canonical source staging.
+`stage_rooted_package` runs **after** `apply_subpath` in both resolution paths
+(first-resolve and re-resolution). It always calls `package_prepare::classify`
+before manifest reading or discovery; classification does not depend on materialization.
+When `staging_root` is set:
 
-1. Resolves `Dialect` from `EffectiveDependency.dialect` (via `Dialect::resolve`)
-2. Calls `staging::stage_rooted_source`, which lifts foreign frontmatter to canonical form and writes the staged tree to `<staging_root>/<source-name>/<dialect>/`
-3. Repoints `package_root` to the staged tree
+1. Schema-v1 packages copy without schema rewrites.
+2. Legacy packages run `mars_schema::upgrade` and warn once per package.
+3. Manifest-free sources resolve their foreign dialect and use the foreign lift.
+4. The resolver repoints `package_root` to the staged tree.
 
-All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged. Plugin builds reuse the same
-`stage_rooted_package` operation only after graph resolution, so the root package's relative path
-dependencies are interpreted against its authored checkout rather than its staged copy.
+All downstream consumers read the prepared tree. A non-materializing resolver may read schema-v1
+or manifest-free content after classification; it refuses legacy packages with a `mars migrate`
+message. Plugin builds provide a temporary staging root during resolution, so legacy inputs are
+materialized before discovery and relative dependency paths remain present in the copied tree.
 
 `ResolveOptions.source_overrides` applies project-local path overrides by source
 name to both direct and manifest-discovered transitive dependencies. Declared

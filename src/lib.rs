@@ -17,6 +17,7 @@ pub mod local_source;
 pub mod lock;
 pub(crate) mod model;
 pub mod models;
+pub(crate) mod package_prepare;
 pub mod permission_set;
 pub mod platform;
 pub(crate) mod plugin;

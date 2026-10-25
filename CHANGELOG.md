@@ -29,8 +29,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Source discovery, MCP discovery, and canonical staging now skip generated plugin trees marked
   by a valid `.mars-plugin.json` at any depth and report each skipped path, preventing rebuild
   output from becoming package input without changing downstream copy and hash semantics.
-- Explicitly or automatically renamed agents now carry their installed name in frontmatter, and
-  `subagents:` references follow explicit agent renames as well as collision renames.
+- Explicitly or automatically renamed agents and skills now carry their installed names in
+  frontmatter, and `subagents:` references follow explicit agent renames as well as collision
+  renames. Native agent sync also removes prior claims that are absent from the current emission
+  set, including outputs left by dependency removals and renames.
 - MCP server collisions now prefer the shallowest package, then dependency declaration order,
   so a package's own server cannot lose to a transitive dependency.
 - Plugin sentinels now carry an offline-recomputable hash of the root package's discovered

@@ -257,6 +257,11 @@ fn install_item(
             } else {
                 atomic_install_dir(&target.source_path, dest)?;
             }
+            if target.id.kind == ItemKind::Skill
+                && let Some(content) = &target.rewritten_content
+            {
+                atomic_write(&dest.join("SKILL.md"), content.as_bytes())?;
+            }
             // Skills are verified by hashing the installed directory content.
             crate::hash::compute_hash(dest, ItemKind::Skill).map(ContentHash::from)
         }

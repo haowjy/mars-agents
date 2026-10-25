@@ -144,13 +144,10 @@ pub fn compile(
     };
     let fanout_agents = loaded.effective.settings.meridian_fanout_agents();
     let native_reconcile_ctx = native_agents::NativeAgentReconcileCtx {
-        policy: agent_surface_policy.clone(),
         project_root: &ctx.project_root,
-        outcomes,
         old_lock,
         dry_run: request.options.dry_run,
         selective_harness_scope: None,
-        fanout_agents,
     };
     let native_compile_ctx = if matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll) {
         None

@@ -75,7 +75,8 @@ unreadable-content exception.
 - `VersionConstraint` — `Semver`, `Latest`, `RefPin`
 
 `ResolvedGraph::dependency_depths()` and `dependency_decl_orders()` derive traversal properties
-from the graph for compiler ordering; callers do not reconstruct them in sync or lowering.
+from the graph plus the consumer's ordered direct dependencies for compiler ordering; callers do
+not reconstruct them in sync or lowering. Depth is the shortest distance from a direct dependency.
 
 ## Production Lenses
 

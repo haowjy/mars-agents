@@ -213,9 +213,9 @@ let policy = agent_surface_policy(Some(&AgentEmission::Auto), spec.as_ref(), tru
 **Reconcile:**
 ```rust
 let ctx = NativeAgentReconcileCtx {
-    policy, project_root, model_aliases, outcomes, old_lock, dry_run, selective_harness_scope,
+    project_root, old_lock, dry_run, selective_harness_scope,
 };
-let removed = reconcile_native_agent_surfaces(&ctx, &mars_agents, diag);
+let removed = reconcile_native_agent_surfaces(&ctx, &desired_outputs, diag);
 ```
 
 **Compile (EmitAll → every agent to every configured managed target):**
@@ -230,6 +230,9 @@ let outputs = compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, &mars_ag
 ## Linked-target writes
 
 Native reconcile and dual-surface compile gate deletes and copies through `surface_ownership` (same rules as `target_sync`). See `src/target_sync/.context/CONTEXT.md`.
+Reconcile compares every prior native-agent lock claim in scope with the exact output set qualified
+for this run. It therefore removes old names and outputs belonging to dependencies that disappeared
+or stopped qualifying, rather than inferring cleanup from the current canonical agent list.
 File-mode hook emission also reserves its exact `OutputRecord` against the
 post-sync ownership lock before writing. Lock finalization retains every prior
 linked output unless its removal was positively confirmed, so failed filesystem

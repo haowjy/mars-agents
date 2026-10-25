@@ -31,6 +31,27 @@ pub fn compute_skill_hash_filtered(
     compute_dir_hash_filtered(dir, excluded_top_level)
 }
 
+/// Compute a skill tree hash with one file's installed bytes substituted.
+pub(crate) fn compute_skill_hash_with_override(
+    dir: &Path,
+    relative_path: &str,
+    content: &[u8],
+    excluded_top_level: &[&str],
+) -> Result<String, MarsError> {
+    let mut entries = Vec::new();
+    collect_file_hashes(dir, dir, &mut entries, excluded_top_level)?;
+    let Some((_, hash)) = entries.iter_mut().find(|(path, _)| path == relative_path) else {
+        return Err(MarsError::InvalidRequest {
+            message: format!(
+                "skill tree {} does not contain {relative_path}",
+                dir.display()
+            ),
+        });
+    };
+    *hash = hash_bytes(content);
+    Ok(hash_file_manifest(entries))
+}
+
 /// Compute SHA-256 of raw bytes.
 ///
 /// Returns `"sha256:<64-char-lowercase-hex>"`.

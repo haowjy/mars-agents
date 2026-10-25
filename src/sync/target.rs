@@ -156,6 +156,29 @@ pub struct TargetItem {
     pub rewritten_content: Option<String>,
 }
 
+impl TargetItem {
+    /// Hash of the bytes/tree mars intends to install after in-memory rewrites.
+    pub(crate) fn expected_installed_hash(&self) -> Result<ContentHash, MarsError> {
+        let Some(content) = &self.rewritten_content else {
+            return Ok(self.source_hash.clone());
+        };
+        let hash = match self.id.kind {
+            ItemKind::Skill => crate::hash::compute_skill_hash_with_override(
+                &self.source_path,
+                "SKILL.md",
+                content.as_bytes(),
+                if self.is_flat_skill {
+                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
+                } else {
+                    &[]
+                },
+            )?,
+            _ => crate::hash::hash_bytes(content.as_bytes()),
+        };
+        Ok(ContentHash::from(hash))
+    }
+}
+
 /// Explicit skill rename that changes the installed skill name.
 #[derive(Debug, Clone)]
 pub struct ExplicitRename {
@@ -186,7 +209,10 @@ pub fn build_with_collisions_and_diag(
     };
     let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
-    let hook_depths = graph.dependency_depths();
+    // Hooks and MCP share one graph-distance definition. Hook depth is
+    // provenance today; keeping it identical prevents a second precedence
+    // meaning if hook collision policy later consumes it.
+    let dependency_depths = graph.dependency_depths(&config.dependencies);
     let decl_orders = graph.dependency_decl_orders(&config.dependencies);
 
     for source_name in &graph.order {
@@ -199,7 +225,7 @@ pub fn build_with_collisions_and_diag(
         let parsed_hooks = crate::compiler::hooks::discover_resolved_hook_items(
             node,
             source_name,
-            hook_depths.get(source_name).copied().unwrap_or(1),
+            dependency_depths.get(source_name).copied().unwrap_or(1),
             decl_orders
                 .get(source_name)
                 .copied()
@@ -225,7 +251,7 @@ pub fn build_with_collisions_and_diag(
             match crate::compiler::mcp::discover_mcp_items_at_depth(
                 &node.rooted_ref.package_root,
                 source_name.as_str(),
-                hook_depths.get(source_name).copied().unwrap_or(1),
+                dependency_depths.get(source_name).copied().unwrap_or(1),
                 decl_order,
                 diag,
             ) {
@@ -557,7 +583,9 @@ pub fn check_unmanaged_collisions(
             // unmanaged user file. Safe to overwrite.
             let hash_path = hash_path_for_kind(&disk_path, target_item.id.kind);
             if let Ok(disk_hash) = hash::compute_hash(&hash_path, target_item.id.kind)
-                && disk_hash == target_item.source_hash.as_str()
+                && target_item
+                    .expected_installed_hash()
+                    .is_ok_and(|expected| disk_hash == expected.as_str())
             {
                 continue;
             }
@@ -895,6 +923,30 @@ mod tests {
             "shared".to_string(),
             "leaf".to_string(),
         ];
+        let direct_dependencies = ["direct-short", "direct-long"]
+            .into_iter()
+            .map(|name| {
+                let path = PathBuf::from(format!("/tmp/{name}"));
+                (
+                    SourceName::from(name),
+                    EffectiveDependency {
+                        declared_source_id: SourceId::Path {
+                            canonical: path.clone(),
+                            subpath: None,
+                        },
+                        source_id: SourceId::Path {
+                            canonical: path.clone(),
+                            subpath: None,
+                        },
+                        spec: SourceSpec::Path(path),
+                        subpath: None,
+                        filter: FilterMode::All,
+                        rename: RenameMap::new(),
+                        dialect: None,
+                    },
+                )
+            })
+            .collect();
 
         for run in 0..128 {
             let mut insertion_order = definitions.clone();
@@ -914,7 +966,7 @@ mod tests {
                 version_constraints: HashMap::new(),
                 unreadable_hook_surfaces: std::collections::BTreeMap::new(),
             };
-            let depths = graph.dependency_depths();
+            let depths = graph.dependency_depths(&direct_dependencies);
             let mut emitted_order = graph.order.clone();
             emitted_order.sort_by_key(|name| (depths[name], name.clone()));
             assert_eq!(

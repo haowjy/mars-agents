@@ -38,7 +38,7 @@ rename = { "agents/coder.md" = "agents/base-coder.md" }
 
 Explicit agent and skill renames receive the same treatment: dependent agent
 frontmatter uses the installed name, and a renamed agent's own `name:` matches
-its installed filename.
+its installed filename. A renamed agent no longer answers to its old name.
 
 ### Config references dangled by rename
 

@@ -267,6 +267,9 @@ fn write_skill(
         diag,
         item.id.name.as_str(),
     )?;
+    if let Some(content) = &item.rewritten_content {
+        crate::fs::atomic_write(&destination.join("SKILL.md"), content.as_bytes())?;
+    }
 
     warn_terms_in_tree(
         &destination,

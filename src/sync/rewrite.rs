@@ -29,6 +29,8 @@ pub struct RenameIndex {
     subagent_renames: HashMap<ItemName, Vec<(ItemName, SourceName)>>,
     /// Installed agents whose authored `name:` must follow their destination.
     renamed_agents: HashSet<(SourceName, ItemName)>,
+    /// Installed skills whose authored `name:` must follow their destination.
+    renamed_skills: HashSet<(SourceName, ItemName)>,
 }
 
 impl RenameIndex {
@@ -56,6 +58,9 @@ impl RenameIndex {
                         ),
                         rename.new_name.clone(),
                     );
+                    index
+                        .renamed_skills
+                        .insert((rename.source_name.clone(), rename.new_name.clone()));
                     &mut index.skill_renames
                 }
                 ItemKind::Agent => {
@@ -94,7 +99,12 @@ impl RenameIndex {
                 continue;
             }
             let renames = match rename.kind {
-                ItemKind::Skill => &mut index.skill_renames,
+                ItemKind::Skill => {
+                    index
+                        .renamed_skills
+                        .insert((rename.source_name.clone(), installed_name.clone()));
+                    &mut index.skill_renames
+                }
                 ItemKind::Agent => {
                     index
                         .renamed_agents
@@ -118,6 +128,7 @@ impl RenameIndex {
         self.skill_renames.is_empty()
             && self.subagent_renames.is_empty()
             && self.renamed_agents.is_empty()
+            && self.renamed_skills.is_empty()
     }
 
     /// Installed-name rewrites visible from one source package.
@@ -152,7 +163,7 @@ impl RenameIndex {
     }
 }
 
-/// Apply explicit and collision renames to each agent in one content update.
+/// Apply installed names to renamed skills, then rewrite agent references.
 pub fn apply_renames(
     target: &mut TargetState,
     index: &RenameIndex,
@@ -163,6 +174,35 @@ pub fn apply_renames(
 
     if index.is_empty() {
         return Ok(warnings);
+    }
+
+    for item in target.items.values_mut().filter(|item| {
+        item.id.kind == ItemKind::Skill
+            && index
+                .renamed_skills
+                .contains(&(item.source_name.clone(), item.id.name.clone()))
+    }) {
+        let skill_path = item.source_path.join("SKILL.md");
+        let content = match std::fs::read_to_string(&skill_path) {
+            Ok(content) => content,
+            Err(error) => {
+                warnings.push(format!(
+                    "warning: could not rewrite skill name in {}: {error}",
+                    skill_path.display()
+                ));
+                continue;
+            }
+        };
+        match frontmatter::parse(&content) {
+            Ok(mut skill) => {
+                skill.insert("name", serde_yaml::Value::String(item.id.name.to_string()));
+                item.rewritten_content = Some(skill.render());
+            }
+            Err(error) => warnings.push(format!(
+                "warning: could not rewrite skill name in {}: {error}",
+                skill_path.display()
+            )),
+        }
     }
 
     // For each agent in target, check if it references any renamed items.

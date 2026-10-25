@@ -11,7 +11,6 @@
 
 use std::path::{Path, PathBuf};
 
-use indexmap::IndexMap;
 use tempfile::TempDir;
 
 use crate::compiler::agent_copy;
@@ -22,63 +21,18 @@ use crate::compiler::harness_descriptor::configured_emit_harnesses;
 use crate::compiler::native_agents::{NativeModelRoutingRuntime, qualifying_agent_emissions};
 use crate::compiler::variants;
 use crate::config::routing_settings::ResolvedRoutingSettings;
-use crate::config::{Config, LocalConfig, Settings, SkillOverlay};
+use crate::config::{Config, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::dialect::Dialect;
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::frontmatter;
 use crate::local_source::LOCAL_SOURCE_DIR;
 use crate::lock::ItemKind;
 use crate::models::ModelsCache;
+use crate::resolve::PublishLens;
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::target::TargetRegistry;
 use crate::types::RenameMap;
-
-/// Publish-view project config for lossiness preview — one load, one lens.
-///
-/// Ignores `mars.local.toml` so preview matches consumer-facing `mars check`
-/// validation (see module docs).
-#[derive(Debug, Clone)]
-struct PublishPreviewConfig {
-    config: Option<Config>,
-    settings: Settings,
-    skills: IndexMap<String, SkillOverlay>,
-    models: IndexMap<String, crate::models::ModelAlias>,
-}
-
-impl Default for PublishPreviewConfig {
-    fn default() -> Self {
-        Self {
-            config: None,
-            settings: Settings::default(),
-            skills: IndexMap::new(),
-            models: IndexMap::new(),
-        }
-    }
-}
-
-/// Load `mars.toml` once and derive all preview inputs from the publish lens.
-fn load_publish_preview_config(base: &Path) -> Result<PublishPreviewConfig, MarsError> {
-    let config = match crate::config::load(base) {
-        Ok(config) => Some(config),
-        Err(MarsError::Config(ConfigError::NotFound { .. })) => None,
-        Err(err) => return Err(err),
-    };
-    let Some(config) = config else {
-        return Ok(PublishPreviewConfig::default());
-    };
-    let (effective, _diagnostics) =
-        crate::config::merge_with_root(config.clone(), LocalConfig::default(), base)?;
-    Ok(PublishPreviewConfig {
-        settings: effective.settings,
-        skills: effective.skills,
-        models: crate::config::layering::overlay_models_replace_by_key(
-            &config.models,
-            &LocalConfig::default(),
-        ),
-        config: Some(config),
-    })
-}
 
 /// Native harness variant keys for skill projection on configured managed targets.
 fn native_skill_harness_keys(settings: &Settings) -> Vec<String> {
@@ -98,11 +52,11 @@ fn native_skill_harness_keys(settings: &Settings) -> Vec<String> {
 /// Lower discovered source agents/skills against configured target harnesses and
 /// return lossiness diagnostics.
 pub fn collect_source_lossiness_diagnostics(
-    base: &Path,
+    lens: &PublishLens,
     mode: LossinessMode,
 ) -> Result<Vec<Diagnostic>, MarsError> {
-    let preview = load_publish_preview_config(base)?;
-    let settings = &preview.settings;
+    let base = lens.package_root();
+    let settings = &lens.effective.settings;
     let native_skill_keys = native_skill_harness_keys(settings);
     let configured_harnesses = configured_emit_harnesses(settings);
     if native_skill_keys.is_empty() && configured_harnesses.is_empty() {
@@ -110,14 +64,14 @@ pub fn collect_source_lossiness_diagnostics(
     }
 
     let (source_root, dialect, fallback_skill_name) =
-        preview_staging_root_and_dialect(base, preview.config.as_ref())?;
+        preview_staging_root_and_dialect(base, lens.manifest_config())?;
     let staging = TempDir::new()?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(mode);
     crate::staging::stage_canonical_source(
         &source_root,
         staging.path(),
         dialect,
-        &preview.skills,
+        &lens.effective.skills,
         &RenameMap::new(),
         fallback_skill_name.as_deref(),
         &mut diag,
@@ -141,7 +95,7 @@ pub fn collect_source_lossiness_diagnostics(
     let routing_settings = ResolvedRoutingSettings::from_settings(settings);
     let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
         .then(|| {
-            NativeModelRoutingRuntime::collect(&preview.models, &models_cache, routing_settings)
+            NativeModelRoutingRuntime::collect(&lens.config.models, &models_cache, routing_settings)
         });
 
     let discovered =
@@ -294,6 +248,14 @@ mod tests {
     use crate::diagnostic::DiagnosticCategory;
     use tempfile::TempDir;
 
+    fn collect_lossiness(base: &Path, mode: LossinessMode) -> Result<Vec<Diagnostic>, MarsError> {
+        let mut publish_diag = DiagnosticCollector::new();
+        let lens = PublishLens::load(base, &mut publish_diag)?;
+        let mut diagnostics = publish_diag.drain();
+        diagnostics.extend(collect_source_lossiness_diagnostics(&lens, mode)?);
+        Ok(diagnostics)
+    }
+
     #[test]
     fn configured_emit_harnesses_uses_managed_targets() {
         let settings = Settings {
@@ -314,8 +276,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
         assert!(diags.is_empty());
     }
 
@@ -334,8 +295,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
         assert!(
             diags.iter().any(|d| {
                 d.code == "launch-time-field-summary"
@@ -364,8 +324,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Verbose).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Verbose).unwrap();
         assert!(
             diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
@@ -394,8 +353,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
         assert!(
             diags
                 .iter()
@@ -420,8 +378,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
         assert!(
             diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
@@ -452,8 +409,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
         assert!(
             diags
                 .iter()
@@ -478,13 +434,11 @@ mod tests {
         )
         .unwrap();
 
-        let before =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
+        let before = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
 
         std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
 
-        let after =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
+        let after = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
         let before_msgs: Vec<_> = before.iter().map(|d| d.message.clone()).collect();
         let after_msgs: Vec<_> = after.iter().map(|d| d.message.clone()).collect();
         assert_eq!(
@@ -509,8 +463,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(&flat_pkg, LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(&flat_pkg, LossinessMode::Surface).unwrap();
         assert!(
             diags.iter().any(|d| {
                 d.category == Some(DiagnosticCategory::Lossiness)
@@ -540,8 +493,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Hidden).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Hidden).unwrap();
         assert!(
             diags
                 .iter()
@@ -570,8 +522,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags =
-            collect_source_lossiness_diagnostics(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
         assert!(
             diags
                 .iter()

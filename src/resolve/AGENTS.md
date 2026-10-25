@@ -77,9 +77,10 @@ unreadable-content exception.
 
 - `provider.rs` bridges the resolver traits to git/path source fetching for sync
   and other real package resolution.
-- `resolve_publish_graph()` is the consumer-facing publish lens: it ignores
-  `mars.local.toml`, clears local dependencies, and resolves with no lock or
-  project staging. Source fetches use `GlobalCache`.
+- `PublishLens` loads the consumer-facing config once: it ignores `mars.local.toml`
+  and clears local dependencies while retaining both authored and effective config.
+  `resolve_publish_graph(&lens, diag)` resolves it with no lock or project staging;
+  source fetches use `GlobalCache` and diagnostics belong to the caller.
 
 ## Version Policy
 

@@ -7,6 +7,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - `mars check PATH` now resolves package path dependencies relative to the checked package,
   rather than the caller's working directory.
+- `mars check` now reports publish-view configuration and dependency-resolution diagnostics
+  instead of dropping them.
 - `mars version` now changes only `[package].version`, preserving comments, formatting,
   ordering, and unrecognized tables in `mars.toml`.
 

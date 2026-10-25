@@ -181,6 +181,8 @@ pub enum PluginHarness {
     Grok,
     Cursor,
     OpenCode,
+    #[serde(other)]
+    Unknown,
 }
 
 impl PluginHarness {
@@ -199,6 +201,7 @@ impl PluginHarness {
             Self::Grok => "grok",
             Self::Cursor => "cursor",
             Self::OpenCode => "opencode",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -253,6 +256,13 @@ pub(crate) fn validate_plugin_build(
         }
         .into());
     }
+    if harnesses.contains(&PluginHarness::Unknown) {
+        return Err(ConfigError::Invalid {
+            message: "mars.toml [plugin].harnesses contains an unknown harness name".to_string(),
+        }
+        .into());
+    }
+    validate_package_authors(config)?;
 
     let name = config
         .plugin
@@ -273,6 +283,7 @@ pub(crate) fn validate_plugin_build(
             PluginHarness::Codex => valid_codex_plugin_name(name),
             PluginHarness::Cursor => valid_cursor_plugin_name(name),
             PluginHarness::OpenCode => valid_npm_package_name(name),
+            PluginHarness::Unknown => unreachable!("unknown harnesses were rejected above"),
         };
         if !valid {
             let rule = match harness {
@@ -291,6 +302,7 @@ pub(crate) fn validate_plugin_build(
                 PluginHarness::OpenCode => {
                     "OpenCode names must be valid lowercase npm package names"
                 }
+                PluginHarness::Unknown => unreachable!("unknown harnesses were rejected above"),
             };
             return Err(ConfigError::Invalid {
                 message: format!("mars.toml {name_field} `{name}` is invalid: {rule}"),
@@ -1401,7 +1413,6 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
     })?;
     let mut config: Config = parse_without_removed_visibility(&content, &path)?;
     migrate_legacy_source_urls(&mut config);
-    validate_package_authors(&config)?;
     validate_plugin_config_shape(&config)?;
     Ok(config)
 }
@@ -1986,7 +1997,6 @@ fn should_upgrade_legacy_git_url(url: &str) -> bool {
 
 /// Write mars.toml atomically.
 pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
-    validate_package_authors(config)?;
     validate_plugin_config_shape(config)?;
     let path = root.join(CONFIG_FILE);
     let content = toml::to_string_pretty(config).map_err(|e| ConfigError::Invalid {
@@ -2373,7 +2383,7 @@ harnesses = ["claude", "cursor"]
     }
 
     #[test]
-    fn plugin_config_rejects_unknown_harnesses_and_pi() {
+    fn plugin_build_rejects_unknown_harnesses_and_pi() {
         for harness in ["unknown", "pi"] {
             let dir = TempDir::new().unwrap();
             std::fs::write(
@@ -2384,9 +2394,13 @@ harnesses = ["claude", "cursor"]
             )
             .unwrap();
 
-            let error = load(dir.path()).unwrap_err().to_string();
+            let config = load(dir.path()).unwrap();
+            let harnesses = config.plugin.as_ref().unwrap().harnesses.clone();
+            let error = validate_plugin_build(&config, &harnesses)
+                .unwrap_err()
+                .to_string();
             assert!(
-                error.contains("unknown variant") && error.contains(harness),
+                error.contains("unknown harness name"),
                 "harness {harness:?} should be refused, got: {error}"
             );
         }

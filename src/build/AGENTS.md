@@ -59,10 +59,10 @@ name and package author/homepage/license metadata, while the publish graph's roo
 to use `[package].name`. Build reports contain one typed tree record and output path per generated
 tree; human output prints one success line per record.
 
-Config loading validates package author names and only `[plugin]` shape. `stage_plugin` is the
-semantic boundary for the canonical configured directory, requested harness set, plugin name, and
-catalog marketplace. The same rules therefore apply to configured and explicit `--out` builds
-without blocking sync.
+Config loading validates only `[plugin]` shape. `stage_plugin` is the semantic boundary for package
+authors, the canonical configured directory, requested harness set, plugin name, and catalog
+marketplace. The same rules therefore apply to configured and explicit `--out` builds without
+blocking sync or list; `mars version` invokes that plugin validation even when output is skipped.
 
 The generated trees are nested at `<out>/<tree>/` and handed to `plugin::output::stage`; the build
 core never mutates the destination itself. The staged build holds the output lock and root-file
@@ -77,8 +77,9 @@ planning also rejects final staged or root-file paths that remain ignored after 
 The output
 layer stages the whole output in a sibling directory, records one root
 `<out>/.mars-plugin.json` sentinel, and publishes with a two-rename swap under the lock.
-It recovers interrupted swaps before a new build, removes a recovery staging sibling only when it
-is empty or Mars-owned, and never replaces a non-empty destination without a valid sentinel.
+It recovers interrupted swaps before a new build, always removes the reserved real-directory
+staging sibling under the output lock, refuses a symlink or non-directory at that path, and never
+replaces a non-empty destination without a valid sentinel.
 Reference qualification uses each source item's `RenameIndex` view
 before applying the building package's single plugin namespace. Agent skill names are qualified
 before native lowering so generated guidance is born qualified; the fence-aware prose pass is

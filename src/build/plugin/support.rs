@@ -297,6 +297,7 @@ fn harness_display_name(harness: PluginHarness) -> &'static str {
         PluginHarness::Grok => "Grok",
         PluginHarness::Cursor => "Cursor",
         PluginHarness::OpenCode => "OpenCode",
+        PluginHarness::Unknown => unreachable!("plugin build validation rejects unknown harnesses"),
     }
 }
 
@@ -344,6 +345,9 @@ fn verification(harness: PluginHarness, component: Component) -> Verification {
         (Codex | OpenCode, Agents) | (_, Component::BootstrapDocs) => {
             unreachable!("impossible components have no verification level")
         }
+        (PluginHarness::Unknown, _) => {
+            unreachable!("plugin build validation rejects unknown harnesses")
+        }
     }
 }
 
@@ -356,6 +360,9 @@ fn install_verification(harness: PluginHarness) -> Verification {
         Claude | Codex | Grok => verified(Live, ""),
         Cursor => verified(DocsOnly, ""),
         OpenCode => verified(Live, " (git)"),
+        PluginHarness::Unknown => {
+            unreachable!("plugin build validation rejects unknown harnesses")
+        }
     }
 }
 
@@ -520,6 +527,7 @@ fn evidence(harness: PluginHarness) -> &'static str {
         PluginHarness::Grok => "p9473, p9478, p9479",
         PluginHarness::Cursor => "p9474",
         PluginHarness::OpenCode => "p9475, p9477",
+        PluginHarness::Unknown => unreachable!("plugin build validation rejects unknown harnesses"),
     }
 }
 

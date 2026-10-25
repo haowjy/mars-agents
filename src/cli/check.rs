@@ -129,7 +129,7 @@ fn plugin_warnings(
         && !requires_mars_has_plugin_floor(package.requires_mars.as_deref())
     {
         warnings.push(format!(
-            "plugin packages should set [package] `requires-mars = \">={PLUGIN_MARS_FLOOR}\"` or a higher floor; older Mars versions may drop [plugin] during `mars version`"
+            "plugin packages should set [package] `requires-mars = \">={PLUGIN_MARS_FLOOR}\"` or a higher floor, then rebuild the plugin; older Mars versions may drop [plugin] during `mars version`"
         ));
     }
 

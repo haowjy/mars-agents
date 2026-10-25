@@ -178,6 +178,10 @@ impl StagedPluginBuild {
         self.root_files.touched_paths()
     }
 
+    pub(crate) fn deleted_root_files(&self) -> Vec<PathBuf> {
+        self.root_files.deleted_paths()
+    }
+
     pub fn publish(self) -> Result<PluginBuildReport, MarsError> {
         root_files::apply(&self.root_files)?;
         self.output.publish()?;
@@ -219,6 +223,7 @@ impl PluginHarness {
             Self::Claude | Self::Codex | Self::Grok => PluginTree::Claude,
             Self::Cursor => PluginTree::Cursor,
             Self::OpenCode => PluginTree::OpenCode,
+            Self::Unknown => unreachable!("plugin build validation rejects unknown harnesses"),
         }
     }
 }

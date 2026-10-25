@@ -77,9 +77,10 @@ tree and root-file plan succeed, the output layer hashes every tree and writes o
 `.mars-plugin.json`; publication applies root writes/deletes and then swaps the staged output with
 two renames. Publication and startup recovery share a cross-process lock keyed by the absolute
 output path; non-empty trees without a valid sentinel are never replaced.
-Recovery removes staging siblings only when empty or Mars-owned, refuses other staging content,
-and preserves an unowned rollback directory even when the live output is valid; ambiguous evidence
-is never deleted.
+Recovery removes the reserved staging sibling whenever it is a real directory, including a partial
+tree killed before the sentinel write. It refuses a symlink or non-directory at that name and
+preserves an unowned rollback directory even when the live output is valid; ambiguous rollback
+evidence is never deleted.
 The root-package input fingerprint is computed from discovered authored item paths after recovery
 and under that same lock, before the staging tree is populated, so crash leftovers and generated
 catalog/output trees cannot make an otherwise clean checkout stale.

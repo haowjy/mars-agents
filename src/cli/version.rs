@@ -35,6 +35,7 @@ pub struct VersionArgs {
 pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let config = crate::config::load(&ctx.project_root)?;
     if let Some(plugin) = &config.plugin {
+        crate::config::validate_plugin_build(&config, &plugin.harnesses)?;
         let output = crate::build::plugin::configured_output_path(&ctx.project_root, plugin)?;
         crate::build::plugin::output::recover(&output)?;
     }
@@ -97,9 +98,24 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
     if let (Some(plugin), Some(staged)) = (&config.plugin, &staged_plugin) {
         touched_paths.push(plugin.dir.clone());
-        touched_paths.extend(staged.touched_root_files());
+        let deleted = staged
+            .deleted_root_files()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        for path in staged.touched_root_files() {
+            if !deleted.contains(&path)
+                || path_exists(&ctx.project_root.join(&path))?
+                || path_tracked_at(&ctx.project_root, "HEAD", &path)?
+            {
+                touched_paths.push(path);
+            }
+        }
     }
-    let snapshot = ReleaseSnapshot::capture(&ctx.project_root, touched_paths)?;
+    let plugin_dir = staged_plugin
+        .as_ref()
+        .and(config.plugin.as_ref())
+        .map(|plugin| plugin.dir.as_path());
+    let snapshot = ReleaseSnapshot::capture(&ctx.project_root, touched_paths, plugin_dir)?;
     let review_filled_changelog = !json
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
@@ -431,17 +447,34 @@ impl ReleaseSnapshot {
     fn capture(
         project_root: &Path,
         touched_paths: impl IntoIterator<Item = PathBuf>,
+        allowed_untracked: Option<&Path>,
     ) -> Result<Self, MarsError> {
         let head = crate::platform::process::run_git(
             &["rev-parse", "HEAD"],
             project_root,
             "capture HEAD before release",
         )?;
-        let touched_paths = touched_paths
+        let touched_paths: Vec<PathBuf> = touched_paths
             .into_iter()
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+
+        for relative in &touched_paths {
+            if allowed_untracked == Some(relative.as_path())
+                || !path_exists(&project_root.join(relative))?
+                || path_tracked_at(project_root, &head, relative)?
+            {
+                continue;
+            }
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "refusing release because {} is an untracked path that Mars did not create; move or remove it before running `mars version`",
+                    relative.display()
+                ),
+            }
+            .into());
+        }
 
         Ok(Self {
             head,
@@ -536,6 +569,37 @@ impl ReleaseSnapshot {
         } else {
             Err(failures.join("; "))
         }
+    }
+}
+
+fn path_tracked_at(project_root: &Path, treeish: &str, relative: &Path) -> Result<bool, MarsError> {
+    let relative = relative.to_str().ok_or_else(|| ConfigError::Invalid {
+        message: format!("release path must be valid Unicode: {}", relative.display()),
+    })?;
+    let tracked = crate::platform::process::run_git(
+        &[
+            "--literal-pathspecs",
+            "ls-tree",
+            "--name-only",
+            treeish,
+            "--",
+            relative,
+        ],
+        project_root,
+        &format!("inspect {relative} at release snapshot"),
+    )?;
+    Ok(!tracked.is_empty())
+}
+
+fn path_exists(path: &Path) -> Result<bool, MarsError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(MarsError::Io {
+            operation: "inspect release path".to_string(),
+            path: path.to_path_buf(),
+            source,
+        }),
     }
 }
 

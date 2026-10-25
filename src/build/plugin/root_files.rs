@@ -36,6 +36,10 @@ impl RootFilePlan {
             .into_iter()
             .collect()
     }
+
+    pub(super) fn deleted_paths(&self) -> Vec<PathBuf> {
+        self.deletes.iter().map(PathBuf::from).collect()
+    }
 }
 
 pub(super) fn plan(

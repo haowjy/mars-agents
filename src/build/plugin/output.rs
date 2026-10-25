@@ -3,17 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE, SENTINEL_SCHEMA_VERSION};
-
-/// Build metadata recorded in the generated plugin tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct SentinelInfo {
-    pub plugin_name: String,
-    pub version: String,
-    pub inputs_hash: String,
-    pub dependencies:
-        std::collections::BTreeMap<String, crate::plugin_metadata::ResolvedDependency>,
-}
+use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
 /// Replace a Mars-owned plugin tree as one crash-recoverable operation.
 ///
@@ -21,10 +11,9 @@ pub(super) struct SentinelInfo {
 /// not moved until `write`, hashing, and the sentinel write have all succeeded.
 pub(super) fn replace_owned_tree(
     out_dir: &Path,
-    sentinel: &SentinelInfo,
+    sentinel: &PluginSentinel,
     write: impl FnOnce(&Path) -> Result<(), MarsError>,
 ) -> Result<(), MarsError> {
-    validate_sentinel_info(sentinel)?;
     let paths = OutputPaths::new(out_dir)?;
     let _lock = crate::fs::FileLock::acquire(&paths.lock)?;
 
@@ -45,15 +34,9 @@ pub(super) fn replace_owned_tree(
         validate_staging_tree(&paths.new)?;
 
         let files = compute_file_hashes(&paths.new)?;
-        let stored = PluginSentinel {
-            schema_version: SENTINEL_SCHEMA_VERSION,
-            mars_version: env!("CARGO_PKG_VERSION").to_string(),
-            plugin_name: sentinel.plugin_name.clone(),
-            version: sentinel.version.clone(),
-            inputs_hash: sentinel.inputs_hash.clone(),
-            dependencies: sentinel.dependencies.clone(),
-            files,
-        };
+        let mut stored = sentinel.clone();
+        stored.files = files;
+        crate::plugin_metadata::validate(&stored, &paths.new.join(SENTINEL_FILE))?;
         write_sentinel(&paths.new, &stored)
     })();
 
@@ -67,19 +50,6 @@ pub(super) fn replace_owned_tree(
     }
 
     publish_staged_tree(&paths)
-}
-
-/// Read and validate a generated plugin tree's sentinel.
-pub(crate) fn read_sentinel(out_dir: &Path) -> Result<PluginSentinel, MarsError> {
-    let metadata = fs::symlink_metadata(out_dir)
-        .map_err(|source| io_error("inspect plugin tree", out_dir, source))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(invalid(format!(
-            "plugin tree must be a directory, not {}",
-            out_dir.display()
-        )));
-    }
-    read_sentinel_file(&out_dir.join(SENTINEL_FILE))
 }
 
 /// Recompute every regular output file hash except the sentinel.
@@ -331,7 +301,7 @@ fn classify_tree(path: &Path) -> Result<TreeState, MarsError> {
         Some(Err(source)) => return Err(io_error("read plugin directory", path, source)),
     }
 
-    Ok(match read_sentinel(path) {
+    Ok(match crate::plugin_metadata::read(path) {
         Ok(_) => TreeState::Owned,
         Err(error) => TreeState::Unowned(error.to_string()),
     })
@@ -432,62 +402,6 @@ fn write_sentinel(out_dir: &Path, sentinel: &PluginSentinel) -> Result<(), MarsE
     })?;
     bytes.push(b'\n');
     crate::fs::atomic_write(&out_dir.join(SENTINEL_FILE), &bytes)
-}
-
-fn read_sentinel_file(path: &Path) -> Result<PluginSentinel, MarsError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|source| io_error("inspect plugin sentinel", path, source))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(invalid(format!(
-            "plugin sentinel must be a regular file: {}",
-            path.display()
-        )));
-    }
-    let bytes = fs::read(path).map_err(|source| io_error("read plugin sentinel", path, source))?;
-    let sentinel: PluginSentinel = serde_json::from_slice(&bytes).map_err(|error| {
-        invalid(format!(
-            "invalid plugin sentinel {}: {error}",
-            path.display()
-        ))
-    })?;
-    validate_stored_sentinel(path, &sentinel)?;
-    Ok(sentinel)
-}
-
-fn validate_stored_sentinel(path: &Path, sentinel: &PluginSentinel) -> Result<(), MarsError> {
-    if sentinel.schema_version != SENTINEL_SCHEMA_VERSION {
-        return Err(invalid(format!(
-            "unsupported plugin sentinel schema {} in {}",
-            sentinel.schema_version,
-            path.display()
-        )));
-    }
-    if !sentinel.is_valid() {
-        return Err(invalid(format!(
-            "plugin sentinel has invalid metadata: {}",
-            path.display()
-        )));
-    }
-    Ok(())
-}
-
-fn validate_sentinel_info(sentinel: &SentinelInfo) -> Result<(), MarsError> {
-    if sentinel.plugin_name.trim().is_empty() {
-        return Err(invalid("plugin name cannot be empty"));
-    }
-    if sentinel.version.trim().is_empty() {
-        return Err(invalid("plugin version cannot be empty"));
-    }
-    if sentinel.inputs_hash.trim().is_empty() {
-        return Err(invalid("plugin input hash cannot be empty"));
-    }
-    if sentinel.dependencies.values().any(|dependency| {
-        dependency.version.as_deref().is_none_or(str::is_empty)
-            && dependency.commit.as_deref().is_none_or(str::is_empty)
-    }) {
-        return Err(invalid("plugin dependency identity cannot be empty"));
-    }
-    Ok(())
 }
 
 fn path_exists(path: &Path) -> Result<bool, MarsError> {

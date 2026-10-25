@@ -31,9 +31,11 @@ the occupied layer). `.mars-src` is discovered separately and wins matching
 nested distribution items; there is no permanent `cw/` exclusion.
 
 Directories containing a valid `.mars-plugin.json` are generated plugin trees and are
-excluded at any depth. The same marker is excluded when a package-root flat skill is hashed or
-copied, so committed plugin output cannot feed the next sync or build. Other configured
-non-hidden output trees remain discoverable; use hidden targets for those authored-root flows.
+excluded at any depth, including hook and MCP discovery, with one info diagnostic per skipped
+path. Canonical staging applies the same boundary before any downstream copy or hash; those
+lower-level primitives remain byte-faithful. The authored-tree filesystem walk also protects
+local-source installs that bypass whole-package staging. Other configured non-hidden output
+trees remain discoverable; use hidden targets for those authored-root flows.
 
 ## Hidden directories
 

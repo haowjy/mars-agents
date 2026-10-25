@@ -4,6 +4,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::MarsError;
+
 pub(crate) const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
 
@@ -27,7 +29,7 @@ pub(crate) struct ResolvedDependency {
 }
 
 impl PluginSentinel {
-    pub(crate) fn is_valid(&self) -> bool {
+    fn is_valid(&self) -> bool {
         self.schema_version == SENTINEL_SCHEMA_VERSION
             && !self.mars_version.trim().is_empty()
             && !self.plugin_name.trim().is_empty()
@@ -53,20 +55,54 @@ impl PluginSentinel {
     }
 }
 
-/// Whether `directory` is a generated plugin tree that discovery and flat-skill
-/// projection must not treat as authored package input.
-pub(crate) fn has_valid_plugin_sentinel(directory: &Path) -> bool {
-    let path = directory.join(SENTINEL_FILE);
-    let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-        return false;
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return false;
+pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), MarsError> {
+    if sentinel.is_valid() {
+        Ok(())
+    } else {
+        Err(invalid(format!(
+            "plugin sentinel has invalid metadata or unsupported schema {}: {}",
+            sentinel.schema_version,
+            path.display()
+        )))
     }
-    std::fs::read(&path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<PluginSentinel>(&bytes).ok())
-        .is_some_and(|sentinel| sentinel.is_valid())
+}
+
+/// Read and validate a generated plugin tree's sentinel.
+pub(crate) fn read(directory: &Path) -> Result<PluginSentinel, MarsError> {
+    let metadata = std::fs::symlink_metadata(directory)
+        .map_err(|source| io_error("inspect plugin tree", directory, source))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(invalid(format!(
+            "plugin tree must be a directory, not {}",
+            directory.display()
+        )));
+    }
+
+    let path = directory.join(SENTINEL_FILE);
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|source| io_error("inspect plugin sentinel", &path, source))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(invalid(format!(
+            "plugin sentinel must be a regular file: {}",
+            path.display()
+        )));
+    }
+    let bytes =
+        std::fs::read(&path).map_err(|source| io_error("read plugin sentinel", &path, source))?;
+    let sentinel: PluginSentinel = serde_json::from_slice(&bytes).map_err(|error| {
+        invalid(format!(
+            "invalid plugin sentinel {}: {error}",
+            path.display()
+        ))
+    })?;
+    validate(&sentinel, &path)?;
+    Ok(sentinel)
+}
+
+/// Whether `directory` is a generated plugin tree that authored-source walks
+/// must not treat as package input.
+pub(crate) fn has_valid_plugin_sentinel(directory: &Path) -> bool {
+    read(directory).is_ok()
 }
 
 pub(crate) fn is_sha256(value: &str) -> bool {
@@ -76,4 +112,18 @@ pub(crate) fn is_sha256(value: &str) -> bool {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     })
+}
+
+fn invalid(message: impl Into<String>) -> MarsError {
+    MarsError::InvalidRequest {
+        message: message.into(),
+    }
+}
+
+fn io_error(operation: &str, path: &Path, source: std::io::Error) -> MarsError {
+    MarsError::Io {
+        operation: operation.to_string(),
+        path: path.to_path_buf(),
+        source,
+    }
 }

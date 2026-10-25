@@ -135,7 +135,7 @@ pub fn discover_hook_items(
     decl_order: usize,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
-    crate::discover::discover_hook_directories(package_root)?
+    crate::discover::discover_hook_directories(package_root, diag)?
         .into_iter()
         .map(|hook_dir| load_hook_item(&hook_dir, source_name, package_depth, decl_order, diag))
         .collect()

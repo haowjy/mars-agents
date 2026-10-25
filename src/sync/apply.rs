@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::fs::{atomic_install_dir, atomic_write};
 use crate::lock::{ItemId, ItemKind};
@@ -54,6 +55,7 @@ pub fn execute(
     root: &Path,
     plan: &SyncPlan,
     options: &SyncOptions,
+    diag: &mut DiagnosticCollector,
 ) -> Result<ApplyResult, MarsError> {
     let mut outcomes = Vec::new();
 
@@ -62,7 +64,7 @@ pub fn execute(
             // Dry run: compute the outcome without touching disk
             dry_run_action(action)
         } else {
-            execute_action(root, action)?
+            execute_action(root, action, diag)?
         };
         outcomes.push(outcome);
     }
@@ -71,13 +73,17 @@ pub fn execute(
 }
 
 /// Execute a single action, writing to disk.
-fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, MarsError> {
+fn execute_action(
+    root: &Path,
+    action: &PlannedAction,
+    diag: &mut DiagnosticCollector,
+) -> Result<ActionOutcome, MarsError> {
     match action {
         PlannedAction::Install { target } => {
             let dest = target.dest_path.resolve(root);
 
             // Read source content and install
-            let installed_checksum = install_item(target, &dest)?;
+            let installed_checksum = install_item(target, &dest, diag)?;
 
             Ok(ActionOutcome {
                 item_id: target.id.clone(),
@@ -93,7 +99,7 @@ fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, 
             let dest = target.dest_path.resolve(root);
 
             // Install (overwrite) source content
-            let installed_checksum = install_item(target, &dest)?;
+            let installed_checksum = install_item(target, &dest, diag)?;
 
             Ok(ActionOutcome {
                 item_id: target.id.clone(),
@@ -220,7 +226,11 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
 /// Install an item (file or directory) to the destination.
 ///
 /// Returns the installed checksum (hash of what was written to disk).
-fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsError> {
+fn install_item(
+    target: &TargetItem,
+    dest: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<ContentHash, MarsError> {
     match target.id.kind {
         ItemKind::Agent | ItemKind::McpServer => {
             let content = content_to_install(target)?;
@@ -238,10 +248,11 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
         }
         ItemKind::Skill | ItemKind::Hook => {
             if target.is_flat_skill {
-                crate::fs::atomic_install_dir_filtered(
+                crate::fs::atomic_install_authored_dir_filtered(
                     &target.source_path,
                     dest,
                     crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
+                    diag,
                 )?;
             } else {
                 atomic_install_dir(&target.source_path, dest)?;
@@ -364,7 +375,13 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert_eq!(result.outcomes.len(), 1);
 
         let outcome = &result.outcomes[0];
@@ -405,7 +422,13 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Updated));
 
         let installed = fs::read(root.path().join("agents/coder.md")).unwrap();
@@ -426,7 +449,13 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
 
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
         assert_eq!(
@@ -461,7 +490,13 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!root.path().join("agents/orphan.md").exists());
     }
@@ -490,7 +525,13 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!root.path().join("skills/old-skill").exists());
     }
@@ -516,7 +557,13 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!bootstrap_dir.exists());
     }
@@ -543,7 +590,13 @@ mod tests {
         };
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Removed));
         assert!(!bootstrap_dir.join("BOOTSTRAP.md").exists());
         assert!(bootstrap_dir.join("keep.md").exists());
@@ -569,7 +622,13 @@ mod tests {
             ..SyncOptions::default()
         };
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert_eq!(result.outcomes.len(), 1);
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
 
@@ -597,7 +656,13 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Skipped));
         assert_eq!(
             result.outcomes[0].dest_path,
@@ -627,7 +692,13 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Kept));
         assert_eq!(
             result.outcomes[0].dest_path,
@@ -670,7 +741,13 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        let result = execute(root.path(), &plan, &options).unwrap();
+        let result = execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
 
         let installed_dir = root.path().join("skills/planning");
@@ -722,7 +799,13 @@ mod tests {
 
         let options = SyncOptions::default();
 
-        execute(root.path(), &plan, &options).unwrap();
+        execute(
+            root.path(),
+            &plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
 
         let installed = root.path().join("skills/flat-skill");
         assert!(installed.join("SKILL.md").exists());

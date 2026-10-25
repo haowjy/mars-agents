@@ -133,11 +133,14 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         profile: &profile,
     };
     let inputs_hash = plugin_inputs_hash(&package_root)?;
-    let sentinel = output::SentinelInfo {
+    let sentinel = crate::plugin_metadata::PluginSentinel {
+        schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
+        mars_version: env!("CARGO_PKG_VERSION").to_string(),
         plugin_name: plugin_name.clone(),
         version: package.version.clone(),
         inputs_hash,
         dependencies: resolved_dependency_identities(&graph, &root_source),
+        files: std::collections::BTreeMap::new(),
     };
     let mut summary = None;
     let mut diagnostics = None;
@@ -340,17 +343,20 @@ pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsErro
         }
     }
 
-    let walker = walkdir::WalkDir::new(package_root)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| include_fingerprint_entry(package_root, entry.path()));
-    for entry in walker {
-        let entry = entry.map_err(|error| MarsError::Internal(error.to_string()))?;
-        if !entry.file_type().is_file() {
+    let mut ignored_diagnostics = DiagnosticCollector::new();
+    let excluded = [PathBuf::from(".git"), PathBuf::from(".mars")];
+    for entry in
+        crate::fs::authored_tree_entries(package_root, &excluded, &mut ignored_diagnostics)?
+    {
+        if entry.kind != crate::fs::AuthoredEntryKind::File {
             continue;
         }
-        let relative = crate::hash::portable_relative(package_root, entry.path())
-            .unwrap_or_else(|| entry.path().to_string_lossy().into_owned());
+        let relative = entry
+            .relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         if matches!(
             relative.as_str(),
             "mars.toml" | "mars.local.toml" | "mars.lock"
@@ -359,27 +365,10 @@ pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsErro
         }
         entries.push((
             format!("@source/{relative}"),
-            crate::hash::hash_bytes(&std::fs::read(entry.path())?),
+            crate::hash::hash_bytes(&std::fs::read(entry.source)?),
         ));
     }
     Ok(crate::hash::hash_file_manifest(entries))
-}
-
-fn include_fingerprint_entry(package_root: &Path, path: &Path) -> bool {
-    if path == package_root {
-        return true;
-    }
-    let Ok(relative) = path.strip_prefix(package_root) else {
-        return false;
-    };
-    if relative
-        .components()
-        .next()
-        .is_some_and(|component| matches!(component.as_os_str().to_str(), Some(".git" | ".mars")))
-    {
-        return false;
-    }
-    !path.is_dir() || !crate::plugin_metadata::has_valid_plugin_sentinel(path)
 }
 
 fn canonical_json(value: serde_json::Value) -> serde_json::Value {

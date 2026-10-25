@@ -782,7 +782,13 @@ fn full_pipeline_fresh_sync() {
     }
 
     // Execute plan
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert_eq!(result.outcomes.len(), 2);
 
     // Verify files were created
@@ -818,7 +824,13 @@ fn re_sync_no_changes() {
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -913,7 +925,13 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 .unwrap();
         let sync_diff = diff::compute(fixture.managed_root(), lock, &target, false).unwrap();
         let sync_plan = create_sync_plan(&sync_diff, &options);
-        let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+        let result = apply::execute(
+            fixture.managed_root(),
+            &sync_plan,
+            &options,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         let new_lock =
             crate::lock::build(graph, &result, lock, std::collections::BTreeMap::new()).unwrap();
         (sync_diff, sync_plan, new_lock)
@@ -1111,7 +1129,13 @@ fn source_update_detects_changes() {
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1148,7 +1172,13 @@ fn local_modification_preserved() {
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1195,7 +1225,13 @@ fn force_overwrites_local_modifications() {
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1226,7 +1262,13 @@ fn force_overwrites_local_modifications() {
         plan::PlannedAction::Overwrite { .. }
     ));
 
-    let result2 = apply::execute(fixture.managed_root(), &sync_plan2, &force_options).unwrap();
+    let result2 = apply::execute(
+        fixture.managed_root(),
+        &sync_plan2,
+        &force_options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert!(matches!(
         result2.outcomes[0].action,
         apply::ActionTaken::Updated
@@ -1255,7 +1297,13 @@ fn orphan_removed_when_source_drops_item() {
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
@@ -1280,7 +1328,13 @@ fn orphan_removed_when_source_drops_item() {
     assert_eq!(orphan_count, 1);
 
     let sync_plan2 = create_sync_plan(&sync_diff2, &options);
-    let result2 = apply::execute(fixture.managed_root(), &sync_plan2, &options).unwrap();
+    let result2 = apply::execute(
+        fixture.managed_root(),
+        &sync_plan2,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
 
     // Reviewer should be removed
     assert!(!fixture.managed_root().join("agents/reviewer.md").exists());
@@ -1317,7 +1371,13 @@ fn dry_run_produces_plan_without_changes() {
     assert!(!sync_plan.actions.is_empty());
 
     // Execute in dry-run mode
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &dry_options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &dry_options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert!(!result.outcomes.is_empty());
 
     // No files should have been created
@@ -1339,7 +1399,13 @@ fn lock_written_after_apply() {
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
 
     let new_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
@@ -1385,7 +1451,13 @@ fn two_sources_no_collision() {
     let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(
+        fixture.managed_root(),
+        &sync_plan,
+        &options,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
 
     assert!(fixture.managed_root().join("agents/coder.md").exists());
     assert!(fixture.managed_root().join("agents/reviewer.md").exists());

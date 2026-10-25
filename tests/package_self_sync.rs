@@ -168,11 +168,21 @@ fn nonhidden_output_promotion_remains_an_explicit_discovery_limitation() {
     dir.child("SKILL.md")
         .write_str("# Root before emission")
         .unwrap();
-    let before = discover::discover_source(dir.path(), Some("demo")).unwrap();
+    let before = discover::discover_source(
+        dir.path(),
+        Some("demo"),
+        &mut mars_agents::diagnostic::DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert_eq!(before[0].source_path, Path::new("."));
     sync(dir.path()).assert().success();
     assert!(!dir.child(".mars/skills/demo/out/native").exists());
-    let after = discover::discover_source(dir.path(), Some("demo")).unwrap();
+    let after = discover::discover_source(
+        dir.path(),
+        Some("demo"),
+        &mut mars_agents::diagnostic::DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert_eq!(after[0].source_path, Path::new("out/native/skills/demo"));
     dir.child("SKILL.md")
         .write_str("# Root edit is now suppressed")

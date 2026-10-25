@@ -1,7 +1,8 @@
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 
 /// Top-level source entries excluded when installing flat skill repositories.
@@ -78,6 +79,41 @@ pub fn atomic_install_dir_filtered(
     atomic_install_dir_impl(src, dest, excluded_top_level)
 }
 
+/// Atomic directory install from an authored source tree.
+///
+/// Unlike the byte-faithful copy primitives, this skips generated plugin trees
+/// at any depth and reports each skipped path. It is the install seam for local
+/// sources that have not already passed through canonical staging.
+pub(crate) fn atomic_install_authored_dir_filtered(
+    src: &Path,
+    dest: &Path,
+    excluded_top_level: &[&str],
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let parent = dest.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(parent)?;
+
+    let excluded_paths = excluded_top_level
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let entries = authored_tree_entries(src, &excluded_paths, diag)?;
+    let tmp_dir = tempfile::TempDir::new_in(parent)?;
+    for entry in entries {
+        let dest_path = tmp_dir.path().join(&entry.relative);
+        match entry.kind {
+            AuthoredEntryKind::Directory => fs::create_dir_all(&dest_path)?,
+            AuthoredEntryKind::File => {
+                if let Some(parent) = dest_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(&entry.source, dest_path)?;
+            }
+        }
+    }
+    install_prepared_temp_dir(tmp_dir, dest)
+}
+
 fn atomic_install_dir_impl(
     src: &Path,
     dest: &Path,
@@ -88,6 +124,11 @@ fn atomic_install_dir_impl(
 
     let tmp_dir = tempfile::TempDir::new_in(parent)?;
     copy_dir_recursive(src, tmp_dir.path(), src, excluded_top_level)?;
+    install_prepared_temp_dir(tmp_dir, dest)
+}
+
+fn install_prepared_temp_dir(tmp_dir: tempfile::TempDir, dest: &Path) -> Result<(), MarsError> {
+    let parent = dest.parent().unwrap_or(Path::new("."));
     let tmp_path = tmp_dir.keep();
 
     if dest.exists() {
@@ -137,10 +178,6 @@ fn copy_dir_recursive(
         if is_excluded_top_level(rel_path, excluded_top_level) {
             continue;
         }
-        if file_type.is_dir() && crate::plugin_metadata::has_valid_plugin_sentinel(&src_path) {
-            continue;
-        }
-
         if file_type.is_dir() {
             fs::create_dir_all(&dest_path)?;
             copy_dir_recursive(&src_path, &dest_path, root, excluded_top_level)?;
@@ -149,6 +186,93 @@ fn copy_dir_recursive(
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthoredEntryKind {
+    Directory,
+    File,
+}
+
+#[derive(Debug)]
+pub(crate) struct AuthoredTreeEntry {
+    pub source: PathBuf,
+    pub relative: PathBuf,
+    pub kind: AuthoredEntryKind,
+}
+
+/// Walk one authored source tree in deterministic parent-before-child order.
+///
+/// Generated plugin trees are source-boundary metadata, so this is deliberately
+/// separate from general copy/hash primitives, which remain byte-faithful.
+pub(crate) fn authored_tree_entries(
+    source_root: &Path,
+    excluded_paths: &[PathBuf],
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<AuthoredTreeEntry>, MarsError> {
+    if crate::plugin_metadata::has_valid_plugin_sentinel(source_root) {
+        report_generated_tree(source_root, diag);
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    collect_authored_tree_entries(source_root, source_root, excluded_paths, diag, &mut entries)?;
+    Ok(entries)
+}
+
+fn collect_authored_tree_entries(
+    source_root: &Path,
+    current: &Path,
+    excluded_paths: &[PathBuf],
+    diag: &mut DiagnosticCollector,
+    entries: &mut Vec<AuthoredTreeEntry>,
+) -> Result<(), MarsError> {
+    let mut children = fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
+    children.sort_by_key(|entry| entry.file_name());
+    for child in children {
+        let source = child.path();
+        let relative = source
+            .strip_prefix(source_root)
+            .expect("authored traversal path should be under root")
+            .to_path_buf();
+        if excluded_paths
+            .iter()
+            .any(|excluded| relative.starts_with(excluded))
+        {
+            continue;
+        }
+        let file_type = child.file_type()?;
+        if file_type.is_dir() {
+            if crate::plugin_metadata::has_valid_plugin_sentinel(&source) {
+                report_generated_tree(&source, diag);
+                continue;
+            }
+            entries.push(AuthoredTreeEntry {
+                source: source.clone(),
+                relative,
+                kind: AuthoredEntryKind::Directory,
+            });
+            collect_authored_tree_entries(source_root, &source, excluded_paths, diag, entries)?;
+        } else {
+            entries.push(AuthoredTreeEntry {
+                source,
+                relative,
+                kind: AuthoredEntryKind::File,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn report_generated_tree(path: &Path, diag: &mut DiagnosticCollector) {
+    let path = path.components().collect::<PathBuf>();
+    diag.info_once(
+        "generated-plugin-tree-skipped",
+        format!(
+            "skipping generated plugin tree at `{}` while reading authored package input",
+            path.display()
+        ),
+    );
 }
 
 fn is_excluded_top_level(path: &Path, excluded_top_level: &[&str]) -> bool {

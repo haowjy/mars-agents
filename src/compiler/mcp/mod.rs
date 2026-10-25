@@ -122,8 +122,14 @@ pub(crate) fn discover_mcp_items_at_depth(
     decl_order: usize,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedMcpItem>, MarsError> {
+    if skip_generated_tree(package_root, diag) {
+        return Ok(Vec::new());
+    }
     let mcp_dir = package_root.join("mcp");
     if !mcp_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    if skip_generated_tree(&mcp_dir, diag) {
         return Ok(Vec::new());
     }
 
@@ -136,6 +142,9 @@ pub(crate) fn discover_mcp_items_at_depth(
     entries.sort_by_key(|e| e.file_name());
 
     for entry in entries {
+        if skip_generated_tree(&entry.path(), diag) {
+            continue;
+        }
         let dir_name = entry.file_name();
         let server_name = dir_name.to_string_lossy();
         // Skip hidden directories.
@@ -180,6 +189,14 @@ pub(crate) fn discover_mcp_items_at_depth(
     }
 
     Ok(items)
+}
+
+fn skip_generated_tree(path: &Path, diag: &mut DiagnosticCollector) -> bool {
+    let generated = crate::plugin_metadata::has_valid_plugin_sentinel(path);
+    if generated {
+        crate::fs::report_generated_tree(path, diag);
+    }
+    generated
 }
 
 // ---------------------------------------------------------------------------

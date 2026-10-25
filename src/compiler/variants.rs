@@ -436,9 +436,6 @@ fn collect_native_projection_hashes(
             continue;
         }
         let metadata = fs::metadata(&path)?;
-        if metadata.is_dir() && crate::plugin_metadata::has_valid_plugin_sentinel(&path) {
-            continue;
-        }
         let rel_path = rel
             .components()
             .map(|component| component.as_os_str().to_string_lossy())
@@ -504,9 +501,6 @@ fn copy_entry_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsE
     };
 
     if metadata.is_dir() {
-        if crate::plugin_metadata::has_valid_plugin_sentinel(source) {
-            return Ok(());
-        }
         copy_dir_following_symlinks(source, dest)
     } else if metadata.is_file() {
         let content = fs::read(source)?;

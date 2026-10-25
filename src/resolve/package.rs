@@ -425,6 +425,7 @@ pub(crate) fn resolve_package_bottom_up(
     let discovered = discover::discover_resolved_source(
         &rooted_ref.package_root,
         Some(pending_src.name.as_ref()),
+        diag,
     )?;
     let mut items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem> = IndexMap::new();
     for item in &discovered {

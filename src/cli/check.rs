@@ -133,7 +133,7 @@ fn check_dir_with_lens(
         errors.push(error.to_string());
     }
 
-    let discovered = discover::discover_resolved_source(base, None)?;
+    let discovered = discover::discover_resolved_source(base, None, diag)?;
     let dialect = Dialect::resolve_local(None, base);
 
     // ── Validate discovered agents/skills ────────────────────────────
@@ -457,7 +457,7 @@ fn resolve_available_skills(
     let mut skills: HashMap<String, (String, String)> = HashMap::new();
     for (source_name, node) in &graph.nodes {
         let discovered =
-            crate::discover::discover_resolved_source(&node.rooted_ref.package_root, None)?;
+            crate::discover::discover_resolved_source(&node.rooted_ref.package_root, None, diag)?;
         let package_filters = graph.filters.get(source_name);
         for item in &discovered {
             if item.id.kind == crate::lock::ItemKind::Skill

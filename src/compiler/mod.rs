@@ -73,7 +73,7 @@ pub fn compile(
     config_entries::preflight_config_entries(ctx, &planned.targeted, request.options.force, diag)?;
 
     // Phase 5: persist config mutations, apply plan to canonical store.
-    let applied = apply_plan(ctx, planned, request)?;
+    let applied = apply_plan(ctx, planned, request, diag)?;
 
     // Phase 3.2 / 3.3: Native agent surfaces — scan once; reconcile + compile after target sync.
     let effective_settings = &applied.planned.targeted.resolved.loaded.effective.settings;

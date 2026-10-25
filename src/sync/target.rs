@@ -214,6 +214,7 @@ pub fn build_with_collisions_and_diag(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
             &discovered_hooks,
+            diag,
         )?;
 
         if source_may_emit_mcp(graph, source_name) {

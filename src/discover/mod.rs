@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::{ItemId, ItemKind};
 use crate::skill_source_name::flat_root_skill_source_name;
@@ -59,16 +60,18 @@ struct LayeredItem {
 pub fn discover_source(
     tree_path: &Path,
     fallback_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    discover_source_with_hooks(tree_path, fallback_name, None)
+    discover_source_with_hooks(tree_path, fallback_name, None, diag)
 }
 
 fn discover_source_with_hooks(
     tree_path: &Path,
     fallback_name: Option<&str>,
     parsed_hooks: Option<&[DiscoveredItem]>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    let items = discover_convention_items(tree_path, fallback_name, parsed_hooks)?;
+    let items = discover_convention_items(tree_path, fallback_name, parsed_hooks, diag)?;
     finalize_items(fallback_name.unwrap_or("unknown-source"), items)
 }
 
@@ -76,20 +79,27 @@ fn discover_source_with_hooks(
 pub fn discover_manifestless_source(
     package_root: &Path,
     source_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    discover_manifestless_source_with_hooks(package_root, source_name, None)
+    discover_manifestless_source_with_hooks(package_root, source_name, None, diag)
 }
 
 fn discover_manifestless_source_with_hooks(
     package_root: &Path,
     source_name: Option<&str>,
     parsed_hooks: Option<&[DiscoveredItem]>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     let label = source_name.unwrap_or("unknown-source");
-    let convention_items = discover_convention_items(package_root, source_name, parsed_hooks)?;
+    let convention_items =
+        discover_convention_items(package_root, source_name, parsed_hooks, diag)?;
 
     let mut items = convention_items;
-    items.append(&mut discover_manifest_declared_items(package_root, label)?);
+    items.append(&mut discover_manifest_declared_items(
+        package_root,
+        label,
+        diag,
+    )?);
     finalize_items(label, items)
 }
 
@@ -97,11 +107,12 @@ fn discover_manifestless_source_with_hooks(
 pub fn discover_resolved_source(
     package_root: &Path,
     source_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     if package_root.join("mars.toml").is_file() {
-        discover_source(package_root, source_name)
+        discover_source(package_root, source_name, diag)
     } else {
-        discover_manifestless_source(package_root, source_name)
+        discover_manifestless_source(package_root, source_name, diag)
     }
 }
 
@@ -110,11 +121,12 @@ pub(crate) fn discover_resolved_source_with_hooks(
     package_root: &Path,
     source_name: Option<&str>,
     parsed_hooks: &[DiscoveredItem],
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     if package_root.join("mars.toml").is_file() {
-        discover_source_with_hooks(package_root, source_name, Some(parsed_hooks))
+        discover_source_with_hooks(package_root, source_name, Some(parsed_hooks), diag)
     } else {
-        discover_manifestless_source_with_hooks(package_root, source_name, Some(parsed_hooks))
+        discover_manifestless_source_with_hooks(package_root, source_name, Some(parsed_hooks), diag)
     }
 }
 
@@ -122,8 +134,12 @@ fn discover_convention_items(
     package_root: &Path,
     source_name: Option<&str>,
     parsed_hooks: Option<&[DiscoveredItem]>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    if !package_root.is_dir() || crate::plugin_metadata::has_valid_plugin_sentinel(package_root) {
+    if !package_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    if generated_plugin_tree(package_root, diag) {
         return Ok(Vec::new());
     }
 
@@ -148,7 +164,13 @@ fn discover_convention_items(
                 push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
             }
             Some(SKILLS_DIR_NAME) => {
-                scan_skill_dir(package_root, &base_rel, &mut scratch, &mut visited_skills)?;
+                scan_skill_dir(
+                    package_root,
+                    &base_rel,
+                    &mut scratch,
+                    &mut visited_skills,
+                    diag,
+                )?;
                 push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
             }
             Some(HOOKS_DIR_NAME) => {
@@ -156,7 +178,13 @@ fn discover_convention_items(
                     if let Some(parsed_hooks) = parsed_hooks {
                         scratch.extend_from_slice(parsed_hooks);
                     } else {
-                        scan_hook_dir(package_root, &base_rel, &mut scratch, &mut visited_hooks)?;
+                        scan_hook_dir(
+                            package_root,
+                            &base_rel,
+                            &mut scratch,
+                            &mut visited_hooks,
+                            diag,
+                        )?;
                     }
                 }
                 push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
@@ -167,6 +195,7 @@ fn discover_convention_items(
                     &base_rel,
                     &mut scratch,
                     &mut visited_bootstrap,
+                    diag,
                 )?;
                 push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
             }
@@ -190,7 +219,7 @@ fn discover_convention_items(
             if name.starts_with('.') || RECURSIVE_SKIP_DIRS.contains(&name) {
                 continue;
             }
-            if crate::plugin_metadata::has_valid_plugin_sentinel(&path) {
+            if generated_plugin_tree(&path, diag) {
                 continue;
             }
             queue.push_back((path, depth + 1));
@@ -237,6 +266,7 @@ fn scan_skill_dir(
     relative_root: &Path,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let dir = package_root.join(relative_root);
     if !dir.is_dir() {
@@ -252,6 +282,9 @@ fn scan_skill_dir(
         {
             continue;
         }
+        if generated_plugin_tree(&path, diag) {
+            continue;
+        }
         let rel = relative_to(package_root, &path)?;
         register_skill_dir(package_root, &rel, items, visited)?;
     }
@@ -264,11 +297,12 @@ fn scan_hook_dir(
     relative_root: &Path,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     if relative_root != Path::new(HOOKS_DIR_NAME) {
         return Ok(());
     }
-    for path in discover_hook_directories(package_root)? {
+    for path in discover_hook_directories(package_root, diag)? {
         let rel = relative_to(package_root, &path)?;
         if !visited.insert(rel.clone()) {
             continue;
@@ -305,25 +339,35 @@ fn scan_hook_dir(
 ///
 /// Hooks are deliberately a package-root-only convention. Unlike agents and
 /// skills, nested `hooks/` containers are not independent package layers.
-pub(crate) fn discover_hook_directories(package_root: &Path) -> Result<Vec<PathBuf>, MarsError> {
-    if crate::plugin_metadata::has_valid_plugin_sentinel(package_root) {
+pub(crate) fn discover_hook_directories(
+    package_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<PathBuf>, MarsError> {
+    if generated_plugin_tree(package_root, diag) {
         return Ok(Vec::new());
     }
     let hooks_dir = package_root.join(HOOKS_DIR_NAME);
     if !hooks_dir.is_dir() {
         return Ok(Vec::new());
     }
-    Ok(read_dir_paths_sorted(&hooks_dir)?
-        .into_iter()
-        .filter(|path| {
-            path.is_dir()
-                && path.join("hook.toml").is_file()
-                && !path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with('.'))
-        })
-        .collect())
+    if generated_plugin_tree(&hooks_dir, diag) {
+        return Ok(Vec::new());
+    }
+    let mut hooks = Vec::new();
+    for path in read_dir_paths_sorted(&hooks_dir)? {
+        if !path.is_dir()
+            || !path.join("hook.toml").is_file()
+            || path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+            || generated_plugin_tree(&path, diag)
+        {
+            continue;
+        }
+        hooks.push(path);
+    }
+    Ok(hooks)
 }
 
 fn scan_agent_dir(
@@ -356,6 +400,7 @@ fn scan_bootstrap_dir(
     relative_root: &Path,
     items: &mut Vec<DiscoveredItem>,
     visited: &mut HashSet<PathBuf>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let dir = package_root.join(relative_root);
     if !dir.is_dir() {
@@ -371,6 +416,9 @@ fn scan_bootstrap_dir(
         {
             continue;
         }
+        if generated_plugin_tree(&path, diag) {
+            continue;
+        }
         let rel = relative_to(package_root, &path)?;
         register_bootstrap_doc(package_root, &rel, items, visited)?;
     }
@@ -382,10 +430,11 @@ fn scan_manifest_declared_path(
     package_root: &Path,
     declared_path: &DeclaredPath,
     items: &mut Vec<DiscoveredItem>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut visited = HashSet::new();
     let candidate = package_root.join(&declared_path.relative_path);
-    if path_is_in_generated_plugin_tree(package_root, &candidate) {
+    if path_is_in_generated_plugin_tree(package_root, &candidate, diag) {
         return Ok(());
     }
     match declared_path.kind {
@@ -403,6 +452,7 @@ fn scan_manifest_declared_path(
                     &declared_path.relative_path,
                     items,
                     &mut visited,
+                    diag,
                 )?;
             }
         }
@@ -442,6 +492,7 @@ fn scan_manifest_declared_path(
                     &declared_path.relative_path,
                     items,
                     &mut visited,
+                    diag,
                 )?;
             }
         }
@@ -535,25 +586,30 @@ fn register_bootstrap_doc(
 fn discover_manifest_declared_items(
     package_root: &Path,
     source_name: &str,
+    diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    if crate::plugin_metadata::has_valid_plugin_sentinel(package_root) {
+    if generated_plugin_tree(package_root, diag) {
         return Ok(Vec::new());
     }
     let mut items = Vec::new();
     for declared_path in collect_manifest_declared_paths(package_root, source_name)? {
-        scan_manifest_declared_path(package_root, &declared_path, &mut items)?;
+        scan_manifest_declared_path(package_root, &declared_path, &mut items, diag)?;
     }
     Ok(dedupe_items_by_path(items))
 }
 
-fn path_is_in_generated_plugin_tree(package_root: &Path, path: &Path) -> bool {
+fn path_is_in_generated_plugin_tree(
+    package_root: &Path,
+    path: &Path,
+    diag: &mut DiagnosticCollector,
+) -> bool {
     let mut current = if path.is_dir() {
         Some(path)
     } else {
         path.parent()
     };
     while let Some(directory) = current {
-        if crate::plugin_metadata::has_valid_plugin_sentinel(directory) {
+        if generated_plugin_tree(directory, diag) {
             return true;
         }
         if directory == package_root {
@@ -562,6 +618,14 @@ fn path_is_in_generated_plugin_tree(package_root: &Path, path: &Path) -> bool {
         current = directory.parent();
     }
     false
+}
+
+fn generated_plugin_tree(path: &Path, diag: &mut DiagnosticCollector) -> bool {
+    let generated = crate::plugin_metadata::has_valid_plugin_sentinel(path);
+    if generated {
+        crate::fs::report_generated_tree(path, diag);
+    }
+    generated
 }
 
 fn ground_items_to_shallowest_layer(items: Vec<LayeredItem>) -> Vec<LayeredItem> {
@@ -833,7 +897,7 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
         agents.push(InstalledItem { id: item.id, path });
     }
 
-    scan_skill_dir(root, Path::new("skills"), &mut scratch, &mut HashSet::new())?;
+    scan_installed_skill_dir(root, Path::new("skills"), &mut scratch, &mut HashSet::new())?;
     for item in scratch.drain(..) {
         let path = root.join(&item.source_path);
         skills.push(InstalledItem { id: item.id, path });
@@ -842,6 +906,31 @@ pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
     sort_installed(&mut agents);
     sort_installed(&mut skills);
     Ok(InstalledState { agents, skills })
+}
+
+fn scan_installed_skill_dir(
+    root: &Path,
+    relative_root: &Path,
+    items: &mut Vec<DiscoveredItem>,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(), MarsError> {
+    let dir = root.join(relative_root);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for path in read_dir_paths_sorted(&dir)? {
+        if !path.is_dir()
+            || path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        {
+            continue;
+        }
+        let relative = relative_to(root, &path)?;
+        register_skill_dir(root, &relative, items, visited)?;
+    }
+    Ok(())
 }
 
 fn sort_installed(items: &mut [InstalledItem]) {

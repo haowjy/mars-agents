@@ -19,7 +19,6 @@ use crate::config::{
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, LossinessMode};
 use crate::error::{ConfigError, MarsError};
 use crate::resolve::{PublishLens, ResolveOptions};
-use crate::sync::rewrite::RenameIndex;
 use crate::target::TargetAdapter;
 use crate::target::claude::ClaudeAdapter;
 use crate::types::{RenameMap, SourceId, SourceName};
@@ -130,23 +129,10 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         &graph_staging.path().join("graph"),
         &mut diag,
     )?;
-    warn_hooks_without_claude_fragment(&graph, &mut diag)?;
-    let (mut target, explicit_renames, collision_renames) =
-        crate::sync::target::build_with_collisions_and_diag(&graph, &effective, &mut diag)?;
-    let rename_index = RenameIndex::new(&explicit_renames, &collision_renames, &target);
-    if !rename_index.is_empty() {
-        let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
-        for warning in crate::sync::rewrite::apply_renames(
-            &mut target,
-            &rename_index,
-            &graph,
-            &dep_precedence,
-        )? {
-            diag.warn("rewrite-warning", warning);
-        }
-    }
-    crate::sync::validate::validate_skill_frontmatter_in_target(&target, &mut diag);
-    emit_missing_skill_warnings(&target, &mut diag);
+    let prepared_target =
+        crate::sync::prepare_target_state(&graph, &effective, &mut diag, |_, _| Ok(()))?;
+    warn_hooks_without_claude_fragment(&prepared_target.target, &mut diag);
+    emit_missing_skill_warnings(&prepared_target.warnings, &mut diag);
 
     let aliases = crate::models::merged_model_aliases(
         &graph,
@@ -178,9 +164,9 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
             agent_overlays: &manifest.agents,
             aliases: &aliases,
             graph: &graph,
-            target: &target,
-            rename_index: &rename_index,
-            collision_renames: &collision_renames,
+            target: &prepared_target.target,
+            rename_index: &prepared_target.rename_index,
+            collision_renames: &prepared_target.collision_renames,
             dep_precedence: &dep_precedence,
             profile,
         },
@@ -245,7 +231,7 @@ fn implicit_consumer_config(
     Ok(EffectiveConfig {
         dependencies,
         settings: Settings {
-            targets: Some(vec![".claude".to_string()]),
+            targets: Some(vec![".claude".to_string(), ".codex".to_string()]),
             ..Settings::default()
         },
         skills: lens.effective.skills.clone(),
@@ -292,64 +278,39 @@ fn stage_graph(
 }
 
 fn warn_hooks_without_claude_fragment(
-    graph: &crate::resolve::ResolvedGraph,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    for source_name in &graph.order {
-        let Some(filters) = graph.filters.get(source_name) else {
-            continue;
-        };
-        let node = &graph.nodes[source_name];
-        for hook_dir in crate::discover::discover_hook_directories(&node.rooted_ref.package_root)? {
-            let hook_name = hook_dir
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let source_path = format!("hooks/{hook_name}");
-            let selected = filters.iter().any(|filter| match filter {
-                FilterMode::All => true,
-                FilterMode::Exclude(excluded) => !excluded.iter().any(|entry| {
-                    entry.as_str() == hook_name
-                        || crate::target::paths_equivalent(entry.as_str(), &source_path)
-                }),
-                FilterMode::Include { .. } | FilterMode::OnlySkills | FilterMode::OnlyAgents => {
-                    false
-                }
-            });
-            if !selected {
-                continue;
-            }
-
-            let raw = std::fs::read_to_string(hook_dir.join("hook.toml"))?;
-            let value: toml::Value = toml::from_str(&raw).map_err(ConfigError::Parse)?;
-            if value.get("visibility").and_then(toml::Value::as_str) != Some("exported") {
-                continue;
-            }
-            let targets = value.get("targets").and_then(toml::Value::as_table);
-            if targets.is_some_and(|targets| !targets.contains_key(".claude")) {
-                diag.warn(
-                    "plugin-hook-no-claude-fragment",
-                    format!(
-                        "hook `{hook_name}` from `{source_name}` has no Claude fragment and is omitted from the shared plugin tree"
-                    ),
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn emit_missing_skill_warnings(
     target: &crate::sync::target::TargetState,
     diag: &mut DiagnosticCollector,
 ) {
-    for warning in crate::sync::validate::validate_skill_refs(target) {
+    let claude_hooks: std::collections::HashSet<_> = target
+        .selected_hooks_for_target(".claude")
+        .map(|(hook, _)| (hook.source_name.as_str(), hook.def.name.as_str()))
+        .collect();
+    for (hook, _) in target.selected_hooks_for_target(".codex") {
+        if claude_hooks.contains(&(hook.source_name.as_str(), hook.def.name.as_str())) {
+            continue;
+        }
+        diag.warn(
+            "plugin-hook-no-claude-fragment",
+            format!(
+                "hook `{}` from `{}` has no Claude fragment and is omitted from the shared plugin tree",
+                hook.def.name, hook.source_name
+            ),
+        );
+    }
+}
+
+fn emit_missing_skill_warnings(
+    warnings: &[crate::validate::ValidationWarning],
+    diag: &mut DiagnosticCollector,
+) {
+    for warning in warnings {
         let crate::validate::ValidationWarning::MissingSkill {
             agent,
             skill_name,
             suggestion,
         } = warning;
         let suffix = suggestion
+            .as_ref()
             .map(|name| format!(" (did you mean `{name}`?)"))
             .unwrap_or_default();
         diag.warn(

@@ -26,7 +26,6 @@ pub struct TargetState {
     // canonical path prunes `items` so post-sync lowering can report the missing winner.
     selected_hooks: IndexMap<DestPath, SelectedHook>,
     selected_mcp: Vec<SelectedMcp>,
-    mcp_discovery_warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,25 +129,12 @@ impl TargetState {
         }
     }
 
-    pub(crate) fn mcp_discovery_warnings(&self) -> impl Iterator<Item = &str> {
-        self.mcp_discovery_warnings.iter().map(String::as_str)
-    }
-
-    pub(crate) fn record_mcp_discovery_warning(&mut self, message: String, local: bool) {
-        if local {
-            self.mcp_discovery_warnings.insert(0, message);
-        } else {
-            self.mcp_discovery_warnings.push(message);
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn from_items(items: IndexMap<DestPath, TargetItem>) -> Self {
         Self {
             items,
             selected_hooks: IndexMap::new(),
             selected_mcp: Vec::new(),
-            mcp_discovery_warnings: Vec::new(),
         }
     }
 }
@@ -196,7 +182,6 @@ pub fn build_with_collisions_and_diag(
         items: IndexMap::new(),
         selected_hooks: IndexMap::new(),
         selected_mcp: Vec::new(),
-        mcp_discovery_warnings: Vec::new(),
     };
     let mut explicit_skill_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
@@ -249,9 +234,9 @@ pub fn build_with_collisions_and_diag(
                         }
                     }
                 }
-                Err(error) => target.record_mcp_discovery_warning(
+                Err(error) => diag.warn(
+                    "mcp-discover",
                     format!("failed to scan MCP items in `{source_name}`: {error}"),
-                    false,
                 ),
             }
         }

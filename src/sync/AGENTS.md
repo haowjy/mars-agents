@@ -102,10 +102,12 @@ both installation and config lowering. Hook selection survives an install skip s
 lowering can issue the genuine not-installed warning; it carries the selected `TargetItem` hash so
 the installed check does not re-hash the source. Config lowering must not rediscover items.
 
-Plugin builds reuse `build_with_collisions_and_diag`, `TargetState`, validation, and
-`RenameIndex` as pure collection seams. `RenameIndex::visible_renames` exposes the same
-own-package-first, then dependency-declaration-order view for qualifying body references;
-callers must not reconstruct that precedence.
+Plugin builds and sync both use `prepare_target_state` for graph collection, optional local
+extension, rename application, and validation. MCP discovery warnings enter the diagnostic
+collector where discovery fails rather than riding `TargetState`, so every caller sees them.
+`RenameIndex::visible_renames` exposes the same own-package-first, then
+dependency-declaration-order view for frontmatter and body references; callers must not
+reconstruct that precedence.
 
 ## Lossiness Gating
 

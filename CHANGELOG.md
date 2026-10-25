@@ -24,6 +24,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ordering, and unrecognized tables in `mars.toml`.
 - Unknown hook and MCP `visibility` values now warn and remain local instead of being silently
   treated as local.
+- Plugin builds now report dependency MCP discovery failures instead of silently omitting those
+  servers, and Codex-only hook warnings follow the same parsed target selection as sync.
 
 ## [0.18.1] - 2026-10-24
 

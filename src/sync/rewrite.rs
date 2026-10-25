@@ -151,21 +151,8 @@ pub fn apply_renames(
             (item.source_path.clone(), item.source_name.clone(), content)
         };
 
-        let agent_deps = ordered_agent_deps(graph, &source_name, dep_precedence);
-        let skill_renames = renames_for_agent(
-            target,
-            &source_name,
-            &agent_deps,
-            ItemKind::Skill,
-            &index.skill_renames,
-        );
-        let subagent_renames = renames_for_agent(
-            target,
-            &source_name,
-            &agent_deps,
-            ItemKind::Agent,
-            &index.subagent_renames,
-        );
+        let (skill_renames, subagent_renames) =
+            index.visible_renames(target, graph, dep_precedence, &source_name);
         if skill_renames.is_empty() && subagent_renames.is_empty() {
             continue;
         }

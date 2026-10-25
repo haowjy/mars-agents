@@ -91,9 +91,6 @@ pub(crate) fn preflight_config_entries(
     for (target, _) in targeted.target.selected_hooks() {
         touched_targets.entry(target.to_string()).or_default().1 = true;
     }
-    for warning in targeted.target.mcp_discovery_warnings() {
-        diag.warn("mcp-discover", warning);
-    }
     for target in targeted.target.selected_mcp_targets() {
         touched_targets.entry(target.to_string()).or_default().0 = true;
     }
@@ -337,10 +334,6 @@ pub(crate) fn compile_config_entries(
     let effective = &applied.planned.targeted.resolved.loaded.effective;
     let target_roots: Vec<String> = effective.settings.managed_targets();
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
-
-    for warning in applied.planned.targeted.target.mcp_discovery_warnings() {
-        diag.warn("mcp-discover", warning);
-    }
 
     // Env ref preflight (non-strict by default).
     let selected_mcp = applied

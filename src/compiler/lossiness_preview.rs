@@ -374,37 +374,6 @@ mod tests {
     }
 
     #[test]
-    fn collect_source_lossiness_stages_foreign_claude_skill() {
-        let dir = TempDir::new().unwrap();
-        let skill = dir.path().join("skills/demo");
-        std::fs::create_dir_all(&skill).unwrap();
-        std::fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Body\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-        assert!(
-            diags.iter().any(|d| {
-                d.category == Some(DiagnosticCategory::Lossiness)
-                    && d.message.contains("tools")
-                    && d.message.contains(".codex")
-            }),
-            "expected codex tools lossiness for staged skill: {diags:?}"
-        );
-        assert!(
-            !diags.iter().any(|d| d.message.contains("model-invocable")),
-            "model-invocable is exact on Codex via openai.yaml sibling: {diags:?}"
-        );
-    }
-
-    #[test]
     fn collect_source_lossiness_only_warns_for_native_skill_targets() {
         let dir = TempDir::new().unwrap();
         let skill = dir.path().join("skills/demo");
@@ -455,37 +424,6 @@ mod tests {
         assert_eq!(
             before_msgs, after_msgs,
             "preview must not treat .mars cache as consumer authoring: before={before:?} after={after:?}"
-        );
-    }
-
-    #[test]
-    fn collect_source_lossiness_flat_skill_uses_source_name_not_temp_dir() {
-        let root = TempDir::new().unwrap();
-        let flat_pkg = root.path().join("flat-skill");
-        std::fs::create_dir_all(&flat_pkg).unwrap();
-        std::fs::write(
-            flat_pkg.join("SKILL.md"),
-            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Flat\n",
-        )
-        .unwrap();
-        std::fs::write(
-            flat_pkg.join("mars.toml"),
-            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(&flat_pkg, LossinessMode::Surface).unwrap();
-        assert!(
-            diags.iter().any(|d| {
-                d.category == Some(DiagnosticCategory::Lossiness)
-                    && d.message.contains("flat-skill")
-                    && d.message.contains("tools")
-            }),
-            "expected flat-skill tools lossiness diagnostic, not temp dir name: {diags:?}"
-        );
-        assert!(
-            !diags.iter().any(|d| d.message.contains(".tmp")),
-            "must not use temp staging dir basename in diagnostics: {diags:?}"
         );
     }
 

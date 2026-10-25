@@ -5,9 +5,7 @@ use serde_yaml::{Mapping, Value};
 use crate::compiler::harness_descriptor::{self, SkillLoweringPolicyKind};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use crate::compiler::skills::SkillProfile;
-use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
-use mars_schema::tool_policy::ToolAction;
 
 // ---------------------------------------------------------------------------
 // Policy axes
@@ -40,37 +38,6 @@ enum UserInvocablePolicy {
     DropWhenDisabled,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum AllowedToolsPolicy {
-    /// Lower allowlist to harness-native `allowed-tools`.
-    Emit { track_unknown_tool_lossiness: bool },
-    /// Warn-drop when allowlist is non-empty.
-    DropWhenNonEmpty,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum DisallowedToolsPolicy {
-    /// Lower denylist to harness-native `disallowed-tools`.
-    Emit,
-    /// Warn-drop when denylist is non-empty.
-    Drop,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum McpToolsPolicy {
-    Emit,
-    Approximate(&'static str),
-    Drop,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum WhenToUsePolicy {
-    /// Emit native `when_to_use` (Claude, Pi).
-    Emit,
-    /// Fold into native `description` (Cursor Apply Intelligently, Codex, OpenCode).
-    FoldIntoDescription,
-}
-
 /// Ordered lowering phases — sequence differs per harness (lossiness order matters).
 #[derive(Debug, Clone, Copy)]
 enum LoweringStep {
@@ -79,10 +46,6 @@ enum LoweringStep {
     Passthrough,
     ModelInvocable,
     UserInvocable,
-    AllowedTools,
-    DisallowedTools,
-    McpTools,
-    WhenToUse,
     /// Pi records user-invocable lossiness after passthrough is inserted.
     UserInvocableLossinessLate,
     /// Cursor-only rule mode: `alwaysApply` + reconcile `description` for Manual vs Intelligent.
@@ -94,10 +57,6 @@ struct SkillLoweringPolicy {
     steps: &'static [LoweringStep],
     model_invocable: ModelInvocablePolicy,
     user_invocable: UserInvocablePolicy,
-    allowed_tools: AllowedToolsPolicy,
-    disallowed_tools: DisallowedToolsPolicy,
-    mcp: McpToolsPolicy,
-    when_to_use: WhenToUsePolicy,
 }
 
 const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
@@ -105,21 +64,11 @@ const CLAUDE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         LoweringStep::Identity,
         LoweringStep::ModelInvocable,
         LoweringStep::UserInvocable,
-        LoweringStep::AllowedTools,
-        LoweringStep::DisallowedTools,
-        LoweringStep::McpTools,
-        LoweringStep::WhenToUse,
         LoweringStep::LicenseMetadata,
         LoweringStep::Passthrough,
     ],
     model_invocable: ModelInvocablePolicy::EmitDisableWhenFalse,
     user_invocable: UserInvocablePolicy::EmitFalseWhenDisabled,
-    allowed_tools: AllowedToolsPolicy::Emit {
-        track_unknown_tool_lossiness: true,
-    },
-    disallowed_tools: DisallowedToolsPolicy::Emit,
-    mcp: McpToolsPolicy::Emit,
-    when_to_use: WhenToUsePolicy::Emit,
 };
 
 const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
@@ -128,18 +77,10 @@ const CODEX_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         LoweringStep::LicenseMetadata,
         LoweringStep::Passthrough,
         LoweringStep::ModelInvocable,
-        LoweringStep::AllowedTools,
-        LoweringStep::DisallowedTools,
-        LoweringStep::McpTools,
         LoweringStep::UserInvocable,
-        LoweringStep::WhenToUse,
     ],
     model_invocable: ModelInvocablePolicy::EmitCodexOpenaiYamlWhenExplicitFalse,
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
-    allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
-    disallowed_tools: DisallowedToolsPolicy::Drop,
-    mcp: McpToolsPolicy::Approximate("Codex uses -c mcp.servers.<name>.command"),
-    when_to_use: WhenToUsePolicy::FoldIntoDescription,
 };
 
 const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
@@ -149,41 +90,21 @@ const OPENCODE_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         LoweringStep::Passthrough,
         LoweringStep::ModelInvocable,
         LoweringStep::UserInvocable,
-        LoweringStep::AllowedTools,
-        LoweringStep::DisallowedTools,
-        LoweringStep::McpTools,
-        LoweringStep::WhenToUse,
     ],
     model_invocable: ModelInvocablePolicy::DropSilentlyWhenFalse,
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
-    allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
-    disallowed_tools: DisallowedToolsPolicy::Drop,
-    mcp: McpToolsPolicy::Approximate(
-        "MCP grants on subprocess errors; streaming uses session payload",
-    ),
-    when_to_use: WhenToUsePolicy::FoldIntoDescription,
 };
 
 const PI_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
     steps: &[
         LoweringStep::Identity,
         LoweringStep::ModelInvocable,
-        LoweringStep::AllowedTools,
-        LoweringStep::DisallowedTools,
-        LoweringStep::McpTools,
-        LoweringStep::WhenToUse,
         LoweringStep::LicenseMetadata,
         LoweringStep::Passthrough,
         LoweringStep::UserInvocableLossinessLate,
     ],
     model_invocable: ModelInvocablePolicy::EmitDisableWhenFalse,
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
-    allowed_tools: AllowedToolsPolicy::Emit {
-        track_unknown_tool_lossiness: false,
-    },
-    disallowed_tools: DisallowedToolsPolicy::Emit,
-    mcp: McpToolsPolicy::Drop,
-    when_to_use: WhenToUsePolicy::Emit,
 };
 
 const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
@@ -192,20 +113,10 @@ const CURSOR_POLICY: SkillLoweringPolicy = SkillLoweringPolicy {
         LoweringStep::LicenseMetadata,
         LoweringStep::Passthrough,
         LoweringStep::CursorRuleMode,
-        LoweringStep::AllowedTools,
-        LoweringStep::DisallowedTools,
-        LoweringStep::McpTools,
         LoweringStep::UserInvocable,
-        LoweringStep::WhenToUse,
     ],
     model_invocable: ModelInvocablePolicy::CursorRuleMode,
     user_invocable: UserInvocablePolicy::DropWhenDisabled,
-    allowed_tools: AllowedToolsPolicy::DropWhenNonEmpty,
-    disallowed_tools: DisallowedToolsPolicy::Drop,
-    mcp: McpToolsPolicy::Approximate(
-        "MCP grants on subprocess errors; streaming uses session payload",
-    ),
-    when_to_use: WhenToUsePolicy::FoldIntoDescription,
 };
 
 fn policy_for(harness: HarnessId) -> &'static SkillLoweringPolicy {
@@ -241,15 +152,6 @@ fn cursor_manual_mode(profile: &SkillProfile) -> bool {
 }
 
 /// Selection guidance for harnesses that fold `when_to_use` into native `description`.
-fn selection_description(profile: &SkillProfile) -> Option<String> {
-    match (&profile.description, &profile.when_to_use) {
-        (Some(desc), Some(wtu)) => Some(format!("{desc}\n\n{wtu}")),
-        (Some(desc), None) => Some(desc.clone()),
-        (None, Some(wtu)) => Some(wtu.clone()),
-        (None, None) => None,
-    }
-}
-
 fn dropped(field: &str, target: &str) -> LossyField {
     LossyField {
         field: field.to_string(),
@@ -280,8 +182,6 @@ struct LoweringCtx<'a> {
     policy: &'static SkillLoweringPolicy,
     target_name: &'static str,
     profile: &'a SkillProfile,
-    /// The profile's tool rules spelled for `harness_kind`, resolved once per lowering.
-    tools: PolicyProjection<'a>,
     yaml: Mapping,
     lossy_fields: Vec<LossyField>,
     siblings: Vec<LoweredSibling>,
@@ -297,7 +197,6 @@ impl<'a> LoweringCtx<'a> {
             policy,
             target_name: harness_descriptor::descriptor(harness_kind).display_name,
             profile,
-            tools: profile.tools.project(harness_kind),
             yaml: Mapping::new(),
             lossy_fields: Vec::new(),
             siblings: Vec::new(),
@@ -311,10 +210,6 @@ impl<'a> LoweringCtx<'a> {
             LoweringStep::Passthrough => self.insert_passthrough(),
             LoweringStep::ModelInvocable => self.apply_model_invocable(),
             LoweringStep::UserInvocable => self.apply_user_invocable(),
-            LoweringStep::AllowedTools => self.apply_allowed_tools(),
-            LoweringStep::DisallowedTools => self.apply_disallowed_tools(),
-            LoweringStep::McpTools => self.apply_mcp(),
-            LoweringStep::WhenToUse => self.apply_when_to_use(),
             LoweringStep::UserInvocableLossinessLate => self.apply_user_invocable_lossiness(),
             LoweringStep::CursorRuleMode => self.apply_cursor_rule_mode(),
         }
@@ -388,152 +283,6 @@ impl<'a> LoweringCtx<'a> {
         if user_invocation_disabled(self.profile) {
             self.lossy_fields
                 .push(dropped("user-invocable", self.target_name));
-        }
-    }
-
-    fn apply_allowed_tools(&mut self) {
-        let policy = self.policy;
-        // A skill's `allowed-tools` pre-approves tools; it has no way to say "ask".
-        if self.profile.tools.has_rule(ToolAction::Ask, RuleKind::All) {
-            self.lossy_fields
-                .push(dropped("tools (ask)", self.target_name));
-        }
-        match policy.allowed_tools {
-            AllowedToolsPolicy::Emit {
-                track_unknown_tool_lossiness,
-            } => {
-                if track_unknown_tool_lossiness {
-                    for note in self.tools.gaps(ToolAction::Allow, RuleKind::Builtin) {
-                        self.lossy_fields.push(LossyField {
-                            field: "tools".into(),
-                            target: self.target_name.into(),
-                            classification: Lossiness::Approximate { note },
-                        });
-                    }
-                }
-                let tools = self.tools.natives(ToolAction::Allow, RuleKind::Builtin);
-                if !tools.is_empty() {
-                    self.yaml.insert(
-                        yk("allowed-tools"),
-                        Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
-                    );
-                }
-            }
-            AllowedToolsPolicy::DropWhenNonEmpty => {
-                if self
-                    .profile
-                    .tools
-                    .has_rule(ToolAction::Allow, RuleKind::Builtin)
-                {
-                    self.lossy_fields.push(dropped("tools", self.target_name));
-                }
-            }
-        }
-    }
-
-    fn apply_disallowed_tools(&mut self) {
-        if !self.profile.tools.has_rule(ToolAction::Deny, RuleKind::All) {
-            return;
-        }
-        let policy = self.policy;
-        match policy.disallowed_tools {
-            DisallowedToolsPolicy::Emit => {
-                for note in self.tools.gaps(ToolAction::Deny, RuleKind::All) {
-                    self.lossy_fields.push(LossyField {
-                        field: "disallowed-tools".into(),
-                        target: self.target_name.into(),
-                        classification: Lossiness::Approximate { note },
-                    });
-                }
-                let tools = self.tools.natives(ToolAction::Deny, RuleKind::All);
-                if !tools.is_empty() {
-                    self.yaml.insert(
-                        yk("disallowed-tools"),
-                        Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
-                    );
-                }
-            }
-            DisallowedToolsPolicy::Drop => {
-                self.lossy_fields
-                    .push(dropped("disallowed-tools", self.target_name));
-            }
-        }
-    }
-
-    fn apply_mcp(&mut self) {
-        if !self
-            .profile
-            .tools
-            .has_rule(ToolAction::Allow, RuleKind::Mcp)
-        {
-            return;
-        }
-        let policy = self.policy;
-        match policy.mcp {
-            McpToolsPolicy::Emit => {
-                for note in self.tools.gaps(ToolAction::Allow, RuleKind::Mcp) {
-                    self.lossy_fields.push(LossyField {
-                        field: "mcp".into(),
-                        target: self.target_name.into(),
-                        classification: Lossiness::Approximate { note },
-                    });
-                }
-                let mcp_tokens = self.tools.natives(ToolAction::Allow, RuleKind::Mcp);
-                if mcp_tokens.is_empty() {
-                    return;
-                }
-                let mut tools = match self.yaml.get(yk("allowed-tools")) {
-                    Some(Value::Sequence(seq)) => seq
-                        .iter()
-                        .filter_map(|v| v.as_str().map(str::to_owned))
-                        .collect::<Vec<_>>(),
-                    _ => Vec::new(),
-                };
-                tools.extend(mcp_tokens);
-                self.yaml.insert(
-                    yk("allowed-tools"),
-                    Value::Sequence(tools.iter().map(|s| ys(s)).collect()),
-                );
-                self.lossy_fields.push(LossyField {
-                    field: "mcp".into(),
-                    target: self.target_name.into(),
-                    classification: Lossiness::Approximate {
-                        note: "Claude skill allowed-tools grants MCP access; it does not restrict invocation",
-                    },
-                });
-            }
-            McpToolsPolicy::Approximate(note) => {
-                self.lossy_fields.push(LossyField {
-                    field: "mcp".into(),
-                    target: self.target_name.into(),
-                    classification: Lossiness::Approximate { note },
-                });
-            }
-            McpToolsPolicy::Drop => {
-                self.lossy_fields.push(dropped("mcp", self.target_name));
-            }
-        }
-    }
-
-    fn apply_when_to_use(&mut self) {
-        let profile = self.profile;
-        match self.policy.when_to_use {
-            WhenToUsePolicy::Emit => {
-                if let Some(when_to_use) = &profile.when_to_use {
-                    self.yaml.insert(yk("when_to_use"), ys(when_to_use));
-                }
-            }
-            WhenToUsePolicy::FoldIntoDescription => {
-                // Manual Cursor skills must not carry a description selection hook.
-                if self.policy.model_invocable == ModelInvocablePolicy::CursorRuleMode
-                    && cursor_manual_mode(profile)
-                {
-                    return;
-                }
-                if let Some(description) = selection_description(profile) {
-                    self.yaml.insert(yk("description"), ys(&description));
-                }
-            }
         }
     }
 

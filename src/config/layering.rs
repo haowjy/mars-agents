@@ -59,10 +59,8 @@ fn compose_agent_overlay(lower: &AgentOverlay, higher: &AgentOverlay) -> AgentOv
     merged
 }
 
-fn compose_skill_overlay(lower: &SkillOverlay, higher: &SkillOverlay) -> SkillOverlay {
-    let mut merged = higher.clone();
-    merged.tools = compose_tool_permission_sets(&lower.tools, &higher.tools);
-    merged
+fn compose_skill_overlay(_lower: &SkillOverlay, higher: &SkillOverlay) -> SkillOverlay {
+    higher.clone()
 }
 
 fn compose_tool_permission_sets(

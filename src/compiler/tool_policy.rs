@@ -12,13 +12,10 @@
 //! must not appear in canonical/MarsNative profiles. Staging strips alias keys; the skill
 //! parser warns with the canonical replacement label.
 
-use serde_yaml::Value;
-
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use crate::config::AgentOverlayTools;
 use crate::permission_set::{PermissionSet, merge_permission_set};
 use mars_schema::HarnessId;
-use mars_schema::frontmatter::Frontmatter;
 use mars_schema::tool_names::{Capability, OverlayToolName, is_mcp_wire_token, render_scoped};
 use mars_schema::tool_natives::{self, Native};
 use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
@@ -242,7 +239,6 @@ pub(crate) trait ToolPolicyRuntime {
     fn project(&self, harness: HarnessId) -> PolicyProjection<'_>;
     fn has_rule(&self, action: ToolAction, kind: RuleKind) -> bool;
     fn apply_overlay(&mut self, overlay: &AgentOverlayTools);
-    fn write_skill_frontmatter(&self, fm: &mut Frontmatter);
 }
 
 impl ToolPolicyRuntime for EffectiveToolPolicy {
@@ -264,40 +260,6 @@ impl ToolPolicyRuntime for EffectiveToolPolicy {
         }
         if let Some(layer) = &overlay.disallowed {
             apply_permission_set(self, layer, ToolAction::Deny);
-        }
-    }
-    fn write_skill_frontmatter(&self, fm: &mut Frontmatter) {
-        let spell = |rule: &ToolRule| Value::String(rule.render());
-        let granted: Vec<&ToolRule> = self
-            .rules
-            .iter()
-            .filter(|rule| rule.action != ToolAction::Deny)
-            .collect();
-        let tools = if self.with_action(ToolAction::Ask).next().is_some() {
-            Value::Mapping(
-                granted
-                    .iter()
-                    .map(|rule| (spell(rule), Value::String(rule.action.as_str().into())))
-                    .collect(),
-            )
-        } else {
-            Value::Sequence(granted.iter().map(|rule| spell(rule)).collect())
-        };
-        let denied: Vec<Value> = self.with_action(ToolAction::Deny).map(spell).collect();
-        fm.remove("disallowed_tools");
-        for (key, value, empty) in [
-            ("tools", tools, granted.is_empty()),
-            (
-                "disallowed-tools",
-                Value::Sequence(denied.clone()),
-                denied.is_empty(),
-            ),
-        ] {
-            if empty {
-                fm.remove(key);
-            } else {
-                fm.insert(key, value);
-            }
         }
     }
 }
@@ -508,25 +470,18 @@ fn overlay_rules(names: &[OverlayToolName], action: ToolAction) -> Vec<ToolRule>
 mod tests {
     use super::*;
     use crate::compiler::agents::{AgentDiagnostic, parse_agent_content_legacy};
-    use crate::compiler::skills::{SkillDiagnostic, parse_skill_content_legacy};
     use mars_schema::HarnessId;
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
     use mars_schema::tool_policy::{
         append_mcp_server_entries_to_tools, is_list_form, parse_tool_policy, yaml_str_list,
     };
+    use serde_yaml::Value;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
         let mut diags = Vec::new();
         let (profile, _) = parse_agent_content_legacy(yaml, &mut diags).unwrap();
         assert!(diags.is_empty(), "agent diags: {diags:?}");
-        profile.tools
-    }
-
-    fn skill_policy(yaml: &str) -> EffectiveToolPolicy {
-        let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content_legacy(yaml, &mut diags).unwrap();
-        assert!(diags.is_empty(), "skill diags: {diags:?}");
         profile.tools
     }
 
@@ -551,13 +506,6 @@ mod tests {
     fn tools_mcp_entry_grants_whole_server() {
         let policy =
             agent_policy("---\nname: a\ndescription: d\ntools:\n  mcp(context7): allow\n---\n");
-        assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
-    }
-
-    #[test]
-    fn skill_tools_mcp_entry_grants_whole_server() {
-        let policy =
-            skill_policy("---\nname: a\ndescription: d\ntools:\n  mcp(context7): allow\n---\nbody");
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
     }
 
@@ -705,19 +653,6 @@ mod tests {
         assert_eq!(projection.rules()[0].1.native(), ["Bash"]);
         assert_eq!(projection.rules()[1].1.native(), ["Bash(git push *)"]);
         assert!(projection.overlaps().is_empty());
-    }
-
-    #[test]
-    fn skill_list_form_grants_and_never_restricts() {
-        let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content_legacy(
-            "---\nname: a\ndescription: d\ntools: [read]\n---\nbody",
-            &mut diags,
-        )
-        .unwrap();
-        assert_eq!(profile.tools.describe(), vec!["allow:read"]);
-        assert!(!profile.tools.is_allowlist());
-        assert_eq!(diags, [SkillDiagnostic::DeprecatedListFormTools]);
     }
 
     #[test]
@@ -957,11 +892,6 @@ mod tests {
                 "deny:agent"
             ]
         );
-
-        // A skill gets the same additive edit.
-        let mut skill = skill_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\nbody"));
-        skill.apply_overlay(&overlay);
-        assert_eq!(skill, agent);
 
         // Explicit replacement gives the previous overlay behavior.
         let replacing = AgentOverlayTools {

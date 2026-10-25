@@ -388,8 +388,6 @@ pub struct SkillOverlay {
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
-    #[serde(default, skip_serializing_if = "AgentOverlayTools::is_empty")]
-    pub tools: AgentOverlayTools,
 }
 
 impl SkillOverlay {
@@ -397,7 +395,6 @@ impl SkillOverlay {
         self.description.is_none()
             && self.model_invocable.is_none()
             && self.user_invocable.is_none()
-            && self.tools.is_empty()
     }
 }
 
@@ -977,22 +974,6 @@ fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectC
         warnings.extend(tool_overlay_warnings(
             "mars.local.toml",
             &format!("[agents.{name}.tools]"),
-            &overlay.tools,
-            None,
-        ));
-    }
-    for (name, overlay) in &config.skills {
-        warnings.extend(tool_overlay_warnings(
-            "mars.toml",
-            &format!("[skills.{name}.tools]"),
-            &overlay.tools,
-            local.skills.get(name).map(|local| &local.tools),
-        ));
-    }
-    for (name, overlay) in &local.skills {
-        warnings.extend(tool_overlay_warnings(
-            "mars.local.toml",
-            &format!("[skills.{name}.tools]"),
             &overlay.tools,
             None,
         ));
@@ -2097,82 +2078,8 @@ override = { effort = "high" }
         assert_eq!(config.settings.model_policies[0].match_value, "gpt-*");
     }
 
-    #[test]
-    fn parse_skill_overlay_tools_and_invocability() {
-        let config: Config = toml::from_str(
-            r#"
-[skills.planning]
-description = "Planning overlay"
-user_invocable = false
-model-invocable = true
-tools.disallowed = ["Agent", "Write"]
-tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
-"#,
-        )
-        .unwrap();
-
-        let overlay = config.skills.get("planning").expect("planning overlay");
-        assert_eq!(overlay.description.as_deref(), Some("Planning overlay"));
-        assert_eq!(overlay.user_invocable, Some(false));
-        assert_eq!(overlay.model_invocable, Some(true));
-        assert_eq!(
-            overlay_tool_strings(overlay.tools.disallowed.as_ref().unwrap().entries()),
-            ["Agent", "Write"]
-        );
-        assert_eq!(
-            overlay_tool_strings(overlay.tools.allowed.as_ref().unwrap().entries()),
-            ["Bash(git *)", "mcp(plugin:demo)"]
-        );
-        assert!(overlay.tools.allowed.as_ref().unwrap().replaces());
-    }
-
     fn overlay_tool_strings(names: &[OverlayToolName]) -> Vec<String> {
         names.iter().cloned().map(String::from).collect()
-    }
-
-    #[test]
-    fn merged_skill_overlays_replace_fields_and_compose_permissions() {
-        let mut base_skills = IndexMap::new();
-        base_skills.insert(
-            "planning".to_string(),
-            SkillOverlay {
-                description: Some("Base description".to_string()),
-                model_invocable: Some(true),
-                user_invocable: Some(true),
-                tools: AgentOverlayTools {
-                    allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
-                    ..AgentOverlayTools::default()
-                },
-            },
-        );
-
-        let mut local_skills = IndexMap::new();
-        local_skills.insert(
-            "planning".to_string(),
-            SkillOverlay {
-                description: Some("Local description".to_string()),
-                user_invocable: Some(false),
-                tools: AgentOverlayTools {
-                    allowed: Some(vec!["Bash(git *)".to_string().try_into().unwrap()].into()),
-                    ..AgentOverlayTools::default()
-                },
-                ..SkillOverlay::default()
-            },
-        );
-        let local = LocalConfig {
-            skills: local_skills,
-            ..LocalConfig::default()
-        };
-
-        let merged = overlay_skill_overlays(&base_skills, &local.skills);
-        let composed = merged.get("planning").expect("planning overlay");
-        assert_eq!(composed.description.as_deref(), Some("Local description"));
-        assert_eq!(composed.model_invocable, None);
-        assert_eq!(composed.user_invocable, Some(false));
-        assert_eq!(
-            overlay_tool_strings(composed.tools.allowed.as_ref().unwrap().entries()),
-            ["Read", "Bash(git *)"]
-        );
     }
 
     #[test]
@@ -2534,7 +2441,7 @@ allowed = { replace = ["Bash"] }
             .iter()
             .filter(|warning| warning.contains(".tools]"))
             .collect::<Vec<_>>();
-        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(
             warnings
                 .iter()
@@ -2542,10 +2449,6 @@ allowed = { replace = ["Bash"] }
         );
         assert!(warnings.iter().any(|warning| {
             warning.contains("mars.toml [agents.coder.tools].allowed")
-                && warning.contains("mars.local.toml")
-        }));
-        assert!(warnings.iter().any(|warning| {
-            warning.contains("mars.toml [skills.review.tools].disallowed")
                 && warning.contains("mars.local.toml")
         }));
         assert!(

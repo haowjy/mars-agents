@@ -437,7 +437,6 @@ fn process_markdown_file(
         {
             let mut skill_diags = Vec::new();
             crate::compiler::skills::push_authored_skill_schema_diags(&parsed, &mut skill_diags);
-            crate::compiler::skills::push_non_canonical_tool_field_diags(&parsed, &mut skill_diags);
             if !skill_diags.is_empty() {
                 let skill_name = parsed
                     .get("name")
@@ -540,7 +539,7 @@ fn process_markdown_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AgentOverlayTools, SkillOverlay};
+    use crate::config::SkillOverlay;
     use crate::diagnostic::DiagnosticCollector;
     use crate::hash;
     use crate::types::{ItemName, RenameMap};
@@ -567,60 +566,6 @@ mod tests {
         )
         .unwrap();
         diag
-    }
-
-    #[test]
-    fn stage_skill_overlay_changes_frontmatter_and_preserves_unaffected_bytes() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/demo");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: base\nuser-invocable: true\n---\n# Body\n",
-        )
-        .unwrap();
-        let other = source.path().join("skills/other");
-        fs::create_dir_all(&other).unwrap();
-        fs::write(
-            other.join("SKILL.md"),
-            "---\nname: other\ndescription: untouched\n---\n# Other\n",
-        )
-        .unwrap();
-
-        let mut overrides = IndexMap::new();
-        overrides.insert(
-            "demo".to_string(),
-            SkillOverlay {
-                description: Some("Overridden".to_string()),
-                user_invocable: Some(false),
-                tools: AgentOverlayTools {
-                    disallowed: Some(vec!["Agent".to_string().try_into().unwrap()].into()),
-                    ..AgentOverlayTools::default()
-                },
-                ..SkillOverlay::default()
-            },
-        );
-
-        let dest = TempDir::new().unwrap();
-        stage_source(
-            source.path(),
-            dest.path(),
-            DefinitionPreparation::Foreign(Dialect::Claude),
-            &overrides,
-            &RenameMap::new(),
-            None,
-        );
-
-        let demo_staged = fs::read_to_string(dest.path().join("skills/demo/SKILL.md")).unwrap();
-        assert!(demo_staged.contains("description: Overridden"));
-        assert!(demo_staged.contains("user-invocable: false"));
-        assert!(demo_staged.contains("disallowed-tools:"));
-
-        let other_staged = fs::read_to_string(dest.path().join("skills/other/SKILL.md")).unwrap();
-        assert_eq!(
-            other_staged,
-            fs::read_to_string(other.join("SKILL.md")).unwrap()
-        );
     }
 
     #[test]
@@ -794,147 +739,6 @@ mod tests {
 
         let staged = fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert!(staged.contains("description: Flat overlay"));
-    }
-
-    #[test]
-    fn mars_native_staging_strips_non_canonical_tool_aliases() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/bad-allowed");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: bad-allowed\ndescription: d\nallowed-tools: [Bash]\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let dest = TempDir::new().unwrap();
-        let mut diag = stage_source(
-            source.path(),
-            dest.path(),
-            DefinitionPreparation::Legacy,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let staged = fs::read_to_string(dest.path().join("skills/bad-allowed/SKILL.md")).unwrap();
-        assert!(
-            !staged.contains("allowed-tools"),
-            "canonical staging must strip non-canonical tool aliases: {staged}"
-        );
-
-        assert!(
-            diag.drain()
-                .iter()
-                .any(|d| d.message.contains("allowed-tools") && d.message.contains("tools:")),
-            "staging must emit non-canonical diagnostic from raw frontmatter"
-        );
-    }
-
-    #[test]
-    fn mars_native_staging_strips_disallowed_tools_alias_and_warns() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/bad-denied");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: bad-denied\ndescription: d\ndisallowed_tools: [Agent]\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let dest = TempDir::new().unwrap();
-        let mut diag = stage_source(
-            source.path(),
-            dest.path(),
-            DefinitionPreparation::Legacy,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let staged = fs::read_to_string(dest.path().join("skills/bad-denied/SKILL.md")).unwrap();
-        assert!(
-            !staged.contains("disallowed_tools"),
-            "canonical staging must strip disallowed_tools alias: {staged}"
-        );
-
-        assert!(
-            diag.drain().iter().any(|d| {
-                d.message.contains("disallowed_tools") && d.message.contains("disallowed-tools:")
-            }),
-            "staging must warn about non-canonical disallowed_tools"
-        );
-    }
-
-    #[test]
-    fn mars_native_canonical_tools_stages_without_non_canonical_diagnostic() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/good-tools");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: good-tools\ndescription: d\ntools: [Bash]\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let dest = TempDir::new().unwrap();
-        let mut diag = stage_source(
-            source.path(),
-            dest.path(),
-            DefinitionPreparation::Schema1,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let staged = fs::read_to_string(dest.path().join("skills/good-tools/SKILL.md")).unwrap();
-        assert!(staged.contains("tools:"));
-        assert!(
-            !diag
-                .drain()
-                .iter()
-                .any(|d| d.code == "skill-schema-warning"),
-            "canonical tools must not emit non-canonical warning"
-        );
-    }
-
-    #[test]
-    fn local_mars_native_staging_emits_non_canonical_tool_diagnostic() {
-        let root = TempDir::new().unwrap();
-        let mars_src = root.path().join(".mars-src");
-        let skill = mars_src.join("skills/bad-allowed");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: bad-allowed\ndescription: d\nallowed-tools: [Bash]\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let mut diag = DiagnosticCollector::new();
-        let staged = stage_local_item(
-            &skill,
-            ItemKind::Skill,
-            DefinitionPreparation::Legacy,
-            &IndexMap::new(),
-            &root.path().join("staging"),
-            "skill:bad-allowed",
-            Some("bad-allowed"),
-            &[],
-            &mut diag,
-        )
-        .unwrap();
-
-        let content = fs::read_to_string(staged.join("SKILL.md")).unwrap();
-        assert!(
-            !content.contains("allowed-tools"),
-            "staged local skill: {content}"
-        );
-        assert!(
-            diag.drain()
-                .iter()
-                .any(|d| d.message.contains("allowed-tools") && d.message.contains("tools:")),
-            "local staging must emit non-canonical diagnostic from raw frontmatter"
-        );
     }
 
     #[test]

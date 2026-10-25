@@ -220,7 +220,7 @@ fn load_skill_document(
 
     // model-invocable gates global discovery, not explicit profile references.
     // If the agent profile lists a skill, it loads regardless.
-    let (_base_profile, base_frontmatter) =
+    let (base_profile, base_frontmatter) =
         parse_skill_file(skill_name, &base_skill_path, warnings)?;
 
     let selected_skill_path = harness_skill_variant_path(skill_dir, harness_id)
@@ -231,8 +231,9 @@ fn load_skill_document(
         read_skill_body(skill_name, &selected_skill_path)?
     };
 
-    let skill_type = skill_type_from_frontmatter(&base_frontmatter);
-    let skill_type = skill_type.unwrap_or_else(|| "reference".to_string());
+    let skill_type = base_profile
+        .skill_type
+        .unwrap_or_else(|| "reference".to_string());
 
     let content = render_skill_content_block(skill_name, &selected_body);
 
@@ -259,11 +260,13 @@ fn resolve_available_skill(
     }
 
     // model-invocable gates global discovery, not explicit profile references.
-    let (base_profile, base_frontmatter) =
+    let (base_profile, _base_frontmatter) =
         parse_skill_file(skill_name, &base_skill_path, warnings)?;
 
-    let skill_type =
-        skill_type_from_frontmatter(&base_frontmatter).unwrap_or_else(|| "reference".to_string());
+    let skill_type = base_profile
+        .skill_type
+        .clone()
+        .unwrap_or_else(|| "reference".to_string());
     let description = base_profile.description.unwrap_or_default();
 
     Ok(AvailableSkillOutcome::Available(AvailableSkill {
@@ -326,14 +329,6 @@ fn parse_skill_file(
     }
 
     Ok(parsed)
-}
-
-fn skill_type_from_frontmatter(frontmatter: &Frontmatter) -> Option<String> {
-    frontmatter
-        .get("type")
-        .and_then(|value| value.as_str())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn render_skill_content_block(skill_name: &str, body: &str) -> String {

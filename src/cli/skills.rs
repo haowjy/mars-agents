@@ -7,7 +7,6 @@ use crate::content::ContentRoots;
 use crate::error::MarsError;
 use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
-use mars_schema::tool_policy::ToolAction;
 
 use super::output;
 
@@ -220,10 +219,6 @@ fn run_show(
                 "type": type_str,
                 "model-invocable": profile.model_invocable,
                 "user-invocable": profile.user_invocable,
-                "rules": profile.tools.rules,
-                // Deprecated: derived from `rules`; cannot carry `ask`, `*` or the capability.
-                "tools": profile.tools.rendered(ToolAction::Allow),
-                "disallowed-tools": profile.tools.rendered(ToolAction::Deny),
                 "scope": scope,
                 "source_path": skill_md,
             }));
@@ -235,7 +230,6 @@ fn run_show(
             println!("user-invocable:  {}", profile.user_invocable);
             println!("scope:         {scope}");
             println!("source_path:   {}", skill_md.display());
-            print_str_list("tool-rules", &profile.tools.describe());
         }
 
         return Ok(0);
@@ -243,14 +237,6 @@ fn run_show(
 
     eprintln!("error: skill `{name}` not found");
     Ok(1)
-}
-
-fn print_str_list(label: &str, items: &[String]) {
-    if items.is_empty() {
-        println!("{label}:          (none)");
-    } else {
-        println!("{label}:          {}", items.join(", "));
-    }
 }
 
 fn dir_name(path: &std::path::Path) -> String {

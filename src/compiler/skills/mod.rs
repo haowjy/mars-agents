@@ -8,8 +8,7 @@ use serde_yaml::Value;
 
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use mars_schema::frontmatter::{Frontmatter, FrontmatterError};
-use mars_schema::invocability::{find_invocability_field, parse_invocability_axis, value_label};
-use mars_schema::tool_policy::{self, EffectiveToolPolicy};
+use mars_schema::invocability::{parse_invocability_axis, value_label};
 
 /// Reserved lift-internal key; must not appear in user-authored MarsNative packages.
 const RESERVED_IMPORT_MARKER: &str = "mars.imported-without-description";
@@ -18,13 +17,9 @@ const RESERVED_IMPORT_MARKER: &str = "mars.imported-without-description";
 pub struct SkillProfile {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub when_to_use: Option<String>,
     pub skill_type: Option<String>,
     pub model_invocable: bool,
     pub user_invocable: bool,
-    /// `tools:` and `disallowed-tools:` as one rule list. A skill's `tools:` pre-approves tools
-    /// while the skill runs and never restricts the rest, so there is no `*: deny` here.
-    pub tools: EffectiveToolPolicy,
     pub license: Option<String>,
     pub metadata: Option<Value>,
     /// true when the source frontmatter explicitly set `model-invocable`
@@ -49,12 +44,6 @@ pub enum SkillDiagnostic {
     RemovedField {
         field: String,
     },
-    NonCanonicalField {
-        field: String,
-        canonical: &'static str,
-    },
-    /// Deprecated list-form `tools: [..]`; it only grants.
-    DeprecatedListFormTools,
     MalformedFrontmatter {
         message: String,
     },
@@ -67,9 +56,7 @@ impl SkillDiagnostic {
         let field = match self {
             Self::InvalidFieldValue { field, .. }
             | Self::InvalidFieldType { field, .. }
-            | Self::RemovedField { field }
-            | Self::NonCanonicalField { field, .. } => field.as_str(),
-            Self::DeprecatedListFormTools => "tools",
+            | Self::RemovedField { field } => field.as_str(),
             Self::MalformedFrontmatter { .. } => "frontmatter",
         };
         SchemaDiagnostic::new(
@@ -111,22 +98,7 @@ impl SkillDiagnostic {
             } => format!(
                 "skill field `{field}` has unsupported value `{value}`; expected: {allowed}"
             ),
-            Self::RemovedField { field } => {
-                if tool_policy::REMOVED_MCP_TOOLS_FIELDS.contains(&field.as_str()) {
-                    format!(
-                        "skill field `{field}` has been removed; {}",
-                        tool_policy::removed_mcp_tools_replacement()
-                    )
-                } else {
-                    format!(
-                        "skill field `{field}` has been removed; use `model-invocable` / `user-invocable` instead"
-                    )
-                }
-            }
-            Self::NonCanonicalField { field, canonical } => {
-                format!("skill field `{field}` is not canonical; use `{canonical}` instead")
-            }
-            Self::DeprecatedListFormTools => "skill `tools: [..]` list form is deprecated; it only grants the listed tools. Write a map (`read: allow`), and add `'*': deny` to allow only those tools".to_string(),
+            Self::RemovedField { field } => format!("skill field `{field}` has been removed"),
             Self::MalformedFrontmatter { message } => {
                 format!("skill frontmatter is malformed; raw fallback used: {message}")
             }
@@ -171,29 +143,6 @@ pub(crate) fn push_authored_skill_schema_diags(
 }
 
 /// Emit warnings for foreign tool-field spellings in raw skill frontmatter.
-pub(crate) fn push_non_canonical_tool_field_diags_legacy(
-    fm: &Frontmatter,
-    diags: &mut Vec<SkillDiagnostic>,
-) {
-    for &(field, canonical) in tool_policy::NON_CANONICAL_TOOL_FIELD_ALIASES {
-        if fm.get(field).is_some() {
-            diags.push(SkillDiagnostic::NonCanonicalField {
-                field: field.to_string(),
-                canonical,
-            });
-        }
-    }
-}
-
-pub(crate) fn push_non_canonical_tool_field_diags(
-    fm: &Frontmatter,
-    diags: &mut Vec<mars_schema::diagnostic::SchemaDiagnostic>,
-) {
-    let mut findings = Vec::new();
-    push_non_canonical_tool_field_diags_legacy(fm, &mut findings);
-    diags.extend(findings.iter().map(SkillDiagnostic::schema_diagnostic));
-}
-
 /// Forward parsed skill schema diagnostics into the pipeline collector.
 pub(crate) fn emit_skill_schema_diags(
     diag: &mut DiagnosticCollector,
@@ -261,35 +210,7 @@ fn emit_skill_schema_diags_from_source_with(
     }
 }
 
-fn push_skill_tool_invalid(
-    diags: &mut Vec<SkillDiagnostic>,
-    field: &str,
-    value: &str,
-    allowed: &'static str,
-) {
-    diags.push(SkillDiagnostic::InvalidFieldValue {
-        field: field.to_string(),
-        value: value.to_string(),
-        allowed,
-    });
-}
-
 /// Read a skill's `tools:` and `disallowed-tools:` (or its `disallowed_tools` spelling).
-pub(crate) fn parse_skill_tool_policy(
-    fm: &Frontmatter,
-    diags: &mut Vec<SkillDiagnostic>,
-) -> EffectiveToolPolicy {
-    let mut invalid = |field: &str, value: &str, allowed: &'static str| {
-        push_skill_tool_invalid(diags, field, value, allowed);
-    };
-    tool_policy::parse_tool_policy(
-        fm.get("tools"),
-        fm.get("disallowed-tools")
-            .or_else(|| fm.get("disallowed_tools")),
-        &mut invalid,
-    )
-}
-
 fn validate_required_string(field: &str, val: Option<&Value>, diags: &mut Vec<SkillDiagnostic>) {
     match val {
         Some(raw) if raw.is_string() => {}
@@ -336,29 +257,10 @@ pub fn parse_skill_profile_legacy(
     consumed_keys.push("description".to_string());
     let description_raw = fm.get("description");
     let description = description_raw.and_then(Value::as_str).map(str::to_owned);
-    consumed_keys.push("when_to_use".to_string());
-    let when_to_use_raw = fm.get("when_to_use");
-    let when_to_use = when_to_use_raw.and_then(Value::as_str).map(str::to_owned);
-    if let Some(raw) = when_to_use_raw
-        && !raw.is_string()
-    {
-        diags.push(SkillDiagnostic::InvalidFieldType {
-            field: "when_to_use".to_string(),
-            value: value_label(raw),
-            allowed: "string",
-        });
-    }
     consumed_keys.push(RESERVED_IMPORT_MARKER.to_string());
     if fm.has_frontmatter() {
         validate_required_string("name", name_raw, diags);
     }
-    consumed_keys.push("tools".to_string());
-    consumed_keys.push("disallowed-tools".to_string());
-    consumed_keys.push("disallowed_tools".to_string());
-    if tool_policy::is_list_form(fm.get("tools")) {
-        diags.push(SkillDiagnostic::DeprecatedListFormTools);
-    }
-    let tools = parse_skill_tool_policy(fm, diags);
     consumed_keys.push("license".to_string());
     let license_raw = fm.get("license");
     let license = license_raw.and_then(Value::as_str).map(str::to_owned);
@@ -372,43 +274,31 @@ pub fn parse_skill_profile_legacy(
         });
     }
     consumed_keys.push("type".to_string());
-    let skill_type_raw = fm.get("type");
-    let skill_type = skill_type_raw.and_then(Value::as_str).map(str::to_owned);
-    if let Some(raw) = skill_type_raw
-        && !raw.is_string()
-    {
-        diags.push(SkillDiagnostic::InvalidFieldType {
-            field: "type".to_string(),
-            value: value_label(raw),
-            allowed: "string",
-        });
+    for field in [
+        "when_to_use",
+        "tools",
+        "disallowed-tools",
+        "disallowed_tools",
+        "allowed-tools",
+        "allowed_tools",
+    ] {
+        consumed_keys.push(field.to_string());
     }
     consumed_keys.push("metadata".to_string());
     let metadata = fm.get("metadata").cloned();
+    let skill_type = metadata
+        .as_ref()
+        .and_then(Value::as_mapping)
+        .and_then(|mapping| mapping.get(Value::String("type".to_string())))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
 
-    let model_invocability = find_invocability_field(fm, "model-invocable");
-    let (model_invocable, had_model_invocable_field) = parse_invocability_bool(
-        "model-invocable",
-        model_invocability.as_ref().map(|f| &f.value),
-        diags,
-    );
-    if let Some(field) = model_invocability {
-        consumed_keys.push(field.consumed_key);
-    }
-    let user_invocability = find_invocability_field(fm, "user-invocable");
-    let (user_invocable, _) = parse_invocability_bool(
-        "user-invocable",
-        user_invocability.as_ref().map(|f| &f.value),
-        diags,
-    );
-    if let Some(field) = user_invocability {
-        consumed_keys.push(field.consumed_key);
-    }
-
-    for &(field, _) in tool_policy::NON_CANONICAL_TOOL_FIELD_ALIASES {
-        consumed_keys.push(field.to_string());
-    }
-    push_non_canonical_tool_field_diags_legacy(fm, diags);
+    let (model_invocable, had_model_invocable_field) =
+        parse_invocability_bool("model-invocable", fm.get("model-invocable"), diags);
+    consumed_keys.push("model-invocable".to_string());
+    let (user_invocable, _) =
+        parse_invocability_bool("user-invocable", fm.get("user-invocable"), diags);
+    consumed_keys.push("user-invocable".to_string());
 
     for field in [
         "invocation",
@@ -422,15 +312,6 @@ pub fn parse_skill_profile_legacy(
             });
         }
     }
-    for &field in tool_policy::REMOVED_MCP_TOOLS_FIELDS {
-        consumed_keys.push(field.to_string());
-        if fm.get(field).is_some() {
-            diags.push(SkillDiagnostic::RemovedField {
-                field: field.to_string(),
-            });
-        }
-    }
-
     // Passthrough = all frontmatter keys we didn't consume above.
     let passthrough_fields = fm
         .keys()
@@ -442,11 +323,9 @@ pub fn parse_skill_profile_legacy(
     SkillProfile {
         name,
         description,
-        when_to_use,
         skill_type,
         model_invocable,
         user_invocable,
-        tools,
         license,
         metadata,
         had_model_invocable_field,
@@ -511,19 +390,6 @@ mod tests {
                 SkillDiagnostic::RemovedField { field } if field == expected
             )
         })
-    }
-
-    #[test]
-    fn snake_case_model_invocable_not_in_passthrough() {
-        let (p, d, _) = parse("---\nname: a\ndescription: b\nmodel_invocable: false\n---\nbody");
-        assert!(d.is_empty());
-        assert!(!p.model_invocable);
-        assert!(p.had_model_invocable_field);
-        assert!(
-            !p.passthrough_fields
-                .iter()
-                .any(|(k, _)| k == "model_invocable")
-        );
     }
 
     #[test]
@@ -732,105 +598,10 @@ body",
     }
 
     #[test]
-    fn separator_tool_aliases_canonicalize() {
-        let (p, d, _) = parse(
-            "---\nname: a\ndescription: b\ntools:\n  ask_user: allow\n  bash(git *): allow\n---\nbody",
-        );
-
-        assert_eq!(p.tools.describe(), ["allow:ask_user", "allow:bash(git *)"]);
-        assert!(d.is_empty());
-    }
-
-    #[test]
-    fn tools_map_allow_and_deny_parse() {
-        let (p, d, _) = parse(
-            "---\nname: a\ndescription: b\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\ndisallowed-tools: [web_search]\n---\nbody",
-        );
-        assert!(d.is_empty());
-        assert_eq!(
-            p.tools.describe(),
-            ["allow:ask_user", "deny:bash(git *)", "deny:web_search"]
-        );
-    }
-
-    #[test]
-    fn unknown_pascal_case_tool_names_convert_to_snake_case() {
-        let (p, d, _) = parse(
-            "---
-name: a
-description: b
-tools:
-  customtool: allow
-  CustomTool: allow
----
-body",
-        );
-
-        assert_eq!(
-            p.tools.describe(),
-            ["allow:customtool", "allow:custom_tool"]
-        );
-        assert!(d.is_empty());
-    }
-
-    #[test]
-    fn type_parses_from_frontmatter() {
-        let (p, d, _) = parse("---\nname: a\ndescription: b\ntype: guardrail\n---\nbody");
-        assert!(d.is_empty());
-        assert_eq!(p.skill_type.as_deref(), Some("guardrail"));
-    }
-
-    #[test]
     fn type_absent_gives_none() {
         let (p, d, _) = parse("---\nname: a\ndescription: b\n---\nbody");
         assert!(d.is_empty());
         assert!(p.skill_type.is_none());
-    }
-
-    #[test]
-    fn non_string_type_emits_diagnostic() {
-        let (p, d, _) = parse("---\nname: a\ndescription: b\ntype: [a, b]\n---\nbody");
-        assert!(p.skill_type.is_none());
-        assert!(d.iter().any(|diag| matches!(
-            diag,
-            SkillDiagnostic::InvalidFieldType { field, allowed, .. }
-                if field == "type" && *allowed == "string"
-        )));
-    }
-
-    #[test]
-    fn disallowed_tools_defaults_empty() {
-        let (p, d, _) = parse("---\nname: a\ndescription: b\n---\nbody");
-        assert!(d.is_empty());
-        assert!(p.tools.rules.is_empty());
-    }
-
-    #[test]
-    fn disallowed_tools_parses_and_canonicalizes() {
-        let (p, d, _) =
-            parse("---\nname: a\ndescription: b\ndisallowed-tools: [Agent, web_search]\n---\nbody");
-        assert!(d.is_empty());
-        assert_eq!(p.tools.describe(), ["deny:agent", "deny:web_search"]);
-    }
-
-    #[test]
-    fn disallowed_tools_snake_key_parses_and_warns() {
-        let (p, d, _) = parse("---\nname: a\ndescription: b\ndisallowed_tools: [Write]\n---\nbody");
-        assert_eq!(p.tools.describe(), ["deny:write"]);
-        assert!(
-            d.iter().any(|diag| matches!(
-                diag,
-                SkillDiagnostic::NonCanonicalField { field, canonical }
-                    if field == "disallowed_tools" && *canonical == "disallowed-tools:"
-            )),
-            "expected non-canonical diagnostic: {d:?}"
-        );
-        assert!(
-            !p.passthrough_fields
-                .iter()
-                .any(|(k, _)| k == "disallowed_tools"),
-            "snake alias must be consumed, not passthrough"
-        );
     }
 
     #[test]
@@ -843,25 +614,5 @@ body",
             diags[0],
             SkillDiagnostic::MalformedFrontmatter { .. }
         ));
-    }
-
-    #[test]
-    fn canonical_allowed_tools_emits_diagnostic_and_not_passthrough() {
-        let (p, d, _) = parse("---\nname: a\ndescription: b\nallowed-tools: [Bash]\n---\nbody");
-        assert!(
-            d.iter().any(|diag| matches!(
-                diag,
-                SkillDiagnostic::NonCanonicalField { field, canonical }
-                    if field == "allowed-tools" && *canonical == "tools:"
-            )),
-            "expected non-canonical diagnostic: {d:?}"
-        );
-        assert!(!d.iter().any(SkillDiagnostic::is_error));
-        assert!(p.tools.rules.is_empty());
-        assert!(
-            !p.passthrough_fields
-                .iter()
-                .any(|(k, _)| k == "allowed-tools" || k == "allowed_tools")
-        );
     }
 }

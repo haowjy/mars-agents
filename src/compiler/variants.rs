@@ -633,48 +633,6 @@ mod tests {
     }
 
     #[test]
-    fn native_projection_lowers_base_frontmatter_with_variant_body() {
-        let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("source");
-        let dest = tmp.path().join("dest");
-        std::fs::create_dir_all(source.join("variants/codex")).unwrap();
-        std::fs::write(
-            source.join("SKILL.md"),
-            "---\nname: planning\ndescription: Base desc\nmodel-invocable: false\ntools:\n  Bash(git *): allow\n---\nBase body\n",
-        )
-        .unwrap();
-        std::fs::write(
-            source.join("variants/codex/SKILL.md"),
-            "---\nname: ignored\n---\nCodex body\n",
-        )
-        .unwrap();
-
-        let mut diag =
-            DiagnosticCollector::with_lossiness_mode(crate::diagnostic::LossinessMode::Surface);
-        project_skill_for_target(&source, &dest, Some("codex"), &mut diag, "planning").unwrap();
-
-        let out = std::fs::read_to_string(dest.join("SKILL.md")).unwrap();
-        assert!(out.contains("name: planning"));
-        assert!(!out.contains("allow_implicit_invocation"));
-        assert!(!out.contains("name: ignored"));
-        assert!(!out.contains("allowed-tools"));
-        assert!(out.ends_with("Codex body\n"));
-        // Dropped fields surface as one summarized lossiness warning per target.
-        let warnings: Vec<_> = diag
-            .drain()
-            .into_iter()
-            .filter(|d| d.code == "skill-field-dropped")
-            .collect();
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].message.contains("tools"));
-        assert!(!warnings[0].message.contains("model-invocable"));
-        assert!(warnings[0].message.contains(".codex"));
-
-        let openai_yaml = std::fs::read_to_string(dest.join("openai.yaml")).unwrap();
-        assert!(openai_yaml.contains("allow_implicit_invocation: false"));
-    }
-
-    #[test]
     fn full_fidelity_projection_keeps_variants() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("source");

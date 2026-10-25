@@ -260,7 +260,10 @@ fn install_item(
             if target.id.kind == ItemKind::Skill
                 && let Some(content) = &target.rewritten_content
             {
-                atomic_write(&dest.join("SKILL.md"), content.as_bytes())?;
+                crate::fs::atomic_write_preserving_permissions(
+                    &dest.join("SKILL.md"),
+                    content.as_bytes(),
+                )?;
             }
             // Skills are verified by hashing the installed directory content.
             crate::hash::compute_hash(dest, ItemKind::Skill).map(ContentHash::from)

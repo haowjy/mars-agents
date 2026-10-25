@@ -54,7 +54,7 @@ struct RawMcpServerDef {
     args: Vec<String>,
     #[serde(default)]
     env: indexmap::IndexMap<String, EnvRef>,
-    #[serde(default = "default_visibility")]
+    #[serde(default = "crate::compiler::visibility::default_visibility")]
     visibility: String,
     #[serde(default)]
     targets: Vec<String>,
@@ -73,10 +73,6 @@ pub struct McpServerDef {
     pub visibility: Visibility,
     /// Optional target filter — if absent, applies to all targets.
     pub targets: Vec<String>,
-}
-
-fn default_visibility() -> String {
-    "local".to_string()
 }
 
 /// A discovered MCP server item with provenance.

@@ -142,24 +142,15 @@ impl RenameIndex {
         graph: &ResolvedGraph,
         dep_precedence: &[SourceName],
         source_name: &SourceName,
-    ) -> (IndexMap<String, String>, IndexMap<String, String>) {
+        kind: ItemKind,
+    ) -> IndexMap<String, String> {
         let source_deps = ordered_agent_deps(graph, source_name, dep_precedence);
-        (
-            renames_for_agent(
-                target,
-                source_name,
-                &source_deps,
-                ItemKind::Skill,
-                &self.skill_renames,
-            ),
-            renames_for_agent(
-                target,
-                source_name,
-                &source_deps,
-                ItemKind::Agent,
-                &self.subagent_renames,
-            ),
-        )
+        let renames = match kind {
+            ItemKind::Skill => &self.skill_renames,
+            ItemKind::Agent => &self.subagent_renames,
+            _ => unreachable!("only agents and skills have rename references"),
+        };
+        renames_for_agent(target, source_name, &source_deps, kind, renames)
     }
 }
 
@@ -231,8 +222,10 @@ pub fn apply_renames(
             )
         };
 
-        let (skill_renames, subagent_renames) =
-            index.visible_renames(target, graph, dep_precedence, &source_name);
+        let skill_renames =
+            index.visible_renames(target, graph, dep_precedence, &source_name, ItemKind::Skill);
+        let subagent_renames =
+            index.visible_renames(target, graph, dep_precedence, &source_name, ItemKind::Agent);
         let rewrite_name = index
             .renamed_agents
             .contains(&(source_name.clone(), installed_name.clone()));

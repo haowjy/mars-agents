@@ -14,16 +14,28 @@ use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::ConfigEntry;
 use crate::types::SourceName;
 
+use super::PluginComponents;
 use super::PluginProfile;
 use super::model::resolve_claude_model;
-use super::references::{qualify_agent_frontmatter, qualify_body_references};
+use super::references::qualify_body_references;
 
-#[derive(Debug, Default)]
-pub(super) struct TreeSummary {
-    pub agents: usize,
-    pub skills: usize,
-    pub hooks: usize,
-    pub mcp_servers: usize,
+pub(super) struct TermSet {
+    terms: &'static [&'static str],
+    lowercase: Vec<String>,
+}
+
+impl TermSet {
+    pub(super) fn new(requires_meridian: bool) -> Self {
+        let terms: &'static [&'static str] = if requires_meridian {
+            &["mars sync", "mars add", ".mars/"]
+        } else {
+            &["meridian", "mars sync", "mars add", ".mars/"]
+        };
+        Self {
+            terms,
+            lowercase: terms.iter().map(|term| term.to_lowercase()).collect(),
+        }
+    }
 }
 
 pub(super) struct TreeInput<'a> {
@@ -38,13 +50,14 @@ pub(super) struct TreeInput<'a> {
     pub collision_renames: &'a [CollisionRename],
     pub dep_precedence: &'a [SourceName],
     pub profile: &'a PluginProfile,
+    pub terms: &'a TermSet,
 }
 
 pub(super) fn write_tree(
     root: &Path,
     input: &TreeInput<'_>,
     diag: &mut DiagnosticCollector,
-) -> Result<TreeSummary, MarsError> {
+) -> Result<PluginComponents, MarsError> {
     write_manifest(root, input.plugin_name, input.package)?;
 
     let installed_skills: IndexMap<String, String> = input
@@ -58,7 +71,7 @@ pub(super) fn write_tree(
         })
         .collect();
 
-    let mut summary = TreeSummary::default();
+    let mut summary = PluginComponents::default();
     let mut skipped_bootstrap = false;
     for item in input.target.items.values() {
         match item.id.kind {
@@ -92,7 +105,7 @@ pub(super) fn write_tree(
         warn_terms_in_tree(
             &destination,
             &format!("hooks/{}", hook.def.name),
-            input.package.requires_meridian.is_some(),
+            input.terms,
             diag,
         )?;
     }
@@ -107,7 +120,7 @@ pub(super) fn write_tree(
         warn_terms_in_content(
             &format!("mcp/{}/mcp.toml", item.name),
             &content,
-            input.package.requires_meridian.is_some(),
+            input.terms,
             diag,
         );
     }
@@ -145,7 +158,7 @@ fn write_agent(
     warn_terms_in_content(
         &format!("agents/{}.md", item.id.name),
         &authored_content,
-        input.package.requires_meridian.is_some(),
+        input.terms,
         diag,
     );
     let content = item.rewritten_content.clone().unwrap_or(authored_content);
@@ -185,7 +198,9 @@ fn write_agent(
         ))
     })?;
     let lowered = apply_plugin_agent_policy(&lowered, &frontmatter, item, diag)?;
-    let qualified = qualify_agent_frontmatter(&lowered, installed_skills)?;
+    let qualified = crate::frontmatter::rewrite_content_skills(&lowered, installed_skills)
+        .map_err(|error| invalid_item("agent", item, error.to_string()))?
+        .unwrap_or(lowered);
     let body_refs = body_reference_map(item, input, installed_skills);
     let qualified = qualify_body_references(&qualified, &body_refs)?;
 
@@ -268,13 +283,16 @@ fn write_skill(
         item.id.name.as_str(),
     )?;
     if let Some(content) = &item.rewritten_content {
-        crate::fs::atomic_write(&destination.join("SKILL.md"), content.as_bytes())?;
+        crate::fs::atomic_write_preserving_permissions(
+            &destination.join("SKILL.md"),
+            content.as_bytes(),
+        )?;
     }
 
     warn_terms_in_tree(
         &destination,
         &format!("skills/{}", item.id.name),
-        input.package.requires_meridian.is_some(),
+        input.terms,
         diag,
     )?;
 
@@ -309,11 +327,12 @@ fn body_reference_map(
     input: &TreeInput<'_>,
     installed_skills: &IndexMap<String, String>,
 ) -> IndexMap<String, String> {
-    let (visible_skill_renames, _) = input.rename_index.visible_renames(
+    let visible_skill_renames = input.rename_index.visible_renames(
         input.target,
         input.graph,
         input.dep_precedence,
         &item.source_name,
+        ItemKind::Skill,
     );
     let mut references = installed_skills.clone();
     for (original, installed) in visible_skill_renames {
@@ -428,7 +447,7 @@ fn warn_relative_mcp_args(
     }
 }
 
-pub(super) fn emit_codex_warnings(summary: &TreeSummary, diag: &mut DiagnosticCollector) {
+pub(super) fn emit_codex_warnings(summary: &PluginComponents, diag: &mut DiagnosticCollector) {
     if summary.agents > 0 {
         diag.warn(
             "plugin-codex-agents-dropped",
@@ -452,16 +471,9 @@ pub(super) fn emit_codex_warnings(summary: &TreeSummary, diag: &mut DiagnosticCo
 fn warn_terms_in_tree(
     root: &Path,
     display_prefix: &str,
-    requires_meridian: bool,
+    terms: &TermSet,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let terms: &[&str] = if requires_meridian {
-        &["mars sync", "mars add", ".mars/"]
-    } else {
-        &["meridian", "mars sync", "mars add", ".mars/"]
-    };
-    let terms_lower: Vec<String> = terms.iter().map(|term| term.to_lowercase()).collect();
-
     let mut files: Vec<PathBuf> = walkdir::WalkDir::new(root)
         .into_iter()
         .filter_map(Result::ok)
@@ -481,7 +493,7 @@ fn warn_terms_in_tree(
         } else {
             format!("{display_prefix}/{relative}")
         };
-        warn_terms_in_content_with_terms(&display, &content, terms, &terms_lower, diag);
+        warn_terms_in_content(&display, &content, terms, diag);
     }
     Ok(())
 }
@@ -489,28 +501,13 @@ fn warn_terms_in_tree(
 fn warn_terms_in_content(
     display_path: &str,
     content: &str,
-    requires_meridian: bool,
-    diag: &mut DiagnosticCollector,
-) {
-    let terms: &[&str] = if requires_meridian {
-        &["mars sync", "mars add", ".mars/"]
-    } else {
-        &["meridian", "mars sync", "mars add", ".mars/"]
-    };
-    let terms_lower: Vec<String> = terms.iter().map(|term| term.to_lowercase()).collect();
-    warn_terms_in_content_with_terms(display_path, content, terms, &terms_lower, diag);
-}
-
-fn warn_terms_in_content_with_terms(
-    display_path: &str,
-    content: &str,
-    terms: &[&str],
-    terms_lower: &[String],
+    terms: &TermSet,
     diag: &mut DiagnosticCollector,
 ) {
     for (index, line) in content.lines().enumerate() {
         let lower = line.to_lowercase();
-        if let Some((position, _)) = terms_lower
+        if let Some((position, _)) = terms
+            .lowercase
             .iter()
             .enumerate()
             .find(|(_, term)| lower.contains(term.as_str()))
@@ -520,7 +517,7 @@ fn warn_terms_in_content_with_terms(
                 format!(
                     "{display_path}:{} mentions {:?}",
                     index + 1,
-                    terms[position]
+                    terms.terms[position]
                 ),
             );
         }

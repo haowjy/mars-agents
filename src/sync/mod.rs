@@ -506,6 +506,7 @@ pub(crate) struct PreparedTarget {
     pub rename_index: rewrite::RenameIndex,
     pub explicit_renames: Vec<target::ExplicitRename>,
     pub collision_renames: Vec<target::CollisionRename>,
+    pub dep_precedence: Vec<SourceName>,
     pub warnings: Vec<crate::validate::ValidationWarning>,
 }
 
@@ -526,8 +527,8 @@ pub(crate) fn prepare_target_state(
     extend(&mut target, diag)?;
 
     let rename_index = rewrite::RenameIndex::new(&explicit_renames, &collision_renames, &target);
+    let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
     if !rename_index.is_empty() {
-        let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
         for warning in rewrite::apply_renames(&mut target, &rename_index, graph, &dep_precedence)? {
             diag.warn("rewrite-warning", warning);
         }
@@ -541,6 +542,7 @@ pub(crate) fn prepare_target_state(
         rename_index,
         explicit_renames,
         collision_renames,
+        dep_precedence,
         warnings,
     })
 }

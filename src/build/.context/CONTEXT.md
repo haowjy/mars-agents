@@ -9,7 +9,9 @@ harness plugin installers.
 
 `build plugin` is a publish operation, not a project compilation. It constructs an implicit
 consumer over `PublishLens`, resolves before staging (so relative package dependencies retain
-their declared base), and reuses sync's `TargetState`/`RenameIndex` to flatten the graph. It
+their declared base), stages through resolve's shared rooted-package operation, and reuses sync's
+`TargetState`/`RenameIndex` to flatten the graph. `PreparedTarget` carries the dependency
+precedence used during rename application so tree writing cannot reconstruct a different order. It
 must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configuration, model
 caches, or installed harnesses. `plugin::output::replace_owned_tree` alone owns destination
 replacement and sentinel publication.

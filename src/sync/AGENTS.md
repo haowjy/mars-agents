@@ -106,7 +106,7 @@ Plugin builds and sync both use `prepare_target_state` for graph collection, opt
 extension, rename application, and validation. MCP discovery warnings enter the diagnostic
 collector where discovery fails rather than riding `TargetState`, so every caller sees them.
 `RenameIndex::visible_renames` exposes the same own-package-first, then
-dependency-declaration-order view for frontmatter and body references; callers must not
+dependency-declaration-order view per item kind for frontmatter and body references; callers must not
 reconstruct that precedence. Renamed skill and agent frontmatter carries the installed name;
 the authored source tree remains untouched and the install layer applies the in-memory rewrite.
 

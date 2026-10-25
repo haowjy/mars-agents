@@ -1041,9 +1041,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
                     &agent.canonical_dest_path,
                 )
             }),
-            model_router
-                .as_deref_mut()
-                .expect("native model router required for native compile"),
+            model_router.expect("native model router required for native compile"),
             diag,
         ),
     };

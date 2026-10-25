@@ -1,0 +1,5 @@
+# Discovery TODO
+
+- Collapse the `*_with_hooks` entry points by making hook discovery an injected step. The current
+  split preserves the public no-hook discovery API while sync supplies already strict-parsed hook
+  items, avoiding a second lenient `hook.toml` parse.

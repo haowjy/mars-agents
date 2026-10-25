@@ -1,7 +1,7 @@
 //! Build one installable Claude-format plugin from a package's publish graph.
 
 mod model;
-pub(crate) mod output;
+mod output;
 mod references;
 mod tree;
 
@@ -36,7 +36,7 @@ pub struct PluginBuildReport {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct PluginComponents {
     pub agents: usize,
     pub skills: usize,
@@ -71,7 +71,7 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
             path: request.package_root.clone(),
             source,
         })?;
-    let out_dir = absolute_from_current_dir(&request.out_dir)?;
+    let out_dir = std::path::absolute(&request.out_dir)?;
 
     let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
     let lens = PublishLens::load(&package_root, &mut diag)?;
@@ -117,8 +117,8 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         &LocalConfig::default(),
         &mut diag,
     );
-    let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
     let profile = PluginProfile::claude();
+    let terms = tree::TermSet::new(package.requires_meridian.is_some());
     let tree_input = tree::TreeInput {
         plugin_name: &plugin_name,
         package,
@@ -129,42 +129,35 @@ pub fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildReport, M
         target: &prepared_target.target,
         rename_index: &prepared_target.rename_index,
         collision_renames: &prepared_target.collision_renames,
-        dep_precedence: &dep_precedence,
+        dep_precedence: &prepared_target.dep_precedence,
         profile: &profile,
+        terms: &terms,
     };
-    let mut summary = None;
-    let mut diagnostics = None;
-    output::replace_owned_tree(&out_dir, |staging| {
+    let (components, diagnostics) = output::replace_owned_tree(&out_dir, |staging| {
         let inputs_hash = plugin_inputs_hash(&package_root)?;
         let built = tree::write_tree(staging, &tree_input, &mut diag)?;
         tree::emit_codex_warnings(&built, &mut diag);
         let collected = diag.drain();
         fail_on_diagnostic_errors(&collected)?;
-        summary = Some(built);
-        diagnostics = Some(collected);
-        Ok(crate::plugin_metadata::PluginSentinel {
-            schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
-            mars_version: env!("CARGO_PKG_VERSION").to_string(),
-            plugin_name: plugin_name.clone(),
-            version: package.version.clone(),
-            inputs_hash,
-            dependencies: resolved_dependency_identities(&graph, &root_source),
-            files: std::collections::BTreeMap::new(),
-        })
+        Ok((
+            crate::plugin_metadata::PluginSentinel {
+                schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
+                mars_version: env!("CARGO_PKG_VERSION").to_string(),
+                plugin_name: plugin_name.clone(),
+                version: package.version.clone(),
+                inputs_hash,
+                dependencies: resolved_dependency_identities(&graph, &root_source),
+                files: std::collections::BTreeMap::new(),
+            },
+            (built, collected),
+        ))
     })?;
-    let summary = summary.expect("plugin writer completed before publication");
-    let diagnostics = diagnostics.expect("plugin writer collected diagnostics");
 
     Ok(PluginBuildReport {
         plugin_name,
         version: package.version.clone(),
         output: out_dir,
-        components: PluginComponents {
-            agents: summary.agents,
-            skills: summary.skills,
-            hooks: summary.hooks,
-            mcp_servers: summary.mcp_servers,
-        },
+        components,
         diagnostics,
     })
 }
@@ -219,22 +212,11 @@ fn stage_graph(
             .nodes
             .get_mut(&source_name)
             .expect("resolved graph order names an existing node");
-        let dependency = effective.dependencies.get(&source_name);
-        let dialect = crate::dialect::Dialect::resolve(
-            dependency.and_then(|entry| entry.dialect),
-            &node.rooted_ref.package_root,
-        );
-        let empty_renames = RenameMap::new();
-        let renames = dependency
-            .map(|entry| &entry.rename)
-            .unwrap_or(&empty_renames);
-        let staged = crate::staging::stage_rooted_source(
+        let staged = crate::resolve::stage_rooted_package(
             &source_name,
             node.rooted_ref.clone(),
-            crate::staging::RootedStageOptions { dialect },
-            &effective.skills,
-            renames,
-            staging_root,
+            effective,
+            Some(staging_root),
             diag,
         )?;
         node.rooted_ref = staged.rooted;
@@ -475,12 +457,4 @@ fn resolved_dependency_identities(
         );
     }
     dependencies
-}
-
-fn absolute_from_current_dir(path: &Path) -> Result<PathBuf, MarsError> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(std::env::current_dir()?.join(path))
-    }
 }

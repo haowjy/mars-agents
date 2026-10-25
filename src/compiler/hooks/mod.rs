@@ -28,15 +28,11 @@ pub struct HookTarget {
 struct RawHookDef {
     #[serde(default)]
     name: Option<String>,
-    #[serde(default = "default_visibility")]
+    #[serde(default = "crate::compiler::visibility::default_visibility")]
     visibility: String,
     targets: BTreeMap<String, HookTarget>,
     #[serde(default)]
     order: i32,
-}
-
-fn default_visibility() -> String {
-    "local".to_string()
 }
 
 #[derive(Debug, Clone)]

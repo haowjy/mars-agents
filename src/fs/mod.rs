@@ -41,6 +41,19 @@ pub fn atomic_write(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
     Ok(())
 }
 
+/// Atomically replace a copied file's bytes without changing its permissions.
+pub(crate) fn atomic_write_preserving_permissions(
+    dest: &Path,
+    content: &[u8],
+) -> Result<(), MarsError> {
+    let permissions = fs::metadata(dest)?.permissions();
+    #[cfg(windows)]
+    clear_readonly(dest)?;
+    atomic_write(dest, content)?;
+    fs::set_permissions(dest, permissions)?;
+    Ok(())
+}
+
 /// Atomically write a regular file unless its bytes are already identical.
 ///
 /// Returns `true` when a write occurred. Symlinks and non-regular destinations

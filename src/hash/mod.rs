@@ -98,51 +98,15 @@ pub(crate) fn strict_file_hashes(
     root: &Path,
     excluded_top_level: &[&str],
 ) -> Result<std::collections::BTreeMap<String, String>, MarsError> {
-    let mut entries = std::collections::BTreeMap::new();
-    collect_strict_file_hashes(root, root, excluded_top_level, &mut entries)?;
-    Ok(entries)
-}
-
-fn collect_strict_file_hashes(
-    root: &Path,
-    current: &Path,
-    excluded_top_level: &[&str],
-    entries: &mut std::collections::BTreeMap<String, String>,
-) -> Result<(), MarsError> {
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        let relative = path.strip_prefix(root).expect("path is always under root");
-        if is_excluded_top_level(relative, excluded_top_level) {
-            continue;
-        }
-        if file_type.is_symlink() {
-            return Err(MarsError::InvalidRequest {
-                message: format!("directory tree cannot contain symlinks: {}", path.display()),
-            });
-        }
-        if file_type.is_dir() {
-            collect_strict_file_hashes(root, &path, excluded_top_level, entries)?;
-            continue;
-        }
-        if !file_type.is_file() {
-            return Err(MarsError::InvalidRequest {
+    let snapshot =
+        crate::platform::fs::strict_directory_tree_snapshot_filtered(root, excluded_top_level)?
+            .ok_or_else(|| MarsError::InvalidRequest {
                 message: format!(
-                    "directory tree contains an unsupported filesystem entry: {}",
-                    path.display()
+                    "directory tree must contain only directories and regular files: {}",
+                    root.display()
                 ),
-            });
-        }
-        let relative = portable_relative(root, &path).ok_or_else(|| MarsError::InvalidRequest {
-            message: format!(
-                "directory tree path must be valid Unicode: {}",
-                path.display()
-            ),
-        })?;
-        entries.insert(relative, hash_bytes(&fs::read(path)?));
-    }
-    Ok(())
+            })?;
+    Ok(snapshot.file_hash_manifest_entries().into_iter().collect())
 }
 
 pub(crate) fn portable_relative(root: &Path, path: &Path) -> Option<String> {

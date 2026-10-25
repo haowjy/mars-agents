@@ -13,6 +13,9 @@ const SELF_SOURCE: &str = "_self";
 
 /// Resolve MCP name collisions for a single target root.
 ///
+/// `items` must already be filtered for `target_root`; target selection belongs
+/// to `TargetState`, while this module owns only collision precedence.
+///
 /// Precedence: shallower package > earlier `decl_order`; equal graph position
 /// breaks alphabetically by source package name.
 pub fn resolve_mcp_collisions_for_target<'a>(
@@ -21,10 +24,7 @@ pub fn resolve_mcp_collisions_for_target<'a>(
     diag: &mut DiagnosticCollector,
 ) -> Vec<&'a ParsedMcpItem> {
     let mut groups: BTreeMap<&str, Vec<&ParsedMcpItem>> = BTreeMap::new();
-    for item in items
-        .into_iter()
-        .filter(|item| mcp_applies_to_target(item, target_root))
-    {
+    for item in items {
         groups.entry(item.name.as_str()).or_default().push(item);
     }
 
@@ -71,10 +71,6 @@ fn resolve_mcp_group<'a>(
         );
     }
     winner
-}
-
-fn mcp_applies_to_target(item: &ParsedMcpItem, target_root: &str) -> bool {
-    item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == target_root)
 }
 
 #[cfg(test)]
@@ -204,8 +200,20 @@ mod tests {
         );
         let mut diag = DiagnosticCollector::new();
 
-        let claude_resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
-        let codex_resolved = resolve_mcp_collisions_for_target(&items, ".codex", &mut diag);
+        let claude_resolved = resolve_mcp_collisions_for_target(
+            items.iter().filter(|item| {
+                item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == ".claude")
+            }),
+            ".claude",
+            &mut diag,
+        );
+        let codex_resolved = resolve_mcp_collisions_for_target(
+            items.iter().filter(|item| {
+                item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == ".codex")
+            }),
+            ".codex",
+            &mut diag,
+        );
 
         assert_eq!(claude_resolved.len(), 1);
         assert_eq!(claude_resolved[0].source_name, "claude");

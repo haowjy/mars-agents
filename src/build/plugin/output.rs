@@ -9,10 +9,10 @@ use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 ///
 /// `write` receives an empty sibling staging directory. The existing output is
 /// not moved until `write`, hashing, and the sentinel write have all succeeded.
-pub(super) fn replace_owned_tree(
+pub(super) fn replace_owned_tree<T>(
     out_dir: &Path,
-    write: impl FnOnce(&Path) -> Result<PluginSentinel, MarsError>,
-) -> Result<(), MarsError> {
+    write: impl FnOnce(&Path) -> Result<(PluginSentinel, T), MarsError>,
+) -> Result<T, MarsError> {
     let paths = OutputPaths::new(out_dir)?;
     let _lock = crate::fs::FileLock::acquire(&paths.lock)?;
 
@@ -29,40 +29,36 @@ pub(super) fn replace_owned_tree(
         .map_err(|source| io_error("create plugin staging directory", &paths.new, source))?;
 
     let staged = (|| {
-        let mut stored = write(&paths.new)?;
+        let (mut stored, value) = write(&paths.new)?;
         validate_staging_tree(&paths.new)?;
 
         let files = compute_file_hashes(&paths.new)?;
         stored.files = files;
         crate::plugin_metadata::validate(&stored, &paths.new.join(SENTINEL_FILE))?;
-        write_sentinel(&paths.new, &stored)
+        write_sentinel(&paths.new, &stored)?;
+        Ok(value)
     })();
 
-    if let Err(build_error) = staged {
-        return match crate::platform::fs::safe_remove(&paths.new) {
-            Ok(()) => Err(build_error),
-            Err(cleanup_error) => Err(MarsError::Internal(format!(
-                "plugin tree build failed: {build_error}; staging cleanup also failed: {cleanup_error}"
-            ))),
-        };
-    }
+    let value = match staged {
+        Ok(value) => value,
+        Err(build_error) => {
+            return match crate::platform::fs::safe_remove(&paths.new) {
+                Ok(()) => Err(build_error),
+                Err(cleanup_error) => Err(MarsError::Internal(format!(
+                    "plugin tree build failed: {build_error}; staging cleanup also failed: {cleanup_error}"
+                ))),
+            };
+        }
+    };
 
-    publish_staged_tree(&paths)
+    publish_staged_tree(&paths)?;
+    Ok(value)
 }
 
 /// Recompute every regular output file hash except the sentinel.
-pub(crate) fn compute_file_hashes(
+pub(super) fn compute_file_hashes(
     out_dir: &Path,
 ) -> Result<std::collections::BTreeMap<String, String>, MarsError> {
-    let metadata = fs::symlink_metadata(out_dir)
-        .map_err(|source| io_error("inspect plugin tree", out_dir, source))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(invalid(format!(
-            "plugin tree must be a directory, not {}",
-            out_dir.display()
-        )));
-    }
-
     crate::hash::strict_file_hashes(out_dir, &[SENTINEL_FILE])
 }
 

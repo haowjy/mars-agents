@@ -46,7 +46,9 @@ sources and versions appear in the final graph.
 2. Calls `staging::stage_rooted_source`, which lifts foreign frontmatter to canonical form and writes the staged tree to `<staging_root>/<source-name>/<dialect>/`
 3. Repoints `package_root` to the staged tree
 
-All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged.
+All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged. Plugin builds reuse the same
+`stage_rooted_package` operation only after graph resolution, so the root package's relative path
+dependencies are interpreted against its authored checkout rather than its staged copy.
 
 `ResolveOptions.source_overrides` applies project-local path overrides by source
 name to both direct and manifest-discovered transitive dependencies. Declared

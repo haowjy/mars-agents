@@ -2,16 +2,6 @@ use indexmap::IndexMap;
 
 use crate::error::MarsError;
 
-/// Qualify skill references in an already-lowered agent document.
-pub(super) fn qualify_agent_frontmatter(
-    content: &str,
-    installed_skills: &IndexMap<String, String>,
-) -> Result<String, MarsError> {
-    crate::frontmatter::rewrite_content_skills(content, installed_skills)
-        .map(|rewritten| rewritten.unwrap_or_else(|| content.to_string()))
-        .map_err(|error| invalid_reference_error("agent frontmatter", error))
-}
-
 /// Rewrite shipped `/skill` references in prose while leaving fenced code alone.
 ///
 /// A slash starts a reference only at the beginning of a line or after

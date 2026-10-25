@@ -97,14 +97,12 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     diagnostics.extend(lossiness_diagnostics_for_check(&lens, args.verbose)?);
     let mut surfaced = Vec::new();
     for diagnostic in diagnostics {
-        match diagnostic.level {
-            crate::diagnostic::DiagnosticLevel::Error => report
+        if diagnostic.level == crate::diagnostic::DiagnosticLevel::Error {
+            report
                 .errors
-                .push(format!("[{}] {}", diagnostic.code, diagnostic.message)),
-            crate::diagnostic::DiagnosticLevel::Warning => report
-                .warnings
-                .push(format!("[{}] {}", diagnostic.code, diagnostic.message)),
-            crate::diagnostic::DiagnosticLevel::Info => surfaced.push(diagnostic),
+                .push(format!("[{}] {}", diagnostic.code, diagnostic.message));
+        } else {
+            surfaced.push(diagnostic);
         }
     }
     let diagnostics = surfaced;

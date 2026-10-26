@@ -14,7 +14,6 @@ use serde_json::Value;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::ItemId;
-use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::ItemName;
 use mars_schema::item::ItemKind;
 
@@ -31,8 +30,6 @@ pub(crate) const SOURCE_MANIFEST_PATHS: &[&str] = &[
 // over-depth convention dirs silently so arbitrary repo trees do not become
 // unbounded discovery surfaces.
 const MAX_DISCOVERY_WALK_DEPTH: usize = 5;
-const AGENTS_DIR_NAME: &str = "agents";
-const SKILLS_DIR_NAME: &str = "skills";
 const HOOKS_DIR_NAME: &str = "hooks";
 const BOOTSTRAP_DIR_NAME: &str = "bootstrap";
 const MANIFEST_BOOTSTRAP_KEYS: &[&str] = &["bootstrapDocs", "bootstrap_docs"];
@@ -55,152 +52,6 @@ struct LayeredItem {
     layer: usize,
 }
 
-/// Discover items by conventional mars package layout, plus bootstrap docs a plugin manifest
-/// declares.
-pub fn discover_source(
-    tree_path: &Path,
-    fallback_name: Option<&str>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<DiscoveredItem>, MarsError> {
-    discover_source_with_hooks(tree_path, fallback_name, None, diag)
-}
-
-/// Discover a rooted source while reusing hook definitions parsed by the compiler.
-pub(crate) fn discover_source_with_hooks(
-    tree_path: &Path,
-    fallback_name: Option<&str>,
-    parsed_hooks: Option<&[DiscoveredItem]>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<DiscoveredItem>, MarsError> {
-    let label = fallback_name.unwrap_or("unknown-source");
-    let mut items = discover_convention_items(tree_path, fallback_name, parsed_hooks, diag)?;
-    items.append(&mut declared_bootstrap_items(tree_path, label, diag)?);
-    finalize_items(label, items)
-}
-
-fn discover_convention_items(
-    package_root: &Path,
-    source_name: Option<&str>,
-    parsed_hooks: Option<&[DiscoveredItem]>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<DiscoveredItem>, MarsError> {
-    if !package_root.is_dir() {
-        return Ok(Vec::new());
-    }
-    if generated_plugin_tree(package_root, diag) {
-        return Ok(Vec::new());
-    }
-
-    let mut items = Vec::new();
-    let mut scratch = Vec::new();
-    let mut visited_agents = HashSet::new();
-    let mut visited_skills = HashSet::new();
-    let mut visited_hooks = HashSet::new();
-    let mut visited_bootstrap = HashSet::new();
-    let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
-    let configured_plugin_dir = configured_plugin_dir(package_root);
-
-    while let Some((base_dir, depth)) = queue.pop_front() {
-        let base_rel = if base_dir == package_root {
-            PathBuf::new()
-        } else {
-            relative_to(package_root, &base_dir)?
-        };
-
-        match base_dir.file_name().and_then(|name| name.to_str()) {
-            Some(AGENTS_DIR_NAME) => {
-                scan_agent_dir(package_root, &base_rel, &mut scratch, &mut visited_agents)?;
-                push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
-            }
-            Some(SKILLS_DIR_NAME) => {
-                scan_skill_dir(
-                    package_root,
-                    &base_rel,
-                    &mut scratch,
-                    &mut visited_skills,
-                    diag,
-                )?;
-                push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
-            }
-            Some(HOOKS_DIR_NAME) => {
-                if base_rel == Path::new(HOOKS_DIR_NAME) {
-                    if let Some(parsed_hooks) = parsed_hooks {
-                        scratch.extend_from_slice(parsed_hooks);
-                    } else {
-                        scan_hook_dir(
-                            package_root,
-                            &base_rel,
-                            &mut scratch,
-                            &mut visited_hooks,
-                            diag,
-                        )?;
-                    }
-                }
-                push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
-            }
-            Some(BOOTSTRAP_DIR_NAME) => {
-                scan_bootstrap_dir(
-                    package_root,
-                    &base_rel,
-                    &mut scratch,
-                    &mut visited_bootstrap,
-                    diag,
-                )?;
-                push_layered_items(&mut items, &mut scratch, convention_layer(&base_rel));
-            }
-            _ => {}
-        }
-
-        if depth == MAX_DISCOVERY_WALK_DEPTH {
-            continue;
-        }
-
-        for path in read_dir_paths_sorted(&base_dir)? {
-            if !path.is_dir() {
-                continue;
-            }
-            if configured_plugin_tree(configured_plugin_dir.as_deref(), &path) {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            // Hidden directories are generated/cache/control surfaces by convention.
-            // Consumers can still import a hidden foreign layout explicitly by rooting
-            // the package at that directory with `subpath = ".claude"`.
-            if name.starts_with('.') || RECURSIVE_SKIP_DIRS.contains(&name) {
-                continue;
-            }
-            if generated_plugin_tree(&path, diag) {
-                continue;
-            }
-            queue.push_back((path, depth + 1));
-        }
-    }
-
-    let found_agent_or_skill_before_grounding = items
-        .iter()
-        .any(|item| matches!(item.item.id.kind, ItemKind::Agent | ItemKind::Skill));
-
-    items = ground_items_to_shallowest_layer(items);
-
-    if !found_agent_or_skill_before_grounding && package_root.join("SKILL.md").is_file() {
-        let name = flat_root_skill_source_name(package_root, source_name);
-        items.push(LayeredItem {
-            item: DiscoveredItem {
-                id: ItemId {
-                    kind: ItemKind::Skill,
-                    name: ItemName::from(name),
-                },
-                source_path: PathBuf::from("."),
-            },
-            layer: 0,
-        });
-    }
-
-    Ok(items.into_iter().map(|layered| layered.item).collect())
-}
-
 fn push_layered_items(
     items: &mut Vec<LayeredItem>,
     scratch: &mut Vec<DiscoveredItem>,
@@ -211,37 +62,6 @@ fn push_layered_items(
 
 fn convention_layer(relative_root: &Path) -> usize {
     relative_root.components().count()
-}
-
-fn scan_skill_dir(
-    package_root: &Path,
-    relative_root: &Path,
-    items: &mut Vec<DiscoveredItem>,
-    visited: &mut HashSet<PathBuf>,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    let dir = package_root.join(relative_root);
-    if !dir.is_dir() {
-        return Ok(());
-    }
-
-    for path in read_dir_paths_sorted(&dir)? {
-        if !path.is_dir() {
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(|name| name.to_str())
-            && name.starts_with('.')
-        {
-            continue;
-        }
-        if generated_plugin_tree(&path, diag) {
-            continue;
-        }
-        let rel = relative_to(package_root, &path)?;
-        register_skill_dir(package_root, &rel, items, visited)?;
-    }
-
-    Ok(())
 }
 
 fn scan_hook_dir(
@@ -322,31 +142,6 @@ pub(crate) fn discover_hook_directories(
     Ok(hooks)
 }
 
-fn scan_agent_dir(
-    package_root: &Path,
-    relative_root: &Path,
-    items: &mut Vec<DiscoveredItem>,
-    visited: &mut HashSet<PathBuf>,
-) -> Result<(), MarsError> {
-    let dir = package_root.join(relative_root);
-    if !dir.is_dir() {
-        return Ok(());
-    }
-
-    for path in read_dir_paths_sorted(&dir)? {
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-            continue;
-        }
-        let rel = relative_to(package_root, &path)?;
-        register_agent_file(&rel, items, visited);
-    }
-
-    Ok(())
-}
-
 fn scan_bootstrap_dir(
     package_root: &Path,
     relative_root: &Path,
@@ -404,55 +199,6 @@ fn scan_declared_bootstrap_path(
         scan_bootstrap_dir(package_root, declared_path, items, &mut visited, diag)?;
     }
     Ok(())
-}
-
-fn register_skill_dir(
-    package_root: &Path,
-    relative_path: &Path,
-    items: &mut Vec<DiscoveredItem>,
-    visited: &mut HashSet<PathBuf>,
-) -> Result<(), MarsError> {
-    let normalized = normalize_relative_path(relative_path);
-    if !visited.insert(normalized.clone()) {
-        return Ok(());
-    }
-    if !package_root.join(&normalized).join("SKILL.md").is_file() {
-        return Ok(());
-    }
-    let name = normalized
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    items.push(DiscoveredItem {
-        id: ItemId {
-            kind: ItemKind::Skill,
-            name: ItemName::from(name.to_string()),
-        },
-        source_path: normalized,
-    });
-    Ok(())
-}
-
-fn register_agent_file(
-    relative_path: &Path,
-    items: &mut Vec<DiscoveredItem>,
-    visited: &mut HashSet<PathBuf>,
-) {
-    let normalized = normalize_relative_path(relative_path);
-    if !visited.insert(normalized.clone()) {
-        return;
-    }
-    let name = normalized
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    items.push(DiscoveredItem {
-        id: ItemId {
-            kind: ItemKind::Agent,
-            name: ItemName::from(name.to_string()),
-        },
-        source_path: normalized,
-    });
 }
 
 fn register_bootstrap_doc(
@@ -563,26 +309,76 @@ pub(crate) fn discover_bootstrap_surfaces(
     finalize_items("unknown-source", items)
 }
 
-/// Discover the package item kinds whose schemas remain binary-owned.
-pub(crate) fn discover_binary_source(
+/// Discover the item kinds `mars-schema` does not own: hooks and bootstrap documents. Agents and
+/// skills come from `Prepared` (see [`package_items`]); nothing here selects them. `parsed_hooks`
+/// are hook definitions the compiler already read strictly.
+pub(crate) fn discover_binary_owned_items(
     package_root: &Path,
     source_name: Option<&str>,
+    parsed_hooks: Option<&[DiscoveredItem]>,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
     if generated_plugin_tree(package_root, diag) {
         return Ok(Vec::new());
     }
     let mut items = discover_bootstrap_surfaces(package_root, diag)?;
-    let mut visited_hooks = HashSet::new();
-    let mut hooks = Vec::new();
-    scan_hook_dir(
-        package_root,
-        Path::new(HOOKS_DIR_NAME),
-        &mut hooks,
-        &mut visited_hooks,
-        diag,
-    )?;
-    items.extend(hooks);
+    match parsed_hooks {
+        Some(parsed) => items.extend_from_slice(parsed),
+        None => {
+            let mut visited_hooks = HashSet::new();
+            scan_hook_dir(
+                package_root,
+                Path::new(HOOKS_DIR_NAME),
+                &mut items,
+                &mut visited_hooks,
+                diag,
+            )?;
+        }
+    }
+    finalize_items(source_name.unwrap_or("unknown-source"), items)
+}
+
+/// The item for a prepared Agent or skill, located at `path`: the definition's output path in
+/// the materialized layout, or its source path in the authored one.
+pub(crate) fn definition_item(
+    definition: &mars_schema::prepare::PreparedDefinition,
+    path: &str,
+) -> DiscoveredItem {
+    let (kind, source_path) = match definition.kind {
+        mars_schema::upgrade::DefinitionKind::Agent => (ItemKind::Agent, PathBuf::from(path)),
+        mars_schema::upgrade::DefinitionKind::Skill => (
+            ItemKind::Skill,
+            match Path::new(path).parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+                _ => PathBuf::from("."),
+            },
+        ),
+    };
+    DiscoveredItem {
+        id: ItemId {
+            kind,
+            name: definition.slug.clone().into(),
+        },
+        source_path,
+    }
+}
+
+/// Every item of a materialized package: Agents and skills from its prepared result, and the
+/// binary-owned kinds from the tree.
+pub(crate) fn package_items(
+    package_root: &Path,
+    source_name: Option<&str>,
+    prepared: &mars_schema::prepare::Prepared,
+    parsed_hooks: Option<&[DiscoveredItem]>,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<DiscoveredItem>, MarsError> {
+    let mut items = discover_binary_owned_items(package_root, source_name, parsed_hooks, diag)?;
+    items.extend(
+        prepared
+            .definitions
+            .iter()
+            .map(|definition| definition_item(definition, &definition.output_path)),
+    );
     finalize_items(source_name.unwrap_or("unknown-source"), items)
 }
 
@@ -838,74 +634,6 @@ fn sort_items(items: &mut [DiscoveredItem]) {
         a.id.cmp(&b.id)
             .then_with(|| a.source_path.cmp(&b.source_path))
     });
-}
-
-/// An installed item's identity and path.
-#[derive(Debug, Clone)]
-pub struct InstalledItem {
-    pub id: ItemId,
-    /// Disk path (absolute) to the installed file/dir.
-    pub path: PathBuf,
-}
-
-/// Result of scanning an installed managed root.
-#[derive(Debug, Clone)]
-pub struct InstalledState {
-    pub agents: Vec<InstalledItem>,
-    pub skills: Vec<InstalledItem>,
-}
-
-/// Discover all installed agents and skills in a managed root.
-pub fn discover_installed(root: &Path) -> Result<InstalledState, MarsError> {
-    let mut agents = Vec::new();
-    let mut skills = Vec::new();
-
-    let mut scratch = Vec::new();
-    let mut visited = HashSet::new();
-    scan_agent_dir(root, Path::new("agents"), &mut scratch, &mut visited)?;
-    for item in scratch.drain(..) {
-        let path = root.join(&item.source_path);
-        agents.push(InstalledItem { id: item.id, path });
-    }
-
-    scan_installed_skill_dir(root, Path::new("skills"), &mut scratch, &mut HashSet::new())?;
-    for item in scratch.drain(..) {
-        let path = root.join(&item.source_path);
-        skills.push(InstalledItem { id: item.id, path });
-    }
-
-    sort_installed(&mut agents);
-    sort_installed(&mut skills);
-    Ok(InstalledState { agents, skills })
-}
-
-fn scan_installed_skill_dir(
-    root: &Path,
-    relative_root: &Path,
-    items: &mut Vec<DiscoveredItem>,
-    visited: &mut HashSet<PathBuf>,
-) -> Result<(), MarsError> {
-    let dir = root.join(relative_root);
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    for path in read_dir_paths_sorted(&dir)? {
-        if !path.is_dir()
-            || path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with('.'))
-        {
-            continue;
-        }
-        let relative = relative_to(root, &path)?;
-        register_skill_dir(root, &relative, items, visited)?;
-    }
-    Ok(())
-}
-
-fn sort_installed(items: &mut [InstalledItem]) {
-    items.sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.path.cmp(&b.path)));
 }
 
 #[cfg(test)]

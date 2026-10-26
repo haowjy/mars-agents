@@ -461,35 +461,13 @@ pub(crate) fn resolve_package_bottom_up(
         .map(|request| request.name.clone())
         .collect();
 
-    let mut discovered = discover::discover_binary_source(
+    let discovered = discover::package_items(
         &rooted_ref.authored_root,
         Some(pending_src.name.as_ref()),
+        &prepared,
+        None,
         diag,
     )?;
-    discovered.extend(prepared.definitions.iter().map(|definition| {
-        let kind = match definition.kind {
-            mars_schema::upgrade::DefinitionKind::Agent => ItemKind::Agent,
-            mars_schema::upgrade::DefinitionKind::Skill => ItemKind::Skill,
-        };
-        let source_path = match kind {
-            ItemKind::Agent => std::path::PathBuf::from(&definition.output_path),
-            ItemKind::Skill if definition.output_path == "SKILL.md" => {
-                std::path::PathBuf::from(".")
-            }
-            ItemKind::Skill => std::path::PathBuf::from(&definition.output_path)
-                .parent()
-                .expect("prepared skill output has a parent")
-                .to_path_buf(),
-            _ => unreachable!(),
-        };
-        discover::DiscoveredItem {
-            id: crate::lock::ItemId {
-                kind,
-                name: definition.slug.clone().into(),
-            },
-            source_path,
-        }
-    }));
     let mut items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem> = IndexMap::new();
     for item in &discovered {
         items.insert((item.id.kind, item.id.name.clone()), item.clone());

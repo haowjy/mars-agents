@@ -266,9 +266,12 @@ pub fn build_with_collisions_and_diag(
             .iter()
             .map(|hook| hook.discovered_item(&node.rooted_ref.package_root))
             .collect::<Vec<_>>();
-        let discovered = discover::discover_source_with_hooks(
+        let discovered = discover::package_items(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
+            node.prepared
+                .as_ref()
+                .expect("production graph nodes retain prepared packages"),
             Some(&discovered_hooks),
             diag,
         )?;
@@ -863,7 +866,7 @@ mod tests {
                         authored_root: tree.path().to_path_buf(),
                         package_root: tree.path().to_path_buf(),
                     },
-                    prepared: None,
+                    prepared: crate::package_prepare::prepare_tree_for_test(name, tree.path()),
                     resolved_ref: ResolvedRef {
                         source_name: name.into(),
                         version: None,

@@ -86,7 +86,7 @@ fn make_graph_config(
                     authored_root: tree_path.clone(),
                     package_root: tree_path.clone(),
                 },
-                prepared: None,
+                prepared: crate::package_prepare::prepare_tree_for_test(name, &tree_path),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: name.into(),
                     version: None,
@@ -1296,7 +1296,8 @@ fn orphan_removed_when_source_drops_item() {
     // Remove reviewer from source
     fs::remove_file(fixture.tree_path(src_idx).join("agents/reviewer.md")).unwrap();
 
-    // Re-sync
+    // Re-sync: the graph is rebuilt because preparation reads the tree once per resolve
+    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
     let (target2, _, _) =
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();

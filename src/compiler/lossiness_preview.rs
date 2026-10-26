@@ -70,7 +70,7 @@ pub fn collect_source_lossiness_diagnostics(
         preview_staging_root_and_dialect(base, lens.manifest.as_ref())?;
     let staging = TempDir::new()?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(mode);
-    crate::staging::stage_canonical_source(
+    let prepared = crate::staging::stage_canonical_source(
         &source_root,
         staging.path(),
         dialect,
@@ -108,12 +108,11 @@ pub fn collect_source_lossiness_diagnostics(
                 .with_settings_policies(settings.model_policies.clone())
         });
 
-    let discovered = crate::discover::discover_source(
-        staging.path(),
-        fallback_skill_name.as_deref(),
-        &mut diag,
-    )?;
-    for item in discovered {
+    for item in prepared
+        .definitions
+        .iter()
+        .map(|definition| crate::discover::definition_item(definition, &definition.output_path))
+    {
         match item.id.kind {
             ItemKind::Agent => {
                 let path = skill_or_agent_path(staging.path(), &item);

@@ -215,7 +215,7 @@ pub(crate) fn stage_canonical_source(
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
     diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
+) -> Result<mars_schema::prepare::Prepared, MarsError> {
     let consumer_manifest = fs::read_to_string(source_root.join("mars.toml"))
         .ok()
         .and_then(|content| content.parse::<toml::Value>().ok())
@@ -243,7 +243,8 @@ pub(crate) fn stage_canonical_source(
         renames,
         fallback_skill_name,
         diag,
-    )
+    )?;
+    Ok(prepared)
 }
 
 pub(crate) fn materialize_local_prepared(

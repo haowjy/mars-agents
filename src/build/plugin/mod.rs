@@ -514,31 +514,13 @@ fn plugin_inputs_hash_from_prepared(
     }
 
     let mut diag = DiagnosticCollector::new();
-    let mut items = crate::discover::discover_binary_source(package_root, None, &mut diag)?;
-    items.extend(prepared.definitions.iter().map(|definition| {
-        let kind = match definition.kind {
-            mars_schema::upgrade::DefinitionKind::Agent => mars_schema::item::ItemKind::Agent,
-            mars_schema::upgrade::DefinitionKind::Skill => mars_schema::item::ItemKind::Skill,
-        };
-        let source_path =
-            if kind == mars_schema::item::ItemKind::Skill && definition.source_path == "SKILL.md" {
-                PathBuf::from(".")
-            } else if kind == mars_schema::item::ItemKind::Skill {
-                PathBuf::from(&definition.source_path)
-                    .parent()
-                    .expect("prepared skill source has a parent")
-                    .to_path_buf()
-            } else {
-                PathBuf::from(&definition.source_path)
-            };
-        crate::discover::DiscoveredItem {
-            id: crate::lock::ItemId {
-                kind,
-                name: definition.slug.clone().into(),
-            },
-            source_path,
-        }
-    }));
+    let mut items =
+        crate::discover::discover_binary_owned_items(package_root, None, None, &mut diag)?;
+    items.extend(
+        prepared.definitions.iter().map(|definition| {
+            crate::discover::definition_item(definition, &definition.source_path)
+        }),
+    );
     for input in crate::staging::publish_inputs_for_items(package_root, &items, true, &mut diag)? {
         let source = package_root.join(&input.relative);
         let relative = crate::hash::portable_relative(package_root, &source).ok_or_else(|| {

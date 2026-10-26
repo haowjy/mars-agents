@@ -435,3 +435,26 @@ fn package_legacy_warning(prepared: &Prepared, root: &Path) -> String {
         .unwrap_or("unknown");
     format!("package `{name}` uses the pre-v1 format; run `mars migrate` in its repository")
 }
+
+/// Prepare a real on-disk tree for graph fixtures, with no dependency entry (so no dialect hint).
+#[cfg(test)]
+pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Option<Arc<Prepared>> {
+    let config = crate::config::EffectiveConfig {
+        dependencies: indexmap::IndexMap::new(),
+        settings: crate::config::Settings::default(),
+        skills: indexmap::IndexMap::new(),
+    };
+    let rooted = crate::resolve::RootedSourceRef {
+        checkout_root: root.to_path_buf(),
+        authored_root: root.to_path_buf(),
+        package_root: root.to_path_buf(),
+    };
+    let prepared = prepare_rooted(
+        &name.into(),
+        rooted,
+        &config,
+        &mut DiagnosticCollector::new(),
+    )
+    .unwrap();
+    Some(prepared.prepared)
+}

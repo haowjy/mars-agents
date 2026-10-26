@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Sync targets, lossiness preview, plugin builds and `doctor` take Agents and skills from the prepared package, not a second walk of the materialized tree; the binary's walk finds only hooks, MCP items and bootstrap documents.
+
 ### Added
 - `inspect` and `normalize` in `mars-schema` (and the WASM package) read any repository as Mars packages: Claude plugins, marketplaces (`strict` and `source` rules) and bare skill trees become schema v1 packages with relocated `skills/<slug>/` and `agents/<slug>.md`, a generated `mars.toml` and provenance; commands, hooks and MCP definitions are reported as not imported. Skill tool keys are dropped with a warning, `type` and `version` move to `metadata`, an unquoted `description:` colon is repaired, and Agent `disallowedTools` merge into `tools`.
 - Dependencies without `mars.toml` go through `normalize`; `agent-skills` is a dialect, and a marketplace with several plugins is an error that lists them.

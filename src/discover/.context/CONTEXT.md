@@ -7,34 +7,30 @@ binary-only inventory here for hooks and bootstrap documents, then combine it wi
 
 ## Contract
 
-Discovery is convention-based. A single bounded recursive walk starts at the rooted package directory and scans any directory named, up to `MAX_DISCOVERY_WALK_DEPTH = 5`:
+`discover` selects the kinds `mars-schema` does not own: hooks, MCP items and bootstrap documents
+(`discover_binary_owned_items`). `package_items` adds the package's Agents and skills from the
+`Prepared` result each caller already holds (`definition_item` maps one definition; a skill's item
+path is the parent of its output path). Nothing here walks a tree for Agents or skills, and nothing
+may: crate preparation owns those definitions.
 
-- `agents/` for `*.md` agent profiles
-- `skills/` for child directories containing `SKILL.md`
-- `bootstrap/` for child directories containing `BOOTSTRAP.md`
-
-The compatibility walk remains for callers that need a foreign all-kind view. The resolver's
-binary-only walk applies the same bootstrap grounding and plugin-declaration rules without scanning
-Agents or skills. Do not add Agent or skill semantics here; crate preparation owns those
-definitions.
+Bootstrap discovery is convention-based. A single bounded recursive walk starts at the rooted package directory and scans any directory named `bootstrap/` up to `MAX_DISCOVERY_WALK_DEPTH = 5` for child directories containing `BOOTSTRAP.md`.
 
 Hooks are the exception to the layered walk: only direct children of the
 package-root `hooks/` directory are discovered. The compiler and general item
 discovery share that directory enumerator, so a hook cannot be listed and then
 fail resolution because a second scanner searched a different root.
 During target construction, strict hook parsing supplies the corresponding
-`DiscoveredItem`s back to the convention walk, preserving grounding and collision
-checks without parsing `hook.toml` twice.
+`DiscoveredItem`s, preserving collision checks without parsing `hook.toml` twice.
 
-After convention scanning, discovery is globally grounded to the shallowest logical layer that contains convention items. Agents, skills, and bootstrap docs are treated as one package layer: if `skills/foo` exists at the package layer, deeper `examples/skills/bar` or vendored nested containers are ignored. If the only convention items are nested, that nested layer becomes the grounded package layer and is still discovered.
+Bootstrap documents are grounded to the shallowest logical layer that contains any: deeper
+vendored `bootstrap/` containers are ignored. Grounding sees only bootstrap documents, not Agents or
+skills.
 
 ## Current-package self inputs
 
-`local_source` opts into this walk only when the project declares `[package]`,
-then selects agents/skills after grounding (other convention kinds still affect
-the occupied layer). `.mars-src` is discovered separately and wins matching
-`(kind, name)` definitions before staging. Removing shallower items can promote
-nested distribution items; there is no permanent `cw/` exclusion.
+`local_source` takes the project's Agents and skills from preparation when the project declares
+`[package]`. `.mars-src` is discovered separately and wins matching `(kind, name)` definitions
+before staging.
 
 Directories containing a valid `.mars-plugin.json` are generated plugin trees and are
 excluded at any depth, including hook and MCP discovery, with one info diagnostic per skipped
@@ -59,11 +55,11 @@ subpath = ".claude"
 dialect = "claude"
 ```
 
-With that rooting, `agents/` and `skills/` are non-hidden children of the effective package root and are discovered normally.
+With that rooting, the foreign `agents/` and `skills/` are non-hidden children of the effective package root and `normalize` reads them.
 
 ## Root `SKILL.md`
 
-A package-root `SKILL.md` is a flat-root skill fallback only when no agents or skills were found by convention. Bootstrap docs can still accompany a flat-root skill through explicit plugin-manifest declarations. A root skill of a manifest-free dependency is relocated to `skills/<slug>/` by `normalize` before this walk sees it.
+A package-root `SKILL.md` is a flat-root skill that preparation reports with an output path of `SKILL.md`; `definition_item` gives it the item path ".". Bootstrap docs can still accompany it through explicit plugin-manifest declarations. A root skill of a manifest-free dependency is relocated to `skills/<slug>/` by `normalize`.
 
 ## Manifest declarations
 

@@ -5,7 +5,7 @@
       {
         "id": "gh",
         "provenance": {
-          "translator": "0.18.3",
+          "translator": "{version}",
           "dialect": "claude",
           "source": {
             "name": "gh-plugin",
@@ -134,7 +134,7 @@
       {
         "id": "subdir",
         "provenance": {
-          "translator": "0.18.3",
+          "translator": "{version}",
           "dialect": "claude",
           "source": {
             "name": "mono",

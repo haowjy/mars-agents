@@ -4,7 +4,7 @@
     {
       "id": "nest",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {},
         "selected_items": [

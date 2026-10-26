@@ -4,7 +4,7 @@
     {
       "id": "document-skills",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {
           "name": "skills"
@@ -157,7 +157,7 @@
     {
       "id": "example-skills",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {
           "name": "skills"

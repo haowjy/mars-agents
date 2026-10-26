@@ -16,8 +16,9 @@ const fixtures = fileURLToPath(new URL("../mars-schema/fixtures/", import.meta.u
 const cases = suite => readdirSync(join(fixtures, suite), { withFileTypes: true })
   .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
 const text = (...parts) => readFileSync(join(fixtures, ...parts), "utf8");
-// Integers beyond 2^53 stay exact (as BigInt), as they do when Rust reads the same file.
-const json = (...parts) => JSON.parse(text(...parts), (_key, value, { source }) =>
+// Integers beyond 2^53 stay exact (as BigInt), as they do when Rust reads the same file. The
+// crate's version, which results carry, is `{version}` in the files.
+const json = (...parts) => JSON.parse(text(...parts).replaceAll("{version}", wasm.version()), (_key, value, { source }) =>
   typeof value === "number" && Number.isInteger(value) && !Number.isSafeInteger(value) && /^-?\d+$/.test(source) ? BigInt(source) : value);
 const tree = (dir, prefix = "") => {
   const files = new Map();

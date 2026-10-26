@@ -4,7 +4,7 @@
     {
       "id": "appended",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {},
         "marketplace": {
@@ -161,7 +161,7 @@
     {
       "id": "manifest-only",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {},
         "marketplace": {
@@ -252,7 +252,7 @@
     {
       "id": "conflicting",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "source": {},
         "marketplace": {
           "plugin": "conflicting",
@@ -284,7 +284,7 @@
     {
       "id": "entry-is-manifest",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {},
         "marketplace": {

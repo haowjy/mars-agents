@@ -4,7 +4,7 @@
     {
       "id": "native-dep",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "source": {
           "name": "native-dep"
         },

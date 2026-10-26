@@ -4,7 +4,7 @@
     {
       "id": "example",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "source": {},
         "selected_items": [
           "agents/helper.md",

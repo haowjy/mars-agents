@@ -4,7 +4,7 @@
     {
       "id": "mono/tools/pkg",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "agent-skills",
         "source": {
           "name": "mono",

@@ -63,6 +63,7 @@ mars add <source...> [filter flags]
 | Flag | Description |
 |---|---|
 | `--subpath PATH` | Install from a package rooted under a subdirectory (requires exactly one source) |
+| `--plugin NAME` | Install one plugin from the Claude marketplace at the source (requires exactly one source; cannot be combined with `--subpath`) |
 | `--agents NAME,...` | Install only named agents (include mode) |
 | `--skills NAME,...` | Install only named skills (include mode) |
 | `--exclude NAME,...` | Exclude named items |
@@ -70,7 +71,8 @@ mars add <source...> [filter flags]
 | `--only-agents` | Install only agents + transitive skill dependencies (skills those agents declare in frontmatter) |
 
 **Rules:**
-- `--subpath` requires exactly one source.
+- `--subpath` and `--plugin` require exactly one source.
+- A marketplace source without `--plugin` is an error that lists its plugins; the dependency is not written.
 - Filter flags require exactly one source. Multi-source add is only for whole-source installs.
 - Re-adding an existing dependency updates it. Filter fields are replaced atomically when any filter flag is present; version-only changes preserve existing filters.
 - Source specifiers:
@@ -83,6 +85,7 @@ mars add <source...> [filter flags]
 Dependency naming model:
 - `mars add` uses the source specifier to derive a dependency name (for example, `meridian-flow/meridian-base` -> `meridian-base`).
 - That dependency name is the key stored in `mars.toml` under `[dependencies.<NAME>]`.
+- A marketplace plugin is named `<repo>/<plugin>` (`anthropics/skills` with `--plugin document-skills` -> `skills/document-skills`), as a subpath package is named `<repo>/<subpath>`.
 - Subsequent commands use that dependency name, not the source URL.
 
 ```bash
@@ -94,6 +97,7 @@ mars add ../my-local-agents
 mars add ../monorepo --subpath packages/agents
 mars add acme/ops --agents deployer,monitor
 mars add acme/toolkit --only-skills
+mars add anthropics/skills --plugin document-skills
 mars add source1 source2          # Multi-source (no filters)
 ```
 
@@ -142,6 +146,8 @@ mars upgrade [names...]
 | `names` | Specific dependency names to upgrade (default: all) |
 
 Uses maximize strategy instead of minimum version selection. Only git sources with semver constraints are upgradeable; path sources have no version to maximize.
+
+A marketplace plugin is refreshed as a whole: Mars re-reads the marketplace at its ref, takes the plugin's current source from it and resolves the plugin's content commit anew, even when the marketplace itself did not change. A plugin whose source moved to another repository or path is reported (`plugin <name> of <dependency> moved: <old> -> <new>`).
 
 ```bash
 mars upgrade                 # Upgrade all

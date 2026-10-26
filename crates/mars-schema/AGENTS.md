@@ -47,7 +47,9 @@ local ones, their items, and a plugin's or skill tree's items with payload listi
 package; a remote plugin's tree comes in `remote_trees`, fetched by the caller after it
 inspected the tree with `Hint.plugin` set to the entry) and adds a generated `mars.toml`
 (`schema = 1`, name from the plugin, the marketplace entry, or the repository name plus the
-subpath) and provenance. A Mars package is the identity case. A package-level error (two skills
+subpath) and provenance. A root normalized with `Hint.plugin` for a remote entry (the resolver
+roots a dependency at the fetched plugin and prepares it through its entry) gets the same
+nested-marketplace refusal as one that arrives in `remote_trees`. A Mars package is the identity case. A package-level error (two skills
 with one slug, conflicting manifests) leaves the package holding nothing to write, with the
 error in its diagnostics. `fixtures/normalize/<case>/` holds `input/`, `request.json`,
 `inspection.json`, `normalized.json` and the file maps under `expected/<package id>/`.

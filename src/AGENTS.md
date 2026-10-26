@@ -34,7 +34,7 @@ sync/build → resolve ← source
 - `cli/` dispatches commands, finds project root, formats output
 - `sync/` orchestrates the pipeline (load → resolve → build → plan → apply → sync targets → finalize)
 - `package_prepare` is the lazy filesystem adapter for crate-owned `mars_schema::prepare`
-- `resolve/` prepares every rooted dependency after `apply_subpath`, retains authored origin plus `Prepared`, and resolves relative dependencies from that origin
+- `resolve/` prepares every rooted dependency after `apply_subpath` (or after `plugin::acquire` for a marketplace plugin), retains authored origin plus `Prepared`, and resolves relative dependencies from that origin
 - `staging/` materializes prepared bytes and consumer overlays directly into the project-owned pending generation; sync publishes it by rename after the diagnostic gate
 - `discover/` owns binary-only hooks, MCP items and bootstrap documents, and takes Agents and skills from the `Prepared` result; no walk selects them; reading a repository as packages (Claude plugins, marketplaces, skill trees) belongs to `mars-schema`
 - dialects are `mars_schema::dialect::Dialect`; dispatch, prediction and lift belong to `mars-schema`
@@ -63,6 +63,7 @@ sync/build → resolve ← source
 |---|---|
 | New harness | `harness/registry.rs`, `target/` adapter, `compiler/agents/lower.rs` |
 | New CLI command | `cli/mod.rs` (enum + dispatch), `cli/<cmd>.rs` |
+| Marketplace plugin dependency (entry, identity, acquisition, lock) | `config/mod.rs` (`InstallDep.plugin`, validation), `types.rs` (`SourceId`), `resolve/plugin.rs`, `lock/mod.rs` (`LockedSource`), `cli/add.rs` |
 | Config schema change | `config/mod.rs`, `config/routing_settings.rs` |
 | Sync pipeline phase | `sync/mod.rs` (phase struct + function) |
 | Model resolution | `models/mod.rs`, `models/availability.rs` |

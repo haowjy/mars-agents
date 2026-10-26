@@ -41,6 +41,10 @@ paths match.
   files and directory manifests become installed. Absent, mismatched, symlinked,
   unreadable, or unsupported paths become pending deletion. Delete the promotion
   after the release following lock v3, together with the #130 legacy-hook sweeps.
+- **Marketplace plugins extend `LockedSource`, not the version.** `plugin` and `content {url,
+  subpath, commit}` are optional and skipped when absent, so locks without plugins read and write
+  unchanged at version 3. A plugin dependency's `url`, `version` and `commit` stay the marketplace's
+  own; `content` is where the plugin's files came from (see `.context/CONTEXT.md`).
 - **Do not change the lock schema for lookup fixes.** `LockIndex` is the
   ephemeral seam for efficient read shapes over the persisted nested-output schema.
 - **Keep path comparisons separator-tolerant.** `DestPath` uses forward-slash

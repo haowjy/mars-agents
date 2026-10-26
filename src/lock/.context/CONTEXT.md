@@ -66,6 +66,28 @@ and skipped outputs must not resurrect removed paths. Same-path deletion claims
 are replaced by verified installation; native and other-path claims survive.
 Native/config transaction recovery remains tracked in #149.
 
+### Marketplace plugin dependencies record two commits
+
+A dependency with `plugin = "<name>"` installs one plugin of a Claude marketplace. Its
+`[dependencies.<name>]` entry keeps the fields every source has, which describe the marketplace
+(`url` or `path`, `version`, `commit`), and adds:
+
+| Field | Meaning |
+|---|---|
+| `plugin` | The plugin installed; part of the entry's identity, like `subpath` |
+| `content.url`, `content.subpath`, `content.commit` | Where the plugin's files came from |
+
+A plugin in the marketplace's own repository repeats the marketplace's `url` and `commit` in
+`content` with its path as `subpath`; a plugin in another repository records that repository, the
+`git-subdir` path, and the commit fetched. `content.url` is canonical like `url`, so it identifies
+the repository but is not what is fetched: the fetch URL comes from the marketplace entry.
+
+Both fields are optional and skipped when absent, so the lock stays version 3 and every lock
+without marketplace plugins is byte-identical. Nothing but `src/resolve/plugin.rs` reads
+`content`: sync replays `content.commit` only while the marketplace is at the locked `commit` and
+the entry names the same repository and path, upgrade resolves it anew, and a change of repository
+or path is reported as `plugin-source-moved`.
+
 ### `LockIndex` is the read seam
 
 `LockFile` preserves the persisted schema. `LockIndex` provides hot lookup

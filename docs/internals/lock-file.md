@@ -17,6 +17,16 @@ commit = "abc123def456"
 [dependencies.local]
 path = "/home/dev/my-agents"
 
+[dependencies."skills/pdf-tools"]
+url = "github.com/anthropics/skills"
+commit = "abc123def456"
+plugin = "pdf-tools"
+
+[dependencies."skills/pdf-tools".content]
+url = "github.com/acme/pdf-tools"
+subpath = "plugin"
+commit = "789fed012345"
+
 [dependency_model_aliases.fast]
 harness = "codex"
 model = "gpt-5"
@@ -72,6 +82,10 @@ Resolved provenance for each source. Built from the resolved dependency graph, n
 | `path` | string | Path source | Canonical local path |
 | `version` | string | Tagged git source | Resolved version tag (e.g., `v1.2.0`) |
 | `commit` | string | Git source | Resolved commit hash |
+| `plugin` | string | Marketplace plugin | The plugin installed from the marketplace at this source; `url`, `version` and `commit` are then the marketplace's own |
+| `content` | table | Marketplace plugin | Where the plugin's files came from (below) |
+
+`[dependencies.<name>.content]` has `url`, `subpath` and `commit`, each present when it applies. A plugin in the marketplace's own repository repeats the marketplace's `url` and `commit` and has its path as `subpath` (none for a plugin at the root); with a marketplace at a local `path`, such a plugin has only its `subpath`. A plugin in another repository records that repository, the `git-subdir` path, and the commit fetched. `plugin` and `content` are absent from every other dependency, so locks without marketplace plugins are unchanged and still `version = 3`.
 
 ### `[items."<kind/name>"]`
 

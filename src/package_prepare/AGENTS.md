@@ -5,7 +5,7 @@ authored package root lazily, sorts directory entries, confines resolved paths t
 latches IO or containment failures because the host-independent `TreeSource` trait has no error
 channel. Always check the latched error immediately after preparation.
 
-`prepare_rooted` runs after dependency `subpath` is applied. It calls `mars_schema::normalize` with the dependency's `dialect` as the hint, so a manifest-free dependency (a Claude plugin, a skill tree) arrives as one schema v1 package with relocated output paths and a generated `mars.toml`; a marketplace with several plugins is an error that lists them until the dependency can name one. It keeps
+`prepare_rooted` runs after dependency `subpath` is applied. It calls `mars_schema::normalize` with the dependency's `dialect` as the hint, so a manifest-free dependency (a Claude plugin, a skill tree) arrives as one schema v1 package with relocated output paths and a generated `mars.toml`; a marketplace is an error that lists its plugins until the dependency names one with `plugin`. A dependency rooted at a marketplace plugin (`RootedSourceRef.plugin`, set by the resolver after it fetched the plugin's files) is normalized as that plugin: the stored marketplace entry is the hint, and any marketplace refusal is the plugin's. It keeps
 `RootedSourceRef.authored_root` immutable, reports `Prepared.diagnostics` against authored paths,
 parses binary-owned manifest sections from normalized manifest bytes, and returns without
 materializing. After the complete graph and local authored packages pass their prepared-diagnostic

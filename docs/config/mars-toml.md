@@ -207,8 +207,40 @@ Each dependency must have exactly one of `url` or `path` (not both, not neither)
 | `subpath` | string | Optional package root under the fetched repo or local path |
 | `version` | string | Version constraint for git sources (see [Version Constraints](#version-constraints)) |
 | `dialect` | string | Inbound lift dialect: `claude`, `agent-skills`, `codex`, `opencode`, `cursor`, or `mars-native` (see [Dialect](#dialect)) |
+| `plugin` | string | The plugin to install from the Claude marketplace at this source (see [Marketplace plugins](#marketplace-plugins)) |
 
 `subpath` is the explicit escape hatch for monorepo packages and foreign hidden layouts. When omitted, Mars discovers from the source root itself and skips dot-prefixed directories. To import a Claude-authored package stored under `.claude/`, set `subpath = ".claude"` and `dialect = "claude"`; the inner `agents/` and `skills/` folders are then discovered normally.
+
+#### Marketplace plugins
+
+A Claude marketplace (a repository with `.claude-plugin/marketplace.json`) publishes several plugins. `plugin = "<name>"` beside `url` (or `path`) installs one of them, and each plugin is its own dependency, package and lock entry:
+
+```toml
+[dependencies."skills/document-skills"]
+url = "https://github.com/anthropics/skills"
+plugin = "document-skills"
+
+[dependencies."skills/example-skills"]
+url = "https://github.com/anthropics/skills"
+plugin = "example-skills"
+```
+
+`mars add https://github.com/anthropics/skills --plugin document-skills` writes the first entry; the dependency is named `<repo>/<plugin>`. A marketplace dependency without `plugin` is an error that lists the plugins, even when there is only one. `version` constrains the marketplace's tags and commits like any git dependency; `mars outdated` reports them.
+
+The marketplace is read at the root of its source, and the plugin's entry says where its files are:
+
+| Entry `source` | Plugin files |
+|---|---|
+| `"./<path>"` or `"."` | That directory of the marketplace checkout |
+| `{source: "github", repo, ref?, sha?}` | `github.com/<repo>` |
+| `{source: "url", url, ref?, sha?}` | That git repository |
+| `{source: "git-subdir", url, path, ref?, sha?}` | That repository, rooted at `path` |
+
+A remote repository is fetched at the entry's `sha`, else its `ref`, else its default branch. Mars fetches any git URL a dependency of its own could name, GitHub or not; the shapes that are not git (`npm`, `archive`, `command`) are an error that names the shape. A remote plugin that is itself a marketplace is refused. The entry is third-party text, so a repository that starts with `-`, has whitespace or no recognized form (`https://`, `ssh://`, `user@host:path`) is refused, and only a marketplace read from a local source (a `path` or a `file://` URL) may name a local repository.
+
+`plugin` cannot be combined with `subpath` (the marketplace entry says where the plugin is) or `dialect` (a marketplace plugin is read as a Claude plugin); an empty `plugin`, one the marketplace does not list, and a source that is not a marketplace are errors that say so (the unknown name lists the plugins).
+
+`mars.lock` records two commits for a plugin whose files live in another repository: the marketplace's (`url`, `version`, `commit`, where every dependency keeps them) and the plugin content's (`content.url`, `content.subpath`, `content.commit`); see [Lock File](../internals/lock-file.md). `mars sync` fetches both locked commits and changes nothing while the marketplace stays at its locked commit and its entry names the same repository and path. `mars upgrade` re-reads the marketplace at its ref, takes the plugin's current source from it and resolves the content commit anew, and reports a plugin whose source moved ("old -> new"). `mars sync --frozen` requires the locked content commit.
 
 Supported source forms in v1:
 - GitHub shorthand, `github:` aliases, repo URLs, and tree URLs
@@ -495,7 +527,7 @@ Resolution order (first-wins):
 1. **Explicit** — `dialect = "codex"` on the dependency entry in `mars.toml`.
 2. **Prediction from evidence in the package root** — a Claude `.claude-plugin/plugin.json` or `marketplace.json`, a `.cursor-plugin/` directory or `.mdc` rules, a non-empty `.codex/`, `.opencode/` or `.claude/` container, then Claude-only frontmatter keys, and `agent-skills` for skills that use only the standard's keys. The strongest evidence decides and other harnesses' copies are reported, not read. Hidden containers are still skipped by item discovery; prediction does not import their contents.
 
-A Claude-shaped dependency (a plugin, a marketplace, or a bare tree of `SKILL.md` directories) is read by Claude's rules: a plugin's `skills` list adds to `skills/`, its `agents` list replaces `agents/`, `commands/` are reported and not imported, and a skill's inner `agents/` folder stays payload. Each item lands in the schema v1 layout (`skills/<slug>/`, `agents/<slug>.md`). A marketplace with one plugin installs that plugin; one with several is an error that lists them until the dependency can name one.
+A Claude-shaped dependency (a plugin, a marketplace, or a bare tree of `SKILL.md` directories) is read by Claude's rules: a plugin's `skills` list adds to `skills/`, its `agents` list replaces `agents/`, `commands/` are reported and not imported, and a skill's inner `agents/` folder stays payload. Each item lands in the schema v1 layout (`skills/<slug>/`, `agents/<slug>.md`). A marketplace dependency names the plugin it wants with [`plugin`](#marketplace-plugins); without one it is an error that lists the plugins.
 3. **Default** — `claude` for dependencies, `mars-native` for `.mars-src` items.
 
 Declared-package self inputs always use `mars-native`, without container inference. Generated native outputs cannot change their dialect.

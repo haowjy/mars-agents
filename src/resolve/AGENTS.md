@@ -1,6 +1,6 @@
 # src/resolve/ — Package Resolution
 
-Dependency resolution with semver constraints. 13 source files + tests, ~9600 lines.
+Dependency resolution with semver constraints. 14 source files + tests, ~9700 lines.
 
 ## Mental Model
 
@@ -59,6 +59,37 @@ this for their implicit root package so graph resolution does not prepare that r
 `ResolveOptions.source_overrides` applies local path overrides by source name while declared source
 identity remains separate. Removed hook schema state is binary-owned and recorded in
 `ResolvedGraph.unreadable_hook_surfaces`.
+
+## Marketplace plugin dependencies
+
+`plugin = "<name>"` on a dependency installs one plugin of the Claude marketplace at its source.
+The selector is part of `SourceId` (`plugin()`), so two plugins of one marketplace are two
+packages with distinct identities; the lock matches an entry only while the plugin is the same.
+
+The marketplace itself resolves as any git or path source: version constraints, lock replay,
+restarts. `root_package` then roots the result: below `subpath` for an ordinary dependency, or
+through `plugin::acquire` for a plugin. `acquire` inspects the marketplace (`mars_schema::inspect`),
+finds the plugin, and roots the package at its files: a directory of the marketplace checkout, or
+another repository fetched through the same `SourceFetcher` at the entry's `sha`, else `ref`, else
+its default branch. The package is then prepared through the entry (`Hint.plugin`) like any other.
+`RootedSourceRef.plugin` keeps that entry and the content coordinates, so a restart pass prepares
+the same plugin again without fetching, and the lock builder reads `plugin` and `content` from it.
+`mars-schema` never fetches; `package_prepare` is the only IO adapter.
+
+- **Replay and refresh.** Sync replays the locked content commit only while the marketplace
+  resolves to the locked commit and the entry names the same repository and path; a changed
+  marketplace, or `mars upgrade` (`LatestOnly`), resolves the content anew. `--frozen` requires the
+  locked content commit. An unreachable locked commit re-resolves with a warning, except frozen.
+- **Moves.** A plugin whose repository or path differs from the lock's `content` is reported by
+  `plugin-source-moved` ("old -> new").
+- **Validation.** Config refuses `plugin` with `subpath` or `dialect` or empty; resolution refuses a
+  source that is not a marketplace, an unknown plugin (listing the available ones), `npm`, `archive`
+  and `command` sources (naming the shape), and a remote plugin that is itself a marketplace. A
+  marketplace dependency with no `plugin` is an error that lists the plugins, even for one.
+- **Trust.** A marketplace entry is third-party text that reaches `git`'s argument list. The
+  repository and ref are validated in `remote_source` (no leading `-`, no whitespace, a recognized
+  form), and only a marketplace from a local source (`path` or `file://`) may name a local
+  repository. GitHub-only hosting is Flow's server policy, not Mars's.
 
 ## Provider traits
 

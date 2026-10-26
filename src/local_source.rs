@@ -11,7 +11,7 @@ use crate::error::MarsError;
 use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::prepare::{PrepareContext, PreparedDefinition};
 
-pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
+pub use mars_schema::prepare::LOCAL_SOURCE_DIR;
 
 #[derive(Debug, Clone)]
 pub struct LocalDiscoveredItem {

@@ -1,6 +1,7 @@
 //! One-pass package classification, normalization, selection, and strict reading.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +27,23 @@ pub enum PrepareContext {
     /// A directory that is either: `Package` unless its `mars.toml` has no `[package]`, which
     /// makes it a consumer project whose tree is read as `AuthoredLocal` content.
     Project,
+}
+
+/// The directory below a consumer project that holds its own authored content.
+pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
+
+/// Where a project directory's authored content lives and how it is read, from its `mars.toml`
+/// bytes: the project root as a `Package`, or, when the manifest is consumer configuration with
+/// no `[package]`, its `.mars-src` as `AuthoredLocal`. A caller that writes to the authored
+/// files, as `mars migrate` does, asks here instead of parsing `mars.toml` itself.
+pub fn project_authored_root(project: &Path, manifest: Option<&[u8]>) -> (PathBuf, PrepareContext) {
+    match crate::package::classify_manifest(manifest) {
+        crate::package::ManifestClassification::ConsumerConfig => (
+            project.join(LOCAL_SOURCE_DIR),
+            PrepareContext::AuthoredLocal,
+        ),
+        _ => (project.to_path_buf(), PrepareContext::Package),
+    }
 }
 
 /// What a package root is, once its manifest, declared dialect and contents have been weighed.

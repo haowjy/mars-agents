@@ -49,7 +49,8 @@ or `approval: yolo`; the rest are read under the dialect declared or predicted.
 `PrepareContext` is `Package` (a package root), `AuthoredLocal` (a consumer project's
 `.mars-src`) or `Project` (a directory that is either: a `mars.toml` with no `[package]` is
 consumer configuration and the tree is read as authored content). The crate decides; callers do
-not re-parse `mars.toml` to pick a context.
+not re-parse `mars.toml` to pick a context. `project_authored_root` gives a writer, `mars migrate`, the
+directory to read and write (`.mars-src` or the root) with the context.
 
 `prepare` returns source and output paths, normalized bytes, authored-file change records,
 payload mappings, and source-keyed structured diagnostics. Source paths are normalized

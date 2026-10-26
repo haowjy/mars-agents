@@ -288,30 +288,45 @@ fn source_blocks(yaml: &str) -> Option<Vec<SourceBlock<'_>>> {
     Some(blocks)
 }
 
-fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
-    upgrade_tools(fm);
+/// The rules for what only pre-v1 Mars wrote, key by key: the invocability renames, the
+/// discarded Agent fields, the removed values, a scalar `permission` and the removed model-policy
+/// override keys. No foreign dialect defines any of them, so every translation applies them
+/// before its own rules (`lift_frontmatter`), and the legacy upgrade is the same rules plus its
+/// own. A tree is never classified as pre-v1 Mars by finding one: its other keys are read in the
+/// dialect they belong to.
+pub(crate) fn lift_mars_only_keys(
+    fm: &mut Frontmatter,
+    kind: DefinitionKind,
+    notes: &mut Vec<SchemaDiagnostic>,
+) -> bool {
+    let before = fm.mapping().clone();
     rename_field(fm, "model_invocable", "model-invocable");
     rename_field(fm, "user_invocable", "user-invocable");
-
-    for field in REMOVED_AGENT_FIELDS.iter().filter(|field| field.discarded) {
-        if fm.remove(field.key).is_some() {
-            diagnostics.push(removed(&[field.key], field.key));
+    if kind == DefinitionKind::Agent {
+        for field in REMOVED_AGENT_FIELDS.iter().filter(|field| field.discarded) {
+            if fm.remove(field.key).is_some() {
+                notes.push(removed(&[field.key], field.key));
+            }
         }
+        for removed in REMOVED_AGENT_VALUES {
+            replace_scalar(fm, removed.key, removed.value, removed.replacement);
+        }
+        move_permission(fm);
+        strip_model_policy_overrides(fm, notes);
     }
+    fm.mapping() != &before
+}
 
-    for removed in REMOVED_AGENT_VALUES {
-        replace_scalar(fm, removed.key, removed.value, removed.replacement);
-    }
-    move_permission(fm);
-    strip_model_policy_overrides(fm, diagnostics);
+fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
+    upgrade_tools(fm);
+    lift_mars_only_keys(fm, DefinitionKind::Agent, diagnostics);
     // A pre-v1 file passed unknown keys to every harness; Claude's own keep reaching Claude.
     claude::translate::move_to_claude_overrides(fm, DefinitionKind::Agent, diagnostics);
     set_aside_rejected_keys(fm, DefinitionKind::Agent, diagnostics);
 }
 
 fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
-    rename_field(fm, "model_invocable", "model-invocable");
-    rename_field(fm, "user_invocable", "user-invocable");
+    lift_mars_only_keys(fm, DefinitionKind::Skill, diagnostics);
 
     if let Some(skill_type) = fm.get("type").cloned() {
         let metadata = fm

@@ -1,5 +1,12 @@
 {
-  "kind": "mars-legacy",
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "claude",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
   "also_found": [],
   "plugins": [],
   "items": [

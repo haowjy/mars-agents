@@ -168,7 +168,11 @@ pub fn lift_frontmatter(
 ) -> Lifted {
     let mut lifted = frontmatter.clone();
     let (mut changes, mut findings) = (Vec::new(), Vec::new());
-    let mut changed = match dialect {
+    // What only pre-v1 Mars wrote is read as such in every dialect, so one such key never
+    // changes how its neighbours are read.
+    let mut changed = dialect != Dialect::MarsNative
+        && crate::upgrade::lift_mars_only_keys(&mut lifted, kind, &mut changes);
+    changed |= match dialect {
         Dialect::MarsNative => false,
         Dialect::Claude | Dialect::AgentSkills => {
             crate::claude::translate::lift(kind, &mut lifted, &mut changes, &mut findings)

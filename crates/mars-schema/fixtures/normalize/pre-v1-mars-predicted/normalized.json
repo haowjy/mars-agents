@@ -1,10 +1,11 @@
 {
-  "kind": "mars-legacy",
+  "kind": "skill-tree",
   "packages": [
     {
       "id": "legacy-dep",
       "provenance": {
         "translator": "{version}",
+        "dialect": "claude",
         "source": {
           "name": "legacy-dep"
         },
@@ -15,7 +16,12 @@
       },
       "prepared": {
         "classification": {
-          "kind": "mars-legacy"
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
         },
         "manifest": {
           "output_path": "mars.toml",
@@ -61,6 +67,7 @@
                 [
                   "tools",
                   {
+                    "*": "deny",
                     "Read": "allow",
                     "Grep": "allow"
                   }
@@ -88,6 +95,11 @@
                 "subagents": [],
                 "tools": [
                   {
+                    "capability": "*",
+                    "pattern": null,
+                    "action": "deny"
+                  },
+                  {
                     "capability": "read",
                     "pattern": null,
                     "action": "allow"
@@ -105,24 +117,7 @@
               "diagnostics": []
             },
             "change": {
-              "kind": "edited",
-              "paths": [
-                [
-                  "approval"
-                ],
-                [
-                  "autocompact"
-                ],
-                [
-                  "fanout"
-                ],
-                [
-                  "network"
-                ],
-                [
-                  "tools"
-                ]
-              ]
+              "kind": "fully-rewritten"
             }
           },
           {
@@ -166,21 +161,7 @@
               "diagnostics": []
             },
             "change": {
-              "kind": "edited",
-              "paths": [
-                [
-                  "metadata"
-                ],
-                [
-                  "model-invocable"
-                ],
-                [
-                  "model_invocable"
-                ],
-                [
-                  "type"
-                ]
-              ]
+              "kind": "fully-rewritten"
             }
           }
         ],

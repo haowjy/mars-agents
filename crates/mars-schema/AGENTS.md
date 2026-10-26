@@ -42,9 +42,13 @@ dialect predicted from evidence in the root, then empty) and chooses a layout. `
 is the one classification and `DialectChoice` the one record of a dialect and its evidence;
 `inspect` reports a `Kind` derived from the classification and layout, not a parallel enum.
 
-A root with no manifest is a pre-v1 Mars package, read through the upgrade, when it is declared
-`mars-native` or a definition carries a key or value only pre-v1 Mars defined
-(`RemovedField::mars_only`, `RemovedValue::mars_only`); the rest are read under the dialect declared or predicted.
+A root with no manifest is a pre-v1 Mars package, read through the upgrade, only when it is declared
+`mars-native`; every other one is read under the dialect declared or predicted. What only pre-v1
+Mars wrote is never evidence for the root. `upgrade::lift_mars_only_keys` applies it per key,
+before the rules of whichever dialect reads the definition: the invocability renames, the
+discarded Agent fields (`RemovedField::discarded`), the removed values (`REMOVED_AGENT_VALUES`),
+a scalar `permission` moved to `harness-overrides.flow` and the removed model-policy override
+keys. `permission` is not on that list as a key, because OpenCode defines it too.
 
 `PrepareContext` is `Package` (a package root), `AuthoredLocal` (a consumer project's
 `.mars-src`) or `Project` (a directory that is either: a `mars.toml` with no `[package]` is

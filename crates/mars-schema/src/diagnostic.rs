@@ -64,14 +64,13 @@ impl SchemaDiagnostic {
 /// A frontmatter key a schema version removed, as the reader and the legacy upgrade share it.
 /// `advice` is what the reader tells the author. A `discarded` key has no replacement, so the
 /// upgrade and the foreign-dialect import drop it with a warning; every other removed key is
-/// renamed or moved by the upgrade, or left for the author. A `mars_only` key is one no foreign
-/// dialect's import reads either, so a manifest-free tree carrying one was written for pre-v1
-/// Mars and is read as such.
+/// renamed or moved by the upgrade, or left for the author. Every discarded Agent key is one
+/// only pre-v1 Mars defined, so `lift_mars_only_keys` drops it from a definition read as any
+/// dialect.
 pub(crate) struct RemovedField {
     pub key: &'static str,
     pub advice: &'static str,
     pub discarded: bool,
-    pub mars_only: bool,
 }
 
 impl RemovedField {
@@ -80,7 +79,6 @@ impl RemovedField {
             key,
             advice,
             discarded: false,
-            mars_only: false,
         }
     }
 
@@ -89,24 +87,16 @@ impl RemovedField {
             key,
             advice,
             discarded: true,
-            mars_only: false,
         }
-    }
-
-    pub(crate) const fn mars_only(mut self) -> Self {
-        self.mars_only = true;
-        self
     }
 }
 
-/// A value a schema version removed from a field that remains. The reader reports it, the legacy
-/// upgrade rewrites it to `replacement`, and a `mars_only` value (one no foreign dialect uses) is
-/// evidence that a manifest-free tree was written for pre-v1 Mars.
+/// A value a schema version removed from a field that remains. The reader reports it, and
+/// `lift_mars_only_keys` rewrites it to `replacement` in a definition read as any dialect.
 pub(crate) struct RemovedValue {
     pub key: &'static str,
     pub value: &'static str,
     pub replacement: &'static str,
-    pub mars_only: bool,
 }
 
 impl RemovedValue {
@@ -119,13 +109,7 @@ impl RemovedValue {
             key,
             value,
             replacement,
-            mars_only: false,
         }
-    }
-
-    pub(crate) const fn mars_only(mut self) -> Self {
-        self.mars_only = true;
-        self
     }
 
     /// The entry for `value` in `key`, when `removed` lists that pair.

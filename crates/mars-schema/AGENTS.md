@@ -32,3 +32,10 @@ types directly rather than reading owned frontmatter keys themselves. Unknown fi
 preserved, while removed fields are errors.
 
 `yaml-rust2` (with default features disabled) supplies the event scan that distinguishes YAML anchors, aliases, and explicit document-end markers from identical text inside scalars. `serde_yaml` remains the semantic parser and validity authority; the event scan does not produce field values.
+
+The public read/edit boundary is `read::read_files`, `edit::emit_value`, and
+`edit::rewrite_block`. `read_files` returns deterministic path-keyed readings
+with ordered frontmatter pairs, typed fields, bodies, and diagnostics. The
+`mars-schema-wasm` crate exposes this contract to Flow; the published
+`@meridian-flow/mars-schema` package contains the Node/browser bindings and
+the shared fixtures.

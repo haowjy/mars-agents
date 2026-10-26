@@ -16,6 +16,16 @@
       "reading": {
         "kind": "skill",
         "result": {
+          "frontmatter": [
+            [
+              "name",
+              "nested"
+            ],
+            [
+              "description",
+              "Nested"
+            ]
+          ],
           "fields": {
             "name": "nested",
             "description": "Nested",
@@ -56,6 +66,16 @@
       "reading": {
         "kind": "skill",
         "result": {
+          "frontmatter": [
+            [
+              "name",
+              "outer"
+            ],
+            [
+              "description",
+              "Outer"
+            ]
+          ],
           "fields": {
             "name": "outer",
             "description": "Outer",

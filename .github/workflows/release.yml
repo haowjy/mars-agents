@@ -61,7 +61,7 @@ jobs:
           npm_packages=(npm/@meridian-flow/*/package.json)
           shopt -u nullglob
           if [[ "${#npm_packages[@]}" -eq 0 ]]; then
-            echo "::error::No npm package metadata found under npm/@meridian-flow/mars-agents*/package.json"
+            echo "::error::No npm package metadata found under npm/@meridian-flow/*/package.json"
             exit 1
           fi
 

@@ -16,6 +16,16 @@
       "reading": {
         "kind": "skill",
         "result": {
+          "frontmatter": [
+            [
+              "name",
+              "flat"
+            ],
+            [
+              "description",
+              "Flat"
+            ]
+          ],
           "fields": {
             "name": "flat",
             "description": "Flat",

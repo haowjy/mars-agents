@@ -16,6 +16,24 @@
       "reading": {
         "kind": "agent",
         "result": {
+          "frontmatter": [
+            [
+              "name",
+              "native"
+            ],
+            [
+              "description",
+              "Native"
+            ],
+            [
+              "tools",
+              {
+                "*": "deny",
+                "Read": "allow",
+                "agent": "allow"
+              }
+            ]
+          ],
           "fields": {
             "name": "native",
             "description": "Native",

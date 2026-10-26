@@ -11,6 +11,20 @@
       "reading": {
         "kind": "agent",
         "result": {
+          "frontmatter": [
+            [
+              "name",
+              "local"
+            ],
+            [
+              "description",
+              "Local"
+            ],
+            [
+              "model-invocable",
+              false
+            ]
+          ],
           "fields": {
             "name": "local",
             "description": "Local",

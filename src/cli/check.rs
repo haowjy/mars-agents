@@ -88,6 +88,26 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         normalized_manifest.as_deref(),
     )?;
     let mut report = check_prepared(&prepared, &authored_base, &lens, &mut publish_diag)?;
+    let known_aliases = crate::models::builtin_aliases();
+    for definition in &prepared.definitions {
+        let mars_schema::prepare::PreparedDefinitionRead::Agent(reading) = &definition.reading
+        else {
+            continue;
+        };
+        let Some(profile) = reading.fields.as_ref() else {
+            continue;
+        };
+        for policy in &profile.model_policies {
+            if policy.match_type == mars_schema::model_policy::ModelPolicyMatchType::Alias
+                && !known_aliases.contains_key(&policy.match_value)
+            {
+                report.warnings.push(format!(
+                    "model policy alias `{}` does not resolve to a catalog alias",
+                    policy.match_value
+                ));
+            }
+        }
+    }
     report
         .warnings
         .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);

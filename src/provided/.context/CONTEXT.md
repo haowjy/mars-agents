@@ -95,9 +95,9 @@ and the `mars.lock` write must still find the directory counted as Mars's.
 The reader holds the record as two sets of names, not a provider map: the loader already rejects a
 name filed under a provider that is not its own (`<skill>__<provider>`), so a reader that has the
 name has every fact the key could add. That is why `provides` takes a name and not a provider — the
-second half of the check ("is it in that provider's list?") could never be false, and doctor no
-longer reads the record at all: it has no manifest to judge a declaration against, so a
-provider-shaped missing name gets the wording any missing skill gets.
+second half of the check ("is it in that provider's list?") could never be false, and doctor does
+not read the record: it has no manifest to judge a declaration against, so a provider-shaped
+missing name gets the wording any missing skill gets.
 
 A sync that replaces a provided directory journals nothing (`sync/recovery.rs` journals only absent
 destinations), so a crash between the replace and the `mars.lock` write leaves the package's bytes

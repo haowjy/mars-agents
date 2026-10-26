@@ -42,11 +42,12 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
             warnings,
         ));
     }
-    let unlocked = assess(root, &spec, &entries, &skills_dir)?;
-    if let Some(plan) = &unlocked.plan
-        && plan.writes_nothing(&entries, &unlocked.previous, &spec)
-    {
-        return Ok(current_report(&spec, &unlocked.previous, plan, warnings));
+    let unlocked = assess(root, &spec)?;
+    if matches_source(&unlocked.previous, &spec, &entries) {
+        let plan = plan_against_disk(root, &entries, &unlocked.previous, &skills_dir)?;
+        if plan.writes_nothing(&entries, &unlocked.previous, &spec) {
+            return Ok(current_report(&spec, &unlocked.previous, &plan, warnings));
+        }
     }
 
     // Step 3: never wait. A holder means someone else is already writing `.mars/`.
@@ -63,14 +64,11 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
             warnings,
         ));
     }
-    let mut assessed = assess(root, &spec, &entries, &skills_dir)?;
+    let mut assessed = assess(root, &spec)?;
     warnings.extend(assessed.warning.take());
-    // This pass is about to apply, so it always plans: the unlocked pass skipped it only when the
-    // record was not this source's.
-    let plan = match assessed.plan.take() {
-        Some(plan) => plan,
-        None => plan_against_disk(root, &entries, &assessed.previous, &skills_dir)?,
-    };
+    // This pass is about to apply, so it always plans; the unlocked pass skipped the hash only when
+    // the record was not this source's.
+    let plan = plan_against_disk(root, &entries, &assessed.previous, &skills_dir)?;
     // A plan that writes nothing leaves both the record and the disk as they are, so a lingering
     // shadow or collision does not rewrite `provided.lock` on every launch.
     if plan.writes_nothing(&entries, &assessed.previous, &spec) {
@@ -127,43 +125,28 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
     })
 }
 
-/// One pass over the record, `mars.lock` and the files on disk: everything a run needs to decide
-/// whether it is up to date, and to apply if it is not.
+/// One pass over the record and `mars.lock`: the record's previous entry for this provider is all
+/// a run needs to decide whether it is up to date, and to apply if it is not.
 struct Assessed {
     record: ProvidedLock,
     previous: ProviderRecord,
-    /// `None` when the record is not this source's (absent, or another version or digest): no
-    /// plan over the files on disk can make it current, so the unlocked pass does not pay to hash
-    /// them. The locked pass plans regardless, because it is about to apply.
-    plan: Option<Plan>,
     /// The writer's warning for a corrupt record this pass starts from empty.
     warning: Option<String>,
 }
 
-/// Read the record and `mars.lock` and plan what to do with each skill.
+/// Read the record and this provider's previous entry.
 ///
 /// The unlocked pass discards `warning`: a run that writes nothing prints nothing (JSON keeps it
 /// on the applied run that reports it).
-fn assess(
-    root: &Path,
-    spec: &ProvideSpec,
-    entries: &ProvidedEntries,
-    skills_dir: &Path,
-) -> Result<Assessed, MarsError> {
+fn assess(root: &Path, spec: &ProvideSpec) -> Result<Assessed, MarsError> {
     let (record, warning) = match ProvidedLock::load(root)? {
         Ok(record) => (record, None),
         Err(unusable) => unusable.for_write()?,
     };
     let previous = record.provider(&spec.provider).cloned().unwrap_or_default();
-    let plan = if matches_source(&previous, spec, entries) {
-        Some(plan_against_disk(root, entries, &previous, skills_dir)?)
-    } else {
-        None
-    };
     Ok(Assessed {
         record,
         previous,
-        plan,
         warning,
     })
 }

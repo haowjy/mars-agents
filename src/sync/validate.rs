@@ -71,7 +71,7 @@ pub(crate) fn validate_skill_refs(
             let warning = match mars_schema::provider::provider_of(&skill_name) {
                 // The package declares the provider: the ref is valid wherever it supplies the
                 // skill, and says so where it does not.
-                Some(provider) if deferred_provider(&skill_name, declared) == Some(provider) => {
+                Some(provider) if deferred_provider(&skill_name, declared).is_some() => {
                     if provided_here {
                         continue;
                     }

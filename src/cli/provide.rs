@@ -41,7 +41,7 @@ pub fn run(args: &ProvideArgs, root: Option<&Path>, json: bool) -> Result<i32, M
         }
     }
 
-    let report = crate::provided::run(&project_root, &args.spec)?;
+    let report = crate::provided::reconcile(&project_root, &args.spec)?;
     if json {
         output::print_json(&report);
     } else {

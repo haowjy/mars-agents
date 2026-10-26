@@ -28,40 +28,42 @@ use super::lock::{PENDING_DIGEST, ProvidedLock, ProviderRecord};
 use super::spec::ProvideSpec;
 use super::{ProvideReport, Status};
 
-pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport, MarsError> {
-    let (entries, mut warnings) = entries::discover(spec)?;
+/// Install one provider's skills into `root`'s canonical store.
+pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, MarsError> {
+    let spec = ProvideSpec::parse(raw_spec)?;
+    let (entries, mut warnings) = entries::discover(&spec)?;
     let skills_dir = root.join(".mars").join("skills");
 
     // Step 2: the fast path runs before the lock.
     if sync_pending(root) {
         return Ok(ProvideReport::without_record(
             Status::SyncPending,
-            spec,
+            &spec,
             warnings,
         ));
     }
-    let unlocked = assess(root, spec, &entries, &skills_dir)?;
+    let unlocked = assess(root, &spec, &entries, &skills_dir)?;
     if let Some(plan) = &unlocked.plan
-        && plan.writes_nothing(&entries, &unlocked.previous, spec)
+        && plan.writes_nothing(&entries, &unlocked.previous, &spec)
     {
-        return Ok(current_report(spec, &unlocked.previous, plan, warnings));
+        return Ok(current_report(&spec, &unlocked.previous, plan, warnings));
     }
 
     // Step 3: never wait. A holder means someone else is already writing `.mars/`.
     let lock_path = root.join(".mars").join("sync.lock");
     let Some(_sync_lock) = FileLock::try_acquire(&lock_path)? else {
-        return Ok(ProvideReport::without_record(Status::Busy, spec, warnings));
+        return Ok(ProvideReport::without_record(Status::Busy, &spec, warnings));
     };
 
     // Step 4: read ownership under the lock; another run may have finished in between.
     if sync_pending(root) {
         return Ok(ProvideReport::without_record(
             Status::SyncPending,
-            spec,
+            &spec,
             warnings,
         ));
     }
-    let mut assessed = assess(root, spec, &entries, &skills_dir)?;
+    let mut assessed = assess(root, &spec, &entries, &skills_dir)?;
     warnings.extend(assessed.warning.take());
     // This pass is about to apply, so it always plans: the unlocked pass skipped it only when the
     // record was not this source's.
@@ -71,8 +73,8 @@ pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport
     };
     // A plan that writes nothing leaves both the record and the disk as they are, so a lingering
     // shadow or collision does not rewrite `provided.lock` on every launch.
-    if plan.writes_nothing(&entries, &assessed.previous, spec) {
-        return Ok(current_report(spec, &assessed.previous, &plan, warnings));
+    if plan.writes_nothing(&entries, &assessed.previous, &spec) {
+        return Ok(current_report(&spec, &assessed.previous, &plan, warnings));
     }
 
     // Step 6: record every directory this run may write before writing any of them. `recorded` is

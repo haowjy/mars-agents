@@ -10,12 +10,11 @@
 //! never projected into targets either, since projection reads only `mars.lock` records.
 //!
 //! ```text
-//! cli/provide.rs ─→ run
-//!                    ├ spec::parse                            `<provider>@<version>=<dir>`
-//!                    ├ entries::discover                      names, digests, validation
+//! cli/provide.rs ─→ reconcile                               design steps 2-8
+//!                    ├ spec::parse                           `<provider>@<version>=<dir>`
+//!                    ├ entries::discover                     names, digests, validation
 //!                    ├ fs::FileLock::try_acquire(.mars/sync.lock)
 //!                    ├ lock::{ProvidedLock::load, save}       tmp + rename
-//!                    ├ reconcile::reconcile                   design steps 2-8
 //!                    └ fs::atomic_install_dir, platform::fs::safe_remove
 //! ```
 
@@ -25,12 +24,10 @@ mod names;
 mod reconcile;
 mod spec;
 
-use std::path::Path;
-
 use serde::Serialize;
 
-use crate::error::MarsError;
 pub(crate) use names::ProvidedNames;
+pub(crate) use reconcile::reconcile;
 use spec::ProvideSpec;
 
 /// What one `mars provide` run did, or why it wrote nothing.
@@ -89,10 +86,4 @@ impl ProvideReport {
             warnings,
         }
     }
-}
-
-/// Install one provider's skills into `root`'s canonical store.
-pub(crate) fn run(root: &Path, raw_spec: &str) -> Result<ProvideReport, MarsError> {
-    let spec = ProvideSpec::parse(raw_spec)?;
-    reconcile::reconcile(root, &spec)
 }

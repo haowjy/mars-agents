@@ -71,7 +71,9 @@ pub fn discover_local_items(
         )?;
         root_candidates.extend(prepared_items(project_root, package_name, prepared));
     }
-    root_candidates.extend(binary_items(project_root, package_name.is_some(), diag)?);
+    // A package's own `bootstrap/` documents are for its consumers; v0.19.0 selected only the
+    // package's Agents and skills (plus the project's hooks and MCP servers) as self items.
+    root_candidates.extend(binary_items(project_root, false, diag)?);
     for candidate in root_candidates {
         if let Some(winner) = selected
             .iter()

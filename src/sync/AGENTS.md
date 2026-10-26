@@ -94,6 +94,8 @@ The reader/local-source seam discovers `.mars-src` unconditionally and adds the
 current package only with `[package]`. It selects local overrides before staging:
 Agents and skills come from prepared schema results, while hooks, MCP servers,
 and bootstrap documents keep their binary-owned discovery and materialization.
+A package's own root `bootstrap/` documents are for its consumers and are not
+self items (only `.mars-src`'s are), as in v0.19.0.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
 visibility, dependency collisions, and local shadowing therefore choose config entries once for

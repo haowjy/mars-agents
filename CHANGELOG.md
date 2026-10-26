@@ -53,6 +53,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so a package's own server cannot lose to a transitive dependency.
 - Skill and hook copies now preserve source executable bits.
 
+## [0.18.4] - 2026-10-25
+
+### Changed
+- Agent inventory prompts no longer include Meridian prompt-file and parallel-spawn usage tips;
+  Meridian's injected guidance owns command usage.
+  
 ## [0.18.3] - 2026-10-25
 
 ### Fixed

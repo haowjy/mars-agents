@@ -145,7 +145,7 @@ harnesses = ["claude", "codex", "grok", "cursor", "opencode"]
 | `name` | string | `[package].name` | Plugin identifier and namespace |
 | `marketplace` | string | `[package].name` | Marketplace/catalog identifier used with `name@marketplace` installs |
 | `description` | string | `[package].description` | Plugin-facing description |
-| `harnesses` | string[] | all five | Harnesses the build serves: `claude`, `codex`, `grok`, `cursor`, and `opencode` |
+| `harnesses` | string[] | every supported harness | Harnesses the build serves: `claude`, `codex`, `grok`, `cursor`, and `opencode`. Harnesses added in later releases join the default |
 
 `dir` must stay inside the package and cannot be `.`, `..`, a dot directory, or an
 `agents`, `skills`, `hooks`, or `bootstrap` source directory. Absolute paths and parent

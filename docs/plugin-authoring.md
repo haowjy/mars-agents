@@ -32,7 +32,7 @@ harnesses = ["claude", "codex", "grok", "cursor", "opencode"]
 
 All `[plugin]` fields are optional. The output directory defaults to `plugin`, identity
 and marketplace default to `[package].name`, description defaults to the package
-description, and all five harnesses are selected by default. See the
+description, and every harness Mars supports is selected by default. A harness added in a later Mars release joins the default, so a package without `harnesses` starts building for it on its next release; list `harnesses` to opt out. See the
 [`mars.toml` reference](config/mars-toml.md#plugin-optional) for field and naming rules.
 
 Build the configured output with:

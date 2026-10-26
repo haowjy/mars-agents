@@ -272,14 +272,7 @@ pub(crate) fn prepare_rooted(
                 ),
             });
         }
-    } else if normalized.kind == Kind::Marketplace
-        && (normalized.packages.len() != 1
-            || normalized
-                .diagnostics
-                .values()
-                .flatten()
-                .any(|diagnostic| diagnostic.code.starts_with("marketplace.")))
-    {
+    } else if normalized.kind == Kind::Marketplace {
         return Err(marketplace_choice_error(
             source_name,
             &source,
@@ -311,8 +304,8 @@ pub(crate) fn prepare_rooted(
     prepared_rooted(rooted, Arc::new(prepared), diag)
 }
 
-/// A marketplace names several plugins, or one that cannot be read: the dependency must say
-/// which it wants.
+/// A marketplace dependency installs one plugin, and the lock records which: the dependency
+/// must say which it wants.
 fn marketplace_choice_error(
     source_name: &crate::types::SourceName,
     source: &DiskTreeSource,

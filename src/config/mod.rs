@@ -1420,15 +1420,10 @@ pub(crate) fn validate_plugin_selector(
         return Ok(());
     };
     let invalid = |message: String| ConfigError::Invalid { message };
-    // The plugin name becomes the tail of the dependency's name, so it is one path component.
-    let slug = !plugin.is_empty()
-        && plugin
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        && !plugin.starts_with(['-', '.']);
-    if !slug {
+    if !mars_schema::claude::manifest::is_plugin_name(plugin) {
         return Err(invalid(format!(
-            "source `{name}` has `plugin = \"{plugin}\"`; a plugin name is letters, digits, `-`, `_` and `.`, and does not start with `-` or `.`"
+            "source `{name}` has `plugin = \"{plugin}\"`; a plugin name is {}",
+            mars_schema::claude::manifest::PLUGIN_NAME_RULE
         )));
     }
     if subpath.is_some() {

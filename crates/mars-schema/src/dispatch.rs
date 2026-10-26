@@ -15,8 +15,8 @@ use serde::Serialize;
 
 use crate::claude::discover::discover_claude;
 use crate::claude::manifest::{
-    MARKETPLACE_MANIFEST, Marketplace, MarketplaceEntry, PLUGIN_MANIFEST, PluginManifest,
-    PluginSpec, resolve_spec,
+    MARKETPLACE_MANIFEST, Marketplace, MarketplaceEntry, PLUGIN_MANIFEST, PLUGIN_NAME_RULE,
+    PluginManifest, PluginSpec, is_plugin_name, resolve_spec,
 };
 use crate::diagnostic::{SchemaDiagnostic, Severity};
 use crate::dialect::{Dialect, DialectChoice};
@@ -332,6 +332,22 @@ fn claude_layout(
     let invalid = |diagnostic: SchemaDiagnostic, path: &str| {
         (Layout::None, vec![(path.to_owned(), diagnostic)])
     };
+    if let Some(plugin) = as_plugin
+        && !is_plugin_name(&plugin.entry.name)
+    {
+        return invalid(
+            SchemaDiagnostic::new(
+                "marketplace.plugin-name-invalid",
+                Severity::Error,
+                Vec::new(),
+                format!(
+                    "plugin name `{}` is not usable ({PLUGIN_NAME_RULE})",
+                    plugin.entry.name
+                ),
+            ),
+            MARKETPLACE_MANIFEST,
+        );
+    }
     if as_plugin.is_none()
         && let Some(bytes) = source.read(MARKETPLACE_MANIFEST)
     {

@@ -145,13 +145,8 @@
           "marketplace": {
             "plugin": "subdir",
             "plugin_source": {
-              "kind": "remote",
-              "repository": "https://github.com/acme/mono",
-              "path": "plugins/sub",
-              "checkout": {
-                "kind": "ref",
-                "name": "main"
-              }
+              "kind": "unsupported",
+              "reason": "`sha` is not a full 40-character commit"
             }
           },
           "selected_items": [

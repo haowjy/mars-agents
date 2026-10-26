@@ -112,7 +112,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 
 ### Security
 - `mars sync` refuses a dependency holding a symlink that leaves the package (`authored package entry escapes package root`). v0.19.0 copied the target, such as `/etc/hostname`, into `.mars/`.
-- A dependency URL, tag, ref or locked commit that starts with `-` is refused before git runs (`--upload-pack=<cmd>` would run `<cmd>`), and `--` precedes the repository and the checked-out revision. `plugin` names are letters, digits, `-`, `_` and `.`, and do not start with `-` or `.`, so `mars add <marketplace> --plugin ..` is an error.
+- A dependency URL, tag, ref or locked commit that starts with `-` is refused before git runs (`--upload-pack=<cmd>` would run `<cmd>`), and `--` precedes the repository and the checked-out revision. `plugin` names are letters, digits, `-`, `_` and `.`, starting with a letter or digit, so `mars add <marketplace> --plugin ..` is an error. `mars-schema` refuses a marketplace entry's unsafe repository or ref (option-like, whitespace, `ext::`, `file://`, an absolute path, any scheme but `https://` and `ssh://`) as an `unsupported` source with a reason, and a `sha` that is not a full commit; a plugin name that is not a name is left out of the list. A marketplace can no longer name a local repository for a plugin.
 
 ## [0.18.3] - 2026-10-25
 

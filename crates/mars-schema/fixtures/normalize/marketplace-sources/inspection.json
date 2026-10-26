@@ -59,17 +59,13 @@
       "entry": {
         "name": "subdir",
         "source": {
-          "kind": "remote",
-          "repository": "https://github.com/acme/mono",
-          "path": "plugins/sub",
-          "checkout": {
-            "kind": "ref",
-            "name": "main"
-          }
+          "kind": "unsupported",
+          "reason": "`sha` is not a full 40-character commit"
         },
         "lists": {}
       },
       "at_marketplace_root": false,
+      "refused": "can't import from this source: `sha` is not a full 40-character commit",
       "diagnostics": {}
     },
     {
@@ -112,8 +108,147 @@
       "at_marketplace_root": false,
       "refused": "can't import from this source: `archive` sources cannot be imported",
       "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "opt-repo",
+        "source": {
+          "kind": "unsupported",
+          "reason": "repository `--upload-pack=touch /tmp/x` starts with `-`, which git reads as an option"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: repository `--upload-pack=touch /tmp/x` starts with `-`, which git reads as an option",
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "ext-repo",
+        "source": {
+          "kind": "unsupported",
+          "reason": "repository `ext::sh-touch-x` is not an `https://` or `ssh://` URL or a `user@host:path` address"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: repository `ext::sh-touch-x` is not an `https://` or `ssh://` URL or a `user@host:path` address",
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "file-repo",
+        "source": {
+          "kind": "unsupported",
+          "reason": "repository `file:///etc/passwd` is a local repository; a marketplace entry names only network repositories"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: repository `file:///etc/passwd` is a local repository; a marketplace entry names only network repositories",
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "abs-repo",
+        "source": {
+          "kind": "unsupported",
+          "reason": "repository `/home/user/.ssh` is a local repository; a marketplace entry names only network repositories"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: repository `/home/user/.ssh` is a local repository; a marketplace entry names only network repositories",
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "git-scheme",
+        "source": {
+          "kind": "unsupported",
+          "reason": "repository `git://example.invalid/p` is not an `https://` or `ssh://` URL or a `user@host:path` address"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: repository `git://example.invalid/p` is not an `https://` or `ssh://` URL or a `user@host:path` address",
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "opt-ref",
+        "source": {
+          "kind": "unsupported",
+          "reason": "ref `--output=/tmp/x` starts with `-`, which git reads as an option"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: ref `--output=/tmp/x` starts with `-`, which git reads as an option",
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "short-sha",
+        "source": {
+          "kind": "unsupported",
+          "reason": "`sha` is not a full 40-character commit"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: `sha` is not a full 40-character commit",
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "scp-like",
+        "source": {
+          "kind": "remote",
+          "repository": "git@example.invalid:acme/p",
+          "checkout": {
+            "kind": "default-branch"
+          }
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "diagnostics": {}
     }
   ],
   "items": [],
-  "diagnostics": {}
+  "diagnostics": {
+    ".claude-plugin/marketplace.json": [
+      {
+        "code": "marketplace.plugin-name-invalid",
+        "severity": "warning",
+        "path": [
+          "plugins",
+          15,
+          "name"
+        ],
+        "message": "plugin name `__proto__` is not usable (letters, digits, `-`, `_` and `.`, starting with a letter or digit); the entry was left out"
+      },
+      {
+        "code": "marketplace.plugin-name-invalid",
+        "severity": "warning",
+        "path": [
+          "plugins",
+          16,
+          "name"
+        ],
+        "message": "plugin name `../x` is not usable (letters, digits, `-`, `_` and `.`, starting with a letter or digit); the entry was left out"
+      },
+      {
+        "code": "marketplace.plugin-name-invalid",
+        "severity": "warning",
+        "path": [
+          "plugins",
+          17,
+          "name"
+        ],
+        "message": "plugin name `a\nb` is not usable (letters, digits, `-`, `_` and `.`, starting with a letter or digit); the entry was left out"
+      }
+    ]
+  }
 }

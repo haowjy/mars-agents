@@ -124,8 +124,22 @@ impl PluginManifest {
         diagnostics: &mut Vec<(String, SchemaDiagnostic)>,
     ) -> Result<Self, SchemaDiagnostic> {
         let object = parse_object(bytes, PLUGIN_MANIFEST)?;
+        let name = text(&object, "name");
+        if let Some(name) = name.as_deref().filter(|name| !is_plugin_name(name)) {
+            diagnostics.push((
+                PLUGIN_MANIFEST.to_owned(),
+                SchemaDiagnostic::new(
+                    "plugin.name-invalid",
+                    Severity::Warning,
+                    vec![PathSegment::Key("name".into())],
+                    format!(
+                        "plugin name `{name}` is not usable ({PLUGIN_NAME_RULE}); the marketplace entry's or the repository's name is used"
+                    ),
+                ),
+            ));
+        }
         Ok(Self {
-            name: text(&object, "name"),
+            name: name.filter(|name| is_plugin_name(name)),
             version: text(&object, "version"),
             description: text(&object, "description"),
             lists: ComponentLists::from_object(&object, PLUGIN_MANIFEST, diagnostics),
@@ -217,6 +231,24 @@ impl Marketplace {
                 ));
                 continue;
             };
+            if !is_plugin_name(&name) {
+                diagnostics.push((
+                    MARKETPLACE_MANIFEST.to_owned(),
+                    SchemaDiagnostic::new(
+                        "marketplace.plugin-name-invalid",
+                        Severity::Warning,
+                        vec![
+                            PathSegment::Key("plugins".into()),
+                            PathSegment::Index(index),
+                            PathSegment::Key("name".into()),
+                        ],
+                        format!(
+                            "plugin name `{name}` is not usable ({PLUGIN_NAME_RULE}); the entry was left out"
+                        ),
+                    ),
+                ));
+                continue;
+            }
             plugins.push(MarketplaceEntry {
                 source: parse_source(entry.get("source"), plugin_root),
                 description: text(entry, "description"),
@@ -231,6 +263,22 @@ impl Marketplace {
             plugins,
         })
     }
+}
+
+/// What a plugin name may be: it becomes a package id and the tail of a dependency name, so it is
+/// one path component that no tool reads as an option or a hidden entry.
+pub const PLUGIN_NAME_RULE: &str =
+    "letters, digits, `-`, `_` and `.`, starting with a letter or digit";
+
+/// Whether `name` is a usable plugin name. The marketplace reader leaves out an entry that fails
+/// it, and a caller that takes a plugin name from a user checks the same rule.
+pub fn is_plugin_name(name: &str) -> bool {
+    name.bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
 fn unsupported(reason: impl Into<String>) -> PluginSource {
@@ -278,44 +326,104 @@ fn parse_source(source: Option<&Value>, plugin_root: Option<&str>) -> PluginSour
         return unsupported("`source` must be a path or an object");
     };
     let field = |key: &str| object.get(key).and_then(Value::as_str);
-    let checkout = || match (field("sha"), field("ref")) {
-        (Some(sha), _) if is_full_sha(sha) => Checkout::Sha {
-            sha: sha.to_owned(),
-        },
-        (_, Some(name)) => Checkout::Ref {
-            name: name.to_owned(),
-        },
-        _ => Checkout::DefaultBranch,
+    // What the entry pins: a full commit, else a ref, else the default branch. A `sha` that is
+    // not a full commit is refused, never read as an unpinned checkout.
+    let checkout = || -> Result<Checkout, String> {
+        match object.get("sha").filter(|sha| !sha.is_null()) {
+            Some(sha) => match sha.as_str().filter(|sha| is_full_sha(sha)) {
+                Some(sha) => Ok(Checkout::Sha {
+                    sha: sha.to_owned(),
+                }),
+                None => Err("`sha` is not a full 40-character commit".to_owned()),
+            },
+            None => match field("ref") {
+                Some(name) => match git_argument_refusal("ref", name) {
+                    Some(reason) => Err(reason),
+                    None => Ok(Checkout::Ref {
+                        name: name.to_owned(),
+                    }),
+                },
+                None => Ok(Checkout::DefaultBranch),
+            },
+        }
+    };
+    // The repository and ref are third-party text that reaches `git`'s argument list.
+    let remote = |repository: &str, path: Option<String>| {
+        let repository = repository_url(repository);
+        if let Some(reason) = repository_refusal(&repository) {
+            return unsupported(reason);
+        }
+        match checkout() {
+            Ok(checkout) => PluginSource::Remote {
+                repository,
+                path,
+                checkout,
+            },
+            Err(reason) => unsupported(reason),
+        }
     };
     let kind = field("source").unwrap_or_default();
     match kind {
         "github" => match field("repo") {
-            Some(repo) => PluginSource::Remote {
-                repository: repository_url(repo),
-                path: None,
-                checkout: checkout(),
-            },
+            Some(repo) => remote(repo, None),
             None => unsupported("a `github` source needs `repo`"),
         },
         "url" => match field("url") {
-            Some(url) => PluginSource::Remote {
-                repository: repository_url(url),
-                path: None,
-                checkout: checkout(),
-            },
+            Some(url) => remote(url, None),
             None => unsupported("a `url` source needs `url`"),
         },
         "git-subdir" => match (field("url"), field("path").and_then(local_path)) {
-            (Some(url), Some(path)) => PluginSource::Remote {
-                repository: repository_url(url),
-                path: Some(path).filter(|path| !path.is_empty()),
-                checkout: checkout(),
-            },
+            (Some(url), Some(path)) => remote(url, Some(path).filter(|path| !path.is_empty())),
             _ => unsupported("a `git-subdir` source needs `url` and an in-repository `path`"),
         },
         "" => unsupported("`source` has no `source` type"),
         other => unsupported(format!("`{other}` sources cannot be imported")),
     }
+}
+
+/// Why `value` (a repository or a ref) must not reach `git` as an argument: it would be read as
+/// an option (`--upload-pack=<cmd>` runs a command), or holds whitespace or control characters.
+fn git_argument_refusal(what: &str, value: &str) -> Option<String> {
+    if value.is_empty() {
+        Some(format!("the {what} is empty"))
+    } else if value.starts_with('-') {
+        Some(format!(
+            "{what} `{value}` starts with `-`, which git reads as an option"
+        ))
+    } else if value
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
+    {
+        Some(format!(
+            "{what} `{value}` holds whitespace or a control character"
+        ))
+    } else {
+        None
+    }
+}
+
+/// Only a network repository may be named: `https://`, `ssh://` or `user@host:path`. A local
+/// repository (`file://`, an absolute path) would read the machine that runs the fetch, and
+/// another scheme (`ext::<cmd>`, `git://`, `http://`) is a transport helper or unencrypted.
+fn repository_refusal(repository: &str) -> Option<String> {
+    if let Some(reason) = git_argument_refusal("repository", repository) {
+        return Some(reason);
+    }
+    if repository.starts_with("file://") || repository.starts_with('/') {
+        return Some(format!(
+            "repository `{repository}` is a local repository; a marketplace entry names only network repositories"
+        ));
+    }
+    let scp_like = repository
+        .split_once(':')
+        .is_some_and(|(user_host, path)| user_host.contains('@') && !path.is_empty());
+    (!(repository.starts_with("https://") || repository.starts_with("ssh://") || scp_like)).then(
+        || {
+            format!(
+                "repository `{repository}` is not an `https://` or `ssh://` URL or a `user@host:path` address"
+            )
+        },
+    )
 }
 
 fn is_full_sha(value: &str) -> bool {

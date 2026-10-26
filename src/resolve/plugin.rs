@@ -105,16 +105,6 @@ pub(crate) fn root_package(
             path,
             checkout,
         } => {
-            let marketplace_is_local = match &pending.spec {
-                crate::config::SourceSpec::Path(_) => true,
-                crate::config::SourceSpec::Git(git) => git.url.as_ref().starts_with("file://"),
-            };
-            let remote = remote_source(name.as_ref(), plugin_name, repository, checkout)?;
-            if remote.is_local() && !marketplace_is_local {
-                return Err(invalid(format!(
-                    "plugin `{plugin_name}` of `{name}` lives at local repository `{repository}`; only a marketplace read from a local source may name one"
-                )));
-            }
             let subpath = match path {
                 Some(path) => optional_subpath(name.as_ref(), path)?,
                 None => None,
@@ -128,7 +118,9 @@ pub(crate) fn root_package(
                 &url,
                 subpath.as_ref(),
             )?;
-            let fetched = fetch_content(pending, &remote, replay, provider, options, diag)?;
+            let fetched = fetch_content(
+                pending, repository, checkout, replay, provider, options, diag,
+            )?;
             let rooted = apply_subpath(name, &fetched.tree_path, subpath.as_ref())?;
             let content = LockedContent {
                 url: Some(url),
@@ -180,54 +172,6 @@ fn optional_subpath(name: &str, path: &str) -> Result<Option<SourceSubpath>, Mar
         })
 }
 
-/// A marketplace-named repository: third-party text that reaches `git`'s argument list.
-struct RemoteSource {
-    url: String,
-    checkout: Checkout,
-}
-
-impl RemoteSource {
-    fn is_local(&self) -> bool {
-        self.url.starts_with("file://") || self.url.starts_with('/')
-    }
-}
-
-fn remote_source(
-    name: &str,
-    plugin: &str,
-    repository: &str,
-    checkout: &Checkout,
-) -> Result<RemoteSource, MarsError> {
-    let refuse = |what: &str, value: &str| MarsError::InvalidRequest {
-        message: format!(
-            "plugin `{plugin}` of `{name}` has an unusable {what} `{value}` in its marketplace entry"
-        ),
-    };
-    let scp_like = repository
-        .split_once(':')
-        .is_some_and(|(user_host, path)| user_host.contains('@') && !path.is_empty());
-    let known_scheme = ["https://", "ssh://", "file://", "/"]
-        .iter()
-        .any(|prefix| repository.starts_with(prefix));
-    if repository.starts_with('-')
-        || repository.chars().any(char::is_whitespace)
-        || !(known_scheme || scp_like)
-    {
-        return Err(refuse("repository", repository));
-    }
-    if let Checkout::Ref { name: reference } = checkout
-        && (reference.is_empty()
-            || reference.starts_with('-')
-            || reference.chars().any(char::is_whitespace))
-    {
-        return Err(refuse("ref", reference));
-    }
-    Ok(RemoteSource {
-        url: repository.to_owned(),
-        checkout: checkout.clone(),
-    })
-}
-
 /// The lock's record of this very dependency (same source and plugin).
 fn locked_source<'a>(
     pending: &PendingSource,
@@ -275,19 +219,21 @@ fn replayable_commit(
     Ok(replay)
 }
 
-/// Fetch the plugin's repository at the entry's `sha`, the replayed commit, or its `ref` (else
+/// Fetch the plugin's repository (the crate has refused any that is not a network repository)
+/// at the entry's `sha`, the replayed commit, or its `ref` (else
 /// the default branch) as it is now.
 fn fetch_content(
     pending: &PendingSource,
-    remote: &RemoteSource,
+    repository: &str,
+    checkout: &Checkout,
     replay: Option<CommitHash>,
     provider: &dyn SourceProvider,
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let url = SourceUrl::from(remote.url.as_str());
+    let url = SourceUrl::from(repository);
     let name = pending.name.as_ref();
-    if let Checkout::Sha { sha } = &remote.checkout {
+    if let Checkout::Sha { sha } = checkout {
         return provider.fetch_git_commit(&url, sha, name, diag);
     }
     if let Some(commit) = replay {
@@ -308,7 +254,7 @@ fn fetch_content(
             result => return result,
         }
     }
-    let reference = match &remote.checkout {
+    let reference = match checkout {
         Checkout::Ref { name } => name.as_str(),
         _ => "HEAD",
     };

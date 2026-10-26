@@ -87,9 +87,12 @@ the same plugin again without fetching, and the lock builder reads `plugin` and 
   and `command` sources (naming the shape), and a remote plugin that is itself a marketplace. A
   marketplace dependency with no `plugin` takes the marketplace's only plugin (a lock written for it records no `plugin`, and no `content` for a plugin in the marketplace's own tree, as v0.19.0 wrote it) and is an error that lists the plugins when there are several.
 - **Trust.** A marketplace entry is third-party text that reaches `git`'s argument list. The
-  repository and ref are validated in `remote_source` (no leading `-`, no whitespace, a recognized
-  form), and only a marketplace from a local source (`path` or `file://`) may name a local
-  repository. GitHub-only hosting is Flow's server policy, not Mars's.
+  crate refuses it when it reads the entry (`parse_source`): the source comes back `unsupported`
+  with a reason for a repository or ref that starts with `-` or holds whitespace, a repository
+  that is not `https://`, `ssh://` or `user@host:path` (a local repository is refused too), and a
+  `sha` that is not 40 hex. The binary acts only on what the crate calls remote, and
+  `git_cli.rs` refuses an option-like argument again at the point git runs. GitHub-only hosting
+  is Flow's server policy, not Mars's.
 
 ## Provider traits
 

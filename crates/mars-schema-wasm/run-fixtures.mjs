@@ -133,8 +133,7 @@ for (const name of cases("upgrade")) {
   const item = kind === "manifest" ? result.manifest : result.definitions.find(d => d.source_path === path);
   assert.equal(Buffer.from(item.normalized_bytes).toString("utf8"), text("upgrade", name, `expected.${ext}`), `upgrade/${name} text`);
   assert.equal(item.change.kind === "fully-rewritten", existsSync(join(fixtures, "upgrade", name, "fully-rewritten.txt")), `upgrade/${name} rewrite mode`);
-  // What the upgrade changed is in `changes`; what it could not carry over (a lost restriction) is a finding.
-  const messages = [...(result.changes?.[path] ?? []), ...(result.diagnostics?.[path] ?? [])].map(d => d.message);
+  const messages = (result.changes?.[path] ?? []).map(d => d.message);
   const keys = json("upgrade", name, "expected-diagnostics.json");
   assert.equal(messages.length, keys.length, `upgrade/${name} diagnostics ${JSON.stringify(messages)}`);
   for (const key of keys) assert.ok(messages.some(m => m.includes(`\`${key}\``)), `upgrade/${name} names ${key}`);

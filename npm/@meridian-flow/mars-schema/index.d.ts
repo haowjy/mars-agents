@@ -237,9 +237,7 @@ export interface Prepared {
   payload: { source_path: string; output_path: string }[];
   /**
    * Package-level findings by source path: what discovery and translation met and could not
-   * convert (`skill.*`, `agent.*`, `import.*`), and `field.restriction-lost` when a translation
-   * or upgrade dropped or moved a restriction (a `deny` or `ask` tool entry, `permission`,
-   * `sandbox`, `approval`) and so widened the agent. A file's own reading diagnostics are on its
+   * convert (`skill.*`, `agent.*`, `import.*`). A file's own reading diagnostics are on its
    * `reading`.
    */
   diagnostics: { [sourcePath: string]: Diagnostic[] };
@@ -247,8 +245,11 @@ export interface Prepared {
    * What preparing changed in each file, by source path: the keys a pre-v1 upgrade
    * (`classification.kind === "mars-legacy"`) or a foreign translation dropped, moved or
    * repaired (legacy keys, skill tool rules, Claude-only keys, a repaired `description`, a key
-   * set aside under `harness-overrides` or dropped). A
-   * file changed when its `change.kind` is not `none` or `generated`. Absent when empty.
+   * set aside under `harness-overrides` or dropped). A change coded `field.restriction-lost`
+   * means a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) was
+   * dropped or moved, so the agent is less restricted than its file says; a caller reports
+   * these every time. A file changed when its `change.kind` is not `none` or `generated`.
+   * Absent when empty.
    */
   changes?: { [sourcePath: string]: Diagnostic[] };
 }

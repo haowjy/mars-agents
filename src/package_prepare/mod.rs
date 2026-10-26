@@ -393,7 +393,8 @@ pub(crate) enum Subject<'a> {
 ///
 /// What preparing changed in each file (`Prepared::changes`) is not repeated on every sync: a
 /// pre-v1 package gets one warning and a translated one a summary line, each with the count of
-/// files, and `mars migrate` lists the changes.
+/// files, and `mars migrate` lists the changes. Except the ones that lost a restriction, which
+/// are printed every time with the file they are in.
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     label: &dyn Fn(&str) -> String,
@@ -405,6 +406,9 @@ pub(crate) fn report_diagnostics(
         for diagnostic in diagnostics {
             diag.schema(diagnostic, &context, false);
         }
+    }
+    for (relative, lost) in prepared.lost_restrictions() {
+        diag.schema(lost, &label(relative), false);
     }
     let files = prepared.changed_files();
     if files == 0 {

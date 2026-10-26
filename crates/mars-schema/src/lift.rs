@@ -189,7 +189,6 @@ pub fn lift_frontmatter(
             kind,
             crate::set_aside::Destination::for_dialect(dialect),
             &mut changes,
-            &mut findings,
         );
     }
     Lifted {

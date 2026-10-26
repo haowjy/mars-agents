@@ -9,7 +9,9 @@
 //! - Any other rejected key is moved under `harness-overrides.<harness>` when a harness could
 //!   read it, and dropped when none could.
 //! - Losing a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) is
-//!   reported as its own finding naming the agent, never as one of the changes a sync counts.
+//!   one of the changes like any other, with its own code ([`RESTRICTION_LOST`]) that names the
+//!   agent. `mars migrate` lists it with the rest, and a sync prints it on every run
+//!   (`Prepared::lost_restrictions`).
 
 use std::cmp::Ordering;
 
@@ -25,6 +27,9 @@ use crate::item::DefinitionKind;
 /// Keys whose errors cannot be cured by moving them: the file's identity, and the block moves go
 /// to.
 const KEPT_KEYS: &[&str] = &["name", "description", "harness-overrides"];
+
+/// The code of the change that records a lost restriction.
+pub(crate) const RESTRICTION_LOST: &str = "field.restriction-lost";
 
 /// Keys that restrict what an agent may do; losing one widens the agent.
 const RESTRICTION_KEYS: &[&str] = &[
@@ -208,12 +213,11 @@ fn restriction_lost(path: &[PathSegment], removed: &Value) -> Option<String> {
     })
 }
 
-/// Reports what the guard did, as changes a sync counts or as a finding when a restriction was
-/// lost.
+/// Reports what the guard did: a change per piece set aside, coded [`RESTRICTION_LOST`] when it
+/// was a restriction.
 struct Report<'a> {
     agent: String,
     changes: &'a mut Vec<SchemaDiagnostic>,
-    findings: &'a mut Vec<SchemaDiagnostic>,
 }
 
 impl Report<'_> {
@@ -221,23 +225,25 @@ impl Report<'_> {
     /// happened to the rejected piece, `why` is the reader's reason.
     fn note(&mut self, path: &[PathSegment], lost: Option<String>, what: &str, why: &str) {
         let shown = path_text(path);
-        match lost {
-            Some(lost) => self.findings.push(SchemaDiagnostic::new(
-                "field.restriction-lost",
-                Severity::Warning,
-                path.to_vec(),
+        let (code, message) = match lost {
+            Some(lost) => (
+                RESTRICTION_LOST,
                 format!(
                     "{} lost the restriction {lost}: {what}. Schema v1 does not accept it ({why})",
                     self.agent
                 ),
-            )),
-            None => self.changes.push(SchemaDiagnostic::new(
+            ),
+            None => (
                 "field.set-aside",
-                Severity::Warning,
-                path.to_vec(),
                 format!("`{shown}` is not valid in schema v1 ({why}); {what}"),
-            )),
-        }
+            ),
+        };
+        self.changes.push(SchemaDiagnostic::new(
+            code,
+            Severity::Warning,
+            path.to_vec(),
+            message,
+        ));
     }
 }
 
@@ -249,7 +255,6 @@ pub(crate) fn set_aside_rejected_keys(
     kind: DefinitionKind,
     destination: Destination<'_>,
     changes: &mut Vec<SchemaDiagnostic>,
-    findings: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
     let rejected = rejected_keys(kind, fm);
     if rejected.is_empty() {
@@ -261,7 +266,6 @@ pub(crate) fn set_aside_rejected_keys(
             None => "this agent".to_owned(),
         },
         changes,
-        findings,
     };
     let mut changed = false;
     let mut movable = Vec::new();

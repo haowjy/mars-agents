@@ -131,6 +131,18 @@ impl Prepared {
     /// How many authored files preparation changed: the prepared bytes differ from the file, and
     /// for a pre-v1 package `mars migrate` writes them back. A generated `mars.toml` has no file
     /// to change and is not counted.
+    /// The changes that lost a restriction (a `deny` or `ask` tool entry, `permission`,
+    /// `sandbox`, `approval`), by source path. Unlike the rest of `changes`, a caller reports
+    /// these on every run: each leaves an agent less restricted than its file says.
+    pub fn lost_restrictions(&self) -> impl Iterator<Item = (&str, &SchemaDiagnostic)> {
+        self.changes.iter().flat_map(|(path, changes)| {
+            changes
+                .iter()
+                .filter(|change| change.code == crate::set_aside::RESTRICTION_LOST)
+                .map(move |change| (path.as_str(), change))
+        })
+    }
+
     pub fn changed_files(&self) -> usize {
         self.manifest
             .iter()
@@ -439,7 +451,6 @@ fn prepare_definition(
             Classification::MarsLegacy => {
                 match crate::upgrade::upgrade_definition(selected.kind, text) {
                     Ok(result) => {
-                        findings = result.findings.clone();
                         let (upgraded, change, upgrade_notes) = upgrade_result(text, result);
                         notes = upgrade_notes;
                         (upgraded, change)

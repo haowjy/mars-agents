@@ -17,10 +17,6 @@ pub struct UpgradeResult {
     pub text: String,
     /// What the upgrade changed, one note per key it dropped or moved.
     pub diagnostics: Vec<SchemaDiagnostic>,
-    /// What it could not carry into schema v1 and the author should know of (a restriction
-    /// lost), reported on its own, not as a change.
-    #[serde(default)]
-    pub findings: Vec<SchemaDiagnostic>,
     /// A changed definition whose source shape prevented top-level block editing.
     pub fully_rewritten: bool,
     /// Authored key paths whose values or presence changed.
@@ -46,16 +42,15 @@ pub enum UpgradeError {
 pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeResult, UpgradeError> {
     let original = Frontmatter::parse(text)?;
     let mut frontmatter = original.clone();
-    let (mut diagnostics, mut findings) = (Vec::new(), Vec::new());
+    let mut diagnostics = Vec::new();
     match kind {
-        DefinitionKind::Agent => upgrade_agent(&mut frontmatter, &mut diagnostics, &mut findings),
-        DefinitionKind::Skill => upgrade_skill(&mut frontmatter, &mut diagnostics, &mut findings),
+        DefinitionKind::Agent => upgrade_agent(&mut frontmatter, &mut diagnostics),
+        DefinitionKind::Skill => upgrade_skill(&mut frontmatter, &mut diagnostics),
     }
     if frontmatter.mapping() == original.mapping() {
         return Ok(UpgradeResult {
             text: text.to_string(),
             diagnostics,
-            findings,
             fully_rewritten: false,
             edited_paths: Vec::new(),
         });
@@ -75,7 +70,6 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
         fully_rewritten: minimally_edited.is_none(),
         text: minimally_edited.unwrap_or(fallback),
         diagnostics,
-        findings,
         edited_paths,
     })
 }
@@ -90,7 +84,6 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
         return Ok(UpgradeResult {
             text: text.to_string(),
             diagnostics: Vec::new(),
-            findings: Vec::new(),
             fully_rewritten: false,
             edited_paths: Vec::new(),
         });
@@ -111,7 +104,6 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
     Ok(UpgradeResult {
         text: with_line_ending_of(text, document.to_string()),
         diagnostics,
-        findings: Vec::new(),
         fully_rewritten: false,
         edited_paths,
     })
@@ -326,23 +318,15 @@ pub(crate) fn lift_mars_only_keys(
     fm.mapping() != &before
 }
 
-fn upgrade_agent(
-    fm: &mut Frontmatter,
-    diagnostics: &mut Vec<SchemaDiagnostic>,
-    findings: &mut Vec<SchemaDiagnostic>,
-) {
+fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
     upgrade_tools(fm);
     lift_mars_only_keys(fm, DefinitionKind::Agent, diagnostics);
     // A pre-v1 file passed unknown keys to every harness; Claude's own keep reaching Claude.
     claude::translate::move_to_claude_overrides(fm, DefinitionKind::Agent, diagnostics);
-    set_aside_rejected_keys(fm, DefinitionKind::Agent, diagnostics, findings);
+    set_aside_rejected_keys(fm, DefinitionKind::Agent, diagnostics);
 }
 
-fn upgrade_skill(
-    fm: &mut Frontmatter,
-    diagnostics: &mut Vec<SchemaDiagnostic>,
-    findings: &mut Vec<SchemaDiagnostic>,
-) {
+fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
     lift_mars_only_keys(fm, DefinitionKind::Skill, diagnostics);
 
     if let Some(skill_type) = fm.get("type").cloned() {
@@ -388,7 +372,7 @@ fn upgrade_skill(
     }
 
     claude::translate::move_to_claude_overrides(fm, DefinitionKind::Skill, diagnostics);
-    set_aside_rejected_keys(fm, DefinitionKind::Skill, diagnostics, findings);
+    set_aside_rejected_keys(fm, DefinitionKind::Skill, diagnostics);
 }
 
 /// What the rules above could not make schema v1 is dropped, with a warning naming it, so the
@@ -399,14 +383,12 @@ fn set_aside_rejected_keys(
     fm: &mut Frontmatter,
     kind: DefinitionKind,
     diagnostics: &mut Vec<SchemaDiagnostic>,
-    findings: &mut Vec<SchemaDiagnostic>,
 ) {
     crate::set_aside::set_aside_rejected_keys(
         fm,
         kind,
         crate::set_aside::Destination::Nowhere,
         diagnostics,
-        findings,
     );
 }
 

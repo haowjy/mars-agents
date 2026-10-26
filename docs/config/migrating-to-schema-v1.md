@@ -9,7 +9,7 @@ mars migrate            # rewrite them
 mars check              # confirm the package is clean
 ```
 
-`mars migrate` deletes some keys without a replacement and prints each one after the files it edited, grouped by code (`field.removed`, `skill.tools-dropped`), one line per file and key, none left out. `--json` carries the same list as `dropped`. Review the result with `git diff` before you commit.
+`mars migrate` deletes some keys without a replacement and prints each one after the files it edited, grouped by code (`field.removed`, `skill.tools-dropped`, `field.set-aside`, `field.restriction-lost`), one line per file and key, none left out. A key that restricted an agent (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) and has no schema 1 meaning is listed under `field.restriction-lost`, in a package and in a project's `.mars-src` alike; `mars sync` prints the same line for a pre-v1 dependency on every run. `--json` carries the same list as `dropped`. Review the result with `git diff` before you commit.
 
 A value with no schema 1 meaning stops the run and names the file and key (``agents/b.md: agent field `model-policies[0].override.effort` has invalid value `bogus` ``). The legacy `effort` values `adaptive` and `disabled` are mapped to `medium` and `none`, in `effort:` and in a model policy's `override.effort`.
 

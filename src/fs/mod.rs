@@ -209,6 +209,14 @@ fn copy_dir_recursive(
             copy_dir_recursive(&src_path, &dest_path, root, excluded)?;
         } else {
             fs::copy(&src_path, &dest_path)?;
+            // `fs::copy` carries the source's full mode; installs use Mars's one rule instead, so
+            // a provided tree's digest (bytes plus executable bit) describes what landed.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = crate::platform::fs::installed_mode(&fs::metadata(&src_path)?);
+                fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))?;
+            }
         }
     }
     Ok(())

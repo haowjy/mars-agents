@@ -652,8 +652,8 @@ from, so a host always fills the root it named.
 a Python package's `__init__.py`, `__pycache__/` and `AGENTS.md` are not skills.
 
 A skill is compared by each file's bytes and executable bit, since an installed copy
-is `0o644` plus the source's execute bits. Changing only a file's mode therefore
-replaces the installed skill on the next run, with or without a version bump.
+is `0o644` plus the source's execute bits. Every installed file gets that mode, so
+adding or removing a file's execute bit replaces the installed skill on the next run, with or without a version bump.
 
 `--json` prints `status`, `provider`, `version`, `skills` (the recorded names
 after the run), `installed`, `replaced`, `adopted`, `removed`, `shadowed`,

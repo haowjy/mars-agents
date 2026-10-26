@@ -93,7 +93,7 @@ pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<Strin
 /// file's executable bit folded in.
 ///
 /// An install is bytes plus the mode the copy path gives them (`0o644` and the source's execute
-/// bits), so freshness must see a mode-only change: a host that fixes a script's mode needs a
+/// bits), so freshness must see an execute-bit change: a host that fixes a script's execute bit needs a
 /// replacement without a dummy content edit. "Executable" is
 /// [`crate::platform::fs::is_executable`], the same notion the copy path installs by.
 ///

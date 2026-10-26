@@ -25,7 +25,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
   byte-identical, and provided skills are never projected. A fast path answers `up-to-date` without
   the sync lock only when a re-plan would write nothing — the record matches the source and every
   source skill is either claimed by a package or installed with its source bytes and executable
-  bit (a mode-only change to a shipped script replaces the skill) — so a skill left
+  bit (installs are `0o644` plus the source's execute bits, so flipping a script's execute bit replaces the skill) — so a skill left
   out earlier (shadowed, collided) installs once the blocker is gone, and a run whose plan changes
   nothing writes nothing. A held lock answers `busy`, an interrupted sync answers `sync-pending` until `mars repair` or `mars sync` recovers it,
   and a crash mid-apply converges on the next run, which reclaims a skill directory the killed run

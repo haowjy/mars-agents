@@ -224,7 +224,7 @@ pub(crate) fn recover_interrupted_skill_installs(mars_dir: &Path) -> Result<bool
     match fs::symlink_metadata(&skills_dir) {
         Ok(metadata) if metadata.is_dir() => {}
         // Nothing staged to reclaim. A file or link here is someone else's obstruction, which the
-        // apply reports in place of this best-effort sweep.
+        // apply reports in place of this sweep.
         Ok(_) => return Ok(false),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(io_context("inspect canonical skills", &skills_dir, error)),

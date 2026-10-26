@@ -56,7 +56,7 @@ only `tempfile`'s `.tmp` plus six alphanumerics is matched.
 
 The tree is copied as authored (no normalization, no `prepare`), because the digest and the
 byte-equal adopt rule compare raw bytes plus the one thing the install adds: each file's executable
-bit (`0o644` and the source's execute bits). So a mode-only change is a change — it replaces the
+bit (`0o644` and the source's execute bits). Every Mars install copy sets that mode (`crate::fs::copy_dir_recursive` and `platform::fs` both use `installed_mode`). So an execute-bit change is a change — it replaces the
 installed skill, and the unlocked fast path sees it because the recorded digest moves.
 `mars_schema::skill::read` is used only to refuse a
 `SKILL.md` that error-level diagnostics would make every later reader drop; warnings (schema v1's

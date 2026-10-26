@@ -139,13 +139,13 @@ Additionally, this phase merges model aliases from the dependency tree. Each res
 
 ### Preparation and the gate
 
-Mars reads every package as [schema v1](../config/schema-v1.md) before it writes anything to the project. The reading is `mars_schema::prepare`, the same code the npm package compiles to WebAssembly; the binary only supplies a lazy, package-confined view of the files (`src/package_prepare/`).
+Mars reads every package as [schema v1](../config/schema-v1.md) before it writes any content to the project. The reading is `mars_schema::prepare`, the same code the npm package compiles to WebAssembly; the binary only supplies a lazy, package-confined view of the files (`src/package_prepare/`).
 
 ```mermaid
 flowchart TD
     R["Resolve: prepare each dependency"] --> L["Prepare .mars-src and the local package"]
     L --> G1{"Prepared<br/>errors?"}
-    G1 -- yes --> F["Exit 2<br/>nothing written"]
+    G1 -- yes --> F["Exit 2<br/>no content written"]
     G1 -- no --> M["Project prepared bytes and overlays<br/>into .mars/.staging.pending"]
     M --> B["Build target, plan,<br/>hook and MCP preflight"]
     B --> G2{"Any<br/>errors?"}
@@ -166,7 +166,7 @@ What preparation decides for a package root:
 The order inside one `mars sync`:
 
 1. **Prepare.** Each dependency is prepared during resolution. The project's own `.mars-src` and `[package]` follow. Preparation reads manifests, definitions and directory listings, never the bytes of payload files.
-2. **Gate.** Every error-level diagnostic collected so far (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*`, `frontmatter.*`, config errors) fails the sync with exit 2. The only writes before this point are `.mars/sync.lock` and the removal of an interrupted pending generation (a dry run makes neither). A `mars add` rejected here has not written the dependency, because the config mutation is saved only when the plan applies.
+2. **Gate.** Every error-level diagnostic collected so far (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*`, `frontmatter.*`, config errors) fails the sync with exit 2. The only writes before this point are `.mars/sync.lock`, the removal of an interrupted pending generation and the removal of a skill directory a killed install left staged under `.mars/skills` (a dry run makes none of them). A `mars add` rejected here has not written the dependency, because the config mutation is saved only when the plan applies.
 3. **Project.** The prepared bytes, the payload files the crate listed, and the binary-owned hook, MCP, bootstrap and plugin-manifest surfaces are written into a scratch generation: `.mars/.staging.pending` in a real sync, a temporary directory outside the project in a dry run. `[skills.<name>]` overlays and dependency renames apply here, after preparation. Nothing outside the scratch generation changes.
 4. **Binary and compiler checks.** Building the target, planning, and the hook and MCP preflight report their own errors, and the gate runs after the target is built and again after the preflight, so those errors also fail before apply.
 5. **Apply and publish.** The config mutation is saved, the plan is applied to the `.mars/` canonical store, and the generation at `.mars/.staging.pending` is renamed over `.mars/staging` (nothing is copied). The next sync that takes the lock removes a leftover pending path.

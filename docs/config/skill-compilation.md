@@ -277,4 +277,4 @@ against the project's configured managed targets.
 | `skill-variant-missing-skill` | warning | Model variant directory has no `SKILL.md` |
 | `skill-schema-error` | error | A selected variant's frontmatter is malformed |
 
-A skill with an error fails `mars sync`, `mars check` and `mars validate` for its package before anything is written. `skill-field-dropped` entries with `Dropped` lossiness are currently suppressed in normal projection output; only `Approximate` entries produce user-visible warnings.
+A skill with an error fails `mars sync`, `mars check` and `mars validate` for its package before any content is written. `skill-field-dropped` entries with `Dropped` lossiness are currently suppressed in normal projection output; only `Approximate` entries produce user-visible warnings.

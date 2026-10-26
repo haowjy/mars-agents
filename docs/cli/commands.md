@@ -81,7 +81,7 @@ mars add <source...> [filter flags]
   - GitLab: `gitlab:group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo/-/tree/main/plugins/foo`
   - Generic git: `git@example.com:org/repo.git`, `git://host/org/repo.git`
   - Local paths
-- A dependency whose definitions break schema v1 is rejected before anything is written: the command exits 2 and `mars.toml` does not gain the dependency (see [sync](#mars-sync)).
+- A dependency whose definitions break schema v1 is rejected before any content is written: the command exits 2 and `mars.toml` does not gain the dependency (see [sync](#mars-sync)).
 - Archive-download and direct file-download URLs are rejected in v1.
 
 Dependency naming model:
@@ -133,7 +133,7 @@ mars sync [--force] [--diff] [--frozen]
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode) |
 
-This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes anything. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and leaves `.mars/`, the targets and `mars.lock` as they were. Warnings (`field.unknown`, the lossiness a target cannot express) are printed and the sync goes on. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
+This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). Warnings (`field.unknown`, the lossiness a target cannot express) are printed and the sync goes on. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
 ---
 
@@ -173,7 +173,7 @@ mars migrate [--check] [--root PATH] [--json]
 | `--check` | List the files that would change and write nothing. Exits 1 if any file needs migration |
 | `--json` | `{check, changed, files, fully_rewritten_files, dropped}`; `dropped` lists `{file, code, message}` for each key the migration removed |
 
-It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`) and every agent and skill definition, and writes only the files that change. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Comments, quoting, key order and the body of a definition stay as they were; only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
+It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`) and every agent and skill definition, and writes only the files that change. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Quoting, key order and the body of a definition stay as they were, and a comment survives unless it belongs to a changed key's block (a comment written directly after a changed key's value is part of that block and is rewritten with it); only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
 
 In a consumer project (a `mars.toml` with no `[package]`), only `.mars-src/` is migrated; with none, the command says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories` and exits 0.
 
@@ -650,6 +650,10 @@ from, so a host always fills the root it named.
 
 `skills/` entries starting with `_` or `.` are ignored, as are top-level files, so
 a Python package's `__init__.py`, `__pycache__/` and `AGENTS.md` are not skills.
+
+A skill is compared by each file's bytes and executable bit, since an installed copy
+is `0o644` plus the source's execute bits. Changing only a file's mode therefore
+replaces the installed skill on the next run, with or without a version bump.
 
 `--json` prints `status`, `provider`, `version`, `skills` (the recorded names
 after the run), `installed`, `replaced`, `adopted`, `removed`, `shadowed`,

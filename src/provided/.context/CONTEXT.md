@@ -48,7 +48,11 @@ Crash safety is the pre-record, not a journal: step 6 writes this provider's sec
 directory installs atomically, then step 8 writes the final digest and names. A crash anywhere in
 between leaves a record no run can read as current, so the next run replans from the files on disk
 and converges — including a skill the host dropped meanwhile, which is still on record and still
-removed. `"pending"` is deliberately not a digest: it must never compare equal to one.
+removed. `"pending"` is deliberately not a digest: it must never compare equal to one. A skill
+directory a killed run staged under `.mars/skills/` and never renamed into place is in no record;
+the next run that takes the lock removes it (`recover_interrupted_skill_installs`). That is safe
+because skill discovery skips hidden directories, so no installed content has such a name, and
+only `tempfile`'s `.tmp` plus six alphanumerics is matched.
 
 The tree is copied as authored (no normalization, no `prepare`), because the digest and the
 byte-equal adopt rule compare raw bytes plus the one thing the install adds: each file's executable

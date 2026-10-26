@@ -28,7 +28,7 @@ Mars classifies a package root before it reads any definition:
 | `schema` higher than 1, or not an integer | Refuses the package. A Mars that does not know the schema cannot read it. |
 | no `mars.toml` | The tree is a foreign layout (a Claude plugin, a marketplace, a tree of `SKILL.md` directories, a Codex, OpenCode or Cursor repository). Mars translates it into a schema v1 package; a tree of plain `agents/` and `skills/` folders is translated by Claude's rules (or OpenCode's, when an Agent has a `permission` map or a `tools` map of booleans), and the keys only pre-v1 Mars defined are rewritten per key whatever the dialect. A key or value the translation cannot make schema v1 is moved under `harness-overrides.<dialect>` (or dropped when no harness reads it, or when Mars lowers it itself) with a warning, never an error: only an authored schema v1 file is read strictly. See [Dialect](mars-toml.md#dialect). |
 
-The same classification runs for dependencies, the local package, `.mars-src/`, `mars check`, `mars validate`, `mars migrate` and plugin builds. Reading finishes for the whole dependency graph before anything is written; see [the sync pipeline](../internals/sync-pipeline.md#preparation-and-the-gate).
+The same classification runs for dependencies, the local package, `.mars-src/`, `mars check`, `mars validate`, `mars migrate` and plugin builds. Reading finishes for the whole dependency graph before any content is written; see [the sync pipeline](../internals/sync-pipeline.md#preparation-and-the-gate).
 
 ### File rules
 

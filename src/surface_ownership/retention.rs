@@ -47,29 +47,33 @@ impl RemovalPlan {
         for (target_root, records) in previous {
             for (key, record) in records {
                 let surface = Surface::of_key(key);
-                per_pair
+                let removal = per_pair
                     .entry((target_root.clone(), surface))
                     .or_insert_with(|| SurfaceRemoval {
                         keys_to_remove: Vec::new(),
                         prior_records: BTreeMap::new(),
-                    })
-                    .prior_records
-                    .insert(key.clone(), record.clone());
-                if desired
+                    });
+                removal.prior_records.insert(key.clone(), record.clone());
+                match desired
                     .get(target_root)
-                    .is_none_or(|entries| !entries.contains_key(key))
+                    .and_then(|entries| entries.get(key))
                 {
-                    stale_keys
-                        .entry(target_root.clone())
-                        .or_default()
-                        .push(key.clone());
-                    if surface == Surface::Mcp {
-                        per_pair
-                            .get_mut(&(target_root.clone(), surface))
-                            .expect("pair was inserted above")
-                            .keys_to_remove
+                    None => {
+                        stale_keys
+                            .entry(target_root.clone())
+                            .or_default()
                             .push(key.clone());
+                        if surface == Surface::Mcp {
+                            removal.keys_to_remove.push(key.clone());
+                        }
                     }
+                    // A changed MCP record may mean the entry moves (OpenCode's
+                    // native section). Remove the old one from where the old
+                    // record says it lives; the write then places the new one.
+                    Some(new) if surface == Surface::Mcp && new != record => {
+                        removal.keys_to_remove.push(key.clone());
+                    }
+                    Some(_) => {}
                 }
             }
         }
@@ -97,10 +101,6 @@ impl RemovalPlan {
             per_pair,
             stale_keys,
         } = self;
-        let prior_records = per_pair
-            .iter()
-            .map(|(pair, removal)| (pair.clone(), removal.prior_records.clone()))
-            .collect();
         let mut outcomes = BTreeMap::new();
         for ((target_root, surface), removal) in per_pair {
             let outcome = if removal.keys_to_remove.is_empty() {
@@ -141,10 +141,7 @@ impl RemovalPlan {
                 );
             }
         }
-        RetentionPlan {
-            outcomes,
-            prior_records,
-        }
+        RetentionPlan { outcomes }
     }
 }
 
@@ -215,7 +212,6 @@ enum RemovalOutcome {
 
 pub(crate) struct RetentionPlan {
     outcomes: BTreeMap<(String, Surface), RemovalOutcome>,
-    prior_records: BTreeMap<(String, Surface), BTreeMap<String, ConfigEntryRecord>>,
 }
 
 impl RetentionPlan {
@@ -229,7 +225,6 @@ impl RetentionPlan {
             Some(RemovalOutcome::Confirmed) | None => Some(WritePermit {
                 target_root,
                 surface,
-                prior_records: self.prior_records.get(&(target_root.to_string(), surface)),
             }),
         }
     }
@@ -250,7 +245,6 @@ impl RetentionPlan {
 pub struct WritePermit<'p> {
     target_root: &'p str,
     surface: Surface,
-    prior_records: Option<&'p BTreeMap<String, ConfigEntryRecord>>,
 }
 
 #[derive(Debug)]
@@ -271,7 +265,6 @@ impl<'p> WritePermit<'p> {
             Ok(ConfigWrite {
                 target_root: self.target_root,
                 entries,
-                prior_records: self.prior_records,
             })
         } else {
             Err(SurfaceMismatch)
@@ -297,7 +290,6 @@ impl<'p> WritePermit<'p> {
         WritePermit {
             target_root,
             surface,
-            prior_records: None,
         }
     }
 }
@@ -305,7 +297,6 @@ impl<'p> WritePermit<'p> {
 pub struct ConfigWrite<'p> {
     target_root: &'p str,
     entries: Vec<ConfigEntry>,
-    prior_records: Option<&'p BTreeMap<String, ConfigEntryRecord>>,
 }
 impl<'p> ConfigWrite<'p> {
     pub(crate) fn target_root(&self) -> &str {
@@ -313,9 +304,6 @@ impl<'p> ConfigWrite<'p> {
     }
     pub(crate) fn entries(&self) -> &[ConfigEntry] {
         &self.entries
-    }
-    pub(crate) fn prior_records(&self) -> Option<&BTreeMap<String, ConfigEntryRecord>> {
-        self.prior_records
     }
     pub(crate) fn into_parts(self, project_root: &Path) -> (PathBuf, Vec<ConfigEntry>) {
         (project_root.join(self.target_root), self.entries)

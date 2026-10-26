@@ -128,7 +128,9 @@ pub(crate) fn preflight_config_entries(
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
                     errors.push(error);
                 }
-                if let Err(error) = crate::target::validate_json_config_file(&path) {
+                if let Err(error) =
+                    crate::target::validate_json_config_file(&path, adapter.mcp_section_key())
+                {
                     errors.push(error.to_string());
                 }
             }
@@ -434,19 +436,17 @@ pub(crate) fn compile_config_entries(
                 };
                 match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir) {
                     Ok(content) => {
-                        let fragment = item.def.targets[target_root]
-                            .fragment
-                            .clone()
-                            .unwrap_or_else(|| {
-                                crate::compiler::hooks::default_fragment_name(target_root)
-                            });
-                        adapter.check_hook_fragment(
-                            &item.def.name,
-                            &item.source_name,
-                            &fragment,
-                            &content,
-                            diag,
-                        );
+                        if let Some(problem) = adapter.hook_fragment_problem(&content) {
+                            diag.warn(
+                                "hook-fragment-contract",
+                                format!(
+                                    "hook `{}` from `{}`: `{target_root}` fragment `{}` {problem}; the fragment will still be installed",
+                                    item.def.name,
+                                    item.source_name,
+                                    item.fragment_name(target_root),
+                                ),
+                            );
+                        }
                         let relative_dest = relative_dest.to_string_lossy().into_owned();
                         desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
                         file_writes.push((
@@ -643,10 +643,29 @@ fn apply_replacement_writes(
                         );
                 }
             }
-            Err(error) => diag.warn(
-                "config-entry-write",
-                format!("failed to write config entries to `{authorized_target}`: {error}"),
-            ),
+            Err(error) => {
+                diag.warn(
+                    "config-entry-write",
+                    format!("failed to write config entries to `{authorized_target}`: {error}"),
+                );
+                // Entries the old lock owned may still be on disk; keep their
+                // records so a later sync can remove them. Hook removal clears
+                // the whole pair before the write, so no hook record applies.
+                if surface == Surface::Mcp {
+                    written_records
+                        .entry(authorized_target.clone())
+                        .or_default()
+                        .extend(
+                            old_lock
+                                .config_entries
+                                .get(&authorized_target)
+                                .into_iter()
+                                .flatten()
+                                .filter(|(key, _)| written_keys.contains(*key))
+                                .map(|(key, record)| (key.clone(), record.clone())),
+                        );
+                }
+            }
         }
     }
 

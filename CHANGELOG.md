@@ -20,11 +20,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
-- OpenCode MCP ownership now records the native config section in `mars.lock`, so legacy migration
-  and stale cleanup preserve same-named user entries in the other section.
 - OpenCode sync now registers MCP servers under native `mcp` entries with `{env:VAR}`
-  environment references, migrates Mars-owned legacy `mcpServers` entries, and removes stale
-  servers from either section without touching unowned entries.
+  environment references and records each written entry in `mars.lock`. Legacy `mcpServers`
+  entries Mars owns migrate on the next sync, and stale cleanup removes only the section the lock
+  names, so same-named user entries survive. A non-object `mcp` value fails sync before any write.
+- A failed MCP config write keeps that target's lock records for the entries it was writing, so
+  entries already on disk stay owned and removable on a later sync.
 - OpenCode sync now warns when a hook fragment lacks the required default `{ id, setup }` export,
   matching plugin builds while still installing the fragment.
 - Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,

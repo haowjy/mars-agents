@@ -17,12 +17,14 @@
 //! Merge-mode config entries use entry ownership rather than path ownership. A
 //! config entry may be removed only when the lock holds a
 //! [`ConfigEntryRecord`](crate::lock::ConfigEntryRecord) and its recorded
-//! `emitted_json` still matches the entry on disk. Target-native records may
-//! instead use that field as a section marker; OpenCode uses `mcp` to distinguish
-//! current entries from the one-release `mcpServers` records without a marker.
-//! Content resemblance without a lock record never establishes ownership. The
-//! temporary issue #130 old-lock bridge is narrower: a record without
-//! `emitted_json` authorizes only the legacy cleanup associated with that key.
+//! `emitted_json` still matches the entry on disk. Content resemblance without
+//! a lock record never establishes ownership. The temporary issue #130 old-lock
+//! bridge is narrower: a record without `emitted_json` authorizes only the
+//! legacy command-path cleanup associated with that recorded key.
+//!
+//! MCP records that change between syncs are removed before the rewrite, using
+//! the old record to find the entry. OpenCode relies on this to move servers
+//! from `mcpServers` (no `emitted_json`) to `mcp` (the exact entry written).
 //!
 //! [`retention`] enforces the other half of the contract: each removal is a
 //! single-use operation that reports the records it could not confirm removing.

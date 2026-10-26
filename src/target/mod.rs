@@ -180,27 +180,33 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     ) {
     }
 
-    /// Validate a target's opaque file-mode hook fragment before installation.
+    /// Name what is wrong with an opaque file-mode hook fragment, if anything.
     ///
     /// Most targets treat file fragments as opaque text. Targets with a native
-    /// loader may inspect the content and emit target-specific diagnostics.
-    fn check_hook_fragment(
-        &self,
-        _hook_name: &str,
-        _source_name: &str,
-        _fragment: &str,
-        _content: &str,
-        _diag: &mut crate::diagnostic::DiagnosticCollector,
-    ) {
+    /// loader report a contract violation; callers build the diagnostic text.
+    fn hook_fragment_problem(&self, _content: &str) -> Option<&'static str> {
+        None
+    }
+
+    /// Top-level key of the config-file object holding this target's MCP
+    /// servers. Preflight validates it before anything is written.
+    fn mcp_section_key(&self) -> &'static str {
+        "mcpServers"
     }
 
     /// Build the ownership record for one emitted config entry.
     ///
-    /// Merge-mode hooks retain their exact emitted JSON for structural removal;
-    /// MCP entries use the historical name-only ownership record unless a
-    /// target overrides this to record its native section.
+    /// `emitted_json` is the canonical JSON of what the adapter wrote, so
+    /// removal can match the entry structurally and a changed entry shows up as
+    /// a changed record. MCP entries default to no JSON (name-only ownership);
+    /// a target overrides this when it records the entry it writes.
     fn config_entry_record(&self, entry: &ConfigEntry) -> crate::lock::ConfigEntryRecord {
-        default_config_entry_record(entry)
+        crate::lock::ConfigEntryRecord {
+            emitted_json: match entry {
+                ConfigEntry::Hook(hook) => serde_json::to_string(&hook.entries).ok(),
+                ConfigEntry::McpServer(_) => None,
+            },
+        }
     }
 
     /// Remove hook entries recorded in the previous lock by structural equality.
@@ -237,7 +243,10 @@ pub(crate) fn parse_json_file(path: &Path) -> Result<serde_json::Value, MarsErro
     })
 }
 
-pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
+pub(crate) fn validate_json_config_file(
+    path: &Path,
+    mcp_section_key: &str,
+) -> Result<(), MarsError> {
     if !path.is_file() {
         return Ok(());
     }
@@ -248,11 +257,11 @@ pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
         })
     })?;
     if object
-        .get("mcpServers")
+        .get(mcp_section_key)
         .is_some_and(|value| !value.is_object())
     {
         return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: mcpServers is not an object", path.display()),
+            message: format!("{}: {mcp_section_key} is not an object", path.display()),
         }));
     }
     if let Some(hooks) = object.get("hooks") {
@@ -268,15 +277,6 @@ pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
         }
     }
     Ok(())
-}
-
-pub(crate) fn default_config_entry_record(entry: &ConfigEntry) -> crate::lock::ConfigEntryRecord {
-    crate::lock::ConfigEntryRecord {
-        emitted_json: match entry {
-            ConfigEntry::Hook(hook) => serde_json::to_string(&hook.entries).ok(),
-            ConfigEntry::McpServer(_) => None,
-        },
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -360,8 +360,10 @@ impl OutputRecord {
 /// Ownership record for one target-native config entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigEntryRecord {
-    /// Canonical JSON for the exact post-substitution hook entry array, or a
-    /// target-native marker such as OpenCode's `mcp` config section.
+    /// Canonical JSON for the exact post-substitution entry the target wrote:
+    /// a hook's entry array, or OpenCode's `mcp` server object. Other MCP
+    /// records carry none; for OpenCode that means an older release wrote the
+    /// entry under `mcpServers`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted_json: Option<String>,
 }

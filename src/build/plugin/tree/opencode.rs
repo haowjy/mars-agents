@@ -4,10 +4,11 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::compiler::agents::HarnessKind;
-use crate::compiler::hooks::{ParsedHookItem, default_fragment_name};
+use crate::compiler::hooks::ParsedHookItem;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::target::ConfigEntry;
+use crate::target::opencode::{McpServer, OpencodeAdapter};
+use crate::target::{ConfigEntry, TargetAdapter};
 
 use super::super::metadata::PackageMetadata;
 use super::{TreeProfile, WrittenTreeContents};
@@ -29,7 +30,7 @@ pub(super) static PROFILE: TreeProfile = TreeProfile {
 };
 
 fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
-    let fragment = fragment_name(hook);
+    let fragment = hook.fragment_name(TARGET_ROOT);
     let path = hook.hook_dir.join(&fragment);
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
@@ -44,20 +45,15 @@ fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
             return;
         }
     };
-    crate::target::opencode::check_hook_fragment(
-        &hook.def.name,
-        &hook.source_name,
-        &fragment,
-        &content,
-        diag,
-    );
-}
-
-fn fragment_name(hook: &ParsedHookItem) -> String {
-    hook.def.targets[TARGET_ROOT]
-        .fragment
-        .clone()
-        .unwrap_or_else(|| default_fragment_name(TARGET_ROOT))
+    if let Some(problem) = OpencodeAdapter.hook_fragment_problem(&content) {
+        diag.warn(
+            "plugin-opencode-hook-default-export",
+            format!(
+                "hook `{}` from `{}`: OpenCode fragment `{fragment}` {problem}; the hook will still be shipped and isolated at runtime",
+                hook.def.name, hook.source_name
+            ),
+        );
+    }
 }
 
 fn write_config_entries(
@@ -70,10 +66,7 @@ fn write_config_entries(
     let servers = entries
         .iter()
         .filter_map(|entry| match entry {
-            ConfigEntry::McpServer(server) => Some((
-                server.name.clone(),
-                crate::target::opencode::McpServer::from(server),
-            )),
+            ConfigEntry::McpServer(server) => Some((server.name.clone(), McpServer::from(server))),
             ConfigEntry::Hook(_) => None,
         })
         .collect::<BTreeMap<_, _>>();
@@ -171,7 +164,7 @@ fn write_package(
         .into_iter()
         .map(|hook| HookData {
             name: hook.def.name.clone(),
-            fragment: fragment_name(hook),
+            fragment: hook.fragment_name(TARGET_ROOT),
         })
         .collect();
 

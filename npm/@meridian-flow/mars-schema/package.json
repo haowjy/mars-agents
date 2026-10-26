@@ -7,13 +7,30 @@
   "types": "./index.d.ts",
   "exports": {
     ".": {
+      "node": {
+        "types": "./index.d.ts",
+        "default": "./node/mars_schema_wasm.js"
+      },
+      "browser": {
+        "types": "./index.web.d.ts",
+        "default": "./web/mars_schema_wasm.js"
+      },
       "types": "./index.d.ts",
-      "node": "./node/mars_schema_wasm.js",
-      "browser": "./web/mars_schema_wasm.js",
       "default": "./node/mars_schema_wasm.js"
     }
   },
-  "files": ["node", "web", "fixtures", "index.d.ts", "README.md"],
-  "scripts": { "build": "../../../scripts/build-schema-wasm.sh" },
-  "devDependencies": { "yaml": "^2.8.1" }
+  "files": [
+    "node",
+    "web",
+    "fixtures",
+    "index.d.ts",
+    "index.web.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "../../../scripts/build-schema-wasm.sh"
+  },
+  "devDependencies": {
+    "yaml": "^2.8.1"
+  }
 }

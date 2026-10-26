@@ -16,7 +16,12 @@ pub enum EmitError {
     IntegerTooLarge(String),
     #[error("duplicate frontmatter key `{0}`")]
     DuplicateKey(String),
+    #[error("mapping key of {0} characters is over the 1024 YAML allows for an implicit key")]
+    KeyTooLong(usize),
 }
+
+/// Longest implicit mapping key (as written, quotes included) YAML parsers accept.
+const MAX_KEY_CHARS: usize = 1024;
 
 /// Emit one JSON-compatible value for the mapping key at column `indent`.
 ///
@@ -37,6 +42,7 @@ pub fn rewrite_block(values: &[(String, Value)]) -> Result<String, EmitError> {
         if !seen.insert(key.as_str()) {
             return Err(EmitError::DuplicateKey(key.clone()));
         }
+        check_key(key)?;
         check(value)?;
         push_pair(&mut out, key, value, 0);
         out.push('\n');
@@ -48,22 +54,30 @@ fn check(value: &Value) -> Result<(), EmitError> {
     match value {
         Value::Number(n) => check_number(n),
         Value::Array(values) => values.iter().try_for_each(check),
-        Value::Object(map) => map.values().try_for_each(check),
+        Value::Object(map) => map.iter().try_for_each(|(key, value)| {
+            check_key(key)?;
+            check(value)
+        }),
         _ => Ok(()),
     }
 }
 
-fn check_number(n: &Number) -> Result<(), EmitError> {
-    let too_large = if let Some(v) = n.as_i64() {
-        v.unsigned_abs() > MAX_SAFE_INTEGER
-    } else if let Some(v) = n.as_u64() {
-        v > MAX_SAFE_INTEGER
+fn check_key(key: &str) -> Result<(), EmitError> {
+    let written = scalar(key).chars().count();
+    if written > MAX_KEY_CHARS {
+        Err(EmitError::KeyTooLong(written))
     } else {
-        // JavaScript cannot tell an integer from a float; a whole float this large was
-        // an integer that already lost digits.
-        n.as_f64()
-            .is_some_and(|v| v.fract() == 0.0 && v.abs() > MAX_SAFE_INTEGER as f64)
-    };
+        Ok(())
+    }
+}
+
+/// Refuses integers JavaScript cannot hold exactly. A float of any finite magnitude is fine:
+/// it is written so that both parsers read the same float back.
+fn check_number(n: &Number) -> Result<(), EmitError> {
+    let too_large = n
+        .as_i64()
+        .is_some_and(|v| v.unsigned_abs() > MAX_SAFE_INTEGER)
+        || n.as_u64().is_some_and(|v| v > MAX_SAFE_INTEGER);
     if too_large {
         Err(EmitError::IntegerTooLarge(n.to_string()))
     } else {
@@ -71,11 +85,14 @@ fn check_number(n: &Number) -> Result<(), EmitError> {
     }
 }
 
-/// A whole float is written as an integer: JavaScript cannot tell `1.0` from `1`, and the
-/// range check has already bounded it to ±2^53.
+/// A float that is whole and safe is written as an integer, since JavaScript cannot tell
+/// `1.0` from `1`; any other float keeps `serde_json`'s shortest form (`1e300`, `1.5e-7`),
+/// which YAML 1.1 and 1.2 parsers read back as the same float.
 fn number(n: &Number) -> String {
     match n.as_f64() {
-        Some(v) if n.is_f64() && v.fract() == 0.0 => (v as i64).to_string(),
+        Some(v) if n.is_f64() && v.fract() == 0.0 && v.abs() <= MAX_SAFE_INTEGER as f64 => {
+            (v as i64).to_string()
+        }
         _ => n.to_string(),
     }
 }

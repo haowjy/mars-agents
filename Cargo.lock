@@ -1366,6 +1366,7 @@ dependencies = [
 name = "mars-schema-wasm"
 version = "0.18.3"
 dependencies = [
+ "js-sys",
  "mars-schema",
  "serde",
  "serde-wasm-bindgen",

@@ -16,7 +16,9 @@ const fixtures = fileURLToPath(new URL("../mars-schema/fixtures/", import.meta.u
 const cases = suite => readdirSync(join(fixtures, suite), { withFileTypes: true })
   .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
 const text = (...parts) => readFileSync(join(fixtures, ...parts), "utf8");
-const json = (...parts) => JSON.parse(text(...parts));
+// Integers beyond 2^53 stay exact (as BigInt), as they do when Rust reads the same file.
+const json = (...parts) => JSON.parse(text(...parts), (_key, value, { source }) =>
+  typeof value === "number" && Number.isInteger(value) && !Number.isSafeInteger(value) && /^-?\d+$/.test(source) ? BigInt(source) : value);
 const tree = (dir, prefix = "") => {
   const files = new Map();
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -141,5 +143,13 @@ check(wasm.read("agents/a.md", `---\n${nestedBlock}---\nbody\n`).frontmatter, ne
 assert.equal(wasm.rewriteBlock([]), "");
 assert.throws(() => wasm.rewriteBlock([["a", 1], ["a", 2]]), /duplicate/);
 assert.throws(() => wasm.emitValue(NaN, 0), /NaN/);
+assert.throws(() => wasm.emitValue(Infinity, 0), /Infinity/);
+for (const lone of ["\ud800x", "x\udfff"]) {
+  assert.throws(() => wasm.emitValue(lone, 0), /lone surrogate/);
+  assert.throws(() => wasm.emitValue({ [lone]: 1 }, 0), /lone surrogate/);
+  assert.throws(() => wasm.emitValue([{ a: [lone] }], 0), /lone surrogate/);
+  assert.throws(() => wasm.rewriteBlock([[lone, 1]]), /lone surrogate/);
+}
+assert.equal(wasm.emitValue("\ud83d\ude00", 0), '"😀"', "a valid surrogate pair is fine");
 
 console.log(`mars-schema-wasm fixtures passed (${checked} checks)`);

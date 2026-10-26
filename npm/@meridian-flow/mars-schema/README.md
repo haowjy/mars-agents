@@ -19,6 +19,9 @@ import init, { read } from "@meridian-flow/mars-schema"; // browser condition
 await init();
 ```
 
+`init` is typed only under the `browser` export condition (`index.web.d.ts`); with TypeScript's
+`bundler` resolution, set `customConditions: ["browser"]` for the web build.
+
 `prepare` is **provisional**: Mars replaces it with `inspect` and `normalize` and adds more
 package kinds. Wrap it narrowly.
 

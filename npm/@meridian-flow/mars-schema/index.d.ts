@@ -13,14 +13,6 @@ export type JsonValue =
 /** Build-time version of the schema crate. */
 export function version(): string;
 
-/**
- * Web build only: instantiate the WASM module before calling anything else
- * (`await init()`). The Node build is synchronous and exports no `init`.
- */
-export default function init(
-  module_or_path?: RequestInfo | URL | Response | BufferSource | WebAssembly.Module | Promise<unknown>,
-): Promise<unknown>;
-
 // ---------------------------------------------------------------------------------------
 // read
 // ---------------------------------------------------------------------------------------
@@ -149,7 +141,9 @@ export function read(path: string, text: string): Reading;
  * - Strings are plain only when they are a safe word; everything else, every multi-line
  *   string included, is JSON double-quoted. Keys follow the same rule.
  *
- * Throws for an integer beyond ±(2^53 − 1), NaN and Infinity.
+ * Floats of any finite magnitude are written so both YAML parsers read the same number
+ * (`1e+300`). Throws for an integer beyond ±(2^53 − 1), NaN, Infinity, a lone surrogate, and a
+ * mapping key written as more than 1024 characters (YAML's limit for an implicit key).
  */
 export function emitValue(value: JsonValue, indent: number): string;
 
@@ -157,7 +151,11 @@ export function emitValue(value: JsonValue, indent: number): string;
  * The full frontmatter block between the `---` fences for these top-level pairs, in order,
  * ending in exactly one newline (`""` for no keys). Mapping keys keep the order given
  * (a JavaScript object lists integer-like keys such as `"1"` first, whatever order they
- * were set in). Throws for a duplicate key.
+ * were set in). Throws for a duplicate key, a key over 1024 characters, and a lone surrogate.
+ *
+ * Do not call it on a reading that has a `yaml.non-json-value` diagnostic: the keys the
+ * reading left out (tags, non-string keys, out-of-range integers, `__proto__`) are not in
+ * `frontmatter`, so the block would silently drop them from the file.
  */
 export function rewriteBlock(frontmatter: [string, JsonValue][]): string;
 

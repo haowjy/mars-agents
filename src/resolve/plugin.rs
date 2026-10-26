@@ -28,6 +28,11 @@ use crate::types::{CommitHash, SourceId, SourceSubpath, SourceUrl};
 /// marketplace the source holds, or at the source below its `subpath`. A dependency that names no
 /// plugin still takes a marketplace's only one (v0.19.0 installed such a dependency); with several,
 /// preparing the source asks for a choice.
+///
+/// The manifest check on disk stays here because `inspect` walks and lists the whole tree: asking
+/// it of every unnamed dependency on every resolve would cost a second walk for a case only
+/// marketplaces have. Moving the one-plugin rule into `inspect` as a default plugin would not
+/// remove that check, so it is not moved.
 pub(crate) fn root_package(
     pending: &PendingSource,
     marketplace: &ResolvedRef,

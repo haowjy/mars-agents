@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path};
 
 pub(crate) const PLUGIN_MANIFEST: &str = ".claude-plugin/plugin.json";
-pub(crate) const MARKETPLACE_MANIFEST: &str = ".claude-plugin/marketplace.json";
+pub const MARKETPLACE_MANIFEST: &str = ".claude-plugin/marketplace.json";
 
 /// The component lists a manifest or marketplace entry can carry. `None` means the key is
 /// absent, which is different from an empty list (an empty Agents list replaces the default).

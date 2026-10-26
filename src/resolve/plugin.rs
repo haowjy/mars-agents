@@ -8,7 +8,7 @@
 //! commit is replayed from the lock while the marketplace is the locked commit, and resolved anew
 //! otherwise (`mars upgrade`, or a marketplace that moved). `mars-schema` never fetches.
 
-use mars_schema::claude::manifest::{Checkout, PluginSource};
+use mars_schema::claude::manifest::{Checkout, MARKETPLACE_MANIFEST, PluginSource};
 use mars_schema::inspect::{Hint, InspectedPlugin, Kind, PluginHint, inspect};
 
 use super::SourceProvider;
@@ -24,8 +24,11 @@ use crate::source::ResolvedRef;
 use crate::source::canonical::canonicalize_git_url;
 use crate::types::{CommitHash, SourceId, SourceSubpath, SourceUrl};
 
-/// Root `pending`'s package at the plugin it names in the marketplace `marketplace` holds.
-pub(crate) fn acquire(
+/// Root `pending`'s package in the resolved source `marketplace`: at the plugin it names in the
+/// marketplace the source holds, or at the source below its `subpath`. A dependency that names no
+/// plugin still takes a marketplace's only one (v0.19.0 installed such a dependency); with several,
+/// preparing the source asks for a choice.
+pub(crate) fn root_package(
     pending: &PendingSource,
     marketplace: &ResolvedRef,
     provider: &dyn SourceProvider,
@@ -33,12 +36,16 @@ pub(crate) fn acquire(
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<RootedSourceRef, MarsError> {
-    let plugin_name = pending
-        .source_id
-        .plugin()
-        .expect("plugin acquisition runs for a dependency that names a plugin");
     let name = &pending.name;
     let invalid = |message: String| MarsError::InvalidRequest { message };
+    let named = pending.source_id.plugin();
+    let plain = || apply_subpath(name, &marketplace.tree_path, pending.subpath.as_ref());
+    if named.is_none()
+        && (pending.subpath.is_some()
+            || !marketplace.tree_path.join(MARKETPLACE_MANIFEST).is_file())
+    {
+        return plain();
+    }
 
     let tree = DiskTreeSource::new(&marketplace.tree_path)?;
     let inspection = inspect(&tree, &Hint::default());
@@ -49,21 +56,29 @@ pub(crate) fn acquire(
         crate::config::SourceSpec::Git(git) => git.url.to_string(),
         crate::config::SourceSpec::Path(path) => path.display().to_string(),
     };
-    if inspection.kind != Kind::Marketplace {
-        return Err(invalid(format!(
-            "`{name}` names plugin `{plugin_name}`, but {source} is not a Claude marketplace (it has no `.claude-plugin/marketplace.json`)"
-        )));
-    }
-    let Some(plugin) = inspection
-        .plugins
-        .iter()
-        .find(|plugin| plugin.entry.name == plugin_name)
-    else {
-        return Err(invalid(format!(
-            "`{name}` names plugin `{plugin_name}`, which the marketplace at {source} does not list; its plugins are:\n{}",
-            plugin_list(&inspection.plugins)
-        )));
+    let plugin = match (named, inspection.plugins.as_slice()) {
+        (Some(plugin_name), _) => {
+            if inspection.kind != Kind::Marketplace {
+                return Err(invalid(format!(
+                    "`{name}` names plugin `{plugin_name}`, but {source} is not a Claude marketplace (it has no `.claude-plugin/marketplace.json`)"
+                )));
+            }
+            inspection
+                .plugins
+                .iter()
+                .find(|plugin| plugin.entry.name == plugin_name)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "`{name}` names plugin `{plugin_name}`, which the marketplace at {source} does not list; its plugins are:\n{}",
+                        plugin_list(&inspection.plugins)
+                    ))
+                })?
+        }
+        (None, [only]) if inspection.kind == Kind::Marketplace => only,
+        // Several plugins: preparing the marketplace reports them and asks for a choice.
+        (None, _) => return plain(),
     };
+    let plugin_name = plugin.entry.name.as_str();
     if let Some(reason) = &plugin.refused {
         return Err(invalid(format!(
             "plugin `{plugin_name}` of `{name}` cannot be installed: {reason}"
@@ -137,6 +152,7 @@ pub(crate) fn acquire(
                 at_marketplace_root,
             },
             content,
+            named: named.is_some(),
         }),
         ..rooted
     })

@@ -1380,12 +1380,12 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
             .rooted_ref
             .plugin
             .as_ref()
-            .map(|plugin| plugin.name().to_owned()),
+            .and_then(|plugin| plugin.locked_name().map(str::to_owned)),
         content: node
             .rooted_ref
             .plugin
             .as_ref()
-            .map(|plugin| plugin.content.clone()),
+            .and_then(|plugin| plugin.locked_content().cloned()),
     }
 }
 

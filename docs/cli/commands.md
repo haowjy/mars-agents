@@ -73,7 +73,7 @@ mars add <source...> [filter flags]
 
 **Rules:**
 - `--subpath` and `--plugin` require exactly one source.
-- A marketplace source without `--plugin` is an error that lists its plugins; the dependency is not written.
+- A marketplace source with exactly one plugin installs it without `--plugin`. With several, `--plugin` is required: the error lists them and the dependency is not written.
 - Filter flags require exactly one source. Multi-source add is only for whole-source installs.
 - Re-adding an existing dependency updates it. Filter fields are replaced atomically when any filter flag is present; version-only changes preserve existing filters.
 - Source specifiers:

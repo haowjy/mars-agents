@@ -85,7 +85,7 @@ the same plugin again without fetching, and the lock builder reads `plugin` and 
 - **Validation.** Config refuses `plugin` with `subpath` or `dialect` or empty; resolution refuses a
   source that is not a marketplace, an unknown plugin (listing the available ones), `npm`, `archive`
   and `command` sources (naming the shape), and a remote plugin that is itself a marketplace. A
-  marketplace dependency with no `plugin` is an error that lists the plugins, even for one.
+  marketplace dependency with no `plugin` takes the marketplace's only plugin (a lock written for it records no `plugin`, and no `content` for a plugin in the marketplace's own tree, as v0.19.0 wrote it) and is an error that lists the plugins when there are several.
 - **Trust.** A marketplace entry is third-party text that reaches `git`'s argument list. The
   repository and ref are validated in `remote_source` (no leading `-`, no whitespace, a recognized
   form), and only a marketplace from a local source (`path` or `file://`) may name a local

@@ -221,7 +221,7 @@ url = "https://github.com/anthropics/skills"
 plugin = "example-skills"
 ```
 
-`mars add https://github.com/anthropics/skills --plugin document-skills` writes the first entry; the dependency is named `<repo>/<plugin>`. A marketplace dependency without `plugin` is an error that lists the plugins, even when there is only one. `version` constrains the marketplace's tags and commits like any git dependency; `mars outdated` reports them.
+`mars add https://github.com/anthropics/skills --plugin document-skills` writes the first entry; the dependency is named `<repo>/<plugin>`. A marketplace dependency without `plugin` installs the marketplace's only plugin, wherever its files are; with several plugins it is an error that lists them. The lock records `plugin` and `content` only for a dependency that names its plugin (and `content` for a plugin in another repository), so a lock written before `plugin` existed still describes a dependency that names none. `version` constrains the marketplace's tags and commits like any git dependency; `mars outdated` reports them.
 
 The marketplace is read at the root of its source, and the plugin's entry says where its files are:
 

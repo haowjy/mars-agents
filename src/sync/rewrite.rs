@@ -453,8 +453,10 @@ mod tests {
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: root.to_path_buf(),
+                    authored_root: root.to_path_buf(),
                     package_root: root.to_path_buf(),
                 },
+                prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: source_name.into(),
                     version: None,
@@ -696,8 +698,10 @@ mod tests {
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: dir.path().to_path_buf(),
+                    authored_root: dir.path().to_path_buf(),
                     package_root: dir.path().to_path_buf(),
                 },
+                prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: "source-a".into(),
                     version: None,

@@ -135,6 +135,8 @@ pub struct ResolvedNode {
     pub source_name: SourceName,
     pub source_id: SourceId,
     pub rooted_ref: RootedSourceRef,
+    /// Crate-owned semantic preparation result for this authored package.
+    pub prepared: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
     pub resolved_ref: ResolvedRef,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
@@ -146,6 +148,9 @@ pub struct ResolvedNode {
 #[derive(Debug, Clone)]
 pub struct RootedSourceRef {
     pub checkout_root: PathBuf,
+    /// Immutable package origin after applying `subpath`.
+    pub authored_root: PathBuf,
+    /// Current materialized content view. Relative dependencies must never use this.
     pub package_root: PathBuf,
 }
 

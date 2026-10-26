@@ -712,65 +712,77 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 /// path dependencies.
 pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let path = source_root.join(CONFIG_FILE);
-    let mut diagnostic_collector = crate::diagnostic::DiagnosticCollector::new();
     match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            // A package manifest may also contain consumer-only settings. They
-            // are not this project's settings and cannot require the consumer
-            // to migrate an upstream package before syncing it.
-            let parsed: SourceManifestSections =
-                toml::from_str(&content).map_err(|e| crate::error::ConfigError::Invalid {
-                    message: format!("failed to parse {}: {e}", path.display()),
-                })?;
-            let Some(_package) = parsed.package else {
-                return Ok((None, diagnostic_collector.drain()));
-            };
-            let reading = mars_schema::manifest::read(&content);
-            for diagnostic in &reading.diagnostics {
-                diagnostic_collector.schema(
-                    diagnostic,
-                    &format!("manifest `{}`", path.display()),
-                    false,
-                );
-            }
-            let Some(package) = reading.fields else {
-                return Ok((None, diagnostic_collector.drain()));
-            };
-            // Convert InstallDep → ManifestDep, preserving both URL and path deps
-            let deps: IndexMap<String, ManifestDep> = parsed
-                .dependencies
-                .into_iter()
-                .map(|(name, entry)| {
-                    (
-                        name.to_string(),
-                        ManifestDep {
-                            url: entry.url,
-                            path: entry.path,
-                            subpath: entry.subpath,
-                            version: entry.version,
-                            filter: entry.filter,
-                        },
-                    )
-                })
-                .collect();
-            Ok((
-                Some(Manifest {
-                    package,
-                    dependencies: deps,
-                    models: parsed.models,
-                }),
-                diagnostic_collector.drain(),
-            ))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok((None, diagnostic_collector.drain()))
-        }
+        Ok(content) => parse_manifest(&content, &path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, Vec::new())),
         Err(source) => Err(MarsError::Io {
             operation: "read manifest config".to_string(),
             path,
             source,
         }),
     }
+}
+
+/// Interpret consumer-owned manifest sections from bytes already normalized by
+/// `mars-schema`. Schema diagnostics are supplied by the prepared result and are
+/// deliberately not regenerated here.
+pub(crate) fn parse_prepared_manifest(
+    content: &str,
+    authored_path: &Path,
+) -> Result<Option<Manifest>, MarsError> {
+    let parsed: SourceManifestSections =
+        toml::from_str(content).map_err(|error| crate::error::ConfigError::Invalid {
+            message: format!("failed to parse {}: {error}", authored_path.display()),
+        })?;
+    let Some(_) = parsed.package else {
+        return Ok(None);
+    };
+    let package = mars_schema::manifest::read(content).fields.ok_or_else(|| {
+        crate::error::ConfigError::Invalid {
+            message: format!("invalid package metadata in {}", authored_path.display()),
+        }
+    })?;
+    let dependencies = parsed
+        .dependencies
+        .into_iter()
+        .map(|(name, entry)| {
+            (
+                name.to_string(),
+                ManifestDep {
+                    url: entry.url,
+                    path: entry.path,
+                    subpath: entry.subpath,
+                    version: entry.version,
+                    filter: entry.filter,
+                },
+            )
+        })
+        .collect();
+    Ok(Some(Manifest {
+        package,
+        dependencies,
+        models: parsed.models,
+    }))
+}
+
+fn parse_manifest(
+    content: &str,
+    path: &Path,
+) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
+    let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
+    let reading = mars_schema::manifest::read(content);
+    for diagnostic in &reading.diagnostics {
+        diagnostics.schema(diagnostic, &format!("manifest `{}`", path.display()), false);
+    }
+    if reading.fields.is_none() {
+        let parsed: toml::Value =
+            toml::from_str(content).map_err(crate::error::ConfigError::Parse)?;
+        if parsed.get("package").is_none() {
+            return Ok((None, diagnostics.drain()));
+        }
+        return Ok((None, diagnostics.drain()));
+    }
+    Ok((parse_prepared_manifest(content, path)?, diagnostics.drain()))
 }
 
 /// Load mars.local.toml (returns Default if absent).

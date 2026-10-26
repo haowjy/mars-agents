@@ -839,8 +839,10 @@ mod tests {
                     },
                     rooted_ref: crate::resolve::RootedSourceRef {
                         checkout_root: tree.path().to_path_buf(),
+                        authored_root: tree.path().to_path_buf(),
                         package_root: tree.path().to_path_buf(),
                     },
+                    prepared: None,
                     resolved_ref: ResolvedRef {
                         source_name: name.into(),
                         version: None,
@@ -916,8 +918,10 @@ mod tests {
             },
             rooted_ref: crate::resolve::RootedSourceRef {
                 checkout_root: root.clone(),
+                authored_root: root.clone(),
                 package_root: root.clone(),
             },
+            prepared: None,
             resolved_ref: ResolvedRef {
                 source_name: name.into(),
                 version: None,

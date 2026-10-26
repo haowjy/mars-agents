@@ -186,8 +186,10 @@ mod tests {
             },
             rooted_ref: crate::resolve::RootedSourceRef {
                 checkout_root: canonical.clone(),
+                authored_root: canonical.clone(),
                 package_root: canonical.clone(),
             },
+            prepared: None,
             resolved_ref: crate::source::ResolvedRef {
                 source_name: name.into(),
                 version: None,

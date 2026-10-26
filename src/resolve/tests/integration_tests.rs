@@ -960,6 +960,7 @@ fn alphabetical_order_linear_chain() {
         ResolvedNode {
             source_name: "c".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
+            prepared: None,
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -971,6 +972,7 @@ fn alphabetical_order_linear_chain() {
         ResolvedNode {
             source_name: "b".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
+            prepared: None,
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -982,6 +984,7 @@ fn alphabetical_order_linear_chain() {
         ResolvedNode {
             source_name: "a".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
+            prepared: None,
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1002,6 +1005,7 @@ fn alphabetical_order_ignores_dependency_shape() {
         ResolvedNode {
             source_name: "a".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
+            prepared: None,
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1013,6 +1017,7 @@ fn alphabetical_order_ignores_dependency_shape() {
         ResolvedNode {
             source_name: "b".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
+            prepared: None,
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1024,6 +1029,7 @@ fn alphabetical_order_ignores_dependency_shape() {
         ResolvedNode {
             source_name: "c".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
+            prepared: None,
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1035,6 +1041,7 @@ fn alphabetical_order_ignores_dependency_shape() {
         ResolvedNode {
             source_name: "d".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/d"), None),
+            prepared: None,
             resolved_ref: dummy_ref("d"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1054,6 +1061,7 @@ fn alphabetical_order_no_deps() {
         ResolvedNode {
             source_name: "a".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
+            prepared: None,
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1065,6 +1073,7 @@ fn alphabetical_order_no_deps() {
         ResolvedNode {
             source_name: "b".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
+            prepared: None,
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1086,6 +1095,7 @@ fn alphabetical_order_is_stable_for_cycles() {
         ResolvedNode {
             source_name: "a".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
+            prepared: None,
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1097,6 +1107,7 @@ fn alphabetical_order_is_stable_for_cycles() {
         ResolvedNode {
             source_name: "b".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
+            prepared: None,
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,

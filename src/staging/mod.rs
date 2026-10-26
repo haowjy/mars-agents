@@ -15,6 +15,7 @@ pub(crate) use publish::{
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use indexmap::IndexMap;
 
@@ -42,6 +43,86 @@ pub(crate) enum HookSurfaceState {
 pub(crate) struct StagedRootedSource {
     pub rooted: RootedSourceRef,
     pub hook_surface: HookSurfaceState,
+}
+
+/// Materialize the crate-owned prepared result. This adapter copies binary-owned
+/// package content, then replaces every schema-owned file with its normalized
+/// bytes and applies consumer skill overlays afterward.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn materialize_prepared_rooted(
+    source_name: &SourceName,
+    rooted: RootedSourceRef,
+    prepared: Arc<mars_schema::prepare::Prepared>,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    staging_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<(RootedSourceRef, HookSurfaceState), MarsError> {
+    let destination = staging_dir_for(staging_root, source_name);
+    if destination.symlink_metadata().is_ok() {
+        crate::platform::fs::safe_remove(&destination)?;
+    }
+    fs::create_dir_all(&destination)?;
+    for entry in crate::fs::authored_tree_entries(
+        &rooted.authored_root,
+        &[],
+        crate::fs::AuthoredSymlinkPolicy::Follow,
+        diag,
+    )? {
+        let output = destination.join(&entry.relative);
+        match entry.kind {
+            crate::fs::AuthoredEntryKind::Directory => fs::create_dir_all(&output)?,
+            crate::fs::AuthoredEntryKind::File => {
+                if let Some(parent) = output.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(entry.source, output)?;
+            }
+        }
+    }
+    if let Some(manifest) = &prepared.manifest {
+        fs::write(
+            destination.join(&manifest.output_path),
+            &manifest.normalized_bytes,
+        )?;
+    }
+    for definition in &prepared.definitions {
+        let mut bytes = definition.normalized_bytes.clone();
+        if definition.kind == mars_schema::upgrade::DefinitionKind::Skill {
+            let logical = rooted.authored_root.join(&definition.source_path);
+            let installed_name = skill_overlay_lookup_name(
+                &logical,
+                &rooted.authored_root,
+                renames,
+                Some(source_name.as_ref()),
+            );
+            if let Some(overlay) = installed_name
+                .as_deref()
+                .and_then(|name| skill_overrides.get(name))
+                && let Ok(text) = std::str::from_utf8(&bytes)
+                && let Ok(frontmatter) = Frontmatter::parse(text)
+            {
+                let (frontmatter, changed) = apply_skill_overlay(&frontmatter, overlay);
+                if changed {
+                    bytes = frontmatter.render().into_bytes();
+                }
+            }
+        }
+        let output = destination.join(&definition.output_path);
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(output, bytes)?;
+    }
+    let hook_surface = detect_unreadable_hook_surface(&destination, diag)?;
+    Ok((
+        RootedSourceRef {
+            checkout_root: rooted.checkout_root,
+            authored_root: rooted.authored_root,
+            package_root: destination,
+        },
+        hook_surface,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +217,7 @@ fn stage_rooted_source_with_policy(
     Ok(StagedRootedSource {
         rooted: RootedSourceRef {
             checkout_root: rooted.checkout_root,
+            authored_root: rooted.authored_root,
             package_root: staged_package_root,
         },
         hook_surface,

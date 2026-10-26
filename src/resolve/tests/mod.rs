@@ -537,6 +537,7 @@ fn dummy_ref(name: &str) -> ResolvedRef {
 fn dummy_rooted_ref() -> RootedSourceRef {
     RootedSourceRef {
         checkout_root: PathBuf::new(),
+        authored_root: PathBuf::new(),
         package_root: PathBuf::new(),
     }
 }

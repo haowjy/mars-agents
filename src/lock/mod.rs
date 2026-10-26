@@ -2502,8 +2502,10 @@ installed_checksum = "sha256:222"
                 ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/base"),
+                    authored_root: PathBuf::from("/tmp/cache/base/plugins/base"),
                     package_root: PathBuf::from("/tmp/cache/base/plugins/base"),
                 },
+                prepared: None,
                 resolved_ref: ResolvedRef {
                     source_name: git_name.clone(),
                     version: Some(semver::Version::new(1, 2, 3)),
@@ -2525,8 +2527,10 @@ installed_checksum = "sha256:222"
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/local"),
+                    authored_root: PathBuf::from("/tmp/cache/local/plugins/local"),
                     package_root: PathBuf::from("/tmp/cache/local/plugins/local"),
                 },
+                prepared: None,
                 resolved_ref: ResolvedRef {
                     source_name: path_name.clone(),
                     version: None,
@@ -2612,8 +2616,10 @@ installed_checksum = "sha256:222"
                 source_id: SourceId::git_with_subpath("https://example.com/base.git".into(), None),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/base"),
+                    authored_root: PathBuf::from("/tmp/cache/base"),
                     package_root: PathBuf::from("/tmp/cache/base"),
                 },
+                prepared: None,
                 resolved_ref: ResolvedRef {
                     source_name: source_name.clone(),
                     version: None,

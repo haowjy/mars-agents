@@ -269,9 +269,22 @@ pub(crate) fn resolve_package_bottom_up(
                     !exclusions.contains_key(&(pending_src.name.clone(), version.clone()))
                 })
             });
-    let (resolved_ref, rooted_ref, hook_surface, manifest) = loop {
-        let candidate = if let Some(value) = override_candidate.take() {
-            value
+    let (resolved_ref, rooted_ref, hook_surface, prepared, manifest) = loop {
+        let candidate = if let Some((resolved, rooted, _hook_surface)) = override_candidate.take() {
+            let prepared = crate::package_prepare::prepare_rooted(
+                &pending_src.name,
+                rooted,
+                effective_config,
+                options.staging_root.as_deref(),
+                diag,
+            )?;
+            (
+                resolved,
+                prepared.rooted,
+                prepared.hook_surface,
+                prepared.prepared,
+                prepared.manifest,
+            )
         } else {
             match resolve_single_source(
                 pending_src,
@@ -295,7 +308,13 @@ pub(crate) fn resolve_package_bottom_up(
                         options.staging_root.as_deref(),
                         diag,
                     )?;
-                    (ref_, staged.rooted, staged.hook_surface)
+                    (
+                        ref_,
+                        staged.rooted,
+                        staged.hook_surface,
+                        staged.prepared,
+                        staged.manifest,
+                    )
                 }
                 Err(MarsError::Resolution(ResolutionError::VersionConflict { .. }))
                     if !rejected.is_empty() =>
@@ -311,14 +330,14 @@ pub(crate) fn resolve_package_bottom_up(
                 Err(error) => return Err(error),
             }
         };
-        let manifest = provider.read_manifest(&candidate.1.package_root, diag)?;
-        let failures = manifest
+        let failures = candidate
+            .4
             .as_ref()
             .map(|manifest| check_package_requirements(&manifest.package, options))
             .transpose()?
             .unwrap_or_default();
         if failures.is_empty() {
-            break (candidate.0, candidate.1, candidate.2, manifest);
+            break candidate;
         }
 
         let label = candidate_version_label(&candidate.0);
@@ -415,7 +434,7 @@ pub(crate) fn resolve_package_bottom_up(
         });
     }
     let manifest_requests =
-        collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
+        collect_manifest_requests(pending_src, &rooted_ref.authored_root, &manifest, options)?;
     let deps = manifest_requests
         .iter()
         .map(|request| request.name.clone())
@@ -438,6 +457,7 @@ pub(crate) fn resolve_package_bottom_up(
                 source_name: pending_src.name.clone(),
                 source_id: pending_src.source_id.clone(),
                 rooted_ref,
+                prepared: Some(prepared),
                 resolved_ref,
                 manifest,
                 deps,

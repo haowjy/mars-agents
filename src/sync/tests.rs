@@ -83,8 +83,10 @@ fn make_graph_config(
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: tree_path.clone(),
+                    authored_root: tree_path.clone(),
                     package_root: tree_path.clone(),
                 },
+                prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: name.into(),
                     version: None,
@@ -499,8 +501,10 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                 ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from(format!("/tmp/{name}")),
+                    authored_root: PathBuf::from(format!("/tmp/{name}")),
                     package_root: PathBuf::from(format!("/tmp/{name}")),
                 },
+                prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: (*name).into(),
                     version: Some(version),
@@ -891,6 +895,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
             &"base".into(),
             crate::resolve::RootedSourceRef {
                 checkout_root: tree_path.clone(),
+                authored_root: tree_path.clone(),
                 package_root: tree_path.clone(),
             },
             crate::staging::RootedStageOptions {

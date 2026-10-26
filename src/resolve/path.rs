@@ -92,6 +92,7 @@ pub(crate) fn apply_subpath(
 
     Ok(RootedSourceRef {
         checkout_root: checkout_root.to_path_buf(),
+        authored_root: package_root.clone(),
         package_root,
     })
 }

@@ -249,7 +249,21 @@ pub(crate) fn prepare_rooted(
     if let Some(error) = source.take_error() {
         return Err(error);
     }
-    report_diagnostics(&prepared, &rooted.authored_root, diag);
+    let package_name = prepared
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.reading.fields.as_ref())
+        .map(|package| package.name.as_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(source_name.as_ref());
+    report_diagnostics(
+        &prepared,
+        &rooted.authored_root,
+        &format!(
+            "package `{package_name}` uses the pre-v1 format; run `mars migrate` in its repository"
+        ),
+        diag,
+    );
 
     prepared_rooted(rooted, Arc::new(prepared), diag)
 }
@@ -296,7 +310,13 @@ pub(crate) fn prepare_authored(
     if let Some(error) = source.take_error() {
         return Err(error);
     }
-    report_diagnostics(&prepared, root, diag);
+    let legacy_warning = match context {
+        PrepareContext::AuthoredLocal => {
+            "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`".to_string()
+        }
+        PrepareContext::Package => package_legacy_warning(&prepared, root),
+    };
+    report_diagnostics(&prepared, root, &legacy_warning, diag);
     Ok(prepared)
 }
 
@@ -311,18 +331,30 @@ pub(crate) fn prepare_authored_without_manifest(
     if let Some(error) = source.take_error() {
         return Err(error);
     }
-    report_diagnostics(&prepared, root, diag);
+    let legacy_warning = match context {
+        PrepareContext::AuthoredLocal => {
+            "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`".to_string()
+        }
+        PrepareContext::Package => package_legacy_warning(&prepared, root),
+    };
+    report_diagnostics(&prepared, root, &legacy_warning, diag);
     Ok(prepared)
 }
 
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     authored_root: &Path,
+    legacy_warning: &str,
     diag: &mut DiagnosticCollector,
 ) {
+    let mut warn_legacy = false;
     for (relative, diagnostics) in &prepared.diagnostics {
         let context = format!("source `{}`", authored_root.join(relative).display());
         for diagnostic in diagnostics {
+            if diagnostic.code == "legacy-package" {
+                warn_legacy = true;
+                continue;
+            }
             if prepared.classification == Classification::MarsLegacy
                 && diagnostic.code == "field.removed"
                 && diagnostic.message.starts_with("removed legacy key")
@@ -332,4 +364,19 @@ pub(crate) fn report_diagnostics(
             diag.schema(diagnostic, &context, false);
         }
     }
+    if warn_legacy {
+        diag.warn_once("legacy-package", legacy_warning);
+    }
+}
+
+fn package_legacy_warning(prepared: &Prepared, root: &Path) -> String {
+    let name = prepared
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.reading.fields.as_ref())
+        .map(|package| package.name.as_str())
+        .filter(|name| !name.is_empty())
+        .or_else(|| root.file_name().and_then(|name| name.to_str()))
+        .unwrap_or("unknown");
+    format!("package `{name}` uses the pre-v1 format; run `mars migrate` in its repository")
 }

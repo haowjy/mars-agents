@@ -131,11 +131,37 @@ struct Origin<'a> {
     content: Option<SourceInfo>,
 }
 
+/// A repository that names plugins but is no plugin itself. A remote plugin source must not be
+/// one: its plugins would be a second marketplace the dependency never chose from.
+fn is_nested_marketplace(tree: &impl TreeSource) -> bool {
+    tree.is_file(MARKETPLACE_MANIFEST) && !tree.is_file(PLUGIN_MANIFEST)
+}
+
+const NESTED_MARKETPLACE: &str = "is itself a marketplace, which cannot be imported as a plugin";
+
 fn normalize_root<T: TreeSource>(
     root: &impl TreeSource,
     request: &NormalizeRequest<'_, T>,
 ) -> Normalized {
     let hint_plugin = request.hint.plugin.as_ref();
+    if let Some(plugin) = hint_plugin
+        && matches!(plugin.entry.source, PluginSource::Remote { .. })
+        && is_nested_marketplace(root)
+    {
+        return Normalized {
+            kind: Kind::Marketplace,
+            packages: Vec::new(),
+            diagnostics: BTreeMap::from([(
+                MARKETPLACE_MANIFEST.to_owned(),
+                vec![SchemaDiagnostic::new(
+                    "marketplace.nested-marketplace",
+                    Severity::Error,
+                    Vec::new(),
+                    format!("plugin `{}` {NESTED_MARKETPLACE}", plugin.entry.name),
+                )],
+            )]),
+        };
+    }
     let items = item_set(&request.selection, "");
     let rooted = prepare_root(
         root,
@@ -264,11 +290,11 @@ fn normalize_plugin<T: TreeSource>(
                 );
                 return;
             };
-            if remote.tree.is_file(MARKETPLACE_MANIFEST) && !remote.tree.is_file(PLUGIN_MANIFEST) {
+            if is_nested_marketplace(remote.tree) {
                 report(
                     Severity::Error,
                     "marketplace.nested-marketplace",
-                    "is itself a marketplace, which cannot be imported as a plugin".into(),
+                    NESTED_MARKETPLACE.into(),
                 );
                 return;
             }

@@ -508,7 +508,13 @@ impl FileLock {
     /// this to serialize only with an owner that already created it. `None`
     /// means no lock file existed, so no writer holds the resource.
     pub fn acquire_existing(lock_path: &Path) -> Result<Option<Self>, MarsError> {
-        let file = match fs::OpenOptions::new().read(true).open(lock_path) {
+        // Opened for writing (without create) because NFS emulates flock with
+        // fcntl locks, which refuse an exclusive lock on a read-only handle.
+        let file = match fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lock_path)
+        {
             Ok(file) => file,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(source) => {

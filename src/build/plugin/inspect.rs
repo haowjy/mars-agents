@@ -218,7 +218,7 @@ impl PluginRootFileState {
         match self {
             Self::Absent { .. } | Self::RecordedUnchanged { .. } => None,
             Self::PreviousBuild { path, .. } => Some(format!(
-                "generated root file {} still holds the previous build's output; run `mars build plugin` to finish the interrupted publication or refresh it",
+                "generated root file {} still holds the previous build's output; the next `mars build plugin` will replace it, or remove it if no selected harness needs it",
                 path.display()
             )),
             Self::RecordedChanged { path, .. } => Some(root_file_conflict_message(

@@ -250,8 +250,12 @@ fn stage_plugin_inner(
         diag,
     )?;
     let mut prepared_target =
-        crate::sync::prepare_target_state(&graph, &effective, None, None, diag, |_, _| Ok(()))?;
-    emit_missing_skill_warnings(&prepared_target.warnings, diag);
+        crate::sync::prepare_target_state(&graph, &effective, diag, |_, _| Ok(()))?;
+    // A plugin build has no project-local items and carries no provided skills, so it passes no
+    // declarations and no installed record: every ref is judged by what the graph ships.
+    let warnings =
+        crate::sync::validate::validate_skill_refs(&prepared_target.target, &graph, None, None);
+    emit_missing_skill_warnings(&warnings, diag);
     materialize_rewritten_skills(&mut prepared_target.target)?;
 
     let aliases = crate::models::merged_model_aliases(

@@ -126,8 +126,10 @@ can issue the genuine not-installed warning; it carries the selected `TargetItem
 installed check does not re-hash the source. Config lowering must not rediscover items.
 
 Plugin builds and sync both use `prepare_target_state` for graph collection, optional local
-extension, rename application, and validation. MCP discovery warnings enter the diagnostic
-collector where discovery fails rather than riding `TargetState`, so every caller sees them.
+extension and rename application. Skill-ref validation is the caller's: sync passes what this
+machine installed and what its own package declares, a plugin build passes neither. MCP discovery
+warnings enter the diagnostic collector where discovery fails rather than riding `TargetState`, so
+every caller sees them.
 `RenameIndex::visible_renames` exposes the same own-package-first, then
 dependency-declaration-order view per item kind for frontmatter and body references; callers must not
 reconstruct that precedence. Renamed skill and agent frontmatter carries the installed name;

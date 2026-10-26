@@ -543,24 +543,21 @@ pub(crate) struct PreparedTarget {
     pub explicit_renames: Vec<target::ExplicitRename>,
     pub collision_renames: Vec<target::CollisionRename>,
     pub dep_precedence: Vec<SourceName>,
-    pub warnings: Vec<crate::validate::ValidationWarning>,
 }
 
-/// Build, extend, rename, and validate one resolved graph target.
-///
-/// `provided` is what a provider installed on this machine (`None` for a publish build, which
-/// ignores it); `local_declared` is the project's own `[package] uses-providers`. Both feed only
-/// the skill-ref check.
+/// Build, extend and rename one resolved graph target.
 ///
 /// Sync extends the dependency target with project-local items before the
 /// shared rename pass; publish builds use the graph target unchanged. Keeping
 /// the extension inside this function preserves the own-package shadowing
 /// rules while ensuring every caller gets the same finalization pipeline.
+///
+/// Skill refs are checked by each caller after this returns, with its own context: sync knows
+/// what this machine installed and what the project's own package declares, a plugin build has
+/// neither.
 pub(crate) fn prepare_target_state(
     graph: &crate::resolve::ResolvedGraph,
     effective: &EffectiveConfig,
-    provided: Option<&crate::provided::ProvidedNames>,
-    local_declared: Option<&[String]>,
     diag: &mut DiagnosticCollector,
     extend: impl FnOnce(&mut target::TargetState, &mut DiagnosticCollector) -> Result<(), MarsError>,
 ) -> Result<PreparedTarget, MarsError> {
@@ -576,15 +573,12 @@ pub(crate) fn prepare_target_state(
         }
     }
 
-    let warnings = validate::validate_skill_refs(&target, graph, provided, local_declared);
-
     Ok(PreparedTarget {
         target,
         rename_index,
         explicit_renames,
         collision_renames,
         dep_precedence,
-        warnings,
     })
 }
 
@@ -608,18 +602,10 @@ pub(crate) fn build_target(
         target: target_state,
         explicit_renames: renames,
         collision_renames,
-        warnings,
         ..
     } = prepare_target_state(
         &resolved.graph,
         &resolved.loaded.effective,
-        Some(&resolved.loaded.provided),
-        resolved
-            .loaded
-            .config
-            .package
-            .as_ref()
-            .map(|package| package.uses_providers.as_slice()),
         diag,
         |target_state, diag| {
             local_items::merge_local_items(
@@ -651,6 +637,18 @@ pub(crate) fn build_target(
             Ok(())
         },
     )?;
+
+    let warnings = validate::validate_skill_refs(
+        &target_state,
+        &resolved.graph,
+        Some(&resolved.loaded.provided),
+        resolved
+            .loaded
+            .config
+            .package
+            .as_ref()
+            .map(|package| package.uses_providers.as_slice()),
+    );
 
     validate::warn_config_dangles_after_rename(
         &renames,

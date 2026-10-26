@@ -598,12 +598,45 @@ pub(crate) fn build_target(
         |target_state, diag| {
             let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
             let old_lock_index = LockIndex::new(&resolved.loaded.old_lock);
+            let managed_targets = resolved.loaded.effective.settings.managed_targets();
 
             for item in local_items {
-                // Hook config and materialization are both discovered from project-root
-                // `hooks/`; treating `.mars-src` hook directories as ordinary canonical
-                // items would bypass per-target identity.
-                if item.discovered.id.kind == ItemKind::Hook {
+                if let crate::local_source::LocalItemContent::Mcp(mcp) = &item.content {
+                    target_state.select_mcp(mcp.as_ref().clone(), &managed_targets);
+                    continue;
+                }
+                if let crate::local_source::LocalItemContent::Hook(hook) = &item.content {
+                    for (target_name, dest_path, target_item) in
+                        target::hook_target_items(hook, &local_source_name, &managed_targets)?
+                    {
+                        if let Some(existing) = target_state.items.shift_remove(&dest_path)
+                            && existing.source_hash != target_item.source_hash
+                        {
+                            diag.warn(
+                                "local-shadow",
+                                format!(
+                                    "local hook `{}` shadows dependency `{}` hook on target `{target_name}`",
+                                    hook.def.name, existing.source_name
+                                ),
+                            );
+                        }
+                        target_state.select_hook(&target_name, &target_item, hook.as_ref().clone());
+                        let disk_path = dest_path.resolve(managed_root);
+                        if !old_lock_index
+                            .contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
+                            && disk_path.symlink_metadata().is_ok()
+                        {
+                            diag.warn(
+                                "unmanaged-collision",
+                                format!(
+                                    "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched",
+                                    hook.def.name
+                                ),
+                            );
+                            continue;
+                        }
+                        target_state.items.insert(dest_path, target_item);
+                    }
                     continue;
                 }
                 let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
@@ -733,50 +766,6 @@ pub(crate) fn build_target(
                         rewritten_content: None,
                     },
                 );
-            }
-
-            // Project-root hooks are authored outside `.mars-src`; materialize each whole
-            // directory into the canonical store so target sync can use normal item ownership.
-            let managed_targets = resolved.loaded.effective.settings.managed_targets();
-            for hook in
-                crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0, diag)?
-            {
-                for (target_name, dest_path, target_item) in
-                    target::hook_target_items(&hook, &local_source_name, &managed_targets)?
-                {
-                    if let Some(existing) = target_state.items.shift_remove(&dest_path)
-                        && existing.source_hash != target_item.source_hash
-                    {
-                        diag.warn(
-                    "local-shadow",
-                    format!(
-                        "local hook `{}` shadows dependency `{}` hook on target `{target_name}`",
-                        hook.def.name, existing.source_name
-                    ),
-                );
-                    }
-                    target_state.select_hook(&target_name, &target_item, hook.clone());
-                    let disk_path = dest_path.resolve(managed_root);
-                    if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-                        && disk_path.symlink_metadata().is_ok()
-                    {
-                        diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));
-                        continue;
-                    }
-                    target_state.items.insert(dest_path, target_item);
-                }
-            }
-
-            match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0, diag) {
-                Ok(items) => {
-                    for item in items {
-                        target_state.select_mcp(item, &managed_targets);
-                    }
-                }
-                Err(error) => diag.warn(
-                    "mcp-discover",
-                    format!("failed to scan local MCP items: {error}"),
-                ),
             }
 
             // Prevent managed installs from overwriting unmanaged files.

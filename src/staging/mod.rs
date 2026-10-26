@@ -259,7 +259,32 @@ pub(crate) fn materialize_local_prepared(
     }
     fs::create_dir_all(&destination)?;
 
-    let mut definition_bytes = item.definition.normalized_bytes.clone();
+    let crate::local_source::LocalItemContent::Prepared {
+        definition,
+        payload,
+    } = &item.content
+    else {
+        for entry in crate::fs::authored_tree_entries(
+            &item.disk_path(),
+            &[],
+            crate::fs::AuthoredSymlinkPolicy::Follow,
+            &mut DiagnosticCollector::new(),
+        )? {
+            let output = destination.join(entry.relative);
+            match entry.kind {
+                crate::fs::AuthoredEntryKind::Directory => fs::create_dir_all(output)?,
+                crate::fs::AuthoredEntryKind::File => {
+                    if let Some(parent) = output.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::copy(entry.source, output)?;
+                }
+            }
+        }
+        return Ok(destination);
+    };
+
+    let mut definition_bytes = definition.normalized_bytes.clone();
     if item.discovered.id.kind == ItemKind::Skill
         && let Some(overlay) = skill_overrides.get(item.discovered.id.name.as_str())
         && let Ok(text) = std::str::from_utf8(&definition_bytes)
@@ -272,7 +297,7 @@ pub(crate) fn materialize_local_prepared(
     }
     let result = match item.discovered.id.kind {
         ItemKind::Agent => {
-            let name = Path::new(&item.definition.output_path)
+            let name = Path::new(&definition.output_path)
                 .file_name()
                 .expect("agent output has a filename");
             let path = destination.join(name);
@@ -281,7 +306,7 @@ pub(crate) fn materialize_local_prepared(
         }
         ItemKind::Skill => {
             fs::write(destination.join("SKILL.md"), definition_bytes)?;
-            for payload in &item.payload {
+            for payload in payload {
                 let relative = PathBuf::from(&payload.source_path);
                 let relative = if item.discovered.source_path == Path::new(".") {
                     relative

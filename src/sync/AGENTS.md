@@ -90,11 +90,10 @@ apply failure leaves the lock unpublished, and the next sync must use `--force` 
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
 | `finalize()` | Write lock, persist model aliases, build report |
 
-The reader/local-source seam discovers `.mars-src` unconditionally and adds
-agents/skills from the current package only with `[package]`. It selects local
-overrides before staging. Project-root hooks keep their separate discovery and
-warning-based collision path in `build_target`; the selected-item hard refusal
-does not change that path.
+The reader/local-source seam discovers `.mars-src` unconditionally and adds the
+current package only with `[package]`. It selects local overrides before staging:
+Agents and skills come from prepared schema results, while hooks, MCP servers,
+and bootstrap documents keep their binary-owned discovery and materialization.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
 visibility, dependency collisions, and local shadowing therefore choose config entries once for

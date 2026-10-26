@@ -17,8 +17,18 @@ pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
 pub struct LocalDiscoveredItem {
     pub discovered: DiscoveredItem,
     pub root: PathBuf,
-    pub(crate) definition: PreparedDefinition,
-    pub(crate) payload: Vec<mars_schema::prepare::PayloadEntry>,
+    pub(crate) content: LocalItemContent,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum LocalItemContent {
+    Prepared {
+        definition: Box<PreparedDefinition>,
+        payload: Vec<mars_schema::prepare::PayloadEntry>,
+    },
+    Binary,
+    Hook(Box<crate::compiler::hooks::ParsedHookItem>),
+    Mcp(Box<crate::compiler::mcp::ParsedMcpItem>),
 }
 
 impl LocalDiscoveredItem {
@@ -44,11 +54,14 @@ pub fn discover_local_items(
             None,
             diag,
         )?;
-        prepared_items(&local_root, Some("_self"), prepared)
+        let mut items = prepared_items(&local_root, Some("_self"), prepared);
+        items.extend(binary_items(&local_root, true, diag)?);
+        items
     } else {
         Vec::new()
     };
 
+    let mut root_candidates = Vec::new();
     if package_name.is_some() {
         let prepared = crate::package_prepare::prepare_authored(
             project_root,
@@ -56,27 +69,81 @@ pub fn discover_local_items(
             None,
             diag,
         )?;
-        for candidate in prepared_items(project_root, package_name, prepared) {
-            if let Some(winner) = selected
-                .iter()
-                .find(|item| item.discovered.id == candidate.discovered.id)
-            {
-                diag.warn(
-                    "local-shadow",
-                    format!(
-                        "self {} `{}` at `{}` shadows package source `{}`",
-                        candidate.discovered.id.kind,
-                        candidate.discovered.id.name,
-                        winner.disk_path().display(),
-                        candidate.disk_path().display(),
-                    ),
-                );
-            } else {
-                selected.push(candidate);
-            }
+        root_candidates.extend(prepared_items(project_root, package_name, prepared));
+    }
+    root_candidates.extend(binary_items(project_root, package_name.is_some(), diag)?);
+    for candidate in root_candidates {
+        if let Some(winner) = selected
+            .iter()
+            .find(|item| item.discovered.id == candidate.discovered.id)
+        {
+            diag.warn(
+                "local-shadow",
+                format!(
+                    "self {} `{}` at `{}` shadows package source `{}`",
+                    candidate.discovered.id.kind,
+                    candidate.discovered.id.name,
+                    winner.disk_path().display(),
+                    candidate.disk_path().display(),
+                ),
+            );
+        } else {
+            selected.push(candidate);
         }
     }
     Ok(selected)
+}
+
+fn binary_items(
+    root: &Path,
+    include_bootstrap: bool,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<LocalDiscoveredItem>, MarsError> {
+    let mut items = Vec::new();
+    if include_bootstrap {
+        items.extend(
+            crate::discover::discover_bootstrap_surfaces(root, diag)?
+                .into_iter()
+                .map(|discovered| LocalDiscoveredItem {
+                    discovered,
+                    root: root.to_path_buf(),
+                    content: LocalItemContent::Binary,
+                }),
+        );
+    }
+    items.extend(
+        crate::compiler::hooks::discover_hook_items(root, "_self", 0, 0, diag)?
+            .into_iter()
+            .map(|hook| LocalDiscoveredItem {
+                discovered: hook.discovered_item(root),
+                root: root.to_path_buf(),
+                content: LocalItemContent::Hook(Box::new(hook)),
+            }),
+    );
+    items.extend(
+        crate::compiler::mcp::discover_mcp_items(root, "_self", 0, diag)?
+            .into_iter()
+            .map(|mcp| {
+                let source_path = mcp
+                    .source_path
+                    .parent()
+                    .and_then(|path| path.strip_prefix(root).ok())
+                    .expect("local MCP definition belongs to its authored root")
+                    .to_path_buf();
+                LocalDiscoveredItem {
+                    discovered: DiscoveredItem {
+                        id: crate::lock::ItemId {
+                            kind: ItemKind::McpServer,
+                            name: mcp.name.clone().into(),
+                        },
+                        source_path,
+                    },
+                    root: root.to_path_buf(),
+                    content: LocalItemContent::Mcp(Box::new(mcp)),
+                }
+            }),
+    );
+    Ok(items)
 }
 
 fn prepared_items(
@@ -127,8 +194,10 @@ fn prepared_items(
                     source_path,
                 },
                 root: root.to_path_buf(),
-                definition,
-                payload,
+                content: LocalItemContent::Prepared {
+                    definition: Box::new(definition),
+                    payload,
+                },
             }
         })
         .collect()

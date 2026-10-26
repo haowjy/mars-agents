@@ -558,7 +558,8 @@ pub fn resolve_policy(
         route_report: report,
     });
 
-    let mut effort = execution_resolution.effort.value;
+    warnings.extend(routing_resolution.warnings);
+    let mut effort = routing_resolution.effort;
     if routing_resolution.effort_consumed {
         effort = None;
         provenance.insert(

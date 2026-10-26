@@ -21,7 +21,11 @@ pub(super) struct RoutingInput<'a> {
 
 pub(super) struct RoutingResolution {
     pub(super) routing: Routing,
+    /// Cursor folded the effort into `harness_model`, so the bundle carries none.
     pub(super) effort_consumed: bool,
+    /// The effort the harness accepts: `max` is `xhigh` for Codex.
+    pub(super) effort: Option<String>,
+    pub(super) warnings: Vec<String>,
     pub(super) cursor_effort_outcome: CursorEffortOutcome,
 }
 
@@ -83,10 +87,11 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     };
     let mut effort_consumed = false;
     let mut cursor_effort_outcome = CursorEffortOutcome::NotRequested;
+    let mut warnings = Vec::new();
 
     if harness_id == HarnessId::Cursor
         && !routing.model.trim().is_empty()
-        && let Some(effort) = effort.filter(|value| !value.trim().is_empty())
+        && let Some(requested) = effort.clone().filter(|value| !value.trim().is_empty())
     {
         cursor_effort_outcome = CursorEffortOutcome::ProbeUnavailable;
         match cursor_probe_result {
@@ -99,8 +104,14 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
                 if probe.slugs.is_empty() {
                     cursor_effort_outcome = CursorEffortOutcome::ProbeReturnedNoSlugs;
                 } else {
-                    match resolve_cursor_effort_slug(&routing.model, &effort, &probe.slugs) {
+                    match resolve_cursor_effort_slug(&routing.model, &requested, &probe.slugs) {
                         Ok(resolution) => {
+                            if let Some(tier) = resolution.max_approximated_by {
+                                warnings.push(format!(
+                                    "effort: Cursor model {} has no max variant; using {} ({tier})",
+                                    routing.model, resolution.slug
+                                ));
+                            }
                             routing.harness_model = resolution.slug;
                             routing.harness_model_source =
                                 RunnablePathSource::CachedProbe.label().to_string();
@@ -130,6 +141,8 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     RoutingResolution {
         routing,
         effort_consumed,
+        effort,
+        warnings,
         cursor_effort_outcome,
     }
 }
@@ -293,6 +306,35 @@ mod tests {
         );
         assert_eq!(resolution.routing.harness_model, "gpt-5.5-high");
         assert_eq!(resolution.routing.harness_model_confidence, "confirmed");
+    }
+
+    #[test]
+    fn cursor_max_without_max_variant_uses_highest_variant_and_warns() {
+        let resolution = resolve_routing(RoutingInput {
+            model: "gpt-5".to_string(),
+            model_token: "gpt-5".to_string(),
+            harness: "cursor".to_string(),
+            selection_kind: "auto".to_string(),
+            match_evidence: "confirmed".to_string(),
+            provider_constraint: None,
+            provider_for_order: None,
+            effort: Some("max".to_string()),
+            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
+                slugs: vec![
+                    "gpt-5".to_string(),
+                    "gpt-5-high".to_string(),
+                    "gpt-5-xhigh".to_string(),
+                ],
+                model_probe_success: true,
+                error: None,
+            }),
+            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
+        });
+
+        assert!(resolution.effort_consumed);
+        assert_eq!(resolution.routing.harness_model, "gpt-5-xhigh");
+        assert_eq!(resolution.warnings.len(), 1, "{:?}", resolution.warnings);
+        assert!(resolution.warnings[0].contains("no max variant"));
     }
 
     #[test]

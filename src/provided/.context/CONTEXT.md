@@ -16,11 +16,12 @@ no-op into `busy` and a fallback read. The unlocked check reads `.mars/provided.
 `FileLock::try_acquire` reports held-ness separately from failure; treating every error as
 contention would silently disable the refresh on a broken lock file.
 
-The fast path proves the source is what the record applied (`version`, `digest`, every recorded
-directory present, none claimed by `mars.lock`). It does **not** hash the installed copies, so a
-destination whose bytes were replaced without `mars.lock` recording it stays `up-to-date`; the
-next host release or edit changes the digest and repairs it. Making the fast path hash every
-recorded tree would close that window at the cost of reading `.mars/skills/` on every launch.
+The fast path proves the source is what the record applied (`version`, `digest`, none claimed
+by `mars.lock`) **and** that every recorded installed tree still hashes to its source skill's
+digest. Existence is not ownership: a sync that replaced a recorded directory with a package's
+copy and died before publishing `mars.lock` leaves foreign bytes under a recorded name, and the
+host would read them as its own. Hashing a host's few small skills costs milliseconds, against a
+host launch measured in hundreds.
 
 ## Ownership and the apply
 

@@ -169,11 +169,19 @@ fn current_record_in(
     {
         return None;
     }
-    if !provider
-        .skills
-        .iter()
-        .all(|name| skills_dir.join(name).is_dir())
-    {
+    // Existence is not ownership: a sync that replaced a recorded directory and died before
+    // publishing `mars.lock` leaves a package's bytes under a recorded name, which only a content
+    // check can see. The trees are a host's few small skills, so this costs milliseconds.
+    let installed_matches_source = |name: &String| {
+        entries
+            .skills
+            .iter()
+            .find(|skill| &skill.name == name)
+            .is_some_and(|skill| {
+                tree_digest(&skills_dir.join(name)).as_ref() == Some(&skill.digest)
+            })
+    };
+    if !provider.skills.iter().all(installed_matches_source) {
         return None;
     }
     if provider.skills.iter().any(|name| claimed(claims, name)) {

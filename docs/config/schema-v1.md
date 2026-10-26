@@ -37,7 +37,7 @@ The same classification runs for dependencies, the local package, `.mars-src/`, 
 - **YAML** must be a mapping, or empty. Schema 1 refuses duplicate keys, anchors and aliases (`yaml.anchor`), and a `...` document-end marker (`yaml.document-end`). A top level that is a list or a scalar is `frontmatter.not-mapping`.
 - **Booleans** are `true` and `false`. `yes`, `no`, `on` and `off` are strings, so they are errors in a boolean field.
 - **Case.** Enumerated values are exact, except `effort` and `harness`, which are case-insensitive.
-- **Unknown keys** are kept in the installed file and, for skills, written to every harness's native `SKILL.md`. Each produces a `field.unknown` warning.
+- **Unknown keys** are kept in the authored file and reach no native file, in Agents and skills alike. Each produces a `field.unknown` warning; [Unknown keys](#unknown-keys) says where harness-specific keys belong.
 
 ## Agent keys
 

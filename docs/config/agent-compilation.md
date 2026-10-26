@@ -144,13 +144,15 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `effort` | `effort:` | exact: `xhigh` and `max` are Claude's own levels. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
+| `network` | dropped | meridian-only |
+| `network-allow`, `network-deny` | dropped | meridian-only |
 | `mode` | dropped | dropped |
 | `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
 | `harness-overrides` | the harness's own block, as extra keys | the harness's own block, as extra keys |
 | `harness` | dropped | dropped |
 
-`approval` and `sandbox` are applied at launch time by Meridian through its harness projection layer, not stored in the agent file. The same holds for the `effort`, `sandbox` and `approval` a matching `model-policies` rule or `[agents.<name>]` overlay sets: Mars resolves them for the native file with the [launch bundle's precedence](schema-v1.md#model-policies) minus the command line, so the file and the bundle agree.
+`approval`, `sandbox`, `network` and the network host sets are applied at launch time by Meridian through its harness projection layer, not stored in the agent file. The same holds for the `effort`, `sandbox`, `approval` and `network` a matching `model-policies` rule or `[agents.<name>]` overlay sets: Mars resolves them for the native file with the [launch bundle's precedence](schema-v1.md#model-policies) minus the command line, so the file and the bundle agree.
 
 ### Tool name projection
 
@@ -278,6 +280,8 @@ TOML format. Codex reads this for native agent invocation.
 | `model` | `model` | exact |
 | `effort` | `model_reasoning_effort` | exact. `none` is written as `"none"`; some Codex models refuse it. `max` is written as `xhigh`, Codex's highest level, with an approximate-mapping warning |
 | `sandbox` | `sandbox_mode` | exact |
+| `network` | dropped | dropped |
+| `network-allow`, `network-deny` | dropped | dropped |
 | `approval` | `approval_policy` | exact |
 | body | `developer_instructions` | exact |
 | `skills.load` | end-of-body `/name` guidance | approximate |
@@ -289,9 +293,10 @@ TOML format. Codex reads this for native agent invocation.
 | `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
 
-Mars writes no network settings into Codex native TOML, so native Codex keeps its own network
-default (off for `workspace-write`). A launch through Meridian can set Codex config such as
-`sandbox_workspace_write.network_access` with `harness-overrides.codex`.
+Mars does not write `network_access` or host sets into Codex native TOML. Native Codex
+therefore keeps its own network default (off for `workspace-write`) rather than
+honoring the profile's `network` value. A launch through Meridian enforces `network` from
+the bundle's `execution_policy.network`.
 
 **Approval value mapping:**
 
@@ -333,6 +338,8 @@ YAML frontmatter + markdown body.
 | `skills.available` | end-of-body `/name` guidance | approximate |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
+| `network` | dropped | meridian-only |
+| `network-allow`, `network-deny` | dropped | meridian-only |
 | `tools` allow and `ask` rules | dropped (reported as `tools`) | dropped |
 | `tools` deny rules (`tools: {write: deny}`, `mcp(...)` refs included) | `permission: {<tool>: deny}` | exact |
 | a scoped deny rule (`bash(git *)`) | dropped (reported as `disallowed-tools`) | dropped |
@@ -369,6 +376,8 @@ YAML frontmatter + markdown body.
 | body | body | exact |
 | `approval` | runtime-only (meridian projects `--force`/`--yolo`) | approximate |
 | `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | approximate |
+| `network` | dropped | meridian-only |
+| `network-allow`, `network-deny` | dropped | meridian-only |
 | `tools` (every rule) | dropped | dropped |
 | `effort` | dropped from frontmatter; selects the model slug instead (below) | approximate |
 | `mcp(...)` in `tools` | dropped (lossiness); launch bundle projects `Mcp(server:tool)` tokens | approximate |
@@ -393,7 +402,7 @@ YAML frontmatter + markdown body.
 | `workspace-write` | `--sandbox disabled` |
 | `danger-full-access` | `--sandbox disabled` |
 
-`approval` and `sandbox` are not stored in the Cursor native agent
+`approval`, `sandbox` and `network` are not stored in the Cursor native agent
 artifact — Cursor IDE doesn't read them from frontmatter. Meridian applies these
 at runtime through its harness projection layer.
 
@@ -416,6 +425,8 @@ YAML frontmatter + markdown body.
 | `skills.available` | end-of-body `/name` guidance | approximate |
 | `effort` | dropped (any value; Pi's own off spelling is `--thinking off`) | approximate |
 | `mcp(...)` in `tools` | dropped (lossiness) | approximate |
+| `network` | dropped | meridian-only |
+| `network-allow`, `network-deny` | dropped | meridian-only |
 | All other policy fields | dropped | dropped |
 | `model-policies` | dropped | meridian-only |
 
@@ -508,6 +519,8 @@ Compact per-field, per-target classification:
 | `mode` | preserved | dropped | dropped | approximate | approximate | approximate |
 | `approval` | preserved | dropped | exact | dropped | approximate | dropped |
 | `sandbox` | preserved | dropped | exact | dropped | approximate | dropped |
+| `network` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
+| `network-allow`, `network-deny` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
 | `model-invocable`, `user-invocable` | preserved | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` |
 | `tools` allowlist and denials | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
 | `tools` `ask` rules | preserved | dropped | dropped | dropped | dropped | dropped |

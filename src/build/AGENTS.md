@@ -112,7 +112,7 @@ generated-file hashes are the only output-integrity source.
 ## Mental Model
 
 ```
-LaunchBundleRequest {agent, fallback_root, model, harness, effort, approval, sandbox, extra_skills}
+LaunchBundleRequest {agent, fallback_root, model, harness, effort, approval, sandbox, network, network_allow, network_deny, extra_skills}
     ↓
 [agent mode] read root then fallback .mars/agents/<name>.md → AgentProfile + body
 [ad-hoc mode] empty_agent_profile() + "" body

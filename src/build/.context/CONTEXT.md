@@ -230,7 +230,7 @@ marks effort consumed (cleared from execution policy output).
 `build_launch_bundle()` resolves project config once, then passes it into policy resolution.
 
 ```
-LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_skills}
+LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, network_allow, network_deny, extra_skills}
     │
     ├─ [agent mode] read + parse .mars/agents/<name>.md → AgentProfile + body
     ├─ [ad-hoc mode] empty_agent_profile() + "" body
@@ -243,7 +243,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, extra_ski
            ├─ models::ensure_fresh()                   (catalog for native slug + probes)
            ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)
-           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, alias compaction)
+           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, network, alias compaction)
            └─ runnable::resolve_routing()              (populate Routing with aggregate report)
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)

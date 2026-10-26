@@ -23,22 +23,22 @@ A value with no schema 1 meaning stops the run and names the file and key (``age
 | Agent | `approval: yolo` | `approval: never` |
 | Agent | `effort: adaptive`, `effort: disabled` | `effort: medium`, `effort: none` |
 | Agent | `permission: read` (or `edit`) | `harness-overrides.flow.permission: read` |
-| Agent | `model_invocable`, `user_invocable`, `disallowed_tools` | the hyphenated spelling |
-| Agent | `network`, `network-allow`, `network-deny`, `autocompact`, `autocompact_pct`, `fanout`, `models`, `mcp-tools` | **deleted**, with no replacement written |
-| Agent | `network`, `autocompact`, `autocompact_pct` or `harness` inside a `model-policies` `override` | **deleted** |
+| Agent | `model_invocable`, `user_invocable`, `disallowed_tools`, `network_allow`, `network_deny` | the hyphenated spelling |
+| Agent | `autocompact`, `autocompact_pct`, `fanout`, `models`, `mcp-tools` | **deleted**, with no replacement written |
+| Agent | `autocompact`, `autocompact_pct` or `harness` inside a `model-policies` `override` | **deleted** |
 | Skill | `type: principle` | `metadata.type: principle` |
 | Skill | `when_to_use: ...` | appended to `description` after a blank line |
 | Skill | `tools`, `disallowed-tools`, `allowed-tools` (and snake_case spellings) | **deleted** |
 | Skill | `model_invocable`, `user_invocable` | the hyphenated spelling |
 | Agent, skill | a key only Claude reads (Agent: `color`, `maxTurns`, `permissionMode`, `memory`, `background`, `isolation`, `initialPrompt`, `hooks`; skill: `argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) | moved to `harness-overrides.claude`, so `.claude/` keeps it and the other harnesses stop receiving it |
 
-Where a deleted key held something you still want, put it where schema 1 keeps it: compaction on the model alias (`[models.<alias>] autocompact = ...`), fan-out candidates in the consumer's `[settings.meridian.fanout]`, MCP grants as `mcp(server): allow` entries in `tools`, `models` as `model-policies`. `network` has no replacement because no consumer acted on it.
+Where a deleted key held something you still want, put it where schema 1 keeps it: compaction on the model alias (`[models.<alias>] autocompact = ...`), fan-out candidates in the consumer's `[settings.meridian.fanout]`, MCP grants as `mcp(server): allow` entries in `tools`, `models` as `model-policies`. `network`, `network-allow` and `network-deny` are schema 1 keys, so a profile that sets them keeps them.
 
 An Agent that sets `tools` as a list with only some names used to restrict nothing; the map form `{name: allow}` states the same grants. It still restricts nothing. To restrict an Agent to a list, write the allowlist form: `"*": deny` plus an `allow` per capability.
 
 ## An example
 
-`mars migrate` on `meridian-base` 0.11.18 changed 25 files (+47, −24): its manifest, one Agent and 23 skills. The three kinds of change:
+`mars migrate` on `meridian-base` 0.11.18 changed 24 files (+56, −26): its manifest and 23 skills. Two of those changes:
 
 ```diff
 --- a/mars.toml
@@ -51,14 +51,6 @@ An Agent that sets `tools` as a list with only some names used to restrict nothi
  
  [dependencies]
  
---- a/agents/kb-maintainer.md
-+++ b/agents/kb-maintainer.md
-@@ -40,7 +40,6 @@ tools:
-   'bash(git clean:*)': deny
-   ask_user: deny
- sandbox: workspace-write
--network: allow
- ---
 --- a/skills/grill/SKILL.md
 +++ b/skills/grill/SKILL.md
 @@ -1,11 +1,12 @@
@@ -77,7 +69,7 @@ An Agent that sets `tools` as a list with only some names used to restrict nothi
 
 ## It edits minimally
 
-The upgrade changes the top-level keys that need it and leaves every other byte alone: comments, quoting, key order, blank lines and the body. A definition with nothing to change is not written. In the example above the 23 skills changed by the lines shown and no other line moved.
+The upgrade changes the top-level keys that need it and leaves every other byte alone: comments, quoting, key order, blank lines and the body. A definition with nothing to change is not written. In the example above each file changed on the lines the table above names and no other line moved.
 
 A changed key's block is written again in YAML's standard style, so a key that changed can lose its original layout (a flow map such as `{alias: opus}` becomes a block mapping). When a definition's top level is not a block mapping, or the edited text fails Mars's check that it reads the same as the upgraded value, Mars rewrites the whole frontmatter instead and reports the file as `fully rewrote`; `--json` lists those files under `fully_rewritten_files`.
 
@@ -89,7 +81,7 @@ Running it again is a no-op: `definition format is already schema v1`.
 
 A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions (until then `mars sync` upgrades them in memory and warns: ``authored `.mars-src` content uses the pre-v1 format (2 files to upgrade); run `mars migrate` ``); with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
 
-The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `default_network` or `network` in an overlay, are ignored and warned about by name; delete them. An invalid overlay `effort`, `approval` or `sandbox` is an error. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
+The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `autocompact` in an overlay, are ignored and warned about by name; delete them. An invalid overlay `effort`, `approval` or `sandbox` is an error. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
 
 ## A dependency that has not migrated
 

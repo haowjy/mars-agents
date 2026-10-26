@@ -13,6 +13,8 @@ harness: claude
 mode: subagent
 approval: auto
 sandbox: workspace-write
+network: allowlist
+network-allow: [github.com, "*.github.com"]
 effort: high
 skills:
   load: [dev-principles, shared-workspace]
@@ -26,8 +28,7 @@ tools:
   "bash(git revert *)": deny
 harness-overrides:
   codex:
-    sandbox_workspace_write:
-      network_access: true
+    model_reasoning_summary: concise
 model-policies:
   - match:
       alias: opus
@@ -240,6 +241,60 @@ sandbox: workspace-write
 
 ---
 
+### `network`
+
+| | |
+|---|---|
+| Type | string |
+| Required | no |
+| Allowed values | `allow`, `deny`, `allowlist` |
+| Default | none (unset; Meridian follows the resolved sandbox) |
+
+Controls whether the agent's shell commands may open connections, including the
+public internet, host services, and local sockets. It does not control built-in
+web tools; grant or deny those with `tools: web`.
+
+| Value | Behavior |
+|---|---|
+| `allow` | Allow shell commands to open connections |
+| `deny` | Deny shell commands from opening connections |
+| `allowlist` | Allow only `network-allow` hosts, minus `network-deny` hosts |
+
+Mars carries an omitted mode as `null` in the launch bundle; it does not choose a network
+default unless `[settings] default-network` (project, local, or user config) supplies one.
+Meridian resolves a remaining unset mode from the sandbox. There is no explicit `default`
+value. Harness projection reports enforcement limits.
+
+At launch, the mode resolves through the same chain as `effort`, `sandbox` and `approval`
+([Schema v1](schema-v1.md#model-policies)), with `[settings] default-network` and the user
+config's default between the settings model policies and the end of the chain.
+
+```yaml
+network: allowlist
+network-allow: [github.com, "*.github.com", "**.pypi.org"]
+network-deny: [uploads.example]
+```
+
+`network-allow` and `network-deny` are permission sets. Plain lists add across user,
+project, local, profile, overlay, and CLI surfaces. `{replace: [...]}` clears lower entries
+([how lists combine](mars-toml.md#adding-to-or-replacing-a-permission-list));
+a package profile may replace its allow set but may not replace its deny set. Each entry is
+an exact host, an IP address, `*.x` (subdomains only), or `**.x` (apex plus subdomains).
+Wildcards require at least two DNS labels. Mars lowercases hosts, removes a trailing dot,
+canonicalizes IPv4-mapped IPv6 to IPv4, deduplicates, and sorts them. It rejects URLs, schemes,
+ports, paths, numeric or `0x`-style terminal DNS labels, empty strings, and a bare `*`;
+internationalized names must use punycode. A malformed value or host is an error
+(`field.value`), and the underscore spellings `network_allow` and `network_deny` are
+removed keys that name their replacement. An empty `allowlist` fails closed to `deny` with a
+warning in the launch bundle.
+
+A natively run Codex agent keeps Codex's own network default: Mars reports `network` as dropped
+for Codex and as meridian-only for the other harnesses ([agent compilation](agent-compilation.md)).
+Do not set `sandbox_workspace_write.network_access` under `harness-overrides.codex` to grant
+network: it bypasses the policy the launch bundle carries.
+
+---
+
 ### `effort`
 
 | | |
@@ -408,8 +463,7 @@ harness-overrides:
   claude:
     color: red                # written to .claude/agents/<name>.md only
   codex:
-    sandbox_workspace_write:  # Codex config keys, carried as written
-      network_access: true
+    model_reasoning_summary: concise   # a Codex config key, carried as written
   flow:
     permission: read          # Meridian Flow's own keys; reserved namespace
 ```
@@ -424,7 +478,7 @@ Use top-level fields for Mars semantics. Use `harness-overrides` for harness-spe
 
 ### `model-policies`
 
-Conditional model settings, declared backups and a per-model guide for this agent. Each rule has a `match` (exactly one of `alias`, `model`, `model-glob`), an optional `override` of `effort`, `sandbox` and `approval`, an optional `when`, and an optional `no-fallback`.
+Conditional model settings, declared backups and a per-model guide for this agent. Each rule has a `match` (exactly one of `alias`, `model`, `model-glob`), an optional `override` of `effort`, `sandbox`, `approval` and `network`, an optional `when`, and an optional `no-fallback`.
 
 ```yaml
 model-policies:
@@ -443,7 +497,7 @@ model-policies:
     no-fallback: true
 ```
 
-Mars takes the first rule that matches the chosen model; only that rule's `override` applies, and it outranks the agent's top-level `effort`, `sandbox` and `approval`. The full precedence, the consumer overlay and settings layers, and `when` are in [Schema v1](schema-v1.md#model-policies). Any `override` key but `effort`, `sandbox` and `approval` is an error.
+Mars takes the first rule that matches the chosen model; only that rule's `override` applies, and it outranks the agent's top-level `effort`, `sandbox` and `approval`. The full precedence, the consumer overlay and settings layers, and `when` are in [Schema v1](schema-v1.md#model-policies). Any `override` key but `effort`, `sandbox`, `approval` and `network` is an error, and the host sets `network-allow` and `network-deny` are not valid there.
 
 **Declared backups.** For an implicit model choice, launch fallback scans **all concrete profile rules**
 in declaration order after trying the primary. It does not depend on where the
@@ -479,7 +533,7 @@ Mars reads every profile with the schema reader and reports diagnostics, each wi
 
 | Condition | Severity |
 |---|---|
-| A removed key (`network`, `disallowed-tools`, `fanout`, ...), a list-form `tools`, an invalid value (`effort: ultra`, `approval: yolo`), malformed `model-policies`, an unclosed or non-mapping frontmatter, a duplicate key | Error |
+| A removed key (`disallowed-tools`, `fanout`, ...), a list-form `tools`, an invalid value (`effort: ultra`, `approval: yolo`), malformed `model-policies`, an unclosed or non-mapping frontmatter, a duplicate key | Error |
 | An unknown harness name in `harness:` | Error |
 | An unknown top-level field | Warning — the field stays in the file but reaches no native file; put harness-specific keys under `harness-overrides.<harness>` |
 | An unknown name in `harness-overrides` (other than `flow`) | Warning — the block is preserved |

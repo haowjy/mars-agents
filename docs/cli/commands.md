@@ -716,9 +716,9 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 **Agent/profile mode** (`--agent <name>`):
 - Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
 - Requires a project with `mars sync` already run
-- Inherits the profile's fields (model, harness, effort, approval, sandbox, skills, tools, model-policies)
+- Inherits the profile's fields (model, harness, effort, approval, sandbox, network, skills, tools, model-policies)
 - Model precedence is `--model` > the `[agents.<name>]` overlay > profile model > `settings.default_model`.
-- Effort, approval and sandbox follow the [precedence chain](../config/schema-v1.md#model-policies): CLI flag, overlay field, the first matching `model-policies` rule, the profile's own value, then the alias's `default_effort`.
+- Effort, approval, sandbox and network follow the [precedence chain](../config/schema-v1.md#model-policies): CLI flag, overlay field, the first matching `model-policies` rule, the profile's own value, then (`network` only) the `[settings]` and user-config `default-network`, or (`effort` only) the alias's `default_effort`.
 
 | Flag | Description |
 |---|---|
@@ -728,6 +728,9 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 | `--effort <level>` | Override effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. `none` asks for no reasoning effort and is written as `"effort": "none"` in the bundle; see [Effort](../config/schema-v1.md#effort) for what each harness does with it. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |
 | `--sandbox <mode>` | Override sandbox: `default`, `read-only`, `workspace-write`, `danger-full-access`. |
+| `--network <mode>` | Override shell network mode: `allow`, `deny`, `allowlist`. Built-in web tools remain controlled by `tools: web`. |
+| `--network-allow <host>` | Add an allowed host. Repeatable; accepts exact hosts, IPs, `*.x`, and `**.x`. |
+| `--network-deny <host>` | Add a denied host. Repeatable; uses the same host grammar. |
 | `--skill <name>` | Add extra skills by name. Repeatable; also accepts `--skill a,b`. |
 
 **Output JSON structure:**
@@ -752,6 +755,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
     "effort": "high",
     "approval": "auto",
     "sandbox": "workspace-write",
+    "network": { "mode": "allow", "allow": [], "deny": ["blocked.example"] },
     "autocompact": null,
     "autocompact_pct": null,
     "timeout": null
@@ -785,6 +789,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
     "effort_source": "cli|overlay|overlay-model-policy|profile-model-policy|profile|settings-model-policy|alias|unset",
     "approval_source": "...",
     "sandbox_source": "...",
+    "network_source": "cli|overlay|overlay-model-policy|profile|profile-model-policy|settings-model-policy|config|unset",
     "autocompact_source": "...",
     "autocompact_pct_source": "...",
     "matched_policy_rule": "profile:0",
@@ -799,7 +804,12 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
 - `skills.*.skill_type` is the skill's `metadata.type`, or `reference` when it sets none.
-- `execution_policy` holds `effort`, `approval`, `sandbox`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction or network setting. `effort` is `none` when `--effort none` or a rule set it.
+- `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is `none` when `--effort none` or a rule set it.
+- `execution_policy.network` is one resolved `{mode, allow, deny}` object. `mode` is
+  `"allow"`, `"deny"`, `"allowlist"`, or `null`; Meridian resolves a remaining unset mode
+  from the sandbox. Mars removes inert sets (`deny` removes both; `allow` removes `allow`) and
+  turns an empty allowlist into `deny` with a warning. The field governs shell connections
+  only; `tools: web` separately governs built-in web tools. See [Network](../config/schema-v1.md#network).
 - Each `provenance.*_source` names the step of the precedence chain that supplied the value, and `matched_policy_rule` names the one `model-policies` rule that matched the chosen model (`profile:<index>`, `overlay:<index>` or `settings:<index>`), even when a higher step then set the field; it is absent when no rule matched.
 
 **`tools.capability_natives`** is always present, independent of the profile's tool policy. It

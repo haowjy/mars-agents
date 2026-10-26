@@ -8,6 +8,7 @@ Config loading, schema, and routing config boundaries.
 |---|---|
 | `mod.rs` | `mars.toml` schema (`Settings`, `Config`), load/save, `EffectiveConfig` |
 | `layering.rs` | Project/local replacement plus permission-set composition |
+| `user.rs` | Restricted user `config.toml` network tier and ignored-key warnings |
 | `targets.rs` | Link normalization — raw target strings → typed `NormalizedLink` / `EffectiveLinks` |
 | `routing_settings.rs` | Raw `Settings` → typed routing input with shared diagnostics |
 | `migrations/link.rs` | Legacy link normalization (historical compat for old config forms) |
@@ -16,14 +17,15 @@ Config loading, schema, and routing config boundaries.
 
 ### Project/local keyed overlays
 
-Model aliases, agent overlays, and skill overlays replace their whole keyed entry. Agent tool
-permission sets are the deliberate exception: they compose through `compose_permission_sets`, so
-an unrelated local scalar does not erase project permissions while project scalars still fall back
-to the profile. Unknown project settings and agent-overlay keys remain tolerated for forward
-compatibility. Local settings stay strict. A project permission set therefore survives a matching
-local block that omits it, while project scalars do not: a local agent block that adds only a tool
-permission must repeat any project `model`, `harness`, `description`, or model policies it intends
-to retain.
+Model aliases, agent overlays, and skill overlays replace their whole keyed entry. Agent network
+and tool permission sets are the deliberate exception: they compose through
+`compose_permission_sets`, so an unrelated local scalar does not erase project permissions while
+project scalars still fall back to the profile. Unknown project and local settings and
+agent-overlay keys remain tolerated for forward compatibility, but network-looking unknowns warn
+because silently dropping a deny would fail open. A project permission set therefore survives a
+matching local block that omits it, while project scalars do not: a local agent block that adds
+only a network or tool permission must repeat any project `model`, `harness`, `description`, or
+model policies it intends to retain.
 
 ### `config::targets` — link normalization
 

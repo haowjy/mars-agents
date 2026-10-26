@@ -17,6 +17,7 @@ struct ParsedAgentInventory {
     description: String,
     model: Option<String>,
     model_backups: Vec<String>,
+    has_model_guide: bool,
     mode: AgentMode,
 }
 
@@ -231,6 +232,7 @@ fn parse_inventory_agent(
             description,
             model: profile.model,
             model_backups,
+            has_model_guide: profile.model_policies.iter().any(|entry| entry.when.is_some()),
             mode,
         }),
         warnings,
@@ -268,6 +270,11 @@ fn render_meridian_agent_line(agent: &ParsedAgentInventory) -> String {
         line.push_str(" | Declared backups: ");
         line.push_str(&agent.model_backups.join(", "));
     }
+    if agent.has_model_guide {
+        line.push_str(" | Model guide: `mars models prompting @");
+        line.push_str(&agent.name);
+        line.push('`');
+    }
 
     line
 }
@@ -275,9 +282,9 @@ fn render_meridian_agent_line(agent: &ParsedAgentInventory) -> String {
 fn render_native_agent_line(agent: &ParsedAgentInventory) -> String {
     let description = agent.description.trim();
     if description.is_empty() {
-        format!("- {}", agent.name)
+        format!("- {}{}", agent.name, if agent.has_model_guide { " (model guide available)" } else { "" })
     } else {
-        format!("- {}: {}", agent.name, description)
+        format!("- {}: {}{}", agent.name, description, if agent.has_model_guide { " (model guide available)" } else { "" })
     }
 }
 

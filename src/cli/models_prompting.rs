@@ -262,12 +262,33 @@ fn prompt_target_for_agent(
         },
     )?;
 
-    Ok(prompt_target_for_routing(
-        Some(agent.name),
+    let mut target = prompt_target_for_routing(
+        Some(agent.name.clone()),
         PromptRefKind::Agent,
         &policy.routing,
         aliases,
-    ))
+    );
+    let guide = agent
+        .profile
+        .model_policies
+        .iter()
+        .filter_map(|entry| entry.when.as_ref().map(|when| {
+            let kind = match entry.match_type {
+                mars_schema::model_policy::ModelPolicyMatchType::Alias => "alias",
+                mars_schema::model_policy::ModelPolicyMatchType::Model => "model",
+                mars_schema::model_policy::ModelPolicyMatchType::ModelGlob => "model-glob",
+            };
+            format!("- {kind} `{}`: {when}", entry.match_value)
+        }))
+        .collect::<Vec<_>>();
+    if !guide.is_empty() {
+        let guide = format!("Model guide for {}:\n{}", agent.name, guide.join("\n"));
+        target.prompting = Some(match target.prompting.take() {
+            Some(generic) => format!("{guide}\n\n{generic}"),
+            None => guide,
+        });
+    }
+    Ok(target)
 }
 
 fn prompt_target_for_routing(

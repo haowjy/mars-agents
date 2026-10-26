@@ -53,7 +53,7 @@ Unknown keys are kept and reported as `field.unknown` warnings. Removed keys are
 - the manifest reading, normalized to schema 1 (a pre-v1 manifest gains `schema = 1`);
 - one entry per selected definition: kind, slug, source and output paths, normalized bytes, the typed reading and a `ChangeRecord` (`None`, `Generated`, `Edited` with the changed key paths, or `FullyRewritten`);
 - payload files as source-to-output paths, never bytes;
-- diagnostics by source path.
+- findings by source path (`diagnostics`) and what preparing changed in each file (`changes`: keys dropped, moved or repaired), with `Prepared::changed_files` for the count.
 
 `TreeSource` is the read interface (`read`, `is_file`, `is_dir`, `children`) that the caller implements for a directory, an archive or memory; `FileTree` is the in-memory implementation and `SubTree` roots a tree below a directory. Preparation reads manifests, definitions and directory listings only.
 

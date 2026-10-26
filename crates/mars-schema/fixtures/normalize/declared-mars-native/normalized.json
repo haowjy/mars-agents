@@ -152,7 +152,7 @@
         ],
         "payload": [],
         "diagnostics": {},
-        "upgrade_diagnostics": {
+        "changes": {
           "agents/planner.md": [
             {
               "code": "field.removed",

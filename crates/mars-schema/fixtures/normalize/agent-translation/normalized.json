@@ -451,7 +451,11 @@
               "severity": "warning",
               "path": [],
               "message": "inline `mcpServers` definitions are not converted; only the server names carry over"
-            },
+            }
+          ]
+        },
+        "changes": {
+          "agents/everything.md": [
             {
               "code": "agent.claude-keys-moved",
               "severity": "info",

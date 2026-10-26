@@ -186,7 +186,7 @@
         ],
         "payload": [],
         "diagnostics": {},
-        "upgrade_diagnostics": {
+        "changes": {
           "agents/old.md": [
             {
               "code": "field.removed",

@@ -148,12 +148,14 @@ fn strip_foreign_keys(fm: &mut Frontmatter, keys: &[&str]) -> bool {
     changed
 }
 
-/// A lifted definition: the new frontmatter, whether any field was rewritten, and what the
-/// dialect's translation dropped or could not convert.
+/// A lifted definition: the new frontmatter, whether any field was rewritten, what the
+/// translation dropped or moved (`changes`), and what it found it could not convert
+/// (`findings`).
 pub struct Lifted {
     pub frontmatter: Frontmatter,
     pub changed: bool,
-    pub diagnostics: Vec<SchemaDiagnostic>,
+    pub changes: Vec<SchemaDiagnostic>,
+    pub findings: Vec<SchemaDiagnostic>,
 }
 
 pub fn lift_frontmatter(
@@ -162,11 +164,11 @@ pub fn lift_frontmatter(
     frontmatter: &Frontmatter,
 ) -> Lifted {
     let mut lifted = frontmatter.clone();
-    let mut diagnostics = Vec::new();
+    let (mut changes, mut findings) = (Vec::new(), Vec::new());
     let changed = match dialect {
         Dialect::MarsNative => false,
         Dialect::Claude | Dialect::AgentSkills => {
-            crate::claude::translate::lift(kind, &mut lifted, &mut diagnostics)
+            crate::claude::translate::lift(kind, &mut lifted, &mut changes, &mut findings)
         }
         Dialect::Codex => lift_codex(kind, &mut lifted),
         Dialect::Cursor => lift_cursor(kind, &mut lifted),
@@ -175,7 +177,8 @@ pub fn lift_frontmatter(
     Lifted {
         frontmatter: lifted,
         changed,
-        diagnostics,
+        changes,
+        findings,
     }
 }
 

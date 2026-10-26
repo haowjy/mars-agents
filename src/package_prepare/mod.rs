@@ -12,7 +12,7 @@ use std::sync::Arc;
 use mars_schema::dialect::Dialect;
 use mars_schema::inspect::{Hint, Kind};
 use mars_schema::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
-use mars_schema::prepare::{PrepareContext, Prepared};
+use mars_schema::prepare::{Classification, PrepareContext, Prepared};
 use mars_schema::tree::TreeSource;
 
 use crate::diagnostic::DiagnosticCollector;
@@ -276,8 +276,7 @@ pub(crate) fn prepare_rooted(
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
-        &format!("package `{package_name}`"),
-        &|files| legacy_package_warning(package_name, files),
+        &Subject::Package(package_name),
         diag,
     );
 
@@ -347,22 +346,11 @@ pub(crate) fn prepare_authored(
         .manifest
         .is_some()
         .then(|| authored_package_name(&prepared, root));
-    report_diagnostics(
-        &prepared,
-        &source_label(root),
-        &match &package_name {
-            Some(name) => format!("package `{name}`"),
-            None => "authored `.mars-src` content".to_string(),
-        },
-        &|files| match &package_name {
-            Some(name) => legacy_package_warning(name, files),
-            None => format!(
-                "authored `.mars-src` content uses the pre-v1 format ({}); run `mars migrate`",
-                files_phrase(files)
-            ),
-        },
-        diag,
-    );
+    let subject = match &package_name {
+        Some(name) => Subject::Package(name),
+        None => Subject::AuthoredSource,
+    };
+    report_diagnostics(&prepared, &source_label(root), &subject, diag);
     Ok(prepared)
 }
 
@@ -391,46 +379,74 @@ pub(crate) fn prepare_project(
     Ok((prepared, manifest))
 }
 
+/// What a report is about, as its one-line summaries name it.
+pub(crate) enum Subject<'a> {
+    /// A package, named by its manifest; `mars migrate` runs in its repository.
+    Package(&'a str),
+    /// The project's own `.mars-src` content.
+    AuthoredSource,
+}
+
 /// `label` names a package-relative path in a diagnostic. A dependency is named by its
 /// package (`meridian-base: skills/poc/SKILL.md`), never by where the cache keeps its
-/// archive; a project's own sources keep their real path. `subject` names the package in the
-/// one-line summaries.
+/// archive; a project's own sources keep their real path.
+///
+/// What preparing changed in each file (`Prepared::changes`) is not repeated on every sync: a
+/// pre-v1 package gets one warning and a translated one a summary line, each with the count of
+/// files, and `mars migrate` lists the changes.
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     label: &dyn Fn(&str) -> String,
-    subject: &str,
-    legacy_warning: &dyn Fn(usize) -> String,
+    subject: &Subject<'_>,
     diag: &mut DiagnosticCollector,
 ) {
-    // Translating a foreign package moves Claude-only keys in many files, the same way each sync;
-    // a sync says how many files, and `mars_schema::prepare` lists them.
-    let mut files_with_moved_keys = 0;
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
-        let mut moved = false;
         for diagnostic in diagnostics {
-            if diagnostic.code.ends_with(".claude-keys-moved") {
-                moved = true;
-            } else {
-                diag.schema(diagnostic, &context, false);
-            }
+            diag.schema(diagnostic, &context, false);
         }
-        files_with_moved_keys += usize::from(moved);
     }
-    if files_with_moved_keys > 0 {
-        diag.info(
-            "claude-keys-moved",
-            format!(
-                "{subject}: moved Claude-only keys to harness-overrides.claude in {files_with_moved_keys} file{}",
-                if files_with_moved_keys == 1 { "" } else { "s" }
-            ),
-        );
+    let files = prepared.changed_files();
+    if files == 0 {
+        return;
     }
-    // The upgrade's own per-file notes (keys dropped, keys moved) are `upgrade_diagnostics`,
-    // which `mars migrate` lists; a sync reports one warning per package with their count.
-    let files = prepared.files_to_migrate();
-    if files > 0 {
-        diag.warn_once("legacy-package", legacy_warning(files));
+    let (name, migrate) = match subject {
+        Subject::Package(name) => (
+            format!("package `{name}`"),
+            "run `mars migrate` in its repository",
+        ),
+        Subject::AuthoredSource => (
+            "authored `.mars-src` content".to_string(),
+            "run `mars migrate`",
+        ),
+    };
+    let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
+    match &prepared.classification {
+        Classification::MarsLegacy => {
+            let no_manifest = prepared
+                .manifest
+                .as_ref()
+                .is_some_and(|manifest| manifest.source_path.is_none());
+            let format = if no_manifest {
+                "has no `mars.toml` and uses pre-v1 Mars keys"
+            } else {
+                "uses the pre-v1 format"
+            };
+            let advice = if no_manifest {
+                "add a `mars.toml` with a `[package]` table (name and version, no `schema`) and run `mars migrate` in its repository"
+            } else {
+                migrate
+            };
+            diag.warn_once(
+                "legacy-package",
+                format!("{name} {format} ({count} to upgrade); {advice}"),
+            );
+        }
+        Classification::Foreign(choice) => diag.info(
+            "package-translated",
+            format!("{name} is read as {}: {count} translated", choice.dialect),
+        ),
+        _ => {}
     }
 }
 
@@ -449,20 +465,6 @@ fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
         .or_else(|| root.file_name().and_then(|name| name.to_str()))
         .unwrap_or("unknown")
         .to_string()
-}
-
-fn legacy_package_warning(name: &str, files: usize) -> String {
-    format!(
-        "package `{name}` uses the pre-v1 format ({}); run `mars migrate` in its repository",
-        files_phrase(files)
-    )
-}
-
-fn files_phrase(files: usize) -> String {
-    format!(
-        "{files} file{} to upgrade",
-        if files == 1 { "" } else { "s" }
-    )
 }
 
 /// Prepare a real on-disk tree for graph fixtures, with no dependency entry (so no dialect hint).

@@ -38,14 +38,16 @@ const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "hooks",
 ];
 
+/// `changes` gets what the lift dropped or moved; `findings` what it could not convert.
 pub(crate) fn lift(
     kind: DefinitionKind,
     fm: &mut Frontmatter,
-    diagnostics: &mut Vec<SchemaDiagnostic>,
+    changes: &mut Vec<SchemaDiagnostic>,
+    findings: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
     match kind {
-        DefinitionKind::Skill => lift_skill(fm, diagnostics),
-        DefinitionKind::Agent => lift_agent(fm, diagnostics),
+        DefinitionKind::Skill => lift_skill(fm, changes, findings),
+        DefinitionKind::Agent => lift_agent(fm, changes, findings),
     }
 }
 
@@ -172,12 +174,16 @@ fn scalar_text(value: &Value) -> Option<String> {
     }
 }
 
-fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> bool {
+fn lift_skill(
+    fm: &mut Frontmatter,
+    changes: &mut Vec<SchemaDiagnostic>,
+    findings: &mut Vec<SchemaDiagnostic>,
+) -> bool {
     let mut changed = false;
     let rendered = fm.render();
     if rendered.contains("${CLAUDE_PLUGIN_ROOT}") || rendered.contains("${CLAUDE_SKILL_DIR}") {
         warn(
-            diagnostics,
+            findings,
             "skill.plugin-variable",
             "refers to `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_SKILL_DIR}`, which are left as written and do not resolve outside Claude Code".into(),
         );
@@ -244,7 +250,7 @@ fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
     if !dropped.is_empty() {
         changed = true;
         warn(
-            diagnostics,
+            changes,
             "skill.tools-dropped",
             format!(
                 "removed {}: schema v1 has no skill tool rules, and Claude's `allowed-tools` grants without restricting",
@@ -254,13 +260,13 @@ fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
     }
     if names_bash || fm.body().contains("scripts/") {
         warn(
-            diagnostics,
+            findings,
             "skill.needs-scripts",
             "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run".into(),
         );
     }
 
-    changed |= move_to_claude_overrides(fm, DefinitionKind::Skill, diagnostics);
+    changed |= move_to_claude_overrides(fm, DefinitionKind::Skill, changes);
     changed
 }
 
@@ -284,7 +290,11 @@ fn mcp_server_names(value: &Value) -> (Vec<String>, bool) {
     (names, has_definitions)
 }
 
-fn lift_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> bool {
+fn lift_agent(
+    fm: &mut Frontmatter,
+    changes: &mut Vec<SchemaDiagnostic>,
+    findings: &mut Vec<SchemaDiagnostic>,
+) -> bool {
     let mut changed = false;
     let mut denied = Vec::new();
     for key in ["disallowedTools", "disallowed-tools", "disallowed_tools"] {
@@ -302,7 +312,7 @@ fn lift_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
         tool_policy::append_mcp_server_entries_to_tools(fm, &names);
         if has_definitions {
             warn(
-                diagnostics,
+                findings,
                 "agent.mcp-not-converted",
                 "inline `mcpServers` definitions are not converted; only the server names carry over".into(),
             );
@@ -333,7 +343,7 @@ fn lift_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
         changed = true;
     }
 
-    changed |= move_to_claude_overrides(fm, DefinitionKind::Agent, diagnostics);
+    changed |= move_to_claude_overrides(fm, DefinitionKind::Agent, changes);
     changed
 }
 

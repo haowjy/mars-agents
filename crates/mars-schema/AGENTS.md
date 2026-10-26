@@ -117,8 +117,10 @@ leaves the keys in place with a warning.
 `mars migrate`. Definition upgrades edit only changed top-level blocks and keep all other
 authored bytes. A non-block top-level mapping or failed semantic verification falls back to a
 reported full frontmatter rewrite. Unchanged definitions and schema-v1 manifests remain
-byte-identical. What an upgrade dropped or could not carry over is `Prepared.upgrade_diagnostics`,
-and `Prepared::files_to_migrate` counts the authored files a legacy package's upgrade changed.
+byte-identical. What preparing changed in a file, whether a pre-v1 upgrade or a foreign translation
+dropped, moved or repaired it, is one channel, `Prepared.changes`; `Prepared.diagnostics` holds only
+what discovery and translation could not convert. `Prepared::changed_files` counts the authored files
+whose bytes changed (not a generated `mars.toml`), and the binary reports that count, never the codes.
 
 Frontmatter is bounded (`MAX_FRONTMATTER_BYTES`, 64 KiB: `frontmatter.too-large`; `MAX_FLOW_DEPTH`, 64
 open brackets over the raw text: `frontmatter.too-deep`) in the one parse every reader shares,

@@ -152,7 +152,7 @@ harness-overrides:
 ---
 ```
 
-Importing a Claude skill moves Claude's own keys (`argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) here, unchanged and in file order, with an info message per file (`skill.claude-keys-moved`; `mars sync` folds them into one line per package with the count of files). `.claude/` keeps them; no other harness sees them. `model` and `effort` have schema meaning on Agents only, so a skill's are Claude's.
+Importing a Claude skill moves Claude's own keys (`argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) here, unchanged and in file order, with an info note per file (`skill.claude-keys-moved`, in `Prepared.changes`; `mars sync` prints one line per package with the count of files translated). `.claude/` keeps them; no other harness sees them. `model` and `effort` have schema meaning on Agents only, so a skill's are Claude's.
 
 ## Unknown Fields
 

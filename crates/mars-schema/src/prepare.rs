@@ -98,29 +98,27 @@ pub struct Prepared {
     pub manifest: Option<PreparedManifest>,
     pub definitions: Vec<PreparedDefinition>,
     pub payload: Vec<PayloadEntry>,
-    /// Package-level diagnostics by source path: discovery and foreign-dialect translation. A
-    /// definition's own reading diagnostics live on its `reading` only; see
+    /// Package-level findings by source path: what discovery and translation met and could not
+    /// convert. A definition's own reading diagnostics live on its `reading` only; see
     /// [`Prepared::all_diagnostics`].
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
-    /// What upgrading a pre-v1 package changed or dropped, by source path (legacy keys, skill
-    /// tool rules). `mars migrate` lists them; a caller that only reads the package reports
-    /// [`Prepared::files_to_migrate`] instead.
+    /// What preparing changed in each file, by source path: the keys a pre-v1 upgrade or a
+    /// foreign translation dropped, moved or repaired. A caller that only reads the package
+    /// reports [`Prepared::changed_files`]; `mars migrate` lists these.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub upgrade_diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
+    pub changes: BTreeMap<String, Vec<SchemaDiagnostic>>,
 }
 
 impl Prepared {
-    /// How many authored files of a pre-v1 package preparation changed: the changes are in the
-    /// prepared bytes, and `mars migrate` writes them back. Zero for any other classification.
-    pub fn files_to_migrate(&self) -> usize {
-        if self.classification != Classification::MarsLegacy {
-            return 0;
-        }
+    /// How many authored files preparation changed: the prepared bytes differ from the file, and
+    /// for a pre-v1 package `mars migrate` writes them back. A generated `mars.toml` has no file
+    /// to change and is not counted.
+    pub fn changed_files(&self) -> usize {
         self.manifest
             .iter()
             .map(|manifest| &manifest.change)
             .chain(self.definitions.iter().map(|definition| &definition.change))
-            .filter(|change| **change != ChangeRecord::None)
+            .filter(|change| !matches!(change, ChangeRecord::None | ChangeRecord::Generated))
             .count()
     }
 
@@ -189,14 +187,14 @@ pub(crate) fn prepare_root(
     let classification = dispatched.classification.clone();
     let manifest_bytes = dispatched.manifest.take();
     let mut diagnostics = std::mem::take(&mut dispatched.discovery.diagnostics);
-    let mut upgrade_diagnostics = BTreeMap::new();
+    let mut changes = BTreeMap::new();
 
     let mut manifest = manifest_bytes.as_deref().map(|bytes| {
         prepare_manifest(
             bytes,
             classification == Classification::MarsLegacy,
             &mut diagnostics,
-            &mut upgrade_diagnostics,
+            &mut changes,
         )
     });
 
@@ -231,7 +229,7 @@ pub(crate) fn prepare_root(
                     all,
                     &selected_paths,
                     &mut diagnostics,
-                    &mut upgrade_diagnostics,
+                    &mut changes,
                 )
             })
             .collect::<Vec<_>>()
@@ -260,14 +258,14 @@ pub(crate) fn prepare_root(
         report_unconverted(source, &dispatched, &mut diagnostics);
     }
     diagnostics.retain(|_, diagnostics| !diagnostics.is_empty());
-    upgrade_diagnostics.retain(|_, diagnostics| !diagnostics.is_empty());
+    changes.retain(|_, diagnostics| !diagnostics.is_empty());
     let prepared = Prepared {
         classification,
         manifest: manifest.take(),
         definitions,
         payload,
         diagnostics,
-        upgrade_diagnostics,
+        changes,
     };
     Rooted {
         prepared,
@@ -341,7 +339,7 @@ fn prepare_manifest(
     bytes: &[u8],
     upgrade: bool,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
-    upgrade_diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
+    changes: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedManifest {
     let invalid_utf8 = std::str::from_utf8(bytes).err().map(|error| {
         SchemaDiagnostic::new(
@@ -371,7 +369,7 @@ fn prepare_manifest(
         Ok(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
         Err(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
     };
-    upgrade_diagnostics
+    changes
         .entry("mars.toml".to_string())
         .or_default()
         .extend(upgraded);
@@ -395,7 +393,7 @@ fn prepare_definition(
     all: &[SelectedDefinition],
     selected_paths: &BTreeSet<&str>,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
-    upgrade_diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
+    changes: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedDefinition {
     let Some(bytes) = source.read(&selected.source_path) else {
         return PreparedDefinition {
@@ -416,11 +414,16 @@ fn prepare_definition(
             change: ChangeRecord::None,
         };
     };
-    let (normalized_bytes, change, found) = match std::str::from_utf8(&bytes) {
+    let (mut notes, mut findings) = (Vec::new(), Vec::new());
+    let (normalized_bytes, change) = match std::str::from_utf8(&bytes) {
         Ok(text) => match classification {
             Classification::MarsLegacy => {
                 match crate::upgrade::upgrade_definition(selected.kind, text) {
-                    Ok(result) => upgrade_result(text, result),
+                    Ok(result) => {
+                        let (upgraded, change, upgrade_notes) = upgrade_result(text, result);
+                        notes = upgrade_notes;
+                        (upgraded, change)
+                    }
                     Err(error) => {
                         push(
                             diagnostics,
@@ -432,27 +435,29 @@ fn prepare_definition(
                                 error.to_string(),
                             ),
                         );
-                        (bytes.clone(), ChangeRecord::None, Vec::new())
+                        (bytes.clone(), ChangeRecord::None)
                     }
                 }
             }
             Classification::Foreign(choice) => {
-                translate_foreign(text, choice.dialect, selected, all, selected_paths, &bytes)
+                let translated =
+                    translate_foreign(text, choice.dialect, selected, all, selected_paths, &bytes);
+                notes = translated.changes;
+                findings = translated.findings;
+                (translated.bytes, translated.change)
             }
-            _ => (bytes.clone(), ChangeRecord::None, Vec::new()),
+            _ => (bytes.clone(), ChangeRecord::None),
         },
-        Err(_) => (bytes.clone(), ChangeRecord::None, Vec::new()),
+        Err(_) => (bytes.clone(), ChangeRecord::None),
     };
-    // What the pre-v1 upgrade did is for `mars migrate`; what translating a foreign file did
-    // is a finding about the package.
-    let into = if *classification == Classification::MarsLegacy {
-        upgrade_diagnostics
-    } else {
-        diagnostics
-    };
-    into.entry(selected.source_path.clone())
+    changes
+        .entry(selected.source_path.clone())
         .or_default()
-        .extend(found);
+        .extend(notes);
+    diagnostics
+        .entry(selected.source_path.clone())
+        .or_default()
+        .extend(findings);
 
     // Only text is upgraded or translated, so these bytes are the file's when they are not text.
     let reading = match std::str::from_utf8(&normalized_bytes) {
@@ -479,6 +484,27 @@ fn prepare_definition(
     }
 }
 
+/// What translating one foreign definition produced.
+struct Translated {
+    bytes: Vec<u8>,
+    change: ChangeRecord,
+    /// What the translation dropped, moved or repaired.
+    changes: Vec<SchemaDiagnostic>,
+    /// What it met and could not convert.
+    findings: Vec<SchemaDiagnostic>,
+}
+
+impl Translated {
+    fn untouched(bytes: &[u8]) -> Self {
+        Self {
+            bytes: bytes.to_vec(),
+            change: ChangeRecord::None,
+            changes: Vec::new(),
+            findings: Vec::new(),
+        }
+    }
+}
+
 /// Lift a foreign definition's frontmatter into schema v1. Frontmatter that cannot be read
 /// stays as written, with the reader's error; only a Claude skill's unquoted `description`
 /// colon is repaired first.
@@ -489,9 +515,9 @@ fn translate_foreign(
     all: &[SelectedDefinition],
     selected_paths: &BTreeSet<&str>,
     bytes: &[u8],
-) -> (Vec<u8>, ChangeRecord, Vec<SchemaDiagnostic>) {
+) -> Translated {
     let claude = matches!(dialect, Dialect::Claude | Dialect::AgentSkills);
-    let mut diagnostics = Vec::new();
+    let mut changes = Vec::new();
     let mut repaired = false;
     let frontmatter = match Frontmatter::parse(text) {
         Ok(frontmatter) => frontmatter,
@@ -501,32 +527,38 @@ fn translate_foreign(
             {
                 Some(frontmatter) => {
                     repaired = true;
-                    diagnostics.push(crate::claude::translate::repaired_diagnostic());
+                    changes.push(crate::claude::translate::repaired_diagnostic());
                     frontmatter
                 }
-                None => return (bytes.to_vec(), ChangeRecord::None, Vec::new()),
+                None => return Translated::untouched(bytes),
             }
         }
-        Err(_) => return (bytes.to_vec(), ChangeRecord::None, Vec::new()),
+        Err(_) => return Translated::untouched(bytes),
     };
     let lifted = crate::lift::lift_frontmatter(dialect, selected.kind, &frontmatter);
-    diagnostics.extend(lifted.diagnostics);
+    changes.extend(lifted.changes);
+    let mut findings = lifted.findings;
     if claude && selected.kind == DefinitionKind::Skill {
-        diagnostics.extend(crate::claude::checks::skill_checks(
+        findings.extend(crate::claude::checks::skill_checks(
             selected,
             &lifted.frontmatter,
             all,
             selected_paths,
         ));
     }
-    if lifted.changed || repaired {
+    let (bytes, change) = if lifted.changed || repaired {
         (
             lifted.frontmatter.render().into_bytes(),
             ChangeRecord::FullyRewritten,
-            diagnostics,
         )
     } else {
-        (bytes.to_vec(), ChangeRecord::None, diagnostics)
+        (bytes.to_vec(), ChangeRecord::None)
+    };
+    Translated {
+        bytes,
+        change,
+        changes,
+        findings,
     }
 }
 

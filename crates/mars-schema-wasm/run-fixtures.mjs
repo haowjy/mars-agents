@@ -73,6 +73,43 @@ for (const name of cases("prepare")) {
 }
 assert.throws(() => wasm.prepare({ files: new Map(), context: "nonsense" }));
 
+// normalize: inspection, the staged inspection of each fetched remote plugin, and the packages
+// equal the fixtures; each package's definition and manifest files equal expected/<id>/<path>
+const defined = object => Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
+for (const name of cases("normalize")) {
+  const dir = join(fixtures, "normalize", name);
+  const request = existsSync(join(dir, "request.json")) ? json("normalize", name, "request.json") : {};
+  const root = tree(join(dir, "input"));
+  const hint = request.hint ?? {};
+  const inspection = wasm.inspect({ tree: root, hint });
+  check(inspection, json("normalize", name, "inspection.json"), `normalize/${name} inspection`);
+  const remoteTrees = {};
+  const remoteInspections = {};
+  for (const [plugin, remote] of Object.entries(request.remote ?? {}).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const fetched = tree(join(dir, remote.dir));
+    remoteTrees[plugin] = defined({ tree: fetched, source: remote.source });
+    const entry = inspection.plugins.find(candidate => candidate.entry.name === plugin).entry;
+    remoteInspections[plugin] = wasm.inspect({ tree: fetched, hint: { plugin: { entry, at_marketplace_root: false } } });
+  }
+  if (existsSync(join(dir, "remote-inspections.json"))) check(remoteInspections, json("normalize", name, "remote-inspections.json"), `normalize/${name} remote inspections`);
+  const result = wasm.normalize(defined({ tree: root, source: request.source, hint: request.hint, selection: request.selection, remoteTrees: Object.keys(remoteTrees).length ? remoteTrees : undefined }));
+  const expectedDir = join(dir, "expected");
+  const expectedFiles = existsSync(expectedDir) ? tree(expectedDir) : new Map();
+  let produced = 0;
+  for (const pkg of result.packages) {
+    for (const file of [pkg.prepared.manifest, ...pkg.prepared.definitions].filter(Boolean)) {
+      const want = expectedFiles.get(`${pkg.id}/${file.output_path}`);
+      assert.ok(file.normalized_bytes instanceof Uint8Array, `normalize/${name} bytes are a Uint8Array`);
+      assert.deepStrictEqual(Buffer.from(file.normalized_bytes), Buffer.from(want ?? []), `normalize/${name} ${pkg.id}/${file.output_path} bytes`);
+      produced++;
+    }
+  }
+  assert.equal(produced, expectedFiles.size, `normalize/${name} file count`);
+  stripBytes(result);
+  check(result, json("normalize", name, "normalized.json"), `normalize/${name}`);
+}
+assert.throws(() => wasm.normalize({ tree: new Map(), hint: { dialect: "nonsense" } }));
+
 // upgrade: the legacy file in a legacy package comes back as expected.*, with the expected diagnostics
 const legacyManifest = '[package]\nname = "legacy"\nversion = "1.0.0"\n';
 const enc = new TextEncoder();

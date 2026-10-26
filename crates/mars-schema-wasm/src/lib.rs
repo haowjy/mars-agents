@@ -84,9 +84,17 @@ pub fn vocabulary() -> Result<JsValue, JsError> {
     to_js(&mars_schema::tool_natives::vocabulary())
 }
 
-/// Prepare a package from `{files: Map<path, Uint8Array>, context?, declaredDialect?}`.
-/// An unrecognized `context` or `declaredDialect` throws. Provisional: P5 replaces this
-/// surface with `inspect` and `normalize`.
+fn file_tree(files: BTreeMap<String, ByteBuf>) -> Result<mars_schema::tree::FileTree, JsError> {
+    Ok(mars_schema::tree::FileTree::from_files(
+        files
+            .into_iter()
+            .map(|(path, bytes)| (path, bytes.into_vec())),
+    )?)
+}
+
+/// Prepare one rooted package from `{files: Map<path, Uint8Array>, context?, declaredDialect?}`:
+/// the single-root core `normalize` builds on. An unrecognized `context` or `declaredDialect`
+/// throws.
 #[wasm_bindgen]
 pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
     #[derive(serde::Deserialize)]
@@ -97,12 +105,7 @@ pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
         declared_dialect: Option<mars_schema::dialect::Dialect>,
     }
     let input: Input = serde_wasm_bindgen::from_value(input)?;
-    let tree = mars_schema::tree::FileTree::from_files(
-        input
-            .files
-            .into_iter()
-            .map(|(path, bytes)| (path, bytes.into_vec())),
-    )?;
+    let tree = file_tree(input.files)?;
     let context = input
         .context
         .unwrap_or(mars_schema::prepare::PrepareContext::Package);
@@ -111,4 +114,75 @@ pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
         context,
         input.declared_dialect,
     ))
+}
+
+/// What a repository is: `{tree: Map<path, Uint8Array>, hint?}` to an `Inspection`. Reads
+/// manifests, listings and definitions, never payload bytes.
+#[wasm_bindgen]
+pub fn inspect(input: JsValue) -> Result<JsValue, JsError> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        tree: BTreeMap<String, ByteBuf>,
+        #[serde(default)]
+        hint: mars_schema::inspect::Hint,
+    }
+    let input: Input = serde_wasm_bindgen::from_value(input)?;
+    to_js(&mars_schema::inspect::inspect(
+        &file_tree(input.tree)?,
+        &input.hint,
+    ))
+}
+
+/// Schema v1 packages for a selection: `{tree, source?, hint?, selection?, remoteTrees?}` to a
+/// `Normalized`. `remoteTrees` maps a marketplace plugin name to `{tree, source?}`, the plugin's
+/// fetched root.
+#[wasm_bindgen]
+pub fn normalize(input: JsValue) -> Result<JsValue, JsError> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Remote {
+        tree: BTreeMap<String, ByteBuf>,
+        #[serde(default)]
+        source: mars_schema::normalize::SourceInfo,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields, rename_all = "camelCase")]
+    struct Input {
+        tree: BTreeMap<String, ByteBuf>,
+        #[serde(default)]
+        source: mars_schema::normalize::SourceInfo,
+        #[serde(default)]
+        hint: mars_schema::inspect::Hint,
+        #[serde(default)]
+        selection: mars_schema::normalize::Selection,
+        #[serde(default)]
+        remote_trees: BTreeMap<String, Remote>,
+    }
+    let input: Input = serde_wasm_bindgen::from_value(input)?;
+    let tree = file_tree(input.tree)?;
+    let remote_trees = input
+        .remote_trees
+        .into_iter()
+        .map(|(plugin, remote)| Ok((plugin, (file_tree(remote.tree)?, remote.source))))
+        .collect::<Result<BTreeMap<_, _>, JsError>>()?;
+    let normalized = mars_schema::normalize::normalize(&mars_schema::normalize::NormalizeRequest {
+        tree: &tree,
+        source: input.source,
+        hint: input.hint,
+        selection: input.selection,
+        remote_trees: remote_trees
+            .iter()
+            .map(|(plugin, (tree, source))| {
+                (
+                    plugin.clone(),
+                    mars_schema::normalize::RemoteTree {
+                        tree,
+                        source: source.clone(),
+                    },
+                )
+            })
+            .collect(),
+    });
+    to_js(&normalized)
 }

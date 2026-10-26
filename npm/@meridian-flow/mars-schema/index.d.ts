@@ -178,10 +178,10 @@ export interface Vocabulary {
 export function vocabulary(): Vocabulary;
 
 // ---------------------------------------------------------------------------------------
-// prepare (provisional: P5 replaces it with inspect/normalize and adds kinds)
+// prepare, inspect, normalize
 // ---------------------------------------------------------------------------------------
 
-export type Dialect = "claude" | "codex" | "opencode" | "cursor" | "mars-native";
+export type Dialect = "claude" | "agent-skills" | "codex" | "opencode" | "cursor" | "mars-native";
 
 export type Classification =
   | { kind: "schema-1" }
@@ -193,15 +193,19 @@ export type Classification =
       dialect: Dialect;
       evidence: { source: "declared" | "predicted"; paths: string[] };
     }
+  | { kind: "marketplace" }
   | { kind: "empty" };
 
 export type ChangeRecord =
   | { kind: "none" }
+  /** The file has no source: `normalize` wrote it (a package's generated `mars.toml`). */
+  | { kind: "generated" }
   | { kind: "edited"; paths: (string | number)[][] }
   | { kind: "fully-rewritten" };
 
 export interface PreparedManifest {
-  source_path: string;
+  /** Absent for a generated manifest. */
+  source_path?: string;
   output_path: string;
   normalized_bytes: Uint8Array;
   reading: DefinitionRead<ManifestFields>;
@@ -211,6 +215,7 @@ export interface PreparedManifest {
 export type PreparedDefinition = {
   slug: string;
   source_path: string;
+  /** `skills/<slug>/SKILL.md` or `agents/<slug>.md` for a Claude-shaped source. */
   output_path: string;
   normalized_bytes: Uint8Array;
   change: ChangeRecord;
@@ -225,15 +230,163 @@ export interface Prepared {
   definitions: PreparedDefinition[];
   payload: { source_path: string; output_path: string }[];
   /**
-   * Package-level diagnostics by source path (discovery and upgrade). A file's own reading
-   * diagnostics are on its `reading`.
+   * Package-level diagnostics by source path: discovery, upgrade and translation (`skill.*`,
+   * `agent.*`, `import.*`). A file's own reading diagnostics are on its `reading`.
    */
   diagnostics: { [sourcePath: string]: Diagnostic[] };
 }
 
-/** Throws for an unrecognized `context` or `declaredDialect`. */
+/**
+ * The single-root core that `normalize` builds on: classify one package root, select, upgrade
+ * or translate, and read. Throws for an unrecognized `context` or `declaredDialect`.
+ */
 export function prepare(input: {
   files: Map<string, Uint8Array>;
   context?: "package" | "authored-local";
   declaredDialect?: Dialect;
 }): Prepared;
+
+export type Tree = Map<string, Uint8Array>;
+
+export type Kind =
+  | "schema-1"
+  | "mars-legacy"
+  | "schema-newer"
+  | "marketplace"
+  | "plugin"
+  | "skill-tree"
+  | "invalid"
+  | "empty";
+
+export type Checkout =
+  | { kind: "sha"; sha: string }
+  | { kind: "ref"; name: string }
+  | { kind: "default-branch" };
+
+export type PluginSource =
+  /** A directory of the marketplace's own tree; `""` is its root. */
+  | { kind: "local"; path: string }
+  /** A Git repository the caller fetches; `path` roots the plugin inside it. */
+  | { kind: "remote"; repository: string; path?: string; checkout: Checkout }
+  /** `npm`, `archive`, `command`, or a shape this version does not know. */
+  | { kind: "unsupported"; reason: string };
+
+export interface ComponentLists {
+  skills?: string[];
+  agents?: string[];
+  commands?: string[];
+  hooks?: boolean;
+  mcp?: boolean;
+}
+
+/** One marketplace `plugins[]` entry. Pass it back as `hint.plugin.entry` for a fetched tree. */
+export interface MarketplaceEntry {
+  name: string;
+  description?: string;
+  version?: string;
+  source: PluginSource;
+  strict?: boolean;
+  lists: ComponentLists;
+}
+
+export interface Hint {
+  /** Overrides prediction, never a Mars manifest. */
+  dialect?: Dialect;
+  /** The package root inside the tree. */
+  subpath?: string;
+  /** Read the root as this plugin of a marketplace (a fetched remote plugin tree). */
+  plugin?: { entry: MarketplaceEntry; at_marketplace_root?: boolean };
+}
+
+export interface InspectedItem {
+  kind: "skill" | "agent" | "command";
+  slug: string;
+  /** The definition file: `…/SKILL.md`, `agents/x.md` or `commands/x.md`. */
+  source_path: string;
+  /** The skill's directory, whose files travel with it. */
+  skill_root?: string;
+  /** Where the definition lands in schema v1; a command is reported and has none. */
+  output_path?: string;
+  /** A skill's payload files, by source path. */
+  payload?: string[];
+}
+
+export interface Inspection {
+  kind: Kind;
+  /** The dialect read, how it was chosen, and the files that decided it. */
+  dialect?: { dialect: Dialect; source: "declared" | "predicted"; evidence: string[] };
+  /** Other harnesses' copies of the package: found, not read. A `weak` one never decides. */
+  also_found: { dialect: Dialect; paths: string[]; weak: boolean }[];
+  name?: string;
+  version?: string;
+  description?: string;
+  /** A marketplace's plugins. */
+  plugins: {
+    entry: MarketplaceEntry;
+    at_marketplace_root: boolean;
+    /** Items of a plugin in the marketplace's own tree; absent for a remote one. */
+    items?: InspectedItem[];
+    /** Why the plugin cannot be imported. */
+    refused?: string;
+    diagnostics: { [path: string]: Diagnostic[] };
+  }[];
+  /** The items of a plugin or skill tree. */
+  items: InspectedItem[];
+  diagnostics: { [path: string]: Diagnostic[] };
+}
+
+/**
+ * What a repository is, before anything is selected. For a remote marketplace plugin: fetch it,
+ * then call this on the fetched tree with `hint.plugin` set to the plugin's entry.
+ */
+export function inspect(input: { tree: Tree; hint?: Hint }): Inspection;
+
+export interface SourceInfo {
+  name?: string;
+  url?: string;
+  requested_ref?: string;
+  resolved_commit?: string;
+  subpath?: string;
+}
+
+export interface Selection {
+  /** Marketplace plugin names; absent takes every plugin. */
+  plugins?: string[];
+  /** Definition source paths by plugin name (`""` for a root that is not a plugin). */
+  items?: { [plugin: string]: string[] };
+}
+
+export interface NormalizedPackage {
+  /** The plugin name, or the package name. */
+  id: string;
+  provenance: {
+    /** The version of the rules that produced these files. */
+    translator: string;
+    dialect?: Dialect;
+    source: SourceInfo;
+    marketplace?: { plugin: string; plugin_source: PluginSource };
+    /** Where a remote plugin's files came from. */
+    content?: SourceInfo;
+    selected_items: string[];
+  };
+  prepared: Prepared;
+}
+
+export interface Normalized {
+  kind: Kind;
+  packages: NormalizedPackage[];
+  /** Marketplace-level findings and the reasons a package was left out, by path. */
+  diagnostics: { [path: string]: Diagnostic[] };
+}
+
+/**
+ * Schema v1 packages for a selection. `remoteTrees` maps a marketplace plugin name to its
+ * fetched root (any `git-subdir` path already applied).
+ */
+export function normalize(input: {
+  tree: Tree;
+  source?: SourceInfo;
+  hint?: Hint;
+  selection?: Selection;
+  remoteTrees?: { [plugin: string]: { tree: Tree; source?: SourceInfo } };
+}): Normalized;

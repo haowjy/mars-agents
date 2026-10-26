@@ -30,6 +30,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - `ls` and `work` are tool capabilities. `harness-overrides.flow` is a reserved namespace for Flow that Mars passes through and never interprets.
 - Reference pages for [schema v1](docs/config/schema-v1.md) and [migration](docs/config/migrating-to-schema-v1.md), and READMEs for the crate and the npm package.
 - `mars check` warns when committed plugin output was built by another Mars version than the running one (the sentinel's `mars_version`): a Mars upgrade can write different files for the same inputs, which the input fingerprint cannot see. Rebuild with `mars build plugin`.
+- `mars check` warns when a package that declares `schema = 1` has a `requires-mars` that allows a Mars older than `0.20.0`, the first release that reads schema 1. A plugin package with no `schema` keeps the `0.19.0` floor; the warning names one floor, the higher. v0.19.0 built `schema = 1` packages without complaint, and wrongly.
 
 ### Changed
 - Mars prepares every package (dependencies, `.mars-src`, the local package, `mars check`, `validate`, `migrate`, publish inputs) through `mars_schema::prepare` before it mutates anything. The authored tree stays untouched; sync projects prepared bytes into the recoverable `.mars/.staging.pending` generation after the diagnostic gate and publishes it by rename. Relative path dependencies resolve from the authored origin. Pre-v1 `.mars-src` content is upgraded in memory with a warning that names `mars migrate`.

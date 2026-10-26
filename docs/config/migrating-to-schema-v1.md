@@ -119,4 +119,4 @@ They share nothing. `mars upgrade` moves your dependencies to newer versions wit
 
 ## After migrating
 
-Commit the result and release it. A package that now declares `schema = 1` needs a Mars that reads schema 1, so raise its `requires-mars` to the first Mars release that does: consumers on older Mars versions then keep resolving the last release that they can read ([`requires-mars`](mars-toml.md#package-optional)).
+Commit the result and release it. A package that now declares `schema = 1` needs a Mars that reads schema 1, so set its `requires-mars` to `">=0.20.0"`, the first Mars release that does (`mars check` warns when it allows an older one): consumers on older Mars versions then keep resolving the last release that they can read ([`requires-mars`](mars-toml.md#package-optional)).

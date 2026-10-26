@@ -83,6 +83,9 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     }
     report
         .warnings
+        .extend(requires_mars_warning(&prepared, &lens));
+    report
+        .warnings
         .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);
     let mut diagnostics = publish_diag.drain();
     diagnostics.extend(lossiness_diagnostics_for_check(
@@ -146,7 +149,41 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     if clean { Ok(0) } else { Ok(1) }
 }
 
+/// The first Mars that reads schema 1: older ones read a `schema = 1` package as pre-v1.
+const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
+/// The first Mars whose `mars version` keeps `[plugin]`.
 const PLUGIN_MARS_FLOOR: &str = "0.19.0";
+
+/// The `requires-mars` floor this package needs and does not set: the highest of the floors
+/// its declarations call for.
+fn requires_mars_warning(
+    prepared: &mars_schema::prepare::Prepared,
+    lens: &crate::resolve::PublishLens,
+) -> Option<String> {
+    let config = lens.manifest.as_ref()?;
+    let package = config.package.as_ref()?;
+    crate::resolve::validate_package_requirement_syntax(package).ok()?;
+    let (floor, reason) = if prepared.classification == Classification::Schema1 {
+        (
+            SCHEMA_1_MARS_FLOOR,
+            "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
+        )
+    } else if config.plugin.is_some() {
+        (
+            PLUGIN_MARS_FLOOR,
+            "older Mars versions may drop [plugin] during `mars version`",
+        )
+    } else {
+        return None;
+    };
+    let has_floor = crate::resolve::requirement_has_floor(
+        package.requires_mars.as_deref(),
+        &Version::parse(floor).expect("Mars floor is valid semver"),
+    );
+    (!has_floor).then(|| {
+        format!("[package] `requires-mars` should be `\">={floor}\"` or a higher floor; {reason}")
+    })
+}
 
 fn plugin_warnings(
     base: &Path,
@@ -167,19 +204,6 @@ fn plugin_warnings(
             None
         }
     };
-    let Some(package) = config.package.as_ref() else {
-        return Ok(warnings);
-    };
-    if crate::resolve::validate_package_requirement_syntax(package).is_ok()
-        && !crate::resolve::requirement_has_floor(
-            package.requires_mars.as_deref(),
-            &Version::parse(PLUGIN_MARS_FLOOR).expect("plugin Mars floor is valid semver"),
-        )
-    {
-        warnings.push(format!(
-            "plugin packages should set [package] `requires-mars = \">={PLUGIN_MARS_FLOOR}\"` or a higher floor, then rebuild the plugin; older Mars versions may drop [plugin] during `mars version`"
-        ));
-    }
 
     let Some(metadata) = metadata else {
         return Ok(warnings);

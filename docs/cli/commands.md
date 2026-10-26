@@ -552,8 +552,10 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Configured plugin output: missing/skipped builds, stale inputs, a different package or Mars
   version, hand-edited or missing generated files, root files left holding an earlier build's
   output, and conflicts at generated package-root paths
-- Plugin compatibility: unknown `[plugin].harnesses` values and a missing
-  `[package].requires-mars = ">=0.19.0"` (or higher) floor
+- `[package].requires-mars` floor: `">=0.20.0"` (or higher) for a package that declares
+  `schema = 1`, the first Mars that reads it; `">=0.19.0"` for a plugin package with no
+  `schema`, the first that keeps `[plugin]`
+- Plugin compatibility: unknown `[plugin].harnesses` values
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
 preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed

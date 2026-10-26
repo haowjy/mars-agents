@@ -1420,8 +1420,16 @@ pub(crate) fn validate_plugin_selector(
         return Ok(());
     };
     let invalid = |message: String| ConfigError::Invalid { message };
-    if plugin.trim().is_empty() {
-        return Err(invalid(format!("source `{name}` has an empty `plugin`")));
+    // The plugin name becomes the tail of the dependency's name, so it is one path component.
+    let slug = !plugin.is_empty()
+        && plugin
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        && !plugin.starts_with(['-', '.']);
+    if !slug {
+        return Err(invalid(format!(
+            "source `{name}` has `plugin = \"{plugin}\"`; a plugin name is letters, digits, `-`, `_` and `.`, and does not start with `-` or `.`"
+        )));
     }
     if subpath.is_some() {
         return Err(invalid(format!(

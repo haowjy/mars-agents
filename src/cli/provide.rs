@@ -69,7 +69,30 @@ fn print_report(report: &ProvideReport) {
         )]),
         Status::Applied => output::print_info(&applied_summary(report)),
     }
-    output::print_warnings(&report.warnings);
+    // Shadowed names and collisions describe the disk, not this run: report them while they last,
+    // so a host that fixed the cause sees the signal until the next run installs the skill.
+    output::print_warnings(&leftover_warnings(report));
+    // Source diagnostics describe the bundle; a launch that wrote nothing must stay quiet. JSON
+    // keeps them on every status.
+    if report.status == Status::Applied {
+        output::print_warnings(&report.warnings);
+    }
+}
+
+/// The warnings for names this run left alone, derived from the reported names so plain text and
+/// `--json` cannot disagree about which names they are.
+fn leftover_warnings(report: &ProvideReport) -> Vec<String> {
+    let shadowed = report.shadowed.iter().map(|name| {
+        format!(
+            "provided skill `{name}` is owned by a package in `mars.lock`; leaving it to the package"
+        )
+    });
+    let collisions = report.collisions.iter().map(|name| {
+        format!(
+            "`.mars/skills/{name}` exists, is not recorded as provided or installed by a package, and differs from the provided copy; left untouched"
+        )
+    });
+    shadowed.chain(collisions).collect()
 }
 
 fn applied_summary(report: &ProvideReport) -> String {

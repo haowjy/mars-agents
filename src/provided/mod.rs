@@ -46,9 +46,11 @@ pub(crate) struct ProvideReport {
     pub replaced: Vec<String>,
     pub adopted: Vec<String>,
     pub removed: Vec<String>,
-    /// Provided skills a package owns in `mars.lock`; left to the package.
+    /// Provided skills a package owns in `mars.lock`; left to the package. Reported on every run
+    /// while the claim lasts, on `up-to-date` as well as `applied`.
     pub shadowed: Vec<String>,
-    /// Destinations Mars did not create and cannot adopt; left untouched.
+    /// Destinations Mars did not create and cannot adopt; left untouched. Reported on every run
+    /// while the directory stays in the way.
     pub collisions: Vec<String>,
     pub warnings: Vec<String>,
 }
@@ -56,7 +58,7 @@ pub(crate) struct ProvideReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum Status {
-    /// The record already describes what is on disk; nothing was written.
+    /// A re-plan would write nothing: the record already describes what is on disk.
     UpToDate,
     /// The record was rewritten to match the source.
     Applied,
@@ -68,7 +70,7 @@ pub(crate) enum Status {
 }
 
 impl ProvideReport {
-    /// A run that wrote nothing and did not read the record.
+    /// A run that wrote nothing: no recorded names to report, and no per-name actions.
     fn without_record(status: Status, spec: &ProvideSpec, warnings: Vec<String>) -> Self {
         Self {
             status,
@@ -82,17 +84,6 @@ impl ProvideReport {
             shadowed: Vec::new(),
             collisions: Vec::new(),
             warnings,
-        }
-    }
-
-    /// A run whose record already matched the source, so it wrote nothing.
-    fn current(spec: &ProvideSpec, record: &lock::ProviderRecord, warnings: Vec<String>) -> Self {
-        Self {
-            status: Status::UpToDate,
-            provider: spec.provider.clone(),
-            version: spec.version.clone(),
-            skills: record.skills.clone(),
-            ..Self::without_record(Status::UpToDate, spec, warnings)
         }
     }
 }

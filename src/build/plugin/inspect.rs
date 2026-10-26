@@ -317,6 +317,7 @@ pub(super) fn inspect_output(
         package_root,
         expected_root_files,
         Some(&sentinel.root_files),
+        Some(&sentinel.root_files_previous),
     )?;
 
     Ok(PluginOutputState {
@@ -337,7 +338,7 @@ fn without_sentinel(
         directory,
         inputs: None,
         version: None,
-        root_files: inspect_root_files(package_root, expected_root_files, None)?,
+        root_files: inspect_root_files(package_root, expected_root_files, None, None)?,
         root_directories: BTreeSet::new(),
     })
 }
@@ -346,10 +347,16 @@ fn inspect_root_files(
     package_root: &Path,
     expected: BTreeSet<&'static str>,
     recorded: Option<&BTreeMap<String, String>>,
+    previous: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<PluginRootFileState>, MarsError> {
     let mut paths: BTreeSet<String> = expected.into_iter().map(str::to_string).collect();
     if let Some(recorded) = recorded {
         paths.extend(recorded.keys().cloned());
+    }
+    // A path that only the previous build recorded is one this build retired
+    // (or one whose write died); retry its removal instead of orphaning it.
+    if let Some(previous) = previous {
+        paths.extend(previous.keys().cloned());
     }
 
     paths
@@ -370,8 +377,12 @@ fn inspect_root_files(
                     path: relative,
                     recorded_hash: recorded.and_then(|files| files.get(&path)).cloned(),
                 },
+                // `previous` covers a publication that swapped the tree and
+                // sentinel but died before rewriting this root file: the bytes
+                // on disk are still Mars output, not a hand edit.
                 RootPathState::Regular(hash)
-                    if recorded.and_then(|files| files.get(&path)) == Some(&hash) =>
+                    if recorded_hash(recorded, &path) == Some(hash.as_str())
+                        || recorded_hash(previous, &path) == Some(hash.as_str()) =>
                 {
                     PluginRootFileState::RecordedUnchanged {
                         path: relative,
@@ -389,12 +400,30 @@ fn inspect_root_files(
                             .clone(),
                     }
                 }
+                RootPathState::Regular(_) | RootPathState::NonRegular
+                    if previous.is_some_and(|files| files.contains_key(&path)) =>
+                {
+                    PluginRootFileState::RecordedChanged {
+                        path: relative,
+                        recorded_hash: previous
+                            .and_then(|files| files.get(&path))
+                            .expect("previous path has a hash")
+                            .clone(),
+                    }
+                }
                 RootPathState::Regular(_) | RootPathState::NonRegular => {
                     PluginRootFileState::Unrecorded { path: relative }
                 }
             })
         })
         .collect()
+}
+
+fn recorded_hash<'a>(
+    recorded: Option<&'a BTreeMap<String, String>>,
+    path: &str,
+) -> Option<&'a str> {
+    recorded?.get(path).map(String::as_str)
 }
 
 enum RootPathState {

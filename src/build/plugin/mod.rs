@@ -144,8 +144,14 @@ impl StagedPluginBuild {
     }
 
     pub fn publish(self) -> Result<PluginBuildReport, MarsError> {
-        root_files::apply(&self.root_files)?;
+        // Replace the tree and sentinel first: that step is a rename swap, so it
+        // either completes or restores the previous tree, and a failure there
+        // leaves the package's root files untouched. Root files are rewritten
+        // after, and the new sentinel records the hashes it replaces, so an
+        // interrupted second step is recovered by the next build instead of
+        // refused.
         self.output.publish()?;
+        root_files::apply(&self.root_files)?;
         Ok(self.report)
     }
 }
@@ -298,6 +304,7 @@ fn stage_plugin_inner(
                     dependencies: resolved_dependency_identities(&graph, &root_source),
                     files: std::collections::BTreeMap::new(),
                     root_files: root_file_plan.root_files.clone(),
+                    root_files_previous: root_file_plan.root_files_previous.clone(),
                     root_directories: root_file_plan.root_directories.clone(),
                 },
                 (built_trees, collected, root_file_plan),

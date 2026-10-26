@@ -77,10 +77,15 @@ plan until publication applies the plan and calls `StagedPlugin::publish`. Confi
 the Claude/Cursor catalogs and OpenCode root package; explicit `--out` builds plan none. The shared
 offline `inspect` classifies the owned directory, its fingerprint/version, and every recorded or
 expected root file. Sentinel ownership is limited to the three generated root paths and records a
-catalog directory only when Mars created its previously missing parent. Root publication accepts an
-absent path, an unchanged recorded file, or bytes identical to the new build, and removes recorded
-files plus owned, now-empty catalog directories retired by a narrowed harness set. Configured-build
-planning also rejects final staged or root-file paths that remain ignored after gitignore negation.
+catalog directory only when Mars created its previously missing parent. Publication swaps the tree
+and sentinel first — a rename swap that either completes or restores the previous tree, so a
+failure there leaves package root files untouched — then rewrites the root files. The sentinel
+records the root hashes that step replaces (`root_files_previous`), so a build that dies between the
+two steps is resumed by the next build instead of refused: root publication accepts an absent path, a
+file matching the sentinel's current or previous hash, or bytes identical to the new build, and
+removes recorded files plus owned, now-empty catalog directories retired by a narrowed harness set.
+Configured-build planning also rejects final staged or root-file paths that remain ignored after
+gitignore negation.
 The output
 layer stages the whole output in a sibling directory, records one root
 `<out>/.mars-plugin.json` sentinel, and publishes with a two-rename swap under the lock.

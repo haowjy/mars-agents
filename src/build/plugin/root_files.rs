@@ -16,6 +16,10 @@ use super::metadata::PackageMetadata;
 
 pub(super) struct RootFilePlan {
     pub(super) root_files: BTreeMap<String, String>,
+    /// Hashes of the root files this plan replaces. Recorded in the sentinel so
+    /// a publication that dies before rewriting them can be resumed instead of
+    /// refused as a hand edit.
+    pub(super) root_files_previous: BTreeMap<String, String>,
     pub(super) root_directories: BTreeSet<String>,
     package_root: PathBuf,
     writes: BTreeMap<String, Vec<u8>>,
@@ -64,6 +68,7 @@ pub(super) fn plan(
     if matches!(destination, PluginBuildDestination::Out(_)) {
         return Ok(RootFilePlan {
             root_files: BTreeMap::new(),
+            root_files_previous: BTreeMap::new(),
             root_directories: BTreeSet::new(),
             package_root,
             writes: BTreeMap::new(),
@@ -160,9 +165,33 @@ pub(super) fn plan(
             created_directories.insert(directory.to_string());
         }
     }
+    // A retire whose delete has not run yet (interrupted publication) keeps its
+    // owned directory recorded, so the retry can remove it once it is empty.
+    for path in &deletes {
+        if let Some(directory) = catalog_directory(path)
+            && state.root_directories.contains(directory)
+        {
+            root_directories.insert(directory.to_string());
+        }
+    }
 
     let touched: BTreeSet<String> = writes.keys().chain(deletes.iter()).cloned().collect();
     check_gitignored(&package_root, out_dir, staging, &touched)?;
+
+    // Publication swaps the tree and sentinel first and rewrites root files
+    // after, so a death in between leaves the previous Mars-written bytes in
+    // place. Only files that still match their live record may be claimed: a
+    // hand edit is never recorded as Mars content.
+    let mut root_files_previous = BTreeMap::new();
+    for state in &state.root_files {
+        let PluginRootFileState::RecordedUnchanged { recorded_hash, .. } = state else {
+            continue;
+        };
+        let key = portable_path(state.path())?;
+        if touched.contains(&key) {
+            root_files_previous.insert(key, recorded_hash.clone());
+        }
+    }
 
     let root_files = writes
         .iter()
@@ -170,6 +199,7 @@ pub(super) fn plan(
         .collect();
     Ok(RootFilePlan {
         root_files,
+        root_files_previous,
         root_directories,
         package_root,
         writes,

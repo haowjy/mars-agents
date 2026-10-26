@@ -374,9 +374,10 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
     set_aside_rejected_keys(fm, DefinitionKind::Skill, diagnostics);
 }
 
-/// What the rules above could not make schema v1 is kept under `harness-overrides.flow`, the
-/// namespace a pre-v1 `permission` already moves to, so the upgrade never hands the strict
-/// reader a value it rejects.
+/// What the rules above could not make schema v1 is dropped, with a warning naming it, so the
+/// upgrade never hands the strict reader a value it rejects. It is not kept under
+/// `harness-overrides.flow`: Flow defines one key, `permission`, and `lift_mars_only_keys` writes
+/// it there when it is `read` or `edit`. Anything else in that namespace would not be Flow's.
 fn set_aside_rejected_keys(
     fm: &mut Frontmatter,
     kind: DefinitionKind,
@@ -385,7 +386,7 @@ fn set_aside_rejected_keys(
     crate::set_aside::set_aside_rejected_keys(
         fm,
         kind,
-        crate::set_aside::Destination::Overrides("flow"),
+        crate::set_aside::Destination::Nowhere,
         diagnostics,
     );
 }

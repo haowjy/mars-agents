@@ -1,5 +1,4 @@
 use crate::build::bundle::Routing;
-use crate::compiler::lossiness::CODEX_MAX_EFFORT_NOTE;
 use crate::models::availability::{RunnableConfidence, RunnablePathSource};
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::probes::CursorProbeResult;
@@ -24,7 +23,6 @@ pub(super) struct RoutingResolution {
     pub(super) routing: Routing,
     /// Cursor folded the effort into `harness_model`, so the bundle carries none.
     pub(super) effort_consumed: bool,
-    /// The effort the harness accepts: `max` is `xhigh` for Codex.
     pub(super) effort: Option<String>,
     pub(super) warnings: Vec<String>,
     pub(super) cursor_effort_outcome: CursorEffortOutcome,
@@ -89,19 +87,6 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     let mut effort_consumed = false;
     let mut cursor_effort_outcome = CursorEffortOutcome::NotRequested;
     let mut warnings = Vec::new();
-    let mut effort = effort;
-
-    // Codex's highest effort is `xhigh`; `max` would reach it as an invalid level.
-    if harness_id == HarnessId::Codex
-        && effort
-            .as_deref()
-            .is_some_and(|value| value.trim().eq_ignore_ascii_case("max"))
-    {
-        effort = Some("xhigh".to_string());
-        warnings.push(format!(
-            "effort: approximate mapping for Codex: {CODEX_MAX_EFFORT_NOTE}"
-        ));
-    }
 
     if harness_id == HarnessId::Cursor
         && !routing.model.trim().is_empty()

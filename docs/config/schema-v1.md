@@ -123,7 +123,7 @@ Removed: `package.visibility`, with nothing to replace it.
 
 ## Effort
 
-`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high`, `xhigh` or `max`, in rising order; values are case-insensitive. `xhigh` and `max` are two levels. Claude Code has both. Codex's highest is `xhigh`, so Mars writes `max` there as `xhigh`, in the native file and in the launch bundle, and warns that it approximated. On Cursor the model's slug carries the effort: `max` selects the model's `-max` variant, else its `-xhigh`, else its `-high`, and warns when it used a lower one.
+`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high`, `xhigh` or `max`, in rising order; values are case-insensitive. `xhigh` and `max` are two levels. Claude Code and Codex have both. On Cursor the model's slug carries the effort: `max` selects the model's `-max` variant, else its `-xhigh`, else its `-high`, and warns when it used a lower one.
 
 **`none` means reasoning off.** It is a value of its own: an absent `effort` means "the model's default", and `none` asks for no reasoning. Mars keeps the distinction end to end. The launch bundle carries `"effort": "none"`, and each harness's native file spells it as that harness does:
 
@@ -134,7 +134,7 @@ Removed: `package.visibility`, with nothing to replace it.
 | OpenCode, Pi | no effort field is written for any value |
 | Cursor | no effort field is written; the model slug is chosen by effort, and `none` selects Cursor's default tier |
 
-The launcher reads the bundle's `effort` and maps it for its harness. The bundle never carries an effort the harness refuses: Codex gets `xhigh` for `max`, and Cursor gets none, because the effort is already in `harness_model`. `mars build launch-bundle --effort none` overrides the Agent from the command line.
+The launcher reads the bundle's `effort` and maps it for its harness. The bundle carries the Agent's effort for every harness but Cursor, which gets none because the effort is already in `harness_model`. `mars build launch-bundle --effort none` overrides the Agent from the command line.
 
 `adaptive` and `disabled` are not values. `mars migrate` rewrites them to `medium` and `none`.
 

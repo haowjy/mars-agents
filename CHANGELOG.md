@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Codex gets `effort: max` as `max`: its models accept the level, so the native file and the launch bundle no longer write `xhigh` and warn that they approximated.
+
 ## [0.20.0] - 2026-10-26
 
 Schema v1: one versioned format for agent definitions, skills and the `[package]` table, read by `mars-schema` and shared with the npm package. See [Schema v1](docs/config/schema-v1.md) and [Migrating a package](docs/config/migrating-to-schema-v1.md).

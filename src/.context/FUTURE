@@ -1,0 +1,9 @@
+# src follow-ups
+
+- **One path for every `.mars/` read** (`src/content.rs`, `mars_schema::read::installed_agent` /
+  `installed_skill`): the installed readers exist and every current call site uses them, but each
+  still reads its file and picks the reader, so a new reader can call
+  `mars_schema::agent::read`/`skill::read` and drop an item from a tree an older Mars wrote. Move
+  the read onto `ContentRoots` (`src/content.rs` already resolves these paths) so a call site
+  cannot choose, or add a `clippy.toml` `disallowed-methods` entry for
+  `mars_schema::{agent,skill}::read` outside the modules that read authored content.

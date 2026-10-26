@@ -559,7 +559,7 @@ pub fn resolve_policy(
     });
 
     warnings.extend(routing_resolution.warnings);
-    let mut effort = routing_resolution.effort;
+    let mut effort = execution_resolution.effort.value.clone();
     if routing_resolution.effort_consumed {
         effort = None;
         provenance.insert(

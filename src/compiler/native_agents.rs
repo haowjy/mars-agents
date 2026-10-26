@@ -580,7 +580,7 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             }
         };
 
-        let reading = mars_schema::agent::read(&content);
+        let reading = mars_schema::read::installed_agent(&content);
         let (Some(profile), Some(body)) = (reading.fields, reading.body) else {
             diag.warn(
                 "native-agent-parse",

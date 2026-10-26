@@ -81,6 +81,11 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
     })
 }
 
+/// Convert a `mars.toml` to schema v1.
+///
+/// `prepare` and `mars migrate` run this on a pre-v1 package. It never touches `requires-mars`:
+/// the requirement gates whether a package may be read at all, so only `mars migrate`,
+/// which a human runs on the package they own, adds one (see [`ensure_requires_mars_floor`]).
 pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
     let mut document = text.parse::<DocumentMut>()?;
     let package = document
@@ -95,18 +100,12 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
             edited_paths: Vec::new(),
         });
     }
-    let mut edited_paths = vec![vec![
-        PathSegment::Key("package".to_string()),
-        PathSegment::Key("schema".to_string()),
-    ]];
-    package.insert("schema", toml_edit::value(1));
     let mut diagnostics = Vec::new();
+    let mut edited_paths = vec![package_path("schema")];
+    package.insert("schema", toml_edit::value(1));
     if package.remove("visibility").is_some() {
         diagnostics.push(removed(&["package", "visibility"], "visibility"));
-        edited_paths.push(vec![
-            PathSegment::Key("package".to_string()),
-            PathSegment::Key("visibility".to_string()),
-        ]);
+        edited_paths.push(package_path("visibility"));
     }
     Ok(UpgradeResult {
         text: with_line_ending_of(text, document.to_string()),
@@ -114,6 +113,59 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
         fully_rewritten: false,
         edited_paths,
     })
+}
+
+/// Adding the `requires-mars` floor to a manifest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FloorOutcome {
+    /// The manifest with the key added, or the input when it was not.
+    pub text: String,
+    /// `mars check`'s advice, when the requirement exists and admits a Mars that reads the
+    /// package as pre-v1, or when the manifest has a shape migrate cannot edit minimally.
+    pub warning: Option<String>,
+}
+
+/// Add `requires-mars = ">=0.20.0"` to a manifest that has no requirement.
+///
+/// `mars migrate` runs this on the manifest it is about to write, so a schema v1 package needs
+/// no hand edit. An existing requirement is never rewritten: when it admits a Mars older than
+/// the first release that reads schema 1, [`FloorOutcome::warning`] is `mars check`'s advice and
+/// the value keeps its bytes and comment. A manifest migrate cannot edit minimally (an inline
+/// `[package]` table) comes back unchanged with the same advice, never an error, so an
+/// already-v1 package migrates exactly as it did before this key existed.
+pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeError> {
+    let mut document = text.parse::<DocumentMut>()?;
+    let package = document
+        .get_mut("package")
+        .ok_or(UpgradeError::MissingPackage)?;
+    let requirement = package
+        .as_table_like()
+        .and_then(|table| table.get("requires-mars"))
+        .and_then(Item::as_str)
+        .map(str::to_owned);
+    if requirement.is_none()
+        && let Some(table) = package.as_table_mut()
+    {
+        table.insert(
+            "requires-mars",
+            toml_edit::value(format!(">={}", crate::package::SCHEMA_1_MARS_FLOOR)),
+        );
+        return Ok(FloorOutcome {
+            text: with_line_ending_of(text, document.to_string()),
+            warning: None,
+        });
+    }
+    Ok(FloorOutcome {
+        text: text.to_string(),
+        warning: crate::package::schema_1_requires_mars_warning(requirement.as_deref()),
+    })
+}
+
+fn package_path(key: &str) -> Vec<PathSegment> {
+    vec![
+        PathSegment::Key("package".to_string()),
+        PathSegment::Key(key.to_string()),
+    ]
 }
 
 /// Whether the file's first line ends in `\r\n`.

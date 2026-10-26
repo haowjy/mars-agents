@@ -92,7 +92,7 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             }
         };
 
-        let profile = match mars_schema::skill::read(&content).into_fields() {
+        let profile = match mars_schema::read::installed_skill(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
                 eprintln!("warning: skipping {}: {why}", skill_md.display());
@@ -189,7 +189,7 @@ fn run_show(
             }
         };
 
-        let profile = match mars_schema::skill::read(&content).into_fields() {
+        let profile = match mars_schema::read::installed_skill(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
                 eprintln!("warning: skipping {}: {why}", skill_md.display());

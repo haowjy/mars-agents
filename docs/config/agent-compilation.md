@@ -278,7 +278,7 @@ TOML format. Codex reads this for native agent invocation.
 | `name` | `name` | exact |
 | `description` | `description` | exact |
 | `model` | `model` | exact |
-| `effort` | `model_reasoning_effort` | exact. `none` is written as `"none"`; some Codex models refuse it. `max` is written as `xhigh`, Codex's highest level, with an approximate-mapping warning |
+| `effort` | `model_reasoning_effort` | exact. Codex accepts every level, `max` included. `none` is written as `"none"`; some Codex models refuse it |
 | `sandbox` | `sandbox_mode` | exact |
 | `network` | dropped | dropped |
 | `network-allow`, `network-deny` | dropped | dropped |

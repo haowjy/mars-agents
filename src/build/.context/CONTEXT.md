@@ -43,8 +43,9 @@ that list or its catalog directory disagrees, so tree rows and the list cannot d
 is an enum, so a tree states whether its generated files write a harness token literally or keep the
 Mars token for its own runtime to substitute, and the hook-path mapping matches on it instead of
 unwrapping an optional token. Their authored-hook check runs once before the item loop; every
-selected hook and MCP server directory is copied. The same mapping resolves `${MARS_MCP_DIR}` to
-`{token}/mcp/<name>` for a token tree and leaves it for the runtime-resolved tree.
+selected hook directory and every token-using MCP server directory is copied. The same mapping
+resolves `${MARS_MCP_DIR}` to `{token}/mcp/<name>` for a token tree and leaves it for the
+runtime-resolved tree.
 `tree::write_tree` is the sole item loop. The OpenCode finish writer emits
 an npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
 servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic

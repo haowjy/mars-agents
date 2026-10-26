@@ -254,11 +254,14 @@ In `--diff` (dry run) mode, actions are computed but not executed.
 
 ### 5.1 Config Entry Compilation (`compile_config_entries`)
 
-Runs after the apply plan and before target sync. Compiles MCP server
+Runs after target sync, so a server's installed directory exists before the
+config entry that points at it is written. Compiles MCP server
 registrations and lifecycle hooks from all packages in the resolved graph and
 writes them to per-target config files. Target construction resolves MCP name collisions and
-materializes the winning server's directory as a target-scoped item, the same way a hook
-directory is installed and pruned; this phase consumes that selection.
+materializes a token-using winner's directory as a target-scoped item, the same way a hook
+directory is installed and pruned; this phase consumes that selection. An entry whose
+`${MARS_MCP_DIR}` directory is not installed is withheld with a `mcp-not-installed` warning;
+a server that never names the token has no directory and needs none.
 
 **Steps:**
 

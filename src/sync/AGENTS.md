@@ -98,7 +98,7 @@ new phase that writes project state must honor `request.options.dry_run`.
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items (`local_items.rs`); refuse unsafe or wrong-shaped canonical self collisions, while explicit `--force` may replace regular agent files and skill directories; prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
+| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items (`local_items.rs`); refuse unsafe or wrong-shaped canonical self collisions, while explicit `--force` may replace regular agent files and skill directories; prune unmanaged collisions over every item, MCP directories included, before references are rewritten; rewrite references and validate (`src/sync/validate.rs`) |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
@@ -136,18 +136,24 @@ self items (only `.mars-src`'s are), as in v0.19.0.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
 visibility, dependency collisions, and local shadowing therefore choose config entries once for
-both installation and config lowering. A selected MCP server's authored directory becomes a
-target-scoped directory item after collisions resolve, so its files, config entry, lock ownership,
-and pruning all name the same winner. It separately retains every filtered, exported graph hook, selected or
-not; plugin builds read that list for omission diagnostics, and sync never reads it. Hook selection survives an install skip so post-target-sync lowering
-can issue the genuine not-installed warning; it carries the selected `TargetItem` hash so the
-installed check does not re-hash the source. Config lowering must not rediscover items.
+both installation and config lowering. Only a target whose adapter writes an MCP config selects a
+server, and a selected server becomes a target-scoped directory item after collisions resolve only
+when its `command` or `args` name `${MARS_MCP_DIR}`; a token-free server is a config entry alone.
+Its files, config entry, lock ownership, and pruning then all name the same winner. It separately
+retains every filtered, exported graph hook, selected or
+not; plugin builds read that list for omission diagnostics, and sync never reads it. Hook and MCP
+selections survive an install skip so post-target-sync lowering can issue the genuine not-installed
+warning; each carries the selected `TargetItem` hash so the installed check does not re-hash the
+source. Config lowering must not rediscover items.
 
-Plugin builds and sync both use `prepare_target_state` for graph collection, optional local
-extension and rename application. Skill-ref validation is the caller's: sync passes what this
-machine installed and what its own package declares, a plugin build passes neither. MCP discovery
-warnings enter the diagnostic collector where discovery fails rather than riding `TargetState`, so
-every caller sees them.
+Plugin builds and sync both call `build_target_state` (graph collection, optional local extension,
+MCP collision resolution, MCP directory materialization) and then `apply_target_renames`. Between
+the two, sync drops items that would overwrite unmanaged content, so the rename view and the
+references it rewrites only see surviving items. The plugin root source name is the local package
+for collision precedence, as `_self` is in sync. Skill-ref validation is the caller's: sync passes
+what this machine installed and what its own package declares, a plugin build passes neither. MCP
+discovery warnings enter the diagnostic collector where discovery fails rather than riding
+`TargetState`, so every caller sees them.
 `RenameIndex::visible_renames` exposes the same own-package-first, then
 dependency-declaration-order view per item kind for frontmatter and body references; callers must not
 reconstruct that precedence. Renamed skill and agent frontmatter carries the installed name;

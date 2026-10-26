@@ -190,7 +190,7 @@ pub(super) fn check_sources(
     let mut seen_mcp = std::collections::BTreeSet::new();
     let mut selected_mcp = Vec::new();
     for profile in profiles {
-        for item in input
+        for (item, _) in input
             .target
             .selected_mcp_for_target(profile.descriptor().target_dir)
         {
@@ -298,8 +298,9 @@ pub(super) fn write_tree(
     let mcp: Vec<_> = input
         .target
         .selected_mcp_for_target(descriptor.target_dir)
+        .map(|(item, _)| item)
         .collect();
-    for item in &mcp {
+    for item in mcp.iter().filter(|item| item.uses_dir_token()) {
         let destination = root.join("mcp").join(&item.name);
         crate::fs::copy_dir_filtered(item.server_dir(), &destination, &[])?;
     }

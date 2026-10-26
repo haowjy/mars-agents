@@ -44,6 +44,10 @@ struct SelectedHook {
 struct SelectedMcp {
     target_roots: Vec<String>,
     item: crate::compiler::mcp::ParsedMcpItem,
+    /// Hash of the server directory installed beside these targets' configs.
+    /// `None` when the server's `command`/`args` never name that directory;
+    /// collision resolution fills it once the targets are known.
+    install_hash: Option<ContentHash>,
 }
 
 impl TargetState {
@@ -128,7 +132,7 @@ impl TargetState {
     pub(crate) fn selected_mcp_for_target(
         &self,
         target_root: &str,
-    ) -> impl Iterator<Item = &crate::compiler::mcp::ParsedMcpItem> {
+    ) -> impl Iterator<Item = (&crate::compiler::mcp::ParsedMcpItem, Option<&ContentHash>)> {
         self.selected_mcp
             .iter()
             .filter(move |selected| {
@@ -137,15 +141,24 @@ impl TargetState {
                     .iter()
                     .any(|target| target == target_root)
             })
-            .map(|selected| &selected.item)
+            .map(|selected| (&selected.item, selected.install_hash.as_ref()))
     }
 
-    pub(crate) fn selected_mcp_groups(
+    /// Selected servers whose own directory is installed, with the directory's
+    /// source hash and the targets that receive it.
+    pub(crate) fn selected_mcp_dirs(
         &self,
-    ) -> impl Iterator<Item = (&crate::compiler::mcp::ParsedMcpItem, &[String])> {
-        self.selected_mcp
-            .iter()
-            .map(|selected| (&selected.item, selected.target_roots.as_slice()))
+    ) -> impl Iterator<
+        Item = (
+            &crate::compiler::mcp::ParsedMcpItem,
+            &ContentHash,
+            &[String],
+        ),
+    > {
+        self.selected_mcp.iter().filter_map(|selected| {
+            let hash = selected.install_hash.as_ref()?;
+            Some((&selected.item, hash, selected.target_roots.as_slice()))
+        })
     }
 
     /// Resolve MCP name collisions once, before installation and config
@@ -153,8 +166,9 @@ impl TargetState {
     pub(crate) fn resolve_mcp_collisions(
         &mut self,
         managed_targets: &[String],
+        local_source: &str,
         diag: &mut DiagnosticCollector,
-    ) {
+    ) -> Result<(), MarsError> {
         use crate::compiler::config_entries::resolve::resolve_mcp_collisions_for_target;
 
         let candidates = self.selected_mcp.clone();
@@ -166,6 +180,7 @@ impl TargetState {
                     .filter(|selected| selected.target_roots.contains(target_root))
                     .map(|selected| &selected.item),
                 target_root,
+                local_source,
                 diag,
             );
             for winner in winners {
@@ -179,30 +194,37 @@ impl TargetState {
                     resolved.push(SelectedMcp {
                         target_roots: vec![target_root.clone()],
                         item: winner.clone(),
+                        install_hash: mcp_install_hash(winner)?,
                     });
                 }
             }
         }
         self.selected_mcp = resolved;
+        Ok(())
     }
 
+    /// Select a server for the managed targets that write MCP config;
+    /// `targets` must already be limited to those.
     pub(crate) fn select_mcp(
         &mut self,
         item: crate::compiler::mcp::ParsedMcpItem,
-        managed_targets: &[String],
+        targets: &[String],
     ) {
-        let target_roots = mcp_target_roots(&item, managed_targets);
-        let selected = SelectedMcp { target_roots, item };
-        let insert_at = self
-            .selected_mcp
-            .iter()
-            .position(|existing| existing.item.source_name != "_self")
-            .unwrap_or(self.selected_mcp.len());
-        if selected.item.source_name == "_self" {
-            self.selected_mcp.insert(insert_at, selected);
+        let target_roots = if item.def.targets.is_empty() {
+            targets.to_vec()
         } else {
-            self.selected_mcp.push(selected);
-        }
+            targets
+                .iter()
+                .filter(|target| item.def.targets.contains(*target))
+                .cloned()
+                .collect()
+        };
+        let selected = SelectedMcp {
+            target_roots,
+            item,
+            install_hash: None,
+        };
+        self.selected_mcp.push(selected);
     }
 
     #[cfg(test)]
@@ -287,6 +309,7 @@ pub fn build_with_collisions_and_diag(
     };
     let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
+    let mcp_target_roots = mcp_config_targets(&managed_target_roots);
     // Hooks and MCP share shortest graph distance as their precedence key.
     // Keeping one definition avoids a second meaning of dependency depth.
     let dependency_depths = graph.dependency_depths(&config.dependencies);
@@ -339,7 +362,7 @@ pub fn build_with_collisions_and_diag(
                     for item in items {
                         if item.def.visibility == crate::compiler::visibility::Visibility::Exported
                         {
-                            target.select_mcp(item, &managed_target_roots);
+                            target.select_mcp(item, &mcp_target_roots);
                         }
                     }
                 }
@@ -461,18 +484,33 @@ pub fn build_with_collisions_and_diag(
     Ok((target, explicit_renames, collision_renames))
 }
 
-fn mcp_target_roots(
-    item: &crate::compiler::mcp::ParsedMcpItem,
-    managed_targets: &[String],
-) -> Vec<String> {
-    if item.def.targets.is_empty() {
-        return managed_targets.to_vec();
-    }
+/// Managed targets whose adapter writes an MCP config file. Only these get a
+/// server's directory or config entry.
+pub(crate) fn mcp_config_targets(managed_targets: &[String]) -> Vec<String> {
+    let registry = crate::target::TargetRegistry::new();
     managed_targets
         .iter()
-        .filter(|target| item.def.targets.contains(target))
+        .filter(|target| {
+            registry
+                .get(target)
+                .is_some_and(|adapter| !adapter.mcp_config_file_names().is_empty())
+        })
         .cloned()
         .collect()
+}
+
+/// Hash of the directory a selected server installs, if its `command` or `args`
+/// name it.
+fn mcp_install_hash(
+    item: &crate::compiler::mcp::ParsedMcpItem,
+) -> Result<Option<ContentHash>, MarsError> {
+    if !item.uses_dir_token() {
+        return Ok(None);
+    }
+    Ok(Some(ContentHash::from(hash::compute_hash(
+        item.server_dir(),
+        ItemKind::McpServer,
+    )?)))
 }
 
 pub(crate) fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
@@ -514,14 +552,15 @@ pub(crate) fn hook_target_items(
         .filter(|target| managed_targets.contains(target))
         .cloned()
         .collect::<Vec<_>>();
-    package_dir_target_items(
+    let source_hash = ContentHash::from(hash::compute_hash(&parsed.hook_dir, ItemKind::Hook)?);
+    Ok(package_dir_target_items(
         ItemKind::Hook,
-        "hooks",
         &parsed.hook_dir,
         &parsed.def.name,
         source_name,
+        &source_hash,
         &target_roots,
-    )
+    ))
 }
 
 /// Build target-scoped items for a package-owned directory that every target
@@ -529,14 +568,15 @@ pub(crate) fn hook_target_items(
 /// so copying, lock ownership, and pruning behave the same way.
 pub(crate) fn package_dir_target_items(
     kind: ItemKind,
-    surface_dir: &str,
     source_dir: &Path,
     item_name: &str,
     source_name: &SourceName,
+    source_hash: &ContentHash,
     target_roots: &[String],
-) -> Result<Vec<(String, DestPath, TargetItem)>, MarsError> {
-    let source_hash = ContentHash::from(hash::compute_hash(source_dir, kind)?);
-    Ok(target_roots
+) -> Vec<(String, DestPath, TargetItem)> {
+    let surface_dir =
+        package_dir_surface(kind).expect("package-directory items are only hooks and MCP servers");
+    target_roots
         .iter()
         .map(|target_name| {
             let dest_path = package_dir_canonical_dest_path(surface_dir, target_name, item_name);
@@ -554,12 +594,21 @@ pub(crate) fn package_dir_target_items(
             };
             (target_name.clone(), dest_path, target_item)
         })
-        .collect())
+        .collect()
+}
+
+/// Directory under a target that holds this kind's package-owned copy.
+pub(crate) fn package_dir_surface(kind: ItemKind) -> Option<&'static str> {
+    match kind {
+        ItemKind::Hook => Some("hooks"),
+        ItemKind::McpServer => Some("mcp"),
+        _ => None,
+    }
 }
 
 /// Canonical package-directory items are target-scoped so each target owns its
 /// installed copy independently.
-pub fn package_dir_canonical_dest_path(
+fn package_dir_canonical_dest_path(
     surface_dir: &str,
     target_name: &str,
     item_name: &str,
@@ -581,12 +630,8 @@ pub(crate) fn package_dir_canonical_owner(
     target_root: &str,
     dest_path: &str,
 ) -> Option<String> {
-    let surface_dir = match kind {
-        ItemKind::Hook => "hooks",
-        ItemKind::McpServer => "mcp",
-        _ => return None,
-    };
-    let name = dest_path.strip_prefix(&format!("{surface_dir}/"))?;
+    let surface_dir = package_dir_surface(kind)?;
+    let name = dest_path.strip_prefix(surface_dir)?.strip_prefix('/')?;
     Some(format!(
         "{surface_dir}/{}/{name}",
         target_root.trim_start_matches('.')
@@ -599,18 +644,13 @@ pub fn package_dir_target_dest_path(
     kind: ItemKind,
     canonical: &DestPath,
 ) -> Option<(&str, String)> {
-    let surface_dir = match kind {
-        ItemKind::Hook => "hooks",
-        ItemKind::McpServer => "mcp",
-        _ => return None,
-    };
+    let surface_dir = package_dir_surface(kind)?;
     let mut parts = canonical.as_str().split('/');
     match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some("hooks"), Some(target), Some(name), None) if surface_dir == "hooks" => {
-            Some((target, format!("hooks/{name}")))
-        }
-        (Some("mcp"), Some(target), Some(name), None) if surface_dir == "mcp" => {
-            Some((target, format!("mcp/{name}")))
+        (Some(canonical_surface), Some(target), Some(name), None)
+            if canonical_surface == surface_dir =>
+        {
+            Some((target, format!("{surface_dir}/{name}")))
         }
         _ => None,
     }
@@ -736,7 +776,7 @@ pub(crate) fn check_unmanaged_collisions(
 }
 
 /// Whether installing one item would overwrite content Mars does not own.
-pub(crate) fn unmanaged_collision(
+fn unmanaged_collision(
     install_target: &Path,
     owns: &Ownership,
     target_item: &TargetItem,

@@ -67,15 +67,21 @@ A server may ship its own files beside `mcp.toml` and name them with
 
 ```toml
 # mcp/echo/mcp.toml
+visibility = "exported"
 command = "node"
 args    = ["${MARS_MCP_DIR}/server.js"]
 ```
 
-Each tree receives the whole `mcp/echo/` directory. The Claude/Codex/Grok tree
-writes `${CLAUDE_PLUGIN_ROOT}/mcp/echo/server.js`, the Cursor tree writes
+As with hooks, only an `exported` server reaches consumers, so a plugin build
+ships nothing for a `local` one.
+
+Each tree receives the whole `mcp/echo/` directory for a server that names the
+token. The Claude/Codex/Grok tree writes
+`${CLAUDE_PLUGIN_ROOT}/mcp/echo/server.js`, the Cursor tree writes
 `${CURSOR_PLUGIN_ROOT}/mcp/echo/server.js`, and the OpenCode tree keeps
 `${MARS_MCP_DIR}` in `mcp.json` so its `index.mjs` can resolve the path at
-runtime. Entries that do not use the token are written unchanged.
+runtime. Entries that do not use the token are written unchanged and ship no
+directory.
 
 ## MCP environment variables
 

@@ -26,7 +26,6 @@ use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
-use crate::sync::ownership::Ownership;
 use crate::sync::target::TargetState;
 use crate::types::managed_cmd;
 use crate::types::{MarsContext, SourceName};
@@ -564,27 +563,68 @@ pub(crate) struct PreparedTarget {
     pub dep_precedence: Vec<SourceName>,
 }
 
-/// Build, extend and rename one resolved graph target.
+/// One resolved target after selection, local extension, MCP collision
+/// resolution and MCP directory materialization, before renames apply.
 ///
-/// Sync extends the dependency target with project-local items before the
-/// shared rename pass; publish builds use the graph target unchanged. Keeping
-/// the extension inside this function preserves the own-package shadowing
-/// rules while ensuring every caller gets the same finalization pipeline.
+/// A caller that prunes items (sync drops paths holding unmanaged content) must
+/// do so before the rename pass, because renames rewrite references to the items
+/// that survive.
+pub(crate) struct BuiltTarget {
+    pub target: target::TargetState,
+    pub explicit_renames: Vec<target::ExplicitRename>,
+    pub collision_renames: Vec<target::CollisionRename>,
+}
+
+/// Build one resolved graph target and settle everything that decides which
+/// items survive: graph collection, the caller's local extension, MCP name
+/// collisions, and each winning server's installed directory.
+///
+/// Sync extends the dependency target with project-local items here; publish
+/// builds use the graph target unchanged. Keeping the extension inside this
+/// function preserves the own-package shadowing rules.
+///
+/// `local_source` names the consumer's own package: it wins MCP name collisions
+/// silently. Sync's local package is `_self`; a plugin build's is its root package.
+pub(crate) fn build_target_state(
+    graph: &crate::resolve::ResolvedGraph,
+    effective: &EffectiveConfig,
+    local_source: &SourceName,
+    diag: &mut DiagnosticCollector,
+    extend: impl FnOnce(&mut target::TargetState, &mut DiagnosticCollector) -> Result<(), MarsError>,
+) -> Result<BuiltTarget, MarsError> {
+    let (mut target, explicit_renames, collision_renames) =
+        target::build_with_collisions_and_diag(graph, effective, diag)?;
+    extend(&mut target, diag)?;
+    target.resolve_mcp_collisions(
+        &effective.settings.managed_targets(),
+        local_source.as_str(),
+        diag,
+    )?;
+    materialize_mcp_directories(&mut target)?;
+    Ok(BuiltTarget {
+        target,
+        explicit_renames,
+        collision_renames,
+    })
+}
+
+/// Build the rename view of the surviving items and rewrite every reference to
+/// them.
 ///
 /// Skill refs are checked by each caller after this returns, with its own context: sync knows
 /// what this machine installed and what the project's own package declares, a plugin build has
 /// neither.
-pub(crate) fn prepare_target_state(
+pub(crate) fn apply_target_renames(
+    built: BuiltTarget,
     graph: &crate::resolve::ResolvedGraph,
     effective: &EffectiveConfig,
     diag: &mut DiagnosticCollector,
-    extend: impl FnOnce(&mut target::TargetState, &mut DiagnosticCollector) -> Result<(), MarsError>,
 ) -> Result<PreparedTarget, MarsError> {
-    let (mut target, explicit_renames, collision_renames) =
-        target::build_with_collisions_and_diag(graph, effective, diag)?;
-    extend(&mut target, diag)?;
-    target.resolve_mcp_collisions(&effective.settings.managed_targets(), diag);
-
+    let BuiltTarget {
+        mut target,
+        explicit_renames,
+        collision_renames,
+    } = built;
     let rename_index = rewrite::RenameIndex::new(&explicit_renames, &collision_renames, &target);
     let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
     if !rename_index.is_empty() {
@@ -617,57 +657,43 @@ pub(crate) fn build_target(
     // Use .mars/ as the canonical content root for diff/collision checks.
     let mars_dir = ctx.project_root.join(".mars");
     let managed_root = &mars_dir;
+    let local_source = crate::types::SourceOrigin::LocalPackage.to_string().into();
 
-    let PreparedTarget {
-        target: mut target_state,
-        explicit_renames: renames,
-        collision_renames,
-        ..
-    } = prepare_target_state(
+    let mut built = build_target_state(
         &resolved.graph,
         &resolved.loaded.effective,
+        &local_source,
         diag,
         |target_state, diag| {
-            local_items::merge_local_items(
-                ctx,
-                &resolved,
-                local_items,
-                request,
-                target_state,
-                diag,
-            )?;
-
-            // Prevent managed installs from overwriting unmanaged files.
-            let unmanaged_collisions = target::check_unmanaged_collisions(
-                managed_root,
-                &resolved.loaded.ownership(),
-                target_state,
-                request.options.force,
-            );
-            for collision in &unmanaged_collisions {
-                diag.warn(
-                    "unmanaged-collision",
-                    format!(
-                        "source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
-                        collision.source_name, collision.path
-                    ),
-                );
-                target_state.items.shift_remove(&collision.path);
-            }
-            Ok(())
+            local_items::merge_local_items(ctx, &resolved, local_items, request, target_state, diag)
         },
     )?;
 
-    // MCP collisions resolve before installation, so only the winning server's
-    // directory becomes an item. It lands beside each target's config like a hook
-    // directory, and removal prunes it through the same lock ownership.
-    materialize_mcp_directories(
+    // Prevent managed installs from overwriting unmanaged files. This runs over
+    // every item, hook and MCP directories included, and before renames rewrite
+    // references, so a pruned item is neither referenced nor installed.
+    for collision in target::check_unmanaged_collisions(
         managed_root,
         &resolved.loaded.ownership(),
-        &mut target_state,
+        &built.target,
         request.options.force,
-        diag,
-    )?;
+    ) {
+        diag.warn(
+            "unmanaged-collision",
+            format!(
+                "source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
+                collision.source_name, collision.path
+            ),
+        );
+        built.target.items.shift_remove(&collision.path);
+    }
+
+    let PreparedTarget {
+        target: target_state,
+        explicit_renames: renames,
+        collision_renames,
+        ..
+    } = apply_target_renames(built, &resolved.graph, &resolved.loaded.effective, diag)?;
 
     let warnings = validate::validate_skill_refs(
         &target_state,
@@ -1157,37 +1183,21 @@ fn retry_tombstone_removals(
 /// Package-owned MCP directories are installed beside each target's config,
 /// exactly like hook directories, and tracked as ordinary canonical items so
 /// removal prunes them.
-fn materialize_mcp_directories(
-    managed_root: &Path,
-    ownership: &Ownership<'_>,
-    target_state: &mut TargetState,
-    force: bool,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
+fn materialize_mcp_directories(target_state: &mut TargetState) -> Result<(), MarsError> {
     let groups = target_state
-        .selected_mcp_groups()
-        .map(|(item, targets)| (item.clone(), targets.to_vec()))
+        .selected_mcp_dirs()
+        .map(|(item, source_hash, targets)| (item.clone(), source_hash.clone(), targets.to_vec()))
         .collect::<Vec<_>>();
-    for (item, target_roots) in groups {
+    for (item, source_hash, target_roots) in groups {
         let source_name = SourceName::from(item.source_name.clone());
         for (_, dest_path, target_item) in target::package_dir_target_items(
             ItemKind::McpServer,
-            "mcp",
             item.server_dir(),
             &item.name,
             &source_name,
+            &source_hash,
             &target_roots,
-        )? {
-            if target::unmanaged_collision(managed_root, ownership, &target_item, force) {
-                diag.warn(
-                    "unmanaged-collision",
-                    format!(
-                        "MCP server `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched",
-                        item.name
-                    ),
-                );
-                continue;
-            }
+        ) {
             target_state.items.insert(dest_path, target_item);
         }
     }

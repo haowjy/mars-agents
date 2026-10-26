@@ -8,7 +8,7 @@ const HOOK_DIR_TOKEN = "${MARS_HOOK_DIR}"
 const MCP_DIR_TOKEN = "${MARS_MCP_DIR}"
 
 function substituteMcpDir(value, mcpDirectory) {
-  if (typeof value === "string") return value.replaceAll(MCP_DIR_TOKEN, mcpDirectory)
+  if (typeof value === "string") return value.replaceAll(MCP_DIR_TOKEN, () => mcpDirectory)
   if (Array.isArray(value)) return value.map((item) => substituteMcpDir(item, mcpDirectory))
   if (value && typeof value === "object") {
     return Object.fromEntries(

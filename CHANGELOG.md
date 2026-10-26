@@ -5,11 +5,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `${MARS_MCP_DIR}` names an MCP server's own `mcp/<name>/` files from its `command` and
-  `args`. `mars sync` installs the server directory beside every target that writes MCP and
-  substitutes the installed absolute path; `mars build plugin` copies it into each tree and
-  maps the token to the harness plugin root (or resolves it at runtime in the OpenCode tree).
-  Executable bits are preserved and a removed server prunes its installed directories.
+- `${MARS_MCP_DIR}` in an MCP server's `command` or `args` names its own `mcp/<name>/` files.
+  `mars sync` installs that directory beside each target that writes MCP and substitutes the
+  installed absolute path; `mars build plugin` copies it into each tree and maps the token to
+  the harness plugin root (or resolves it at runtime in the OpenCode tree). A server that never
+  names the token registers and copies exactly as before, and a target that writes no MCP
+  config receives no directory. Executable bits are preserved and a removed server prunes its
+  installed directories. A token-using server's name must be a single path component; other
+  names skip that one server with a warning.
 
 ### Changed
 - README plugin support table: cells are generated from what each plugin tree actually does. Grok

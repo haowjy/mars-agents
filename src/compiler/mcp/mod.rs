@@ -99,6 +99,12 @@ impl ParsedMcpItem {
             .parent()
             .expect("discovered MCP definition belongs to a server directory")
     }
+
+    /// Whether `command` or `args` reference the server's own directory. Only
+    /// such a server gets its directory installed beside a target's config.
+    pub fn uses_dir_token(&self) -> bool {
+        def_uses_dir_token(&self.def)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -145,14 +151,6 @@ pub(crate) fn discover_mcp_items_at_depth(
             })
         })?;
         let resolved_name = raw_def.name.as_deref().unwrap_or(&server_name).to_string();
-        if let Err(message) = crate::compiler::validate_path_component(&resolved_name) {
-            return Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "{}: invalid name `{resolved_name}`: {message}",
-                    toml_path.display()
-                ),
-            }));
-        }
         let def = McpServerDef {
             command: raw_def.command,
             args: raw_def.args,
@@ -166,6 +164,21 @@ pub(crate) fn discover_mcp_items_at_depth(
             ),
             targets: raw_def.targets,
         };
+        // Only a server that installs its own directory needs a name that is a
+        // safe path component; a token-free server is only a config entry.
+        if def_uses_dir_token(&def)
+            && let Err(message) = crate::compiler::validate_path_component(&resolved_name)
+        {
+            let relative = toml_path.strip_prefix(package_root).unwrap_or(&toml_path);
+            diag.warn(
+                "mcp-invalid-name",
+                format!(
+                    "MCP server `{resolved_name}` in `{source_name}` at `{}` uses {MCP_DIR_TOKEN}, so its directory name {message}; skipping this server",
+                    relative.display()
+                ),
+            );
+            continue;
+        }
 
         items.push(ParsedMcpItem {
             name: resolved_name,
@@ -272,6 +285,10 @@ pub(crate) const MCP_DIR_TOKEN: &str = "${MARS_MCP_DIR}";
 
 fn substitute_mcp_dir(text: &str, mcp_dir: &str) -> String {
     text.replace(MCP_DIR_TOKEN, mcp_dir)
+}
+
+fn def_uses_dir_token(def: &McpServerDef) -> bool {
+    def.command.contains(MCP_DIR_TOKEN) || def.args.iter().any(|arg| arg.contains(MCP_DIR_TOKEN))
 }
 
 /// A fully lowered MCP server entry ready for a target adapter to write.

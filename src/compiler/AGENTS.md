@@ -160,7 +160,9 @@ config files via adapters. `TargetState` carries each selected parsed item and i
 plus filtered exported graph hooks for plugin omission diagnostics; preflight and emission consume
 the selected values instead of rediscovering package config entries. Sync checks a selected hook's
 installed directory after target sync, while a plugin build can lower the same pure selection
-without an installed directory.
+without an installed directory. A selection carries the `TargetItem` hash of the directory it
+installs — hooks always, MCP servers only when they name `${MARS_MCP_DIR}` — so the installed
+check does not re-hash the source, and a server with no hash has no directory to check.
 `lower_config_entries_for_target` owns native merge-fragment loading and hook ordering. MCP
 collisions resolve once in `TargetState` before installation and config lowering, so the winning
 server's directory and config entry come from the same selection. Callers supply the
@@ -169,9 +171,11 @@ server's directory and config entry come from the same selection. Callers supply
 ## MCP Compilation (`mcp/`)
 
 Discovers MCP server items, validates env refs, and substitutes `${MARS_MCP_DIR}` in
-`command`/`args`. The server directory is a package-owned item installed beside each
-target that writes MCP, using the same target-scoped canonical path and lock ownership
-as a hook directory.
+`command`/`args`. Only a server whose command or args name the token installs its
+directory, as a package-owned item beside each target that writes MCP, using the same
+target-scoped canonical path and lock ownership as a hook directory. Its name must then
+be one path component; a token-free server keeps whatever name it has, because nothing
+installs it as a directory.
 
 ## Hooks Compilation (`hooks/`)
 

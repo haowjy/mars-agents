@@ -5,7 +5,7 @@ agents and skills. Mars compiles these into target-specific config files during
 `mars sync`.
 
 - **MCP servers** are registered per harness target (`.claude/.mcp.json`,
-  `.codex/mcp.json`, `.opencode/opencode.json`, etc.) from `mcp/<name>/mcp.toml`
+  `.codex/codex_mcp.json`, `.opencode/opencode.json`, etc.) from `mcp/<name>/mcp.toml`
   package definitions.
 - **MCP tool-policy refs** (`mcp(...)` entries in an Agent's `tools` map)
   gate which MCP tools an agent may use — separate from server registration.
@@ -14,7 +14,7 @@ agents and skills. Mars compiles these into target-specific config files during
   Cursor config, or whole TypeScript plugins to OpenCode and Pi, and install
   their complete hook directories beside the target.
 - **Server files** shipped beside `mcp.toml` are installed with their server
-  directory and can be named with `${MARS_MCP_DIR}`.
+  directory when `command` or `args` names it with `${MARS_MCP_DIR}`.
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
@@ -116,17 +116,31 @@ args    = ["${MARS_MCP_DIR}/server.js"]
 ```
 
 `mars sync` installs the whole `mcp/<name>/` directory beside each target's
-config (`.claude/mcp/echo/`, `.codex/mcp/echo/`, and so on) and replaces the
-token in `command` and `args` with that installed absolute path. The server
-registered under a `name` override installs under the registered name.
-Executable bits are preserved. Removing the server from the package prunes the
-installed directories on the next sync.
+config that writes an MCP config file (`.claude/mcp/echo/`, `.codex/mcp/echo/`,
+and so on) and replaces the token in `command` and `args` with that installed
+absolute path. A target whose adapter writes no MCP config (`.pi`, `.agents`)
+receives no directory. The server registered under a `name` override installs
+under the registered name. Executable bits are preserved. Removing the server
+from the package prunes the installed directories on the next sync.
 
-`mars build plugin` copies `mcp/<name>/` into each generated tree and maps the
-token to the tree's own root: `${CLAUDE_PLUGIN_ROOT}/mcp/<name>` for the shared
-Claude/Codex/Grok tree, `${CURSOR_PLUGIN_ROOT}/mcp/<name>` for Cursor, and a
-runtime-resolved path under the OpenCode package for OpenCode. An entry without
-the token is unchanged.
+Only a server that names the token gets a directory; one whose `command` and
+`args` never mention `${MARS_MCP_DIR}` registers exactly as it did before and
+copies nothing. Because the registered name becomes one directory under each
+target, a token-using server's name must be a single path component: a name
+like `github/copilot` is skipped with a warning. A token-free server may use
+any name.
+
+If something Mars does not own already occupies an installed path, sync warns,
+leaves that content untouched, and withholds the target's config entry so
+nothing points at files Mars did not install. `mars sync --force` overwrites
+instead.
+
+`mars build plugin` copies a token-using server's `mcp/<name>/` into each
+generated tree and maps the token to the tree's own root:
+`${CLAUDE_PLUGIN_ROOT}/mcp/<name>` for the shared Claude/Codex/Grok tree,
+`${CURSOR_PLUGIN_ROOT}/mcp/<name>` for Cursor, and a runtime-resolved path under
+the OpenCode package for OpenCode. An entry without the token is unchanged and
+ships no directory.
 
 The token applies to `command` and `args`. `env` values remain symbolic
 `{ from = "env", var = "…" }` references; Mars never resolves their values.

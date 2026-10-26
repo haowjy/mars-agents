@@ -31,9 +31,25 @@ impl SkillsSpec {
     }
 }
 
+/// The most frontmatter bytes a file may carry. Parsing time grows with the square of the
+/// nesting depth the text can hold, so an unbounded block is a way to stall a server that reads
+/// untrusted files; real frontmatter is a few hundred bytes.
+pub const MAX_FRONTMATTER_BYTES: usize = 64 * 1024;
+
+/// The deepest run of `[` and `{` the frontmatter may open, counted over the raw text. The
+/// YAML scanners take time quadratic in that depth, so a size cap alone still lets 64 KiB of `[`
+/// stall a parse for seconds; real frontmatter nests a few levels.
+pub const MAX_FLOW_DEPTH: usize = 64;
+
 /// Errors from frontmatter parsing.
 #[derive(Debug, thiserror::Error)]
 pub enum FrontmatterError {
+    #[error("frontmatter is {0} bytes; the limit is {MAX_FRONTMATTER_BYTES}")]
+    TooLarge(usize),
+
+    #[error("frontmatter nests `[` or `{{` more than {MAX_FLOW_DEPTH} deep")]
+    TooDeep,
+
     #[error("malformed YAML frontmatter: {0}")]
     MalformedYaml(#[from] serde_yaml::Error),
 
@@ -108,7 +124,13 @@ impl Frontmatter {
             return Err(FrontmatterError::Unclosed);
         };
 
+        if yaml_len > MAX_FRONTMATTER_BYTES {
+            return Err(FrontmatterError::TooLarge(yaml_len));
+        }
         let yaml_text = &after_first_line[..yaml_len];
+        if exceeds_flow_depth(yaml_text) {
+            return Err(FrontmatterError::TooDeep);
+        }
         let body_start = yaml_len + closing_len;
         let body = after_first_line[body_start..].to_string();
 
@@ -364,6 +386,23 @@ fn rewrite_string_list_value(
         }
         _ => {}
     }
+}
+
+fn exceeds_flow_depth(yaml: &str) -> bool {
+    let mut depth = 0usize;
+    for byte in yaml.bytes() {
+        match byte {
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_FLOW_DEPTH {
+                    return true;
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
 }
 
 fn split_first_line(content: &str) -> (&str, &str) {

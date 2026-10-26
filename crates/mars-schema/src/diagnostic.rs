@@ -193,6 +193,8 @@ pub fn display_path(path: &[PathSegment]) -> String {
 
 pub(crate) fn frontmatter_error(error: &crate::frontmatter::FrontmatterError) -> SchemaDiagnostic {
     let code = match error {
+        crate::frontmatter::FrontmatterError::TooLarge(_) => "frontmatter.too-large",
+        crate::frontmatter::FrontmatterError::TooDeep => "frontmatter.too-deep",
         crate::frontmatter::FrontmatterError::Unclosed => "frontmatter.unclosed",
         crate::frontmatter::FrontmatterError::Anchor => "yaml.anchor",
         crate::frontmatter::FrontmatterError::DocumentEnd => "yaml.document-end",

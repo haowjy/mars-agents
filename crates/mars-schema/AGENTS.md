@@ -118,6 +118,11 @@ reported full frontmatter rewrite. Unchanged definitions and schema-v1 manifests
 byte-identical. What an upgrade dropped or could not carry over is `Prepared.upgrade_diagnostics`,
 and `Prepared::needs_migration` is the typed signal that a legacy package was read.
 
+Frontmatter is bounded (`MAX_FRONTMATTER_BYTES`, 64 KiB: `frontmatter.too-large`; `MAX_FLOW_DEPTH`, 64
+open brackets over the raw text: `frontmatter.too-deep`) in the one parse every reader shares,
+because the YAML scanners are quadratic in nesting depth (64 KiB of `[` took 5.4 s). A refused block
+reads as `fields: null` with that one diagnostic.
+
 `yaml-rust2` (with default features disabled) supplies the event scan that distinguishes YAML
 anchors, aliases, and explicit document-end markers from identical text inside scalars.
 `serde_yaml` remains the semantic parser and validity authority; the event scan does not

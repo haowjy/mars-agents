@@ -6,14 +6,28 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::diagnostic::DiagnosticCollector;
+use crate::provided::ProvidedNames;
+use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
-use crate::validate::ValidationWarning;
+use crate::types::{SourceName, SourceOrigin};
+use crate::validate::{RefClass, ValidationWarning, classify_unresolved_ref};
 use mars_schema::item::ItemKind;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
 /// reference skills that exist in the target state.
-pub(crate) fn validate_skill_refs(target: &TargetState) -> Vec<ValidationWarning> {
+///
+/// The one reporter of refs against what is installed: the resolver never reports a ref it
+/// defers to a declared provider, and `provided` (`None` where provided skills must not count,
+/// as in plugin builds) is judged only here, by [`classify_unresolved_ref`].
+/// `local_declared` is the `[package] uses-providers` of the project's own items, `None` for a
+/// consumer project without a `[package]` table.
+pub(crate) fn validate_skill_refs(
+    target: &TargetState,
+    graph: &ResolvedGraph,
+    provided: Option<&ProvidedNames>,
+    local_declared: Option<&[String]>,
+) -> Vec<ValidationWarning> {
     use crate::validate::{extract_skills_from_content, find_suggestion};
 
     let available_skills: HashSet<String> = target
@@ -22,6 +36,7 @@ pub(crate) fn validate_skill_refs(target: &TargetState) -> Vec<ValidationWarning
         .filter(|item| item.id.kind == ItemKind::Skill)
         .map(|item| item.id.name.to_string())
         .collect();
+    let local_source = SourceName::from(SourceOrigin::LocalPackage.to_string());
 
     let mut warnings = Vec::new();
 
@@ -30,19 +45,52 @@ pub(crate) fn validate_skill_refs(target: &TargetState) -> Vec<ValidationWarning
         .values()
         .filter(|item| item.id.kind == ItemKind::Agent)
     {
+        let declared = if item.source_name == local_source {
+            local_declared
+        } else {
+            Some(
+                graph
+                    .nodes
+                    .get(&item.source_name)
+                    .and_then(|node| node.manifest.as_ref())
+                    .map_or(&[][..], |manifest| {
+                        manifest.package.uses_providers.as_slice()
+                    }),
+            )
+        };
         let content = match &item.rewritten_content {
             Some(content) => content.clone(),
             None => std::fs::read_to_string(&item.source_path).unwrap_or_default(),
         };
         for skill_name in extract_skills_from_content(&content) {
-            if !available_skills.contains(&skill_name) {
-                let suggestion = find_suggestion(&skill_name, &available_skills);
-                warnings.push(ValidationWarning::MissingSkill {
-                    agent: item.id.clone(),
-                    skill_name,
-                    suggestion,
-                });
+            if available_skills.contains(&skill_name) {
+                continue;
             }
+            let agent = item.id.clone();
+            warnings.push(
+                match classify_unresolved_ref(&skill_name, declared, provided) {
+                    RefClass::Satisfied => continue,
+                    RefClass::Unavailable { provider } => {
+                        ValidationWarning::ProvidedSkillUnavailable {
+                            agent,
+                            provider: provider.to_string(),
+                            skill_name,
+                        }
+                    }
+                    RefClass::Undeclared { provider } => {
+                        ValidationWarning::ProvidedSkillUndeclared {
+                            agent,
+                            provider: provider.to_string(),
+                            skill_name,
+                        }
+                    }
+                    RefClass::Missing { .. } => ValidationWarning::MissingSkill {
+                        agent,
+                        suggestion: find_suggestion(&skill_name, &available_skills),
+                        skill_name,
+                    },
+                },
+            );
         }
     }
 

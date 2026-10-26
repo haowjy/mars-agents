@@ -19,6 +19,112 @@ pub enum ValidationWarning {
         /// Fuzzy match suggestion: "did you mean X?"
         suggestion: Option<String>,
     },
+    /// An agent references `x__p`, its package declares provider `p`, and `p` has not provided
+    /// the skill here. Sync continues: the package works wherever the provider supplies it.
+    ProvidedSkillUnavailable {
+        agent: ItemId,
+        skill_name: String,
+        provider: String,
+    },
+    /// An agent in a package references a skill a provider has provided here, but the package
+    /// does not declare that provider, so consumers without it would not resolve the ref.
+    ProvidedSkillUndeclared {
+        agent: ItemId,
+        skill_name: String,
+        provider: String,
+    },
+}
+
+impl ValidationWarning {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::MissingSkill { .. } => "missing-skill",
+            Self::ProvidedSkillUnavailable { .. } => "provided-skill-unavailable",
+            Self::ProvidedSkillUndeclared { .. } => "provided-skill-undeclared",
+        }
+    }
+
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::MissingSkill {
+                agent,
+                skill_name,
+                suggestion,
+            } => match suggestion {
+                Some(s) => format!(
+                    "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
+                    agent.name
+                ),
+                None => format!(
+                    "agent `{}` references missing skill `{skill_name}`",
+                    agent.name
+                ),
+            },
+            Self::ProvidedSkillUnavailable {
+                agent,
+                skill_name,
+                provider,
+            } => format!(
+                "agent `{}` references skill `{skill_name}`, which provider `{provider}` supplies; \
+                 it is not provided here, so the agent runs without it",
+                agent.name
+            ),
+            Self::ProvidedSkillUndeclared {
+                agent,
+                skill_name,
+                provider,
+            } => format!(
+                "agent `{}` references skill `{skill_name}`, provided here by `{provider}`, but this \
+                 package's `[package] uses-providers` does not list `{provider}`; consumers will not resolve it",
+                agent.name
+            ),
+        }
+    }
+}
+
+/// How a skill ref that no skill in the target state satisfies stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RefClass<'a> {
+    /// A provider that the requester may rely on has provided it here: nothing to report.
+    Satisfied,
+    /// The requester's package declares the provider; the provider has not provided it here.
+    Unavailable { provider: &'a str },
+    /// A provider has provided it here, but the requester's package does not declare it.
+    Undeclared { provider: &'a str },
+    /// Nothing supplies it. `provider` is the one the name is spelled for (`x__p`).
+    Missing { provider: Option<&'a str> },
+}
+
+/// Classify a ref to a skill that is not in the target state.
+///
+/// `declared` is the requesting package's `uses-providers`: `Some` for a package (a dependency,
+/// or a package repository's own items), `None` for a consumer project's local items, which
+/// need no declaration. `provided` is what this machine's providers installed, or `None` where
+/// that must not matter: the resolver and `mars check` judge a ref by its package alone, so a
+/// package behaves the same on every machine.
+pub(crate) fn classify_unresolved_ref<'a>(
+    name: &'a str,
+    declared: Option<&[String]>,
+    provided: Option<&crate::provided::ProvidedNames>,
+) -> RefClass<'a> {
+    let Some(provider) = mars_schema::provider::provider_of(name) else {
+        return RefClass::Missing { provider: None };
+    };
+    let is_provided = provided.is_some_and(|names| names.provides(provider, name));
+    match declared {
+        Some(list) if list.iter().any(|declared| declared == provider) => {
+            if is_provided {
+                RefClass::Satisfied
+            } else {
+                RefClass::Unavailable { provider }
+            }
+        }
+        Some(_) if is_provided => RefClass::Undeclared { provider },
+        None if is_provided => RefClass::Satisfied,
+        Some(_) | None => RefClass::Missing {
+            provider: Some(provider),
+        },
+    }
 }
 
 /// Generic: parse skill dependencies from any item's frontmatter.
@@ -160,18 +266,18 @@ mod tests {
 
         let warnings = check_deps(&agents, &skills).unwrap();
         assert_eq!(warnings.len(), 1);
-        match &warnings[0] {
-            ValidationWarning::MissingSkill {
-                agent,
-                skill_name,
-                suggestion,
-            } => {
-                assert_eq!(agent.name, "coder");
-                assert_eq!(agent.kind, ItemKind::Agent);
-                assert_eq!(skill_name, "missing-skill");
-                assert!(suggestion.is_none());
-            } // only variant is MissingSkill; exhaustive match above
-        }
+        let ValidationWarning::MissingSkill {
+            agent,
+            skill_name,
+            suggestion,
+        } = &warnings[0]
+        else {
+            panic!("expected a missing-skill warning, got {:?}", warnings[0]);
+        };
+        assert_eq!(agent.name, "coder");
+        assert_eq!(agent.kind, ItemKind::Agent);
+        assert_eq!(skill_name, "missing-skill");
+        assert!(suggestion.is_none());
     }
 
     #[test]
@@ -226,11 +332,10 @@ mod tests {
         let warnings = check_deps(&agents, &skills).unwrap();
         assert_eq!(warnings.len(), 1); // 1 MissingSkill only
 
-        match &warnings[0] {
-            ValidationWarning::MissingSkill { suggestion, .. } => {
-                assert_eq!(suggestion.as_deref(), Some("planning"));
-            } // only variant is MissingSkill; exhaustive match above
-        }
+        let ValidationWarning::MissingSkill { suggestion, .. } = &warnings[0] else {
+            panic!("expected a missing-skill warning, got {:?}", warnings[0]);
+        };
+        assert_eq!(suggestion.as_deref(), Some("planning"));
     }
 
     #[test]

@@ -170,12 +170,19 @@ pub(crate) fn discovered_item_markdown_path(
     }
 }
 
+/// Resolve one skill ref of `requester` to the package item that supplies it.
+///
+/// `Ok(None)` defers a ref `x__p` to provider `p` when the requesting package declares `p` in
+/// `uses-providers` and no package ships the skill: nothing is pulled and nothing is reported
+/// here, because sync's validator is the one reporter of what is installed. The answer depends
+/// on the package alone, never on what this machine has provided, so a package resolves the
+/// same everywhere. Any other missing skill is `SkillNotFound`.
 pub(crate) fn resolve_skill_ref(
     skill: &ItemName,
     requester: &PendingItem,
     registry: &IndexMap<SourceName, RegisteredPackage>,
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
-) -> Result<PendingItem, MarsError> {
+) -> Result<Option<PendingItem>, MarsError> {
     let required_by = format!("{}/{}", requester.package, requester.item);
     let resolver = SkillResolver { registry };
     let resolved_skill = match resolver.resolve(skill, &requester.package) {
@@ -185,6 +192,18 @@ pub(crate) fn resolve_skill_ref(
             searched,
             ..
         }) => {
+            let declared = registry
+                .get(&requester.package)
+                .and_then(|package| package.node.manifest.as_ref())
+                .map_or(&[][..], |manifest| {
+                    manifest.package.uses_providers.as_slice()
+                });
+            if matches!(
+                validate::classify_unresolved_ref(skill.as_str(), Some(declared), None),
+                validate::RefClass::Unavailable { .. }
+            ) {
+                return Ok(None);
+            }
             return Err(ResolutionError::SkillNotFound {
                 skill: missing_skill,
                 required_by,
@@ -204,14 +223,14 @@ pub(crate) fn resolve_skill_ref(
     let constraint = primary_package_constraint(constraints, &resolved_skill.package)
         .unwrap_or(&package.constraint)
         .clone();
-    Ok(PendingItem {
+    Ok(Some(PendingItem {
         package: resolved_skill.package,
         item: skill.clone(),
         kind: ItemKind::Skill,
         constraint,
         required_by,
         is_local: package.is_local,
-    })
+    }))
 }
 
 pub(crate) fn primary_package_constraint<'a>(

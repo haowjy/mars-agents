@@ -124,6 +124,13 @@ impl ProvidedLock {
         self.providers.get(provider)
     }
 
+    /// Every provider's record, by provider name.
+    pub(crate) fn providers(&self) -> impl Iterator<Item = (&str, &ProviderRecord)> {
+        self.providers
+            .iter()
+            .map(|(name, record)| (name.as_str(), record))
+    }
+
     /// Replace one provider's record, keeping every other provider's.
     pub(crate) fn set_provider(&mut self, provider: &str, record: ProviderRecord) {
         self.providers.insert(provider.to_string(), record);

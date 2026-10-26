@@ -17,7 +17,7 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 
 | Phase | Struct | Key Contents |
 |---|---|---|
-| 1 | `LoadedConfig` | Config, LocalConfig, EffectiveConfig, old_lock, sync_lock |
+| 1 | `LoadedConfig` | Config, LocalConfig, EffectiveConfig, old_lock, provided names, sync_lock |
 | 2 | `ResolvedState` | LoadedConfig + ResolvedGraph |
 | 3 | `TargetedState` | ResolvedState + TargetState (canonical items and selected hooks/MCP) + validation warnings |
 | 4 | `PlannedState` | TargetedState + SyncPlan |
@@ -84,7 +84,7 @@ apply failure leaves the lock unpublished, and the next sync must use `--force` 
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items; refuse unsafe or wrong-shaped canonical self collisions, while explicit `--force` may replace regular agent files and skill directories; prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
+| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items (`local_items.rs`); refuse unsafe or wrong-shaped canonical self collisions, while explicit `--force` may replace regular agent files and skill directories; prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
@@ -94,6 +94,26 @@ The reader/local-source seam discovers `.mars-src` unconditionally and adds the
 current package only with `[package]`. It selects local overrides before staging:
 Agents and skills come from prepared schema results, while hooks, MCP servers,
 and bootstrap documents keep their binary-owned discovery and materialization.
+
+### Ownership and provided names
+
+`load_config` reads `.mars/provided.lock` under the sync lock into `LoadedConfig.provided`
+(`provided::ProvidedNames`; sync never writes it). Two things use it, and nothing else in sync does:
+
+- **Ownership** (`ownership.rs`): every decision about an existing canonical destination (a local
+  hook, a local agent or skill, a dependency item in `check_unmanaged_collisions`) asks
+  `LoadedConfig::ownership().owns(dest)`: `mars.lock` claims it, or a provider installed it. The
+  package item then replaces the provided copy instead of colliding, so a package wins its
+  destination on every machine and `mars.lock` is identical with or without a host. Recovery
+  (`recovery.rs`) asks a narrower question (was a journaled write already published?) and reads
+  `mars.lock` alone; it journals only absent destinations, so replacing a provided directory leaves
+  no journal entry. A crash between that replace and the lock write is repaired by `mars provide`
+  (foreign bytes under a recorded name are replaced) and re-taken by the next sync.
+- **Ref reporting** (`validate::validate_skill_refs`): the one reporter of skill refs against what
+  is installed. The resolver never reads provided names and reports nothing for a ref it defers to
+  a declared provider; `validate::classify_unresolved_ref` decides `provided-skill-unavailable`,
+  `provided-skill-undeclared` or `missing-skill`. `mars check` calls the same classifier without
+  provided names, because it is the publish gate.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
 visibility, dependency collisions, and local shadowing therefore choose config entries once for

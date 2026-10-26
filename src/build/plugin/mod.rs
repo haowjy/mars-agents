@@ -250,7 +250,7 @@ fn stage_plugin_inner(
         diag,
     )?;
     let mut prepared_target =
-        crate::sync::prepare_target_state(&graph, &effective, diag, |_, _| Ok(()))?;
+        crate::sync::prepare_target_state(&graph, &effective, None, None, diag, |_, _| Ok(()))?;
     emit_missing_skill_warnings(&prepared_target.warnings, diag);
     materialize_rewritten_skills(&mut prepared_target.target)?;
 
@@ -434,7 +434,11 @@ fn emit_missing_skill_warnings(
             agent,
             skill_name,
             suggestion,
-        } = warning;
+        } = warning
+        else {
+            diag.warn(warning.code(), warning.message());
+            continue;
+        };
         let suffix = suggestion
             .as_ref()
             .map(|name| format!(" (did you mean `{name}`?)"))

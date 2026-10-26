@@ -128,27 +128,36 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             .map(|a| (a.name.clone(), a.path.clone()))
             .collect();
 
-        if let Ok(warnings) = crate::validate::check_deps(&agents_for_check, &available_skills) {
-            for w in &warnings {
-                match w {
-                    crate::validate::ValidationWarning::MissingSkill {
-                        agent,
-                        skill_name,
-                        suggestion,
-                    } => {
-                        let msg = match suggestion {
-                            Some(s) => format!(
-                                "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
-                                agent.name
-                            ),
-                            None => format!(
-                                "agent `{}` references missing skill `{skill_name}` — \
-                                 add a source that provides it, or create it locally in skills/{skill_name}/",
-                                agent.name
-                            ),
-                        };
-                        errors.push(msg);
+        if let Ok(missing) = crate::validate::check_deps(&agents_for_check, &available_skills) {
+            for w in &missing {
+                if let crate::validate::ValidationWarning::MissingSkill {
+                    agent,
+                    skill_name,
+                    suggestion,
+                } = w
+                {
+                    if mars_schema::provider::provider_of(skill_name).is_some() {
+                        // Doctor has no manifest, so it cannot tell a declared provider ref
+                        // from an undeclared one: a provider's skill is a warning here and
+                        // sync, which reads the manifest, is the authority.
+                        warnings.push(format!(
+                            "agent `{}` references skill `{skill_name}`, which a host program supplies (`mars provide`) and which is not installed here",
+                            agent.name,
+                        ));
+                        continue;
                     }
+                    let msg = match suggestion {
+                        Some(s) => format!(
+                            "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
+                            agent.name
+                        ),
+                        None => format!(
+                            "agent `{}` references missing skill `{skill_name}` — \
+                             add a source that provides it, or create it locally in skills/{skill_name}/",
+                            agent.name
+                        ),
+                    };
+                    errors.push(msg);
                 }
             }
         }

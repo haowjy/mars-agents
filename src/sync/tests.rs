@@ -212,6 +212,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock,
         },
@@ -273,6 +274,7 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock,
         },
@@ -353,6 +355,7 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock,
         },
@@ -414,6 +417,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock,
         },
@@ -477,6 +481,7 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock,
         },
@@ -1049,7 +1054,7 @@ fn validate_skill_refs_ignores_stale_installed_agent_content() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
 
-    let warnings = validate::validate_skill_refs(&target);
+    let warnings = validate::validate_skill_refs(&target, &graph, None, None);
 
     assert!(
         warnings.is_empty(),
@@ -1070,20 +1075,20 @@ fn validate_skill_refs_warns_for_missing_target_source_ref() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
 
-    let warnings = validate::validate_skill_refs(&target);
+    let warnings = validate::validate_skill_refs(&target, &graph, None, None);
 
     assert_eq!(warnings.len(), 1);
-    match &warnings[0] {
-        ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } => {
-            assert_eq!(agent.name, "coder");
-            assert_eq!(skill_name, "missing-skill");
-            assert_eq!(suggestion, &None);
-        }
-    }
+    let ValidationWarning::MissingSkill {
+        agent,
+        skill_name,
+        suggestion,
+    } = &warnings[0]
+    else {
+        panic!("expected a missing-skill warning, got {:?}", warnings[0]);
+    };
+    assert_eq!(agent.name, "coder");
+    assert_eq!(skill_name, "missing-skill");
+    assert_eq!(suggestion, &None);
 }
 
 #[test]
@@ -1135,7 +1140,8 @@ fn validate_skill_refs_uses_rewritten_content() {
     );
     let target = TargetState::from_items(items);
 
-    let warnings = validate::validate_skill_refs(&target);
+    let (graph, _) = make_graph_config(&fixture, Vec::new());
+    let warnings = validate::validate_skill_refs(&target, &graph, None, None);
 
     assert!(
         warnings.is_empty(),

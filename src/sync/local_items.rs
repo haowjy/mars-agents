@@ -9,12 +9,13 @@ use std::path::Path;
 
 use mars_schema::item::ItemKind;
 
+use super::ownership::Ownership;
 use super::{LoadedConfig, ResolvedState, SyncRequest};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::hash;
 use crate::local_source::{LocalDiscoveredItem, LocalItemContent};
-use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, LockIndex};
+use crate::lock::ItemId;
 use crate::sync::target::{self, TargetItem, TargetState, default_dest_path};
 use crate::types::{ContentHash, MarsContext, SourceName, SourceOrigin, managed_cmd};
 
@@ -32,7 +33,7 @@ pub(super) fn merge_local_items(
         resolved,
         request,
         local_source_name: SourceOrigin::LocalPackage.to_string().into(),
-        old_lock_index: LockIndex::new(&resolved.loaded.old_lock),
+        owns: resolved.loaded.ownership(),
         // `.mars/` is the canonical content root for diff and collision checks.
         managed_root: ctx.project_root.join(".mars"),
     };
@@ -56,7 +57,7 @@ struct LocalMerge<'a> {
     resolved: &'a ResolvedState,
     request: &'a SyncRequest,
     local_source_name: SourceName,
-    old_lock_index: LockIndex<'a>,
+    owns: Ownership<'a>,
     managed_root: std::path::PathBuf,
 }
 
@@ -88,11 +89,7 @@ impl LocalMerge<'_> {
             }
             target_state.select_hook(&target_name, &target_item, hook.clone());
             let disk_path = dest_path.resolve(&self.managed_root);
-            if !self
-                .old_lock_index
-                .contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-                && disk_path.symlink_metadata().is_ok()
-            {
+            if !self.owns.owns(&dest_path) && disk_path.symlink_metadata().is_ok() {
                 diag.warn(
                     "unmanaged-collision",
                     format!(
@@ -181,10 +178,7 @@ impl LocalMerge<'_> {
         }
 
         let disk_path = dest_path.resolve(&self.managed_root);
-        let unowned_collision = !self
-            .old_lock_index
-            .contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-            && disk_path.symlink_metadata().is_ok();
+        let unowned_collision = !self.owns.owns(&dest_path) && disk_path.symlink_metadata().is_ok();
         let adoptable = unowned_collision
             && force_adoptable_self_destination(&disk_path, &self.managed_root, kind);
         if unowned_collision && !(self.request.options.force && adoptable) {

@@ -4,6 +4,7 @@ pub mod diff;
 pub mod filter;
 mod local_items;
 pub mod mutation;
+pub(crate) mod ownership;
 pub mod plan;
 pub(crate) mod recovery;
 pub mod rewrite;
@@ -138,10 +139,19 @@ pub(crate) struct LoadedConfig {
     pub local: LocalConfig,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
+    /// What `mars provide` installed here, read under the sync lock. Never written by sync.
+    pub provided: crate::provided::ProvidedNames,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock.
     #[allow(dead_code)]
     pub sync_lock: FileLock,
+}
+
+impl LoadedConfig {
+    /// Whether a canonical destination is Mars-owned: claimed by `mars.lock` or provided.
+    pub(crate) fn ownership(&self) -> ownership::Ownership<'_> {
+        ownership::Ownership::new(&self.old_lock, &self.provided)
+    }
 }
 
 /// Phase 2: Resolved dependency graph.
@@ -428,11 +438,14 @@ pub(crate) fn load_config(
         );
     }
 
+    let provided = crate::provided::ProvidedNames::load(project_root, diag)?;
+
     Ok(LoadedConfig {
         config,
         local,
         effective,
         old_lock,
+        provided,
         dependency_changes,
         sync_lock: _sync_lock,
     })
@@ -535,6 +548,10 @@ pub(crate) struct PreparedTarget {
 
 /// Build, extend, rename, and validate one resolved graph target.
 ///
+/// `provided` is what a provider installed on this machine (`None` for a publish build, which
+/// ignores it); `local_declared` is the project's own `[package] uses-providers`. Both feed only
+/// the skill-ref check.
+///
 /// Sync extends the dependency target with project-local items before the
 /// shared rename pass; publish builds use the graph target unchanged. Keeping
 /// the extension inside this function preserves the own-package shadowing
@@ -542,6 +559,8 @@ pub(crate) struct PreparedTarget {
 pub(crate) fn prepare_target_state(
     graph: &crate::resolve::ResolvedGraph,
     effective: &EffectiveConfig,
+    provided: Option<&crate::provided::ProvidedNames>,
+    local_declared: Option<&[String]>,
     diag: &mut DiagnosticCollector,
     extend: impl FnOnce(&mut target::TargetState, &mut DiagnosticCollector) -> Result<(), MarsError>,
 ) -> Result<PreparedTarget, MarsError> {
@@ -557,7 +576,7 @@ pub(crate) fn prepare_target_state(
         }
     }
 
-    let warnings = validate::validate_skill_refs(&target);
+    let warnings = validate::validate_skill_refs(&target, graph, provided, local_declared);
 
     Ok(PreparedTarget {
         target,
@@ -594,6 +613,13 @@ pub(crate) fn build_target(
     } = prepare_target_state(
         &resolved.graph,
         &resolved.loaded.effective,
+        Some(&resolved.loaded.provided),
+        resolved
+            .loaded
+            .config
+            .package
+            .as_ref()
+            .map(|package| package.uses_providers.as_slice()),
         diag,
         |target_state, diag| {
             local_items::merge_local_items(
@@ -608,7 +634,7 @@ pub(crate) fn build_target(
             // Prevent managed installs from overwriting unmanaged files.
             let unmanaged_collisions = target::check_unmanaged_collisions(
                 managed_root,
-                &resolved.loaded.old_lock,
+                &resolved.loaded.ownership(),
                 target_state,
                 request.options.force,
             );
@@ -1007,28 +1033,8 @@ pub(crate) fn finalize(
         }
     }
 
-    for w in &state.applied.planned.targeted.warnings {
-        match w {
-            ValidationWarning::MissingSkill {
-                agent,
-                skill_name,
-                suggestion,
-            } => {
-                let msg = match suggestion {
-                    Some(s) => format!(
-                        "agent `{}` references missing skill `{}` (did you mean `{}`?)",
-                        agent.name, skill_name, s
-                    ),
-                    None => {
-                        format!(
-                            "agent `{}` references missing skill `{}`",
-                            agent.name, skill_name
-                        )
-                    }
-                };
-                diag.warn("missing-skill", msg);
-            }
-        }
+    for warning in &state.applied.planned.targeted.warnings {
+        diag.warn(warning.code(), warning.message());
     }
     let dependency_changes = state
         .applied

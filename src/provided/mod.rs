@@ -21,6 +21,7 @@
 
 mod entries;
 mod lock;
+mod names;
 mod reconcile;
 mod spec;
 
@@ -29,6 +30,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::error::MarsError;
+pub(crate) use names::ProvidedNames;
 use spec::ProvideSpec;
 
 /// What one `mars provide` run did, or why it wrote nothing.

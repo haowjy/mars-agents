@@ -542,7 +542,7 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so removed keys, invalid values and malformed YAML are errors (exit 1), unknown keys warn, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
 - Frontmatter: name, description presence and consistency
 - Duplicate `(kind, name)` discoveries within the package
-- Skill dependency references (warns about external deps)
+- Skill dependency references (warns about external deps). A ref `<skill>__<provider>` passes when `[package] uses-providers` lists the provider; otherwise it is an error naming `uses-providers`, with or without `[dependencies]`. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine
 - Symlinks in source packages (warned as unsupported)
 - Missing `SKILL.md` in skill directories
 - Configured plugin output: missing/skipped builds, stale inputs or versions, hand-edited or
@@ -665,6 +665,15 @@ to the package.
 `.mars/provided.lock` is machine-local (`version = 1`, one `[providers.<name>]`
 table per provider with `version`, `digest` and `skills`). `digest` is `pending`
 while an apply is in flight; the next run replans from the files on disk.
+
+Other commands only read it. `mars sync` counts the recorded names as available
+for refs from a package that declares the provider in `uses-providers` (see
+[mars.toml](../config/mars-toml.md#provided-skills-and-uses-providers)), and treats a
+recorded destination as Mars-owned, so a package item or `.mars-src/` item that wants
+the same destination replaces it instead of colliding. A missing, corrupt or newer
+`provided.lock` reads as "nothing provided" with one `provided-lock-unusable` warning.
+`mars doctor` warns, rather than errors, on a missing `<skill>__<provider>` ref, since
+it has no manifest to read declarations from.
 
 ---
 

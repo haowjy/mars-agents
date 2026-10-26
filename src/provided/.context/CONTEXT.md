@@ -4,9 +4,8 @@
 `.mars/skills/` and record their names in `.mars/provided.lock`. Provided skills are not
 dependencies: they are absent from `mars.toml`, `mars.lock` and the resolve graph, so nothing
 projects them into a managed target and every committed file stays byte-identical with or without
-a host. Not-yet-implemented readers (resolver, ref checks, sync ownership) are the other half of
-that story; until they land, a package item whose destination is a provided skill is still an
-unmanaged collision.
+a host. The readers (sync's ref validator, sync ownership, `mars check`, `mars doctor`) are the
+other half of that story: see "What readers see".
 
 ## The fast path runs before the lock
 
@@ -51,3 +50,27 @@ gitignored, so nothing committed carries a provider, a path or a version. A corr
 warning and an empty record (adoption recovers what the disk can prove); an unknown version is
 refused, because a newer Mars wrote it. Recorded names are validated as single path components
 before use, since the file is written by another build.
+
+## What readers see
+
+`names.rs` is the readers' view: `sync::load_config` loads `ProvidedNames` once the sync lock is
+held, and nothing else writes or re-reads the file during a sync. A reader never fails because of
+the record, so a plain run without the host neither deletes provided skills nor trips on them: an
+absent, corrupt or newer-than-this-Mars file reads as "nothing provided" (one
+`provided-lock-unusable` warning for the last two). Only `mars provide`, the writer, refuses a
+newer record. A read error that is not a missing file still fails the sync.
+
+Two facts come out of it, and each has one consumer. `provides(provider, skill)` feeds
+`validate::classify_unresolved_ref`, the one classifier behind sync's `provided-skill-*` /
+`missing-skill` reporting, `mars check` and the resolver's deferral; the resolver and `check` pass
+no provided names, so a dependency ref's validity depends on the requesting package alone and never
+on what a machine has installed. `owns(dest)` feeds `sync::ownership::Ownership`, the one ownership
+predicate: a destination is Mars-owned if `mars.lock` claims it or a provider installed it, so a
+package item (or a `.mars-src/` item) replaces a provided directory instead of colliding, on every
+machine. The next `mars provide` sees the claim in `mars.lock` and drops its record (`shadowed`).
+
+A sync that replaces a provided directory journals nothing (`sync/recovery.rs` journals only absent
+destinations), so a crash between the replace and the `mars.lock` write leaves the package's bytes
+under a recorded name. That is safe: `mars provide` hashes recorded trees and replaces them with the
+provider's copy, and the next sync replaces them again; a sync that runs first finds the same bytes
+already in place. Either order converges on the lock an uninterrupted sync writes.

@@ -403,12 +403,15 @@ pub fn resolve(
         );
 
         for skill_dep in skill_deps {
-            let resolved_skill = resolve_skill_ref(
+            let Some(resolved_skill) = resolve_skill_ref(
                 &skill_dep,
                 &pending_item,
                 ctx.registry(),
                 ctx.version_constraints(),
-            )?;
+            )?
+            else {
+                continue;
+            };
             if is_item_excluded(
                 ctx.materialization_filters(),
                 ctx.registry(),

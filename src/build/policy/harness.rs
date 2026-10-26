@@ -190,7 +190,7 @@ mod tests {
     use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
     use crate::routing::MatchEvidence;
     use mars_schema::agent::AgentProfile;
-    use mars_schema::agent::HarnessOverrides;
+    use mars_schema::harness_overrides::HarnessOverrides;
 
     static EMPTY_RUNTIME_ALIASES: LazyLock<IndexMap<String, ModelAlias>> =
         LazyLock::new(IndexMap::new);

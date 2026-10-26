@@ -111,6 +111,46 @@ pub(crate) fn unrecognized_field(removed: &[RemovedField], key: &str) -> SchemaD
     }
 }
 
+/// A bad value for a field the item kind defines (`kind` is the noun in the message).
+pub(crate) fn push_invalid(
+    kind: &str,
+    diags: &mut Vec<SchemaDiagnostic>,
+    path: Vec<PathSegment>,
+    value: impl Into<String>,
+    allowed: &'static str,
+) {
+    let value = value.into();
+    let severity = if matches!(path.first(), Some(PathSegment::Key(key)) if key == "harness-overrides")
+    {
+        Severity::Warning
+    } else {
+        Severity::Error
+    };
+    let display_field = if matches!(path.first(), Some(PathSegment::Key(key)) if key == "model-policies")
+    {
+        path.iter()
+            .map(|segment| match segment {
+                PathSegment::Key(key) => key.clone(),
+                PathSegment::Index(index) => format!("[{}]", index),
+            })
+            .fold(String::new(), |mut display, segment| {
+                if !display.is_empty() && !segment.starts_with('[') {
+                    display.push('.');
+                }
+                display.push_str(&segment);
+                display
+            })
+    } else {
+        display_path(&path)
+    };
+    diags.push(SchemaDiagnostic::new(
+        "field.value",
+        severity,
+        path,
+        format!("{kind} field `{display_field}` has invalid value `{value}`; allowed: {allowed}"),
+    ));
+}
+
 pub(crate) fn key_path(field: impl Into<String>) -> Vec<PathSegment> {
     vec![PathSegment::Key(field.into())]
 }

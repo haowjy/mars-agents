@@ -8,6 +8,7 @@ pub mod dialect;
 pub mod discover;
 mod dispatch;
 pub mod harness;
+pub mod harness_overrides;
 pub mod inspect;
 pub mod manifest;
 pub mod normalize;

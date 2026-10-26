@@ -28,7 +28,7 @@ fn profile_with_model(model: &str, harness: HarnessId) -> mars_schema::agent::Ag
         skills: mars_schema::frontmatter::SkillsSpec::default(),
         subagents: Vec::new(),
         tools: Default::default(),
-        harness_overrides: mars_schema::agent::HarnessOverrides::default(),
+        harness_overrides: mars_schema::harness_overrides::HarnessOverrides::default(),
         model_policies: Vec::new(),
     }
 }

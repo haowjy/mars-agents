@@ -129,8 +129,9 @@ pub(super) fn load_models_cache(project_root: &Path) -> Result<ModelsCache, Mars
 mod tests {
     use super::*;
 
-    use mars_schema::agent::{AgentProfile, HarnessOverrides};
+    use mars_schema::agent::AgentProfile;
     use mars_schema::frontmatter::SkillsSpec;
+    use mars_schema::harness_overrides::HarnessOverrides;
 
     fn empty_profile() -> AgentProfile {
         AgentProfile {

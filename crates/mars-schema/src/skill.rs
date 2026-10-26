@@ -26,7 +26,7 @@ pub struct SkillProfile {
     pub has_frontmatter: bool,
     /// Per-harness native keys (`harness-overrides:`), written only to that harness's file.
     #[serde(skip)]
-    pub harness_overrides: crate::agent::HarnessOverrides,
+    pub harness_overrides: crate::harness_overrides::HarnessOverrides,
 }
 
 /// Non-JSON YAML (tags, non-string keys) is left out, as in the reading's `frontmatter`,
@@ -168,8 +168,11 @@ fn read_fields(
                 }
             }
             "harness-overrides" => {
-                profile.harness_overrides =
-                    crate::agent::parse_harness_overrides("skill", value, &mut field_diagnostics);
+                profile.harness_overrides = crate::harness_overrides::parse_harness_overrides(
+                    "skill",
+                    value,
+                    &mut field_diagnostics,
+                );
             }
             _ => classification_diagnostics.push(unrecognized_field(REMOVED_SKILL_FIELDS, &key)),
         }

@@ -16,7 +16,8 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 | Module | Owns |
 |---|---|
 | `read` | `read(path, text)` and `read_definition(kind, text)`: the one way a definition is read; `Reading`, `DefinitionRead`, `Valid` |
-| `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; their removed-field tables (`RemovedField`, in `diagnostic`) |
+| `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; the removed-field tables (`RemovedField`, in `diagnostic`) |
+| `harness_overrides` | `harness-overrides` parsing and `HarnessOverrides`, shared by the Agent and skill readers |
 | `prepare` | `prepare`: classify one root, select, upgrade or translate, read; `Prepared`, `PrepareContext`, `Classification` |
 | `dispatch` | Classification order, layout choice, consumer-configuration detection, the dialect prediction (`DialectChoice` in `dialect`) |
 | `discover` | The one bounded walk (`walk`, `walk_dirs`, `excluded`), the Mars convention scan, payload assignment |

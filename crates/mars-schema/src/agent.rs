@@ -1,13 +1,11 @@
 //! Agent definition reader.
 
-use indexmap::IndexMap;
-
 use crate::HarnessId;
-use crate::ordered::OrderedValue;
 use serde_yaml::Value;
 
-use crate::diagnostic::{RemovedField, unrecognized_field};
+use crate::diagnostic::{RemovedField, push_invalid, unrecognized_field};
 use crate::frontmatter::{Frontmatter, SkillsSpec};
+use crate::harness_overrides::{HarnessOverrides, parse_harness_overrides};
 use crate::invocability::parse_invocability_axis;
 use crate::model_policy::ModelPolicyRule;
 use crate::tool_policy::{self, EffectiveToolPolicy};
@@ -164,34 +162,6 @@ impl EffortLevel {
 }
 
 // ---------------------------------------------------------------------------
-// Harness-native passthrough overrides
-// ---------------------------------------------------------------------------
-
-/// Per-harness target-native passthrough blocks (`harness-overrides:`).
-///
-/// Mars validates only shape/serializability. Nested keys are owned by the
-/// target harness and are not interpreted as Mars semantic fields.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-#[serde(transparent)]
-pub struct HarnessOverrides {
-    pub entries: IndexMap<String, IndexMap<String, OrderedValue>>,
-}
-
-fn mars_schema_harness_known(value: &str) -> Option<HarnessId> {
-    crate::harness::parse(value)
-}
-
-fn harness_key(harness: &HarnessId) -> &'static str {
-    harness.as_str()
-}
-
-impl HarnessOverrides {
-    pub fn get(&self, harness: &HarnessId) -> Option<&IndexMap<String, OrderedValue>> {
-        self.entries.get(harness_key(harness))
-    }
-}
-
-// ---------------------------------------------------------------------------
 // AgentProfile — the fully parsed frontmatter
 // ---------------------------------------------------------------------------
 
@@ -271,47 +241,6 @@ fn push_agent_invalid(
     push_invalid("agent", diags, path, value, allowed);
 }
 
-/// A bad value for a field the item kind defines (`kind` is the noun in the message).
-pub(crate) fn push_invalid(
-    kind: &str,
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-    path: Vec<crate::diagnostic::PathSegment>,
-    value: impl Into<String>,
-    allowed: &'static str,
-) {
-    use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, display_path};
-    let value = value.into();
-    let severity = if matches!(path.first(), Some(PathSegment::Key(key)) if key == "harness-overrides")
-    {
-        Severity::Warning
-    } else {
-        Severity::Error
-    };
-    let display_field = if matches!(path.first(), Some(PathSegment::Key(key)) if key == "model-policies")
-    {
-        path.iter()
-            .map(|segment| match segment {
-                PathSegment::Key(key) => key.clone(),
-                PathSegment::Index(index) => format!("[{}]", index),
-            })
-            .fold(String::new(), |mut display, segment| {
-                if !display.is_empty() && !segment.starts_with('[') {
-                    display.push('.');
-                }
-                display.push_str(&segment);
-                display
-            })
-    } else {
-        display_path(&path)
-    };
-    diags.push(SchemaDiagnostic::new(
-        "field.value",
-        severity,
-        path,
-        format!("{kind} field `{display_field}` has invalid value `{value}`; allowed: {allowed}"),
-    ));
-}
-
 fn push_unknown_harness(diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>, value: &str) {
     use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
     diags.push(SchemaDiagnostic::new(
@@ -320,247 +249,6 @@ fn push_unknown_harness(diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>, va
         key_path("harness"),
         format!("unknown harness `{value}`; known: claude, codex, opencode, cursor, pi"),
     ));
-}
-
-fn push_unknown_harness_override(
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-    value: &str,
-) {
-    use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path};
-    let mut path = key_path("harness-overrides");
-    path.push(PathSegment::Key(value.to_owned()));
-    diags.push(SchemaDiagnostic::new(
-        "harness.unknown",
-        Severity::Warning,
-        path,
-        format!("unknown harness override `{value}`; preserving passthrough block"),
-    ));
-}
-
-fn push_agent_tool_invalid(
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-    path: Vec<crate::diagnostic::PathSegment>,
-    value: &str,
-    allowed: &'static str,
-) {
-    push_agent_invalid(diags, path, value, allowed);
-}
-
-/// Report a key JavaScript cannot hold as a plain property; the key is left out of the reading.
-fn push_unholdable_key(
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-    path: &[crate::diagnostic::PathSegment],
-    key: &str,
-) -> bool {
-    let Err(message) = crate::ordered::reject_unholdable_key(key) else {
-        return false;
-    };
-    diags.push(crate::diagnostic::SchemaDiagnostic::new(
-        "yaml.non-json-value",
-        crate::diagnostic::Severity::Error,
-        path.to_vec(),
-        message,
-    ));
-    true
-}
-
-fn parse_native_config_value(
-    kind: &str,
-    path: &[crate::diagnostic::PathSegment],
-    value: &Value,
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> Option<OrderedValue> {
-    match value {
-        Value::Null => {
-            push_invalid(
-                kind,
-                diags,
-                path.to_vec(),
-                "null".to_string(),
-                "non-null scalar, array, or map value",
-            );
-            None
-        }
-        Value::Bool(v) => Some(OrderedValue::Bool(*v)),
-        Value::String(v) => Some(OrderedValue::String(v.clone())),
-        Value::Number(v) => {
-            if v.as_i64()
-                .is_some_and(|n| n.unsigned_abs() > crate::ordered::MAX_SAFE_INTEGER)
-                || v.as_u64()
-                    .is_some_and(|n| n > crate::ordered::MAX_SAFE_INTEGER)
-            {
-                push_invalid(
-                    kind,
-                    diags,
-                    path.to_vec(),
-                    v.to_string(),
-                    "integer within ±(2^53 − 1)",
-                );
-                None
-            } else if let Some(number) = v.as_i64().map(serde_json::Number::from) {
-                Some(OrderedValue::Number(number))
-            } else if let Some(number) = v.as_u64().map(serde_json::Number::from) {
-                Some(OrderedValue::Number(number))
-            } else if let Some(float) = v.as_f64() {
-                match serde_json::Number::from_f64(float) {
-                    Some(number) => Some(OrderedValue::Number(number)),
-                    None => {
-                        push_invalid(
-                            kind,
-                            diags,
-                            path.to_vec(),
-                            float.to_string(),
-                            "finite JSON number",
-                        );
-                        None
-                    }
-                }
-            } else {
-                push_invalid(
-                    kind,
-                    diags,
-                    path.to_vec(),
-                    crate::ordered::plain(value),
-                    "JSON number",
-                );
-                None
-            }
-        }
-        Value::Sequence(seq) => {
-            let mut out = Vec::with_capacity(seq.len());
-            for (index, entry) in seq.iter().enumerate() {
-                let mut child_path = path.to_vec();
-                child_path.push(crate::diagnostic::PathSegment::Index(index));
-                if let Some(parsed) = parse_native_config_value(kind, &child_path, entry, diags) {
-                    out.push(parsed);
-                }
-            }
-            Some(OrderedValue::Array(out))
-        }
-        Value::Mapping(mapping) => {
-            let mut out = IndexMap::new();
-            for (key, entry) in mapping {
-                let Some(key_text) = key.as_str() else {
-                    push_invalid(
-                        kind,
-                        diags,
-                        path.to_vec(),
-                        crate::ordered::plain(key),
-                        "string keys",
-                    );
-                    continue;
-                };
-                let mut child_path = path.to_vec();
-                child_path.push(crate::diagnostic::PathSegment::Key(key_text.to_owned()));
-                if push_unholdable_key(diags, &child_path, key_text) {
-                    continue;
-                }
-                if let Some(parsed) = parse_native_config_value(kind, &child_path, entry, diags) {
-                    out.insert(key_text.to_string(), parsed);
-                }
-            }
-            Some(OrderedValue::Object(out))
-        }
-        _ => {
-            push_invalid(
-                kind,
-                diags,
-                path.to_vec(),
-                crate::ordered::plain(value),
-                "YAML/TOML/JSON-serializable value",
-            );
-            None
-        }
-    }
-}
-
-/// `harness-overrides` of an Agent or skill; `kind` names the item in diagnostics.
-pub(crate) fn parse_harness_overrides(
-    kind: &str,
-    val: &Value,
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> HarnessOverrides {
-    use crate::diagnostic::{PathSegment, key_path};
-    let root = key_path("harness-overrides");
-    let mut out = HarnessOverrides::default();
-    let Some(mapping) = val.as_mapping() else {
-        push_invalid(
-            kind,
-            diags,
-            root.clone(),
-            crate::ordered::plain(val),
-            "mapping of harness name to target-native config mapping",
-        );
-        return out;
-    };
-
-    for (k, v) in mapping {
-        let Some(harness_name) = k.as_str() else {
-            push_invalid(
-                kind,
-                diags,
-                root.clone(),
-                crate::ordered::plain(k),
-                "string harness keys",
-            );
-            continue;
-        };
-        let mut harness_path = root.clone();
-        harness_path.push(PathSegment::Key(harness_name.to_owned()));
-        if push_unholdable_key(diags, &harness_path, harness_name) {
-            continue;
-        }
-        let Some(sub_mapping) = v.as_mapping() else {
-            push_invalid(
-                kind,
-                diags,
-                harness_path,
-                crate::ordered::plain(v),
-                "mapping of target-native keys",
-            );
-            continue;
-        };
-        if !crate::harness::RESERVED_CONSUMER_NAMESPACES.contains(&harness_name)
-            && mars_schema_harness_known(harness_name).is_none()
-        {
-            push_unknown_harness_override(diags, harness_name);
-        }
-        let mut parsed = IndexMap::new();
-        for (target_key, target_value) in sub_mapping {
-            let Some(key_text) = target_key.as_str() else {
-                push_invalid(
-                    kind,
-                    diags,
-                    harness_path.clone(),
-                    crate::ordered::plain(target_key),
-                    "string target-native keys",
-                );
-                continue;
-            };
-            let mut value_path = harness_path.clone();
-            value_path.push(PathSegment::Key(key_text.to_owned()));
-            if push_unholdable_key(diags, &value_path, key_text) {
-                continue;
-            }
-            if let Some(value) = parse_native_config_value(kind, &value_path, target_value, diags) {
-                parsed.insert(key_text.to_string(), value);
-            }
-        }
-        if !parsed.is_empty() {
-            out.entries.insert(harness_name.to_string(), parsed);
-        }
-    }
-
-    out
-}
-
-fn push_model_policy_invalid(
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-    path: Vec<crate::diagnostic::PathSegment>,
-    value: impl Into<String>,
-    allowed: &'static str,
-) {
-    push_agent_invalid(diags, path, value, allowed);
 }
 
 fn push_model_policy_parse_error(
@@ -583,10 +271,10 @@ fn push_model_policy_parse_error(
     };
     match error {
         crate::model_policy::ModelPolicyRuleParseError::RuleMustBeMapping { found } => {
-            push_model_policy_invalid(diags, rule_path, found, "mapping with match and override");
+            push_agent_invalid(diags, rule_path, found, "mapping with match and override");
         }
         crate::model_policy::ModelPolicyRuleParseError::MatchMissing => {
-            push_model_policy_invalid(
+            push_agent_invalid(
                 diags,
                 child("match"),
                 "<missing>",
@@ -594,7 +282,7 @@ fn push_model_policy_parse_error(
             );
         }
         crate::model_policy::ModelPolicyRuleParseError::MatchMustBeMapping { found } => {
-            push_model_policy_invalid(
+            push_agent_invalid(
                 diags,
                 child("match"),
                 found,
@@ -602,7 +290,7 @@ fn push_model_policy_parse_error(
             );
         }
         crate::model_policy::ModelPolicyRuleParseError::MatchMustContainExactlyOne { found } => {
-            push_model_policy_invalid(
+            push_agent_invalid(
                 diags,
                 child("match"),
                 found,
@@ -610,16 +298,16 @@ fn push_model_policy_parse_error(
             );
         }
         crate::model_policy::ModelPolicyRuleParseError::MatchKeyMustBeString { found } => {
-            push_model_policy_invalid(diags, child("match"), found, "model, alias, model-glob");
+            push_agent_invalid(diags, child("match"), found, "model, alias, model-glob");
         }
         crate::model_policy::ModelPolicyRuleParseError::UnknownMatchKey { key } => {
-            push_model_policy_invalid(diags, child("match"), key, "model, alias, model-glob");
+            push_agent_invalid(diags, child("match"), key, "model, alias, model-glob");
         }
         crate::model_policy::ModelPolicyRuleParseError::MatchValueMustBeString { key, found } => {
-            push_model_policy_invalid(diags, grandchild("match", &key), found, "non-empty string");
+            push_agent_invalid(diags, grandchild("match", &key), found, "non-empty string");
         }
         crate::model_policy::ModelPolicyRuleParseError::MatchValueEmpty { key } => {
-            push_model_policy_invalid(
+            push_agent_invalid(
                 diags,
                 grandchild("match", &key),
                 "<empty>",
@@ -627,10 +315,10 @@ fn push_model_policy_parse_error(
             );
         }
         crate::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
-            push_model_policy_invalid(diags, child("override"), found, "mapping");
+            push_agent_invalid(diags, child("override"), found, "mapping");
         }
         crate::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key } => {
-            push_model_policy_invalid(
+            push_agent_invalid(
                 diags,
                 grandchild("override", &key),
                 key,
@@ -642,13 +330,13 @@ fn push_model_policy_parse_error(
             found,
             allowed,
         } => {
-            push_model_policy_invalid(diags, grandchild("override", &key), found, allowed);
+            push_agent_invalid(diags, grandchild("override", &key), found, allowed);
         }
         crate::model_policy::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
-            push_model_policy_invalid(diags, child("no-fallback"), found, "boolean");
+            push_agent_invalid(diags, child("no-fallback"), found, "boolean");
         }
         crate::model_policy::ModelPolicyRuleParseError::WhenInvalid { found } => {
-            push_model_policy_invalid(diags, child("when"), found, "non-empty one-line string");
+            push_agent_invalid(diags, child("when"), found, "non-empty one-line string");
         }
     }
 }
@@ -658,7 +346,7 @@ fn parse_model_policies(
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> Vec<ModelPolicyRule> {
     let Some(seq) = val.as_sequence() else {
-        push_model_policy_invalid(
+        push_agent_invalid(
             diags,
             crate::diagnostic::key_path("model-policies"),
             crate::ordered::plain(val),
@@ -919,7 +607,7 @@ fn read_fields(
                     ));
                 } else {
                     let mut invalid = |path, value: &str, allowed: &'static str| {
-                        push_agent_tool_invalid(diags, path, value, allowed);
+                        push_agent_invalid(diags, path, value, allowed);
                     };
                     profile.tools = tool_policy::parse_tool_policy(Some(value), &mut invalid);
                 }

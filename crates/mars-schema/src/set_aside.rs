@@ -214,6 +214,22 @@ fn restriction_lost(path: &[PathSegment], removed: &Value) -> Option<String> {
     })
 }
 
+/// The reader's reason, except for a `permission` map: the reader's advice is about Flow's scalar
+/// `permission`, and a map is OpenCode's format.
+fn reason(key: &str, value: Option<&Value>, destination: Destination<'_>, read: &str) -> String {
+    if key != "permission" || !matches!(value, Some(Value::Mapping(_))) {
+        return read.to_owned();
+    }
+    match destination {
+        Destination::Overrides(_) => "`permission` as a map is OpenCode's format; declare \
+             `dialect = \"open-code\"` on this dependency so Mars reads it"
+            .to_owned(),
+        Destination::Nowhere => "`permission` as a map is OpenCode's format; put it under \
+             `harness-overrides.opencode.permission`"
+            .to_owned(),
+    }
+}
+
 /// Reports what the guard did: a change per piece set aside, coded [`RESTRICTION_LOST`] when it
 /// was a restriction.
 struct Report<'a> {
@@ -292,7 +308,7 @@ pub(crate) fn set_aside_rejected_keys(
             }
             continue;
         }
-        let why = rejections[0].why.clone();
+        let why = reason(&key, fm.get(&key), destination, &rejections[0].why);
         if reserved || matches!(destination, Destination::Nowhere) {
             let removed = fm.remove(&key).unwrap_or(Value::Null);
             changed = true;

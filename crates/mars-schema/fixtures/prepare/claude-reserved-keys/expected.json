@@ -154,7 +154,7 @@
         "path": [
           "permission"
         ],
-        "message": "agent `g` lost the restriction `permission`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (`permission` was removed; move it under `harness-overrides.flow.permission`)"
+        "message": "agent `g` lost the restriction `permission`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (`permission` as a map is OpenCode's format; declare `dialect = \"open-code\"` on this dependency so Mars reads it)"
       }
     ],
     "skills/lint/SKILL.md": [

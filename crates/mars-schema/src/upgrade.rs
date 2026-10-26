@@ -6,18 +6,23 @@ use toml_edit::{DocumentMut, Item};
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum DefinitionKind {
     Agent,
     Skill,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UpgradeResult {
     pub text: String,
     pub diagnostics: Vec<SchemaDiagnostic>,
     /// A changed definition whose source shape prevented top-level block editing.
     pub fully_rewritten: bool,
+    /// Authored key paths whose values or presence changed.
+    pub edited_paths: Vec<Vec<PathSegment>>,
 }
 
 impl UpgradeResult {
@@ -49,8 +54,11 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
             text: text.to_string(),
             diagnostics,
             fully_rewritten: false,
+            edited_paths: Vec::new(),
         });
     }
+
+    let edited_paths = changed_mapping_paths(original.mapping(), frontmatter.mapping());
 
     let fallback = frontmatter.render();
     let minimally_edited = edit_top_level_blocks(text, original.mapping(), frontmatter.mapping())
@@ -64,6 +72,7 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
         fully_rewritten: minimally_edited.is_none(),
         text: minimally_edited.unwrap_or(fallback),
         diagnostics,
+        edited_paths,
     })
 }
 
@@ -78,18 +87,45 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
             text: text.to_string(),
             diagnostics: Vec::new(),
             fully_rewritten: false,
+            edited_paths: Vec::new(),
         });
     }
+    let mut edited_paths = vec![vec![
+        PathSegment::Key("package".to_string()),
+        PathSegment::Key("schema".to_string()),
+    ]];
     package.insert("schema", toml_edit::value(1));
     let mut diagnostics = Vec::new();
     if package.remove("visibility").is_some() {
         diagnostics.push(removed(&["package", "visibility"], "visibility"));
+        edited_paths.push(vec![
+            PathSegment::Key("package".to_string()),
+            PathSegment::Key("visibility".to_string()),
+        ]);
     }
     Ok(UpgradeResult {
         text: document.to_string(),
         diagnostics,
         fully_rewritten: false,
+        edited_paths,
     })
+}
+
+fn changed_mapping_paths(before: &Mapping, after: &Mapping) -> Vec<Vec<PathSegment>> {
+    let mut keys = before
+        .keys()
+        .chain(after.keys())
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    keys.dedup();
+    keys.into_iter()
+        .filter(|key| {
+            let key = Value::String((*key).to_string());
+            before.get(&key) != after.get(&key)
+        })
+        .map(|key| vec![PathSegment::Key(key.to_string())])
+        .collect()
 }
 
 #[derive(Debug)]

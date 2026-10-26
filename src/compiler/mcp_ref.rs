@@ -15,22 +15,6 @@ fn segment_display(segment: &McpSegment) -> String {
     }
 }
 
-pub(crate) fn parse_foreign_mcp_token(
-    raw: &str,
-    dialect: crate::dialect::Dialect,
-) -> Option<McpRef> {
-    use mars_schema::mcp::ForeignMcpDialect;
-
-    let dialect = match dialect {
-        crate::dialect::Dialect::Claude => ForeignMcpDialect::Claude,
-        crate::dialect::Dialect::Cursor => ForeignMcpDialect::Cursor,
-        crate::dialect::Dialect::Codex
-        | crate::dialect::Dialect::OpenCode
-        | crate::dialect::Dialect::MarsNative => return None,
-    };
-    mars_schema::mcp::parse_foreign_mcp_token(raw, dialect)
-}
-
 /// Per-harness native MCP token projection from a canonical [`McpRef`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum McpProjection {

@@ -4,6 +4,8 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod agent;
+pub mod dialect;
+mod discover;
 pub mod harness;
 pub mod manifest;
 pub mod read;
@@ -15,6 +17,7 @@ pub use harness::HarnessId;
 pub mod frontmatter;
 pub mod invocability;
 pub mod item;
+pub mod lift;
 pub mod markdown;
 
 pub mod mcp;
@@ -27,4 +30,6 @@ pub mod model_policy;
 
 pub mod diagnostic;
 pub mod package;
+pub mod plugin_metadata;
+pub mod prepare;
 pub mod upgrade;

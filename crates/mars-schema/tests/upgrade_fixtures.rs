@@ -29,6 +29,7 @@ fn legacy_upgrade_fixtures() {
                 text: input.clone(),
                 diagnostics: Vec::new(),
                 fully_rewritten: false,
+                edited_paths: Vec::new(),
             },
             other => panic!("unknown fixture kind {other}"),
         };
@@ -73,6 +74,7 @@ fn legacy_upgrade_fixtures() {
                 text: result.text.clone(),
                 diagnostics: Vec::new(),
                 fully_rewritten: false,
+                edited_paths: Vec::new(),
             },
             _ => unreachable!(),
         };

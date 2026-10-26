@@ -16,7 +16,7 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 | Module | Owns |
 |---|---|
 | `read` | `read(path, text)` and `read_definition(kind, text)`: the one way a definition is read; `Reading`, `DefinitionRead`, `Valid` |
-| `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; the removed-field tables (`RemovedField`, in `diagnostic`) |
+| `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; the removed-field and removed-value tables (`RemovedField`, `RemovedValue`, in `diagnostic`) |
 | `harness_overrides` | `harness-overrides` parsing and `HarnessOverrides`, shared by the Agent and skill readers |
 | `prepare` | `prepare`: classify one root, select, upgrade or translate, read; `Prepared`, `PrepareContext`, `Classification` |
 | `dispatch` | Classification order, layout choice, consumer-configuration detection, the dialect prediction (`DialectChoice` in `dialect`) |
@@ -43,8 +43,8 @@ is the one classification and `DialectChoice` the one record of a dialect and it
 `inspect` reports a `Kind` derived from the classification and layout, not a parallel enum.
 
 A root with no manifest is a pre-v1 Mars package, read through the upgrade, when it is declared
-`mars-native` or a definition carries a key only pre-v1 Mars defined (`RemovedField::mars_only`)
-or `approval: yolo`; the rest are read under the dialect declared or predicted.
+`mars-native` or a definition carries a key or value only pre-v1 Mars defined
+(`RemovedField::mars_only`, `RemovedValue::mars_only`); the rest are read under the dialect declared or predicted.
 
 `PrepareContext` is `Package` (a package root), `AuthoredLocal` (a consumer project's
 `.mars-src`) or `Project` (a directory that is either: a `mars.toml` with no `[package]` is

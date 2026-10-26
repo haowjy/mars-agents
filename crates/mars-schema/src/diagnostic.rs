@@ -99,6 +99,55 @@ impl RemovedField {
     }
 }
 
+/// A value a schema version removed from a field that remains. The reader reports it, the legacy
+/// upgrade rewrites it to `replacement`, and a `mars_only` value (one no foreign dialect uses) is
+/// evidence that a manifest-free tree was written for pre-v1 Mars.
+pub(crate) struct RemovedValue {
+    pub key: &'static str,
+    pub value: &'static str,
+    pub replacement: &'static str,
+    pub mars_only: bool,
+}
+
+impl RemovedValue {
+    pub(crate) const fn new(
+        key: &'static str,
+        value: &'static str,
+        replacement: &'static str,
+    ) -> Self {
+        Self {
+            key,
+            value,
+            replacement,
+            mars_only: false,
+        }
+    }
+
+    pub(crate) const fn mars_only(mut self) -> Self {
+        self.mars_only = true;
+        self
+    }
+
+    /// The entry for `value` in `key`, when `removed` lists that pair.
+    pub(crate) fn find<'a>(removed: &'a [Self], key: &str, value: &str) -> Option<&'a Self> {
+        removed
+            .iter()
+            .find(|entry| entry.key == key && entry.value == value)
+    }
+
+    pub(crate) fn diagnostic(&self) -> SchemaDiagnostic {
+        SchemaDiagnostic::new(
+            "field.removed",
+            Severity::Error,
+            key_path(self.key),
+            format!(
+                "{} value `{}` was removed; use `{}`",
+                self.key, self.value, self.replacement
+            ),
+        )
+    }
+}
+
 /// What an Agent or skill reader reports for a key it has no field for: `field.removed` (an
 /// error) when `removed` lists it, else `field.unknown` (a warning). An unknown key stays in the
 /// authored file and reaches no native file.

@@ -3,7 +3,7 @@
 use crate::HarnessId;
 use serde_yaml::Value;
 
-use crate::diagnostic::{RemovedField, push_invalid, unrecognized_field};
+use crate::diagnostic::{RemovedField, RemovedValue, push_invalid, unrecognized_field};
 use crate::frontmatter::{Frontmatter, SkillsSpec};
 use crate::harness_overrides::{HarnessOverrides, parse_harness_overrides};
 use crate::invocability::parse_invocability_axis;
@@ -29,6 +29,13 @@ pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
         "move it under `harness-overrides.flow.permission`",
     )
     .mars_only(),
+];
+
+/// Values the legacy upgrade rewrites; the reader refuses them.
+pub(crate) const REMOVED_AGENT_VALUES: &[RemovedValue] = &[
+    RemovedValue::new("approval", "yolo", "never").mars_only(),
+    RemovedValue::new("effort", "adaptive", "medium"),
+    RemovedValue::new("effort", "disabled", "none"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -573,13 +580,10 @@ pub(crate) fn read_fields(
             "approval" => {
                 profile.approval =
                     read_string(value, "approval", false, diags).and_then(|approval| {
-                        if approval == "yolo" {
-                            diags.push(SchemaDiagnostic::new(
-                                "field.removed",
-                                Severity::Error,
-                                key_path("approval"),
-                                "approval value `yolo` was removed; use `never`",
-                            ));
+                        if let Some(removed) =
+                            RemovedValue::find(REMOVED_AGENT_VALUES, "approval", &approval)
+                        {
+                            diags.push(removed.diagnostic());
                             return None;
                         }
                         ApprovalMode::parse(&approval).or_else(|| {
@@ -608,6 +612,12 @@ pub(crate) fn read_fields(
             }
             "effort" => {
                 profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {
+                    if let Some(removed) =
+                        RemovedValue::find(REMOVED_AGENT_VALUES, "effort", &effort)
+                    {
+                        diags.push(removed.diagnostic());
+                        return None;
+                    }
                     EffortLevel::parse(&effort).or_else(|| {
                         push_agent_invalid(diags, key_path("effort"), effort, EffortLevel::ALLOWED);
                         None

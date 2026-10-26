@@ -7,7 +7,10 @@ use crate::claude;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 use crate::item::DefinitionKind;
-use crate::{agent::REMOVED_AGENT_FIELDS, skill};
+use crate::{
+    agent::{REMOVED_AGENT_FIELDS, REMOVED_AGENT_VALUES},
+    skill,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UpgradeResult {
@@ -296,9 +299,9 @@ fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
         }
     }
 
-    replace_scalar(fm, "effort", "adaptive", "medium");
-    replace_scalar(fm, "effort", "disabled", "none");
-    replace_scalar(fm, "approval", "yolo", "never");
+    for removed in REMOVED_AGENT_VALUES {
+        replace_scalar(fm, removed.key, removed.value, removed.replacement);
+    }
     move_permission(fm);
     strip_model_policy_overrides(fm, diagnostics);
     // A pre-v1 file passed unknown keys to every harness; Claude's own keep reaching Claude.

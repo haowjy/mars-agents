@@ -391,8 +391,8 @@ enum Prediction {
     MarsLegacy,
 }
 
-/// A file only pre-v1 Mars could have written: a removed key no foreign import reads
-/// (`disallowed-tools` is one Claude's import reads, so it is not evidence), or `approval: yolo`.
+/// A file only pre-v1 Mars could have written: a removed key or value no foreign import
+/// reads (`disallowed-tools` is one Claude's import reads, so it is not evidence).
 fn is_pre_v1_mars(kind: DefinitionKind, frontmatter: &crate::frontmatter::Frontmatter) -> bool {
     let removed = match kind {
         DefinitionKind::Agent => crate::agent::REMOVED_AGENT_FIELDS,
@@ -403,10 +403,13 @@ fn is_pre_v1_mars(kind: DefinitionKind, frontmatter: &crate::frontmatter::Frontm
             .iter()
             .any(|field| field.mars_only && field.key == key.as_str())
     }) || (kind == DefinitionKind::Agent
-        && frontmatter
-            .get("approval")
-            .and_then(serde_yaml::Value::as_str)
-            == Some("yolo"))
+        && crate::agent::REMOVED_AGENT_VALUES.iter().any(|removed| {
+            removed.mars_only
+                && frontmatter
+                    .get(removed.key)
+                    .and_then(serde_yaml::Value::as_str)
+                    == Some(removed.value)
+        }))
 }
 
 /// No manifest or container decided: the discovered files do. A key only pre-v1 Mars defined

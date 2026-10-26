@@ -3,16 +3,46 @@
 /// Handles MCP server registration for the OpenCode harness.
 ///
 /// OpenCode-native lowering:
-/// - MCP: writes to `opencode.json` (mcpServers section), env vars as plain name map
+/// - MCP: writes to `opencode.json` (`mcp` section), with local command arrays and
+///   `{env:VAR}` environment references
 ///
-/// Mars has no OpenCode hook writer; OpenCode extensibility uses TypeScript plugins.
+/// Mars has no OpenCode hook config writer; OpenCode hooks are TypeScript plugins.
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+use serde::Serialize;
 
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
 
 use super::{ConfigEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
+
+/// The native MCP entry shared by direct target sync and the OpenCode plugin build.
+#[derive(Debug, Serialize)]
+pub(crate) struct McpServer {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    command: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    environment: BTreeMap<String, String>,
+}
+
+impl From<&McpServerEntry> for McpServer {
+    fn from(server: &McpServerEntry) -> Self {
+        Self {
+            kind: "local",
+            command: std::iter::once(server.command.clone())
+                .chain(server.args.iter().cloned())
+                .collect(),
+            environment: server
+                .env
+                .iter()
+                .map(|(key, variable)| (key.clone(), format!("{{env:{variable}}}")))
+                .collect(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct OpencodeAdapter;
@@ -113,11 +143,11 @@ impl TargetAdapter for OpencodeAdapter {
 //
 // OpenCode uses a single config file for MCP:
 // {
-//   "mcpServers": {
+//   "mcp": {
 //     "server-name": {
-//       "command": "...",
-//       "args": [...],
-//       "env": { "KEY": "VAR_NAME" }   ← plain var name, no interpolation
+//       "type": "local",
+//       "command": ["...", "..."],
+//       "environment": { "KEY": "{env:VAR_NAME}" }
 //     }
 //   }
 // }
@@ -140,33 +170,27 @@ fn write_opencode_config(
         })
     })?;
 
+    // A prior release owned these names under `mcpServers`. Remove only names
+    // that are being written now; unrelated user entries remain untouched.
+    migrate_legacy_mcp_servers(root_obj, servers);
+
     // MCP servers
     if !servers.is_empty() {
         let mcp_obj = root_obj
-            .entry("mcpServers")
+            .entry("mcp")
             .or_insert_with(|| serde_json::json!({}));
         let mcp_map = mcp_obj.as_object_mut().ok_or_else(|| {
             MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{}: mcpServers is not an object", path.display()),
+                message: format!("{}: mcp is not an object", path.display()),
             })
         })?;
 
         for server in servers {
-            let mut entry = serde_json::json!({
-                "command": server.command,
-                "args": server.args,
-            });
-
-            // OpenCode: env as plain name map (no interpolation)
-            if !server.env.is_empty() {
-                let env_obj: serde_json::Map<String, serde_json::Value> = server
-                    .env
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                    .collect();
-                entry["env"] = serde_json::Value::Object(env_obj);
-            }
-
+            let entry = serde_json::to_value(McpServer::from(*server)).map_err(|error| {
+                MarsError::Config(crate::error::ConfigError::Invalid {
+                    message: format!("failed to serialize OpenCode MCP server: {error}"),
+                })
+            })?;
             mcp_map.insert(server.name.clone(), entry);
         }
     }
@@ -207,15 +231,19 @@ fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(
         None => return Ok(()),
     };
 
-    // Remove MCP entries
-    if let Some(mcp_map) = root_obj
-        .get_mut("mcpServers")
-        .and_then(|v| v.as_object_mut())
-    {
+    // Remove MCP entries from both the current and one-release legacy keys.
+    for section in ["mcp", "mcpServers"] {
+        let Some(mcp_map) = root_obj.get_mut(section).and_then(|v| v.as_object_mut()) else {
+            continue;
+        };
+        let mut changed = false;
         for key in entry_keys {
             if let Some(name) = key.strip_prefix("mcp:") {
-                mcp_map.remove(name);
+                changed |= mcp_map.remove(name).is_some();
             }
+        }
+        if changed && mcp_map.is_empty() {
+            root_obj.remove(section);
         }
     }
 
@@ -254,6 +282,26 @@ fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(
     })?;
     crate::fs::atomic_write(&path, content.as_bytes())?;
     Ok(())
+}
+
+fn migrate_legacy_mcp_servers(
+    root_obj: &mut serde_json::Map<String, serde_json::Value>,
+    servers: &[&McpServerEntry],
+) {
+    let Some(legacy_map) = root_obj
+        .get_mut("mcpServers")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+
+    let mut changed = false;
+    for server in servers {
+        changed |= legacy_map.remove(&server.name).is_some();
+    }
+    if changed && legacy_map.is_empty() {
+        root_obj.remove("mcpServers");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +348,8 @@ mod tests {
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["context7"].is_object());
+        assert!(json["mcp"]["context7"].is_object());
+        assert_eq!(json["mcp"]["context7"]["type"], "local");
     }
 
     #[test]
@@ -319,8 +368,10 @@ mod tests {
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        // OpenCode: env is a plain name map (not interpolated)
-        assert_eq!(json["mcpServers"]["server"]["env"]["TOKEN"], "MY_TOKEN");
+        assert_eq!(
+            json["mcp"]["server"]["environment"]["TOKEN"],
+            "{env:MY_TOKEN}"
+        );
     }
 
     #[test]
@@ -341,8 +392,8 @@ mod tests {
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["to-remove"].is_null());
-        assert!(json["mcpServers"]["to-keep"].is_object());
+        assert!(json["mcp"]["to-remove"].is_null());
+        assert!(json["mcp"]["to-keep"].is_object());
     }
 
     #[test]

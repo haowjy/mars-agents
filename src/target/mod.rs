@@ -232,6 +232,11 @@ pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
             message: format!("{}: mcpServers is not an object", path.display()),
         }));
     }
+    if object.get("mcp").is_some_and(|value| !value.is_object()) {
+        return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+            message: format!("{}: mcp is not an object", path.display()),
+        }));
+    }
     if let Some(hooks) = object.get("hooks") {
         let hooks = hooks.as_object().ok_or_else(|| {
             MarsError::Config(crate::error::ConfigError::Invalid {

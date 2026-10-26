@@ -11,7 +11,7 @@ function runtimeServer(server) {
 
   const environment = {}
   for (const [key, value] of Object.entries(server.environment)) {
-    const match = /^\$\{env:(.+)\}$/.exec(value)
+    const match = /^\{env:(.+)\}$/.exec(value)
     if (!match) {
       environment[key] = value
       continue

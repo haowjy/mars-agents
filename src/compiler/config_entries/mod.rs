@@ -434,6 +434,21 @@ pub(crate) fn compile_config_entries(
                 };
                 match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir) {
                     Ok(content) => {
+                        if target_root == ".opencode" {
+                            let fragment = item.def.targets[target_root]
+                                .fragment
+                                .clone()
+                                .unwrap_or_else(|| {
+                                    crate::compiler::hooks::default_fragment_name(target_root)
+                                });
+                            crate::compiler::hooks::check_opencode_default_export(
+                                &item.def.name,
+                                &item.source_name,
+                                &fragment,
+                                &content,
+                                diag,
+                            );
+                        }
                         let relative_dest = relative_dest.to_string_lossy().into_owned();
                         desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
                         file_writes.push((

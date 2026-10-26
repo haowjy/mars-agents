@@ -20,6 +20,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- OpenCode sync now registers MCP servers under native `mcp` entries with `{env:VAR}`
+  environment references, migrates Mars-owned legacy `mcpServers` entries, and removes stale
+  servers from either section without touching unowned entries.
+- OpenCode sync now warns when a hook fragment lacks the required default `{ id, setup }` export,
+  matching plugin builds while still installing the fragment.
 - Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,
   and malformed non-table `plugin` values survive config loading and saving so non-plugin commands
   can continue while `mars check` and plugin builds report the invalid value.

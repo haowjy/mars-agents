@@ -124,6 +124,63 @@ pub fn default_fragment_name(target: &str) -> String {
     format!("{}.json", target.trim_start_matches('.'))
 }
 
+/// Warn when an OpenCode fragment cannot be recognized as a plugin default export.
+///
+/// OpenCode reports this load failure only as a warning and still exits
+/// successfully, so both sync and plugin builds check the authored fragment
+/// before installing or shipping it. The fragment remains available so a
+/// forward-compatible export shape is not silently discarded.
+pub(crate) fn check_opencode_default_export(
+    hook_name: &str,
+    source_name: &str,
+    fragment: &str,
+    content: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    if has_default_export(content) {
+        return;
+    }
+
+    diag.warn(
+        "plugin-opencode-hook-default-export",
+        format!(
+            "hook `{hook_name}` from `{source_name}`: OpenCode fragment `{fragment}` has no recognizable default export; add a default `{{ id, setup }}` export; the fragment will still be installed",
+        ),
+    );
+}
+
+fn has_default_export(content: &str) -> bool {
+    content.lines().any(|line| {
+        let line = line.trim_start();
+        let Some(after_export) = line.strip_prefix("export") else {
+            return false;
+        };
+        if after_export
+            .chars()
+            .next()
+            .is_some_and(|character| !character.is_whitespace() && character != '{')
+        {
+            return false;
+        }
+        let exported = after_export.trim_start();
+        exported.strip_prefix("default").is_some_and(|rest| {
+            rest.chars().next().is_none_or(|character| {
+                !character.is_ascii_alphanumeric() && !matches!(character, '_' | '$')
+            })
+        }) || (exported.starts_with('{')
+            && exported.split_once('}').is_some_and(|(bindings, _)| {
+                bindings.split(',').any(|binding| {
+                    binding.split_whitespace().collect::<Vec<_>>() == ["{", "default"]
+                        || binding
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .windows(2)
+                            .any(|tokens| tokens == ["as", "default"])
+                })
+            }))
+    })
+}
+
 pub fn discover_hook_items(
     package_root: &Path,
     source_name: &str,

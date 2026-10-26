@@ -136,7 +136,8 @@ pub(crate) struct NativeModelRoutingRuntime<'a> {
     cache: &'a ModelsCache,
     catalog_model_slugs: Vec<String>,
     routing_settings: ResolvedRoutingSettings,
-    /// `[[settings.model-policies]]`: the lowest policy layer, known at sync.
+    /// `[[settings.model-policies]]`, the lowest policy layer, known at sync, and the project's
+    /// network settings, which sync reports once per target.
     settings: crate::config::Settings,
     session: CapabilitySession,
     installed_for_native_targets: HashSet<String>,
@@ -154,6 +155,10 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
         });
         Self::with_session(aliases, cache, routing_settings, session)
+    }
+
+    pub(crate) fn project_network_keys(&self) -> Vec<&'static str> {
+        self.settings.network_keys()
     }
 
     /// Settings model policies join the native precedence chain, as in the bundle.
@@ -759,6 +764,7 @@ pub(crate) fn compile_native_agents<'a>(
         options: &ctx.options,
     };
     let mut records = Vec::new();
+    let mut codex_emitted = false;
 
     // `mars_agents` carry already overlay-resolved profiles (resolved once in
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
@@ -776,6 +782,7 @@ pub(crate) fn compile_native_agents<'a>(
             ctx.configured_emit_harnesses,
             model_router,
         ) {
+            codex_emitted |= emission.harness == mars_schema::HarnessId::Codex;
             emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &emission.harness,
@@ -790,6 +797,16 @@ pub(crate) fn compile_native_agents<'a>(
                 &mut records,
             );
         }
+    }
+
+    // Native Codex files carry no network setting, and a project default is not any one
+    // Agent's, so it is reported once for the target.
+    if codex_emitted {
+        crate::compiler::lossiness::emit_project_settings_dropped_warning(
+            &model_router.project_network_keys(),
+            "Codex",
+            diag,
+        );
     }
 
     records

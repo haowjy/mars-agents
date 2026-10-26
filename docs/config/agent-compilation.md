@@ -295,7 +295,7 @@ TOML format. Codex reads this for native agent invocation.
 
 Mars does not write `network_access` or host sets into Codex native TOML. Native Codex
 therefore keeps its own network default (off for `workspace-write`) rather than
-honoring the profile's `network` value. A launch through Meridian enforces `network` from
+honoring the profile's `network` value. An Agent's own `network`, `network-allow` or `network-deny` is reported as dropped on that Agent. A project's `[settings]` network (`default-network`, `network-allow`, `network-deny`) is not any one Agent's: `mars sync` reports it once for the `.codex` target, not on every Agent. A launch through Meridian enforces `network` from
 the bundle's `execution_policy.network`.
 
 **Approval value mapping:**

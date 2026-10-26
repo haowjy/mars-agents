@@ -611,6 +611,18 @@ impl Settings {
         self.meridian.agent_copy.as_ref()
     }
 
+    /// The network keys a project sets in `[settings]` (or inherits from the user config).
+    pub fn network_keys(&self) -> Vec<&'static str> {
+        [
+            ("default-network", self.default_network.is_some()),
+            ("network-allow", !self.network_allow.entries().is_empty()),
+            ("network-deny", !self.network_deny.entries().is_empty()),
+        ]
+        .into_iter()
+        .filter_map(|(key, set)| set.then_some(key))
+        .collect()
+    }
+
     /// Fanout agent list from `[settings.meridian.fanout]`.
     pub fn meridian_fanout_agents(&self) -> &[String] {
         self.meridian

@@ -337,6 +337,12 @@ pub(crate) fn report_diagnostics(
     for (relative, diagnostics) in &prepared.diagnostics {
         let context = format!("source `{}`", authored_root.join(relative).display());
         for diagnostic in diagnostics {
+            if prepared.classification == Classification::MarsLegacy
+                && diagnostic.code == "field.removed"
+                && diagnostic.message.starts_with("removed legacy key")
+            {
+                continue;
+            }
             diag.schema(diagnostic, &context, false);
         }
     }

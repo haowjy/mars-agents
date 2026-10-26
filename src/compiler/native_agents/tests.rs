@@ -910,6 +910,7 @@ fn emit_all_consumes_overlay_model_policies() {
                 match_value: "opus".to_string(),
                 no_fallback: false,
                 overrides: Default::default(),
+                when: None,
             }]),
             ..Default::default()
         },

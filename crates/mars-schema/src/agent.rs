@@ -428,7 +428,7 @@ fn parse_harness_overrides(
             );
             continue;
         };
-        if mars_schema_harness_known(harness_name).is_none() {
+        if harness_name != "flow" && mars_schema_harness_known(harness_name).is_none() {
             push_unknown_harness_override(diags, harness_name);
         }
         let mut parsed = serde_json::Map::new();

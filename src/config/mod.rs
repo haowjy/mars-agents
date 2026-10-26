@@ -2102,6 +2102,7 @@ override = { effort = "high" }
                     match_value: "project-policy".to_string(),
                     no_fallback: false,
                     overrides: Default::default(),
+                when: None,
                 }]),
                 unknown: BTreeMap::from([(
                     "project_future".to_string(),
@@ -2249,12 +2250,14 @@ override = { effort = "high" }
             match_value: "gpt55".to_string(),
             no_fallback: false,
             overrides: Default::default(),
+                when: None,
         };
         let local_rule = ModelPolicyRule {
             match_type: ModelPolicyMatchType::Alias,
             match_value: "gptmini".to_string(),
             no_fallback: false,
             overrides: Default::default(),
+                when: None,
         };
         let settings = Settings {
             targets: Some(vec![".claude".to_string(), ".codex".to_string()]),

@@ -33,3 +33,4 @@ pub mod package;
 pub mod plugin_metadata;
 pub mod prepare;
 pub mod upgrade;
+pub mod edit;

@@ -45,6 +45,8 @@ pub struct ModelPolicyRule {
     pub match_value: String,
     pub no_fallback: bool,
     pub overrides: ModelPolicyOverride,
+    /// A compact, authored guide explaining when this model is a good choice.
+    pub when: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,11 +208,20 @@ pub fn parse_model_policy_rule_value(
         }
     };
 
+    let when = match rule.get(serde_yaml::Value::String("when".to_string())) {
+        None | Some(serde_yaml::Value::Null) => None,
+        Some(serde_yaml::Value::String(value)) if value.lines().count() <= 1 => Some(value.clone()),
+        Some(value) => return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
+            key: "when".to_string(), found: format!("{value:?}"), allowed: "one-line string",
+        }),
+    };
+
     Ok(ModelPolicyRule {
         match_type,
         match_value,
         no_fallback,
         overrides,
+        when,
     })
 }
 
@@ -331,6 +342,9 @@ impl Serialize for ModelPolicyRule {
         }
         if self.no_fallback {
             map.serialize_entry("no-fallback", &self.no_fallback)?;
+        }
+        if let Some(when) = &self.when {
+            map.serialize_entry("when", when)?;
         }
         map.end()
     }

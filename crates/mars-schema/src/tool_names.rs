@@ -334,9 +334,15 @@ pub fn is_canonical_capability(name: &str) -> bool {
     canonical_tool_name(name).is_some()
 }
 
-#[cfg(test)]
 pub fn canonical_capabilities() -> impl Iterator<Item = &'static str> {
     CANONICAL_TOOLS.iter().map(|tool| tool.name)
+}
+
+/// The authored capability vocabulary, including accepted legacy spellings.
+pub fn vocabulary() -> serde_json::Value {
+    serde_json::json!({"capabilities": CANONICAL_TOOLS.iter().map(|tool| serde_json::json!({
+        "name": tool.name, "aliases": tool.aliases
+    })).collect::<Vec<_>>()})
 }
 
 /// Split `head(payload)` into `head` and `(payload)`; a name without parentheses has no payload.

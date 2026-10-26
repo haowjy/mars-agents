@@ -63,6 +63,43 @@ pub fn lookup(capability: &str, harness: HarnessId) -> Option<Native> {
         .map(|(_, native)| *native)
 }
 
+/// Serializable vocabulary for consumers that must not duplicate native tables.
+pub fn vocabulary() -> serde_json::Value {
+    let mut root = crate::tool_names::vocabulary();
+    let mut hosts = crate::harness::ALL.iter().map(|host| {
+        let natives = table(*host).iter().map(|(name, native)| {
+            let value = match native {
+                Native::Tools(names) | Native::ScopedTools { unscoped: names, .. } =>
+                    serde_json::json!({"kind":"tools", "tools":names}),
+                Native::Absent => serde_json::json!({"kind":"absent"}),
+                Native::NoSwitch(note) => serde_json::json!({"kind":"no-switch", "note":note}),
+            };
+            (name.to_string(), value)
+        }).collect::<serde_json::Map<_, _>>();
+        (host.as_str().to_string(), serde_json::Value::Object(natives))
+    }).collect::<serde_json::Map<_, _>>();
+    let flow = serde_json::json!({
+        "read": {"kind":"tools", "tools":["read"]},
+        "write": {"kind":"tools", "tools":["write"]},
+        "edit": {"kind":"tools", "tools":["write"]},
+        "glob": {"kind":"tools", "tools":["glob"]},
+        "grep": {"kind":"tools", "tools":["grep"]},
+        "ls": {"kind":"tools", "tools":["ls"]},
+        "skill": {"kind":"tools", "tools":["skill"]},
+        "agent": {"kind":"tools", "tools":["spawn", "thread_create", "thread_send", "thread_wait"]},
+        "ask_user": {"kind":"tools", "tools":["ask"]},
+        "bash": {"kind":"tools", "tools":["bash"]},
+        "work": {"kind":"absent"}
+    });
+    hosts.insert("flow".into(), flow);
+    root["natives"] = serde_json::Value::Object(hosts);
+    if let Some(capabilities) = root["capabilities"].as_array_mut() {
+        capabilities.push(serde_json::json!({"name":"ls", "aliases": []}));
+        capabilities.push(serde_json::json!({"name":"work", "aliases": []}));
+    }
+    root
+}
+
 fn table(harness: HarnessId) -> Table {
     match harness {
         HarnessId::Claude => CLAUDE,

@@ -26,7 +26,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
-- Package preparation now normalizes dependency, local, check, validation, and publish inputs in
+- Package preparation now normalizes dependency, local, check, validation, migration, and publish inputs in
   owned scratch space; strict diagnostics block every project mutation except the sync lock, while
   validation retains its structured report and staging has one owner per package. Migration and legacy staging discover definitions
   without rewriting supporting Markdown inside skills.

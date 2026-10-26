@@ -55,17 +55,34 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         ManifestClassification::NoManifest => unreachable!("manifest bytes were provided"),
     }
 
+    let prepared = tempfile::tempdir()?;
+    let mut prepare_diag = crate::diagnostic::DiagnosticCollector::new();
+    crate::staging::stage_prepared_package(
+        root,
+        prepared.path(),
+        crate::staging::DefinitionPreparation::Legacy,
+        &[],
+        &mut prepare_diag,
+    )?;
+    prepare_diag.fail_on_errors()?;
+
     let mut pending = Vec::new();
+    let mut manifest_result = upgrade_manifest(&manifest_text).map_err(upgrade_error)?;
+    manifest_result.text = std::fs::read_to_string(prepared.path().join("mars.toml"))?;
     push_if_changed(
         root,
         manifest_path,
         &manifest_text,
-        upgrade_manifest(&manifest_text).map_err(upgrade_error)?,
+        manifest_result,
         &mut pending,
     );
     for (path, kind) in definition_files(root)? {
         let text = std::fs::read_to_string(&path)?;
-        let upgraded = upgrade_definition(kind, &text).map_err(upgrade_error)?;
+        let mut upgraded = upgrade_definition(kind, &text).map_err(upgrade_error)?;
+        let relative = path
+            .strip_prefix(root)
+            .expect("discovered definitions are below the package root");
+        upgraded.text = std::fs::read_to_string(prepared.path().join(relative))?;
         push_if_changed(root, path, &text, upgraded, &mut pending);
     }
     pending.sort_by(|left, right| left.relative.cmp(&right.relative));
@@ -86,10 +103,36 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 }
 
 fn migrate_consumer(args: &MigrateArgs, root: &Path, json: bool) -> Result<i32, MarsError> {
+    let authored_root = root.join(".mars-src");
+    let prepared = if authored_root.is_dir() {
+        let prepared = tempfile::tempdir()?;
+        let mut prepare_diag = crate::diagnostic::DiagnosticCollector::new();
+        crate::staging::stage_prepared_package(
+            &authored_root,
+            prepared.path(),
+            crate::staging::DefinitionPreparation::Legacy,
+            &[],
+            &mut prepare_diag,
+        )?;
+        prepare_diag.fail_on_errors()?;
+        Some(prepared)
+    } else {
+        None
+    };
     let mut pending = Vec::new();
-    for (path, kind) in definition_files(&root.join(".mars-src"))? {
+    for (path, kind) in definition_files(&authored_root)? {
         let text = std::fs::read_to_string(&path)?;
-        let upgraded = upgrade_definition(kind, &text).map_err(upgrade_error)?;
+        let mut upgraded = upgrade_definition(kind, &text).map_err(upgrade_error)?;
+        let relative = path
+            .strip_prefix(&authored_root)
+            .expect("discovered definitions are below .mars-src");
+        upgraded.text = std::fs::read_to_string(
+            prepared
+                .as_ref()
+                .expect("discovered .mars-src definitions require a prepared tree")
+                .path()
+                .join(relative),
+        )?;
         push_if_changed(root, path, &text, upgraded, &mut pending);
     }
     pending.sort_by(|left, right| left.relative.cmp(&right.relative));

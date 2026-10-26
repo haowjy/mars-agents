@@ -263,8 +263,9 @@ A map-form `allow` is a grant, not an allowlist, so it writes no `tools:` field:
 would read `tools: [Bash]` as "only Bash". Omitting `tools:` inherits every tool, so the
 grant loses nothing and Mars records no lossiness for it.
 Mars records an `ask` rule and an empty allowlist as dropped lossiness and never drops them
-silently; Meridian enforces them from the launch bundle. Other harnesses' agent files carry no tool list at all, so any
-allow, ask or deny rule is recorded as dropped there too.
+silently; Meridian enforces them from the launch bundle. Codex, Cursor and Pi agent files carry no tool list at
+all, so any allow, ask or deny rule is recorded as dropped there too; OpenCode's carries the deny rules
+(below).
 
 ### `.codex/agents/<name>.toml`
 
@@ -332,11 +333,21 @@ YAML frontmatter + markdown body.
 | `skills.available` | end-of-body `/name` guidance | approximate |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
-| `tools` (every rule) | dropped | dropped |
+| `tools` allow and `ask` rules | dropped (reported as `tools`) | dropped |
+| `tools` deny rules (`tools: {write: deny}`, `mcp(...)` refs included) | `permission: {<tool>: deny}` | exact |
+| a scoped deny rule (`bash(git *)`) | dropped (reported as `disallowed-tools`) | dropped |
 | `effort` | dropped from frontmatter (any value, `none` included) | approximate |
-| `mcp(...)` in `tools` | dropped (lossiness); launch bundle projects OpenCode tokens | approximate |
+| `mcp(...)` in `tools` | a deny is written as above; the rest is dropped (lossiness); launch bundle projects OpenCode tokens | approximate |
 | `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
+
+OpenCode's agent file has one tool control, the `permission` map (its `tools` booleans are
+deprecated), so a deny rule lowers to `<tool>: deny` using the permission names in the table
+above (`write` and `edit` both become `edit`). The map merges with the author's
+`harness-overrides.opencode.permission`: the author's other entries stay, in their order, and an
+entry that disagrees with a Mars deny is dropped with a warning. Allow and `ask` rules and scoped
+rules have no entry Mars writes, so they are reported as dropped; write them under
+`harness-overrides.opencode.permission` to have them in the file.
 
 OpenCode has no per-agent skill preload field. Its separate `.opencode/skills/` surface makes the
 generated `/name` references resolvable.
@@ -453,7 +464,8 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 |---|---|
 | Claude agent native | Projected `mcp__…` tokens merged into Claude's `tools:` (allowlist) and `disallowed-tools:` (denials) |
 | Skill native files | None: a skill carries no tool policy |
-| Codex / OpenCode / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
+| OpenCode agent native | A denied MCP ref is a `permission` entry (`<server>_<tool>: deny`); the rest → MCP lossiness |
+| Codex / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
 | Launch bundle | `tools.rules[].native` carries permission tokens; legacy `ToolsSpec.mcp` duplicates allowed names. Neither carries server definitions |
 
 Implementation: grammar in [`crates/mars-schema/src/mcp.rs`](../../crates/mars-schema/src/mcp.rs),

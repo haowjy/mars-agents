@@ -99,7 +99,7 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 - `mars_schema::HarnessId` — Claude, Codex, OpenCode, Cursor, Pi
 ### Harness Override Passthrough
 
-`harness-overrides.<harness>` blocks are target-native passthrough on Agents and skills. Mars validates only the outer mapping shape and serializability. Lowering writes each harness's own block into its native file (Markdown frontmatter; extra top-level keys after Codex's) and never another harness's; a key the lowering owns (`mars_schema::agent::LoweredField::keys`, the skill identity/invocability keys, Codex's seven) keeps Mars's value and the override is reported as `Dropped`. Unknown (non-override) keys reach no native file. Unknown override harness keys are warnings and are preserved for forward compatibility.
+`harness-overrides.<harness>` blocks are target-native passthrough on Agents and skills. Mars validates only the outer mapping shape and serializability. Lowering writes each harness's own block into its native file (Markdown frontmatter; extra top-level keys after Codex's) and never another harness's; a key the lowering owns (`mars_schema::agent::LoweredField::keys`, `mars_schema::skill::LOWERED_KEYS`, Codex's seven) keeps Mars's value and the override is reported as `Dropped`. OpenCode's `permission` is the exception: Mars writes `deny` entries for the Agent's deny rules and merges them over the author's `harness-overrides.opencode.permission`, so only an entry that contradicts a deny is dropped. Unknown (non-override) keys reach no native file. Unknown override harness keys are warnings and are preserved for forward compatibility.
 
 ## Shared Tool Policy (`tool_policy.rs`)
 

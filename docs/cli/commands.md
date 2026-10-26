@@ -576,6 +576,55 @@ and leaves the corrupt lock untouched.
 
 ---
 
+## `mars provide`
+
+Install a host program's own skills into `.mars/skills/`.
+
+```bash
+mars provide <provider>@<version>=<directory> [--json]
+```
+
+A host ships skills with its binary and hands Mars the directory holding them
+(Meridian runs this on every launch). Mars copies `<directory>/skills/*` into
+`.mars/skills/` and records the names in `.mars/provided.lock`, which no other
+command writes. It never touches `mars.toml`, `mars.lock` or a managed target,
+and provided skills are never projected into targets.
+
+| Field | Meaning |
+|---|---|
+| `<provider>` | The host's own namespace, separate from dependency keys. `[a-z0-9][a-z0-9-]*` |
+| `<version>` | Opaque, non-empty; recorded for display and change detection (host versions need not be semver) |
+| `<directory>` | Holds `skills/`; each entry is a directory named `<skill>__<provider>` whose `SKILL.md` has the same `name` |
+
+`skills/` entries starting with `_` or `.` are ignored, as are top-level files, so
+a Python package's `__init__.py`, `__pycache__/` and `AGENTS.md` are not skills.
+
+`--json` prints `status`, `provider`, `version`, `skills` (the recorded names
+after the run), `installed`, `replaced`, `adopted`, `removed`, `shadowed`,
+`collisions` and `warnings`. `status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `up-to-date` | The record matches the source; nothing was written |
+| `applied` | Skills were installed, replaced, adopted or removed |
+| `busy` | Another Mars process holds `.mars/sync.lock`; nothing was written |
+| `sync-pending` | An interrupted sync owns canonical destinations; run `mars repair` first |
+
+All four exit 0. Validation failures exit 2: `provided-name-invalid` (a name or
+`SKILL.md` `name` that is not `<skill>__<provider>`) and `provided-skill-invalid`
+(a missing `skills/` directory, a missing `SKILL.md`, or one the schema rejects).
+
+Mars only deletes names its own record lists, so a directory it did not create is
+adopted when its bytes match the source and reported as `collisions` otherwise. A
+provided skill whose destination a package owns is reported as `shadowed` and left
+to the package.
+
+`.mars/provided.lock` is machine-local (`version = 1`, one `[providers.<name>]`
+table per provider with `version`, `digest` and `skills`). `digest` is `pending`
+while an apply is in flight; the next run replans from the files on disk.
+
+---
+
 ## `mars cache`
 
 Manage the global source cache.

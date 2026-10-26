@@ -8,6 +8,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Sync targets, lossiness preview, plugin builds and `doctor` take Agents and skills from the prepared package, not a second walk of the materialized tree; the binary's walk finds only hooks, MCP items and bootstrap documents.
 
 ### Added
+- `mars provide <provider>@<version>=<directory>` installs a host program's own skills into
+  `.mars/skills/` and records the names in `.mars/provided.lock`, a machine-local file no other
+  command writes. Nothing committed changes: `mars.toml`, `mars.lock` and every managed target stay
+  byte-identical, and provided skills are never projected. A fast path answers `up-to-date` without
+  the sync lock, a held lock answers `busy`, an interrupted sync answers `sync-pending`, and a crash
+  mid-apply converges on the next run. `--json` reports the status, the recorded names and per-name
+  `installed`/`replaced`/`adopted`/`removed`/`shadowed`/`collisions`. `FileLock::try_acquire` is
+  the one non-blocking lock helper now shared with the model probing caches.
 - `inspect` and `normalize` in `mars-schema` (and the WASM package) read any repository as Mars packages: Claude plugins, marketplaces (`strict` and `source` rules) and bare skill trees become schema v1 packages with relocated `skills/<slug>/` and `agents/<slug>.md`, a generated `mars.toml` and provenance; commands, hooks and MCP definitions are reported as not imported. Skill tool keys are dropped with a warning, `type` and `version` move to `metadata`, an unquoted `description:` colon is repaired, and Agent `disallowedTools` merge into `tools`.
 - Dependencies without `mars.toml` go through `normalize`; `agent-skills` is a dialect.
 - `plugin = "<name>"` on a dependency installs one plugin of the Claude marketplace at its `url` or `path`; each plugin is its own dependency, package and lock entry, and a marketplace dependency without one is an error that lists the plugins. A plugin in another repository (`github`, `url` and `git-subdir` sources, at the entry's `sha`, else `ref`, else default branch) is fetched like any git source; `npm`, `archive` and `command` sources are refused naming the shape. `mars.lock` records the plugin and its content commit beside the marketplace's: `mars sync` replays both, `mars upgrade` re-reads the marketplace and resolves the content anew and reports a plugin whose source moved, and `--frozen` requires the locked content commit. Locks without plugins are unchanged. `mars add <marketplace> --plugin <name>` writes the entry.

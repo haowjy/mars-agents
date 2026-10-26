@@ -4,7 +4,7 @@ pub mod diff;
 pub mod filter;
 pub mod mutation;
 pub mod plan;
-mod recovery;
+pub(crate) mod recovery;
 pub mod rewrite;
 pub mod target;
 pub mod types;

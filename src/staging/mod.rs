@@ -219,7 +219,7 @@ pub(crate) fn stage_local_item(
     fs::create_dir_all(dest.parent().unwrap_or(&dest))?;
 
     match kind {
-        ItemKind::Agent | ItemKind::McpServer => {
+        ItemKind::Agent => {
             fs::create_dir_all(&dest)?;
             let dest_file =
                 dest.join(source_path.file_name().ok_or_else(|| MarsError::Source {
@@ -246,7 +246,7 @@ pub(crate) fn stage_local_item(
             )?;
             Ok(dest_file)
         }
-        ItemKind::Skill | ItemKind::Hook | ItemKind::BootstrapDoc => {
+        ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
             fs::create_dir_all(&dest)?;
             copy_and_lift_tree(
                 source_path,

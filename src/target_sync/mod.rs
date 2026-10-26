@@ -141,18 +141,17 @@ fn sync_one_target(
             continue;
         }
         let canonical_dest_rel = outcome.dest_path.as_str();
-        let hook_dest;
-        let dest_rel = if outcome.item_id.kind == crate::lock::ItemKind::Hook {
-            let Some((hook_target, target_dest)) =
-                crate::sync::target::hook_target_dest_path(&outcome.dest_path)
-            else {
-                continue;
-            };
-            if hook_target != target_name.trim_start_matches('.') {
+        let scoped_dest;
+        let dest_rel = if let Some((item_target, target_dest)) =
+            crate::sync::target::package_dir_target_dest_path(
+                outcome.item_id.kind,
+                &outcome.dest_path,
+            ) {
+            if item_target != target_name.trim_start_matches('.') {
                 continue;
             }
-            hook_dest = target_dest;
-            hook_dest.as_str()
+            scoped_dest = target_dest;
+            scoped_dest.as_str()
         } else {
             canonical_dest_rel
         };

@@ -178,13 +178,17 @@ plus filtered exported graph hooks for plugin omission diagnostics; preflight an
 the selected values instead of rediscovering package config entries. Sync checks a selected hook's
 installed directory after target sync, while a plugin build can lower the same pure selection
 without an installed directory.
-`lower_config_entries_for_target` owns per-target MCP collision resolution, native merge-fragment
-loading, and hook ordering. Callers supply the `${MARS_HOOK_DIR}` replacement through its
-hook-directory callback.
+`lower_config_entries_for_target` owns native merge-fragment loading and hook ordering. MCP
+collisions resolve once in `TargetState` before installation and config lowering, so the winning
+server's directory and config entry come from the same selection. Callers supply the
+`${MARS_HOOK_DIR}` and `${MARS_MCP_DIR}` replacements through its directory callbacks.
 
 ## MCP Compilation (`mcp/`)
 
-Discovers MCP server items, validates env refs, detects collisions.
+Discovers MCP server items, validates env refs, and substitutes `${MARS_MCP_DIR}` in
+`command`/`args`. The server directory is a package-owned item installed beside each
+target that writes MCP, using the same target-scoped canonical path and lock ownership
+as a hook directory.
 
 ## Hooks Compilation (`hooks/`)
 

@@ -22,7 +22,8 @@ declared list of generated root files; staging and sentinel validation read it, 
 its constant directly, with `spec`'s test failing if a tree's root file or catalog directory is not
 in that list. `PluginRoot` is an enum: a tree either writes a harness token literally or keeps the
 Mars token for its own runtime to substitute, so the merged-hook path mapping matches on it instead
-of unwrapping an optional token.
+of unwrapping an optional token. Every selected hook and MCP server directory is copied whole into
+the tree, and `${MARS_HOOK_DIR}` / `${MARS_MCP_DIR}` map through that same plugin root.
 Harness identity, variant key, and sync root come from `compiler::harness_descriptor`; authored-hook
 checks run once before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode
 have their own tree identities. The OpenCode tree is an npm-shaped package whose fixed `index.mjs`
@@ -31,15 +32,15 @@ data URL. A build warning reports fragments with no recognizable default export,
 isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
 and one fragment's load or setup failure does not block later hooks.
 
-Publication staging and input fingerprinting share a typed inventory of item roots and MCP
-definitions. Graph filters narrow each staged dependency to what target collection can publish,
+Publication staging and input fingerprinting share a typed inventory of item roots and MCP server
+directories. Graph filters narrow each staged dependency to what target collection can publish,
 except that every hook root remains available for the strict pre-filter compatibility check. A
 single authored walker takes the policy: publication confines links to the package and rejects
 special files, while sync retains its historical follow behavior. Manifestless foreign sources
 separately copy manifest metadata with declarations rewritten to the selected typed inventory, so
 rediscovery does not require excluded paths. The root-package input fingerprint includes inventory
 kinds and authored bytes, but never Mars-generated catalog metadata. Repo tooling and filtered-out
-non-hook items are not staged. A flat-root skill retains authored root resources but its publication
+items are not staged. A flat-root skill retains authored root resources but its publication
 inventory excludes standard tooling directories and top-level special filesystem nodes. Installed
 skill frontmatter is written once into graph staging before every tree projects it; derived skill
 and hook trees then use the plain copier, with other-target hook fragments excluded.
@@ -111,8 +112,8 @@ before native lowering so generated guidance is born qualified; the fence-aware 
 only responsible for authored body references.
 
 `plugin_inputs_hash` is the offline F3 seam: bytes under the root package's discovered own-item
-paths (including hook fragments and MCP definitions), with generated trees skipped and text line
-endings normalized, plus `[package]` without `version` and the `[plugin]`, `[dependencies]`,
+paths (including hook fragments and MCP server directories), with generated trees skipped and text
+line endings normalized, plus `[package]` without `version` and the `[plugin]`, `[dependencies]`,
 `[models]`, `[skills]`, and `[agents]` tables. It never resolves. Builds compute it after output
 recovery while holding the output lock. The sentinel separately records resolved dependency
 version/commit identities, one SHA-256 per generated file, and the root-file ownership map; the

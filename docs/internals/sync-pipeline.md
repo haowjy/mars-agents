@@ -225,7 +225,9 @@ In `--diff` (dry run) mode, actions are computed but not executed.
 
 Runs after the apply plan and before target sync. Compiles MCP server
 registrations and lifecycle hooks from all packages in the resolved graph and
-writes them to per-target config files.
+writes them to per-target config files. Target construction resolves MCP name collisions and
+materializes the winning server's directory as a target-scoped item, the same way a hook
+directory is installed and pruned; this phase consumes that selection.
 
 **Steps:**
 
@@ -235,7 +237,7 @@ writes them to per-target config files.
 3. Filter items whose `visibility` is `"local"` (default) when they originate
    from a dependency — only `"exported"` items cross the package boundary.
 4. Check env references — warn (or error under `--strict`) for missing env vars.
-5. Resolve per-target MCP name collisions:
+5. Use the per-target MCP winners from target construction. Collision precedence:
    - `_self` (local package) wins over any dependency, silently.
    - Among dependencies, earlier `[dependencies]` declaration order wins; a
      warning is emitted naming both sources.

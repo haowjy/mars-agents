@@ -54,6 +54,8 @@ pub(crate) fn inputs_for_items(
     if include_mcp {
         for definition in crate::compiler::mcp::discover_mcp_definition_paths(package_root, diag)? {
             let relative = definition
+                .parent()
+                .expect("discovered MCP definition belongs to a server directory")
                 .strip_prefix(package_root)
                 .expect("discovered MCP definition is inside its package")
                 .to_path_buf();
@@ -188,6 +190,9 @@ fn copy_and_lift_path(
 ) -> Result<(), MarsError> {
     let relative_root = &input.relative;
     let logical_root = package_root.join(relative_root);
+    // An MCP server directory is program data, not agent content: copying it
+    // verbatim keeps authored files exactly as shipped.
+    let verbatim = input.item_kinds.len() == 1 && input.item_kinds.contains(&ItemKind::McpServer);
     if fs::metadata(&logical_root)?.is_dir() {
         fs::create_dir_all(dest_root.join(relative_root))?;
         for entry in crate::fs::authored_tree_entries(
@@ -199,7 +204,12 @@ fn copy_and_lift_path(
             let relative = relative_root.join(&entry.relative);
             let destination = dest_root.join(&relative);
             if entry.kind == crate::fs::AuthoredEntryKind::Directory {
-                fs::create_dir_all(destination)?;
+                fs::create_dir_all(&destination)?;
+            } else if verbatim {
+                if let Some(parent) = destination.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(&entry.source, &destination)?;
             } else {
                 copy_and_lift_file(&entry.source, &relative, dest_root, ctx)?;
             }

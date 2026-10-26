@@ -31,6 +31,23 @@ pub mod variants;
 /// Typed visibility shared by hook and MCP manifests.
 pub mod visibility;
 
+/// Item names become one directory under a target; reject anything that could
+/// escape it.
+pub(crate) fn validate_path_component(name: &str) -> Result<(), &'static str> {
+    use std::path::Component;
+    if name.is_empty() {
+        return Err("must not be empty");
+    }
+    if name.contains(['/', '\\', '\0']) {
+        return Err("must be a single path component");
+    }
+    let mut components = std::path::Path::new(name).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => Err("must be a single path component"),
+    }
+}
+
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
 pub(crate) use native_agents::{
     NativeAgentLinkMaterializeCtx, RemovedNativeOutput, effective_native_profile,

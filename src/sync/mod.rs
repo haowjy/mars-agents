@@ -547,6 +547,7 @@ pub(crate) fn prepare_target_state(
     let (mut target, explicit_renames, collision_renames) =
         target::build_with_collisions_and_diag(graph, effective, diag)?;
     extend(&mut target, diag)?;
+    target.resolve_mcp_collisions(&effective.settings.managed_targets(), diag);
 
     let rename_index = rewrite::RenameIndex::new(&explicit_renames, &collision_renames, &target);
     let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
@@ -586,7 +587,7 @@ pub(crate) fn build_target(
     let staging_root = resolved.loaded.staging_root(&ctx.project_root);
 
     let PreparedTarget {
-        target: target_state,
+        target: mut target_state,
         explicit_renames: renames,
         collision_renames,
         warnings,
@@ -802,6 +803,13 @@ pub(crate) fn build_target(
             }
             Ok(())
         },
+    )?;
+
+    materialize_mcp_directories(
+        &resolved.loaded.old_lock,
+        managed_root,
+        &mut target_state,
+        diag,
     )?;
 
     validate::validate_skill_frontmatter_in_target(&target_state, diag);
@@ -1297,6 +1305,49 @@ fn retry_tombstone_removals(
         }
     }
     removed
+}
+
+/// Package-owned MCP directories are installed beside each target's config,
+/// exactly like hook directories, and tracked as ordinary canonical items so
+/// removal prunes them.
+fn materialize_mcp_directories(
+    old_lock: &LockFile,
+    managed_root: &Path,
+    target_state: &mut TargetState,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let old_lock_index = LockIndex::new(old_lock);
+    let groups = target_state
+        .selected_mcp_groups()
+        .map(|(item, targets)| (item.clone(), targets.to_vec()))
+        .collect::<Vec<_>>();
+    for (item, target_roots) in groups {
+        let source_name = SourceName::from(item.source_name.clone());
+        for (_, dest_path, target_item) in target::package_dir_target_items(
+            ItemKind::McpServer,
+            "mcp",
+            item.server_dir(),
+            &item.name,
+            &source_name,
+            &target_roots,
+        )? {
+            let disk_path = dest_path.resolve(managed_root);
+            if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
+                && disk_path.symlink_metadata().is_ok()
+            {
+                diag.warn(
+                    "unmanaged-collision",
+                    format!(
+                        "MCP server `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched",
+                        item.name
+                    ),
+                );
+                continue;
+            }
+            target_state.items.insert(dest_path, target_item);
+        }
+    }
+    Ok(())
 }
 
 fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {

@@ -13,6 +13,8 @@ agents and skills. Mars compiles these into target-specific config files during
 - **Hooks** contribute target-native JSON fragments to Claude, Codex, and
   Cursor config, or whole TypeScript plugins to OpenCode and Pi, and install
   their complete hook directories beside the target.
+- **Server files** shipped beside `mcp.toml` are installed with their server
+  directory and can be named with `${MARS_MCP_DIR}`.
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
@@ -95,6 +97,39 @@ use a different name:
 name    = "custom-name"
 command = "node"
 ```
+
+### Server files (`${MARS_MCP_DIR}`)
+
+An MCP server directory may ship the program it launches, not just `mcp.toml`:
+
+```
+mcp/echo/
+  mcp.toml
+  server.js
+```
+
+Name those files with `${MARS_MCP_DIR}` instead of an absolute path:
+
+```toml
+command = "node"
+args    = ["${MARS_MCP_DIR}/server.js"]
+```
+
+`mars sync` installs the whole `mcp/<name>/` directory beside each target's
+config (`.claude/mcp/echo/`, `.codex/mcp/echo/`, and so on) and replaces the
+token in `command` and `args` with that installed absolute path. The server
+registered under a `name` override installs under the registered name.
+Executable bits are preserved. Removing the server from the package prunes the
+installed directories on the next sync.
+
+`mars build plugin` copies `mcp/<name>/` into each generated tree and maps the
+token to the tree's own root: `${CLAUDE_PLUGIN_ROOT}/mcp/<name>` for the shared
+Claude/Codex/Grok tree, `${CURSOR_PLUGIN_ROOT}/mcp/<name>` for Cursor, and a
+runtime-resolved path under the OpenCode package for OpenCode. An entry without
+the token is unchanged.
+
+The token applies to `command` and `args`. `env` values remain symbolic
+`{ from = "env", var = "…" }` references; Mars never resolves their values.
 
 ## Declaring Hooks in a Package
 

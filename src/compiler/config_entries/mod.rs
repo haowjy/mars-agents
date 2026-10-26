@@ -199,22 +199,23 @@ pub(crate) fn preflight_config_entries(
 
 /// Lower the mergeable MCP and hook entries for one target.
 ///
-/// The caller owns target-specific eligibility checks, including whether a
-/// project-installed hook directory is current. `hook_dir` supplies the
-/// replacement for `${MARS_HOOK_DIR}` in each hook's native fragment.
+/// The caller owns target-specific eligibility checks, including whether an
+/// installed hook or MCP directory is current. `hook_dir` supplies the
+/// replacement for `${MARS_HOOK_DIR}` in each hook's native fragment;
+/// `mcp_dir` supplies the replacement for `${MARS_MCP_DIR}` in a server's
+/// command and arguments.
 pub(crate) fn lower_config_entries_for_target(
     hooks: &[&ParsedHookItem],
     mcp: &[&ParsedMcpItem],
     adapter: &dyn TargetAdapter,
     hook_dir: impl Fn(&ParsedHookItem) -> String,
+    mcp_dir: impl Fn(&ParsedMcpItem) -> String,
     diag: &mut DiagnosticCollector,
 ) -> Vec<ConfigEntry> {
-    use crate::compiler::config_entries::resolve::resolve_mcp_collisions_for_target;
-
     let target_root = adapter.name();
     let mut entries = Vec::new();
-    for parsed in resolve_mcp_collisions_for_target(mcp.iter().copied(), target_root, diag) {
-        let entry = TargetMcpEntry::from_parsed(parsed);
+    for parsed in mcp.iter().copied() {
+        let entry = TargetMcpEntry::from_parsed(parsed, &mcp_dir(parsed));
         entries.push(ConfigEntry::McpServer(McpServerEntry {
             name: entry.name,
             command: entry.command,
@@ -380,7 +381,11 @@ pub(crate) fn compile_config_entries(
                     installed_hook_dir(&ctx.project_root, target_root, &item.def.name);
                 if mode.is_some()
                     && !dry_run
-                    && !hook_directory_is_installed(source_hash, &installed)
+                    && !package_dir_matches_hash(
+                        source_hash.as_ref(),
+                        &installed,
+                        crate::lock::ItemKind::Hook,
+                    )
                 {
                     diag.warn(
                         "hook-not-installed",
@@ -401,16 +406,48 @@ pub(crate) fn compile_config_entries(
             .targeted
             .target
             .selected_mcp_for_target(target_root)
+            .filter(|item| {
+                let installed =
+                    installed_package_dir(&ctx.project_root, target_root, "mcp", &item.name);
+                if !adapter.mcp_config_file_names().is_empty()
+                    && !dry_run
+                    && !package_dir_is_installed(
+                        item.server_dir(),
+                        &installed,
+                        crate::lock::ItemKind::McpServer,
+                    )
+                {
+                    diag.warn(
+                        "mcp-not-installed",
+                        format!(
+                            "not emitting MCP server `{}` for `{target_root}` because `{}` is not installed",
+                            item.name,
+                            installed.display()
+                        ),
+                    );
+                    return false;
+                }
+                true
+            })
             .collect::<Vec<_>>();
         let entries = lower_config_entries_for_target(
             &installed_hooks,
             &selected_mcp,
             adapter,
             |item| {
-                portable_installed_hook_dir(&installed_hook_dir(
+                portable_installed_dir(&installed_package_dir(
                     &ctx.project_root,
                     target_root,
+                    "hooks",
                     &item.def.name,
+                ))
+            },
+            |item| {
+                portable_installed_dir(&installed_package_dir(
+                    &ctx.project_root,
+                    target_root,
+                    "mcp",
+                    &item.name,
                 ))
             },
             diag,
@@ -827,19 +864,47 @@ fn write_file_hook_outputs(
     }
 }
 
-fn hook_directory_is_installed(
-    source_hash: &crate::types::ContentHash,
+fn package_dir_matches_hash(
+    expected: &str,
     installed: &std::path::Path,
+    kind: crate::lock::ItemKind,
 ) -> bool {
-    crate::hash::compute_hash(installed, crate::lock::ItemKind::Hook)
+    crate::hash::compute_hash(installed, kind)
         .ok()
-        .is_some_and(|installed| installed == source_hash.as_str())
+        .is_some_and(|installed| installed == expected)
+}
+
+fn package_dir_is_installed(
+    source: impl AsRef<std::path::Path>,
+    installed: &std::path::Path,
+    kind: crate::lock::ItemKind,
+) -> bool {
+    let Ok(source) = crate::hash::compute_hash(source.as_ref(), kind) else {
+        return false;
+    };
+    package_dir_matches_hash(&source, installed, kind)
+}
+
+fn installed_package_dir(
+    project_root: &Path,
+    target_root: &str,
+    surface_dir: &str,
+    item_name: &str,
+) -> PathBuf {
+    project_root
+        .join(target_root)
+        .join(surface_dir)
+        .join(item_name)
 }
 
 fn installed_hook_dir(project_root: &Path, target_root: &str, hook_name: &str) -> PathBuf {
-    project_root.join(target_root).join("hooks").join(hook_name)
+    installed_package_dir(project_root, target_root, "hooks", hook_name)
+}
+
+fn portable_installed_dir(installed: &std::path::Path) -> String {
+    installed.to_string_lossy().replace('\\', "/")
 }
 
 fn portable_installed_hook_dir(installed: &std::path::Path) -> String {
-    installed.to_string_lossy().replace('\\', "/")
+    portable_installed_dir(installed)
 }

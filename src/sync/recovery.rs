@@ -136,11 +136,13 @@ fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
 fn logical_key(item: &PendingWrite) -> Result<String, MarsError> {
     let dest = &item.dest_path;
     let name = dest.item_name(item.kind);
-    if item.kind == ItemKind::Hook {
-        let Some((target, _)) = super::target::hook_target_dest_path(dest) else {
-            return Err(invalid("invalid target-scoped hook destination"));
+    if matches!(item.kind, ItemKind::Hook | ItemKind::McpServer) {
+        let Some((target, _)) = super::target::package_dir_target_dest_path(item.kind, dest) else {
+            return Err(invalid(
+                "invalid target-scoped package directory destination",
+            ));
         };
-        Ok(format!("hook/{name}@{target}"))
+        Ok(format!("{}/{name}@{target}", item.kind))
     } else {
         Ok(format!("{}/{name}", item.kind))
     }
@@ -288,7 +290,7 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
             )));
         }
         let metadata = fs::symlink_metadata(&path)?;
-        let expects_file = matches!(item.kind, ItemKind::Agent | ItemKind::McpServer);
+        let expects_file = item.kind == ItemKind::Agent;
         let checksum = lock::regular_output_checksum(&path);
         let matching = versions
             .iter()

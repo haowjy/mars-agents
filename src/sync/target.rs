@@ -117,6 +117,52 @@ impl TargetState {
             .map(|selected| &selected.item)
     }
 
+    pub(crate) fn selected_mcp_groups(
+        &self,
+    ) -> impl Iterator<Item = (&crate::compiler::mcp::ParsedMcpItem, &[String])> {
+        self.selected_mcp
+            .iter()
+            .map(|selected| (&selected.item, selected.target_roots.as_slice()))
+    }
+
+    /// Resolve MCP name collisions once, before installation and config
+    /// lowering. Each surviving item carries only the targets it won.
+    pub(crate) fn resolve_mcp_collisions(
+        &mut self,
+        managed_targets: &[String],
+        diag: &mut DiagnosticCollector,
+    ) {
+        use crate::compiler::config_entries::resolve::resolve_mcp_collisions_for_target;
+
+        let candidates = self.selected_mcp.clone();
+        let mut resolved: Vec<SelectedMcp> = Vec::new();
+        for target_root in managed_targets {
+            let winners = resolve_mcp_collisions_for_target(
+                candidates
+                    .iter()
+                    .filter(|selected| selected.target_roots.contains(target_root))
+                    .map(|selected| &selected.item),
+                target_root,
+                diag,
+            );
+            for winner in winners {
+                if let Some(existing) = resolved.iter_mut().find(|selected| {
+                    selected.item.source_name == winner.source_name
+                        && selected.item.source_path == winner.source_path
+                        && selected.item.name == winner.name
+                }) {
+                    existing.target_roots.push(target_root.clone());
+                } else {
+                    resolved.push(SelectedMcp {
+                        target_roots: vec![target_root.clone()],
+                        item: winner.clone(),
+                    });
+                }
+            }
+        }
+        self.selected_mcp = resolved;
+    }
+
     pub(crate) fn select_mcp(
         &mut self,
         item: crate::compiler::mcp::ParsedMcpItem,
@@ -435,21 +481,46 @@ pub(crate) fn hook_target_items(
     source_name: &SourceName,
     managed_targets: &[String],
 ) -> Result<Vec<(String, DestPath, TargetItem)>, MarsError> {
-    let source_hash = ContentHash::from(hash::compute_hash(&parsed.hook_dir, ItemKind::Hook)?);
-    Ok(parsed
+    let target_roots = parsed
         .def
         .targets
         .keys()
         .filter(|target| managed_targets.contains(target))
+        .cloned()
+        .collect::<Vec<_>>();
+    package_dir_target_items(
+        ItemKind::Hook,
+        "hooks",
+        &parsed.hook_dir,
+        &parsed.def.name,
+        source_name,
+        &target_roots,
+    )
+}
+
+/// Build target-scoped items for a package-owned directory that every target
+/// receives its own copy of. Hooks and MCP server directories share this path
+/// so copying, lock ownership, and pruning behave the same way.
+pub(crate) fn package_dir_target_items(
+    kind: ItemKind,
+    surface_dir: &str,
+    source_dir: &Path,
+    item_name: &str,
+    source_name: &SourceName,
+    target_roots: &[String],
+) -> Result<Vec<(String, DestPath, TargetItem)>, MarsError> {
+    let source_hash = ContentHash::from(hash::compute_hash(source_dir, kind)?);
+    Ok(target_roots
+        .iter()
         .map(|target_name| {
-            let dest_path = hook_canonical_dest_path(target_name, &parsed.def.name);
+            let dest_path = package_dir_canonical_dest_path(surface_dir, target_name, item_name);
             let target_item = TargetItem {
                 id: ItemId {
-                    kind: ItemKind::Hook,
-                    name: hook_scoped_item_name(target_name, &parsed.def.name),
+                    kind,
+                    name: package_dir_scoped_item_name(target_name, item_name),
                 },
                 source_name: source_name.clone(),
-                source_path: parsed.hook_dir.clone(),
+                source_path: source_dir.to_path_buf(),
                 dest_path: dest_path.clone(),
                 source_hash: source_hash.clone(),
                 is_flat_skill: false,
@@ -460,26 +531,61 @@ pub(crate) fn hook_target_items(
         .collect())
 }
 
-/// Canonical hook directories are target-scoped so providers with the same
-/// name can independently serve different harnesses.
-pub fn hook_canonical_dest_path(target_name: &str, hook_name: &str) -> DestPath {
+/// Canonical package-directory items are target-scoped so each target owns its
+/// installed copy independently.
+pub fn package_dir_canonical_dest_path(
+    surface_dir: &str,
+    target_name: &str,
+    item_name: &str,
+) -> DestPath {
     DestPath::new(format!(
-        "hooks/{}/{}",
-        target_name.trim_start_matches('.'),
-        hook_name
+        "{surface_dir}/{}/{item_name}",
+        target_name.trim_start_matches('.')
     ))
-    .expect("validated target and hook names form a safe canonical path")
+    .expect("validated target and item names form a safe canonical path")
 }
 
-fn hook_scoped_item_name(target_name: &str, hook_name: &str) -> ItemName {
-    format!("{}@{}", hook_name, target_name.trim_start_matches('.')).into()
+fn package_dir_scoped_item_name(target_name: &str, item_name: &str) -> ItemName {
+    format!("{}@{}", item_name, target_name.trim_start_matches('.')).into()
 }
 
-/// Map a target-scoped canonical hook path to its native target destination.
-pub fn hook_target_dest_path(canonical: &DestPath) -> Option<(&str, String)> {
+/// Canonical owner of a target's installed copy of a package directory.
+pub(crate) fn package_dir_canonical_owner(
+    kind: ItemKind,
+    target_root: &str,
+    dest_path: &str,
+) -> Option<String> {
+    let surface_dir = match kind {
+        ItemKind::Hook => "hooks",
+        ItemKind::McpServer => "mcp",
+        _ => return None,
+    };
+    let name = dest_path.strip_prefix(&format!("{surface_dir}/"))?;
+    Some(format!(
+        "{surface_dir}/{}/{name}",
+        target_root.trim_start_matches('.')
+    ))
+}
+
+/// Map a target-scoped canonical package-directory path to its native target
+/// destination.
+pub fn package_dir_target_dest_path(
+    kind: ItemKind,
+    canonical: &DestPath,
+) -> Option<(&str, String)> {
+    let surface_dir = match kind {
+        ItemKind::Hook => "hooks",
+        ItemKind::McpServer => "mcp",
+        _ => return None,
+    };
     let mut parts = canonical.as_str().split('/');
     match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some("hooks"), Some(target), Some(name), None) => Some((target, format!("hooks/{name}"))),
+        (Some("hooks"), Some(target), Some(name), None) if surface_dir == "hooks" => {
+            Some((target, format!("hooks/{name}")))
+        }
+        (Some("mcp"), Some(target), Some(name), None) if surface_dir == "mcp" => {
+            Some((target, format!("mcp/{name}")))
+        }
         _ => None,
     }
 }

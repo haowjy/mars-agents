@@ -306,6 +306,10 @@ pub(super) fn write_tree(
         .target
         .selected_mcp_for_target(descriptor.target_dir)
         .collect();
+    for item in &mcp {
+        let destination = root.join("mcp").join(&item.name);
+        crate::fs::copy_dir_filtered(item.server_dir(), &destination, &[])?;
+    }
     let registry = crate::target::TargetRegistry::new();
     let adapter = registry
         .get(descriptor.target_dir)
@@ -318,6 +322,12 @@ pub(super) fn write_tree(
             profile.plugin_root.resolve(
                 crate::compiler::hooks::HOOK_DIR_TOKEN,
                 &format!("hooks/{}", hook.def.name),
+            )
+        },
+        |item| {
+            profile.plugin_root.resolve(
+                crate::compiler::mcp::MCP_DIR_TOKEN,
+                &format!("mcp/{}", item.name),
             )
         },
         diag,

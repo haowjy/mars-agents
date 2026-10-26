@@ -92,6 +92,15 @@ pub struct ParsedMcpItem {
     pub decl_order: usize,
 }
 
+impl ParsedMcpItem {
+    /// Authored directory holding `mcp.toml` and any files the server ships.
+    pub fn server_dir(&self) -> &Path {
+        self.source_path
+            .parent()
+            .expect("discovered MCP definition belongs to a server directory")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Discovery
 // ---------------------------------------------------------------------------
@@ -136,6 +145,14 @@ pub(crate) fn discover_mcp_items_at_depth(
             })
         })?;
         let resolved_name = raw_def.name.as_deref().unwrap_or(&server_name).to_string();
+        if let Err(message) = crate::compiler::validate_path_component(&resolved_name) {
+            return Err(MarsError::Config(ConfigError::Invalid {
+                message: format!(
+                    "{}: invalid name `{resolved_name}`: {message}",
+                    toml_path.display()
+                ),
+            }));
+        }
         let def = McpServerDef {
             command: raw_def.command,
             args: raw_def.args,
@@ -250,6 +267,13 @@ pub fn check_env_refs(
 // Target lowering
 // ---------------------------------------------------------------------------
 
+/// The authored placeholder for the directory an MCP server's files are installed in.
+pub(crate) const MCP_DIR_TOKEN: &str = "${MARS_MCP_DIR}";
+
+fn substitute_mcp_dir(text: &str, mcp_dir: &str) -> String {
+    text.replace(MCP_DIR_TOKEN, mcp_dir)
+}
+
 /// A fully lowered MCP server entry ready for a target adapter to write.
 #[derive(Debug, Clone)]
 pub struct TargetMcpEntry {
@@ -264,8 +288,9 @@ pub struct TargetMcpEntry {
 }
 
 impl TargetMcpEntry {
-    /// Build from a parsed item.
-    pub fn from_parsed(item: &ParsedMcpItem) -> Self {
+    /// Build from a parsed item, resolving `${MARS_MCP_DIR}` to the directory
+    /// this target installs the server's files in.
+    pub fn from_parsed(item: &ParsedMcpItem, mcp_dir: &str) -> Self {
         let env = item
             .def
             .env
@@ -274,8 +299,13 @@ impl TargetMcpEntry {
             .collect();
         Self {
             name: item.name.clone(),
-            command: item.def.command.clone(),
-            args: item.def.args.clone(),
+            command: substitute_mcp_dir(&item.def.command, mcp_dir),
+            args: item
+                .def
+                .args
+                .iter()
+                .map(|arg| substitute_mcp_dir(arg, mcp_dir))
+                .collect(),
             env,
         }
     }
@@ -426,7 +456,7 @@ TOKEN = { from = "env", var = "SECRET_TOKEN" }
         );
         let items =
             discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
-        let entry = TargetMcpEntry::from_parsed(&items[0]);
+        let entry = TargetMcpEntry::from_parsed(&items[0], "/installed/mcp/server");
         // The env map carries the variable name, not the resolved value.
         assert_eq!(entry.env["TOKEN"], "SECRET_TOKEN");
     }

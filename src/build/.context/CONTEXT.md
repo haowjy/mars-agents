@@ -16,13 +16,13 @@ must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configura
 caches, or installed harnesses. `plugin::output::stage` owns staging and sentinel publication;
 its lock-owning `StagedPlugin` alone replaces the destination when published.
 
-The publish variant of rooted-package staging selects graph-filtered item roots, eligible MCP
-definitions, and all hook roots (for strict pre-filter compatibility validation) rather than
+The publish variant of rooted-package staging selects graph-filtered item roots, eligible MCP server
+directories, and all hook roots (for strict pre-filter compatibility validation) rather than
 walking the package checkout. Staging and the input fingerprint share that typed item/MCP inventory.
 Manifestless foreign sources separately copy manifest metadata with declarations filtered to
 selected items. The one authored walker takes a symlink policy: publication dereferences only links
 whose canonical targets remain inside the owning package and rejects special files, while sync uses
-its historical follow behavior. Repo tooling and filtered-out non-hook items are ignored. The
+its historical follow behavior. Repo tooling and filtered-out items are ignored. The
 root-package fingerprint includes inventory kinds, but not generated catalog metadata. Flat-root
 skills keep authored resources but exclude standard repo tooling and top-level special filesystem
 nodes from their publication inventory. Skill rename content is written once into graph staging
@@ -45,7 +45,9 @@ that list or its catalog directory disagrees, so tree rows and the list cannot d
 is an enum, so a tree states whether its generated files write a harness token literally or keep the
 Mars token for its own runtime to substitute, and the hook-path mapping matches on it instead of
 unwrapping an optional token. Their authored-hook check runs once before the item loop; every
-selected hook is copied. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits
+selected hook and MCP server directory is copied. The same mapping resolves `${MARS_MCP_DIR}` to
+`{token}/mcp/<name>` for a token tree and leaves it for the runtime-resolved tree.
+`tree::write_tree` is the sole item loop. The OpenCode finish writer emits
 an npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
 servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
 default-export check warns but never removes a hook; hook-directory substitution is JavaScript-string

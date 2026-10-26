@@ -99,20 +99,6 @@ pub(crate) fn uses_removed_schema(value: &toml::Value) -> bool {
         || value.get("targets").is_some_and(toml::Value::is_array)
 }
 
-fn validate_path_component(name: &str) -> Result<(), &'static str> {
-    if name.is_empty() {
-        return Err("must not be empty");
-    }
-    if name.contains(['/', '\\', '\0']) {
-        return Err("must be a single path component");
-    }
-    let mut components = Path::new(name).components();
-    match (components.next(), components.next()) {
-        (Some(Component::Normal(_)), None) => Ok(()),
-        _ => Err("must be a single path component"),
-    }
-}
-
 fn validate_fragment_path(path: &str) -> Result<(), &'static str> {
     if path.is_empty() || path.contains('\0') {
         return Err("must be a non-empty relative path");
@@ -190,7 +176,7 @@ fn load_hook_item(
         return Err(invalid(&toml_path, "at least one target table is required"));
     }
     let name = raw_def.name.unwrap_or(dir_name);
-    if let Err(message) = validate_path_component(&name) {
+    if let Err(message) = crate::compiler::validate_path_component(&name) {
         return Err(invalid(
             &toml_path,
             &format!("invalid name `{name}`: {message}"),

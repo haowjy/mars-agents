@@ -18,7 +18,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly. One exception:
 /// Codex lowers `network` as [`Lossiness::Dropped`], because its native artifact carries
 /// `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
-pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
+pub use crate::compiler::lossiness::{CODEX_MAX_EFFORT_NOTE, Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
@@ -951,7 +951,7 @@ pub fn lower_to_codex(
                 field: "effort".into(),
                 target: target.into(),
                 classification: Lossiness::Approximate {
-                    note: "Codex has no effort above xhigh; `max` is written as `xhigh`",
+                    note: CODEX_MAX_EFFORT_NOTE,
                 },
             });
             Some("xhigh")

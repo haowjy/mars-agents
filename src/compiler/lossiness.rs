@@ -27,6 +27,11 @@ pub enum Lossiness {
     MeridianOnly,
 }
 
+/// Codex's highest effort is `xhigh`; `max` is written as `xhigh` in its native files and in
+/// the launch bundle.
+pub const CODEX_MAX_EFFORT_NOTE: &str =
+    "Codex has no effort above xhigh; `max` is written as `xhigh`";
+
 /// A secondary artifact emitted alongside the primary lowered file (e.g. Codex `openai.yaml`).
 #[derive(Debug, Clone)]
 pub struct LoweredSibling {

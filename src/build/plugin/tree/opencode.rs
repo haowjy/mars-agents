@@ -47,7 +47,7 @@ fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
     };
     if let Some(problem) = OpencodeAdapter.hook_fragment_problem(&content) {
         diag.warn(
-            "plugin-opencode-hook-default-export",
+            "hook-fragment-contract",
             format!(
                 "hook `{}` from `{}`: OpenCode fragment `{fragment}` {problem}; the hook will still be shipped and isolated at runtime",
                 hook.def.name, hook.source_name

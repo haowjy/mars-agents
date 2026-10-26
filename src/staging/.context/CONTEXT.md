@@ -13,9 +13,11 @@ For local content, `materialize_local_prepared` writes one selected definition a
 payload under `_local/<item>`. Flat-skill exclusions are consumer policy and apply during this copy.
 
 Graph and local-package prepared diagnostics gate before scratch materialization begins. Binary
-surface and compiler diagnostics then gate durable publication. Publication copies the scratch tree
-to `.mars/.staging.pending` and atomically replaces `.mars/staging`. The next holder of `sync.lock`
-removes that exact pending path after an interruption; no temporary-name glob is reclaimed.
+surface and compiler diagnostics then gate durable publication. A real sync builds the generation in
+place at `.mars/.staging.pending` (a dry run builds it in a temporary directory outside the project
+and publishes nothing), and publication renames that path over `.mars/staging`; nothing is copied.
+The next holder of `sync.lock` removes that exact pending path after an interruption; no
+temporary-name glob is reclaimed.
 
 `overlay.rs` is the remaining semantic-looking code here because `[skills.<name>]` is consumer
 configuration. It must run after schema preparation and uses the installed name after dependency

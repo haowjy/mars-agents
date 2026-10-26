@@ -44,7 +44,7 @@ fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
             return;
         }
     };
-    crate::compiler::hooks::check_opencode_default_export(
+    crate::target::opencode::check_hook_fragment(
         &hook.def.name,
         &hook.source_name,
         &fragment,

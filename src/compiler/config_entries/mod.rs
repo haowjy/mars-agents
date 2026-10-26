@@ -434,21 +434,19 @@ pub(crate) fn compile_config_entries(
                 };
                 match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir) {
                     Ok(content) => {
-                        if target_root == ".opencode" {
-                            let fragment = item.def.targets[target_root]
-                                .fragment
-                                .clone()
-                                .unwrap_or_else(|| {
-                                    crate::compiler::hooks::default_fragment_name(target_root)
-                                });
-                            crate::compiler::hooks::check_opencode_default_export(
-                                &item.def.name,
-                                &item.source_name,
-                                &fragment,
-                                &content,
-                                diag,
-                            );
-                        }
+                        let fragment = item.def.targets[target_root]
+                            .fragment
+                            .clone()
+                            .unwrap_or_else(|| {
+                                crate::compiler::hooks::default_fragment_name(target_root)
+                            });
+                        adapter.check_hook_fragment(
+                            &item.def.name,
+                            &item.source_name,
+                            &fragment,
+                            &content,
+                            diag,
+                        );
                         let relative_dest = relative_dest.to_string_lossy().into_owned();
                         desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
                         file_writes.push((
@@ -469,15 +467,7 @@ pub(crate) fn compile_config_entries(
         // Write via the target adapter (if one is registered).
         let mut target_records = BTreeMap::new();
         for entry in &entries {
-            target_records.insert(
-                entry.key(),
-                ConfigEntryRecord {
-                    emitted_json: match entry {
-                        ConfigEntry::Hook(hook) => serde_json::to_string(&hook.entries).ok(),
-                        ConfigEntry::McpServer(_) => None,
-                    },
-                },
-            );
+            target_records.insert(entry.key(), adapter.config_entry_record(entry));
         }
 
         // Emit target-specific pre-write diagnostics (runs even on dry runs).

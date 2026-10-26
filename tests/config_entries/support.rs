@@ -169,7 +169,10 @@ fn assert_config_entry_consistency_with_diagnostics(
 
     for (target, records) in &lock.config_entries {
         for (key, record) in records {
-            if let Some(emitted) = &record.emitted_json {
+            if key.starts_with("hook:") {
+                let Some(emitted) = &record.emitted_json else {
+                    continue;
+                };
                 let event = key
                     .strip_prefix("hook:")
                     .and_then(|rest| rest.split_once(':'))

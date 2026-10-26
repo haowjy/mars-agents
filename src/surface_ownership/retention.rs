@@ -97,6 +97,10 @@ impl RemovalPlan {
             per_pair,
             stale_keys,
         } = self;
+        let prior_records = per_pair
+            .iter()
+            .map(|(pair, removal)| (pair.clone(), removal.prior_records.clone()))
+            .collect();
         let mut outcomes = BTreeMap::new();
         for ((target_root, surface), removal) in per_pair {
             let outcome = if removal.keys_to_remove.is_empty() {
@@ -137,7 +141,10 @@ impl RemovalPlan {
                 );
             }
         }
-        RetentionPlan { outcomes }
+        RetentionPlan {
+            outcomes,
+            prior_records,
+        }
     }
 }
 
@@ -208,6 +215,7 @@ enum RemovalOutcome {
 
 pub(crate) struct RetentionPlan {
     outcomes: BTreeMap<(String, Surface), RemovalOutcome>,
+    prior_records: BTreeMap<(String, Surface), BTreeMap<String, ConfigEntryRecord>>,
 }
 
 impl RetentionPlan {
@@ -221,6 +229,7 @@ impl RetentionPlan {
             Some(RemovalOutcome::Confirmed) | None => Some(WritePermit {
                 target_root,
                 surface,
+                prior_records: self.prior_records.get(&(target_root.to_string(), surface)),
             }),
         }
     }
@@ -241,6 +250,7 @@ impl RetentionPlan {
 pub struct WritePermit<'p> {
     target_root: &'p str,
     surface: Surface,
+    prior_records: Option<&'p BTreeMap<String, ConfigEntryRecord>>,
 }
 
 #[derive(Debug)]
@@ -261,6 +271,7 @@ impl<'p> WritePermit<'p> {
             Ok(ConfigWrite {
                 target_root: self.target_root,
                 entries,
+                prior_records: self.prior_records,
             })
         } else {
             Err(SurfaceMismatch)
@@ -286,6 +297,7 @@ impl<'p> WritePermit<'p> {
         WritePermit {
             target_root,
             surface,
+            prior_records: None,
         }
     }
 }
@@ -293,6 +305,7 @@ impl<'p> WritePermit<'p> {
 pub struct ConfigWrite<'p> {
     target_root: &'p str,
     entries: Vec<ConfigEntry>,
+    prior_records: Option<&'p BTreeMap<String, ConfigEntryRecord>>,
 }
 impl<'p> ConfigWrite<'p> {
     pub(crate) fn target_root(&self) -> &str {
@@ -300,6 +313,9 @@ impl<'p> ConfigWrite<'p> {
     }
     pub(crate) fn entries(&self) -> &[ConfigEntry] {
         &self.entries
+    }
+    pub(crate) fn prior_records(&self) -> Option<&BTreeMap<String, ConfigEntryRecord>> {
+        self.prior_records
     }
     pub(crate) fn into_parts(self, project_root: &Path) -> (PathBuf, Vec<ConfigEntry>) {
         (project_root.join(self.target_root), self.entries)

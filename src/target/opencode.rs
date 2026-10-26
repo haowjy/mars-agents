@@ -7,16 +7,19 @@
 ///   `{env:VAR}` environment references
 ///
 /// Mars has no OpenCode hook config writer; OpenCode hooks are TypeScript plugins.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::ItemKind;
 use crate::types::DestPath;
 
 use super::{ConfigEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
+
+const MCP_SECTION_MARKER: &str = "mcp";
 
 /// The native MCP entry shared by direct target sync and the OpenCode plugin build.
 #[derive(Debug, Serialize)]
@@ -44,6 +47,130 @@ impl From<&McpServerEntry> for McpServer {
     }
 }
 
+/// Check the OpenCode plugin contract for a file-mode hook fragment.
+pub(crate) fn check_hook_fragment(
+    hook_name: &str,
+    source_name: &str,
+    fragment: &str,
+    content: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    if has_default_export(content) {
+        return;
+    }
+
+    diag.warn(
+        "opencode-hook-default-export",
+        format!(
+            "hook `{hook_name}` from `{source_name}`: OpenCode fragment `{fragment}` has no recognizable default export; add a default `{{ id, setup }}` export; the fragment will still be installed",
+        ),
+    );
+}
+
+fn has_default_export(content: &str) -> bool {
+    let content = strip_javascript_comments_and_strings(content);
+    for (index, _) in content.match_indices("export") {
+        let before = content[..index].chars().next_back();
+        let after_export = &content[index + "export".len()..];
+        if before.is_some_and(is_javascript_identifier_char)
+            || after_export
+                .chars()
+                .next()
+                .is_some_and(is_javascript_identifier_char)
+        {
+            continue;
+        }
+
+        let rest = after_export.trim_start();
+        if let Some(after_default) = rest.strip_prefix("default")
+            && !after_default
+                .chars()
+                .next()
+                .is_some_and(is_javascript_identifier_char)
+        {
+            return true;
+        }
+
+        let Some(bindings) = rest.strip_prefix('{') else {
+            continue;
+        };
+        let Some(end) = bindings.find('}') else {
+            continue;
+        };
+        let tokens = bindings[..end]
+            .split(|character: char| !is_javascript_identifier_char(character))
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>();
+        if tokens
+            .windows(2)
+            .any(|window| window[0] == "as" && window[1] == "default")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_javascript_identifier_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+}
+
+/// Remove comments and quoted text so examples in prose cannot satisfy the
+/// heuristic. Newlines are preserved so adjacent tokens do not accidentally
+/// join across removed content.
+fn strip_javascript_comments_and_strings(content: &str) -> String {
+    let bytes = content.as_bytes();
+    let mut stripped = Vec::with_capacity(content.len());
+    let mut quote = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        if let Some(delimiter) = quote {
+            stripped.push(if bytes[index] == b'\n' { b'\n' } else { b' ' });
+            if bytes[index] == b'\\' {
+                if let Some(escaped) = bytes.get(index + 1) {
+                    stripped.push(if *escaped == b'\n' { b'\n' } else { b' ' });
+                    index += 2;
+                    continue;
+                }
+            } else if bytes[index] == delimiter {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        match bytes[index] {
+            b'\'' | b'"' | b'`' => {
+                quote = Some(bytes[index]);
+                stripped.push(b' ');
+                index += 1;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    if bytes[index] == b'\n' {
+                        stripped.push(b'\n');
+                    }
+                    index += 1;
+                }
+                index = (index + 2).min(bytes.len());
+            }
+            _ => {
+                stripped.push(bytes[index]);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&stripped).into_owned()
+}
+
 #[derive(Debug)]
 pub struct OpencodeAdapter;
 
@@ -64,6 +191,25 @@ impl TargetAdapter for OpencodeAdapter {
         Some("opencode")
     }
 
+    fn check_hook_fragment(
+        &self,
+        hook_name: &str,
+        source_name: &str,
+        fragment: &str,
+        content: &str,
+        diag: &mut DiagnosticCollector,
+    ) {
+        check_hook_fragment(hook_name, source_name, fragment, content, diag);
+    }
+
+    fn config_entry_record(&self, entry: &ConfigEntry) -> crate::lock::ConfigEntryRecord {
+        let mut record = super::default_config_entry_record(entry);
+        if matches!(entry, ConfigEntry::McpServer(_)) {
+            record.emitted_json = Some(MCP_SECTION_MARKER.to_owned());
+        }
+        record
+    }
+
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {
         match kind {
             ItemKind::Skill => Some(DestPath::from(format!("skills/{name}").as_str())),
@@ -76,6 +222,13 @@ impl TargetAdapter for OpencodeAdapter {
         write: crate::surface_ownership::retention::ConfigWrite<'_>,
         project_root: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
+        let legacy_mcp_names: BTreeSet<String> = write
+            .prior_records()
+            .into_iter()
+            .flat_map(|records| records.iter())
+            .filter(|(key, record)| key.starts_with("mcp:") && record.emitted_json.is_none())
+            .map(|(key, _)| key[4..].to_owned())
+            .collect();
         let (target_dir, entries) = write.into_parts(project_root);
         let mcp_servers: Vec<&McpServerEntry> = entries
             .iter()
@@ -92,7 +245,7 @@ impl TargetAdapter for OpencodeAdapter {
             return Ok(Vec::new());
         }
 
-        let path = (write_opencode_config)(&target_dir, &mcp_servers)?;
+        let path = (write_opencode_config)(&target_dir, &mcp_servers, &legacy_mcp_names)?;
         Ok(vec![path])
     }
 
@@ -112,7 +265,7 @@ impl TargetAdapter for OpencodeAdapter {
     ) -> crate::surface_ownership::retention::RemovalReport {
         let (target_dir, removal) = operation.into_parts(project_root);
         let keys: Vec<String> = removal.prior_records.keys().cloned().collect();
-        match remove_opencode_entries(&keys, &target_dir) {
+        match remove_opencode_entries(&keys, &removal.prior_records, &target_dir) {
             Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
             Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
                 error,
@@ -127,7 +280,8 @@ impl TargetAdapter for OpencodeAdapter {
         project_root: &Path,
     ) -> crate::surface_ownership::retention::RemovalReport {
         let (target_dir, removal) = operation.into_parts(project_root);
-        match remove_opencode_entries(&removal.keys_to_remove, &target_dir) {
+        match remove_opencode_entries(&removal.keys_to_remove, &removal.prior_records, &target_dir)
+        {
             Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
             Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
                 error,
@@ -155,6 +309,7 @@ impl TargetAdapter for OpencodeAdapter {
 fn write_opencode_config(
     target_dir: &Path,
     servers: &[&McpServerEntry],
+    legacy_mcp_names: &BTreeSet<String>,
 ) -> Result<PathBuf, MarsError> {
     let path = target_dir.join("opencode.json");
 
@@ -171,8 +326,8 @@ fn write_opencode_config(
     })?;
 
     // A prior release owned these names under `mcpServers`. Remove only names
-    // that are being written now; unrelated user entries remain untouched.
-    migrate_legacy_mcp_servers(root_obj, servers);
+    // recorded as legacy-owned; unrelated user entries remain untouched.
+    migrate_legacy_mcp_servers(root_obj, legacy_mcp_names);
 
     // MCP servers
     if !servers.is_empty() {
@@ -218,7 +373,11 @@ fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
     normalized.contains(&format!("/hooks/{hook_name}/"))
 }
 
-fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
+fn remove_opencode_entries(
+    entry_keys: &[String],
+    prior_records: &BTreeMap<String, crate::lock::ConfigEntryRecord>,
+    target_dir: &Path,
+) -> Result<(), MarsError> {
     let path = target_dir.join("opencode.json");
     if !path.is_file() {
         return Ok(());
@@ -231,16 +390,32 @@ fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(
         None => return Ok(()),
     };
 
-    // Remove MCP entries from both the current and one-release legacy keys.
-    for section in ["mcp", "mcpServers"] {
+    // Remove MCP entries only from the section recorded in the lock. A
+    // missing marker is the one-release bridge for old `mcpServers` output.
+    let mut names_by_section: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for key in entry_keys {
+        let Some(name) = key.strip_prefix("mcp:") else {
+            continue;
+        };
+        let Some(record) = prior_records.get(key) else {
+            continue;
+        };
+        let Some(section) = (match record.emitted_json.as_deref() {
+            None => Some("mcpServers"),
+            Some(MCP_SECTION_MARKER) => Some("mcp"),
+            Some(_) => None,
+        }) else {
+            continue;
+        };
+        names_by_section.entry(section).or_default().push(name);
+    }
+    for (section, names) in names_by_section {
         let Some(mcp_map) = root_obj.get_mut(section).and_then(|v| v.as_object_mut()) else {
             continue;
         };
         let mut changed = false;
-        for key in entry_keys {
-            if let Some(name) = key.strip_prefix("mcp:") {
-                changed |= mcp_map.remove(name).is_some();
-            }
+        for name in names {
+            changed |= mcp_map.remove(name).is_some();
         }
         if changed && mcp_map.is_empty() {
             root_obj.remove(section);
@@ -286,7 +461,7 @@ fn remove_opencode_entries(entry_keys: &[String], target_dir: &Path) -> Result<(
 
 fn migrate_legacy_mcp_servers(
     root_obj: &mut serde_json::Map<String, serde_json::Value>,
-    servers: &[&McpServerEntry],
+    legacy_mcp_names: &BTreeSet<String>,
 ) {
     let Some(legacy_map) = root_obj
         .get_mut("mcpServers")
@@ -296,8 +471,8 @@ fn migrate_legacy_mcp_servers(
     };
 
     let mut changed = false;
-    for server in servers {
-        changed |= legacy_map.remove(&server.name).is_some();
+    for name in legacy_mcp_names {
+        changed |= legacy_map.remove(name).is_some();
     }
     if changed && legacy_map.is_empty() {
         root_obj.remove("mcpServers");
@@ -388,7 +563,17 @@ mod tests {
             )
             .unwrap();
 
-        remove_opencode_entries(&["mcp:to-remove".to_string()], tmp.path()).unwrap();
+        remove_opencode_entries(
+            &["mcp:to-remove".to_string()],
+            &BTreeMap::from([(
+                "mcp:to-remove".to_string(),
+                crate::lock::ConfigEntryRecord {
+                    emitted_json: Some(MCP_SECTION_MARKER.to_string()),
+                },
+            )]),
+            tmp.path(),
+        )
+        .unwrap();
 
         let raw = std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -411,7 +596,12 @@ mod tests {
         )
         .unwrap();
 
-        remove_opencode_entries(&["hook:tool.pre:audit".to_string()], tmp.path()).unwrap();
+        remove_opencode_entries(
+            &["hook:tool.pre:audit".to_string()],
+            &BTreeMap::new(),
+            tmp.path(),
+        )
+        .unwrap();
 
         let json: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(tmp.path().join("opencode.json")).unwrap(),

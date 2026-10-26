@@ -599,7 +599,7 @@ fn discover_manifest_declared_items(
     }
     let mut items = Vec::new();
     let configured_plugin_dir = configured_plugin_dir(package_root);
-    for declared_path in collect_manifest_declared_paths(package_root, source_name)? {
+    for declared_path in collect_manifest_declared_paths(package_root, source_name, None)? {
         scan_manifest_declared_path(
             package_root,
             configured_plugin_dir.as_deref(),
@@ -609,6 +609,70 @@ fn discover_manifest_declared_items(
         )?;
     }
     Ok(dedupe_items_by_path(items))
+}
+
+/// Discover only binary-owned bootstrap document surfaces from an authored tree.
+pub(crate) fn discover_bootstrap_surfaces(
+    package_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<DiscoveredItem>, MarsError> {
+    if !package_root.is_dir() || generated_plugin_tree(package_root, diag) {
+        return Ok(Vec::new());
+    }
+    let configured_plugin_dir = configured_plugin_dir(package_root);
+    let mut layered = Vec::new();
+    let mut scratch = Vec::new();
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
+    while let Some((base_dir, depth)) = queue.pop_front() {
+        let base_rel = if base_dir == package_root {
+            PathBuf::new()
+        } else {
+            relative_to(package_root, &base_dir)?
+        };
+        if base_dir.file_name().and_then(|name| name.to_str()) == Some(BOOTSTRAP_DIR_NAME) {
+            scan_bootstrap_dir(package_root, &base_rel, &mut scratch, &mut visited, diag)?;
+            push_layered_items(&mut layered, &mut scratch, convention_layer(&base_rel));
+        }
+        if depth == MAX_DISCOVERY_WALK_DEPTH {
+            continue;
+        }
+        for path in read_dir_paths_sorted(&base_dir)? {
+            if !path.is_dir() || configured_plugin_tree(configured_plugin_dir.as_deref(), &path) {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.starts_with('.')
+                || RECURSIVE_SKIP_DIRS.contains(&name)
+                || generated_plugin_tree(&path, diag)
+            {
+                continue;
+            }
+            queue.push_back((path, depth + 1));
+        }
+    }
+    let mut items: Vec<_> = ground_items_to_shallowest_layer(layered)
+        .into_iter()
+        .map(|item| item.item)
+        .collect();
+    if !package_root.join("mars.toml").is_file() {
+        for declared in collect_manifest_declared_paths(
+            package_root,
+            "unknown-source",
+            Some(ItemKind::BootstrapDoc),
+        )? {
+            scan_manifest_declared_path(
+                package_root,
+                configured_plugin_dir.as_deref(),
+                &declared,
+                &mut items,
+                diag,
+            )?;
+        }
+    }
+    finalize_items("unknown-source", items)
 }
 
 fn path_is_in_generated_plugin_tree(
@@ -700,6 +764,7 @@ fn dedupe_items_by_path(items: Vec<DiscoveredItem>) -> Vec<DiscoveredItem> {
 fn collect_manifest_declared_paths(
     package_root: &Path,
     source_name: &str,
+    kind_filter: Option<ItemKind>,
 ) -> Result<Vec<DeclaredPath>, MarsError> {
     let mut declared = Vec::new();
     for manifest in SOURCE_MANIFEST_PATHS {
@@ -718,6 +783,9 @@ fn collect_manifest_declared_paths(
     let mut resolved = Vec::new();
     let mut seen = HashSet::new();
     for raw in declared {
+        if kind_filter.is_some_and(|kind| raw.kind != kind) {
+            continue;
+        }
         if !raw.raw_path.starts_with("./") {
             continue;
         }

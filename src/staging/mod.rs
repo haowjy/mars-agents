@@ -122,29 +122,11 @@ fn materialize_prepared_tree(
     }
     // Hooks, bootstrap documents, MCP definitions and foreign source manifests
     // remain binary-owned package surfaces.
-    for relative in ["hooks", "bootstrap", "mcp"] {
-        let root = authored_root.join(relative);
-        if !root.is_dir() {
-            continue;
-        }
-        fs::create_dir_all(destination.join(relative))?;
-        for entry in crate::fs::authored_tree_entries(
-            &root,
-            &[],
-            crate::fs::AuthoredSymlinkPolicy::Follow,
-            diag,
-        )? {
-            let output = destination.join(relative).join(&entry.relative);
-            match entry.kind {
-                crate::fs::AuthoredEntryKind::Directory => fs::create_dir_all(output)?,
-                crate::fs::AuthoredEntryKind::File => {
-                    if let Some(parent) = output.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::copy(entry.source, output)?;
-                }
-            }
-        }
+    for relative in ["hooks", "mcp"] {
+        copy_authored_subtree(authored_root, Path::new(relative), destination, diag)?;
+    }
+    for item in crate::discover::discover_bootstrap_surfaces(authored_root, diag)? {
+        copy_authored_subtree(authored_root, &item.source_path, destination, diag)?;
     }
     for relative in crate::discover::SOURCE_MANIFEST_PATHS {
         let source = authored_root.join(relative);
@@ -155,6 +137,37 @@ fn materialize_prepared_tree(
                 fs::create_dir_all(parent)?;
             }
             fs::copy(source, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_authored_subtree(
+    authored_root: &Path,
+    relative: &Path,
+    destination: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let root = authored_root.join(relative);
+    if !root.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(destination.join(relative))?;
+    for entry in crate::fs::authored_tree_entries(
+        &root,
+        &[],
+        crate::fs::AuthoredSymlinkPolicy::Follow,
+        diag,
+    )? {
+        let output = destination.join(relative).join(&entry.relative);
+        match entry.kind {
+            crate::fs::AuthoredEntryKind::Directory => fs::create_dir_all(output)?,
+            crate::fs::AuthoredEntryKind::File => {
+                if let Some(parent) = output.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(entry.source, output)?;
+            }
         }
     }
     Ok(())

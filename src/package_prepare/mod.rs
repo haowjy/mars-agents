@@ -26,7 +26,6 @@ use crate::error::MarsError;
 pub(crate) struct DiskTreeSource {
     root: PathBuf,
     canonical_root: PathBuf,
-    hide_manifest: bool,
     error: RefCell<Option<MarsError>>,
 }
 
@@ -40,14 +39,8 @@ impl DiskTreeSource {
         Ok(Self {
             root: root.to_path_buf(),
             canonical_root,
-            hide_manifest: false,
             error: RefCell::new(None),
         })
-    }
-
-    pub(crate) fn without_manifest(mut self) -> Self {
-        self.hide_manifest = true;
-        self
     }
 
     pub(crate) fn take_error(&self) -> Option<MarsError> {
@@ -102,9 +95,6 @@ impl DiskTreeSource {
 
 impl TreeSource for DiskTreeSource {
     fn read(&self, path: &str) -> Option<Vec<u8>> {
-        if self.hide_manifest && path == "mars.toml" {
-            return None;
-        }
         let logical = self.path(path)?;
         let actual = self.confined(&logical)?;
         match fs::metadata(&actual) {
@@ -133,9 +123,6 @@ impl TreeSource for DiskTreeSource {
     }
 
     fn is_file(&self, path: &str) -> bool {
-        if self.hide_manifest && path == "mars.toml" {
-            return false;
-        }
         self.path(path)
             .and_then(|path| self.confined(&path))
             .and_then(|path| fs::metadata(path).ok())
@@ -358,35 +345,39 @@ pub(crate) fn prepare_authored(
     if let Some(error) = source.take_error() {
         return Err(error);
     }
-    let legacy_warning = match context {
-        PrepareContext::AuthoredLocal => {
-            "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`".to_string()
-        }
-        PrepareContext::Package => package_legacy_warning(&prepared, root),
+    // A package carries its manifest; authored content has none to name it by.
+    let legacy_warning = if prepared.manifest.is_some() {
+        package_legacy_warning(&prepared, root)
+    } else {
+        "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`".to_string()
     };
     report_diagnostics(&prepared, &source_label(root), &legacy_warning, diag);
     Ok(prepared)
 }
 
-pub(crate) fn prepare_authored_without_manifest(
+/// Prepare a directory that is a package root or a consumer project, with the `mars.toml`
+/// bytes a publish lens reads: the prepared manifest, or a consumer project's own
+/// configuration, which preparation does not touch.
+pub(crate) fn prepare_project(
     root: &Path,
-    context: PrepareContext,
-    dialect: Option<Dialect>,
     diag: &mut DiagnosticCollector,
-) -> Result<Prepared, MarsError> {
-    let source = DiskTreeSource::new(root)?.without_manifest();
-    let prepared = mars_schema::prepare::prepare(&source, context, dialect);
-    if let Some(error) = source.take_error() {
-        return Err(error);
-    }
-    let legacy_warning = match context {
-        PrepareContext::AuthoredLocal => {
-            "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`".to_string()
-        }
-        PrepareContext::Package => package_legacy_warning(&prepared, root),
+) -> Result<(Prepared, Option<Vec<u8>>), MarsError> {
+    let prepared = prepare_authored(root, PrepareContext::Project, None, diag)?;
+    let manifest = match &prepared.manifest {
+        Some(manifest) => Some(manifest.normalized_bytes.clone()),
+        None => match fs::read(root.join("mars.toml")) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(MarsError::Io {
+                    operation: "read consumer configuration".to_string(),
+                    path: root.join("mars.toml"),
+                    source,
+                });
+            }
+        },
     };
-    report_diagnostics(&prepared, &source_label(root), &legacy_warning, diag);
-    Ok(prepared)
+    Ok((prepared, manifest))
 }
 
 /// `label` names a package-relative path in a diagnostic. A dependency is named by its

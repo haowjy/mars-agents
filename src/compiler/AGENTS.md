@@ -34,7 +34,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
 - `tool_policy.rs` — runtime projection, overlay merging and specificity over schema-owned tool rules. Authored parsing, vocabulary, aliases and native tables live in `mars-schema`.
 - `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
-- `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
+- `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_prepared_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
 - `mars-schema::invocability` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
 - `mars-schema::tool_names` — the capability vocabulary, aliases and `tool(pattern)` grammar
 - `mars-schema::tool_natives` — explicit per-harness native tool tables. Nothing is derived by naming convention.

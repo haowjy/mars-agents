@@ -57,7 +57,7 @@ Unknown keys are kept and reported as `field.unknown` warnings. Removed keys are
 
 `TreeSource` is the read interface (`read`, `is_file`, `is_dir`, `children`) that the caller implements for a directory, an archive or memory; `FileTree` is the in-memory implementation and `SubTree` roots a tree below a directory. Preparation reads manifests, definitions and directory listings only.
 
-`PrepareContext::Package` is a package root; `PrepareContext::AuthoredLocal` is a consumer project's `.mars-src`. A pre-v1 package is upgraded with `upgrade::upgrade_definition` and `upgrade::upgrade_manifest`, which edit only the top-level keys that change and keep every other byte; `mars migrate` writes `Prepared`'s normalized bytes back to the authored files.
+`PrepareContext::Package` is a package root; `PrepareContext::AuthoredLocal` is a consumer project's `.mars-src`; `PrepareContext::Project` is a directory that is either (a `mars.toml` with no `[package]` is consumer configuration, and the tree is read as authored content). A pre-v1 package is upgraded with `upgrade::upgrade_definition` and `upgrade::upgrade_manifest`, which edit only the top-level keys that change and keep every other byte; `mars migrate` writes `Prepared`'s normalized bytes back to the authored files.
 
 `inspect::inspect(&source, &hint)` reports what a repository is (a marketplace's plugins, a plugin's or skill tree's items, the dialect and its evidence), and `normalize::normalize(&request)` runs `prepare` on each selected root of a Claude plugin, marketplace, skill tree or other foreign layout and adds a generated `mars.toml` and provenance. Neither fetches anything: a remote marketplace plugin comes back in the caller's `remote_trees`.
 

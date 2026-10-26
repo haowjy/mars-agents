@@ -42,9 +42,16 @@ pub struct PackageMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManifestClassification {
     Schema1,
-    SchemaNewer { schema: u64 },
+    SchemaNewer {
+        schema: u64,
+    },
     MarsLegacy,
-    Invalid { message: String },
+    /// A `mars.toml` with no `[package]`: a consumer project's configuration, which makes the
+    /// directory a project and not a package.
+    ConsumerConfig,
+    Invalid {
+        message: String,
+    },
     NoManifest,
 }
 
@@ -69,7 +76,10 @@ pub fn classify_manifest(bytes: Option<&[u8]>) -> ManifestClassification {
             };
         }
     };
-    let Some(package) = manifest.get("package").and_then(toml::Value::as_table) else {
+    let Some(package) = manifest.get("package") else {
+        return ManifestClassification::ConsumerConfig;
+    };
+    let Some(package) = package.as_table() else {
         return ManifestClassification::Invalid {
             message: "mars.toml at a package root must contain [package]".to_string(),
         };

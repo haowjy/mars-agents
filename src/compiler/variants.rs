@@ -363,30 +363,6 @@ pub(crate) fn project_prepared_skill_for_target(
     Ok(true)
 }
 
-/// Lower a staged skill for one native harness (variant-aware) and emit lossiness warnings.
-///
-/// Mirrors `project_skill_for_target` + `compile_projected_skill_frontmatter` without
-/// writing projected trees — used by `mars check` / `mars init` preview.
-pub(crate) fn emit_staged_skill_lossiness_for_harness(
-    staged_skill_dir: &Path,
-    harness_key: &str,
-    skill_name: &str,
-    diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<(), MarsError> {
-    let projected_skill = harness_skill_variant_path(staged_skill_dir, harness_key)
-        .unwrap_or_else(|| staged_skill_dir.join("SKILL.md"));
-    let selected_content = fs::read_to_string(&projected_skill)?;
-    let _ = lower_projected_skill_for_harness(
-        staged_skill_dir,
-        &selected_content,
-        harness_key,
-        skill_name,
-        diag,
-        true,
-    )?;
-    Ok(())
-}
-
 pub(crate) fn emit_prepared_skill_lossiness_for_harness(
     authored_skill_dir: &Path,
     prepared_base_content: &str,

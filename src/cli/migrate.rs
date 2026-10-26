@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use mars_schema::package::{ManifestClassification, classify_manifest};
 use mars_schema::prepare::{ChangeRecord, PrepareContext, Prepared};
 use serde::Serialize;
 
@@ -42,10 +43,8 @@ struct PendingWrite {
 
 pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let root = &ctx.project_root;
-    let manifest = std::fs::read_to_string(root.join("mars.toml"))?;
-    let consumer = manifest
-        .parse::<toml::Value>()
-        .is_ok_and(|value| value.get("package").is_none());
+    let manifest = std::fs::read(root.join("mars.toml"))?;
+    let consumer = classify_manifest(Some(&manifest)) == ManifestClassification::ConsumerConfig;
     let (authored_root, context) = if consumer {
         (root.join(".mars-src"), PrepareContext::AuthoredLocal)
     } else {

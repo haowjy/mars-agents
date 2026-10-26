@@ -16,8 +16,15 @@ use crate::upgrade::{DefinitionKind, UpgradeResult};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PrepareContext {
+    /// A package root (a dependency, or the package being published): its `mars.toml` must
+    /// declare `[package]`, and a root with no manifest is read as the dialect it looks like.
     Package,
+    /// A consumer's own authored directory (`.mars-src`): content without a manifest is Mars
+    /// convention, and a `mars.toml` without `[package]` is consumer configuration, not read.
     AuthoredLocal,
+    /// A directory that is either: `Package` unless its `mars.toml` has no `[package]`, which
+    /// makes it a consumer project whose tree is read as `AuthoredLocal` content.
+    Project,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -200,7 +207,7 @@ pub(crate) fn prepare_root(
         options.fallback_name,
     );
     let classification = dispatched.classification.clone();
-    let manifest_bytes = source.read("mars.toml");
+    let manifest_bytes = dispatched.manifest.take();
     let mut diagnostics = std::mem::take(&mut dispatched.discovery.diagnostics);
     let mut upgrade_diagnostics = BTreeMap::new();
 

@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::manifest::{PLUGIN_MANIFEST, PluginSpec, SkillSources};
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::discover::{
-    Boundary, RECURSIVE_SKIP_DIRS, Discovery, DroppedItem, SelectedDefinition, basename, file_stem, finish, is_hidden,
-    join, root_skill_slug, walk,
+    Boundary, Discovery, DroppedItem, RECURSIVE_SKIP_DIRS, SelectedDefinition, basename, file_stem,
+    finish, is_hidden, join, root_skill_slug, walk,
 };
 use crate::tree::TreeSource;
 use crate::upgrade::DefinitionKind;

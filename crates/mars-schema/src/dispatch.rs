@@ -63,6 +63,9 @@ pub struct Mirror {
 }
 
 pub(crate) struct Dispatched {
+    /// The package manifest to prepare. Consumer configuration is not one, so it is `None`
+    /// there; the root's `mars.toml` stays the consumer's to read.
+    pub manifest: Option<Vec<u8>>,
     pub kind: Kind,
     pub classification: Classification,
     pub layout: Layout,
@@ -104,7 +107,46 @@ pub(crate) fn dispatch(
     as_plugin: Option<AsPlugin<'_>>,
     fallback_name: Option<&str>,
 ) -> Dispatched {
+    let manifest = source.read("mars.toml");
+    let manifest_class = classify_manifest(manifest.as_deref());
+    let consumer_tree = consumer_content(context, &manifest_class);
+    let mut dispatched = classify(
+        source,
+        &manifest_class,
+        consumer_tree,
+        declared,
+        as_plugin,
+        fallback_name,
+    );
+    dispatched.manifest = manifest.filter(|_| !consumer_tree);
+    dispatched
+}
+
+/// Whether the root's items are the consumer's own authored content, read as Mars convention
+/// with no manifest.
+fn consumer_content(context: PrepareContext, manifest: &ManifestClassification) -> bool {
+    matches!(
+        (context, manifest),
+        (
+            PrepareContext::AuthoredLocal,
+            ManifestClassification::NoManifest
+        ) | (
+            PrepareContext::AuthoredLocal | PrepareContext::Project,
+            ManifestClassification::ConsumerConfig
+        )
+    )
+}
+
+fn classify(
+    source: &impl TreeSource,
+    manifest: &ManifestClassification,
+    consumer_tree: bool,
+    declared: Option<Dialect>,
+    as_plugin: Option<AsPlugin<'_>>,
+    fallback_name: Option<&str>,
+) -> Dispatched {
     let finished = |kind, classification, layout, discovery, also_found| Dispatched {
+        manifest: None,
         kind,
         classification,
         layout,
@@ -125,7 +167,16 @@ pub(crate) fn dispatch(
         );
     }
 
-    match classify_manifest(source.read("mars.toml").as_deref()) {
+    match manifest {
+        _ if consumer_tree => {
+            return finished(
+                Kind::MarsLegacy,
+                Classification::MarsLegacy,
+                Layout::Convention,
+                discover(source, fallback_name),
+                Vec::new(),
+            );
+        }
         ManifestClassification::Schema1 => {
             return finished(
                 Kind::Schema1,
@@ -147,27 +198,18 @@ pub(crate) fn dispatch(
         ManifestClassification::SchemaNewer { schema } => {
             return finished(
                 Kind::SchemaNewer,
-                Classification::SchemaNewer { schema },
+                Classification::SchemaNewer { schema: *schema },
                 Layout::None,
                 Discovery::empty(),
                 Vec::new(),
             );
         }
-        ManifestClassification::Invalid { .. } => {
+        ManifestClassification::Invalid { .. } | ManifestClassification::ConsumerConfig => {
             return finished(
                 Kind::Invalid,
                 Classification::Invalid,
                 Layout::None,
                 Discovery::empty(),
-                Vec::new(),
-            );
-        }
-        ManifestClassification::NoManifest if context == PrepareContext::AuthoredLocal => {
-            return finished(
-                Kind::MarsLegacy,
-                Classification::MarsLegacy,
-                Layout::Convention,
-                discover(source, fallback_name),
                 Vec::new(),
             );
         }

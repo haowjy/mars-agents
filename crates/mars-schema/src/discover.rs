@@ -136,13 +136,20 @@ impl Boundary {
     }
 
     fn in_plugin_dir(&self, path: &str) -> bool {
-        self.plugin_dir.as_deref().is_some_and(|dir| within(path, dir))
+        self.plugin_dir
+            .as_deref()
+            .is_some_and(|dir| within(path, dir))
     }
 
     /// Whether `dir`, whose parents are already clear, may be entered. A directory holding a
     /// marker is recorded in `generated`. Hidden directories are not searched for markers: a
     /// dot-prefixed directory can be intentional authored content in a skill's payload.
-    pub(crate) fn admits(&self, source: &impl TreeSource, dir: &str, generated: &mut Vec<String>) -> bool {
+    pub(crate) fn admits(
+        &self,
+        source: &impl TreeSource,
+        dir: &str,
+        generated: &mut Vec<String>,
+    ) -> bool {
         if self.in_plugin_dir(dir) {
             return false;
         }

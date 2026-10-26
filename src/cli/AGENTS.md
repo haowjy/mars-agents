@@ -63,8 +63,8 @@ at emission time when mode is `Hidden`.
 | `mars check` | Direct preview | `Surface` | Yes |
 | `mars init` | Direct preview | `Surface` | Yes |
 
-`mars check` and `mars init` call `lossiness_preview::collect_source_lossiness_diagnostics`
-with `LossinessMode::Surface` (bypassing the sync pipeline).
+`mars check` and `mars init` prepare the tree once (`PublishLens::load`) and call
+`lossiness_preview::collect_prepared_source_lossiness_diagnostics` with `LossinessMode::Surface` (bypassing the sync pipeline).
 
 ## Catalog / probe refresh flags
 

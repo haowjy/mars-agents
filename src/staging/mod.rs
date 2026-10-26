@@ -20,7 +20,6 @@ use crate::error::MarsError;
 use crate::platform::cache::safe_component;
 use crate::resolve::RootedSourceRef;
 use crate::types::{RenameMap, SourceName};
-use mars_schema::dialect::Dialect;
 use mars_schema::frontmatter::Frontmatter;
 use mars_schema::item::ItemKind;
 
@@ -204,48 +203,6 @@ fn copy_authored_subtree(
         }
     }
     Ok(())
-}
-
-/// Compatibility entry used by lossiness preview and discovery fixtures. It
-/// delegates semantic work to `mars-schema` and only materializes the result.
-pub(crate) fn stage_canonical_source(
-    source_root: &Path,
-    dest_root: &Path,
-    dialect: Option<Dialect>,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    renames: &RenameMap,
-    fallback_skill_name: Option<&str>,
-    diag: &mut DiagnosticCollector,
-) -> Result<mars_schema::prepare::Prepared, MarsError> {
-    let consumer_manifest = fs::read_to_string(source_root.join("mars.toml"))
-        .ok()
-        .and_then(|content| content.parse::<toml::Value>().ok())
-        .is_some_and(|manifest| manifest.get("package").is_none());
-    let prepared = if consumer_manifest {
-        crate::package_prepare::prepare_authored_without_manifest(
-            source_root,
-            mars_schema::prepare::PrepareContext::AuthoredLocal,
-            dialect,
-            diag,
-        )?
-    } else {
-        crate::package_prepare::prepare_authored(
-            source_root,
-            mars_schema::prepare::PrepareContext::Package,
-            dialect,
-            diag,
-        )?
-    };
-    materialize_prepared_tree(
-        source_root,
-        dest_root,
-        &prepared,
-        skill_overrides,
-        renames,
-        fallback_skill_name,
-        diag,
-    )?;
-    Ok(prepared)
 }
 
 pub(crate) fn materialize_local_prepared(

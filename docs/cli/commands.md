@@ -42,7 +42,7 @@ mars init [TARGET] [--link DIR...]
 - Idempotent: re-running is a no-op for init, but still processes `--link`
 - When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
   against configured managed targets, reporting what each target cannot express
-  (lossiness diagnostics via `collect_source_lossiness_diagnostics`). A consumer
+  (lossiness diagnostics via `collect_prepared_source_lossiness_diagnostics`). A consumer
   project has no package to publish, so it gets no preview
 
 ```bash
@@ -551,7 +551,7 @@ Does not require a mars project (no `mars.toml` needed). Validates:
   `[package].requires-mars = ">=0.19.0"` (or higher) floor
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
-preview** (`collect_source_lossiness_diagnostics`) against the configured managed
+preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed
 targets — reports what each native target cannot express from the source tree's
 agents and skills.
 

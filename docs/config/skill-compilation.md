@@ -259,7 +259,7 @@ The launch bundle reads skills from `.mars/skills/`; Meridian gets skill content
 
 Mars reads every skill with the schema reader and emits diagnostics during `mars sync`, `mars check` and `mars validate`.
 Field-loss diagnostics also surface via `mars check` and `mars init`, which run a
-lossiness preview (`lossiness_preview::collect_source_lossiness_diagnostics`)
+lossiness preview (`lossiness_preview::collect_prepared_source_lossiness_diagnostics`)
 against the project's configured managed targets.
 
 | Code | Severity | Cause |

@@ -12,7 +12,6 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::error::MarsError;
-use mars_schema::dialect::Dialect;
 
 use super::output;
 
@@ -55,38 +54,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
-    let consumer_config = std::fs::read_to_string(authored_base.join("mars.toml"))
-        .ok()
-        .and_then(|content| content.parse::<toml::Value>().ok())
-        .is_some_and(|manifest| manifest.get("package").is_none());
-    let (prepared, normalized_manifest) = if consumer_config {
-        let prepared = crate::package_prepare::prepare_authored_without_manifest(
-            &authored_base,
-            mars_schema::prepare::PrepareContext::AuthoredLocal,
-            Some(Dialect::MarsNative),
-            &mut publish_diag,
-        )?;
-        (
-            prepared,
-            Some(std::fs::read(authored_base.join("mars.toml"))?),
-        )
-    } else {
-        let prepared = crate::package_prepare::prepare_authored(
-            &authored_base,
-            mars_schema::prepare::PrepareContext::Package,
-            None,
-            &mut publish_diag,
-        )?;
-        let manifest = prepared
-            .manifest
-            .as_ref()
-            .map(|manifest| manifest.normalized_bytes.clone());
-        (prepared, manifest)
-    };
-    let lens = crate::resolve::PublishLens::from_prepared_manifest(
-        &authored_base,
-        normalized_manifest.as_deref(),
-    )?;
+    let (lens, prepared) = crate::resolve::PublishLens::load(&authored_base, &mut publish_diag)?;
     let mut report = check_prepared(&prepared, &authored_base, &lens, &mut publish_diag)?;
     let known_aliases = crate::models::merged_runtime_aliases(
         &Default::default(),
@@ -403,37 +371,9 @@ fn check_prepared(
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let consumer = std::fs::read_to_string(base.join("mars.toml"))
-        .ok()
-        .and_then(|content| content.parse::<toml::Value>().ok())
-        .is_some_and(|manifest| manifest.get("package").is_none());
-    let prepared = if consumer {
-        crate::package_prepare::prepare_authored_without_manifest(
-            base,
-            mars_schema::prepare::PrepareContext::AuthoredLocal,
-            Some(Dialect::MarsNative),
-            &mut diag,
-        )?
-    } else {
-        crate::package_prepare::prepare_authored(
-            base,
-            mars_schema::prepare::PrepareContext::Package,
-            None,
-            &mut diag,
-        )?
-    };
-    let lens = match crate::resolve::PublishLens::from_prepared_manifest(
-        base,
-        if consumer {
-            Some(std::fs::read(base.join("mars.toml"))?)
-        } else {
-            prepared
-                .manifest
-                .as_ref()
-                .map(|manifest| manifest.normalized_bytes.clone())
-        }
-        .as_deref(),
-    ) {
+    let (prepared, manifest) = crate::package_prepare::prepare_project(base, &mut diag)?;
+    let lens = match crate::resolve::PublishLens::from_prepared_manifest(base, manifest.as_deref())
+    {
         Ok(lens) => lens,
         Err(error) => {
             return Ok(CheckReport {

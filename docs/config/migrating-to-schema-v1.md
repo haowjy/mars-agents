@@ -84,7 +84,7 @@ Running it again is a no-op: `definition format is already schema v1`.
 
 ## Consumer projects
 
-A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions; with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
+A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions (until then `mars sync` upgrades them in memory and warns: ``authored `.mars-src` content uses the pre-v1 format; run `mars migrate` ``); with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
 
 The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `default_network` or `network` in an overlay, are ignored without a warning; delete them. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
 

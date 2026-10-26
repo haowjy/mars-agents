@@ -81,7 +81,7 @@ Limits:
 
 Present only in source packages — repos that other projects depend on via `mars add`. Consumer projects that just install agents/skills from external packages do not need this section.
 
-To keep project-local agents and skills without publishing, use `.mars-src/` instead. See [local-development.md](../dev/local-development.md#mars-src----project-local-agents-and-skills).
+To keep project-local agents and skills without publishing, use `.mars-src/` instead. See [local-development.md](../dev/local-development.md#mars-src--project-local-agents-and-skills).
 
 ```toml
 [package]

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::claude::manifest::{MarketplaceEntry, PluginSource};
 use crate::diagnostic::SchemaDiagnostic;
 use crate::dialect::Dialect;
-use crate::discover::payload_paths;
+use crate::discover::{enclosing_generated_dir, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 pub use crate::dispatch::{Kind, Mirror};
 use crate::prepare::{DialectEvidenceSource, PrepareContext};
@@ -197,6 +197,17 @@ fn inspect_plugin(
         PluginSource::Local { path } => {
             plugin.at_marketplace_root = path.is_empty();
             let root = SubTree::new(source, path.clone());
+            if let Some(generated) = enclosing_generated_dir(source, path) {
+                plugin.refused = Some(format!(
+                    "`{path}` is inside `{}`, plugin output Mars built, which is never input",
+                    if generated.is_empty() {
+                        "."
+                    } else {
+                        &generated
+                    }
+                ));
+                return plugin;
+            }
             if !path.is_empty() && !source.is_dir(path) {
                 plugin.refused = Some(format!("`{path}` does not exist in the marketplace"));
                 return plugin;

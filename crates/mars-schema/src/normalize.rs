@@ -13,6 +13,7 @@ use crate::claude::manifest::{
 };
 use crate::diagnostic::{SchemaDiagnostic, Severity};
 use crate::dialect::Dialect;
+use crate::discover::enclosing_generated_dir;
 use crate::dispatch::{AsPlugin, Layout};
 use crate::inspect::{Hint, Kind};
 use crate::prepare::{
@@ -220,6 +221,21 @@ fn normalize_plugin<T: TreeSource>(
             return;
         }
         PluginSource::Local { path } => {
+            if let Some(generated) = enclosing_generated_dir(marketplace_root, path) {
+                report(
+                    Severity::Warning,
+                    "marketplace.plugin-generated",
+                    format!(
+                        "`{path}` is inside `{}`, plugin output Mars built, which is never input",
+                        if generated.is_empty() {
+                            "."
+                        } else {
+                            &generated
+                        }
+                    ),
+                );
+                return;
+            }
             if !path.is_empty() && !marketplace_root.is_dir(path) {
                 report(
                     Severity::Error,

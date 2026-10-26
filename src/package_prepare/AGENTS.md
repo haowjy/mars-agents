@@ -5,7 +5,7 @@ authored package root lazily, sorts directory entries, confines resolved paths t
 latches IO or containment failures because the host-independent `TreeSource` trait has no error
 channel. Always check the latched error immediately after preparation.
 
-`prepare_rooted` runs after dependency `subpath` is applied. It keeps
+`prepare_rooted` runs after dependency `subpath` is applied. It calls `mars_schema::normalize` with the dependency's `dialect` as the hint, so a manifest-free dependency (a Claude plugin, a skill tree) arrives as one schema v1 package with relocated output paths and a generated `mars.toml`; a marketplace with several plugins is an error that lists them until the dependency can name one. It keeps
 `RootedSourceRef.authored_root` immutable, reports `Prepared.diagnostics` against authored paths,
 parses binary-owned manifest sections from normalized manifest bytes, and returns without
 materializing. After the complete graph and local authored packages pass their prepared-diagnostic
@@ -19,6 +19,6 @@ Commands consume `Prepared` directly:
 - sync and plugin resolution retain the result on each graph node;
 - local package and `.mars-src` selection compares prepared definitions before overlays.
 
-Do not add binary classification, Agent/skill discovery, lift, upgrade, or schema rereads. Extend
+Do not add binary classification, Agent/skill discovery, lift, upgrade, or schema rereads. Authored local trees and `mars check` use `mars_schema::prepare` directly. Extend
 `mars-schema::Prepared` when a consumer lacks semantic information. Consumer filters, renames and
 overlays run after preparation.

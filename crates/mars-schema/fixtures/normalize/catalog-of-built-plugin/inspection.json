@@ -1,0 +1,28 @@
+{
+  "kind": "marketplace",
+  "dialect": {
+    "dialect": "claude",
+    "source": "predicted",
+    "evidence": [
+      ".claude-plugin/marketplace.json"
+    ]
+  },
+  "also_found": [],
+  "plugins": [
+    {
+      "entry": {
+        "name": "example",
+        "source": {
+          "kind": "local",
+          "path": "plugin/claude"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "`plugin/claude` is inside `plugin`, plugin output Mars built, which is never input",
+      "diagnostics": {}
+    }
+  ],
+  "items": [],
+  "diagnostics": {}
+}

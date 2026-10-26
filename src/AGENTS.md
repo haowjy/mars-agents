@@ -36,8 +36,8 @@ sync/build → resolve ← source
 - `package_prepare` is the lazy filesystem adapter for crate-owned `mars_schema::prepare`
 - `resolve/` prepares every rooted dependency after `apply_subpath`, retains authored origin plus `Prepared`, and resolves relative dependencies from that origin
 - `staging/` materializes prepared bytes and consumer overlays directly into the project-owned pending generation; sync publishes it by rename after the diagnostic gate
-- `discover/` owns binary-only hooks, MCP items and bootstrap documents; Agent and skill selection belongs to `mars-schema`
-- `dialect/` parses binary configuration vocabulary; crate preparation owns inference and lift semantics
+- `discover/` owns binary-only hooks, MCP items and bootstrap documents, plus the convention walk over materialized trees; reading a repository as packages (Claude plugins, marketplaces, skill trees) belongs to `mars-schema`
+- dialects are `mars_schema::dialect::Dialect`; dispatch, prediction and lift belong to `mars-schema`
 - `skill_source_name` — single flat-root skill naming rule shared by discovery and staging overlay lookup
 - `source/` fetches git/path sources, manages global cache
 - `config/` parses mars.toml + mars.local.toml, merges to EffectiveConfig

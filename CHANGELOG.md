@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `inspect` and `normalize` in `mars-schema` (and the WASM package) read any repository as Mars packages: Claude plugins, marketplaces (`strict` and `source` rules) and bare skill trees become schema v1 packages with relocated `skills/<slug>/` and `agents/<slug>.md`, a generated `mars.toml` and provenance; commands, hooks and MCP definitions are reported as not imported. Skill tool keys are dropped with a warning, `type` and `version` move to `metadata`, an unquoted `description:` colon is repaired, and Agent `disallowedTools` merge into `tools`.
+- Dependencies without `mars.toml` go through `normalize`; `agent-skills` is a dialect, and a marketplace with several plugins is an error that lists them.
 - `@meridian-flow/mars-schema` returns one plain-object v1 reading (file spellings, `null` for absent, `Uint8Array` bytes) from `read(path, text)` for agents, skills and `mars.toml`; its YAML emitter quotes every unsafe key and string and refuses integers beyond ±(2^53 − 1).
 - `ls` and `work` are tool capabilities, and the published vocabulary includes a typed Flow table.
 - `mars-schema` can prepare package trees in memory, returning normalized definitions, strict
@@ -30,6 +32,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- Dependency `dialect = "opencode"` now parses; `open-code` was the only spelling the config accepted.
 - Native agent files and plugin trees resolve effort, sandbox and approval through the launch bundle's precedence chain, now including `[agents.<name>]` overlay scalars and `[[settings.model-policies]]`; an artifact that names no model gets only the overlay and top-level values.
 - Claude agent files omit `effort` when the resolved effort is `none` (Claude Code has no off value) and report the loss; `mars-schema` readings and `rewriteBlock` keep mapping key order at every depth.
 - Native agent files (`.claude`, `.codex`, Cursor, plugin trees) take effort, sandbox and approval from the matching model policy, as the launch bundle does.

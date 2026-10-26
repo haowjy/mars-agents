@@ -260,6 +260,19 @@ fn slugify(name: &str) -> String {
     slug.trim_matches('-').to_owned()
 }
 
+/// The generated plugin directory that holds `path` or any parent of it, if one does.
+pub(crate) fn enclosing_generated_dir(source: &impl TreeSource, path: &str) -> Option<String> {
+    let mut prefix = String::new();
+    let mut components = std::iter::once("").chain(path.split('/').filter(|part| !part.is_empty()));
+    components.find_map(|component| {
+        prefix = join(&prefix, component);
+        source
+            .read(&join(&prefix, SENTINEL_FILE))
+            .is_some_and(|bytes| is_valid_sentinel(&bytes))
+            .then(|| prefix.clone())
+    })
+}
+
 pub(crate) fn generated_plugin_dirs(
     source: &impl TreeSource,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,

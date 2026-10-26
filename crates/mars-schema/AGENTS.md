@@ -17,14 +17,40 @@ non-block top-level mapping or failed semantic verification falls back to a repo
 frontmatter rewrite. Unchanged definitions and schema-v1 manifests remain byte-identical. The
 fixtures under `fixtures/upgrade/` are the published upgrade contract.
 
-`prepare` is the package-reading boundary. It classifies a `TreeSource`, selects Agents and
-skills once, normalizes and strictly reads every selected definition and applicable manifest,
-and returns source/output paths, normalized bytes, authored-file change records, payload
-mappings, and source-keyed structured diagnostics. Source paths are normalized package-relative
-identities and never describe materialization storage. Consumers apply filters, renames,
-overlays, and other consumer configuration only after preparation. `prepare` lists payload but
-never reads payload bytes; `FileTree` is its in-memory WASM and fixture adapter. The cases under
-`fixtures/prepare/` are the serialized package-preparation contract.
+`prepare` is the one-root reading core. `dispatch` classifies the root in the order of
+`mars-normalize` (generated output, then a Mars manifest, then a declared dialect, then the
+dialect predicted from evidence in the root, then empty) and chooses a layout. The Mars
+convention walk (`discover`) serves Mars packages and the Codex, OpenCode and Cursor lifts, with
+output paths equal to source paths. The Claude layout (`claude/`) serves `claude` and
+`agent-skills`: `claude::manifest` parses `plugin.json` and `marketplace.json` and applies
+Claude's merge and `strict` rules (a list adds to the default skills folder and replaces the
+default Agents and commands folders), `claude::discover` finds the items (the default
+`skills/<name>/SKILL.md`, listed paths, or for a bare tree every `SKILL.md` directory within five
+levels without entering a found skill) and relocates each to `skills/<slug>/` or
+`agents/<slug>.md`, and `claude::translate` and `claude::checks` hold the skills and Agents tables
+and the warnings that depend on where a skill landed. Payload is assigned before selection, so a
+nested skill is never its parent's payload. `prepare` returns source/output paths, normalized
+bytes, authored-file change records, payload mappings, and source-keyed structured diagnostics.
+Source paths are normalized package-relative identities and never describe materialization
+storage. Consumers apply filters, renames, overlays, and other consumer configuration only after
+preparation. `prepare` lists payload but never reads payload bytes; `FileTree` is its in-memory
+WASM and fixture adapter and `SubTree` roots a tree below a directory. The cases under
+`fixtures/prepare/` are the serialized preparation contract.
+
+`inspect` and `normalize` are `dispatch` and `prepare` over a whole repository, not a second
+pipeline. `inspect(tree, hint)` reports the kind (`schema-1`, `mars-legacy`, `schema-newer`,
+`marketplace`, `plugin`, `skill-tree`, `invalid`, `empty`), the dialect with its evidence and
+whether it was declared or predicted, other harnesses' copies (`also_found`, never read), a
+marketplace's plugins with their sources (local, remote coordinates, or unsupported) and, for
+local ones, their items, and a plugin's or skill tree's items with payload listings.
+`normalize(request)` runs `prepare` on each selected root (a marketplace plugin is its own
+package; a remote plugin's tree comes in `remote_trees`, fetched by the caller after it
+inspected the tree with `Hint.plugin` set to the entry) and adds a generated `mars.toml`
+(`schema = 1`, name from the plugin, the marketplace entry, or the repository name plus the
+subpath) and provenance. A Mars package is the identity case. A package-level error (two skills
+with one slug, conflicting manifests) leaves the package holding nothing to write, with the
+error in its diagnostics. `fixtures/normalize/<case>/` holds `input/`, `request.json`,
+`inspection.json`, `normalized.json` and the file maps under `expected/<package id>/`.
 
 `agent`, `skill`, and `manifest` are the only readers for schema-v1 definitions. Their
 serialized reading and diagnostics are pinned by `fixtures/read/`; callers consume these
@@ -58,8 +84,8 @@ keys sort; `serde_json/preserve_order` stays off because it would reorder every 
 output. Native config for the bundle is converted to `serde_json::Map` at the boundary.
 
 `mars-schema-wasm` serializes with `Serializer::json_compatible()` (plain objects, `null`) and
-exposes `read`, `emitValue`, `rewriteBlock`, `vocabulary` and `prepare` (provisional until P5) as
-`@meridian-flow/mars-schema`. The npm `node/`, `web/` and `fixtures/` are built by
+exposes `read`, `emitValue`, `rewriteBlock`, `vocabulary`, `prepare`, `inspect` and `normalize` as
+`@meridian-flow/mars-schema` (trees are `Map<path, Uint8Array>`). The npm `node/`, `web/` and `fixtures/` are built by
 `scripts/build-schema-wasm.sh`, never committed. Fixtures are checked in Rust (`tests/`) and in
 Node (`crates/mars-schema-wasm/run-fixtures.mjs`, deep equality on every suite; emit cases are
 spliced into a frontmatter and read back by `read` and the `yaml` library). Regenerate expected

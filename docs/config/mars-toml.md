@@ -206,7 +206,7 @@ Each dependency must have exactly one of `url` or `path` (not both, not neither)
 | `path` | string | Local filesystem path (relative to project root or absolute) |
 | `subpath` | string | Optional package root under the fetched repo or local path |
 | `version` | string | Version constraint for git sources (see [Version Constraints](#version-constraints)) |
-| `dialect` | string | Inbound lift dialect: `claude`, `codex`, `opencode`, `cursor`, or `mars-native` (see [Dialect](#dialect)) |
+| `dialect` | string | Inbound lift dialect: `claude`, `agent-skills`, `codex`, `opencode`, `cursor`, or `mars-native` (see [Dialect](#dialect)) |
 
 `subpath` is the explicit escape hatch for monorepo packages and foreign hidden layouts. When omitted, Mars discovers from the source root itself and skips dot-prefixed directories. To import a Claude-authored package stored under `.claude/`, set `subpath = ".claude"` and `dialect = "claude"`; the inner `agents/` and `skills/` folders are then discovered normally.
 
@@ -488,12 +488,14 @@ Branch or commit pins (non-semver strings) bypass version resolution entirely an
 
 ## Dialect
 
-The `dialect` key on `[dependencies.<dep>]` controls how mars lifts foreign frontmatter to canonical form during the staging seam. It accepts: `claude`, `codex`, `opencode`, `cursor`, `mars-native`.
+The `dialect` key on `[dependencies.<dep>]` controls how mars lifts foreign frontmatter to canonical form during the staging seam. It accepts: `claude`, `agent-skills`, `codex`, `opencode`, `cursor`, `mars-native`.
 
 Resolution order (first-wins):
 
 1. **Explicit** — `dialect = "codex"` on the dependency entry in `mars.toml`.
-2. **Container inference for lift only** — if the rooted source tree contains exactly one non-empty foreign container such as `.claude/agents/` or `.claude/skills/`, the corresponding dialect is inferred. Hidden containers are still skipped by item discovery; inference does not import their contents.
+2. **Prediction from evidence in the package root** — a Claude `.claude-plugin/plugin.json` or `marketplace.json`, a `.cursor-plugin/` directory or `.mdc` rules, a non-empty `.codex/`, `.opencode/` or `.claude/` container, then Claude-only frontmatter keys, and `agent-skills` for skills that use only the standard's keys. The strongest evidence decides and other harnesses' copies are reported, not read. Hidden containers are still skipped by item discovery; prediction does not import their contents.
+
+A Claude-shaped dependency (a plugin, a marketplace, or a bare tree of `SKILL.md` directories) is read by Claude's rules: a plugin's `skills` list adds to `skills/`, its `agents` list replaces `agents/`, `commands/` are reported and not imported, and a skill's inner `agents/` folder stays payload. Each item lands in the schema v1 layout (`skills/<slug>/`, `agents/<slug>.md`). A marketplace with one plugin installs that plugin; one with several is an error that lists them until the dependency can name one.
 3. **Default** — `claude` for dependencies, `mars-native` for `.mars-src` items.
 
 Declared-package self inputs always use `mars-native`, without container inference. Generated native outputs cannot change their dialect.

@@ -1,6 +1,7 @@
 # src/discover/ — Source Item Discovery
 
-`mars-schema` is the authority for Agent and skill selection. Resolver and plugin paths call the
+`mars-schema` is the authority for Agent and skill selection, including Claude plugin and
+marketplace manifests and skill trees (`inspect`, `normalize`). Resolver and plugin paths call the
 binary-only inventory here for hooks and bootstrap documents, then combine it with
 `Prepared.definitions`; they do not run the compatibility all-kind walk.
 
@@ -62,13 +63,13 @@ With that rooting, `agents/` and `skills/` are non-hidden children of the effect
 
 ## Root `SKILL.md`
 
-A package-root `SKILL.md` is a flat-root skill fallback only when no agents or skills were found by convention. Bootstrap docs can still accompany a flat-root skill through explicit plugin-manifest declarations.
+A package-root `SKILL.md` is a flat-root skill fallback only when no agents or skills were found by convention. Bootstrap docs can still accompany a flat-root skill through explicit plugin-manifest declarations. A root skill of a manifest-free dependency is relocated to `skills/<slug>/` by `normalize` before this walk sees it.
 
 ## Manifest declarations
 
-Claude plugin manifests (`.claude-plugin/plugin.json` and `marketplace.json`) are explicit declarations, not auto-scanning. Their `./` paths are normalized, checked to stay under the package root, and then scanned/registered according to the declared item kind.
+Only `bootstrapDocs` is read from `.claude-plugin/plugin.json` and `marketplace.json` here; the paths are normalized, checked to stay under the package root, and registered as bootstrap docs. Skills and Agents a manifest lists are the schema crate's (`claude::manifest`), where the manifest's lists add to or replace the default folders as Claude does.
 
-Manifest-declared items and convention items share one duplicate rule: if two discovered items have the same `(kind, name)`, discovery raises `DiscoveryCollision`. There is no precedence order or silent shadowing inside a single source.
+Declared and convention items share one duplicate rule: if two discovered items have the same `(kind, name)`, discovery raises `DiscoveryCollision`. There is no precedence order or silent shadowing inside a single source.
 
 ## Rationale
 

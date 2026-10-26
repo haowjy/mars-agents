@@ -1,0 +1,140 @@
+{
+  "kind": "schema-1",
+  "packages": [
+    {
+      "id": "example",
+      "provenance": {
+        "translator": "0.18.3",
+        "source": {},
+        "selected_items": [
+          "agents/helper.md",
+          "skills/authored/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "schema-1"
+        },
+        "manifest": {
+          "source_path": "mars.toml",
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "name",
+                "example"
+              ],
+              [
+                "version",
+                "1.0.0"
+              ],
+              [
+                "schema",
+                1
+              ]
+            ],
+            "fields": {
+              "name": "example",
+              "version": "1.0.0",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "none"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "helper",
+            "source_path": "agents/helper.md",
+            "output_path": "agents/helper.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "helper"
+                ],
+                [
+                  "description",
+                  "An agent."
+                ]
+              ],
+              "fields": {
+                "name": "helper",
+                "description": "An agent.",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "You are an agent.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "authored",
+            "source_path": "skills/authored/SKILL.md",
+            "output_path": "skills/authored/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "authored"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "authored",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {
+          "plugin/.mars-plugin.json": [
+            {
+              "code": "generated-plugin-tree-skipped",
+              "severity": "info",
+              "path": [],
+              "message": "skipping generated plugin tree at `plugin` while reading authored package input"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

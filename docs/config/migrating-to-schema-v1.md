@@ -98,7 +98,7 @@ warning: package `legacy` uses the pre-v1 format; run `mars migrate` in its repo
 
 The warning names the package so you can ask its maintainer to migrate; nothing in your project needs to change, and the dependency's repository is not modified. The upgrade also drops a skill's tool keys with a warning that names the file.
 
-A dependency that declares `schema = 1` and breaks its rules is different: Mars reports each error with the file and the replacement and fails `mars sync` before it writes anything. A tree with no `mars.toml` is read by [Claude's rules](mars-toml.md#dialect) and then strictly, so it is not upgraded in memory; its removed keys are errors.
+A dependency that declares `schema = 1` and breaks its rules is different: Mars reports each error with the file and the replacement and fails `mars sync` before it writes anything. A tree with no `mars.toml` is not upgraded in memory. [Claude's rules](mars-toml.md#dialect) translate its definitions and the result is read strictly, so a removed Mars key such as `network` is an error.
 
 ## `mars migrate` and `mars upgrade`
 

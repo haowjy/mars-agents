@@ -7,20 +7,19 @@
 - **Target sync**: optional copies from `.mars/` into managed target directories, configured by `settings.targets`.
 - **`--root`**: points to the project root when you need to override auto-detection.
 
-Mars uses three project files plus an optional user network-default file:
+Mars uses three project files:
 
 | File | Purpose | Committed? |
 |---|---|---|
 | `mars.toml` | Dependencies, filters, settings | Yes |
 | `mars.lock` | Resolved versions, checksums, ownership | Yes |
 | `mars.local.toml` | Developer-local overrides | No (gitignored) |
-| `$MARS_CONFIG_DIR/config.toml` (otherwise the platform `mars/config.toml`) | User network defaults | User-owned |
 
 ## Layering and precedence
 
 Mars applies configuration layers in this precedence order:
 
-`user config < mars.toml < mars.local.toml < CLI/command inputs`
+`mars.toml < mars.local.toml < CLI/command inputs`
 
 Default merge semantics:
 
@@ -29,57 +28,51 @@ Default merge semantics:
 - **Arrays/lists:** higher layer replaces the full list (including explicit `[]`), except the
   permission sets below.
 - **Permission sets:** plain lists add; `{ replace = [...] }` clears lower entries first. This
-  applies only to network allow/deny hosts and tool grants/denies. See
+  applies only to the tool grants and denies of an `[agents.<name>.tools]` overlay. See
   [Adding to or replacing a permission list](#adding-to-or-replacing-a-permission-list).
 
 For keyed overlay tables:
 
 - `[models]` overlays are **replace-by-key** per alias entry (no recursive field merge inside one alias block).
 - `[agents]` and `[skills]` are also **replace-by-key** for scalars, options, model policies,
-  and unknown keys. Their network and tool permission sets are the exception: those compose
-  across matching project/local entries with the add/replace rule.
+  and unknown keys. An agent's tool permission sets (`[agents.<name>.tools]`) are the exception:
+  they compose across matching project/local entries with the add/replace rule.
 
 ### Adding to or replacing a permission list
 
-Four lists are permission lists:
-- `network-allow`
-- `network-deny`
+Two lists are permission lists, both on an agent overlay:
 - `tools.allowed`
 - `tools.disallowed`
 
 When more than one place sets one of these lists, Mars combines them. The places, from lowest
 to highest:
 
-user config < `mars.toml` `[settings]` < `mars.local.toml` `[settings]` < agent profile < `[agents.<name>]` / `[skills.<name>]` overlay < CLI flags
+agent profile `tools` < `[agents.<name>.tools]` in `mars.toml` < `[agents.<name>.tools]` in `mars.local.toml`
 
 A plain list **adds** its entries to what lower places gave:
 
 ```toml
 # mars.toml
-[settings]
-network-allow = ["github.com"]
+[agents.coder.tools]
+allowed = ["bash(git *)"]
 
 # mars.local.toml
-[settings]
-network-allow = ["pypi.org"]   # result: github.com, pypi.org
+[agents.coder.tools]
+allowed = ["web"]   # result: the profile's rules, bash(git *), web
 ```
 
-To **discard** what lower places gave and use only your entries, write the list inside a
-`replace` table. Places above this one still add on top:
+To **discard** what lower places gave for that action and use only your entries, write the list
+inside a `replace` table:
 
 ```toml
-[agents.coder]
-network-allow = { replace = ["github.com"] }   # ignores user/project/profile hosts
-tools.allowed = { replace = ["Read", "Grep"] }
+[agents.coder.tools]
+allowed = { replace = ["read", "grep"] }   # ignores the profile's and the project block's allows
 ```
 
-The same in profile YAML frontmatter is `network-allow: {replace: [github.com]}`.
-
 Limits:
-- A package's agent profile can't replace a **deny** list (`network-deny`,
-  `disallowed-tools`), and can't use `replace` for tools at all; both are errors. Profiles sit above your `[settings]`, so a package
-  could otherwise erase your denies. Your own config files and overlays can replace anything.
-- CLI flags (`--network-allow`, `--network-deny`) only add.
+- A package's agent profile can't use `replace`: `tools: {replace: [...]}` is an error. Profiles
+  sit below your overlays, so a package has no lower policy to replace. Your own config files
+  and overlays can replace anything.
 - An empty plain list (`[]`) adds nothing. `{ replace = [] }` clears the lower entries.
 
 ## `mars.toml`
@@ -94,6 +87,7 @@ To keep project-local agents and skills without publishing, use `.mars-src/` ins
 [package]
 name = "meridian-base"
 version = "1.2.0"
+schema = 1
 description = "Core agents and skills for meridian"  # optional
 authors = ["Example Maintainer <maintainer@example.com>"] # optional; table form also accepted
 homepage = "https://github.com/example/meridian-base" # optional
@@ -105,13 +99,15 @@ requires-meridian = ">=0.20.0"                       # optional
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | yes | Package name, used for dependency resolution |
-| `version` | string | yes | Semver version of this package |
+| `version` | string | yes | Semver version of this package; a missing version warns |
+| `schema` | integer | yes | The definition format the package uses: `1`. See [Schema v1](schema-v1.md). A package without it is read as pre-v1 and upgraded in memory, with a warning; `mars migrate` adds it. Any other number is refused |
 | `description` | string | no | Human-readable description |
 | `authors` | string[] or table[] | no | Package authors as `"Name <email>"` strings or `{ name, email }` tables; the first author supplies generated plugin owner metadata |
 | `homepage` | string | no | Package or project homepage used in generated plugin manifests |
 | `license` | string | no | Package license identifier used in generated plugin manifests |
 | `requires-mars` | semver requirement | no | Mars versions that can consume this package |
 | `requires-meridian` | semver requirement | no | Meridian versions that can consume this package; skipped when Mars runs standalone |
+| `uses-providers` | string[] | no | The hosts the package expects to supply skills, such as `["meridian"]`. Mars reads and carries it |
 
 Bare engine versions such as `"0.11"` mean a minimum (`">=0.11.0"`).
 Full semver ranges are also accepted. During dependency resolution Mars skips
@@ -319,9 +315,6 @@ targets = [".claude", ".cursor"]
 agent_emission = "auto"
 min_mars_version = "0.12.0"
 models_cache_ttl_hours = 24
-default_network = "allowlist"
-network-allow = ["github.com", "*.github.com", "**.pypi.org"]
-network-deny = ["blocked.example"]
 # Catalog ingest only. Pins still run if the harness can resolve the provider.
 catalog_providers = ["anthropic", "openai", "google", "meta", "deepseek", "xai", "openrouter"]
 
@@ -342,9 +335,9 @@ include_fanout = false
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
-| `default_network` | string | unset | Project-wide network mode (`allow`, `deny`, `allowlist`) when no higher policy layer sets one. |
-| `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Allowed host permission set. Plain lists add across user/project/local/profile/overlay/CLI; `{ replace = [...] }` clears lower entries. |
-| `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Denied host permission set, with the same merge rule. Denies win at enforcement. |
+| `harness_order` | string[] | unset | Ordered harness preference for launch-bundle candidate selection; the first installed candidate wins |
+| `provider_order` | string[] | unset | Provider preference for model-first routing tie-breaks, used after model-name matching |
+| `model-policies` | rule[] | `[]` | Model policy rules for every agent, written `[[settings.model-policies]]`; they apply after an agent's own rules. See [Model policies](schema-v1.md#model-policies) |
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
 
@@ -358,47 +351,29 @@ Local targets replace project targets, even with an empty list. A local
 managed_root does not override project targets. An explicit `--harness` cannot
 expand target permission; a disabled profile/alias preference is skipped.
 
-Network hosts are canonicalized to lowercase without a trailing dot, deduplicated, and
-sorted in the launch bundle. Each entry is an exact host, an IP address, `*.x` (subdomains
-only), or `**.x` (the apex and subdomains). Wildcards require at least two DNS labels. IPv4-mapped
-IPv6 is canonicalized to IPv4. URLs, schemes, ports, paths, numeric or `0x`-style terminal DNS
-labels, empty strings, and a bare `*` are errors; internationalized names must use punycode.
-Under `deny`, both host sets are inert and omitted. Under `allow`, the
-allow set is inert and omitted; deny hosts still apply. `allowlist` without an allowed host
-fails closed to `deny` and adds a bundle warning.
-
-Network policy keys accept separator aliases for compatibility: `default_network` or
-`default-network`, and `network-allow` / `network-deny` or `network_allow` / `network_deny`.
-Mars warns when another ignored key looks network-related and lists these accepted spellings.
-
-### User network defaults
-
-`$MARS_CONFIG_DIR/config.toml`, or `mars/config.toml` under the platform config directory,
-accepts only these fields for now:
-
-```toml
-[settings]
-default_network = "allowlist"
-network-allow = ["github.com", "*.github.com"]
-network-deny = ["blocked.example"]
-```
-
-Project and local settings layer above them. Other user `[settings]` keys are ignored with a
-launch-bundle warning; Mars does not pretend they form a general user configuration tier.
-
-
 `[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `harnesses` | string[] | `[]` | Harnesses to receive selective native agent copies; each harness target must also be an effective managed target |
-| `include_fanout` | bool | `false` | Also qualify agents through matching `model-policies` / fanout rules |
+| `include_fanout` | bool | `false` | Also qualify agents through their `model-policies` rules |
 
 Qualifying agents have a matching `harness:`, a `model:` alias that resolves to the listed harness, or — with `include_fanout = true` — a matching `model-policies` rule. For Claude, use `harnesses = ["claude"]` with `.claude` as an effective managed target (from `settings.targets`, or legacy `managed_root` when `targets` is unset) to materialize Claude-native `Agent()` copies while Meridian continues to use `.mars/agents/` for normal `meridian spawn` delegation.
 
+`[settings.meridian.fanout]` names agents that get the `include_fanout` treatment one by one, and that the Agent inventory lists in the Meridian section as well as the native one:
+
+```toml
+[settings.meridian.fanout]
+agents = ["reviewer", "prober"]
+```
+
+An agent that has a native copy is otherwise listed only in the native section. The earlier per-agent `fanout:` frontmatter key is gone from schema 1; this list is where that choice lives now, because it is consumer configuration. If a [rename](#renaming) leaves a listed name pointing at no installed agent, sync warns (`config-rename-dangle`).
+
 ### `[agents.<name>]` (overlay)
 
-Overlay policy applied to an agent during the staging seam. Applied on top of the agent's frontmatter — no forking or patching of the source. Available in both `mars.toml` and `mars.local.toml`; a matching local block replaces the project block except for the four composing permission sets.
+Overlays are **your project's** policy for an installed agent or skill, layered over the package's text without forking it. They are consumer configuration: they are not part of [schema v1](schema-v1.md), the package files never see them, and a dependency's own `[agents.*]` and `[skills.*]` tables are inert in your project. Available in both `mars.toml` and `mars.local.toml`; a matching local block replaces the project block except for the composing `tools` permission sets.
+
+An agent overlay is read when Mars builds a launch bundle and when it writes native agent files. `.mars/agents/<name>.md` keeps the package's text.
 
 ```toml
 [agents.reviewer]
@@ -408,9 +383,6 @@ harness = "claude"
 effort = "high"
 approval = "confirm"
 sandbox = "read-only"
-network = "deny"
-network-allow = ["github.com", "*.github.com"]
-network-deny = ["uploads.example"]
 model-invocable = false
 user-invocable = true
 model-policies = [{ match = { model-glob = "gpt-5*" }, no-fallback = true }]
@@ -422,50 +394,40 @@ disallowed = ["agent"]
 
 | Field | Type | Description |
 |---|---|---|
-| `description` | string | Override the agent's description |
+| `description` | string | Override the description written to native agent files |
 | `model` | string | Model token or alias for this agent |
 | `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`) |
-| `effort` | string | Effort level: `low`, `medium`, `high`, `xhigh` |
-| `approval` | string | Approval mode: `default`, `auto`, `confirm`, `yolo` |
+| `effort` | string | Effort level: `none`, `low`, `medium`, `high`, `xhigh`. See [Effort](schema-v1.md#effort) |
+| `approval` | string | Approval mode: `default`, `auto`, `confirm`, `never` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
-| `network` | string | Shell network mode: `allow`, `deny`, `allowlist`; unset follows the sandbox in Meridian and does not affect built-in web tools |
-| `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | Allowed host set. Plain lists add; `{ replace = [...] }` clears settings/profile hosts first. |
-| `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | Denied host set. Plain lists add; `{ replace = [...] }` clears lower hosts first. |
-| `autocompact` | integer | Token threshold for context compaction (0–4294967295) |
-| `autocompact_pct` | integer | Context fill percentage (1–100) triggering compaction |
-| `model-invocable` | bool | Whether the model can invoke this agent without user prompt |
-| `user-invocable` | bool | Whether the user can `/name` this agent |
+| `model-invocable` | bool | Override the profile's `model-invocable` |
+| `user-invocable` | bool | Override the profile's `user-invocable` |
 | `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile and preserve wildcard rules; `{ replace = [...] }` clears that action's lower rules, including `'*': allow`. During the compatibility release, Mars warns once for each non-empty plain list and names its file; empty lists and replacement tables do not warn. Profile `ask` rules and the `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
-| `model-policies` | table[] | Model routing policy rules |
+| `model-policies` | table[] | Model policy rules; same shape as the profile's and checked when `mars.toml` loads |
 
-The removed `tools.mcp` overlay key is rejected at parse time — include MCP grants in
-`tools.allowed` (e.g. `"mcp(plugin:demo)"`). See
-[agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
+Mars does not check an overlay's `effort`, `approval` or `sandbox` string when it loads `mars.toml`: write the values the profile accepts. An unrecognized `approval` is passed through to the launch bundle as written and left out of native files.
+
+Keys that overlays no longer read are ignored without a warning: `network`, `network-allow`, `network-deny`, `autocompact`, `autocompact_pct` and `tools.mcp` on an agent, and `tools` on a skill. Delete them. Put an MCP grant in `tools.allowed` (`"mcp(plugin:demo)"`; see [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references)), and compaction on the model alias. An unknown key is also ignored, for forward compatibility.
 
 Each `model-policies` rule has a `match` table with exactly one of `alias`, `model`,
-or `model-glob`, plus optional `override` and `no-fallback` fields. Overlay/settings
+or `model-glob`, plus optional `override`, `when` and `no-fallback` fields. Overlay/settings
 rules supply conditional settings. Profile rules also declare launch backups:
 all concrete, unflagged entries participate in declaration order, independently of
 the primary's active settings match. `no-fallback` excludes only its entry; it never
-vetoes the rest of the chain. See [model policies](agent-profiles.md#model-policies).
-
-Execution-policy overrides may set `effort`, `approval`, `sandbox`, `network`,
-`autocompact`, or `autocompact_pct`. `network` follows the same overlay → profile →
-settings model-policy precedence as `sandbox`. Network host sets are deliberately not valid
-inside model-policy overrides.
+vetoes the rest of the chain. An `override` may set `effort`, `approval` and `sandbox`; any other key, `network` or `harness` for
+instance, fails `mars.toml` at load. The first rule that matches the chosen model wins, overlay rules before the profile's and
+settings rules last; see [Model policies](schema-v1.md#model-policies) and the profile's
+[`model-policies`](agent-profiles.md#model-policies).
 
 ### `[skills.<name>]` (overlay)
 
-Per-skill overlay policy in `mars.toml`. Same seam as agent overlays — applied during staging, no source forking.
+Per-skill overlay policy in `mars.toml`. Same seam as agent overlays, except that a skill overlay is applied while Mars installs the skill: it rewrites the installed `.mars/skills/<name>/SKILL.md`, never the source.
 
 ```toml
 [skills.my-skill]
 description = "Overridden description"
 model-invocable = false
 user-invocable = true
-
-[skills.my-skill.tools]
-disallowed = ["agent"]
 ```
 
 | Field | Type | Description |
@@ -473,7 +435,8 @@ disallowed = ["agent"]
 | `description` | string | Override the skill's description |
 | `model-invocable` | bool | Override model invocability |
 | `user-invocable` | bool | Override user invocability |
-| `tools` | table | Tool permission sets, layered like an agent's (above). Plain arrays add and preserve wildcard rules; `{ replace = [...] }` clears lower entries for that action, including `'*': allow`. The skill's `ask` rules and `'*': deny` allowlist marker stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Names are checked at load like an agent's |
+
+Skills carry no tool policy in schema 1, so a skill overlay has no `tools` table; one in `mars.toml` is ignored.
 
 ## Curated model display
 
@@ -520,19 +483,21 @@ Branch or commit pins (non-semver strings) bypass version resolution entirely an
 
 ## Dialect
 
-The `dialect` key on `[dependencies.<dep>]` controls how mars lifts foreign frontmatter to canonical form during the staging seam. It accepts: `claude`, `agent-skills`, `codex`, `opencode`, `cursor`, `mars-native`.
+The `dialect` key on `[dependencies.<dep>]` controls how Mars reads a dependency's layout and frontmatter and translates it to schema v1 when the package is prepared (see [Preparation and the gate](../internals/sync-pipeline.md#preparation-and-the-gate)). It accepts: `claude`, `agent-skills`, `codex`, `opencode`, `cursor`, `mars-native`.
+
+It applies to a dependency with no `mars.toml`. A root with a `mars.toml` is a Mars package and is read as schema v1 (or upgraded, when it declares no `schema`) whatever `dialect` says.
 
 Resolution order (first-wins):
 
 1. **Explicit** — `dialect = "codex"` on the dependency entry in `mars.toml`.
 2. **Prediction from evidence in the package root** — a Claude `.claude-plugin/plugin.json` or `marketplace.json`, a `.cursor-plugin/` directory or `.mdc` rules, a non-empty `.codex/`, `.opencode/` or `.claude/` container, then Claude-only frontmatter keys, and `agent-skills` for skills that use only the standard's keys. The strongest evidence decides and other harnesses' copies are reported, not read. Hidden containers are still skipped by item discovery; prediction does not import their contents.
-
-A Claude-shaped dependency (a plugin, a marketplace, or a bare tree of `SKILL.md` directories) is read by Claude's rules: a plugin's `skills` list adds to `skills/`, its `agents` list replaces `agents/`, `commands/` are reported and not imported, and a skill's inner `agents/` folder stays payload. Each item lands in the schema v1 layout (`skills/<slug>/`, `agents/<slug>.md`). A marketplace dependency names the plugin it wants with [`plugin`](#marketplace-plugins); without one it is an error that lists the plugins.
 3. **Default** — `claude` for dependencies, `mars-native` for `.mars-src` items.
 
 Declared-package self inputs always use `mars-native`, without container inference. Generated native outputs cannot change their dialect.
 
-Without this field, a source authored in Claude-native `allowed-tools` will be interpreted through the Claude lift table. Set `dialect = "mars-native"` for sources that already use canonical frontmatter. To import a package whose actual items live under a hidden foreign container, set both `subpath` and `dialect` explicitly.
+A Claude-shaped dependency (a plugin, a marketplace, or a bare tree of `SKILL.md` directories) is read by Claude's rules: a plugin's `skills` list adds to `skills/`, its `agents` list replaces `agents/`, `commands/` are reported and not imported, and a skill's inner `agents/` folder stays payload. Each item lands in the schema v1 layout (`skills/<slug>/`, `agents/<slug>.md`). A marketplace dependency names the plugin it wants with [`plugin`](#marketplace-plugins); without one it is an error that lists the plugins.
+
+A translated definition is then read strictly, like any schema v1 file. Claude's own keys are translated: a skill's `allowed-tools` is dropped with a warning, and a top-level `type` or `version` moves under `metadata`. A removed Mars key such as `network` or `model_invocable` is a `field.removed` error that fails sync, because no dialect owns it; a dependency with a `mars.toml` and no `schema` is the case Mars upgrades instead. To import a package whose actual items live under a hidden foreign container, set both `subpath` and `dialect` explicitly.
 
 ## Renaming
 
@@ -574,6 +539,10 @@ exclude = ["thinking"]
 | `exclude` | string[] | no | Glob patterns to exclude from matches |
 | `autocompact` | u32 | no | Token count threshold that triggers context compaction (0–4294967295) |
 | `autocompact_pct` | u8 | no | Context fill percentage (1–100) that triggers compaction; launchers may combine it with `autocompact` when the harness exposes both controls |
+| `default_effort` | string | no | Effort used when nothing above the alias sets one: `low`, `medium`, `high`, `xhigh` or `auto` (not `none`) |
+| `prompting` | string | no | Guidance text that `mars models prompting <alias>` prints |
+
+Compaction settings come only from the alias. An Agent has no compaction keys in schema 1, and an `[agents.<name>]` overlay has none, so a threshold moves with the model rather than with the Agent. `default_effort` is the last step of the [precedence chain](schema-v1.md#model-policies).
 
 When `model` is omitted, Mars auto-resolves by querying the cached model catalog with `match`/`exclude` patterns and selecting the best match.
 
@@ -661,19 +630,18 @@ For local overlay semantics:
 - `[models.<alias>]` replaces the full keyed block when the same alias appears locally.
 - `[agents.<name>]` and `[skills.<name>]` replace the full keyed block for scalars, options,
   model policies, and unknown keys.
-- `network-allow`, `network-deny`, `tools.allowed`, and `tools.disallowed` are the exception:
+- `tools.allowed` and `tools.disallowed` are the exception:
   they compose across the matching project/local blocks with the permission-set add/replace rule.
 - A project tool list therefore still applies when the matching local block omits that list. To
   discard it, add the corresponding local `{ replace = [...] }` list or remove the project list.
   During the compatibility release, a non-empty plain project list warns and names both files
   when a matching local block does not replace it.
-- Other fields still follow whole-entry replacement. For example, adding only `network-deny` to
+- Other fields still follow whole-entry replacement. For example, adding only `tools.disallowed` to
   a local agent block drops the project block's `model`, `harness`, `description`, and
   `model-policies`; repeat the needed project scalars and model policies in the local block.
 - Other arrays replace by value when authored locally.
 
-Unknown agent-overlay keys remain tolerated for forward compatibility. An ignored key beginning
-with `network` produces a warning with the accepted keys. Unknown keys under local `[settings]`
+Unknown agent-overlay keys remain tolerated for forward compatibility and are ignored without a warning. Unknown keys under local `[settings]`
 are rejected.
 
 `mars models list` / `mars models resolve` now return local-config parse/validation errors instead of silently falling back to defaults. Fallback-to-default only happens when `mars.toml` is absent.

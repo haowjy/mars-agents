@@ -32,7 +32,7 @@ sync/build → resolve ← source
 
 - `cli/` dispatches commands, finds project root, formats output
 - `sync/` orchestrates the pipeline (load → resolve → build → plan → apply → sync targets → finalize)
-- `resolve/` resolves dependency graph with semver constraints; runs `staging::stage_rooted_package` after `apply_subpath` when `staging_root` is set
+- `resolve/` resolves dependency graph with semver constraints; runs `staging::stage_rooted_package` once per selected candidate, after `apply_subpath`, when `staging_root` is set — manifests and their relative `path` deps are read from the authored root, not the staged copy
 - `staging/` lifts foreign-dialect frontmatter → canonical before discover/hash, in both resolve (dependencies) and sync (local items)
 - `discover/` owns source item discovery: a bounded convention walk over non-hidden
   package layers for agents, skills, and bootstrap docs; whole hook directories

@@ -197,19 +197,7 @@ pub(crate) fn resolve_package_bottom_up(
                         &new_ref.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
-                    let staged = stage_rooted_package(
-                        &pending_src.name,
-                        new_rooted,
-                        effective_config,
-                        options.staging_root.as_deref(),
-                        diag,
-                    )?;
-                    ctx.set_pending_restart(
-                        pending_src.name.clone(),
-                        new_ref,
-                        staged.rooted,
-                        staged.hook_surface,
-                    );
+                    ctx.set_pending_restart(pending_src.name.clone(), new_ref, new_rooted);
                     return Err(MarsError::ResolutionRestartNeeded {
                         package: pending_src.name.to_string(),
                     });
@@ -263,14 +251,16 @@ pub(crate) fn resolve_package_bottom_up(
     //   B2: we fall through to normal first-resolution logic below, which runs the
     //       same seed_items / filter path as any non-overridden first resolution.
     let mut rejected: Vec<(String, Vec<EngineRequirementFailure>)> = Vec::new();
-    let mut override_candidate =
-        ctx.version_override(&pending_src.name)
-            .filter(|(resolved, _, _)| {
-                resolved.version.as_ref().is_none_or(|version| {
-                    !exclusions.contains_key(&(pending_src.name.clone(), version.clone()))
-                })
-            });
-    let (resolved_ref, rooted_ref, hook_surface, manifest) = loop {
+    let mut override_candidate = ctx
+        .version_override(&pending_src.name)
+        .filter(|(resolved, _)| {
+            resolved.version.as_ref().is_none_or(|version| {
+                !exclusions.contains_key(&(pending_src.name.clone(), version.clone()))
+            })
+        });
+    // The authored root, not the staged copy: relative `path` dependencies in this
+    // package's manifest resolve against the directory that declares them.
+    let (resolved_ref, authored_rooted, manifest) = loop {
         let candidate = if let Some(value) = override_candidate.take() {
             value
         } else {
@@ -289,14 +279,7 @@ pub(crate) fn resolve_package_bottom_up(
                         &ref_.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
-                    let staged = stage_rooted_package(
-                        &pending_src.name,
-                        rooted,
-                        effective_config,
-                        options.staging_root.as_deref(),
-                        diag,
-                    )?;
-                    (ref_, staged.rooted, staged.hook_surface)
+                    (ref_, rooted)
                 }
                 Err(MarsError::Resolution(ResolutionError::VersionConflict { .. }))
                     if !rejected.is_empty() =>
@@ -319,7 +302,7 @@ pub(crate) fn resolve_package_bottom_up(
             .transpose()?
             .unwrap_or_default();
         if failures.is_empty() {
-            break (candidate.0, candidate.1, candidate.2, manifest);
+            break (candidate.0, candidate.1, manifest);
         }
 
         let label = candidate_version_label(&candidate.0);
@@ -360,14 +343,9 @@ pub(crate) fn resolve_package_bottom_up(
     if !rejected.is_empty() {
         ctx.set_version_override(
             pending_src.name.clone(),
-            (
-                resolved_ref.clone(),
-                rooted_ref.clone(),
-                hook_surface.clone(),
-            ),
+            (resolved_ref.clone(), authored_rooted.clone()),
         );
     }
-    ctx.set_hook_surface(&pending_src.name, hook_surface);
     if let Some((locked_version, failures)) = rejected.first()
         && locked
             .and_then(|lock| lock.dependencies.get(&pending_src.name))
@@ -415,12 +393,26 @@ pub(crate) fn resolve_package_bottom_up(
             engines,
         });
     }
-    let manifest_requests =
-        collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
+    let manifest_requests = collect_manifest_requests(
+        pending_src,
+        &authored_rooted.package_root,
+        &manifest,
+        options,
+    )?;
     let deps = manifest_requests
         .iter()
         .map(|request| request.name.clone())
         .collect();
+
+    let staged = stage_rooted_package(
+        &pending_src.name,
+        authored_rooted,
+        effective_config,
+        options.staging_root.as_deref(),
+        diag,
+    )?;
+    ctx.set_hook_surface(&pending_src.name, staged.hook_surface);
+    let rooted_ref = staged.rooted;
 
     let discovered = discover::discover_resolved_source(
         &rooted_ref.package_root,

@@ -143,6 +143,10 @@ pub struct ResolvedNode {
 }
 
 /// Source checkout provenance and rooted package boundary.
+///
+/// `package_root` may point at a staged copy of the package while `checkout_root`
+/// stays the authored checkout. Read the manifest, and resolve its relative `path`
+/// dependencies, before staging — against the authored root.
 #[derive(Debug, Clone)]
 pub struct RootedSourceRef {
     pub checkout_root: PathBuf,

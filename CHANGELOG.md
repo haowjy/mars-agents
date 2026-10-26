@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A dependency's relative `path` dependency resolves against the directory of the `mars.toml` that
+  declares it, not that package's staged copy, so a consumer that also depends on it directly no
+  longer fails with `referenced with conflicting identities`. Git dependencies and their
+  checkout-internal relative paths are unaffected.
+
 ## [0.19.0] - 2026-10-26
 
 ### Added

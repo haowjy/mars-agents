@@ -40,13 +40,19 @@ sources and versions appear in the final graph.
 ## Staging Seam
 
 `ResolveOptions.staging_root` (resolve/types.rs:304) enables per-dependency canonical source staging.
-`stage_rooted_package` (package.rs:384–408) runs **after** `apply_subpath` in both resolution paths (first-resolve and re-resolution). When `staging_root` is set:
+`stage_rooted_package` (package.rs) runs **once per package, after a candidate is selected**, so
+engine-rejected candidates are never staged. When `staging_root` is set:
 
 1. Resolves `Dialect` from `EffectiveDependency.dialect` (via `Dialect::resolve`)
 2. Calls `staging::stage_rooted_source`, which lifts foreign frontmatter to canonical form and writes the staged tree to `<staging_root>/<source-name>/<dialect>/`
 3. Repoints `package_root` to the staged tree
 
-All downstream consumers (manifest reading, item discovery) transparently read from the staged tree. Without `staging_root`, the raw checkout is used unchanged. Plugin builds reuse the same
+Manifest reading and manifest-request collection run **before** staging against the authored package
+root, so a dependency's relative `path` dependency resolves against the directory of the `mars.toml`
+that declares it (as Cargo and npm do) — never against a copy under staging. Item discovery reads the
+staged tree. Without `staging_root`, the raw checkout is used unchanged. Version overrides and restart
+payloads carry the authored rooted ref; the fresh pass stages a carried-over candidate when it uses
+it. Plugin builds reuse the same
 `stage_rooted_package` operation only after graph resolution, so the root package's relative path
 dependencies are interpreted against its authored checkout rather than its staged copy.
 

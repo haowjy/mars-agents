@@ -1,0 +1,23 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "opencode",
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        "agents/review.md"
+      ]
+    }
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "review",
+      "source_path": "agents/review.md",
+      "output_path": "agents/review.md"
+    }
+  ],
+  "diagnostics": {}
+}

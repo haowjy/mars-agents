@@ -1,0 +1,28 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "claude",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "reader",
+      "source_path": "agents/reader.md",
+      "output_path": "agents/reader.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "notes",
+      "source_path": "skills/notes/SKILL.md",
+      "skill_root": "skills/notes",
+      "output_path": "skills/notes/SKILL.md"
+    }
+  ],
+  "diagnostics": {}
+}

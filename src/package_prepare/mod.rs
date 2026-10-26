@@ -428,7 +428,7 @@ pub(crate) fn report_diagnostics(
                 .as_ref()
                 .is_some_and(|manifest| manifest.source_path.is_none());
             let format = if no_manifest {
-                "has no `mars.toml` and uses pre-v1 Mars keys"
+                "has no `mars.toml` and is declared `mars-native`"
             } else {
                 "uses the pre-v1 format"
             };

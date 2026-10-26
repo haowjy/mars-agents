@@ -1,0 +1,137 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "mars-dep",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {
+          "name": "mars-dep"
+        },
+        "selected_items": [
+          "agents/reader.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "mars-dep"
+              ]
+            ],
+            "fields": {
+              "name": "mars-dep",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "reader",
+            "source_path": "agents/reader.md",
+            "output_path": "agents/reader.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "reader"
+                ],
+                [
+                  "description",
+                  "Reads and searches only"
+                ],
+                [
+                  "tools",
+                  {
+                    "*": "deny",
+                    "Read": "allow",
+                    "Grep": "allow"
+                  }
+                ],
+                [
+                  "harness-overrides",
+                  {
+                    "flow": {
+                      "permission": "read"
+                    }
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "reader",
+                "description": "Reads and searches only",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "*",
+                    "pattern": null,
+                    "action": "deny"
+                  },
+                  {
+                    "capability": "read",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "grep",
+                    "pattern": null,
+                    "action": "allow"
+                  }
+                ],
+                "harness-overrides": {
+                  "flow": {
+                    "permission": "read"
+                  }
+                },
+                "model-policies": []
+              },
+              "body": "Read the code.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

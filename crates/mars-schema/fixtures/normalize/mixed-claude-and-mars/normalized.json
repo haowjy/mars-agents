@@ -1,0 +1,168 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "mixed-dep",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {
+          "name": "mixed-dep"
+        },
+        "selected_items": [
+          "agents/reader.md",
+          "skills/notes/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "mixed-dep"
+              ]
+            ],
+            "fields": {
+              "name": "mixed-dep",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "reader",
+            "source_path": "agents/reader.md",
+            "output_path": "agents/reader.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "reader"
+                ],
+                [
+                  "description",
+                  "A Claude agent that may only read"
+                ],
+                [
+                  "tools",
+                  {
+                    "*": "deny",
+                    "Read": "allow",
+                    "Grep": "allow",
+                    "Glob": "allow"
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "reader",
+                "description": "A Claude agent that may only read",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "*",
+                    "pattern": null,
+                    "action": "deny"
+                  },
+                  {
+                    "capability": "read",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "grep",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "glob",
+                    "pattern": null,
+                    "action": "allow"
+                  }
+                ],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "Read the code.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "notes",
+            "source_path": "skills/notes/SKILL.md",
+            "output_path": "skills/notes/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "notes"
+                ],
+                [
+                  "description",
+                  "A skill written for pre-v1 Mars"
+                ],
+                [
+                  "model-invocable",
+                  false
+                ]
+              ],
+              "fields": {
+                "name": "notes",
+                "description": "A skill written for pre-v1 Mars",
+                "model-invocable": false,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Take notes.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

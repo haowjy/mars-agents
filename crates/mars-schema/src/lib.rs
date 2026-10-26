@@ -8,6 +8,7 @@ pub mod harness;
 pub mod manifest;
 pub mod read;
 pub mod skill;
+pub mod tree;
 
 pub use harness::HarnessId;
 

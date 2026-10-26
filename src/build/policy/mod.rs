@@ -617,6 +617,44 @@ pub fn resolve_policy(
     })
 }
 
+/// The profile as it launches on one model: effort, approval and sandbox resolved with the
+/// launch bundle's precedence (matched profile model policy over the top-level field, the
+/// alias default effort last). Native artifacts lower this profile so they agree with the
+/// bundle. `token` is the model token the agent selected; `canonical_model_id` is what it
+/// resolves to. CLI, overlay scalars and settings policies are launch-time layers native
+/// files do not see.
+pub(crate) fn profile_for_model(
+    profile: &AgentProfile,
+    token: &str,
+    canonical_model_id: &str,
+    alias: Option<&ModelAlias>,
+) -> AgentProfile {
+    use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
+    let matched = match_model_policy(
+        profile
+            .model_policies
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| (PolicyLayer::Profile, index, rule)),
+        canonical_model_id,
+        alias.map(|_| token),
+    );
+    let mut resolved = profile.clone();
+    resolved.effort = execution::resolve_effort(None, profile, alias, None, matched.as_ref())
+        .value
+        .as_deref()
+        .and_then(EffortLevel::parse);
+    resolved.approval = execution::resolve_approval(None, profile, None, matched.as_ref())
+        .value
+        .as_deref()
+        .and_then(ApprovalMode::parse);
+    resolved.sandbox = execution::resolve_sandbox(None, profile, None, matched.as_ref())
+        .value
+        .as_deref()
+        .and_then(SandboxMode::parse);
+    resolved
+}
+
 pub(super) fn policy_override_string(rule: &ModelPolicyRule, key: &str) -> Option<String> {
     rule.overrides.get(key).map(str::to_string)
 }

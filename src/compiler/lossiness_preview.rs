@@ -18,7 +18,9 @@ use crate::compiler::agent_copy;
 use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::compiler::harness_descriptor::configured_emit_harnesses;
-use crate::compiler::native_agents::{NativeModelRoutingRuntime, qualifying_agent_emissions};
+use crate::compiler::native_agents::{
+    NativeEmission, NativeModelRoutingRuntime, qualifying_agent_emissions,
+};
 use crate::compiler::variants;
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::config::{Config, Settings};
@@ -328,7 +330,11 @@ fn collect_agent_content_lossiness(
         return;
     }
     let body = fm.body();
-    for (harness, model) in qualifying_agent_emissions(
+    for NativeEmission {
+        harness,
+        model,
+        profile,
+    } in qualifying_agent_emissions(
         &profile,
         agent_name,
         policy,

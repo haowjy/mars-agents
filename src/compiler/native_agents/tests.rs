@@ -136,7 +136,8 @@ fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
             true,
         ),
         NativeModelDecision::Set {
-            model_id: "claude-sonnet-4-6".to_string()
+            model_id: "claude-sonnet-4-6".to_string(),
+            token: "sonnet".to_string(),
         }
     );
     assert_eq!(
@@ -199,7 +200,8 @@ fn native_model_routing_resolves_auto_aliases_from_models_cache() {
             true,
         ),
         NativeModelDecision::Set {
-            model_id: "claude-sonnet-4-6".to_string()
+            model_id: "claude-sonnet-4-6".to_string(),
+            token: "sonnet".to_string(),
         }
     );
 }

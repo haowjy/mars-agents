@@ -477,6 +477,13 @@ fn write_agent(
         tree_profile.native_model_aliases,
         input.aliases,
     );
+    if let Some(token) = effective.model.as_deref() {
+        let alias = input.aliases.get(token);
+        let canonical = alias
+            .and_then(|alias| alias.pinned_model_id())
+            .unwrap_or(token);
+        effective = crate::build::policy::profile_for_model(&effective, token, canonical, alias);
+    }
     let lowered = lower_for_harness_with_model(
         &tree_profile.harness,
         &effective,

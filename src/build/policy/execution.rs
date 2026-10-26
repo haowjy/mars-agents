@@ -7,7 +7,7 @@ use crate::build::policy::{
 };
 use crate::config::AgentOverlay;
 use crate::models::ModelAlias;
-use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
+use mars_schema::agent::{AgentProfile, ApprovalMode, EffortLevel, SandboxMode};
 
 pub(super) struct ExecutionResolution {
     pub(super) effort: ResolvedField<Option<String>>,
@@ -25,9 +25,25 @@ pub(super) fn resolve_execution_policy(
     matched_policy: Option<&MatchedModelPolicy>,
     native_config: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> ExecutionResolution {
-    let effort = resolve_effort(input, alias, overlay, matched_policy);
-    let approval = resolve_approval(input, overlay, matched_policy);
-    let sandbox = resolve_sandbox(input, overlay, matched_policy);
+    let effort = resolve_effort(
+        input.effort_override,
+        input.profile,
+        alias,
+        overlay,
+        matched_policy,
+    );
+    let approval = resolve_approval(
+        input.approval_override,
+        input.profile,
+        overlay,
+        matched_policy,
+    );
+    let sandbox = resolve_sandbox(
+        input.sandbox_override,
+        input.profile,
+        overlay,
+        matched_policy,
+    );
     let autocompact = alias_field(alias.and_then(|entry| entry.autocompact));
     let autocompact_pct = alias_field(alias.and_then(|entry| entry.autocompact_pct));
 
@@ -110,8 +126,9 @@ fn alias_field<T>(value: Option<T>) -> ResolvedField<Option<T>> {
     resolved_field(value, source)
 }
 
-fn resolve_effort(
-    input: &PolicyInput<'_>,
+pub(super) fn resolve_effort(
+    cli: Option<&str>,
+    profile: &AgentProfile,
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
@@ -121,12 +138,11 @@ fn resolve_effort(
         matched_policy,
         policy_string_override_by_source,
         PolicyFieldLayers {
-            cli: input.effort_override.map(str::to_string),
+            cli: cli.map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.effort.as_deref())
                 .map(str::to_string),
-            profile: input
-                .profile
+            profile: profile
                 .effort
                 .as_ref()
                 .map(EffortLevel::as_str)
@@ -137,8 +153,9 @@ fn resolve_effort(
     )
 }
 
-fn resolve_approval(
-    input: &PolicyInput<'_>,
+pub(super) fn resolve_approval(
+    cli: Option<&str>,
+    profile: &AgentProfile,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
 ) -> ResolvedField<Option<String>> {
@@ -147,12 +164,11 @@ fn resolve_approval(
         matched_policy,
         policy_string_override_by_source,
         PolicyFieldLayers {
-            cli: input.approval_override.map(str::to_string),
+            cli: cli.map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.approval.as_deref())
                 .map(str::to_string),
-            profile: input
-                .profile
+            profile: profile
                 .approval
                 .as_ref()
                 .map(ApprovalMode::as_str)
@@ -163,8 +179,9 @@ fn resolve_approval(
     )
 }
 
-fn resolve_sandbox(
-    input: &PolicyInput<'_>,
+pub(super) fn resolve_sandbox(
+    cli: Option<&str>,
+    profile: &AgentProfile,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
 ) -> ResolvedField<Option<String>> {
@@ -173,12 +190,11 @@ fn resolve_sandbox(
         matched_policy,
         policy_string_override_by_source,
         PolicyFieldLayers {
-            cli: input.sandbox_override.map(str::to_string),
+            cli: cli.map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.sandbox.as_deref())
                 .map(str::to_string),
-            profile: input
-                .profile
+            profile: profile
                 .sandbox
                 .as_ref()
                 .map(SandboxMode::as_str)

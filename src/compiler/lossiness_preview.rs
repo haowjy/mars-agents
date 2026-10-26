@@ -319,7 +319,7 @@ fn collect_agent_content_lossiness(
     let Some(model_router) = model_router else {
         return;
     };
-    let Ok(fm) = frontmatter::parse(&content) else {
+    let Ok(fm) = frontmatter::parse(content) else {
         return;
     };
     let mut agent_diags = Vec::new();

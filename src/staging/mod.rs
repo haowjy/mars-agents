@@ -65,6 +65,38 @@ pub(crate) fn materialize_prepared_rooted(
     ))
 }
 
+/// Materialize a completely prepared graph after its diagnostic gate.
+pub(crate) fn materialize_prepared_graph(
+    graph: &mut crate::resolve::ResolvedGraph,
+    effective: &crate::config::EffectiveConfig,
+    staging_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let empty_renames = RenameMap::new();
+    for (source_name, node) in &mut graph.nodes {
+        let prepared = node
+            .prepared
+            .as_ref()
+            .expect("production graph nodes retain prepared packages");
+        let renames = effective
+            .dependencies
+            .get(source_name)
+            .map(|dependency| &dependency.rename)
+            .unwrap_or(&empty_renames);
+        let (rooted, _) = materialize_prepared_rooted(
+            source_name,
+            node.rooted_ref.clone(),
+            Arc::clone(prepared),
+            &effective.skills,
+            renames,
+            staging_root,
+            diag,
+        )?;
+        node.rooted_ref = rooted;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn materialize_prepared_tree(
     authored_root: &Path,
@@ -286,7 +318,7 @@ fn staging_dir_for(staging_root: &Path, source_name: &SourceName) -> PathBuf {
     staging_root.join(safe_component(source_name.as_ref()))
 }
 
-fn detect_unreadable_hook_surface(
+pub(crate) fn detect_unreadable_hook_surface(
     package_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<HookSurfaceState, MarsError> {

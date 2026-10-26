@@ -191,7 +191,7 @@ pub(crate) struct SyncedState {
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
-    let ir = crate::reader::read(ctx, request, &mut diag)?;
+    let ir = crate::reader::read(ctx, request, &mut diag, true)?;
     let unreadable_hook_surfaces = &ir.resolved.graph.unreadable_hook_surfaces;
     if request.recovery.defers_on_unreadable() && !unreadable_hook_surfaces.is_empty() {
         persist_pending_config_mutation(ctx, &ir.resolved.loaded, request)?;
@@ -223,7 +223,7 @@ pub(crate) fn execute_validation(
     validate_request(request)?;
     debug_assert!(request.options.dry_run);
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
-    let ir = crate::reader::read(ctx, request, &mut diag)?;
+    let ir = crate::reader::read(ctx, request, &mut diag, false)?;
     crate::compiler::compile_reporting(ctx, ir, request, &mut diag)
 }
 
@@ -465,7 +465,6 @@ pub(crate) fn resolve_graph(
         .collect();
     let preparation = tempfile::tempdir()?;
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
-        .with_staging_root(preparation.path().to_path_buf())
         .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(
         &loaded.effective,

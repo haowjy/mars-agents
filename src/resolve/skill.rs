@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
+#[cfg(test)]
 use crate::discover;
 use crate::error::{MarsError, ResolutionError};
 use crate::types::{ItemName, SourceName};
@@ -113,15 +115,43 @@ pub(crate) fn parse_pending_item_skill_deps(
         return Ok(Vec::new());
     }
 
-    let Some(discovered) = package.item(pending_item.kind, &pending_item.item) else {
+    let Some(_discovered) = package.item(pending_item.kind, &pending_item.item) else {
         return Ok(Vec::new());
     };
-    let item_path =
-        discovered_item_markdown_path(&package.node.rooted_ref.package_root, discovered);
-    let skill_deps = validate::parse_item_skill_deps(&item_path)?;
+    let skill_deps = if let Some(prepared) = &package.node.prepared {
+        prepared
+            .definitions
+            .iter()
+            .find(|definition| {
+                definition.slug == pending_item.item.as_ref()
+                    && matches!(
+                        (definition.kind, pending_item.kind),
+                        (mars_schema::upgrade::DefinitionKind::Agent, ItemKind::Agent)
+                            | (mars_schema::upgrade::DefinitionKind::Skill, ItemKind::Skill)
+                    )
+            })
+            .map(|definition| {
+                validate::extract_skills_from_content(&String::from_utf8_lossy(
+                    &definition.normalized_bytes,
+                ))
+            })
+            .unwrap_or_default()
+    } else {
+        #[cfg(test)]
+        {
+            let item_path =
+                discovered_item_markdown_path(&package.node.rooted_ref.package_root, _discovered);
+            validate::parse_item_skill_deps(&item_path)?
+        }
+        #[cfg(not(test))]
+        {
+            unreachable!("production resolver nodes retain prepared packages")
+        }
+    };
     Ok(skill_deps.into_iter().map(ItemName::from).collect())
 }
 
+#[cfg(test)]
 pub(crate) fn discovered_item_markdown_path(
     package_root: &Path,
     item: &discover::DiscoveredItem,

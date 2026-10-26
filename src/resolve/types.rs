@@ -396,7 +396,7 @@ pub enum ResolveMode {
 }
 
 /// Options controlling resolution behavior.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ResolveOptions {
     pub mode: ResolveMode,
     /// Running mars version override. Production uses the crate version.
@@ -405,10 +405,10 @@ pub struct ResolveOptions {
     pub meridian_version: Option<semver::Version>,
     pub ignore_requires_mars: bool,
     pub ignore_requires_meridian: bool,
-    /// Per-project directory for dependency-scoped canonical source staging.
-    pub staging_root: Option<std::path::PathBuf>,
     /// Local source substitutions, including names first introduced transitively.
     pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
+    pub(crate) prepared_sources:
+        indexmap::IndexMap<SourceName, std::sync::Arc<mars_schema::prepare::Prepared>>,
 }
 
 impl Default for ResolveOptions {
@@ -419,8 +419,8 @@ impl Default for ResolveOptions {
             meridian_version: None,
             ignore_requires_mars: false,
             ignore_requires_meridian: false,
-            staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
+            prepared_sources: indexmap::IndexMap::new(),
         }
     }
 }
@@ -444,8 +444,8 @@ impl ResolveOptions {
             meridian_version: None,
             ignore_requires_mars: false,
             ignore_requires_meridian: false,
-            staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
+            prepared_sources: indexmap::IndexMap::new(),
         }
     }
 
@@ -456,8 +456,8 @@ impl ResolveOptions {
             meridian_version: None,
             ignore_requires_mars: false,
             ignore_requires_meridian: false,
-            staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
+            prepared_sources: indexmap::IndexMap::new(),
         }
     }
 
@@ -471,14 +471,9 @@ impl ResolveOptions {
             meridian_version: None,
             ignore_requires_mars: false,
             ignore_requires_meridian: false,
-            staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
+            prepared_sources: indexmap::IndexMap::new(),
         }
-    }
-
-    pub fn with_staging_root(mut self, staging_root: std::path::PathBuf) -> Self {
-        self.staging_root = Some(staging_root);
-        self
     }
 
     pub(crate) fn with_source_overrides(
@@ -486,6 +481,15 @@ impl ResolveOptions {
         source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     ) -> Self {
         self.source_overrides = source_overrides;
+        self
+    }
+
+    pub(crate) fn with_prepared_source(
+        mut self,
+        source_name: SourceName,
+        prepared: std::sync::Arc<mars_schema::prepare::Prepared>,
+    ) -> Self {
+        self.prepared_sources.insert(source_name, prepared);
         self
     }
 

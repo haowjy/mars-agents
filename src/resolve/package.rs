@@ -78,6 +78,20 @@ impl RegisteredPackage {
     }
 }
 
+fn prepare_package(
+    source_name: &SourceName,
+    rooted: crate::resolve::RootedSourceRef,
+    effective_config: &EffectiveConfig,
+    options: &ResolveOptions,
+    diag: &mut DiagnosticCollector,
+) -> Result<crate::package_prepare::PreparedRootedSource, MarsError> {
+    if let Some(prepared) = options.prepared_sources.get(source_name) {
+        crate::package_prepare::prepared_rooted(rooted, std::sync::Arc::clone(prepared), diag)
+    } else {
+        crate::package_prepare::prepare_rooted(source_name, rooted, effective_config, diag)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_package_bottom_up(
     pending_src: &PendingSource,
@@ -196,11 +210,11 @@ pub(crate) fn resolve_package_bottom_up(
                         &new_ref.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
-                    let staged = crate::package_prepare::prepare_rooted(
+                    let staged = prepare_package(
                         &pending_src.name,
                         new_rooted,
                         effective_config,
-                        options.staging_root.as_deref(),
+                        options,
                         diag,
                     )?;
                     ctx.set_pending_restart(
@@ -271,13 +285,8 @@ pub(crate) fn resolve_package_bottom_up(
             });
     let (resolved_ref, rooted_ref, hook_surface, prepared, manifest) = loop {
         let candidate = if let Some((resolved, rooted, _hook_surface)) = override_candidate.take() {
-            let prepared = crate::package_prepare::prepare_rooted(
-                &pending_src.name,
-                rooted,
-                effective_config,
-                options.staging_root.as_deref(),
-                diag,
-            )?;
+            let prepared =
+                prepare_package(&pending_src.name, rooted, effective_config, options, diag)?;
             let manifest = test_manifest_fallback(
                 provider,
                 &prepared.rooted.authored_root,
@@ -307,11 +316,11 @@ pub(crate) fn resolve_package_bottom_up(
                         &ref_.tree_path,
                         pending_src.subpath.as_ref(),
                     )?;
-                    let staged = crate::package_prepare::prepare_rooted(
+                    let staged = prepare_package(
                         &pending_src.name,
                         rooted,
                         effective_config,
-                        options.staging_root.as_deref(),
+                        options,
                         diag,
                     )?;
                     let manifest = test_manifest_fallback(
@@ -453,7 +462,7 @@ pub(crate) fn resolve_package_bottom_up(
         .collect();
 
     let mut discovered = discover::discover_binary_source(
-        &rooted_ref.package_root,
+        &rooted_ref.authored_root,
         Some(pending_src.name.as_ref()),
         diag,
     )?;

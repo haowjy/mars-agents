@@ -230,13 +230,11 @@ pub(crate) struct PreparedRootedSource {
     pub hook_surface: crate::staging::HookSurfaceState,
 }
 
-/// Prepare one authored package exactly once, then optionally materialize its
-/// normalized projection for existing filesystem consumers.
+/// Prepare one authored package exactly once without materializing it.
 pub(crate) fn prepare_rooted(
     source_name: &crate::types::SourceName,
     rooted: crate::resolve::RootedSourceRef,
     effective_config: &crate::config::EffectiveConfig,
-    staging_root: Option<&Path>,
     diag: &mut DiagnosticCollector,
 ) -> Result<PreparedRootedSource, MarsError> {
     let dependency = effective_config.dependencies.get(source_name);
@@ -253,6 +251,14 @@ pub(crate) fn prepare_rooted(
     }
     report_diagnostics(&prepared, &rooted.authored_root, diag);
 
+    prepared_rooted(rooted, Arc::new(prepared), diag)
+}
+
+pub(crate) fn prepared_rooted(
+    rooted: crate::resolve::RootedSourceRef,
+    prepared: Arc<Prepared>,
+    diag: &mut DiagnosticCollector,
+) -> Result<PreparedRootedSource, MarsError> {
     let manifest = prepared
         .manifest
         .as_ref()
@@ -262,35 +268,7 @@ pub(crate) fn prepare_rooted(
         })
         .transpose()?
         .flatten();
-
-    if staging_root.is_none() && matches!(prepared.classification, Classification::MarsLegacy) {
-        return Err(MarsError::Source {
-            source_name: source_name.to_string(),
-            message: format!(
-                "package `{source_name}` uses the pre-v1 format, but this operation does not materialize packages; run `mars migrate` in that package first"
-            ),
-        });
-    }
-
-    let prepared = Arc::new(prepared);
-    let (rooted, hook_surface) = if let Some(staging_root) = staging_root {
-        let empty_renames = crate::types::RenameMap::new();
-        let renames = dependency
-            .map(|entry| &entry.rename)
-            .unwrap_or(&empty_renames);
-        crate::staging::materialize_prepared_rooted(
-            source_name,
-            rooted,
-            Arc::clone(&prepared),
-            &effective_config.skills,
-            renames,
-            staging_root,
-            diag,
-        )?
-    } else {
-        (rooted, crate::staging::HookSurfaceState::Readable)
-    };
-
+    let hook_surface = crate::staging::detect_unreadable_hook_surface(&rooted.authored_root, diag)?;
     Ok(PreparedRootedSource {
         rooted,
         prepared,

@@ -456,9 +456,7 @@ fn resolve_available_skills(
     lens: &crate::resolve::PublishLens,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<HashMap<String, (String, String)>, MarsError> {
-    let staging = tempfile::tempdir()?;
-    let options =
-        crate::resolve::ResolveOptions::default().with_staging_root(staging.path().to_path_buf());
+    let options = crate::resolve::ResolveOptions::default();
     let graph =
         crate::resolve::resolve_publish_graph_from_config(lens, &lens.effective, &options, diag)?;
 

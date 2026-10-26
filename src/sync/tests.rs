@@ -891,7 +891,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
 
     let stage = |cfg: &EffectiveConfig| {
         let mut diag = DiagnosticCollector::new();
-        crate::package_prepare::prepare_rooted(
+        let prepared = crate::package_prepare::prepare_rooted(
             &"base".into(),
             crate::resolve::RootedSourceRef {
                 checkout_root: tree_path.clone(),
@@ -899,11 +899,20 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 package_root: tree_path.clone(),
             },
             cfg,
-            Some(&staging_root),
+            &mut diag,
+        )
+        .unwrap();
+        crate::staging::materialize_prepared_rooted(
+            &"base".into(),
+            prepared.rooted,
+            prepared.prepared,
+            &cfg.skills,
+            &crate::types::RenameMap::new(),
+            &staging_root,
             &mut diag,
         )
         .unwrap()
-        .rooted
+        .0
     };
 
     let mut graph = {

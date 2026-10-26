@@ -194,12 +194,12 @@ fn stage_plugin_inner(
             path: request.package_root.clone(),
             source,
         })?;
-    let authored = crate::package_prepare::prepare_authored(
+    let authored = std::sync::Arc::new(crate::package_prepare::prepare_authored(
         &package_root,
         mars_schema::prepare::PrepareContext::Package,
         None,
         diag,
-    )?;
+    )?);
     diag.fail_on_errors()?;
     let lens = PublishLens::from_prepared_manifest(
         &package_root,
@@ -234,12 +234,19 @@ fn stage_plugin_inner(
 
     let graph_staging = tempfile::TempDir::new()?;
     let effective = implicit_consumer_config(&lens, &root_source, &profiles)?;
-    let resolve_options =
-        ResolveOptions::default().with_staging_root(graph_staging.path().join("resolve"));
-    let graph = crate::resolve::resolve_publish_graph_from_config(
+    let resolve_options = ResolveOptions::default()
+        .with_prepared_source(root_source.clone(), std::sync::Arc::clone(&authored));
+    let mut graph = crate::resolve::resolve_publish_graph_from_config(
         &lens,
         &effective,
         &resolve_options,
+        diag,
+    )?;
+    diag.fail_on_errors()?;
+    crate::staging::materialize_prepared_graph(
+        &mut graph,
+        &effective,
+        &graph_staging.path().join("resolve"),
         diag,
     )?;
     let mut prepared_target =

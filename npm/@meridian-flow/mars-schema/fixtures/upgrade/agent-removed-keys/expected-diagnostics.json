@@ -1,0 +1,10 @@
+[
+  "network",
+  "network-allow",
+  "network-deny",
+  "fanout",
+  "models",
+  "mcp-tools",
+  "autocompact",
+  "autocompact_pct"
+]

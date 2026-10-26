@@ -58,7 +58,7 @@ jobs:
           fi
 
           shopt -s nullglob
-          npm_packages=(npm/@meridian-flow/mars-agents*/package.json)
+          npm_packages=(npm/@meridian-flow/*/package.json)
           shopt -u nullglob
           if [[ "${#npm_packages[@]}" -eq 0 ]]; then
             echo "::error::No npm package metadata found under npm/@meridian-flow/mars-agents*/package.json"
@@ -446,6 +446,16 @@ jobs:
             "
             npm publish --provenance --access public --tag "$NPM_DIST_TAG"
           )
+
+      - name: Build and publish schema package
+        run: |
+          VERSION=${{ steps.release_meta.outputs.version }}
+          NPM_DIST_TAG=${{ steps.release_meta.outputs.npm_dist_tag }}
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --locked --version 0.2.122
+          npm --prefix npm/@meridian-flow/mars-schema version "$VERSION" --no-git-tag-version --allow-same-version
+          npm --prefix npm/@meridian-flow/mars-schema run build
+          npm publish npm/@meridian-flow/mars-schema --provenance --access public --tag "$NPM_DIST_TAG"
 
   cargo-publish:
     name: Publish crate

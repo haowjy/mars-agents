@@ -1,0 +1,51 @@
+{
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "message": "`autocompact` was removed; configure compaction on the model alias",
+      "path": [
+        "autocompact"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "approval": null,
+    "description": null,
+    "effort": null,
+    "had_model_invocable_field": false,
+    "had_user_invocable_field": false,
+    "harness": null,
+    "harness_overrides": {
+      "entries": {}
+    },
+    "mode": null,
+    "model": null,
+    "model_invocable": true,
+    "model_policies": [],
+    "name": null,
+    "sandbox": null,
+    "skills": {
+      "available": [],
+      "load": []
+    },
+    "subagents": [],
+    "tools": {
+      "rules": []
+    },
+    "user_invocable": true
+  },
+  "frontmatter": [
+    [
+      "autocompact",
+      true
+    ]
+  ],
+  "unknown": [
+    [
+      "autocompact",
+      true
+    ]
+  ]
+}

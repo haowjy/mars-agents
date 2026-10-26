@@ -512,7 +512,7 @@ jobs:
           sed -i -E "s/(mars-schema = \{ version = )\"[^\"]+\"/\1\"${NEXT_VERSION}\"/" Cargo.toml crates/mars-schema-wasm/Cargo.toml
           sed -i -E "0,/^version = \".*\"/s//version = \"${PYTHON_VERSION}\"/" pyproject.toml
 
-          for pkg in npm/@meridian-flow/mars-agents*/package.json; do
+          for pkg in npm/@meridian-flow/*/package.json; do
             [[ -f "${pkg}" ]] || continue
             node -e "
               const fs = require('fs');
@@ -556,7 +556,7 @@ jobs:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
           TRIGGER_SHA: ${{ github.sha }}
         run: |
-          git add Cargo.toml crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/mars-agents*/package.json
+          git add Cargo.toml crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/*/package.json
           git commit -m "release: v${NEXT_VERSION}" -m "Release-Trigger: ${TRIGGER_SHA}"
           echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 

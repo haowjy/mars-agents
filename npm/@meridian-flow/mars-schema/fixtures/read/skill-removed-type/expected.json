@@ -1,0 +1,54 @@
+{
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "message": "`type` was removed; use `metadata.type`",
+      "path": [
+        "type"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.required",
+      "message": "`name` must be a non-empty string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.required",
+      "message": "`description` must be a non-empty string",
+      "path": [
+        "description"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "compatibility": null,
+    "description": null,
+    "had_model_invocable_field": false,
+    "has_frontmatter": true,
+    "license": null,
+    "metadata": null,
+    "model_invocable": true,
+    "name": null,
+    "passthrough_fields": [],
+    "skill_type": null,
+    "user_invocable": true
+  },
+  "frontmatter": [
+    [
+      "type",
+      "coding"
+    ]
+  ],
+  "unknown": [
+    [
+      "type",
+      "coding"
+    ]
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.unknown",
+      "message": "unknown field `future-key` is preserved",
+      "path": [
+        "future-key"
+      ],
+      "severity": "warning"
+    },
+    {
+      "code": "field.required",
+      "message": "`name` must be a non-empty string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.required",
+      "message": "`description` must be a non-empty string",
+      "path": [
+        "description"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "compatibility": null,
+    "description": null,
+    "had_model_invocable_field": false,
+    "has_frontmatter": true,
+    "license": null,
+    "metadata": null,
+    "model_invocable": true,
+    "name": null,
+    "passthrough_fields": [
+      [
+        "future-key",
+        "yes"
+      ]
+    ],
+    "skill_type": null,
+    "user_invocable": true
+  },
+  "frontmatter": [
+    [
+      "future-key",
+      "yes"
+    ]
+  ],
+  "unknown": [
+    [
+      "future-key",
+      "yes"
+    ]
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "frontmatter.not-mapping",
+      "message": "frontmatter is not a YAML mapping",
+      "path": [],
+      "severity": "error"
+    }
+  ],
+  "fields": null,
+  "frontmatter": [],
+  "unknown": []
+}

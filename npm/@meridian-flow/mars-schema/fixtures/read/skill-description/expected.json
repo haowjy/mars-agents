@@ -1,0 +1,33 @@
+{
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "field.required",
+      "message": "`name` must be a non-empty string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "compatibility": null,
+    "description": "useful",
+    "had_model_invocable_field": false,
+    "has_frontmatter": true,
+    "license": null,
+    "metadata": null,
+    "model_invocable": true,
+    "name": null,
+    "passthrough_fields": [],
+    "skill_type": null,
+    "user_invocable": true
+  },
+  "frontmatter": [
+    [
+      "description",
+      "useful"
+    ]
+  ],
+  "unknown": []
+}

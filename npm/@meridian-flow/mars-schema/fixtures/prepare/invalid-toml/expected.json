@@ -1,0 +1,37 @@
+{
+  "classification": {
+    "kind": "invalid"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "fields": null,
+      "body": null,
+      "unknown": [],
+      "diagnostics": [
+        {
+          "code": "toml.invalid",
+          "severity": "error",
+          "path": [],
+          "message": "TOML parse error at line 1, column 9\n  |\n1 | [package\n  |         ^\ninvalid table header\nexpected `.`, `]`\n"
+        }
+      ]
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [],
+  "payload": [],
+  "diagnostics": {
+    "mars.toml": [
+      {
+        "code": "toml.invalid",
+        "severity": "error",
+        "path": [],
+        "message": "TOML parse error at line 1, column 9\n  |\n1 | [package\n  |         ^\ninvalid table header\nexpected `.`, `]`\n"
+      }
+    ]
+  }
+}

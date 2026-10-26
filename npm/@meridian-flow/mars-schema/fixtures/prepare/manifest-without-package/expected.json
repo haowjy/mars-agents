@@ -1,0 +1,41 @@
+{
+  "classification": {
+    "kind": "invalid"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "fields": null,
+      "body": null,
+      "unknown": [],
+      "diagnostics": [
+        {
+          "code": "manifest.package-required",
+          "severity": "error",
+          "path": [
+            "package"
+          ],
+          "message": "manifest requires a [package] table"
+        }
+      ]
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [],
+  "payload": [],
+  "diagnostics": {
+    "mars.toml": [
+      {
+        "code": "manifest.package-required",
+        "severity": "error",
+        "path": [
+          "package"
+        ],
+        "message": "manifest requires a [package] table"
+      }
+    ]
+  }
+}

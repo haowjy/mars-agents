@@ -1,0 +1,11 @@
+{
+  "name": "@meridian-flow/mars-schema",
+  "version": "0.18.3",
+  "description": "Mars agent schema reader and lossless editor",
+  "license": "MIT",
+  "type": "commonjs",
+  "exports": { ".": { "node": "./node/mars_schema_wasm.js", "browser": "./web/mars_schema_wasm.js", "default": "./node/mars_schema_wasm.js" } },
+  "files": ["node", "web", "fixtures", "index.d.ts", "README.md"],
+  "scripts": { "build": "../../../scripts/build-schema-wasm.sh" },
+  "devDependencies": { "yaml": "^2.8.1" }
+}

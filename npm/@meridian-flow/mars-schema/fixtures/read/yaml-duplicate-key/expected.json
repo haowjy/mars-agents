@@ -1,0 +1,14 @@
+{
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "yaml.duplicate-key",
+      "message": "malformed YAML frontmatter: duplicate entry with key \"name\"",
+      "path": [],
+      "severity": "error"
+    }
+  ],
+  "fields": null,
+  "frontmatter": [],
+  "unknown": []
+}

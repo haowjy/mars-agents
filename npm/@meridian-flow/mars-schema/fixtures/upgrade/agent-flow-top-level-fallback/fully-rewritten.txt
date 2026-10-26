@@ -1,0 +1,1 @@
+The top-level mapping is flow style, so minimal block editing is not possible.

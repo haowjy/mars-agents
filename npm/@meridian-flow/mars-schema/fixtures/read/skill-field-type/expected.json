@@ -1,0 +1,49 @@
+{
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.required",
+      "message": "`name` must be a non-empty string",
+      "path": [
+        "name"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.required",
+      "message": "`description` must be a non-empty string",
+      "path": [
+        "description"
+      ],
+      "severity": "error"
+    },
+    {
+      "code": "field.type",
+      "message": "`metadata` must be a map",
+      "path": [
+        "metadata"
+      ],
+      "severity": "error"
+    }
+  ],
+  "fields": {
+    "compatibility": null,
+    "description": null,
+    "had_model_invocable_field": false,
+    "has_frontmatter": true,
+    "license": null,
+    "metadata": "nope",
+    "model_invocable": true,
+    "name": null,
+    "passthrough_fields": [],
+    "skill_type": null,
+    "user_invocable": true
+  },
+  "frontmatter": [
+    [
+      "metadata",
+      "nope"
+    ]
+  ],
+  "unknown": []
+}

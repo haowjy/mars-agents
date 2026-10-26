@@ -14,6 +14,14 @@ categories = ["command-line-utilities", "development-tools"]
 members = [".", "crates/mars-schema", "crates/mars-schema-wasm"]
 resolver = "2"
 
+[profile.release.package.mars-schema-wasm]
+opt-level = "s"
+codegen-units = 1
+strip = true
+
+[profile.release]
+lto = true
+
 [[bin]]
 name = "mars"
 path = "src/main.rs"

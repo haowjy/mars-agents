@@ -258,7 +258,7 @@ pub struct AgentOverlay {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effort: Option<String>,
+    pub effort: Option<mars_schema::agent::EffortLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -952,24 +952,15 @@ fn stale_overlay_warnings(
     warnings
 }
 
-/// `effort`, `approval` and `sandbox` in an overlay take the same values as in an Agent file.
+/// `approval` and `sandbox` in an overlay take the same values as in an Agent file (`effort` is
+/// typed, so an invalid one fails when `mars.toml` is read).
 fn validate_agent_overlays(
     file: &Path,
     agents: &IndexMap<String, AgentOverlay>,
 ) -> Result<(), MarsError> {
-    use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
+    use mars_schema::agent::{ApprovalMode, SandboxMode};
     for (name, overlay) in agents {
         let values = [
-            (
-                "effort",
-                overlay.effort.as_deref(),
-                overlay
-                    .effort
-                    .as_deref()
-                    .and_then(EffortLevel::parse)
-                    .is_some(),
-                EffortLevel::ALLOWED,
-            ),
             (
                 "approval",
                 overlay.approval.as_deref(),
@@ -2129,7 +2120,7 @@ override = { effort = "high" }
                 description: Some("project description".to_string()),
                 model: Some("gpt55".to_string()),
                 harness: Some("codex".to_string()),
-                effort: Some("high".to_string()),
+                effort: Some(mars_schema::agent::EffortLevel::High),
                 tools: AgentOverlayTools {
                     allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
                     disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),

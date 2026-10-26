@@ -172,6 +172,20 @@ impl EffortLevel {
     }
 }
 
+/// Reads the same spellings `parse` does, so a config field typed `EffortLevel` holds the
+/// canonical level and no later reader re-parses a string.
+impl<'de> serde::Deserialize<'de> for EffortLevel {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "`effort` has invalid value `{text}`; allowed: {}",
+                Self::ALLOWED
+            ))
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AgentProfile — the fully parsed frontmatter
 // ---------------------------------------------------------------------------

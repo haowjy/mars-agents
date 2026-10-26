@@ -138,8 +138,7 @@ pub(super) fn resolve_effort(
         PolicyFieldLayers {
             cli: cli.map(str::to_string),
             overlay: overlay
-                .and_then(|entry| entry.effort.as_deref())
-                .and_then(EffortLevel::parse)
+                .and_then(|entry| entry.effort.as_ref())
                 .map(|level| level.as_str().to_string()),
             profile: profile
                 .effort

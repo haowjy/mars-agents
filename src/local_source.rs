@@ -1,16 +1,15 @@
 //! Self source selection: `.mars-src/` overrides the declared package.
 //!
-//! Local items intentionally use the same convention walk as dependency packages
-//! so nested `.mars-src/**/agents` and `.mars-src/**/skills` layouts follow the
-//! same layer-grounding rules as published source trees.
+//! Both authored roots are prepared through `mars-schema`; shadow selection is
+//! consumer policy applied to those prepared definition lists.
 
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::DiagnosticCollector;
-use crate::discover::{self, DiscoveredItem};
+use crate::discover::DiscoveredItem;
 use crate::error::MarsError;
-use crate::staging::DefinitionPreparation;
 use mars_schema::item::ItemKind;
+use mars_schema::prepare::{PrepareContext, PreparedDefinition};
 
 pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
 
@@ -18,7 +17,8 @@ pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
 pub struct LocalDiscoveredItem {
     pub discovered: DiscoveredItem,
     pub root: PathBuf,
-    pub(crate) preparation: DefinitionPreparation,
+    pub(crate) definition: PreparedDefinition,
+    pub(crate) payload: Vec<mars_schema::prepare::PayloadEntry>,
 }
 
 impl LocalDiscoveredItem {
@@ -31,53 +31,100 @@ pub fn preferred_local_source_root(project_root: &Path) -> PathBuf {
     project_root.join(LOCAL_SOURCE_DIR)
 }
 
-/// Select self definitions before staging; dependency destination renames happen later.
 pub fn discover_local_items(
     project_root: &Path,
     package_name: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<LocalDiscoveredItem>, MarsError> {
-    let root = preferred_local_source_root(project_root);
-    let mut selected: Vec<_> = discover::discover_source(&root, Some("_self"), diag)?
-        .into_iter()
-        .map(|discovered| LocalDiscoveredItem {
-            discovered,
-            root: root.clone(),
-            preparation: DefinitionPreparation::Legacy,
-        })
-        .collect();
+    let local_root = preferred_local_source_root(project_root);
+    let mut selected = if local_root.is_dir() {
+        let prepared = crate::package_prepare::prepare_authored(
+            &local_root,
+            PrepareContext::AuthoredLocal,
+            None,
+            diag,
+        )?;
+        prepared_items(&local_root, prepared)
+    } else {
+        Vec::new()
+    };
 
-    if let Some(name) = package_name {
-        let preparation = crate::package_prepare::classify(name, project_root, None, diag)?;
-        let package_root = project_root.to_path_buf();
-        for discovered in discover::discover_source(&package_root, Some(name), diag)? {
-            if !matches!(discovered.id.kind, ItemKind::Agent | ItemKind::Skill) {
-                continue;
-            }
+    if package_name.is_some() {
+        let prepared = crate::package_prepare::prepare_authored(
+            project_root,
+            PrepareContext::Package,
+            None,
+            diag,
+        )?;
+        for candidate in prepared_items(project_root, prepared) {
             if let Some(winner) = selected
                 .iter()
-                .find(|item| item.discovered.id == discovered.id)
+                .find(|item| item.discovered.id == candidate.discovered.id)
             {
                 diag.warn(
                     "local-shadow",
                     format!(
                         "self {} `{}` at `{}` shadows package source `{}`",
-                        discovered.id.kind,
-                        discovered.id.name,
+                        candidate.discovered.id.kind,
+                        candidate.discovered.id.name,
                         winner.disk_path().display(),
-                        package_root.join(&discovered.source_path).display(),
+                        candidate.disk_path().display(),
                     ),
                 );
-                continue;
+            } else {
+                selected.push(candidate);
             }
-            selected.push(LocalDiscoveredItem {
-                discovered,
-                root: package_root.clone(),
-                preparation,
-            });
         }
     }
     Ok(selected)
+}
+
+fn prepared_items(
+    root: &Path,
+    prepared: mars_schema::prepare::Prepared,
+) -> Vec<LocalDiscoveredItem> {
+    prepared
+        .definitions
+        .into_iter()
+        .map(|definition| {
+            let kind = match definition.kind {
+                mars_schema::upgrade::DefinitionKind::Agent => ItemKind::Agent,
+                mars_schema::upgrade::DefinitionKind::Skill => ItemKind::Skill,
+            };
+            let source_path = match kind {
+                ItemKind::Agent => PathBuf::from(&definition.source_path),
+                ItemKind::Skill if definition.source_path == "SKILL.md" => PathBuf::from("."),
+                ItemKind::Skill => PathBuf::from(&definition.source_path)
+                    .parent()
+                    .expect("skill definition has a parent")
+                    .to_path_buf(),
+                _ => unreachable!(),
+            };
+            let prefix = if source_path == Path::new(".") {
+                "".to_string()
+            } else {
+                format!("{}/", source_path.to_string_lossy().replace('\\', "/"))
+            };
+            let payload = prepared
+                .payload
+                .iter()
+                .filter(|entry| prefix.is_empty() || entry.source_path.starts_with(&prefix))
+                .cloned()
+                .collect();
+            LocalDiscoveredItem {
+                discovered: DiscoveredItem {
+                    id: crate::lock::ItemId {
+                        kind,
+                        name: definition.slug.clone().into(),
+                    },
+                    source_path,
+                },
+                root: root.to_path_buf(),
+                definition,
+                payload,
+            }
+        })
+        .collect()
 }
 
 /// Resource exclusions for a flat self skill, relative to its source root.
@@ -94,8 +141,6 @@ pub(crate) fn flat_skill_excluded_paths(
     let source_root = dunce::canonicalize(source_root)?;
     let project_root = dunce::canonicalize(project_root)?;
     if source_root == project_root {
-        // These are project output/control roots, not reserved names inside
-        // an authored `.mars-src` resource tree.
         excluded.extend([PathBuf::from(LOCAL_SOURCE_DIR), PathBuf::from(".agents")]);
         excluded.extend(
             mars_schema::harness::ALL
@@ -108,8 +153,6 @@ pub(crate) fn flat_skill_excluded_paths(
         if let Ok(relative) = path.strip_prefix(&source_root) {
             excluded.push(relative.to_path_buf());
         }
-        // Missing targets have no resources to exclude yet. Resolve existing
-        // paths too so parent segments and aliases cannot hide generated trees.
         if let Ok(real_path) = dunce::canonicalize(&path)
             && let Ok(relative) = real_path.strip_prefix(&source_root)
         {

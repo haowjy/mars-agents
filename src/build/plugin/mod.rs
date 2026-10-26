@@ -194,7 +194,20 @@ fn stage_plugin_inner(
             path: request.package_root.clone(),
             source,
         })?;
-    let lens = PublishLens::load(&package_root, diag)?;
+    let authored = crate::package_prepare::prepare_authored(
+        &package_root,
+        mars_schema::prepare::PrepareContext::Package,
+        None,
+        diag,
+    )?;
+    diag.fail_on_errors()?;
+    let lens = PublishLens::from_prepared_manifest(
+        &package_root,
+        authored
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.normalized_bytes.as_slice()),
+    )?;
     let manifest = lens.manifest.as_ref().ok_or_else(|| {
         MarsError::Config(ConfigError::Invalid {
             message: format!(
@@ -223,16 +236,10 @@ fn stage_plugin_inner(
     let effective = implicit_consumer_config(&lens, &root_source, &profiles)?;
     let resolve_options =
         ResolveOptions::default().with_staging_root(graph_staging.path().join("resolve"));
-    let mut graph = crate::resolve::resolve_publish_graph_from_config(
+    let graph = crate::resolve::resolve_publish_graph_from_config(
         &lens,
         &effective,
         &resolve_options,
-        diag,
-    )?;
-    stage_graph(
-        &mut graph,
-        &effective,
-        &graph_staging.path().join("graph"),
         diag,
     )?;
     let mut prepared_target =
@@ -408,82 +415,6 @@ fn implicit_consumer_config(
         },
         skills: lens.effective.skills.clone(),
     })
-}
-
-fn stage_graph(
-    graph: &mut crate::resolve::ResolvedGraph,
-    effective: &EffectiveConfig,
-    staging_root: &Path,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    for source_name in graph.order.clone() {
-        let rooted = graph
-            .nodes
-            .get(&source_name)
-            .expect("resolved graph order names an existing node")
-            .rooted_ref
-            .clone();
-        let discovered = crate::discover::discover_resolved_source(
-            &rooted.package_root,
-            Some(source_name.as_str()),
-            diag,
-        )?;
-        let mut selected = crate::sync::target::apply_source_filters(
-            graph,
-            &source_name,
-            effective.dependencies.get(&source_name),
-            &discovered,
-            &rooted.package_root,
-        )?
-        .unwrap_or_default();
-        // Hook manifests are parsed strictly before source filters are applied.
-        // Keep every hook root in the staged tree so removed schemas and other
-        // compatibility errors cannot be hidden by an unrelated item filter.
-        for item in discovered
-            .iter()
-            .filter(|item| item.id.kind == mars_schema::item::ItemKind::Hook)
-        {
-            if !selected.contains(item) {
-                selected.push(item.clone());
-            }
-        }
-        let include_mcp = crate::sync::target::source_may_emit_mcp(graph, &source_name);
-        let inputs = crate::staging::publish_inputs_for_items(
-            &rooted.package_root,
-            &selected,
-            include_mcp,
-            diag,
-        )?;
-        let empty_renames = RenameMap::new();
-        let renames = effective
-            .dependencies
-            .get(&source_name)
-            .map(|dependency| &dependency.rename)
-            .unwrap_or(&empty_renames);
-        let staged = crate::staging::stage_rooted_source_for_publish_inputs(
-            &source_name,
-            rooted,
-            crate::staging::RootedStageOptions {
-                preparation: crate::staging::DefinitionPreparation::Schema1,
-            },
-            &effective.skills,
-            renames,
-            staging_root,
-            &inputs,
-            diag,
-        )?;
-        let node = graph
-            .nodes
-            .get_mut(&source_name)
-            .expect("resolved graph order names an existing node");
-        node.rooted_ref = staged.rooted;
-        if let crate::staging::HookSurfaceState::Unreadable { hook_names } = staged.hook_surface {
-            graph
-                .unreadable_hook_surfaces
-                .insert(source_name, hook_names);
-        }
-    }
-    Ok(())
 }
 
 fn emit_missing_skill_warnings(

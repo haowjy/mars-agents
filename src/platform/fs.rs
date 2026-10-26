@@ -151,6 +151,35 @@ pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
     replace_generated_dir(&tmp_path, dest)
 }
 
+const PENDING_STAGING_GENERATION: &str = ".staging.pending";
+
+/// Remove only the pending canonical generation owned by sync.
+pub(crate) fn recover_pending_staging(mars_dir: &Path) -> Result<bool, MarsError> {
+    let pending = mars_dir.join(PENDING_STAGING_GENERATION);
+    if pending.symlink_metadata().is_err() {
+        return Ok(false);
+    }
+    safe_remove(&pending)?;
+    Ok(true)
+}
+
+/// Publish canonical staging through an identifiable generation. A process
+/// interrupted after the copy leaves exactly `.mars/.staging.pending`, which
+/// the next lock holder reclaims without touching unrelated temporary paths.
+pub(crate) fn publish_staging_generation(source: &Path, mars_dir: &Path) -> Result<(), MarsError> {
+    fs::create_dir_all(mars_dir)?;
+    let pending = mars_dir.join(PENDING_STAGING_GENERATION);
+    if pending.symlink_metadata().is_ok() {
+        safe_remove(&pending)?;
+    }
+    fs::create_dir(&pending)?;
+    if let Err(error) = copy_dir_following_symlinks(source, &pending) {
+        let _ = safe_remove(&pending);
+        return Err(error);
+    }
+    replace_generated_dir(&pending, &mars_dir.join("staging"))
+}
+
 /// Whether two regular files have identical byte content.
 ///
 /// Returns `false` (not an error) when either path is missing, not a regular file,

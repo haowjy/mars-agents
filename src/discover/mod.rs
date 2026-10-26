@@ -117,39 +117,6 @@ pub fn discover_resolved_source(
     }
 }
 
-/// Discover the authored Agent and skill files that carry versioned frontmatter.
-/// Files contained by a skill are payload unless discovery identifies the file
-/// itself as the skill definition.
-pub(crate) fn discover_definition_files(
-    package_root: &Path,
-    source_name: Option<&str>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<(PathBuf, mars_schema::upgrade::DefinitionKind)>, MarsError> {
-    let mut definitions = Vec::new();
-    for item in discover_resolved_source(package_root, source_name, diag)? {
-        let (path, kind) = match item.id.kind {
-            ItemKind::Agent => (
-                package_root.join(item.source_path),
-                mars_schema::upgrade::DefinitionKind::Agent,
-            ),
-            ItemKind::Skill => {
-                let root = package_root.join(item.source_path);
-                let path = if root.is_dir() {
-                    root.join("SKILL.md")
-                } else {
-                    root
-                };
-                (path, mars_schema::upgrade::DefinitionKind::Skill)
-            }
-            _ => continue,
-        };
-        definitions.push((path, kind));
-    }
-    definitions.sort_by(|left, right| left.0.cmp(&right.0));
-    definitions.dedup_by(|left, right| left.0 == right.0);
-    Ok(definitions)
-}
-
 /// Discover a rooted source while reusing hook definitions parsed by the compiler.
 pub(crate) fn discover_resolved_source_with_hooks(
     package_root: &Path,
@@ -887,68 +854,6 @@ fn parse_declared_paths(json: &Value) -> Vec<RawDeclaredPath> {
         }
     }
     declared
-}
-
-/// Remove manifest declarations that cannot contribute any selected item.
-///
-/// Publication staging uses this after discovery and filtering so rediscovery
-/// does not require excluded paths to be copied merely because the authored
-/// foreign manifest still names them.
-pub(crate) fn retain_selected_manifest_declarations(
-    json: &mut Value,
-    selected: &[(ItemKind, PathBuf)],
-) {
-    let Some(map) = json.as_object_mut() else {
-        return;
-    };
-    for (kind, keys) in [
-        (ItemKind::Skill, MANIFEST_SKILL_KEYS),
-        (ItemKind::Agent, MANIFEST_AGENT_KEYS),
-        (ItemKind::BootstrapDoc, MANIFEST_BOOTSTRAP_KEYS),
-    ] {
-        for key in keys {
-            let keep = map
-                .get_mut(*key)
-                .is_none_or(|value| retain_selected_declared_value(value, kind, selected));
-            if !keep {
-                map.remove(*key);
-            }
-        }
-    }
-}
-
-fn retain_selected_declared_value(
-    value: &mut Value,
-    kind: ItemKind,
-    selected: &[(ItemKind, PathBuf)],
-) -> bool {
-    match value {
-        Value::String(path) => declaration_can_select(path, kind, selected),
-        Value::Array(values) => {
-            values.retain_mut(|child| retain_selected_declared_value(child, kind, selected));
-            !values.is_empty()
-        }
-        Value::Object(map) => map
-            .get("path")
-            .and_then(Value::as_str)
-            .is_none_or(|path| declaration_can_select(path, kind, selected)),
-        // Discovery ignores unsupported shapes, so preserve them verbatim.
-        _ => true,
-    }
-}
-
-fn declaration_can_select(path: &str, kind: ItemKind, selected: &[(ItemKind, PathBuf)]) -> bool {
-    let raw = Path::new(path);
-    if !raw.starts_with("./") {
-        return true;
-    }
-    let Some(normalized) = normalize_manifest_declared_path(raw) else {
-        // Initial discovery reports malformed declarations before staging.
-        return true;
-    };
-    selected.iter().any(|(selected_kind, path)| {
-        *selected_kind == kind && (path.starts_with(&normalized) || normalized.starts_with(path))
-    })
 }
 
 fn collect_declared_paths_from_value(

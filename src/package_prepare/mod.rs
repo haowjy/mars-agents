@@ -329,42 +329,6 @@ pub(crate) fn prepare_authored_without_manifest(
     Ok(prepared)
 }
 
-/// Transitional adapter for local consumers not yet carrying `Prepared`.
-pub(crate) fn classify(
-    package_name: &str,
-    package_root: &Path,
-    declared_dialect: Option<Dialect>,
-    diag: &mut DiagnosticCollector,
-) -> Result<crate::staging::DefinitionPreparation, MarsError> {
-    let prepared = prepare_authored(
-        package_root,
-        PrepareContext::Package,
-        declared_dialect,
-        diag,
-    )?;
-    match prepared.classification {
-        Classification::Schema1 => Ok(crate::staging::DefinitionPreparation::Schema1),
-        Classification::MarsLegacy => Ok(crate::staging::DefinitionPreparation::Legacy),
-        Classification::Foreign { dialect, .. } => Ok(
-            crate::staging::DefinitionPreparation::Foreign(match dialect {
-                mars_schema::dialect::Dialect::Claude => Dialect::Claude,
-                mars_schema::dialect::Dialect::Codex => Dialect::Codex,
-                mars_schema::dialect::Dialect::OpenCode => Dialect::OpenCode,
-                mars_schema::dialect::Dialect::Cursor => Dialect::Cursor,
-                mars_schema::dialect::Dialect::MarsNative => Dialect::MarsNative,
-            }),
-        ),
-        Classification::SchemaNewer { schema } => Err(MarsError::Source {
-            source_name: package_name.to_owned(),
-            message: format!("package declares unsupported schema {schema}"),
-        }),
-        Classification::Invalid | Classification::Empty => Err(MarsError::Source {
-            source_name: package_name.to_owned(),
-            message: "package cannot be prepared".to_string(),
-        }),
-    }
-}
-
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     authored_root: &Path,

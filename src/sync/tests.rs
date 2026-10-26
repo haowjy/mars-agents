@@ -891,21 +891,15 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
 
     let stage = |cfg: &EffectiveConfig| {
         let mut diag = DiagnosticCollector::new();
-        crate::staging::stage_rooted_source(
+        crate::package_prepare::prepare_rooted(
             &"base".into(),
             crate::resolve::RootedSourceRef {
                 checkout_root: tree_path.clone(),
                 authored_root: tree_path.clone(),
                 package_root: tree_path.clone(),
             },
-            crate::staging::RootedStageOptions {
-                preparation: crate::staging::DefinitionPreparation::Foreign(
-                    cfg.dependencies["base"].dialect.unwrap(),
-                ),
-            },
-            &cfg.skills,
-            &cfg.dependencies["base"].rename,
-            &staging_root,
+            cfg,
+            Some(&staging_root),
             &mut diag,
         )
         .unwrap()

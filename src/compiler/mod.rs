@@ -95,9 +95,9 @@ fn compile_inner(
         diag.fail_on_errors()?;
     }
     if !request.options.dry_run {
-        crate::platform::fs::atomic_copy_dir(
+        crate::platform::fs::publish_staging_generation(
             planned.targeted.resolved.preparation.path(),
-            &ctx.project_root.join(".mars/staging"),
+            &ctx.project_root.join(".mars"),
         )?;
     }
 

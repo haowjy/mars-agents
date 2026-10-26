@@ -347,6 +347,13 @@ pub(crate) fn load_config(
     // complete diagnostic gate. All package trees live in owned scratch space.
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
+    let recovered_pending_generation = crate::platform::fs::recover_pending_staging(&mars_dir)?;
+    if recovered_pending_generation {
+        diag.warn(
+            "sync-recovered-staging",
+            "reclaimed an interrupted canonical staging generation",
+        );
+    }
 
     // Load config under lock (auto-init when mutating and missing).
     let mut config = match crate::config::load(project_root) {
@@ -631,17 +638,12 @@ pub(crate) fn build_target(
                 };
                 let staging_root = resolved.preparation.path();
                 let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
-                let staged_path = crate::staging::stage_local_item(
-                    &item.disk_path(),
-                    item.discovered.id.kind,
-                    item.preparation,
+                let staged_path = crate::staging::materialize_local_prepared(
+                    &item,
                     &resolved.loaded.effective.skills,
                     staging_root,
                     &item_key,
-                    (item.discovered.id.kind == ItemKind::Skill)
-                        .then(|| item.discovered.id.name.as_str()),
                     &excluded_paths,
-                    diag,
                 )?;
                 let source_path = staged_path;
                 let source_hash = if is_flat_skill {

@@ -128,7 +128,9 @@ pub(crate) fn preflight_config_entries(
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
                     errors.push(error);
                 }
-                if let Err(error) = crate::target::validate_json_config_file(&path) {
+                if let Err(error) =
+                    crate::target::validate_json_config_file(&path, adapter.mcp_section_key())
+                {
                     errors.push(error.to_string());
                 }
             }
@@ -434,6 +436,17 @@ pub(crate) fn compile_config_entries(
                 };
                 match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir) {
                     Ok(content) => {
+                        if let Some(problem) = adapter.hook_fragment_problem(&content) {
+                            diag.warn(
+                                "hook-fragment-contract",
+                                format!(
+                                    "hook `{}` from `{}`: `{target_root}` fragment `{}` {problem}; the fragment will still be installed",
+                                    item.def.name,
+                                    item.source_name,
+                                    item.fragment_name(target_root),
+                                ),
+                            );
+                        }
                         let relative_dest = relative_dest.to_string_lossy().into_owned();
                         desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
                         file_writes.push((
@@ -454,15 +467,7 @@ pub(crate) fn compile_config_entries(
         // Write via the target adapter (if one is registered).
         let mut target_records = BTreeMap::new();
         for entry in &entries {
-            target_records.insert(
-                entry.key(),
-                ConfigEntryRecord {
-                    emitted_json: match entry {
-                        ConfigEntry::Hook(hook) => serde_json::to_string(&hook.entries).ok(),
-                        ConfigEntry::McpServer(_) => None,
-                    },
-                },
-            );
+            target_records.insert(entry.key(), adapter.config_entry_record(entry));
         }
 
         // Emit target-specific pre-write diagnostics (runs even on dry runs).
@@ -638,10 +643,35 @@ fn apply_replacement_writes(
                         );
                 }
             }
-            Err(error) => diag.warn(
-                "config-entry-write",
-                format!("failed to write config entries to `{authorized_target}`: {error}"),
-            ),
+            Err(error) => {
+                diag.warn(
+                    "config-entry-write",
+                    format!("failed to write config entries to `{authorized_target}`: {error}"),
+                );
+                // An unchanged entry the old lock owned is still on disk; keep
+                // its record so a later sync can remove it. A changed record's
+                // entry was already removed before this write, so it drops.
+                // Hook removal clears the whole pair before the write, so no
+                // hook record applies.
+                if surface == Surface::Mcp {
+                    let desired = desired_records.get(&authorized_target);
+                    written_records
+                        .entry(authorized_target.clone())
+                        .or_default()
+                        .extend(
+                            old_lock
+                                .config_entries
+                                .get(&authorized_target)
+                                .into_iter()
+                                .flatten()
+                                .filter(|(key, record)| {
+                                    written_keys.contains(*key)
+                                        && desired.and_then(|d| d.get(*key)) == Some(*record)
+                                })
+                                .map(|(key, record)| (key.clone(), record.clone())),
+                        );
+                }
+            }
         }
     }
 

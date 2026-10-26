@@ -169,7 +169,10 @@ fn assert_config_entry_consistency_with_diagnostics(
 
     for (target, records) in &lock.config_entries {
         for (key, record) in records {
-            if let Some(emitted) = &record.emitted_json {
+            if key.starts_with("hook:") {
+                let Some(emitted) = &record.emitted_json else {
+                    continue;
+                };
                 let event = key
                     .strip_prefix("hook:")
                     .and_then(|rest| rest.split_once(':'))
@@ -216,9 +219,14 @@ fn assert_config_entry_consistency_with_diagnostics(
                 let Ok(root) = serde_json::from_str::<serde_json::Value>(&raw) else {
                     continue;
                 };
+                let section = if target == ".opencode" {
+                    "mcp"
+                } else {
+                    "mcpServers"
+                };
                 assert!(
-                    root["mcpServers"].get(name).is_some(),
-                    "lock owns `{key}` but mcpServers.{name} is absent on disk"
+                    root[section].get(name).is_some(),
+                    "lock owns `{key}` but {section}.{name} is absent on disk"
                 );
             }
             // A hook record without emitted_json is the explicit one-release

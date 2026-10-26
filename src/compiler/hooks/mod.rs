@@ -53,6 +53,15 @@ pub struct ParsedHookItem {
 }
 
 impl ParsedHookItem {
+    /// Fragment file this hook ships for `target`: the declared one, else the
+    /// target's default.
+    pub(crate) fn fragment_name(&self, target: &str) -> String {
+        self.def.targets[target]
+            .fragment
+            .clone()
+            .unwrap_or_else(|| default_fragment_name(target))
+    }
+
     pub(crate) fn discovered_item(&self, package_root: &Path) -> crate::discover::DiscoveredItem {
         crate::discover::DiscoveredItem {
             id: crate::lock::ItemId {
@@ -253,11 +262,7 @@ pub fn load_merge_fragment(
     emit_unchecked_warning: bool,
 ) -> Result<HookFragment, MarsError> {
     let target = &item.def.targets[target_name];
-    let fragment_name = target
-        .fragment
-        .clone()
-        .unwrap_or_else(|| default_fragment_name(target_name));
-    let path = item.hook_dir.join(&fragment_name);
+    let path = item.hook_dir.join(item.fragment_name(target_name));
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| invalid(&path, &format!("failed to read fragment: {error}")))?;
     let mut value: Value = serde_json::from_str(&raw)
@@ -323,11 +328,7 @@ pub fn load_file_fragment(
             ),
         ));
     }
-    let fragment_name = target
-        .fragment
-        .clone()
-        .unwrap_or_else(|| default_fragment_name(target_name));
-    let path = item.hook_dir.join(fragment_name);
+    let path = item.hook_dir.join(item.fragment_name(target_name));
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| invalid(&path, &format!("failed to read fragment: {error}")))?;
     Ok(substitute_hook_dir(&raw, hook_dir))

@@ -5,7 +5,8 @@ agents and skills. Mars compiles these into target-specific config files during
 `mars sync`.
 
 - **MCP servers** are registered per harness target (`.claude/.mcp.json`,
-  `.codex/mcp.json`, etc.) from `mcp/<name>/mcp.toml` package definitions.
+  `.codex/mcp.json`, `.opencode/opencode.json`, etc.) from `mcp/<name>/mcp.toml`
+  package definitions.
 - **MCP tool-policy refs** (`mcp(...)` in agent/skill `tools:` / `disallowed-tools:`)
   gate which MCP tools an agent or skill may use — separate from server registration.
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
@@ -15,6 +16,11 @@ agents and skills. Mars compiles these into target-specific config files during
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
+
+OpenCode uses its native `mcp` section. Stdio servers are written as
+`{ "type": "local", "command": ["..."], "environment": { "KEY": "{env:VAR}" } }`.
+When upgrading from a release that wrote `mcpServers`, the next sync migrates
+Mars-owned server names and preserves unrelated entries in either section.
 
 ## Tool-policy MCP references vs server definitions
 
@@ -247,11 +253,10 @@ export default {
 }
 ```
 
-Plugin builds require a default `{ id, setup }` export and isolate each fragment so one load or
-setup failure does not block later hooks. Direct `.opencode` target sync still has the named-export
-loading bug tracked in [mars-agents#198](https://github.com/haowjy/mars-agents/issues/198);
-the example above documents the plugin-build contract, not a verified sync workaround. Mars places
-the synced fragment at `.opencode/plugins/mars-<name>.ts`.
+OpenCode fragments must use a default `{ id, setup }` export. Mars warns when a fragment has no
+recognizable default export but still installs it; plugin builds isolate each fragment so one load
+or setup failure does not block later hooks. Mars places synced fragments at
+`.opencode/plugins/mars-<name>.ts`.
 
 These placed fragments are managed target outputs. Mars preserves an existing
 file at that path during ordinary sync when the lock holds no installed-content

@@ -69,6 +69,9 @@ pub enum ApprovalMode {
 }
 
 impl ApprovalMode {
+    /// The values `parse` accepts, as the invalid-value errors list them.
+    pub const ALLOWED: &'static str = "default, auto, confirm, never";
+
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "default" => Some(Self::Default),
@@ -100,6 +103,9 @@ pub enum SandboxMode {
 }
 
 impl SandboxMode {
+    /// The values `parse` accepts, as the invalid-value errors list them.
+    pub const ALLOWED: &'static str = "default, read-only, workspace-write, danger-full-access";
+
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "default" => Some(Self::Default),
@@ -133,6 +139,9 @@ pub enum EffortLevel {
 }
 
 impl EffortLevel {
+    /// The values `parse` accepts (`max` is `xhigh`), as the invalid-value errors list them.
+    pub const ALLOWED: &'static str = "none, low, medium, high, xhigh, max";
+
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "none" => Some(Self::None),
@@ -557,13 +566,14 @@ fn read_fields(
                                 key_path("approval"),
                                 "approval value `yolo` was removed; use `never`",
                             ));
+                            return None;
                         }
                         ApprovalMode::parse(&approval).or_else(|| {
                             push_agent_invalid(
                                 diags,
                                 key_path("approval"),
                                 approval,
-                                "default, auto, confirm, never",
+                                ApprovalMode::ALLOWED,
                             );
                             None
                         })
@@ -576,7 +586,7 @@ fn read_fields(
                             diags,
                             key_path("sandbox"),
                             sandbox,
-                            "default, read-only, workspace-write, danger-full-access",
+                            SandboxMode::ALLOWED,
                         );
                         None
                     })
@@ -585,12 +595,7 @@ fn read_fields(
             "effort" => {
                 profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {
                     EffortLevel::parse(&effort).or_else(|| {
-                        push_agent_invalid(
-                            diags,
-                            key_path("effort"),
-                            effort,
-                            "low, medium, high, xhigh, none",
-                        );
+                        push_agent_invalid(diags, key_path("effort"), effort, EffortLevel::ALLOWED);
                         None
                     })
                 });

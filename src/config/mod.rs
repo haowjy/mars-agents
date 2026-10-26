@@ -968,7 +968,7 @@ fn validate_agent_overlays(
                     .as_deref()
                     .and_then(EffortLevel::parse)
                     .is_some(),
-                "none, low, medium, high, xhigh, max",
+                EffortLevel::ALLOWED,
             ),
             (
                 "approval",
@@ -978,7 +978,7 @@ fn validate_agent_overlays(
                     .as_deref()
                     .and_then(ApprovalMode::parse)
                     .is_some(),
-                "default, auto, confirm, never",
+                ApprovalMode::ALLOWED,
             ),
             (
                 "sandbox",
@@ -988,7 +988,7 @@ fn validate_agent_overlays(
                     .as_deref()
                     .and_then(SandboxMode::parse)
                     .is_some(),
-                "default, read-only, workspace-write, danger-full-access",
+                SandboxMode::ALLOWED,
             ),
         ];
         for (key, value, valid, allowed) in values {

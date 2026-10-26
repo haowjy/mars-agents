@@ -1,5 +1,6 @@
 //! Model-policy definition and validation shared by profiles and consumer config.
 
+use crate::agent::{ApprovalMode, EffortLevel, SandboxMode};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
@@ -264,42 +265,27 @@ fn parse_overrides(
                     found: crate::ordered::plain(value),
                     allowed: allowed_override_values(key),
                 })?;
+        let invalid = || ModelPolicyRuleParseError::OverrideValueInvalid {
+            key: key.to_string(),
+            found: raw.to_string(),
+            allowed: allowed_override_values(key),
+        };
         match key {
             "effort" => {
-                let normalized = raw.to_ascii_lowercase();
-                if !matches!(
-                    normalized.as_str(),
-                    "none" | "low" | "medium" | "high" | "xhigh" | "max"
-                ) {
-                    return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
-                        key: key.to_string(),
-                        found: raw.to_string(),
-                        allowed: allowed_override_values(key),
-                    });
-                }
-                overrides.effort = Some(if normalized == "max" {
-                    "xhigh".to_string()
-                } else {
-                    normalized
-                });
+                overrides.effort =
+                    Some(EffortLevel::parse(raw).ok_or_else(invalid)?.as_str().into());
             }
-            "sandbox"
-                if matches!(
-                    raw,
-                    "default" | "read-only" | "workspace-write" | "danger-full-access"
-                ) =>
-            {
-                overrides.sandbox = Some(raw.to_string());
+            "sandbox" => {
+                overrides.sandbox =
+                    Some(SandboxMode::parse(raw).ok_or_else(invalid)?.as_str().into());
             }
-            "approval" if matches!(raw, "default" | "auto" | "confirm" | "never") => {
-                overrides.approval = Some(raw.to_string());
-            }
-            "sandbox" | "approval" => {
-                return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
-                    key: key.to_string(),
-                    found: raw.to_string(),
-                    allowed: allowed_override_values(key),
-                });
+            "approval" => {
+                overrides.approval = Some(
+                    ApprovalMode::parse(raw)
+                        .ok_or_else(invalid)?
+                        .as_str()
+                        .into(),
+                );
             }
             _ => {
                 return Err(ModelPolicyRuleParseError::UnknownOverrideKey {
@@ -313,9 +299,9 @@ fn parse_overrides(
 
 fn allowed_override_values(key: &str) -> &'static str {
     match key {
-        "effort" => "none, low, medium, high, xhigh",
-        "sandbox" => "default, read-only, workspace-write, danger-full-access",
-        "approval" => "default, auto, confirm, never",
+        "effort" => EffortLevel::ALLOWED,
+        "sandbox" => SandboxMode::ALLOWED,
+        "approval" => ApprovalMode::ALLOWED,
         _ => "effort, sandbox, approval",
     }
 }

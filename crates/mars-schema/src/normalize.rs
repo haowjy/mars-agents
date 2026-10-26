@@ -52,19 +52,11 @@ pub struct Selection {
     pub items: BTreeMap<String, Vec<String>>,
 }
 
-pub struct RemoteTree<'a, T: TreeSource> {
-    /// The plugin's root: the caller applied any `git-subdir` path.
-    pub tree: &'a T,
-    pub source: SourceInfo,
-}
-
 pub struct NormalizeRequest<'a, T: TreeSource> {
     pub tree: &'a T,
     pub source: SourceInfo,
     pub hint: Hint,
     pub selection: Selection,
-    /// Fetched remote plugin trees by plugin name.
-    pub remote_trees: BTreeMap<String, RemoteTree<'a, T>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,9 +84,6 @@ pub struct Provenance {
     pub source: SourceInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub marketplace: Option<MarketplaceProvenance>,
-    /// Where a remote plugin's files came from.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<SourceInfo>,
     /// The definition source paths imported.
     pub selected_items: Vec<String>,
 }
@@ -127,8 +116,6 @@ fn item_set(selection: &Selection, plugin: &str) -> Option<BTreeSet<String>> {
 /// Where a package sits in a marketplace, when it does.
 struct Origin<'a> {
     entry: &'a MarketplaceEntry,
-    /// Where a remote plugin's files came from.
-    content: Option<SourceInfo>,
 }
 
 /// A repository that names plugins but is no plugin itself. A remote plugin source must not be
@@ -197,7 +184,6 @@ fn normalize_root<T: TreeSource>(
     }
     let origin = hint_plugin.map(|plugin| Origin {
         entry: &plugin.entry,
-        content: None,
     });
     finish_package(rooted, request, origin, &mut normalized);
     normalized
@@ -271,46 +257,26 @@ fn normalize_plugin<T: TreeSource>(
                 return;
             }
             let root = SubTree::new(marketplace_root, path.clone());
-            (
-                prepare_root(
-                    &root,
-                    PrepareContext::Package,
-                    request.hint.dialect,
-                    options(path.is_empty()),
-                ),
-                None,
+            prepare_root(
+                &root,
+                PrepareContext::Package,
+                request.hint.dialect,
+                options(path.is_empty()),
             )
         }
+        // The caller fetches it and normalizes the fetched tree with `hint.plugin` set to the
+        // entry: the one protocol for a plugin whose files are not in this tree.
         PluginSource::Remote { .. } => {
-            let Some(remote) = request.remote_trees.get(&entry.name) else {
-                report(
-                    severity,
-                    "marketplace.remote-not-fetched",
-                    "lives in another repository and was not fetched".into(),
-                );
-                return;
-            };
-            if is_nested_marketplace(remote.tree) {
-                report(
-                    Severity::Error,
-                    "marketplace.nested-marketplace",
-                    NESTED_MARKETPLACE.into(),
-                );
-                return;
-            }
-            (
-                prepare_root(
-                    remote.tree,
-                    PrepareContext::Package,
-                    request.hint.dialect,
-                    options(false),
-                ),
-                Some(remote.source.clone()),
-            )
+            report(
+                severity,
+                "marketplace.remote-not-fetched",
+                "lives in another repository: fetch it and normalize that tree with `hint.plugin`"
+                    .into(),
+            );
+            return;
         }
     };
-    let (rooted, content) = rooted;
-    finish_package(rooted, request, Some(Origin { entry, content }), normalized);
+    finish_package(rooted, request, Some(Origin { entry }), normalized);
 }
 
 /// Add the package. A package-level error (two skills with one slug, conflicting manifests,
@@ -378,7 +344,6 @@ fn finish_package<T: TreeSource>(
                 plugin: origin.entry.name.clone(),
                 plugin_source: origin.entry.source.clone(),
             }),
-            content: origin.and_then(|origin| origin.content),
             selected_items,
         },
         prepared,

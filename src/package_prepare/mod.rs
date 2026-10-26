@@ -5,7 +5,6 @@
 //! result onto binary diagnostics and materialization.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -232,7 +231,6 @@ pub(crate) fn prepare_rooted(
             ..Hint::default()
         },
         selection: Selection::default(),
-        remote_trees: BTreeMap::new(),
     };
     let mut normalized = normalize(&request);
     if let Some(error) = source.take_error() {

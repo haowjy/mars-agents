@@ -93,224 +93,6 @@
         "payload": [],
         "diagnostics": {}
       }
-    },
-    {
-      "id": "gh",
-      "provenance": {
-        "translator": "0.18.3",
-        "dialect": "claude",
-        "source": {
-          "name": "sources",
-          "url": "https://github.com/acme/sources",
-          "resolved_commit": "1111111111111111111111111111111111111111"
-        },
-        "marketplace": {
-          "plugin": "gh",
-          "plugin_source": {
-            "kind": "remote",
-            "repository": "https://github.com/acme/gh-plugin",
-            "checkout": {
-              "kind": "ref",
-              "name": "v1"
-            }
-          }
-        },
-        "content": {
-          "name": "gh-plugin",
-          "url": "https://github.com/acme/gh-plugin",
-          "requested_ref": "v1",
-          "resolved_commit": "2222222222222222222222222222222222222222"
-        },
-        "selected_items": [
-          "skills/remote-skill/SKILL.md"
-        ]
-      },
-      "prepared": {
-        "classification": {
-          "kind": "foreign",
-          "dialect": "claude",
-          "evidence": {
-            "source": "predicted",
-            "paths": [
-              ".claude-plugin/plugin.json"
-            ]
-          }
-        },
-        "manifest": {
-          "output_path": "mars.toml",
-          "reading": {
-            "frontmatter": [
-              [
-                "schema",
-                1
-              ],
-              [
-                "name",
-                "gh"
-              ],
-              [
-                "version",
-                "0.3.0"
-              ],
-              [
-                "description",
-                "From GitHub"
-              ]
-            ],
-            "fields": {
-              "name": "gh",
-              "version": "0.3.0",
-              "description": "From GitHub",
-              "schema": 1
-            },
-            "body": null,
-            "diagnostics": []
-          },
-          "change": {
-            "kind": "generated"
-          }
-        },
-        "definitions": [
-          {
-            "kind": "skill",
-            "slug": "remote-skill",
-            "source_path": "skills/remote-skill/SKILL.md",
-            "output_path": "skills/remote-skill/SKILL.md",
-            "reading": {
-              "frontmatter": [
-                [
-                  "name",
-                  "remote-skill"
-                ],
-                [
-                  "description",
-                  "A skill."
-                ]
-              ],
-              "fields": {
-                "name": "remote-skill",
-                "description": "A skill.",
-                "model-invocable": true,
-                "user-invocable": true,
-                "license": null,
-                "compatibility": null,
-                "metadata": null
-              },
-              "body": "# Body\n",
-              "diagnostics": []
-            },
-            "change": {
-              "kind": "none"
-            }
-          }
-        ],
-        "payload": [],
-        "diagnostics": {}
-      }
-    },
-    {
-      "id": "subdir",
-      "provenance": {
-        "translator": "0.18.3",
-        "dialect": "claude",
-        "source": {
-          "name": "sources",
-          "url": "https://github.com/acme/sources",
-          "resolved_commit": "1111111111111111111111111111111111111111"
-        },
-        "marketplace": {
-          "plugin": "subdir",
-          "plugin_source": {
-            "kind": "remote",
-            "repository": "https://github.com/acme/mono",
-            "path": "plugins/sub",
-            "checkout": {
-              "kind": "ref",
-              "name": "main"
-            }
-          }
-        },
-        "content": {
-          "name": "mono",
-          "url": "https://github.com/acme/mono",
-          "resolved_commit": "3333333333333333333333333333333333333333",
-          "subpath": "plugins/sub"
-        },
-        "selected_items": [
-          "skills/deep/SKILL.md"
-        ]
-      },
-      "prepared": {
-        "classification": {
-          "kind": "foreign",
-          "dialect": "claude",
-          "evidence": {
-            "source": "predicted",
-            "paths": []
-          }
-        },
-        "manifest": {
-          "output_path": "mars.toml",
-          "reading": {
-            "frontmatter": [
-              [
-                "schema",
-                1
-              ],
-              [
-                "name",
-                "subdir"
-              ]
-            ],
-            "fields": {
-              "name": "subdir",
-              "version": "",
-              "schema": 1
-            },
-            "body": null,
-            "diagnostics": []
-          },
-          "change": {
-            "kind": "generated"
-          }
-        },
-        "definitions": [
-          {
-            "kind": "skill",
-            "slug": "deep",
-            "source_path": "skills/deep/SKILL.md",
-            "output_path": "skills/deep/SKILL.md",
-            "reading": {
-              "frontmatter": [
-                [
-                  "name",
-                  "deep"
-                ],
-                [
-                  "description",
-                  "A skill."
-                ]
-              ],
-              "fields": {
-                "name": "deep",
-                "description": "A skill.",
-                "model-invocable": true,
-                "user-invocable": true,
-                "license": null,
-                "compatibility": null,
-                "metadata": null
-              },
-              "body": "# Body\n",
-              "diagnostics": []
-            },
-            "change": {
-              "kind": "none"
-            }
-          }
-        ],
-        "payload": [],
-        "diagnostics": {}
-      }
     }
   ],
   "diagnostics": {
@@ -319,13 +101,25 @@
         "code": "marketplace.remote-not-fetched",
         "severity": "warning",
         "path": [],
-        "message": "plugin `pinned`: lives in another repository and was not fetched"
+        "message": "plugin `gh`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
       },
       {
-        "code": "marketplace.nested-marketplace",
-        "severity": "error",
+        "code": "marketplace.remote-not-fetched",
+        "severity": "warning",
         "path": [],
-        "message": "plugin `market`: is itself a marketplace, which cannot be imported as a plugin"
+        "message": "plugin `pinned`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
+      },
+      {
+        "code": "marketplace.remote-not-fetched",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `subdir`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
+      },
+      {
+        "code": "marketplace.remote-not-fetched",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `market`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
       },
       {
         "code": "marketplace.plugin-unsupported",

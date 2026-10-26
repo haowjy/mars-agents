@@ -73,8 +73,9 @@ for (const name of cases("prepare")) {
 }
 assert.throws(() => wasm.prepare({ files: new Map(), context: "nonsense" }));
 
-// normalize: inspection, the staged inspection of each fetched remote plugin, and the packages
-// equal the fixtures; each package's definition and manifest files equal expected/<id>/<path>
+// normalize: inspection, the staged inspection and normalization of each fetched remote plugin
+// (its own tree, with `hint.plugin` set to the marketplace entry), and the packages equal the
+// fixtures; each package's definition and manifest files equal expected/<id>/<path>
 const defined = object => Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 for (const name of cases("normalize")) {
   const dir = join(fixtures, "normalize", name);
@@ -83,20 +84,23 @@ for (const name of cases("normalize")) {
   const hint = request.hint ?? {};
   const inspection = wasm.inspect({ tree: root, hint });
   check(inspection, json("normalize", name, "inspection.json"), `normalize/${name} inspection`);
-  const remoteTrees = {};
+  const result = wasm.normalize(defined({ tree: root, source: request.source, hint: request.hint, selection: request.selection }));
+  const packages = [...result.packages];
   const remoteInspections = {};
+  const remoteNormalized = {};
   for (const [plugin, remote] of Object.entries(request.remote ?? {}).sort(([a], [b]) => (a < b ? -1 : 1))) {
     const fetched = tree(join(dir, remote.dir));
-    remoteTrees[plugin] = defined({ tree: fetched, source: remote.source });
     const entry = inspection.plugins.find(candidate => candidate.entry.name === plugin).entry;
-    remoteInspections[plugin] = wasm.inspect({ tree: fetched, hint: { plugin: { entry, at_marketplace_root: false } } });
+    const remoteHint = { plugin: { entry, at_marketplace_root: false } };
+    remoteInspections[plugin] = wasm.inspect({ tree: fetched, hint: remoteHint });
+    remoteNormalized[plugin] = wasm.normalize(defined({ tree: fetched, source: remote.source, hint: remoteHint }));
+    packages.push(...remoteNormalized[plugin].packages);
   }
   if (existsSync(join(dir, "remote-inspections.json"))) check(remoteInspections, json("normalize", name, "remote-inspections.json"), `normalize/${name} remote inspections`);
-  const result = wasm.normalize(defined({ tree: root, source: request.source, hint: request.hint, selection: request.selection, remoteTrees: Object.keys(remoteTrees).length ? remoteTrees : undefined }));
   const expectedDir = join(dir, "expected");
   const expectedFiles = existsSync(expectedDir) ? tree(expectedDir) : new Map();
   let produced = 0;
-  for (const pkg of result.packages) {
+  for (const pkg of packages) {
     for (const file of [pkg.prepared.manifest, ...pkg.prepared.definitions].filter(Boolean)) {
       const want = expectedFiles.get(`${pkg.id}/${file.output_path}`);
       assert.ok(file.normalized_bytes instanceof Uint8Array, `normalize/${name} bytes are a Uint8Array`);
@@ -107,6 +111,10 @@ for (const name of cases("normalize")) {
   assert.equal(produced, expectedFiles.size, `normalize/${name} file count`);
   stripBytes(result);
   check(result, json("normalize", name, "normalized.json"), `normalize/${name}`);
+  if (existsSync(join(dir, "remote-normalized.json"))) {
+    for (const normalized of Object.values(remoteNormalized)) stripBytes(normalized);
+    check(remoteNormalized, json("normalize", name, "remote-normalized.json"), `normalize/${name} remote normalized`);
+  }
 }
 assert.throws(() => wasm.normalize({ tree: new Map(), hint: { dialect: "nonsense" } }));
 

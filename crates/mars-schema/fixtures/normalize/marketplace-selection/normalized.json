@@ -97,7 +97,7 @@
         "code": "marketplace.remote-not-fetched",
         "severity": "error",
         "path": [],
-        "message": "plugin `far`: lives in another repository and was not fetched"
+        "message": "plugin `far`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
       }
     ]
   }

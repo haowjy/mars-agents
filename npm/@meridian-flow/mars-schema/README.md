@@ -31,7 +31,7 @@ await init();
 | `vocabulary()` | The tool capabilities, their aliases, and the native tools of each host. |
 | `prepare({files, context?, declaredDialect?})` | Classifies and reads one package root held in memory. |
 | `inspect({tree, hint?})` | Reports what a repository is: a marketplace's plugins, a plugin's or skill tree's items, the dialect and the evidence for it. |
-| `normalize({tree, source?, hint?, selection?, remoteTrees?})` | Turns a selection into schema v1 packages with a generated `mars.toml` and provenance. |
+| `normalize({tree, source?, hint?, selection?})` | Turns a selection into schema v1 packages with a generated `mars.toml` and provenance. |
 | `version()` | The version of the schema crate this build was made from. |
 
 A tree is a `Map<string, Uint8Array>` from `/`-separated relative paths to bytes. `prepare`, `inspect` and `normalize` read manifests, definitions and directory listings, never the bytes of a skill's other files.
@@ -92,7 +92,7 @@ natives.flow.work;                 // { kind: "tools", tools: ["work"] }
 
 `prepare` is the single-root core. It classifies the root (`schema-1`, `mars-legacy`, `schema-newer`, a foreign dialect, `marketplace`, `invalid` or `empty`), selects definitions, upgrades a pre-v1 package or translates a foreign one, and reads each result. For each definition it returns the source and output paths, the normalized bytes, the typed reading, and a change record (`none`, `edited` with the changed key paths, or `fully-rewritten`); payload files come back as source-to-output paths without bytes, and diagnostics are keyed by source path. `context` is `"package"` (the default) or `"authored-local"` (a consumer project's `.mars-src`).
 
-`inspect` reports what is in a repository before anything is chosen, and `normalize` builds the packages for a selection. A remote marketplace plugin is fetched by the caller: `inspect` the marketplace, fetch the entry's repository, then `inspect` or `normalize` the fetched tree with `hint.plugin` set to the entry (or pass it in `remoteTrees`). The Claude rules (a plugin's `skills` list adds to the default folder, its `agents` list replaces it, commands are reported and not imported) are applied here; see [Dialect](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#dialect).
+`inspect` reports what is in a repository before anything is chosen, and `normalize` builds the packages for a selection. A remote marketplace plugin is fetched by the caller: `inspect` the marketplace, fetch the entry's repository, then `inspect` or `normalize` the fetched tree with `hint.plugin` set to the entry. The Claude rules (a plugin's `skills` list adds to the default folder, its `agents` list replaces it, commands are reported and not imported) are applied here; see [Dialect](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#dialect).
 
 ## Fixtures
 

@@ -376,8 +376,6 @@ export interface NormalizedPackage {
     dialect?: Dialect;
     source: SourceInfo;
     marketplace?: { plugin: string; plugin_source: PluginSource };
-    /** Where a remote plugin's files came from. */
-    content?: SourceInfo;
     selected_items: string[];
   };
   prepared: Prepared;
@@ -391,13 +389,13 @@ export interface Normalized {
 }
 
 /**
- * Schema v1 packages for a selection. `remoteTrees` maps a marketplace plugin name to its
- * fetched root (any `git-subdir` path already applied).
+ * Schema v1 packages for a selection. A remote marketplace plugin is fetched by the caller (any
+ * `git-subdir` path applied) and normalized as its own tree with `hint.plugin` set to its entry;
+ * `source` then describes the fetched repository.
  */
 export function normalize(input: {
   tree: Tree;
   source?: SourceInfo;
   hint?: Hint;
   selection?: Selection;
-  remoteTrees?: { [plugin: string]: { tree: Tree; source?: SourceInfo } };
 }): Normalized;

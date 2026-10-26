@@ -1,3 +1,0 @@
----
-disallowed-tools: [read]
----

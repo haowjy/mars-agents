@@ -1,4 +1,0 @@
----
-subagents: [child]
----
-body

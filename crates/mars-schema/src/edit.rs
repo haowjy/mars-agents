@@ -7,13 +7,14 @@
 
 use serde_json::{Number, Value};
 
-/// Largest integer magnitude a JavaScript number holds exactly.
-const MAX_SAFE_INTEGER: u64 = 1 << 53;
+/// Largest integer magnitude JavaScript represents unambiguously (`Number.MAX_SAFE_INTEGER`):
+/// 2^53 is also what 2^53 + 1 rounds to.
+pub(crate) const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 /// A value that cannot be written as YAML without changing it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EmitError {
-    #[error("integer {0} is beyond ±2^53 and cannot cross to JavaScript exactly")]
+    #[error("integer {0} is beyond ±(2^53 − 1) and cannot cross to JavaScript exactly")]
     IntegerTooLarge(String),
     #[error("duplicate frontmatter key `{0}`")]
     DuplicateKey(String),
@@ -72,6 +73,15 @@ fn check_number(n: &Number) -> Result<(), EmitError> {
     }
 }
 
+/// A whole float is written as an integer: JavaScript cannot tell `1.0` from `1`, and the
+/// range check has already bounded it to ±2^53.
+fn number(n: &Number) -> String {
+    match n.as_f64() {
+        Some(v) if n.is_f64() && v.fract() == 0.0 => (v as i64).to_string(),
+        _ => n.to_string(),
+    }
+}
+
 fn push_pair(out: &mut String, key: &str, value: &Value, column: usize) {
     out.push_str(&scalar(key));
     out.push(':');
@@ -87,7 +97,7 @@ fn emit(value: &Value, indent: usize) -> String {
     match value {
         Value::Null => "null".into(),
         Value::Bool(v) => v.to_string(),
-        Value::Number(v) => v.to_string(),
+        Value::Number(v) => number(v),
         Value::String(v) => scalar(v),
         Value::Array(values) if values.is_empty() => "[]".into(),
         Value::Object(values) if values.is_empty() => "{}".into(),

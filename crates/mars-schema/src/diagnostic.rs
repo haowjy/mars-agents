@@ -17,6 +17,9 @@ pub enum PathSegment {
     Index(usize),
 }
 
+/// Byte offsets into the file text. Only fence and YAML-syntax errors may carry one
+/// (`serde_yaml` has no spans; divergence V3), and no reader sets it yet. Every other
+/// diagnostic is located by `path`, which consumers map to a range with their own parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ByteRange {
     pub start: usize,

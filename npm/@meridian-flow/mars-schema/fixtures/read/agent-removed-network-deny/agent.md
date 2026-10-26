@@ -1,3 +1,0 @@
----
-network-deny: [x]
----

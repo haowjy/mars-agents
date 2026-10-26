@@ -1,0 +1,6 @@
+# Built by scripts/build-schema-wasm.sh
+/node/
+/web/
+/fixtures/
+/node_modules/
+/.build.*/

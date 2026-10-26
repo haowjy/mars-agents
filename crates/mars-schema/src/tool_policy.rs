@@ -71,7 +71,7 @@ impl ToolRule {
     }
 
     /// The pattern as the bundle and `show --json` print it: an `mcp` rule's `server/tool`.
-    pub fn wire_pattern(&self) -> Option<String> {
+    fn wire_pattern(&self) -> Option<String> {
         match &self.capability {
             Capability::Mcp(mcp_ref) => Some(mcp_ref.to_pattern()),
             _ => self.pattern.clone(),
@@ -329,7 +329,7 @@ fn permission_replace_entries(value: &Value) -> Option<&Value> {
 const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
 
 /// Retired top-level MCP grant field spellings (use inline `mcp(...)` in `tools:` instead).
-pub const REMOVED_MCP_TOOLS_FIELDS: &[&str] = &["mcp-tools", "mcp_tools"];
+const REMOVED_MCP_TOOLS_FIELDS: &[&str] = &["mcp-tools", "mcp_tools"];
 
 /// Strip retired `mcp-tools` keys from canonical frontmatter during staging lift.
 pub fn strip_removed_mcp_tools_fields(fm: &mut Frontmatter) -> bool {

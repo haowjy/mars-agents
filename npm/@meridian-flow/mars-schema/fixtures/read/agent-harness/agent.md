@@ -1,4 +1,0 @@
----
-harness: codex
----
-body

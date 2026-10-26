@@ -4,6 +4,7 @@ use serde::Serialize;
 use serde_yaml::Value;
 
 use crate::diagnostic::SchemaDiagnostic;
+use crate::edit::MAX_SAFE_INTEGER;
 
 /// The serialized v1 reading of one schema-owned file.
 ///
@@ -87,7 +88,18 @@ pub(crate) fn json_value(value: &Value) -> Result<serde_json::Value, String> {
     match value {
         Value::Null => Ok(serde_json::Value::Null),
         Value::Bool(v) => Ok((*v).into()),
-        Value::Number(v) => serde_json::to_value(v).map_err(|e| e.to_string()),
+        Value::Number(v) => {
+            let beyond = v
+                .as_i64()
+                .is_some_and(|n| n.unsigned_abs() > MAX_SAFE_INTEGER)
+                || v.as_u64().is_some_and(|n| n > MAX_SAFE_INTEGER);
+            if beyond {
+                return Err(format!(
+                    "integer {v} is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
+                ));
+            }
+            serde_json::to_value(v).map_err(|e| e.to_string())
+        }
         Value::String(v) => Ok(v.clone().into()),
         Value::Sequence(values) => values
             .iter()

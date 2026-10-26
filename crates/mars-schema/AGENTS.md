@@ -33,9 +33,33 @@ preserved, while removed fields are errors.
 
 `yaml-rust2` (with default features disabled) supplies the event scan that distinguishes YAML anchors, aliases, and explicit document-end markers from identical text inside scalars. `serde_yaml` remains the semantic parser and validity authority; the event scan does not produce field values.
 
-The public read/edit boundary is `read::read_files`, `edit::emit_value`, and
-`edit::rewrite_block`. `read_files` returns deterministic path-keyed readings
-with ordered frontmatter pairs, typed fields, bodies, and diagnostics. The
-`mars-schema-wasm` crate exposes this contract to Flow; the published
-`@meridian-flow/mars-schema` package contains the Node/browser bindings and
-the shared fixtures.
+The public read/edit boundary is `read::read`, `edit::emit_value` and `edit::rewrite_block`.
+`read(path, text)` picks the reader from the package-relative path (`mars.toml`,
+`agents/<slug>.md`, `skills/<slug>/SKILL.md`; any other path is an error, never a default) and
+returns one `DefinitionRead`: ordered `frontmatter` pairs, typed `fields`, `body`, `diagnostics`.
+Typed fields serialize with the spellings the file uses (kebab-case keys and values, `xhigh`,
+`read-only`), internal flags are `#[serde(skip)]`, and wrappers are `#[serde(transparent)]`; a
+refactor of `AgentProfile` that changes the serde shape changes the published contract and
+`fixtures/read/`. `prepare` embeds the same shape and keeps only package-level diagnostics
+(discovery, upgrade) in its own map; `Prepared::all_diagnostics` merges both. `Diagnostic.range`
+is for fence and YAML-syntax errors only (divergence V3) and no reader sets it yet.
+
+Emission has one scalar rule for keys and string values: plain only for a safe word
+(`[A-Za-z_][A-Za-z0-9_./-]*`, no YAML boolean, null, number or infinity word), otherwise JSON
+double-quoted with every non-printable, line-separator and BOM character escaped. Multi-line
+strings are quoted, never block scalars. `emit_value(value, indent)`: `indent` is the owning
+key's column; a scalar is one line with no leading newline; a non-empty collection starts with
+`\n` and its children sit at `indent + 2`; output never ends in a newline. Integers beyond
+±(2^53 − 1) are refused. `rewrite_block` returns the whole block between the fences, keys in order,
+ending in exactly one newline. Nested mapping keys come out sorted (`serde_json` without
+`preserve_order`).
+
+`mars-schema-wasm` serializes with `Serializer::json_compatible()` (plain objects, `null`) and
+exposes `read`, `emitValue`, `rewriteBlock`, `vocabulary` and `prepare` (provisional until P5) as
+`@meridian-flow/mars-schema`. The npm `node/`, `web/` and `fixtures/` are built by
+`scripts/build-schema-wasm.sh`, never committed. Fixtures are checked in Rust (`tests/`) and in
+Node (`crates/mars-schema-wasm/run-fixtures.mjs`, deep equality on every suite; emit cases are
+spliced into a frontmatter and read back by `read` and the `yaml` library). Regenerate expected
+output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff.
+`crates/mars-schema-wasm/sweep-rewrite.mjs <dir>...` checks read → rewriteBlock → read on real
+files.

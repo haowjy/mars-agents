@@ -344,7 +344,19 @@ fn parse_native_config_value(
         Value::Bool(v) => Some(serde_json::Value::Bool(*v)),
         Value::String(v) => Some(serde_json::Value::String(v.clone())),
         Value::Number(v) => {
-            if let Some(number) = v.as_i64().map(serde_json::Number::from) {
+            if v.as_i64()
+                .is_some_and(|n| n.unsigned_abs() > crate::edit::MAX_SAFE_INTEGER)
+                || v.as_u64()
+                    .is_some_and(|n| n > crate::edit::MAX_SAFE_INTEGER)
+            {
+                push_agent_invalid(
+                    diags,
+                    path.to_vec(),
+                    v.to_string(),
+                    "integer within ±(2^53 − 1)",
+                );
+                None
+            } else if let Some(number) = v.as_i64().map(serde_json::Number::from) {
                 Some(serde_json::Value::Number(number))
             } else if let Some(number) = v.as_u64().map(serde_json::Number::from) {
                 Some(serde_json::Value::Number(number))
@@ -437,7 +449,9 @@ fn parse_harness_overrides(
             );
             continue;
         };
-        if harness_name != "flow" && mars_schema_harness_known(harness_name).is_none() {
+        if !crate::harness::RESERVED_CONSUMER_NAMESPACES.contains(&harness_name)
+            && mars_schema_harness_known(harness_name).is_none()
+        {
             push_unknown_harness_override(diags, harness_name);
         }
         let mut parsed = serde_json::Map::new();
@@ -557,6 +571,9 @@ fn push_model_policy_parse_error(
         }
         crate::model_policy::ModelPolicyRuleParseError::NoFallbackMustBeBoolean { found } => {
             push_model_policy_invalid(diags, child("no-fallback"), found, "boolean");
+        }
+        crate::model_policy::ModelPolicyRuleParseError::WhenInvalid { found } => {
+            push_model_policy_invalid(diags, child("when"), found, "non-empty one-line string");
         }
     }
 }

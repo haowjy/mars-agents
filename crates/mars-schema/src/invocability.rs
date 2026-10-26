@@ -8,7 +8,7 @@ use serde_yaml::Value;
 
 use crate::frontmatter::Frontmatter;
 
-pub fn value_label(val: &Value) -> String {
+fn value_label(val: &Value) -> String {
     val.as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| format!("{val:?}"))

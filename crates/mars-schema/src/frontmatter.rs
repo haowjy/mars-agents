@@ -252,10 +252,7 @@ impl Frontmatter {
 }
 
 /// Rename skills in frontmatter using exact-match replacement.
-pub fn rewrite_skills(
-    fm: &mut Frontmatter,
-    renames: &IndexMap<String, String>,
-) -> IndexSet<String> {
+fn rewrite_skills(fm: &mut Frontmatter, renames: &IndexMap<String, String>) -> IndexSet<String> {
     let mut renamed = IndexSet::new();
     let key = yaml_key("skills");
     if let Some(value) = fm.yaml.get_mut(&key) {
@@ -266,10 +263,7 @@ pub fn rewrite_skills(
 }
 
 /// Rename subagents in frontmatter using exact-match replacement.
-pub fn rewrite_subagents(
-    fm: &mut Frontmatter,
-    renames: &IndexMap<String, String>,
-) -> IndexSet<String> {
+fn rewrite_subagents(fm: &mut Frontmatter, renames: &IndexMap<String, String>) -> IndexSet<String> {
     rewrite_string_list_field(fm, "subagents", renames)
 }
 

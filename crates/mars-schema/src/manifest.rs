@@ -115,7 +115,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
     crate::read::DefinitionRead {
         frontmatter: package
             .iter()
-            .map(|(key, value)| (key.clone(), toml_json(value)))
+            .filter_map(|(key, value)| Some((key.clone(), toml_json(value)?)))
             .collect(),
         fields,
         body: None,
@@ -123,19 +123,25 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
     }
 }
 
-fn toml_json(value: &toml::Value) -> serde_json::Value {
-    match value {
+/// `None` for an integer JavaScript cannot hold exactly.
+fn toml_json(value: &toml::Value) -> Option<serde_json::Value> {
+    Some(match value {
         toml::Value::String(v) => v.clone().into(),
+        toml::Value::Integer(v) if v.unsigned_abs() > crate::edit::MAX_SAFE_INTEGER => return None,
         toml::Value::Integer(v) => (*v).into(),
         toml::Value::Float(v) => serde_json::Number::from_f64(*v)
             .map_or(serde_json::Value::Null, serde_json::Value::Number),
         toml::Value::Boolean(v) => (*v).into(),
         toml::Value::Datetime(v) => v.to_string().into(),
-        toml::Value::Array(values) => values.iter().map(toml_json).collect(),
+        toml::Value::Array(values) => values
+            .iter()
+            .map(toml_json)
+            .collect::<Option<Vec<_>>>()?
+            .into(),
         toml::Value::Table(table) => table
             .iter()
-            .map(|(key, value)| (key.clone(), toml_json(value)))
-            .collect::<serde_json::Map<_, _>>()
+            .map(|(key, value)| Some((key.clone(), toml_json(value)?)))
+            .collect::<Option<serde_json::Map<_, _>>>()?
             .into(),
-    }
+    })
 }

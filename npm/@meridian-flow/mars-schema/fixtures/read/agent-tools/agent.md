@@ -1,4 +1,0 @@
----
-tools: {read: allow}
----
-body

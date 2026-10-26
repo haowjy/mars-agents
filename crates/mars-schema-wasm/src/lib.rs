@@ -1,8 +1,7 @@
 //! WebAssembly bindings for the pure Mars schema crate.
 //!
 //! Every result is serialized with `Serializer::json_compatible()`: plain objects and
-//! arrays, `null` for absent values, `Uint8Array` for bytes. The shapes are the serde
-//! shapes of `mars_schema`'s types, pinned by `crates/mars-schema/fixtures`.
+//! arrays, `null` for absent values, `Uint8Array` for bytes. The shapes are the serde shapes of `mars_schema`'s types, pinned by `crates/mars-schema/fixtures`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -14,7 +13,7 @@ use serde_wasm_bindgen::Serializer;
 use wasm_bindgen::prelude::*;
 
 fn to_js(value: &impl Serialize) -> Result<JsValue, JsError> {
-    Ok(value.serialize(&Serializer::json_compatible())?)
+    Ok(value.serialize(&Serializer::json_compatible().serialize_bytes_as_arrays(false))?)
 }
 
 /// A JSON value read from JavaScript. Unlike `serde_json::Value`, it refuses NaN and
@@ -48,12 +47,12 @@ impl<'de> Visitor<'de> for JsonVisitor {
     fn visit_i128<E: de::Error>(self, v: i128) -> Result<Json, E> {
         i64::try_from(v)
             .map(|v| Json(v.into()))
-            .map_err(|_| E::custom("integer is beyond ±2^53"))
+            .map_err(|_| E::custom("integer is beyond ±(2^53 − 1)"))
     }
     fn visit_u128<E: de::Error>(self, v: u128) -> Result<Json, E> {
         u64::try_from(v)
             .map(|v| Json(v.into()))
-            .map_err(|_| E::custom("integer is beyond ±2^53"))
+            .map_err(|_| E::custom("integer is beyond ±(2^53 − 1)"))
     }
     fn visit_f64<E: de::Error>(self, v: f64) -> Result<Json, E> {
         serde_json::Number::from_f64(v)
@@ -119,15 +118,17 @@ pub fn vocabulary() -> Result<JsValue, JsError> {
     to_js(&mars_schema::tool_natives::vocabulary())
 }
 
-/// Prepare a package from `{files: Map<path, Uint8Array>, context?}`. Provisional: P5
-/// replaces this surface with `inspect` and `normalize`.
+/// Prepare a package from `{files: Map<path, Uint8Array>, context?, declaredDialect?}`.
+/// An unrecognized `context` or `declaredDialect` throws. Provisional: P5 replaces this
+/// surface with `inspect` and `normalize`.
 #[wasm_bindgen]
 pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
     #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
+    #[serde(deny_unknown_fields, rename_all = "camelCase")]
     struct Input {
         files: BTreeMap<String, ByteBuf>,
         context: Option<mars_schema::prepare::PrepareContext>,
+        declared_dialect: Option<mars_schema::dialect::Dialect>,
     }
     let input: Input = serde_wasm_bindgen::from_value(input)?;
     let tree = mars_schema::tree::FileTree::from_files(
@@ -139,5 +140,9 @@ pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
     let context = input
         .context
         .unwrap_or(mars_schema::prepare::PrepareContext::Package);
-    to_js(&mars_schema::prepare::prepare(&tree, context, None))
+    to_js(&mars_schema::prepare::prepare(
+        &tree,
+        context,
+        input.declared_dialect,
+    ))
 }

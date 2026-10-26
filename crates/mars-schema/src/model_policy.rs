@@ -88,6 +88,9 @@ pub enum ModelPolicyRuleParseError {
     NoFallbackMustBeBoolean {
         found: String,
     },
+    WhenInvalid {
+        found: String,
+    },
 }
 
 impl ModelPolicyRuleParseError {
@@ -126,6 +129,9 @@ impl ModelPolicyRuleParseError {
             ),
             Self::NoFallbackMustBeBoolean { .. } => {
                 "model policy `no-fallback` must be a boolean".to_string()
+            }
+            Self::WhenInvalid { .. } => {
+                "model policy `when` must be a non-empty one-line string".to_string()
             }
             Self::RuleMustBeMapping { .. } => "model policy rule must be a mapping".to_string(),
         }
@@ -210,12 +216,14 @@ pub fn parse_model_policy_rule_value(
 
     let when = match rule.get(serde_yaml::Value::String("when".to_string())) {
         None | Some(serde_yaml::Value::Null) => None,
-        Some(serde_yaml::Value::String(value)) if value.lines().count() <= 1 => Some(value.clone()),
+        Some(serde_yaml::Value::String(value))
+            if !value.is_empty() && !value.contains(['\n', '\r']) =>
+        {
+            Some(value.clone())
+        }
         Some(value) => {
-            return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
-                key: "when".to_string(),
+            return Err(ModelPolicyRuleParseError::WhenInvalid {
                 found: format!("{value:?}"),
-                allowed: "one-line string",
             });
         }
     };

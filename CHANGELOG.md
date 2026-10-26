@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `@meridian-flow/mars-schema` returns one plain-object v1 reading (file spellings, `null` for absent, `Uint8Array` bytes) from `read(path, text)` for agents, skills and `mars.toml`; its YAML emitter quotes every unsafe key and string and refuses integers beyond ±(2^53 − 1).
+- `ls` and `work` are tool capabilities, and the published vocabulary includes a typed Flow table.
 - `mars-schema` can prepare package trees in memory, returning normalized definitions, strict
   readings, authored-file changes, payload mappings, and source-keyed diagnostics.
 - Schema-v1 Agent, skill, and package readers now live in `mars-schema`, reject removed or ambiguous syntax, preserve unknown fields, and expose stable structured diagnostics.
@@ -28,6 +30,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- Native agent files (`.claude`, `.codex`, Cursor, plugin trees) take effort, sandbox and approval from the matching model policy, as the launch bundle does.
+- Model policy `when` has its own diagnostic path and rejects empty and multi-line values; `mars check` resolves policy aliases against the package's own `[models.*]` and names the agent and file.
 - Binary package consumers now prepare authored trees through `mars-schema`, retain authored
   origins independently from materialized paths, and resolve transitive path dependencies from
   those origins.

@@ -297,7 +297,7 @@ fn lift_cursor(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
     }
 }
 
-pub fn cursor_manual_rule_shape(fm: &Frontmatter) -> bool {
+fn cursor_manual_rule_shape(fm: &Frontmatter) -> bool {
     fm.get("alwaysApply").and_then(Value::as_bool) == Some(false)
         && fm.get("description").is_none()
         && fm.get("globs").is_none()

@@ -1,4 +1,0 @@
----
-metadata: {type: coding}
----
-body

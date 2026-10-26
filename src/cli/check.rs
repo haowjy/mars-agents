@@ -88,7 +88,10 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         normalized_manifest.as_deref(),
     )?;
     let mut report = check_prepared(&prepared, &authored_base, &lens, &mut publish_diag)?;
-    let known_aliases = crate::models::builtin_aliases();
+    let known_aliases = crate::models::merged_runtime_aliases(
+        &Default::default(),
+        lens.manifest.as_ref().map(|config| &config.models),
+    );
     for definition in &prepared.definitions {
         let mars_schema::prepare::PreparedDefinitionRead::Agent(reading) = &definition.reading
         else {
@@ -102,8 +105,8 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
                 && !known_aliases.contains_key(&policy.match_value)
             {
                 report.warnings.push(format!(
-                    "model policy alias `{}` does not resolve to a catalog alias",
-                    policy.match_value
+                    "{}: agent `{}` has a model policy for alias `{}`, which is not a catalog alias here",
+                    definition.source_path, definition.slug, policy.match_value
                 ));
             }
         }

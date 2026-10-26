@@ -1,3 +1,0 @@
----
-disable-model-invocation: true
----

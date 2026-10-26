@@ -1,4 +1,0 @@
----
-sandbox: read-only
----
-body

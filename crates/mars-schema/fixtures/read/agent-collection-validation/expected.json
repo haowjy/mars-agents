@@ -1,0 +1,124 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "  "
+    ],
+    [
+      "model",
+      ""
+    ],
+    [
+      "skills",
+      {
+        "load": [
+          "ok",
+          3,
+          ""
+        ],
+        "available": false
+      }
+    ],
+    [
+      "subagents",
+      [
+        "ok",
+        3,
+        ""
+      ]
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [
+        "ok"
+      ],
+      "available": []
+    },
+    "subagents": [
+      "ok"
+    ],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model"
+      ],
+      "message": "`model` must be a non-empty string"
+    },
+    {
+      "code": "field.type",
+      "severity": "error",
+      "path": [
+        "skills",
+        "load",
+        1
+      ],
+      "message": "`skills.load` entry 2 must be a non-empty string"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "skills",
+        "load",
+        2
+      ],
+      "message": "`skills.load` entry 3 must be a non-empty string"
+    },
+    {
+      "code": "field.type",
+      "severity": "error",
+      "path": [
+        "skills",
+        "available"
+      ],
+      "message": "`skills.available` must be a list of non-empty strings"
+    },
+    {
+      "code": "field.type",
+      "severity": "error",
+      "path": [
+        "subagents",
+        1
+      ],
+      "message": "`subagents` entry 2 must be a non-empty string"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "subagents",
+        2
+      ],
+      "message": "`subagents` entry 3 must be a non-empty string"
+    }
+  ]
+}

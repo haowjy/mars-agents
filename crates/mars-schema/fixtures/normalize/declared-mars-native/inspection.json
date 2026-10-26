@@ -1,0 +1,21 @@
+{
+  "kind": "mars-legacy",
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "planner",
+      "source_path": "agents/planner.md",
+      "output_path": "agents/planner.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "plan",
+      "source_path": "skills/plan/SKILL.md",
+      "skill_root": "skills/plan",
+      "output_path": "skills/plan/SKILL.md"
+    }
+  ],
+  "diagnostics": {}
+}

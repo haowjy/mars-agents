@@ -9,6 +9,9 @@ use crate::error::MarsError;
 pub(crate) const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
 
+/// The Mars that writes a sentinel's `mars_version`, and the one `mars check` compares it with.
+pub(crate) const MARS_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Generated root files live here, below `build::plugin`'s tree rows, because
 // sentinel validation and staging read them from a lower layer.
 

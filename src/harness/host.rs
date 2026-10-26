@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use wait_timeout::ChildExt;
 
-use crate::harness::registry::{self, HarnessId};
+use crate::harness::registry;
 use crate::models::probes::ProbeRefreshMode;
 use crate::models::probes::cursor_cache::CachedCursorProbeOutcome;
 use crate::models::probes::opencode_cache::CachedProbeOutcome;
@@ -14,6 +14,7 @@ use crate::models::probes::pi_cache::CachedPiProbeOutcome;
 use crate::models::probes::{
     CursorProbeResult, ObservedOutcome, OpenCodeProbeResult, PiProbeResult, ProbeObservation,
 };
+use mars_schema::HarnessId;
 
 #[derive(Debug, Clone)]
 pub struct CapabilityCollectionOptions {
@@ -494,7 +495,7 @@ pub struct NativeAuthCache {
 
 impl NativeAuthCache {
     pub fn state(&self, harness: &str) -> AuthState {
-        let Some(id) = registry::parse(harness) else {
+        let Some(id) = mars_schema::harness::parse(harness) else {
             return AuthState::Unknown {
                 reason: "unknown harness".to_string(),
             };
@@ -508,7 +509,7 @@ impl NativeAuthCache {
 }
 
 pub fn native_auth_state_for_name(harness: &str) -> AuthState {
-    let Some(id) = registry::parse(harness) else {
+    let Some(id) = mars_schema::harness::parse(harness) else {
         return AuthState::Unknown {
             reason: "unknown harness".to_string(),
         };

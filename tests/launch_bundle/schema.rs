@@ -25,7 +25,7 @@ tools:
   Bash: allow
   Write: allow
   mcp(plugin:context7:context7): allow
-disallowed-tools: [Agent]
+  Agent: deny
 ---
 
 Review code changes.

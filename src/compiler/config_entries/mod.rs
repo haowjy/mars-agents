@@ -14,6 +14,7 @@ use crate::lock::ConfigEntryRecord;
 use crate::sync::AppliedState;
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry, TargetAdapter};
 use crate::types::MarsContext;
+use mars_schema::item::ItemKind;
 
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
@@ -29,7 +30,7 @@ pub(crate) fn file_hook_output_preserve_paths(
     for item in lock
         .items
         .values()
-        .filter(|item| item.kind == crate::lock::ItemKind::Hook)
+        .filter(|item| item.kind == ItemKind::Hook)
     {
         for output in item
             .outputs
@@ -140,7 +141,7 @@ pub(crate) fn preflight_config_entries(
         let adapter = registry.get(target_name);
         let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
         let installed = installed_hook_dir(&ctx.project_root, target_name, &item.def.name);
-        let hook_dir = portable_installed_hook_dir(&installed);
+        let hook_dir = portable_installed_dir(&installed);
         if let Err(error) = validate_destination_path(&ctx.project_root, &installed, true) {
             errors.push(error);
             continue;
@@ -384,7 +385,7 @@ pub(crate) fn compile_config_entries(
                     && !package_dir_matches_hash(
                         source_hash.as_ref(),
                         &installed,
-                        crate::lock::ItemKind::Hook,
+                        ItemKind::Hook,
                     )
                 {
                     diag.warn(
@@ -414,7 +415,7 @@ pub(crate) fn compile_config_entries(
                     && !package_dir_is_installed(
                         item.server_dir(),
                         &installed,
-                        crate::lock::ItemKind::McpServer,
+                        ItemKind::McpServer,
                     )
                 {
                     diag.warn(
@@ -457,7 +458,7 @@ pub(crate) fn compile_config_entries(
         let mut file_writes = Vec::new();
         if mode == Some(crate::target::HookFragmentMode::File) {
             for item in &installed_hooks {
-                let hook_dir = portable_installed_hook_dir(&installed_hook_dir(
+                let hook_dir = portable_installed_dir(&installed_hook_dir(
                     &ctx.project_root,
                     target_root,
                     &item.def.name,
@@ -864,11 +865,7 @@ fn write_file_hook_outputs(
     }
 }
 
-fn package_dir_matches_hash(
-    expected: &str,
-    installed: &std::path::Path,
-    kind: crate::lock::ItemKind,
-) -> bool {
+fn package_dir_matches_hash(expected: &str, installed: &std::path::Path, kind: ItemKind) -> bool {
     crate::hash::compute_hash(installed, kind)
         .ok()
         .is_some_and(|installed| installed == expected)
@@ -877,7 +874,7 @@ fn package_dir_matches_hash(
 fn package_dir_is_installed(
     source: impl AsRef<std::path::Path>,
     installed: &std::path::Path,
-    kind: crate::lock::ItemKind,
+    kind: ItemKind,
 ) -> bool {
     let Ok(source) = crate::hash::compute_hash(source.as_ref(), kind) else {
         return false;
@@ -903,8 +900,4 @@ fn installed_hook_dir(project_root: &Path, target_root: &str, hook_name: &str) -
 
 fn portable_installed_dir(installed: &std::path::Path) -> String {
     installed.to_string_lossy().replace('\\', "/")
-}
-
-fn portable_installed_hook_dir(installed: &std::path::Path) -> String {
-    portable_installed_dir(installed)
 }

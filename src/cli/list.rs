@@ -3,9 +3,8 @@
 use std::path::Path;
 
 use crate::error::MarsError;
-use crate::frontmatter;
 use crate::hash;
-use crate::lock::ItemKind;
+use mars_schema::item::ItemKind;
 
 use super::output::{self, CatalogEntry, ListEntry};
 
@@ -74,7 +73,7 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             ItemKind::BootstrapDoc => dest_path.item_name(item.kind),
             _ => path_to_name(&disk_path),
         };
-        let (name, description) = read_name_description(&content_path, &fallback_name);
+        let (name, description) = read_name_description(&content_path, &fallback_name, item.kind);
         let variants = match item.kind {
             ItemKind::Skill => {
                 let (index, _warnings) =
@@ -118,26 +117,29 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
 }
 
 /// Read name and description from a file's frontmatter.
-fn read_name_description(path: &Path, fallback_name: &str) -> (String, String) {
+fn read_name_description(path: &Path, fallback_name: &str, kind: ItemKind) -> (String, String) {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return (fallback_name.to_string(), String::new()),
     };
-    match frontmatter::parse(&content) {
-        Ok(fm) => {
-            let name = fm
-                .name()
-                .map(str::to_string)
-                .unwrap_or_else(|| fallback_name.to_string());
-            let description = fm
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            (name, description)
-        }
-        Err(_) => (fallback_name.to_string(), String::new()),
-    }
+    let fields = if kind == ItemKind::Skill {
+        mars_schema::skill::read(&content)
+            .fields
+            .map(|profile| (profile.name, profile.description))
+    } else {
+        mars_schema::agent::read(&content)
+            .fields
+            .map(|profile| (profile.name, profile.description))
+    };
+    fields.map_or_else(
+        || (fallback_name.to_string(), String::new()),
+        |(name, description)| {
+            (
+                name.unwrap_or_else(|| fallback_name.to_string()),
+                description.unwrap_or_default(),
+            )
+        },
+    )
 }
 
 /// Derive a display name from a file path.
@@ -179,13 +181,12 @@ fn run_status(
         }
 
         let disk_path = dest_path.resolve(root);
-        let hash_path = hash_path_for_kind(&disk_path, item.kind);
-        let status = if !hash_path.exists() {
+        let status = if !disk_path.exists() {
             "missing".to_string()
         } else if super::conflict_markers::file_has_conflict_markers(&disk_path) {
             "conflicted".to_string()
         } else {
-            let disk_hash = hash::compute_hash(&hash_path, item.kind)?;
+            let disk_hash = hash::compute_hash(&disk_path, item.kind)?;
             if disk_hash == item.installed_checksum.as_ref() {
                 "ok".to_string()
             } else {
@@ -207,16 +208,6 @@ fn run_status(
     Ok(0)
 }
 
-fn hash_path_for_kind(path: &Path, kind: ItemKind) -> std::path::PathBuf {
-    if kind == ItemKind::BootstrapDoc {
-        path.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,7 +217,8 @@ mod tests {
     fn read_name_description_uses_provided_fallback_name() {
         let dir = TempDir::new().unwrap();
         let missing_skill_md = dir.path().join("skills/test-skill/SKILL.md");
-        let (name, description) = read_name_description(&missing_skill_md, "test-skill");
+        let (name, description) =
+            read_name_description(&missing_skill_md, "test-skill", ItemKind::Skill);
         assert_eq!(name, "test-skill");
         assert_eq!(description, "");
     }

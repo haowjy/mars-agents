@@ -1,0 +1,13 @@
+{
+  "frontmatter": [],
+  "fields": null,
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "frontmatter.unclosed",
+      "severity": "error",
+      "path": [],
+      "message": "frontmatter is not closed with an exact `---` line"
+    }
+  ]
+}

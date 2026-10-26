@@ -3,11 +3,10 @@ use std::path::Path;
 
 use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
 use crate::build::inventory::build_inventory_prompt;
-use crate::compiler::skills::parse_skill_content;
 use crate::compiler::variants::harness_skill_variant_path;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
-use crate::frontmatter::{Frontmatter, SkillsSpec};
+use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
 
@@ -220,19 +219,20 @@ fn load_skill_document(
 
     // model-invocable gates global discovery, not explicit profile references.
     // If the agent profile lists a skill, it loads regardless.
-    let (_base_profile, base_frontmatter) =
-        parse_skill_file(skill_name, &base_skill_path, warnings)?;
+    let base = parse_skill_file(skill_name, &base_skill_path, warnings)?;
+    let base_profile = base.fields;
 
     let selected_skill_path = harness_skill_variant_path(skill_dir, harness_id)
         .unwrap_or_else(|| base_skill_path.clone());
     let selected_body = if selected_skill_path == base_skill_path {
-        base_frontmatter.body().trim().to_string()
+        base.body.trim().to_string()
     } else {
         read_skill_body(skill_name, &selected_skill_path)?
     };
 
-    let skill_type = skill_type_from_frontmatter(&base_frontmatter);
-    let skill_type = skill_type.unwrap_or_else(|| "reference".to_string());
+    let skill_type = base_profile
+        .skill_type
+        .unwrap_or_else(|| "reference".to_string());
 
     let content = render_skill_content_block(skill_name, &selected_body);
 
@@ -259,11 +259,12 @@ fn resolve_available_skill(
     }
 
     // model-invocable gates global discovery, not explicit profile references.
-    let (base_profile, base_frontmatter) =
-        parse_skill_file(skill_name, &base_skill_path, warnings)?;
+    let base_profile = parse_skill_file(skill_name, &base_skill_path, warnings)?.fields;
 
-    let skill_type =
-        skill_type_from_frontmatter(&base_frontmatter).unwrap_or_else(|| "reference".to_string());
+    let skill_type = base_profile
+        .skill_type
+        .clone()
+        .unwrap_or_else(|| "reference".to_string());
     let description = base_profile.description.unwrap_or_default();
 
     Ok(AvailableSkillOutcome::Available(AvailableSkill {
@@ -294,7 +295,7 @@ fn parse_skill_file(
     skill_name: &str,
     skill_path: &Path,
     warnings: &mut Vec<String>,
-) -> Result<(crate::compiler::skills::SkillProfile, Frontmatter), String> {
+) -> Result<mars_schema::read::Valid<mars_schema::skill::SkillProfile>, String> {
     let raw = std::fs::read_to_string(skill_path).map_err(|err| {
         format!(
             "failed to read skill `{skill_name}` from {}: {err}",
@@ -302,38 +303,23 @@ fn parse_skill_file(
         )
     })?;
 
-    let mut skill_diags = Vec::new();
-    let parsed = parse_skill_content(&raw, &mut skill_diags).map_err(|err| {
-        format!(
-            "failed to parse skill `{skill_name}` from {}: {err}",
-            skill_path.display()
-        )
-    })?;
-
-    for diag in skill_diags {
-        if diag.is_error() {
-            return Err(format!(
+    let valid = mars_schema::skill::read(&raw)
+        .into_valid()
+        .map_err(|error| {
+            format!(
                 "skill `{skill_name}` has invalid frontmatter in {}: {}",
                 skill_path.display(),
-                diag.message()
-            ));
-        }
-        warnings.push(format!(
+                error.message()
+            )
+        })?;
+    warnings.extend(valid.warnings.iter().map(|diag| {
+        format!(
             "skill `{skill_name}` has frontmatter warning in {}: {}",
             skill_path.display(),
             diag.message()
-        ));
-    }
-
-    Ok(parsed)
-}
-
-fn skill_type_from_frontmatter(frontmatter: &Frontmatter) -> Option<String> {
-    frontmatter
-        .get("type")
-        .and_then(|value| value.as_str())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+        )
+    }));
+    Ok(valid)
 }
 
 fn render_skill_content_block(skill_name: &str, body: &str) -> String {

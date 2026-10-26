@@ -4,6 +4,8 @@ use crate::sync::diff::{DiffEntry, SyncDiff};
 use crate::sync::target::TargetItem;
 use crate::sync::types::SyncOptions;
 use crate::types::{ContentHash, DestPath, SourceName};
+#[cfg(test)]
+use mars_schema::item::ItemKind;
 
 /// A planned set of actions to execute.
 #[derive(Debug, Clone)]
@@ -115,7 +117,7 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
 mod tests {
     use super::*;
     use crate::hash;
-    use crate::lock::{ItemId, ItemKind, LockedItem};
+    use crate::lock::{ItemId, LockedItem};
     use crate::sync::diff::{DiffEntry, SyncDiff};
     use crate::sync::target::TargetItem;
     use std::path::PathBuf;

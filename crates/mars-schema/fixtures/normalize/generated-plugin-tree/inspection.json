@@ -1,0 +1,31 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "agent-skills",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "authored",
+      "source_path": "skills/authored/SKILL.md",
+      "skill_root": "skills/authored",
+      "output_path": "skills/authored/SKILL.md"
+    }
+  ],
+  "diagnostics": {
+    "dist-plugin/.mars-plugin.json": [
+      {
+        "code": "generated-plugin-tree-skipped",
+        "severity": "info",
+        "path": [],
+        "message": "skipping generated plugin tree at `dist-plugin` while reading authored package input"
+      }
+    ]
+  }
+}

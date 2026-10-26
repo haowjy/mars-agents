@@ -16,7 +16,7 @@ pub(super) fn qualify_body_references(
         return Ok(content.to_string());
     }
 
-    let mut frontmatter = crate::frontmatter::parse(content)
+    let mut frontmatter = mars_schema::frontmatter::parse(content)
         .map_err(|error| invalid_reference_error("markdown frontmatter", error))?;
     let rewritten = rewrite_body(frontmatter.body(), references);
     if rewritten == frontmatter.body() {
@@ -31,7 +31,7 @@ fn rewrite_body(body: &str, references: &IndexMap<String, String>) -> String {
     names.sort_by_key(|name| std::cmp::Reverse(name.len()));
 
     let mut output = String::with_capacity(body.len());
-    let mut fences = crate::markdown::FenceTracker::default();
+    let mut fences = mars_schema::markdown::FenceTracker::default();
     for line in body.split_inclusive('\n') {
         if fences.visit(line) {
             output.push_str(line);
@@ -92,7 +92,7 @@ fn is_name_character(ch: char) -> bool {
 
 fn invalid_reference_error(
     location: &str,
-    error: crate::frontmatter::FrontmatterError,
+    error: mars_schema::frontmatter::FrontmatterError,
 ) -> MarsError {
     MarsError::Config(crate::error::ConfigError::Invalid {
         message: format!("failed to rewrite plugin {location}: {error}"),

@@ -5,12 +5,12 @@ use indexmap::IndexMap;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
-use crate::lock::ItemKind;
 use crate::resolve::ResolvedGraph;
 use crate::sync::rewrite::RenameIndex;
 use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry};
 use crate::types::SourceName;
+use mars_schema::item::ItemKind;
 
 use super::PluginComponents;
 use super::metadata::PackageMetadata;
@@ -141,6 +141,7 @@ pub(super) struct TreeInput<'a> {
     pub metadata: &'a PackageMetadata,
     pub root_source: &'a SourceName,
     pub agent_overlays: &'a IndexMap<String, crate::config::AgentOverlay>,
+    pub settings_policies: &'a [mars_schema::model_policy::ModelPolicyRule],
     pub aliases: &'a IndexMap<String, crate::models::ModelAlias>,
     pub graph: &'a ResolvedGraph,
     pub target: &'a TargetState,
@@ -160,11 +161,6 @@ pub(super) fn check_sources(
         match item.id.kind {
             ItemKind::Agent => check_agent_source(item, input.terms, diag)?,
             ItemKind::Skill => {
-                crate::compiler::skills::emit_plugin_skill_schema_diags_from_source(
-                    &item.source_path,
-                    item.id.name.as_str(),
-                    diag,
-                );
                 let excluded = if item.is_flat_skill {
                     crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
                 } else {
@@ -238,10 +234,7 @@ fn check_agent_source(
         .rewritten_content
         .as_deref()
         .unwrap_or(&authored_content);
-    let mut parse_diags = Vec::new();
-    crate::compiler::agents::parse_agent_content(content, &mut parse_diags)
-        .map_err(|error| invalid_item("agent", item, error.to_string()))?;
-    emit_agent_parse_diagnostics(item, &parse_diags, diag)
+    emit_agent_parse_diagnostics(item, &mars_schema::agent::read(content).diagnostics, diag)
 }
 
 pub(super) fn write_tree(
@@ -410,10 +403,22 @@ fn write_agent(
 ) -> Result<Option<ModelFallbackReason>, MarsError> {
     let authored_content = std::fs::read_to_string(&item.source_path)?;
     let content = item.rewritten_content.clone().unwrap_or(authored_content);
-    let mut ignored_parse_diags = Vec::new();
-    let (profile, frontmatter) =
-        crate::compiler::agents::parse_agent_content(&content, &mut ignored_parse_diags)
-            .map_err(|error| invalid_item("agent", item, error.to_string()))?;
+    // `check_agent_source` already reported the file's diagnostics, so only a file with no
+    // fields to lower fails here. The authored frontmatter carries the keys a plugin keeps
+    // that no native file would.
+    let reading = mars_schema::agent::read(&content);
+    let (Some(profile), Some(body)) = (reading.fields, reading.body) else {
+        return Err(invalid_item(
+            "agent",
+            item,
+            reading
+                .diagnostics
+                .first()
+                .map_or("unreadable".to_owned(), |d| d.message().to_owned()),
+        ));
+    };
+    let source = mars_schema::frontmatter::parse(&content)
+        .map_err(|error| invalid_item("agent", item, error.to_string()))?;
 
     let overlay = (item.source_name == *input.root_source)
         .then(|| agent_overlay_name(item, input.collision_renames))
@@ -427,13 +432,29 @@ fn write_agent(
         tree_profile.native_model_aliases,
         input.aliases,
     );
-    let lowered = lower_for_harness_with_model(
-        &tree_profile.harness,
+    // Policies apply only to a model the file names, as in native lowering.
+    let token = effective.model.as_deref().filter(|_| {
+        matches!(
+            model.native,
+            crate::compiler::agents::lower::NativeModel::Set(_)
+        )
+    });
+    let alias = token.and_then(|token| input.aliases.get(token));
+    let model_ref = token.map(|token| crate::build::policy::ModelRef {
+        token,
+        canonical_id: alias
+            .and_then(|alias| alias.pinned_model_id())
+            .unwrap_or(token),
+        alias,
+    });
+    effective = crate::build::policy::profile_for_model(
         &effective,
-        &frontmatter,
-        frontmatter.body(),
-        &model.native,
+        overlay,
+        input.settings_policies,
+        model_ref,
     );
+    let lowered =
+        lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
     let plugin_lossy_fields;
     let lossy_fields = if tree_profile.approximate_lowers_to_dropped {
         plugin_lossy_fields = lowered
@@ -467,7 +488,7 @@ fn write_agent(
             item.id.name
         ))
     })?;
-    let lowered = agent_policy(&lowered, &frontmatter, item, diag)?;
+    let lowered = agent_policy(&lowered, &source, item, diag)?;
     let qualified = qualify_body_references(&lowered, &body_refs)?;
 
     let path = root.join("agents").join(format!("{}.md", item.id.name));
@@ -476,7 +497,7 @@ fn write_agent(
 }
 
 fn qualify_agent_skills(
-    skills: &mut crate::frontmatter::SkillsSpec,
+    skills: &mut mars_schema::frontmatter::SkillsSpec,
     references: &IndexMap<String, String>,
 ) {
     for skill in skills.load.iter_mut().chain(&mut skills.available) {
@@ -524,7 +545,7 @@ fn write_skill(
 
     let skill_md = destination.join("SKILL.md");
     let qualified = std::fs::read_to_string(&skill_md)?;
-    crate::frontmatter::parse(&qualified)
+    mars_schema::frontmatter::parse(&qualified)
         .map_err(|error| invalid_item("skill", item, error.to_string()))?;
     Ok(())
 }
@@ -590,7 +611,7 @@ fn agent_overlay_name<'a>(
 
 fn emit_agent_parse_diagnostics(
     item: &TargetItem,
-    findings: &[crate::compiler::agents::AgentDiagnostic],
+    findings: &[mars_schema::diagnostic::SchemaDiagnostic],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     for finding in findings {

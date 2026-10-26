@@ -1,0 +1,14 @@
+{
+  "kind": "marketplace",
+  "packages": [],
+  "diagnostics": {
+    ".claude-plugin/marketplace.json": [
+      {
+        "code": "marketplace.plugin-generated",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `example`: `plugin/claude` is inside `plugin`, plugin output Mars built, which is never input"
+      }
+    ]
+  }
+}

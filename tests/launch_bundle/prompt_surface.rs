@@ -248,9 +248,9 @@ skills:
   available: [planning, workspace]
 ---
 Review code changes."#;
-    let dev_principles = "---\nname: dev_principles\ndescription: Core principles\ntype: principle\n---\nAlways be precise.";
-    let planning = "---\nname: planning\ndescription: Use when decomposing phased work.\ntype: reference\n---\nPlanning body should stay out of prompt.";
-    let workspace = "---\nname: workspace\ndescription: Use when other agents may have changes.\ntype: guardrail\n---\nWorkspace body should stay out of prompt.";
+    let dev_principles = "---\nname: dev_principles\ndescription: Core principles\nmetadata:\n  type: principle\n---\nAlways be precise.";
+    let planning = "---\nname: planning\ndescription: Use when decomposing phased work.\nmetadata:\n  type: reference\n---\nPlanning body should stay out of prompt.";
+    let workspace = "---\nname: workspace\ndescription: Use when other agents may have changes.\nmetadata:\n  type: guardrail\n---\nWorkspace body should stay out of prompt.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,
@@ -318,7 +318,7 @@ model: gpt-5
 skills: [planning]
 ---
 Review code changes."#;
-    let skill_content = "---\nname: planning\ndescription: Plan tasks\ntype: guardrail\n---\nBase planning content.";
+    let skill_content = "---\nname: planning\ndescription: Plan tasks\nmetadata:\n  type: guardrail\n---\nBase planning content.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,
@@ -337,7 +337,7 @@ Review code changes."#;
     std::fs::create_dir_all(&codex_variant_path).unwrap();
     std::fs::write(
         codex_variant_path.join("SKILL.md"),
-        "---\nname: planning\ndescription: Variant metadata ignored\ntype: reference\ntools:\n  askuser: allow\n---\nCodex variant content.",
+        "---\nname: planning\ndescription: Variant metadata ignored\nmetadata:\n  type: reference\ntools:\n  askuser: allow\n---\nCodex variant content.",
     )
     .unwrap();
 
@@ -456,8 +456,8 @@ model: claude-opus-4-6
 skills: [planning, hidden]
 ---
 Review code changes."#;
-    let planning_skill = "---\nname: planning\ndescription: Plan tasks\ntype: reference\n---\nVisible skill content.";
-    let hidden_skill = "---\nname: hidden\ndescription: Hidden skill\nmodel-invocable: false\ntype: principle\n---\nExplicitly referenced content.";
+    let planning_skill = "---\nname: planning\ndescription: Plan tasks\nmetadata:\n  type: reference\n---\nVisible skill content.";
+    let hidden_skill = "---\nname: hidden\ndescription: Hidden skill\nmodel-invocable: false\nmetadata:\n  type: principle\n---\nExplicitly referenced content.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,
@@ -563,14 +563,10 @@ skills: [reference_a, principle_a, guardrail_a, reference_b]
 ---
 Review code changes."#;
 
-    let reference_a =
-        "---\nname: reference_a\ndescription: Ref A\ntype: reference\n---\nReference A body.";
-    let principle_a =
-        "---\nname: principle_a\ndescription: Principle A\ntype: principle\n---\nPrinciple body.";
-    let guardrail_a =
-        "---\nname: guardrail_a\ndescription: Guardrail A\ntype: guardrail\n---\nGuardrail body.";
-    let reference_b =
-        "---\nname: reference_b\ndescription: Ref B\ntype: unknown-kind\n---\nReference B body.";
+    let reference_a = "---\nname: reference_a\ndescription: Ref A\nmetadata:\n  type: reference\n---\nReference A body.";
+    let principle_a = "---\nname: principle_a\ndescription: Principle A\nmetadata:\n  type: principle\n---\nPrinciple body.";
+    let guardrail_a = "---\nname: guardrail_a\ndescription: Guardrail A\nmetadata:\n  type: guardrail\n---\nGuardrail body.";
+    let reference_b = "---\nname: reference_b\ndescription: Ref B\nmetadata:\n  type: unknown-kind\n---\nReference B body.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,
@@ -798,10 +794,8 @@ model: claude-opus-4-6
 skills: [planning]
 ---
 Review code changes."#;
-    let planning_skill =
-        "---\nname: planning\ndescription: Plan tasks\ntype: reference\n---\nPlanning content.";
-    let extra_skill =
-        "---\nname: extra_skill\ndescription: Extra helper\ntype: reference\n---\nExtra content.";
+    let planning_skill = "---\nname: planning\ndescription: Plan tasks\nmetadata:\n  type: reference\n---\nPlanning content.";
+    let extra_skill = "---\nname: extra_skill\ndescription: Extra helper\nmetadata:\n  type: reference\n---\nExtra content.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,
@@ -858,10 +852,8 @@ model: claude-opus-4-6
 skills: [principle_a, reference_a]
 ---
 Review code changes."#;
-    let principle_skill =
-        "---\nname: principle_a\ndescription: Principle\ntype: principle\n---\nPrinciple body.";
-    let reference_skill =
-        "---\nname: reference_a\ndescription: Reference\ntype: reference\n---\nReference body.";
+    let principle_skill = "---\nname: principle_a\ndescription: Principle\nmetadata:\n  type: principle\n---\nPrinciple body.";
+    let reference_skill = "---\nname: reference_a\ndescription: Reference\nmetadata:\n  type: reference\n---\nReference body.";
 
     let (server, project_root) = setup_bundle_project(
         &temp,

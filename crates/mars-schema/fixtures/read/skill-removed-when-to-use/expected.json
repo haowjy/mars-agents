@@ -1,0 +1,44 @@
+{
+  "frontmatter": [
+    [
+      "when_to_use",
+      "now"
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "when_to_use"
+      ],
+      "message": "`when_to_use` was removed; fold it into `description`"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
+  ]
+}

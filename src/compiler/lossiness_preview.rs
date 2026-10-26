@@ -9,30 +9,24 @@
 //! (`resolve::resolve_publish_graph`), which strips local dev overrides
 //! so validation reflects what downstream consumers see.
 
-use std::path::{Path, PathBuf};
-
-use tempfile::TempDir;
+use std::path::Path;
 
 use crate::compiler::agent_copy;
 use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
-use crate::compiler::agents::{HarnessKind, parse_agent_profile};
 use crate::compiler::harness_descriptor::configured_emit_harnesses;
-use crate::compiler::native_agents::{NativeModelRoutingRuntime, qualifying_agent_emissions};
+use crate::compiler::native_agents::{
+    AgentRef, NativeEmission, NativeModelRoutingRuntime, qualifying_agent_emissions,
+};
 use crate::compiler::variants;
+use crate::config::Settings;
 use crate::config::routing_settings::ResolvedRoutingSettings;
-use crate::config::{Config, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
-use crate::dialect::Dialect;
 use crate::error::MarsError;
-use crate::frontmatter;
-use crate::local_source::LOCAL_SOURCE_DIR;
-use crate::lock::ItemKind;
 use crate::models::ModelsCache;
 use crate::resolve::PublishLens;
-use crate::skill_source_name::flat_root_skill_source_name;
 use crate::target::TargetRegistry;
-use crate::types::RenameMap;
+use mars_schema::HarnessId;
 
 /// Native harness variant keys for skill projection on configured managed targets.
 fn native_skill_harness_keys(settings: &Settings) -> Vec<String> {
@@ -49,13 +43,13 @@ fn native_skill_harness_keys(settings: &Settings) -> Vec<String> {
     keys
 }
 
-/// Lower discovered source agents/skills against configured target harnesses and
-/// return lossiness diagnostics.
-pub fn collect_source_lossiness_diagnostics(
+/// Lower an already prepared package without rediscovering or restaging it.
+pub fn collect_prepared_source_lossiness_diagnostics(
     lens: &PublishLens,
+    prepared: &mars_schema::prepare::Prepared,
+    authored_root: &Path,
     mode: LossinessMode,
 ) -> Result<Vec<Diagnostic>, MarsError> {
-    let base = lens.package_root();
     let settings = &lens.effective.settings;
     let native_skill_keys = native_skill_harness_keys(settings);
     let configured_harnesses = configured_emit_harnesses(settings);
@@ -63,20 +57,7 @@ pub fn collect_source_lossiness_diagnostics(
         return Ok(Vec::new());
     }
 
-    let (source_root, dialect, fallback_skill_name) =
-        preview_staging_root_and_dialect(base, lens.manifest.as_ref())?;
-    let staging = TempDir::new()?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(mode);
-    crate::staging::stage_canonical_source(
-        &source_root,
-        staging.path(),
-        dialect,
-        &lens.effective.skills,
-        &RenameMap::new(),
-        fallback_skill_name.as_deref(),
-        &mut diag,
-    )?;
-
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
         settings.meridian_agent_copy(),
         &settings.managed_targets(),
@@ -102,118 +83,46 @@ pub fn collect_source_lossiness_diagnostics(
     let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
         .then(|| {
             NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
+                .with_settings(settings.clone())
         });
 
-    let discovered = crate::discover::discover_resolved_source(
-        staging.path(),
-        fallback_skill_name.as_deref(),
-        &mut diag,
-    )?;
-    for item in discovered {
-        match item.id.kind {
-            ItemKind::Agent => {
-                let path = skill_or_agent_path(staging.path(), &item);
-                collect_staged_agent_lossiness(
-                    &path,
-                    item.id.name.as_str(),
-                    &policy,
-                    &configured_harnesses,
-                    fanout_agents,
-                    model_router.as_mut(),
-                    &mut diag,
-                );
-            }
-            ItemKind::Skill => {
-                let skill_dir = skill_or_agent_path(staging.path(), &item);
-                let skill_name = item.id.name.as_str();
-                variants::validate_skill_variants(&skill_dir, skill_name, &mut diag);
+    for definition in &prepared.definitions {
+        let content = String::from_utf8_lossy(&definition.normalized_bytes);
+        match definition.kind {
+            mars_schema::item::DefinitionKind::Agent => collect_agent_content_lossiness(
+                &content,
+                &definition.slug,
+                &policy,
+                &configured_harnesses,
+                fanout_agents,
+                model_router.as_mut(),
+                &mut diag,
+            ),
+            mars_schema::item::DefinitionKind::Skill => {
+                let source_path = authored_root.join(&definition.source_path);
+                let skill_dir = source_path.parent().unwrap_or(authored_root);
+                variants::validate_skill_variants(skill_dir, &definition.slug, &mut diag);
                 for harness_key in &native_skill_keys {
-                    variants::emit_staged_skill_lossiness_for_harness(
-                        &skill_dir,
-                        harness_key.as_str(),
-                        skill_name,
+                    variants::emit_prepared_skill_lossiness_for_harness(
+                        skill_dir,
+                        &content,
+                        harness_key,
+                        &definition.slug,
                         &mut diag,
                     )?;
                 }
             }
-            ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {}
         }
     }
 
     Ok(diag.drain())
 }
 
-fn preview_staging_root_and_dialect(
-    base: &Path,
-    config: Option<&Config>,
-) -> Result<(PathBuf, Dialect, Option<String>), MarsError> {
-    let fallback_skill_name = preview_flat_skill_fallback_name(base, config);
-    let is_consumer = is_consumer_project(base, config);
-    if is_consumer {
-        let local_root = base.join(LOCAL_SOURCE_DIR);
-        if local_root.is_dir() {
-            return Ok((
-                local_root.clone(),
-                Dialect::resolve_local(None, &local_root),
-                fallback_skill_name,
-            ));
-        }
-        return Ok((
-            base.to_path_buf(),
-            Dialect::resolve_local(None, base),
-            fallback_skill_name,
-        ));
-    }
-    Ok((
-        base.to_path_buf(),
-        Dialect::resolve(None, base),
-        fallback_skill_name,
-    ))
-}
-
-/// Stable flat-root skill name for preview staging/discovery.
-///
-/// Matches dependency staging: package name when declared, otherwise the source
-/// directory basename — never the ephemeral temp staging directory name.
-fn preview_flat_skill_fallback_name(base: &Path, config: Option<&Config>) -> Option<String> {
-    if !base.join("SKILL.md").is_file() {
-        return None;
-    }
-    Some(flat_root_skill_source_name(
-        base,
-        config
-            .and_then(|c| c.package.as_ref())
-            .map(|p| p.name.as_str()),
-    ))
-}
-
-/// True when the project has local consumer authoring content in `.mars-src/`.
-///
-/// `.mars/` is a sync cache and must not flip preview into local-consumer mode;
-/// sync discovers `_self` items only from `.mars-src/` (`local_source.rs`).
-fn is_consumer_project(base: &Path, config: Option<&Config>) -> bool {
-    let Some(config) = config else {
-        return false;
-    };
-    if config.package.is_some() {
-        return false;
-    }
-    base.join(LOCAL_SOURCE_DIR).is_dir()
-}
-
-fn skill_or_agent_path(staged_root: &Path, item: &crate::discover::DiscoveredItem) -> PathBuf {
-    if item.source_path == Path::new(".") {
-        staged_root.to_path_buf()
-    } else {
-        staged_root.join(&item.source_path)
-    }
-}
-
-fn collect_staged_agent_lossiness(
-    path: &Path,
+fn collect_agent_content_lossiness(
+    content: &str,
     agent_name: &str,
     policy: &crate::compiler::AgentSurfacePolicy,
-    configured_harnesses: &[HarnessKind],
+    configured_harnesses: &[HarnessId],
     fanout_agents: &[String],
     model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
@@ -221,20 +130,23 @@ fn collect_staged_agent_lossiness(
     let Some(model_router) = model_router else {
         return;
     };
-    let Ok(content) = std::fs::read_to_string(path) else {
+    let Ok(mars_schema::read::Valid {
+        fields: profile,
+        body,
+        ..
+    }) = mars_schema::agent::read(content).into_valid()
+    else {
         return;
     };
-    let Ok(fm) = frontmatter::parse(&content) else {
-        return;
-    };
-    let mut agent_diags = Vec::new();
-    let profile = parse_agent_profile(&fm, &mut agent_diags);
-    if agent_diags.iter().any(|d| d.is_error()) {
-        return;
-    }
-    let body = fm.body();
-    for (harness, model) in qualifying_agent_emissions(
-        &profile,
+    for NativeEmission {
+        harness,
+        model,
+        profile,
+    } in qualifying_agent_emissions(
+        AgentRef {
+            profile: &profile,
+            overlay: None,
+        },
         agent_name,
         policy,
         fanout_agents,
@@ -242,7 +154,7 @@ fn collect_staged_agent_lossiness(
         configured_harnesses,
         model_router,
     ) {
-        let lowered = lower_for_harness_with_model(&harness, &profile, &fm, body, &model);
+        let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
         crate::compiler::lossiness::emit_agent_lossiness_warnings(
             agent_name,
             &lowered.lossy_fields,
@@ -255,13 +167,16 @@ fn collect_staged_agent_lossiness(
 mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticCategory;
+    use mars_schema::HarnessId;
     use tempfile::TempDir;
 
     fn collect_lossiness(base: &Path, mode: LossinessMode) -> Result<Vec<Diagnostic>, MarsError> {
         let mut publish_diag = DiagnosticCollector::new();
-        let lens = PublishLens::load(base, &mut publish_diag)?;
+        let (lens, prepared) = PublishLens::load(base, &mut publish_diag)?;
         let mut diagnostics = publish_diag.drain();
-        diagnostics.extend(collect_source_lossiness_diagnostics(&lens, mode)?);
+        diagnostics.extend(collect_prepared_source_lossiness_diagnostics(
+            &lens, &prepared, base, mode,
+        )?);
         Ok(diagnostics)
     }
 
@@ -272,7 +187,7 @@ mod tests {
             ..Default::default()
         };
         let harnesses = configured_emit_harnesses(&settings);
-        assert_eq!(harnesses, vec![HarnessKind::Cursor]);
+        assert_eq!(harnesses, vec![HarnessId::Cursor]);
     }
 
     #[test]
@@ -294,13 +209,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+            "[settings]\ntargets = [\".claude\"]\nagent_emission = \"always\"\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("agents")).unwrap();
         std::fs::write(
             dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
+            "---\nname: worker\ndescription: test\napproval: auto\n---\n# Worker",
         )
         .unwrap();
 
@@ -323,21 +238,20 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+            "[settings]\ntargets = [\".claude\"]\nagent_emission = \"always\"\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("agents")).unwrap();
         std::fs::write(
             dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
+            "---\nname: worker\ndescription: test\napproval: auto\n---\n# Worker",
         )
         .unwrap();
 
         let diags = collect_lossiness(dir.path(), LossinessMode::Verbose).unwrap();
         assert!(
             diags.iter().any(|d| {
-                d.category == Some(DiagnosticCategory::Lossiness)
-                    && d.message.contains("native-config")
+                d.category == Some(DiagnosticCategory::Lossiness) && d.message.contains("approval")
             }),
             "expected verbose meridian-only diagnostic: {diags:?}"
         );
@@ -368,37 +282,6 @@ mod tests {
                 .iter()
                 .all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
             "expected no agent lossiness under SuppressAll: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn collect_source_lossiness_stages_foreign_claude_skill() {
-        let dir = TempDir::new().unwrap();
-        let skill = dir.path().join("skills/demo");
-        std::fs::create_dir_all(&skill).unwrap();
-        std::fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Body\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-        assert!(
-            diags.iter().any(|d| {
-                d.category == Some(DiagnosticCategory::Lossiness)
-                    && d.message.contains("tools")
-                    && d.message.contains(".codex")
-            }),
-            "expected codex tools lossiness for staged skill: {diags:?}"
-        );
-        assert!(
-            !diags.iter().any(|d| d.message.contains("model-invocable")),
-            "model-invocable is exact on Codex via openai.yaml sibling: {diags:?}"
         );
     }
 
@@ -453,37 +336,6 @@ mod tests {
         assert_eq!(
             before_msgs, after_msgs,
             "preview must not treat .mars cache as consumer authoring: before={before:?} after={after:?}"
-        );
-    }
-
-    #[test]
-    fn collect_source_lossiness_flat_skill_uses_source_name_not_temp_dir() {
-        let root = TempDir::new().unwrap();
-        let flat_pkg = root.path().join("flat-skill");
-        std::fs::create_dir_all(&flat_pkg).unwrap();
-        std::fs::write(
-            flat_pkg.join("SKILL.md"),
-            "---\nname: flat-skill\ndescription: flat layout\nmodel-invocable: false\nallowed-tools: [Bash(git *)]\n---\n# Flat\n",
-        )
-        .unwrap();
-        std::fs::write(
-            flat_pkg.join("mars.toml"),
-            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(&flat_pkg, LossinessMode::Surface).unwrap();
-        assert!(
-            diags.iter().any(|d| {
-                d.category == Some(DiagnosticCategory::Lossiness)
-                    && d.message.contains("flat-skill")
-                    && d.message.contains("tools")
-            }),
-            "expected flat-skill tools lossiness diagnostic, not temp dir name: {diags:?}"
-        );
-        assert!(
-            !diags.iter().any(|d| d.message.contains(".tmp")),
-            "must not use temp staging dir basename in diagnostics: {diags:?}"
         );
     }
 

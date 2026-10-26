@@ -1,9 +1,8 @@
 use indexmap::IndexMap;
 
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::agents::lower::NativeModel;
-use crate::harness::registry::HarnessId;
 use crate::models::{ModelAlias, ModelSpec};
+use mars_schema::HarnessId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ModelFallbackReason {
@@ -19,7 +18,7 @@ pub(super) struct ResolvedModel {
 /// Resolve a package-authored model token without catalogs, caches, or host probes.
 pub(super) fn resolve_model(
     token: Option<&str>,
-    harness: HarnessKind,
+    harness: HarnessId,
     native_aliases: &[&str],
     aliases: &IndexMap<String, ModelAlias>,
 ) -> ResolvedModel {
@@ -61,7 +60,7 @@ pub(super) fn resolve_model(
 
 fn alias_target(alias: &ModelAlias) -> Option<HarnessId> {
     if let Some(harness) = alias.harness.as_deref() {
-        return crate::harness::registry::parse(harness);
+        return mars_schema::harness::parse(harness);
     }
 
     let provider = match &alias.spec {

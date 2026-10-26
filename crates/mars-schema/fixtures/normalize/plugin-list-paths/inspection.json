@@ -1,0 +1,79 @@
+{
+  "kind": "plugin",
+  "dialect": {
+    "dialect": "claude",
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        ".claude-plugin/plugin.json"
+      ]
+    }
+  },
+  "also_found": [],
+  "name": "lists",
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "real",
+      "source_path": "agents/real.md",
+      "output_path": "agents/real.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "a",
+      "source_path": "skills/a/SKILL.md",
+      "skill_root": "skills/a",
+      "output_path": "skills/a/SKILL.md"
+    },
+    {
+      "kind": "command",
+      "slug": "x",
+      "source_path": "cmds/x.md"
+    }
+  ],
+  "diagnostics": {
+    ".claude-plugin/plugin.json": [
+      {
+        "code": "source-manifest.path-missing",
+        "severity": "warning",
+        "path": [
+          "skills"
+        ],
+        "message": "declared path `./missing` does not exist"
+      },
+      {
+        "code": "source-manifest.path-not-file",
+        "severity": "warning",
+        "path": [
+          "agents"
+        ],
+        "message": "`./agents/dir` is a directory; `agents` entries must be `.md` files"
+      },
+      {
+        "code": "source-manifest.path-missing",
+        "severity": "warning",
+        "path": [
+          "agents"
+        ],
+        "message": "declared path `./agents/gone.md` does not exist"
+      },
+      {
+        "code": "source-manifest.path-invalid",
+        "severity": "warning",
+        "path": [
+          "skills"
+        ],
+        "message": "`skills` entry \"../escape\" is not a `./` path and was left out"
+      },
+      {
+        "code": "source-manifest.path-invalid",
+        "severity": "warning",
+        "path": [
+          "skills"
+        ],
+        "message": "`skills` entry \"bare\" is not a `./` path and was left out"
+      }
+    ]
+  }
+}

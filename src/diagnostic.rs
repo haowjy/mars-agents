@@ -1,11 +1,14 @@
+use std::borrow::Cow;
+
 use serde::Serialize;
 
 /// A diagnostic message from library code.
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,
-    /// Machine-readable code, e.g. "shadow-collision", "manifest-path-dep".
-    pub code: &'static str,
+    /// Machine-readable code, e.g. "shadow-collision", "manifest-path-dep". A schema
+    /// diagnostic's code passes through unchanged.
+    pub code: Cow<'static, str>,
     /// Human-readable message.
     pub message: String,
     /// Optional context (source name, item path, etc.).
@@ -73,6 +76,8 @@ pub struct DiagnosticCollector {
     lossiness_mode: LossinessMode,
     /// Launch-time / meridian-enforced field mappings accumulated for summary or verbose detail.
     meridian_only_records: Vec<MeridianOnlyRecord>,
+    /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
+    unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl DiagnosticCollector {
@@ -86,6 +91,57 @@ impl DiagnosticCollector {
             engine_fallbacks: Vec::new(),
             lossiness_mode,
             meridian_only_records: Vec::new(),
+            unknown_field_sites: std::collections::HashMap::new(),
+        }
+    }
+
+    pub(crate) fn schema(
+        &mut self,
+        diagnostic: &mars_schema::diagnostic::SchemaDiagnostic,
+        context: &str,
+        errors_as_warnings: bool,
+    ) {
+        use mars_schema::diagnostic::Severity;
+
+        let code = Cow::Owned(diagnostic.code.clone());
+        let message = format!("{context}: {}", diagnostic.message);
+        if self
+            .diagnostics
+            .iter()
+            .any(|existing| existing.code == code && existing.message == message)
+        {
+            return;
+        }
+        if diagnostic.severity == Severity::Error && !errors_as_warnings {
+            self.error_with_category(code, message, DiagnosticCategory::Validation);
+        } else if diagnostic.severity == Severity::Info {
+            self.info(code, message);
+        } else if diagnostic.code == "field.unknown" {
+            self.warn_unknown_field(code, &diagnostic.message, context);
+        } else {
+            self.warn(code, message);
+        }
+    }
+
+    /// One warning per unknown field name, listing every file that carries it: the first file
+    /// is reported as an ordinary warning, and each further one extends the same warning.
+    fn warn_unknown_field(&mut self, code: Cow<'static, str>, text: &str, context: &str) {
+        let sites = self.unknown_field_sites.entry(text.to_owned()).or_default();
+        if sites.iter().any(|site| site == context) {
+            return;
+        }
+        sites.push(context.to_owned());
+        if sites.len() == 1 {
+            self.warn(code.clone(), format!("{context}: {text}"));
+            return;
+        }
+        let message = format!("{text} (in {} files: {})", sites.len(), sites.join(", "));
+        let first = format!("{}: {text}", sites[0]);
+        if let Some(existing) = self.diagnostics.iter_mut().find(|existing| {
+            existing.code == code
+                && (existing.message == first || existing.message.starts_with(text))
+        }) {
+            existing.message = message;
         }
     }
 
@@ -159,10 +215,10 @@ impl DiagnosticCollector {
         self.lossiness_mode.surfaces_lossiness()
     }
 
-    pub fn error(&mut self, code: &'static str, message: impl Into<String>) {
+    pub fn error(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Error,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: None,
@@ -171,7 +227,7 @@ impl DiagnosticCollector {
 
     pub fn error_with_category(
         &mut self,
-        code: &'static str,
+        code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
@@ -180,26 +236,38 @@ impl DiagnosticCollector {
         }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Error,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: Some(category),
         });
     }
 
-    pub fn warn(&mut self, code: &'static str, message: impl Into<String>) {
+    pub fn warn(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: None,
         });
     }
 
+    pub(crate) fn warn_once(&mut self, code: &'static str, message: impl Into<String>) {
+        let message = message.into();
+        if self
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == code && diagnostic.message == message)
+        {
+            return;
+        }
+        self.warn(code, message);
+    }
+
     pub fn warn_with_category(
         &mut self,
-        code: &'static str,
+        code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
@@ -208,18 +276,18 @@ impl DiagnosticCollector {
         }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: Some(category),
         });
     }
 
-    pub fn info(&mut self, code: &'static str, message: impl Into<String>) {
+    pub fn info(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
         let message = message.into();
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Info,
-            code,
+            code: code.into(),
             message,
             context: None,
             category: None,
@@ -240,7 +308,7 @@ impl DiagnosticCollector {
 
     pub fn info_with_category(
         &mut self,
-        code: &'static str,
+        code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
@@ -249,7 +317,7 @@ impl DiagnosticCollector {
         }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Info,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: Some(category),
@@ -258,13 +326,13 @@ impl DiagnosticCollector {
 
     pub fn warn_with_context(
         &mut self,
-        code: &'static str,
+        code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
         context: impl Into<String>,
     ) {
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
-            code,
+            code: code.into(),
             message: message.into(),
             context: Some(context.into()),
             category: None,
@@ -273,6 +341,23 @@ impl DiagnosticCollector {
 
     pub fn extend(&mut self, diagnostics: Vec<Diagnostic>) {
         self.diagnostics.extend(diagnostics);
+    }
+
+    pub(crate) fn fail_on_errors(&self) -> Result<(), crate::error::MarsError> {
+        let errors = self
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+            .map(|diagnostic| format!("[{}] {}", diagnostic.code, diagnostic.message))
+            .collect::<Vec<_>>();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::error::ConfigError::Invalid {
+                message: errors.join("\n"),
+            }
+            .into())
+        }
     }
 
     pub fn drain(&mut self) -> Vec<Diagnostic> {
@@ -379,7 +464,7 @@ pub fn compatibility_preflight(
             if bin < req {
                 Some(Diagnostic {
                     level: DiagnosticLevel::Error,
-                    code: "compat-version",
+                    code: "compat-version".into(),
                     message: format!(
                         "this project requires mars >= {min} but the installed binary is {binary_version}; \
                          upgrade with: cargo install mars-agents"
@@ -396,7 +481,7 @@ pub fn compatibility_preflight(
             // unknown version scheme → don't hard-block the consumer).
             Some(Diagnostic {
                 level: DiagnosticLevel::Warning,
-                code: "compat-version-parse",
+                code: "compat-version-parse".into(),
                 message: format!(
                     "could not compare mars version `{binary_version}` against requirement `{min}`; \
                      proceeding with defaults"
@@ -612,7 +697,7 @@ mod tests {
     fn display_shows_error_prefix() {
         let d = Diagnostic {
             level: DiagnosticLevel::Error,
-            code: "test",
+            code: "test".into(),
             message: "something broke".to_string(),
             context: None,
             category: None,
@@ -624,7 +709,7 @@ mod tests {
     fn display_shows_warning_prefix() {
         let d = Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: "test",
+            code: "test".into(),
             message: "heads up".to_string(),
             context: None,
             category: None,

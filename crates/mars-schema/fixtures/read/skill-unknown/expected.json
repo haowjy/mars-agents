@@ -1,0 +1,44 @@
+{
+  "frontmatter": [
+    [
+      "future-key",
+      "yes"
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "future-key"
+      ],
+      "message": "unknown field `future-key` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
+  ]
+}

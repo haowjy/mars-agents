@@ -5,6 +5,8 @@
 //!
 //! All targets are managed outputs — they get copies (not symlinks) of .mars/ content.
 
+#[cfg(test)]
+use mars_schema::item::ItemKind;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -131,13 +133,13 @@ fn sync_one_target(
     let target_accepts_canonical_agents = target_adapter
         .map(|adapter| {
             adapter
-                .default_dest_path(crate::lock::ItemKind::Agent, "__mars_probe__")
+                .default_dest_path(mars_schema::item::ItemKind::Agent, "__mars_probe__")
                 .is_some()
         })
         .unwrap_or(true);
 
     for outcome in outcomes {
-        if outcome.item_id.kind == crate::lock::ItemKind::BootstrapDoc {
+        if outcome.item_id.kind == mars_schema::item::ItemKind::BootstrapDoc {
             continue;
         }
         let canonical_dest_rel = outcome.dest_path.as_str();
@@ -155,7 +157,8 @@ fn sync_one_target(
         } else {
             canonical_dest_rel
         };
-        if outcome.item_id.kind == crate::lock::ItemKind::Agent && !target_accepts_canonical_agents
+        if outcome.item_id.kind == mars_schema::item::ItemKind::Agent
+            && !target_accepts_canonical_agents
         {
             if matches!(outcome.action, ActionTaken::Removed) {
                 let target_path = target_root.join(dest_rel);
@@ -192,7 +195,7 @@ fn sync_one_target(
                 let dest = target_root.join(dest_rel);
                 if source.exists() || source.symlink_metadata().is_ok() {
                     let should_refresh_native_skill = outcome.item_id.kind
-                        == crate::lock::ItemKind::Skill
+                        == mars_schema::item::ItemKind::Skill
                         && native_skill_variant_key.is_some();
                     let dest_exists = surface_ownership::target_dest_exists(&dest);
                     let managed_dest_is_current_or_stale = dest_exists
@@ -453,7 +456,7 @@ fn should_copy_to_target(
 
 fn disk_matches_recorded_or_desired(
     dest: &Path,
-    kind: crate::lock::ItemKind,
+    kind: mars_schema::item::ItemKind,
     target_name: &str,
     dest_rel: &str,
     old_lock: &LockFile,
@@ -500,7 +503,7 @@ fn record_synced_output(
     synced_outputs: &mut Vec<TargetSyncedOutput>,
     dest: &Path,
     dest_rel: &str,
-    kind: crate::lock::ItemKind,
+    kind: mars_schema::item::ItemKind,
 ) {
     if let Ok(checksum) = crate::hash::compute_hash(dest, kind) {
         synced_outputs.push(TargetSyncedOutput {
@@ -520,12 +523,12 @@ fn record_synced_output(
 fn copy_item_to_target(
     source: &Path,
     dest: &Path,
-    kind: crate::lock::ItemKind,
+    kind: mars_schema::item::ItemKind,
     item_name: &str,
     native_skill_variant_key: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
-    if kind == crate::lock::ItemKind::Skill && native_skill_variant_key.is_some() {
+    if kind == mars_schema::item::ItemKind::Skill && native_skill_variant_key.is_some() {
         crate::compiler::variants::validate_skill_variants(source, item_name, diag);
         return crate::compiler::variants::project_skill_for_target(
             source,
@@ -617,7 +620,7 @@ mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticCollector;
     use crate::hash;
-    use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
+    use crate::lock::{LockFile, LockedItemV2, OutputRecord};
     use crate::surface_ownership::CollisionAdoptHint;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::{DestPath, ItemName};
@@ -626,7 +629,7 @@ mod tests {
     fn make_outcome(dest: &str, action: ActionTaken) -> ActionOutcome {
         ActionOutcome {
             item_id: crate::lock::ItemId {
-                kind: crate::lock::ItemKind::Agent,
+                kind: mars_schema::item::ItemKind::Agent,
                 name: ItemName::from("test"),
             },
             action,
@@ -988,7 +991,7 @@ mod tests {
         std::fs::write(mars_dir.join("skills/planning/SKILL.md"), "# Planning").unwrap();
 
         let mut outcome = make_outcome("skills/planning", ActionTaken::Installed);
-        outcome.item_id.kind = crate::lock::ItemKind::Skill;
+        outcome.item_id.kind = mars_schema::item::ItemKind::Skill;
         let outcomes = vec![outcome];
         let mut diag = DiagnosticCollector::new();
 
@@ -1028,7 +1031,7 @@ mod tests {
         .unwrap();
 
         let mut outcome = make_outcome("skills/planning", ActionTaken::Installed);
-        outcome.item_id.kind = crate::lock::ItemKind::Skill;
+        outcome.item_id.kind = mars_schema::item::ItemKind::Skill;
         let outcomes = vec![outcome];
         let mut diag = DiagnosticCollector::new();
 

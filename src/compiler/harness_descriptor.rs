@@ -3,12 +3,11 @@
 //! This module is the compiler-side owner for facts that used to be duplicated
 //! across lowerers: canonical ids, skill variant keys,
 //! MCP projection policy, and lowering-policy selection hooks. The
-//! descriptor is keyed by [`HarnessKind`] so compiler code does not re-match raw
+//! descriptor is keyed by [`HarnessId`] so compiler code does not re-match raw
 //! `"claude"`/`"codex"` strings at each call site.
 
-use crate::compiler::agents::HarnessKind;
 use crate::config::Settings;
-use crate::harness::registry::HarnessId;
+use mars_schema::HarnessId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum McpProjectionPolicy {
@@ -37,7 +36,7 @@ pub(crate) enum SkillLoweringPolicyKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CompilerHarnessDescriptor {
-    pub kind: HarnessKind,
+    pub kind: HarnessId,
     pub id: HarnessId,
     pub canonical_id: &'static str,
     pub display_name: &'static str,
@@ -50,7 +49,7 @@ pub(crate) struct CompilerHarnessDescriptor {
 
 const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
     CompilerHarnessDescriptor {
-        kind: HarnessKind::Claude,
+        kind: HarnessId::Claude,
         id: HarnessId::Claude,
         canonical_id: "claude",
         display_name: "Claude",
@@ -61,7 +60,7 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         skill_policy: SkillLoweringPolicyKind::Claude,
     },
     CompilerHarnessDescriptor {
-        kind: HarnessKind::Codex,
+        kind: HarnessId::Codex,
         id: HarnessId::Codex,
         canonical_id: "codex",
         display_name: "Codex",
@@ -72,7 +71,7 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         skill_policy: SkillLoweringPolicyKind::Codex,
     },
     CompilerHarnessDescriptor {
-        kind: HarnessKind::Pi,
+        kind: HarnessId::Pi,
         id: HarnessId::Pi,
         canonical_id: "pi",
         display_name: "Pi",
@@ -83,7 +82,7 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         skill_policy: SkillLoweringPolicyKind::Pi,
     },
     CompilerHarnessDescriptor {
-        kind: HarnessKind::OpenCode,
+        kind: HarnessId::OpenCode,
         id: HarnessId::OpenCode,
         canonical_id: "opencode",
         display_name: "OpenCode",
@@ -94,7 +93,7 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         skill_policy: SkillLoweringPolicyKind::OpenCode,
     },
     CompilerHarnessDescriptor {
-        kind: HarnessKind::Cursor,
+        kind: HarnessId::Cursor,
         id: HarnessId::Cursor,
         canonical_id: "cursor",
         display_name: "Cursor",
@@ -106,7 +105,7 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
     },
 ];
 
-pub(crate) fn descriptor(kind: HarnessKind) -> &'static CompilerHarnessDescriptor {
+pub(crate) fn descriptor(kind: HarnessId) -> &'static CompilerHarnessDescriptor {
     DESCRIPTORS
         .iter()
         .find(|descriptor| descriptor.kind == kind)
@@ -132,7 +131,7 @@ pub(crate) fn known_canonical_ids() -> impl Iterator<Item = &'static str> {
 }
 
 /// Harnesses that would receive native agent artifacts during sync for these settings.
-pub(crate) fn configured_emit_harnesses(settings: &Settings) -> Vec<HarnessKind> {
+pub(crate) fn configured_emit_harnesses(settings: &Settings) -> Vec<HarnessId> {
     settings
         .managed_targets()
         .iter()

@@ -19,12 +19,12 @@ pub mod pi;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::lock::ItemKind;
 #[doc(hidden)]
 pub use crate::surface_ownership::retention::ConfigWrite;
 use crate::surface_ownership::retention::{RemovalOperation, RemovalReport, Surface};
 use crate::types::DestPath;
 use indexmap::IndexMap;
+use mars_schema::item::ItemKind;
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 

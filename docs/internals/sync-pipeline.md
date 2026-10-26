@@ -19,11 +19,15 @@ mars.toml + mars.local.toml
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  2. Resolve     │  Fetch sources, discover transitive deps, merge model aliases,
-│                 │  STAGE: each dep through stage_rooted_package — lift foreign
-│                 │  frontmatter to canonical, apply skill overlays, repoint package_root
-│                 │  to .mars/staging/<source>/<dialect>/
+│  2. Resolve     │  Fetch sources, discover transitive deps, merge model aliases.
+│                 │  PREPARE: each dep, then .mars-src and the local package,
+│                 │  through mars_schema::prepare (read strictly, no writes)
 └────────┬────────┘
+         ▼
+┌─────────────────┐
+│  Gate           │  Any prepared error fails the sync here, before anything
+└────────┬────────┘  is materialized. Then project prepared bytes + overlays
+         │           into the scratch generation .mars/.staging.pending
          ▼
 ┌─────────────────┐
 │ Recovery Halt?  │  For recovery commands, persist user intent and return
@@ -31,9 +35,9 @@ mars.toml + mars.local.toml
          │ continue
          ▼
 ┌─────────────────┐
-│  3. Build Target│  Discover items, apply filters, detect collisions.
-│                 │  STAGE: local (_self) items through staging::stage_local_item
-│                 │  before hashing — same lift/overlay path as deps.
+│  3. Build Target│  Select the prepared definitions, apply filters, detect
+│                 │  collisions. Local (_self) items are projected before
+│                 │  hashing, so the diff compares the installed form.
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -57,18 +61,18 @@ mars.toml + mars.local.toml
 
 | Phase | Struct | Key contents |
 |---|---|---|
-| 1 | `LoadedConfig` | `Config`, `LocalConfig`, `EffectiveConfig`, `old_lock`, `sync_lock` (only when `.mars/sync.lock` already exists, on a dry run), dry-run staging dir |
-| 2 | `ResolvedState` | `LoadedConfig` + `ResolvedGraph` + `model_aliases` |
+| 1 | `LoadedConfig` | `Config`, `LocalConfig`, `EffectiveConfig`, `old_lock`, `sync_lock` (a dry run holds it only when `.mars/sync.lock` already exists) |
+| 2 | `ResolvedState` | `LoadedConfig` + `ResolvedGraph` + `model_aliases` + the scratch generation |
 | 3 | `TargetedState` | `ResolvedState` + `TargetState` + renames + validation warnings |
 | 4 | `PlannedState` | `TargetedState` + `SyncPlan` |
 | 5 | `AppliedState` | `PlannedState` + `ApplyResult` |
 | 6 | `SyncedState` | `AppliedState` + `Vec<TargetSyncOutcome>` |
 
 In a dry run, phase 1 takes the sync flock only when `.mars/sync.lock` already exists (it never
-creates it) and phases 2–3 stage into a temporary directory instead of `.mars/staging`, so a
-preview (`mars sync --diff`, `mars validate`, `mars version`'s validation) creates no project
-paths. Taking an existing lock keeps the preview from reading `mars.lock` and the intent journal
-while a real sync rewrites them.
+creates it or reclaims a leftover pending generation), and phase 2 puts the scratch generation in a
+temporary directory instead of `.mars/.staging.pending`, so a preview (`mars sync --diff`,
+`mars validate`, `mars version`'s validation) creates no project paths. Taking an existing lock
+keeps the preview from reading `mars.lock` and the intent journal while a real sync rewrites them.
 
 A `DiagnosticCollector` is threaded through all phases. No `eprintln!` in library code — all warnings/info go through structured diagnostics.
 
@@ -100,16 +104,9 @@ Then merges `mars.toml` with `mars.local.toml` overrides into `EffectiveConfig`.
 
 ### 2. Resolve (`resolve_graph`)
 
-Fetches sources, resolves concrete versions, and stages each package.
+Fetches sources, resolves concrete versions, and prepares each package.
 
-**Staging seam (dependency packages).** After selecting a concrete version,
-`stage_rooted_package` (src/resolve/package.rs:384–408) creates a dialect-scoped
-copy of the package under `.mars/staging/<source>/<dialect>/`. The copy lifts
-foreign frontmatter spellings (e.g. `allowed-tools` → `tools:`) to canonical,
-applies `[skills.<name>]` overlays, and renames items per config. The staged
-tree — not the raw source — is what downstream phases hash and discover.
-Staging requires `ResolveOptions.staging_root`; when it is unset (e.g. unit
-tests), the raw source is used directly.
+**Preparation (dependency packages).** After selecting a concrete version and applying `subpath` (or fetching a marketplace plugin's files), the resolver hands the authored tree to `package_prepare::prepare_rooted`, which calls `mars_schema::normalize` and keeps the result, a `Prepared`, on the graph node. The authored tree is never modified. See [Preparation and the gate](#preparation-and-the-gate).
 
 **Algorithm (src/resolve/mod.rs):**
 1. Fetch dependencies from EffectiveConfig
@@ -140,11 +137,49 @@ tests), the raw source is used directly.
 
 Additionally, this phase merges model aliases from the dependency tree. Each resolved dependency's `[models]` config is collected in **declaration order** (the order deps appear in the consumer's `mars.toml`, not alphabetical). `merge_model_config()` applies two layers: dependencies first (declaration-order first-wins on sibling conflicts), consumer config on top (always wins). Within transitive subtrees, each parent's manifest declaration order determines its children's ordering. Diamond deps inherit the position of the earliest direct dep that reaches them. See [configuration.md](../config/mars-toml.md#merge-precedence) for the full precedence rules, conflict warnings, and examples.
 
+### Preparation and the gate
+
+Mars reads every package as [schema v1](../config/schema-v1.md) before it writes any content to the project. The reading is `mars_schema::prepare`, the same code the npm package compiles to WebAssembly; the binary only supplies a lazy, package-confined view of the files (`src/package_prepare/`).
+
+```mermaid
+flowchart TD
+    R["Resolve: prepare each dependency"] --> L["Prepare .mars-src and the local package"]
+    L --> G1{"Prepared<br/>errors?"}
+    G1 -- yes --> F["Exit 2<br/>no content written"]
+    G1 -- no --> M["Project prepared bytes and overlays<br/>into .mars/.staging.pending"]
+    M --> B["Build target, plan,<br/>hook and MCP preflight"]
+    B --> G2{"Any<br/>errors?"}
+    G2 -- yes --> F
+    G2 -- no --> A["Apply: config mutation,<br/>canonical store, publish staging"]
+```
+
+What preparation decides for a package root:
+
+| Root | Result |
+|---|---|
+| `mars.toml` with `[package] schema = 1` | Read strictly |
+| `mars.toml` with no `schema` | Upgraded in memory with the `mars migrate` rules; one warning per package names it |
+| `mars.toml` with another `schema` | Refused (`field.type`) |
+| No `mars.toml` | Translated to schema v1 by the dialect's rules (Claude by default), then read strictly |
+| A marketplace | An error that lists its plugins, unless the dependency names one with `plugin` |
+
+The order inside one `mars sync`:
+
+1. **Prepare.** Each dependency is prepared during resolution. The project's own `.mars-src` and `[package]` follow. Preparation reads manifests, definitions and directory listings, never the bytes of payload files.
+2. **Gate.** Every error-level diagnostic collected so far (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*`, `frontmatter.*`, config errors) fails the sync with exit 2. The only writes before this point are `.mars/sync.lock`, the removal of an interrupted pending generation and the removal of a skill directory a killed install left staged under `.mars/skills` (a dry run makes none of them). A `mars add` rejected here has not written the dependency, because the config mutation is saved only when the plan applies.
+3. **Project.** The prepared bytes, the payload files the crate listed, and the binary-owned hook, MCP, bootstrap and plugin-manifest surfaces are written into a scratch generation: `.mars/.staging.pending` in a real sync, a temporary directory outside the project in a dry run. `[skills.<name>]` overlays and dependency renames apply here, after preparation. Nothing outside the scratch generation changes.
+4. **Binary and compiler checks.** Building the target, planning, and the hook and MCP preflight report their own errors, and the gate runs after the target is built and again after the preflight, so those errors also fail before apply.
+5. **Apply and publish.** The config mutation is saved, the plan is applied to the `.mars/` canonical store, and the generation at `.mars/.staging.pending` is renamed over `.mars/staging` (nothing is copied). The next sync that takes the lock removes a leftover pending path.
+
+Warnings never stop a sync: unknown keys (`field.unknown`), the lossiness a target cannot express, and the pre-v1 notice are printed and the run continues. `--diff` runs the same steps and writes nothing.
+
+Other commands read the same `Prepared`. `mars check` and `mars validate` report its diagnostics (validate returns schema errors as report data, never mutating), `mars migrate` writes its normalized bytes back to the authored files, and `mars outdated` reads tags only, so it never classifies a package. An unusable version is refused by sync with its error.
+
 ### Recovery halt (reader/compiler boundary)
 
 Upgrade, override, remove, and repair opt into recovery behavior for packages
 that still contain unreadable removed-schema hook surfaces. After the reader
-resolves and stages the graph, `sync::execute` checks
+resolves, prepares and projects the graph, `sync::execute` checks
 `unreadable_hook_surfaces` before calling the compiler.
 
 When blockers exist, Mars persists only the requested `mars.toml` or
@@ -160,21 +195,17 @@ Constructs the desired target state from the resolved graph.
 
 For each source in topological order:
 
-For project-local (`_self`) items, staging runs here rather than during
-resolve. `staging::stage_local_item` (src/sync/mod.rs:297–304) applies the
-same lift + overlay pipeline as dependency staging, but works from the local
-`.mars-src/` tree. Local items are staged before hashing so the sync diff
-compares the canonical form, not the raw source.
-1. **Discover** items in the source tree with the bounded convention walk (`agents/`, `skills/`, and `bootstrap/` directories at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback)
+Agents and skills come from each package's `Prepared` result, so no walk selects them here. For project-local (`_self`) items, `staging::materialize_local_prepared` projects the selected definition and its crate-listed payload into the scratch generation before hashing, so the sync diff compares the installed form, not the raw source.
+1. **Select** the prepared Agents and skills; the binary discovers only hooks, MCP servers and bootstrap documents itself (`bootstrap/` directories at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`)
 2. **Apply filter** (All, Include, Exclude, OnlySkills, OnlyAgents)
 3. **Apply rename** mappings from config
 4. **Compute source hash** (SHA-256 of source content)
 
 After building all items:
 5. **Detect cross-source destination collisions** — dependency agents and skills from different sources that want the same destination path are both auto-renamed with `__{source_name}`; explicit dependency `rename` mappings run first and can prevent or customize the rename
-6. **Check unmanaged collisions** — prune items that would overwrite files not tracked in the lock
+6. **Check unmanaged collisions** — prune items that would overwrite a canonical path Mars does not own: `mars.lock` does not claim it and `.mars/provided.lock` does not list it (see [canonical ownership](lock-file.md#canonical-ownership)). MCP server directories join the target state after MCP name collision resolution and take the same check, so only the winning server's files are installed.
 7. **Rewrite frontmatter** — build one `RenameIndex` from explicit skill renames and automatic collision renames that survived pruning, then apply one rewrite pass per agent; dependency fallback candidates follow mars.toml declaration order (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
-8. **Validate** — check skill frontmatter schema, validate skill references in agent frontmatter, and warn on `config-rename-dangle` (config-side references to names that renames have replaced)
+8. **Validate** — validate skill references in agent frontmatter, and warn on `config-rename-dangle` (config-side references to names that renames have replaced)
 
 ### 4. Create Plan (`create_plan`)
 
@@ -200,7 +231,7 @@ The diff matrix:
 With `--force`, the baseline for "local changed" shifts to `source_checksum`, so conflicted files are treated as local modifications and get overwritten.
 
 Also injects project-local items under the `_self` source name (`_self` is the reserved local-project source identifier):
-- Items from `.mars-src/` are always discovered by the same convention walk as dependency packages, regardless of whether `[package]` is present. Nested `.mars-src/**/agents/`, `.mars-src/**/skills/`, and `.mars-src/**/bootstrap/` folders are included when they are in the shallowest discovered package layer.
+- Items from `.mars-src/` are always prepared like a dependency package, regardless of whether `[package]` is present; with no `mars.toml` there, they are read as a pre-v1 Mars tree and upgraded in memory. Nested `.mars-src/**/agents/`, `.mars-src/**/skills/`, and `.mars-src/**/bootstrap/` folders are included when they are in the shallowest discovered package layer.
 - Repo-root `agents/`/`skills/` directories are not local discovery roots; published source packages expose `agents/`, `skills/`, and `bootstrap/` convention folders at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5` when consumed as dependencies.
 - Dot-prefixed directories are skipped during default discovery. Import a foreign hidden layout explicitly with dependency `subpath` (for example `.claude`) and `dialect`.
 - If one source exposes duplicate `(kind, name)` items through convention scanning, manifest declarations, or both, discovery fails with `DiscoveryCollision`; sync does not choose a winner inside that source.

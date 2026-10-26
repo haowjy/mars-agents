@@ -1,0 +1,1 @@
+{"name": "anthropic-agent-skills", "plugins": [{"name": "document-skills", "description": "Documents", "source": "./", "strict": false, "skills": ["./skills/pdf", "./skills/xlsx"]}, {"name": "example-skills", "description": "Examples", "source": "./", "strict": false, "skills": ["./skills/skill-creator"]}]}

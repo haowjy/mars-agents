@@ -1,24 +1,22 @@
 use crate::build::bundle::ExecutionNetworkPolicy;
 use crate::build::policy::PolicySource::{
-    Alias, Cli, Overlay, OverlayModelPolicy, Profile, ProfileModelPolicy, SettingsModelPolicy,
-    Unset,
+    Alias, Cli, Config, Overlay, OverlayModelPolicy, Profile, ProfileModelPolicy,
+    SettingsModelPolicy, Unset,
 };
 use crate::build::policy::{
-    MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_network_override,
-    matched_policy_string_override, matched_policy_u8_override, matched_policy_u32_override,
+    MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
 };
-use crate::compiler::agents::{ApprovalMode, EffortLevel, NetworkPolicy, SandboxMode};
-use crate::config::{AgentOverlay, NetworkHost, Settings};
+use crate::config::{AgentOverlay, Settings};
 use crate::models::ModelAlias;
-use crate::permission_set::{PermissionSet, merge_permission_set};
+use mars_schema::agent::{AgentProfile, ApprovalMode, EffortLevel, SandboxMode};
+use mars_schema::network::{NetworkHost, NetworkPolicy};
+use mars_schema::permission_set::{PermissionSet, merge_permission_set};
 
 pub(super) struct ExecutionResolution {
     pub(super) effort: ResolvedField<Option<String>>,
     pub(super) approval: ResolvedField<Option<String>>,
     pub(super) sandbox: ResolvedField<Option<String>>,
-    pub(super) network: ResolvedField<Option<NetworkPolicy>>,
-    pub(super) resolved_network: ExecutionNetworkPolicy,
-    pub(super) warnings: Vec<String>,
+    pub(super) network: ResolvedNetwork,
     pub(super) autocompact: ResolvedField<Option<u32>>,
     pub(super) autocompact_pct: ResolvedField<Option<u8>>,
     pub(super) native_config: Option<serde_json::Map<String, serde_json::Value>>,
@@ -32,21 +30,44 @@ pub(super) fn resolve_execution_policy(
     settings: &Settings,
     native_config: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> ExecutionResolution {
-    let effort = resolve_effort(input, alias, overlay, matched_policy);
-    let approval = resolve_approval(input, overlay, matched_policy);
-    let sandbox = resolve_sandbox(input, overlay, matched_policy);
-    let (network, resolved_network, warnings) =
-        resolve_network(input, overlay, matched_policy, settings);
-    let autocompact = resolve_autocompact(input, alias, overlay, matched_policy);
-    let autocompact_pct = resolve_autocompact_pct(input, alias, overlay, matched_policy);
+    let effort = resolve_effort(
+        input.effort_override,
+        input.profile,
+        alias,
+        overlay,
+        matched_policy,
+    );
+    let approval = resolve_approval(
+        input.approval_override,
+        input.profile,
+        overlay,
+        matched_policy,
+    );
+    let sandbox = resolve_sandbox(
+        input.sandbox_override,
+        input.profile,
+        overlay,
+        matched_policy,
+    );
+    let network = resolve_network(
+        CliNetwork {
+            mode: input.network_override,
+            allow: input.network_allow,
+            deny: input.network_deny,
+        },
+        input.profile,
+        overlay,
+        matched_policy,
+        Some(settings),
+    );
+    let autocompact = alias_field(alias.and_then(|entry| entry.autocompact));
+    let autocompact_pct = alias_field(alias.and_then(|entry| entry.autocompact_pct));
 
     ExecutionResolution {
         effort,
         approval,
         sandbox,
         network,
-        resolved_network,
-        warnings,
         autocompact,
         autocompact_pct,
         native_config,
@@ -69,6 +90,7 @@ struct PolicyFieldLayers<T> {
     cli: Option<T>,
     overlay: Option<T>,
     profile: Option<T>,
+    /// `[settings]` defaults: below every model policy, above the alias.
     settings: Option<T>,
     alias: Option<T>,
 }
@@ -87,10 +109,10 @@ fn resolve_policy_field<T>(
         field_layer(Cli, layers.cli),
         field_layer(Overlay, layers.overlay),
         policy_override_by_source(matched_policy, key, OverlayModelPolicy),
-        field_layer(Profile, layers.profile),
         policy_override_by_source(matched_policy, key, ProfileModelPolicy),
+        field_layer(Profile, layers.profile),
         policy_override_by_source(matched_policy, key, SettingsModelPolicy),
-        field_layer(PolicySource::Config, layers.settings),
+        field_layer(Config, layers.settings),
         field_layer(Alias, layers.alias),
     ]
     .into_iter()
@@ -122,33 +144,22 @@ fn policy_network_override_by_source(
     key: &str,
     source: PolicySource,
 ) -> Option<ResolvedField<Option<NetworkPolicy>>> {
-    matched_policy_network_override(matched_policy, key)
-        .filter(|decision| decision.source == source)
-        .map(resolved_policy_field)
+    let field = policy_string_override_by_source(matched_policy, key, source)?;
+    Some(ResolvedField {
+        value: Some(NetworkPolicy::parse(field.value.as_deref()?)?),
+        source: field.source,
+        matched_rule: field.matched_rule,
+    })
 }
 
-fn policy_u32_override_by_source(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-    source: PolicySource,
-) -> Option<ResolvedField<Option<u32>>> {
-    matched_policy_u32_override(matched_policy, key)
-        .filter(|decision| decision.source == source)
-        .map(resolved_policy_field)
+fn alias_field<T>(value: Option<T>) -> ResolvedField<Option<T>> {
+    let source = if value.is_some() { Alias } else { Unset };
+    resolved_field(value, source)
 }
 
-fn policy_u8_override_by_source(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-    source: PolicySource,
-) -> Option<ResolvedField<Option<u8>>> {
-    matched_policy_u8_override(matched_policy, key)
-        .filter(|decision| decision.source == source)
-        .map(resolved_policy_field)
-}
-
-fn resolve_effort(
-    input: &PolicyInput<'_>,
+pub(super) fn resolve_effort(
+    cli: Option<&str>,
+    profile: &AgentProfile,
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
@@ -158,15 +169,14 @@ fn resolve_effort(
         matched_policy,
         policy_string_override_by_source,
         PolicyFieldLayers {
-            cli: input.effort_override.map(str::to_string),
+            cli: cli.map(str::to_string),
             overlay: overlay
-                .and_then(|entry| entry.effort.as_deref())
-                .map(str::to_string),
-            profile: input
-                .profile
+                .and_then(|entry| entry.effort.as_ref())
+                .map(|level| level.as_str().to_string()),
+            profile: profile
                 .effort
                 .as_ref()
-                .map(effort_level_to_str)
+                .map(EffortLevel::as_str)
                 .map(str::to_string),
             settings: None,
             alias: alias.and_then(|entry| entry.default_effort.clone()),
@@ -174,8 +184,9 @@ fn resolve_effort(
     )
 }
 
-fn resolve_approval(
-    input: &PolicyInput<'_>,
+pub(super) fn resolve_approval(
+    cli: Option<&str>,
+    profile: &AgentProfile,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
 ) -> ResolvedField<Option<String>> {
@@ -184,15 +195,14 @@ fn resolve_approval(
         matched_policy,
         policy_string_override_by_source,
         PolicyFieldLayers {
-            cli: input.approval_override.map(str::to_string),
+            cli: cli.map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.approval.as_deref())
                 .map(str::to_string),
-            profile: input
-                .profile
+            profile: profile
                 .approval
                 .as_ref()
-                .map(approval_mode_to_str)
+                .map(ApprovalMode::as_str)
                 .map(str::to_string),
             settings: None,
             alias: None,
@@ -200,8 +210,9 @@ fn resolve_approval(
     )
 }
 
-fn resolve_sandbox(
-    input: &PolicyInput<'_>,
+pub(super) fn resolve_sandbox(
+    cli: Option<&str>,
+    profile: &AgentProfile,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
 ) -> ResolvedField<Option<String>> {
@@ -210,15 +221,14 @@ fn resolve_sandbox(
         matched_policy,
         policy_string_override_by_source,
         PolicyFieldLayers {
-            cli: input.sandbox_override.map(str::to_string),
+            cli: cli.map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.sandbox.as_deref())
                 .map(str::to_string),
-            profile: input
-                .profile
+            profile: profile
                 .sandbox
                 .as_ref()
-                .map(sandbox_mode_to_str)
+                .map(SandboxMode::as_str)
                 .map(str::to_string),
             settings: None,
             alias: None,
@@ -226,39 +236,52 @@ fn resolve_sandbox(
     )
 }
 
-fn resolve_network(
-    input: &PolicyInput<'_>,
+/// The CLI layer of network policy: `--network`, `--network-allow`, `--network-deny`.
+pub(super) struct CliNetwork<'a> {
+    pub(super) mode: Option<&'a NetworkPolicy>,
+    pub(super) allow: &'a [NetworkHost],
+    pub(super) deny: &'a [NetworkHost],
+}
+
+pub(super) struct ResolvedNetwork {
+    pub(super) mode: ResolvedField<Option<NetworkPolicy>>,
+    pub(super) policy: ExecutionNetworkPolicy,
+    pub(super) warnings: Vec<String>,
+}
+
+/// Network mode follows the shared precedence chain, with `[settings] default-network` below
+/// the model policies. Native lowering passes no `settings`: see `profile_for_model`. Host sets merge in layer order (settings, profile, overlay, CLI) and
+/// come out sorted: the project's deny entries are never replaced by a higher layer.
+pub(super) fn resolve_network(
+    cli: CliNetwork<'_>,
+    profile: &AgentProfile,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-    settings: &Settings,
-) -> (
-    ResolvedField<Option<NetworkPolicy>>,
-    ExecutionNetworkPolicy,
-    Vec<String>,
-) {
+    settings: Option<&Settings>,
+) -> ResolvedNetwork {
     let mut mode = resolve_policy_field(
         "network",
         matched_policy,
         policy_network_override_by_source,
         PolicyFieldLayers {
-            cli: input.network_override.cloned(),
+            cli: cli.mode.cloned(),
             overlay: overlay.and_then(|entry| entry.network.clone()),
-            profile: input.profile.network.clone(),
-            settings: settings.default_network.clone(),
+            profile: profile.network.clone(),
+            settings: settings.and_then(|settings| settings.default_network.clone()),
             alias: None,
         },
     );
     let mut allow = merge_network_hosts(
-        &settings.network_allow,
-        &input.profile.network_allow,
+        settings.map(|settings| &settings.network_allow),
+        &profile.network_allow,
         overlay.map(|entry| &entry.network_allow),
-        input.network_allow,
+        cli.allow,
     );
     let mut deny = merge_network_hosts(
-        &settings.network_deny,
-        &input.profile.network_deny,
+        settings.map(|settings| &settings.network_deny),
+        &profile.network_deny,
         overlay.map(|entry| &entry.network_deny),
-        input.network_deny,
+        cli.deny,
     );
     let mut warnings = Vec::new();
     if mode.value == Some(NetworkPolicy::Allowlist) && allow.is_empty() {
@@ -275,100 +298,29 @@ fn resolve_network(
         Some(NetworkPolicy::Allow) => allow.clear(),
         Some(NetworkPolicy::Allowlist) | None => {}
     }
-    let resolved = ExecutionNetworkPolicy {
+    let policy = ExecutionNetworkPolicy {
         mode: mode.value.clone(),
         allow,
         deny,
     };
-    (mode, resolved, warnings)
+    ResolvedNetwork {
+        mode,
+        policy,
+        warnings,
+    }
 }
 
 fn merge_network_hosts(
-    settings: &PermissionSet<NetworkHost>,
+    settings: Option<&PermissionSet<NetworkHost>>,
     profile: &PermissionSet<NetworkHost>,
     overlay: Option<&PermissionSet<NetworkHost>>,
     cli: &[NetworkHost],
 ) -> Vec<NetworkHost> {
     let mut merged = Vec::new();
-    for layer in [Some(settings), Some(profile), overlay]
-        .into_iter()
-        .flatten()
-    {
+    for layer in [settings, Some(profile), overlay].into_iter().flatten() {
         merge_permission_set(&mut merged, layer);
     }
     merge_permission_set(&mut merged, &PermissionSet::Add(cli.to_vec()));
     merged.sort();
     merged
-}
-
-fn resolve_autocompact(
-    input: &PolicyInput<'_>,
-    alias: Option<&ModelAlias>,
-    overlay: Option<&AgentOverlay>,
-    matched_policy: Option<&MatchedModelPolicy>,
-) -> ResolvedField<Option<u32>> {
-    resolve_policy_field(
-        "autocompact",
-        matched_policy,
-        policy_u32_override_by_source,
-        PolicyFieldLayers {
-            cli: None,
-            overlay: overlay
-                .and_then(|entry| entry.autocompact)
-                .and_then(|value| u32::try_from(value).ok()),
-            profile: input.profile.autocompact,
-            settings: None,
-            alias: alias.and_then(|entry| entry.autocompact),
-        },
-    )
-}
-
-fn resolve_autocompact_pct(
-    input: &PolicyInput<'_>,
-    alias: Option<&ModelAlias>,
-    overlay: Option<&AgentOverlay>,
-    matched_policy: Option<&MatchedModelPolicy>,
-) -> ResolvedField<Option<u8>> {
-    resolve_policy_field(
-        "autocompact_pct",
-        matched_policy,
-        policy_u8_override_by_source,
-        PolicyFieldLayers {
-            cli: None,
-            overlay: overlay
-                .and_then(|entry| entry.autocompact_pct)
-                .and_then(|value| u8::try_from(value).ok())
-                .filter(|value| (1..=100).contains(value)),
-            profile: input.profile.autocompact_pct,
-            settings: None,
-            alias: alias.and_then(|entry| entry.autocompact_pct),
-        },
-    )
-}
-
-fn effort_level_to_str(effort: &EffortLevel) -> &'static str {
-    match effort {
-        EffortLevel::Low => "low",
-        EffortLevel::Medium => "medium",
-        EffortLevel::High => "high",
-        EffortLevel::XHigh => "xhigh",
-    }
-}
-
-fn approval_mode_to_str(mode: &ApprovalMode) -> &'static str {
-    match mode {
-        ApprovalMode::Default => "default",
-        ApprovalMode::Auto => "auto",
-        ApprovalMode::Confirm => "confirm",
-        ApprovalMode::Never => "never",
-    }
-}
-
-fn sandbox_mode_to_str(mode: &SandboxMode) -> &'static str {
-    match mode {
-        SandboxMode::Default => "default",
-        SandboxMode::ReadOnly => "read-only",
-        SandboxMode::WorkspaceWrite => "workspace-write",
-        SandboxMode::DangerFullAccess => "danger-full-access",
-    }
 }

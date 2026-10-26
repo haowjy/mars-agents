@@ -1,0 +1,15 @@
+{
+  "kind": "schema-1",
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "native",
+      "source_path": "skills/native/SKILL.md",
+      "skill_root": "skills/native",
+      "output_path": "skills/native/SKILL.md"
+    }
+  ],
+  "diagnostics": {}
+}

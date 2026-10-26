@@ -1,19 +1,33 @@
-//! Target-state validation: skill reference checks, frontmatter schema checks,
-//! and config-side dangle detection after renames.
+//! Target-state validation: skill reference checks and config-side dangle
+//! detection after renames.
 //!
 //! Called from `build_target` against the post-prune, post-rewrite target state.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::diagnostic::DiagnosticCollector;
-use crate::lock::ItemKind;
+use crate::provided::ProvidedNames;
+use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
-use crate::validate::ValidationWarning;
+use crate::types::{SourceName, SourceOrigin};
+use crate::validate::{ValidationWarning, deferred_provider};
+use mars_schema::item::ItemKind;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
 /// reference skills that exist in the target state.
-pub(crate) fn validate_skill_refs(target: &TargetState) -> Vec<ValidationWarning> {
+///
+/// The one reporter of refs against what is installed, and the only place that combines a
+/// package's declaration with this machine: the resolver never reports a ref it defers to a
+/// declared provider, and `provided` (`None` where provided skills must not count, as in plugin
+/// builds) is read only here. `local_declared` is the `[package] uses-providers` of the project's
+/// own items, `None` for a consumer project without a `[package]` table.
+pub(crate) fn validate_skill_refs(
+    target: &TargetState,
+    graph: &ResolvedGraph,
+    provided: Option<&ProvidedNames>,
+    local_declared: Option<&[String]>,
+) -> Vec<ValidationWarning> {
     use crate::validate::{extract_skills_from_content, find_suggestion};
 
     let available_skills: HashSet<String> = target
@@ -22,6 +36,7 @@ pub(crate) fn validate_skill_refs(target: &TargetState) -> Vec<ValidationWarning
         .filter(|item| item.id.kind == ItemKind::Skill)
         .map(|item| item.id.name.to_string())
         .collect();
+    let local_source = SourceName::from(SourceOrigin::LocalPackage.to_string());
 
     let mut warnings = Vec::new();
 
@@ -30,44 +45,66 @@ pub(crate) fn validate_skill_refs(target: &TargetState) -> Vec<ValidationWarning
         .values()
         .filter(|item| item.id.kind == ItemKind::Agent)
     {
+        let declared = if item.source_name == local_source {
+            local_declared
+        } else {
+            Some(
+                graph
+                    .nodes
+                    .get(&item.source_name)
+                    .and_then(|node| node.manifest.as_ref())
+                    .map_or(&[][..], |manifest| {
+                        manifest.package.uses_providers.as_slice()
+                    }),
+            )
+        };
         let content = match &item.rewritten_content {
             Some(content) => content.clone(),
             None => std::fs::read_to_string(&item.source_path).unwrap_or_default(),
         };
         for skill_name in extract_skills_from_content(&content) {
-            if !available_skills.contains(&skill_name) {
-                let suggestion = find_suggestion(&skill_name, &available_skills);
-                warnings.push(ValidationWarning::MissingSkill {
-                    agent: item.id.clone(),
-                    skill_name,
-                    suggestion,
-                });
+            if available_skills.contains(&skill_name) {
+                continue;
             }
+            let agent = item.id.clone();
+            let provided_here = provided.is_some_and(|names| names.provides(&skill_name));
+            let warning = match mars_schema::provider::provider_of(&skill_name) {
+                // The package declares the provider: the ref is valid wherever it supplies the
+                // skill, and says so where it does not.
+                Some(provider) if deferred_provider(&skill_name, declared).is_some() => {
+                    if provided_here {
+                        continue;
+                    }
+                    ValidationWarning::ProvidedSkillUnavailable {
+                        agent,
+                        provider: provider.to_string(),
+                        skill_name,
+                    }
+                }
+                // Provided here. A consumer project's own items have no `[package]` table, so
+                // nothing needs declaring and the ref is satisfied; a package that does not
+                // declare the provider would not resolve it for consumers.
+                Some(provider) if provided_here => {
+                    if declared.is_none() {
+                        continue;
+                    }
+                    ValidationWarning::ProvidedSkillUndeclared {
+                        agent,
+                        provider: provider.to_string(),
+                        skill_name,
+                    }
+                }
+                _ => ValidationWarning::MissingSkill {
+                    agent,
+                    suggestion: find_suggestion(&skill_name, &available_skills),
+                    skill_name,
+                },
+            };
+            warnings.push(warning);
         }
     }
 
     warnings
-}
-
-pub(crate) fn validate_skill_frontmatter_in_target(
-    target: &TargetState,
-    diag: &mut DiagnosticCollector,
-) {
-    for item in target
-        .items
-        .values()
-        .filter(|item| item.id.kind == ItemKind::Skill)
-    {
-        validate_skill_frontmatter_at_source(&item.source_path, item.id.name.as_str(), diag);
-    }
-}
-
-fn validate_skill_frontmatter_at_source(
-    source_path: &std::path::Path,
-    skill_name: &str,
-    diag: &mut DiagnosticCollector,
-) {
-    crate::compiler::skills::emit_skill_schema_diags_from_source(source_path, skill_name, diag);
 }
 
 pub(crate) fn warn_config_dangles_after_rename(

@@ -1,0 +1,2 @@
+Flow-style top level forces the full rewrite; the BOM, LF fences and the body without a
+final newline all survive unchanged.

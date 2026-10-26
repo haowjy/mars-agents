@@ -166,6 +166,8 @@ pub fn find_cursor_prefix_matches<'a>(model_id: &str, slugs: &'a [String]) -> Ve
 pub struct CursorEffortResolution {
     pub slug: String,
     pub candidate_slugs: Vec<String>,
+    /// The tier whose variant was used when the model has none for `max`: `xhigh`, else `high`.
+    pub max_approximated_by: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,6 +212,7 @@ pub fn resolve_cursor_effort_slug(
             return Ok(CursorEffortResolution {
                 slug: (*bare_slug).to_string(),
                 candidate_slugs,
+                max_approximated_by: None,
             });
         }
 
@@ -219,13 +222,26 @@ pub fn resolve_cursor_effort_slug(
         });
     }
 
-    let effort_matches: Vec<&str> = prefix_matches
-        .iter()
-        .copied()
-        .filter(|slug| {
-            slug_matches_effort(&normalized_model, &normalize_slug(slug), &normalized_effort)
-        })
-        .collect();
+    let matching = |tier: &str| -> Vec<&str> {
+        prefix_matches
+            .iter()
+            .copied()
+            .filter(|slug| slug_matches_effort(&normalized_model, &normalize_slug(slug), tier))
+            .collect()
+    };
+    let mut effort_matches = matching(&normalized_effort);
+    let mut max_approximated_by = None;
+    if effort_matches.is_empty() && normalized_effort == "max" {
+        // Few Cursor models have a `-max` variant; `max` then means the model's highest one.
+        for tier in ["xhigh", "high"] {
+            let tier_matches = matching(tier);
+            if !tier_matches.is_empty() {
+                effort_matches = tier_matches;
+                max_approximated_by = Some(tier);
+                break;
+            }
+        }
+    }
 
     if effort_matches.is_empty() {
         // Fall back to the bare slug in two cases:
@@ -248,6 +264,7 @@ pub fn resolve_cursor_effort_slug(
             return Ok(CursorEffortResolution {
                 slug: (*bare_slug).to_string(),
                 candidate_slugs,
+                max_approximated_by: None,
             });
         }
 
@@ -262,6 +279,7 @@ pub fn resolve_cursor_effort_slug(
     Ok(CursorEffortResolution {
         slug: chosen.to_string(),
         candidate_slugs,
+        max_approximated_by,
     })
 }
 

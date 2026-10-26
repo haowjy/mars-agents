@@ -1,24 +1,19 @@
 # Skill Compilation
 
-Skills use a universal frontmatter schema that mars compiles to per-harness native field formats during `mars sync`. This separates skill authoring from harness-specific field names — a skill author writes `model-invocable: false` once, and mars emits the right field for Claude, Codex, or any other target.
+Skills use a universal frontmatter schema that mars compiles to per-harness native field formats during `mars sync`. This separates skill authoring from harness-specific field names — a skill author writes `model-invocable: false` once, and mars emits the right field for Claude, Codex, or any other target. The schema is [schema v1](schema-v1.md#skill-keys); a package that predates it can be upgraded with [`mars migrate`](migrating-to-schema-v1.md).
 
 ## Universal Skill Frontmatter
 
-All skill fields below are optional. A skill with no frontmatter is valid and is treated as body-only with both model and user invocability enabled.
+`name` and `description` are required when a skill has frontmatter; every other field is optional. A skill with no frontmatter is a body-only skill: it reads with a `skill.no-frontmatter` warning and has both model and user invocability enabled.
 
 ```yaml
 ---
 name: my-skill
 description: What this skill does
 model-invocable: false
-tools:
-  bash(git *): allow
-  read: allow
-  write: allow
-  mcp(plugin:demo): allow
-disallowed-tools: [agent]
 license: MIT
 metadata:
+  type: reference
   owner: platform-team
 ---
 
@@ -46,36 +41,6 @@ Human-readable display name. Used in `mars list` and preserved in compiled artif
 | Required | yes (when frontmatter present) |
 
 One-line summary. Shown in `mars list` and passed through to native artifacts.
-
----
-
-### `type`
-
-| | |
-|---|---|
-| Type | string (free-form) |
-| Required | no |
-| Default | `reference` |
-
-Classifies the skill for prompt-assembly ordering and `mars skills` filtering. `type` is **not** a restricted enum — any string is accepted and preserved.
-
-Mars uses it for exactly two things:
-
-1. **Sort priority during prompt assembly.** Loaded skills are ordered by tier so higher-priority guidance lands first:
-
-   | `type` | Priority |
-   |---|---|
-   | `principle` | 0 (first) |
-   | `guardrail` | 1 |
-   | `reference`, any other value, or unset | 2 (last) |
-
-2. **Filtering.** `mars skills list --type <value>` matches `type` by exact string.
-
-A skill with no `type` defaults to `reference`. Custom values (e.g. `type: workflow`) are accepted, sort at priority 2, and stay filterable by their exact string — but they gain no behavior beyond `reference`.
-
-```yaml
-type: principle
-```
 
 ---
 
@@ -109,82 +74,21 @@ Controls whether the user can trigger this skill with `/name`.
 user-invocable: false   # user cannot trigger via /name
 ```
 
-**Removed fields.** `invocation`, `disable-model-invocation`, and `allow_implicit_invocation` are no longer recognized. Using them produces a user-visible `skill-schema-error` diagnostic whose message says the field was removed; the parser-level variant is `RemovedField`. Migrate to `model-invocable` / `user-invocable`.
-
 ---
 
-### `tools`
+### Removed fields
 
-| | |
+A skill carries no tool policy, and schema 1 rejects these keys with an error that names the replacement:
+
+| Removed | Replace with |
 |---|---|
-| Type | deprecated string[] **or** map of `tool-pattern: allow\|deny\|ask` |
-| Default | empty |
+| `type` | `metadata.type` |
+| `when_to_use` | fold it into `description` |
+| `tools`, `disallowed-tools`, `allowed-tools` and the snake_case spellings | nothing |
+| `model_invocable`, `user_invocable` | `model-invocable`, `user-invocable` |
+| `invocation`, `disable-model-invocation`, `allow_implicit_invocation` | `model-invocable` and `user-invocable` |
 
-Tools this skill pre-approves while it runs, and inline denials — the same rule grammar as agent profiles (see [agent-profiles.md](agent-profiles.md#tools)): Mars capability names (`bash`, `ask_user`, `web_search`), scoped patterns, readable aliases and native spellings such as `Bash`, `shell`, and `askuser`.
-
-A skill's grants never restrict anything. `ask` has no skill field, so it is reported as
-dropped lossiness.
-
-List form is deprecated. It still grants the listed tools, restricts nothing, and emits a
-warning. Write grants in map form instead:
-
-```yaml
-tools:
-  bash(git *): allow
-  read: allow
-```
-
-Map form mixes allow and deny entries; denials merge with `disallowed-tools`:
-
-```yaml
-tools:
-  ask_user: allow
-  "bash(git *)": deny
-```
-
-Dropped by some harnesses — see the lossiness table below.
-
-**Canonical skills do not use `allowed-tools`.** Authoring `allowed-tools` or
-`allowed_tools` directly in a skill's frontmatter produces a `skill-schema-warning`
-diagnostic (Validation category, always surfaced regardless of lossiness
-settings) and the key is **stripped** before the skill reaches `.mars/`. The
-diagnostic is emitted at the staging boundary, before the strip. Use the canonical
-`tools:` field instead.
-
-During staging for foreign dialects (Claude, Codex, etc.), harness-native
-`allowed-tools` / `allowed_tools` are lifted to canonical `tools:` — this is
-the normal import path for foreign-authored skills, distinct from the warning
-path above.
-
----
-
-### `disallowed-tools`
-
-| | |
-|---|---|
-| Type | string[] |
-| Default | empty |
-
-Flat tool denylist merged with map-form `tools:` denials. Lowered to harness-native denylist fields where supported (Claude, Pi); warn-dropped elsewhere.
-
-```yaml
-disallowed-tools: [agent, web_search]
-```
-
-**MCP grants** — same `mcp(...)` grammar as agent profiles (see
-[agent-profiles.md](agent-profiles.md#tools)). Author grants in `tools:` and denials in
-`disallowed-tools:`. The legacy `mcp-tools:` field is **removed**.
-
-On Claude, allowed MCP refs project into `allowed-tools:` as harness-native tokens (a
-**grant**, not a restriction — Mars records approximate lossiness). Other harnesses drop
-or approximate MCP from native skill artifacts; the launch bundle carries the real
-per-harness projection. See [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
-
-```yaml
-tools:
-  bash(git *): allow
-  mcp(plugin:context7): allow
-```
+`mars migrate` makes these changes. A pre-v1 dependency gets the same upgrade in memory, and dropping a skill's tool keys warns with the file's name. Foreign skills (a Claude plugin's `allowed-tools`, for example) are translated when Mars imports them: the tool keys are dropped with a warning, because the skill itself carries no tool policy. See [Dialect](mars-toml.md#dialect).
 
 ---
 
@@ -210,33 +114,49 @@ license: MIT
 | Type | YAML mapping |
 | Default | none |
 
-Arbitrary key-value metadata. Not interpreted by mars or Meridian; passed through to all native artifacts for use by downstream tooling.
+Key-value metadata, passed through to all native artifacts. Mars reads one key, `metadata.type`, and leaves the rest to downstream tooling.
 
 ```yaml
 metadata:
+  type: principle
   owner: platform-team
-  tier: core
 ```
+
+**`metadata.type`** is a free-form string that classifies the skill. A value that is not a string is an error. It is **not** a restricted enum — any string is accepted and preserved. Mars uses it for exactly two things:
+
+1. **Sort priority during prompt assembly.** Loaded skills are ordered by tier so higher-priority guidance lands first:
+
+   | `metadata.type` | Priority |
+   |---|---|
+   | `principle` | 0 (first) |
+   | `guardrail` | 1 |
+   | `reference`, any other value, or unset | 2 (last) |
+
+2. **Filtering.** `mars skills list --type <value>` matches `metadata.type` by exact string.
+
+In the launch bundle, a skill with no `metadata.type` has `skill_type` `reference`. Custom values (such as `workflow`) sort at priority 2 and stay filterable by their exact string, but gain no behavior beyond `reference`.
 
 ---
 
-## Unknown Fields
+## `harness-overrides`
 
-Skill frontmatter fields not listed above are **passed through** to all native targets unchanged. Mars preserves unrecognized fields verbatim during lowering — harness-specific fields like Claude Code's `argument-hint` and `arguments` survive compilation and reach the target artifact.
-
-This means you can add harness-native fields directly to your skill frontmatter and they will appear in the compiled output for every target. Mars does not validate or interpret them — it copies the YAML value as-is.
+A skill takes the same `harness-overrides` table as an Agent: a map of harness name to the native keys that harness's `SKILL.md` should carry. Mars writes the block for each harness into that harness's skill file (and plugin tree) and into no other. A key Mars lowers itself (`name`, `description`, `license`, `metadata`, `disable-model-invocation`, `user-invocable`, and Cursor's `alwaysApply`) keeps Mars's value; the override is dropped with a warning.
 
 ```yaml
 ---
 name: my-skill
 description: Does a thing
-argument-hint: "What should I review?"
-arguments:
-  - name: target
-    description: File or directory to review
-    required: true
+harness-overrides:
+  claude:
+    argument-hint: "What should I review?"
 ---
 ```
+
+Importing a Claude skill moves Claude's own keys (`argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) here, unchanged and in file order, with an info note per file (`skill.claude-keys-moved`, in `Prepared.changes`; `mars sync` prints one line per package with the count of files translated). `.claude/` keeps them; no other harness sees them. `model` and `effort` have schema meaning on Agents only, so a skill's are Claude's.
+
+## Unknown Fields
+
+A skill frontmatter field not listed above is kept in the authored file but written to **no** native file, so a Claude-only key never leaks into a Codex or OpenCode skill. Each one produces a `field.unknown` warning that says where harness-specific keys belong: `harness-overrides.<harness>`.
 
 ## Per-Harness Lowering
 
@@ -252,11 +172,10 @@ Mars compiles universal frontmatter fields to each target's native field names d
 | `model-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | `alwaysApply: false`, `description` kept |
 | `user-invocable: false` | preserved | `user-invocable: false` | dropped | dropped | dropped | dropped |
 | `user-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | (omit) |
-| `tools` | preserved | `allowed-tools` (+ projected MCP grants) | dropped | dropped | `allowed-tools` | dropped |
-| `disallowed-tools` | preserved | `disallowed-tools` (+ projected MCP denials) | dropped | dropped | `disallowed-tools` | dropped |
-| `mcp(...)` in `tools` / `disallowed-tools` | preserved | projected into `allowed-tools` / `disallowed-tools` | approximate | approximate | dropped | approximate |
 | `license` | preserved | `license` | `license` | `license` | `license` | `license` |
 | `metadata` | preserved | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` |
+| unknown fields | preserved | dropped | dropped | dropped | dropped | dropped |
+| `harness-overrides.<target>` | preserved | extra keys | extra keys | extra keys | extra keys | extra keys |
 
 ¹ Codex gets `openai.yaml` beside the skill's `SKILL.md` (`policy:` with `allow_implicit_invocation: false`) only when the source skill explicitly sets `model-invocable: false`. An absent or `true` value writes nothing, because Codex allows implicit invocation by default. The field never appears in the Codex `SKILL.md`.
 
@@ -310,7 +229,7 @@ Source tree:
 
 ```
 skills/my-skill/
-  SKILL.md          # base: model-invocable: false, tools: {bash(git *): allow}
+  SKILL.md          # base: model-invocable: false
   variants/
     claude/
       SKILL.md      # Claude-specific instructions
@@ -324,7 +243,7 @@ After `mars sync`:
 - `.claude/skills/my-skill/SKILL.md` — Claude lowering of base frontmatter + claude variant body
 - `.codex/skills/my-skill/SKILL.md` — Codex lowering of base frontmatter + codex variant body
 
-A launch bundle for a Claude agent that loads `my-skill` carries the Claude variant body, with `type` and other metadata from the base frontmatter.
+A launch bundle for a Claude agent that loads `my-skill` carries the Claude variant body, with `skill_type` (from `metadata.type`) and other metadata from the base frontmatter.
 
 ---
 
@@ -338,24 +257,24 @@ The launch bundle reads skills from `.mars/skills/`; Meridian gets skill content
 
 ## Diagnostics
 
-Mars emits diagnostics during `mars sync` and `mars validate` for skill compilation issues.
+Mars reads every skill with the schema reader and emits diagnostics during `mars sync`, `mars check` and `mars validate`.
 Field-loss diagnostics also surface via `mars check` and `mars init`, which run a
-lossiness preview (`lossiness_preview::collect_source_lossiness_diagnostics`)
+lossiness preview (`lossiness_preview::collect_prepared_source_lossiness_diagnostics`)
 against the project's configured managed targets.
 
 | Code | Severity | Cause |
 |---|---|---|
-| `skill-schema-error` | error | Invalid or malformed frontmatter, including removed `invocation`, `disable-model-invocation`, or `allow_implicit_invocation` fields; the parser-level variant for removed fields is `RemovedField` |
+| `field.removed` | error | A removed key (see [Removed fields](#removed-fields)); the message names the replacement |
+| `field.required` | error | `name` or `description` is missing or empty in a skill with frontmatter |
+| `field.type` | error | A field has the wrong type, such as a non-string `metadata.type` or `model-invocable: yes` |
+| `field.unknown` | warning | An unknown field; it stays in the file and reaches no native file |
+| `skill.claude-keys-moved` | info | Import moved Claude-only keys to `harness-overrides.claude` |
+| `skill.claude-keys-conflict` | warning | A Claude-only key was dropped because `harness-overrides.claude` already sets it; the override's value wins |
+| `skill.claude-keys-unmoved` | warning | Claude-only keys stayed in place because `harness-overrides` or `harness-overrides.claude` is not a mapping |
+| `skill.no-frontmatter` | warning | A body-only skill |
 | `skill-field-dropped` | metadata | Internal lossiness metadata for fields with no native equivalent; used by verbose tooling, not a guaranteed user-visible warning |
-| `skill-schema-warning` | warning | Non-fatal parse issue |
 | `skill-variant-unknown-harness` | warning | Unknown harness key under `variants/` |
 | `skill-variant-missing-skill` | warning | Model variant directory has no `SKILL.md` |
+| `skill-schema-error` | error | A selected variant's frontmatter is malformed |
 
-`skill-field-dropped` entries with `Dropped` lossiness are currently suppressed in normal projection output; only `Approximate` entries produce user-visible warnings.
-
-The `skill-schema-warning` for non-canonical `allowed-tools` is a **Validation**
-category diagnostic and is **not** gated by `surface_lossiness_warnings`. It is
-always emitted when the condition is detected at the staging boundary, regardless
-of whether field-loss warnings are configured.
-
-Errors in frontmatter parsing skip frontmatter compilation for that skill; the body is still projected.
+A skill with an error fails `mars sync`, `mars check` and `mars validate` for its package before any content is written. `skill-field-dropped` entries with `Dropped` lossiness are currently suppressed in normal projection output; only `Approximate` entries produce user-visible warnings.

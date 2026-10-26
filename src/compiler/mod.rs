@@ -13,7 +13,6 @@ pub mod config_entries;
 pub(crate) mod harness_descriptor;
 pub mod hooks;
 /// Hook compiler lane: native event discovery, validation, and ordering.
-pub(crate) mod invocability;
 pub(crate) mod lossiness;
 pub(crate) mod lossiness_preview;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
@@ -23,8 +22,6 @@ pub(crate) mod native_agent_manifest;
 mod native_agents;
 /// Skill frontmatter compiler lane: universal schema parsing and native lowering.
 pub mod skills;
-pub(crate) mod tool_names;
-pub(crate) mod tool_natives;
 pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
@@ -75,9 +72,31 @@ pub fn compile(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<SyncReport, MarsError> {
+    compile_inner(ctx, ir, request, diag, true)
+}
+
+pub(crate) fn compile_reporting(
+    ctx: &MarsContext,
+    ir: ReaderIr,
+    request: &SyncRequest,
+    diag: &mut DiagnosticCollector,
+) -> Result<SyncReport, MarsError> {
+    compile_inner(ctx, ir, request, diag, false)
+}
+
+fn compile_inner(
+    ctx: &MarsContext,
+    ir: ReaderIr,
+    request: &SyncRequest,
+    diag: &mut DiagnosticCollector,
+    enforce_diagnostic_gate: bool,
+) -> Result<SyncReport, MarsError> {
     // Phase 3: assign dest paths, handle collisions, rewrite frontmatter refs.
     let targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
 
+    if enforce_diagnostic_gate {
+        diag.fail_on_errors()?;
+    }
     // Phase 4: diff + plan.
     let planned = create_plan(ctx, targeted, request, diag)?;
 
@@ -89,8 +108,32 @@ pub fn compile(
     // Hook schemas and native allowlists are resolved before any mutation.
     config_entries::preflight_config_entries(ctx, &planned.targeted, request.options.force, diag)?;
 
+    if enforce_diagnostic_gate {
+        diag.fail_on_errors()?;
+    }
     // Phase 5: persist config mutations, apply plan to canonical store.
-    let applied = apply_plan(ctx, planned, request)?;
+    let mut applied = apply_plan(ctx, planned, request)?;
+    if !request.options.dry_run {
+        let pending = applied
+            .planned
+            .targeted
+            .resolved
+            .preparation
+            .path()
+            .to_path_buf();
+        let published = ctx.project_root.join(".mars/staging");
+        crate::platform::fs::publish_staging_generation(&pending, &ctx.project_root.join(".mars"))?;
+        applied
+            .planned
+            .targeted
+            .target
+            .rebase_source_root(&pending, &published);
+        for node in applied.planned.targeted.resolved.graph.nodes.values_mut() {
+            if let Ok(relative) = node.rooted_ref.package_root.strip_prefix(&pending) {
+                node.rooted_ref.package_root = published.join(relative);
+            }
+        }
+    }
 
     // Phase 3.2 / 3.3: Native agent surfaces — scan once; reconcile + compile after target sync.
     let effective_settings = &applied.planned.targeted.resolved.loaded.effective.settings;
@@ -123,6 +166,7 @@ pub fn compile(
                 &models_cache,
                 routing_settings,
             )
+            .with_settings(effective_settings.clone())
         });
     let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
 
@@ -234,7 +278,7 @@ pub fn suppress_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome>
         .iter()
         .cloned()
         .map(|mut outcome| {
-            if outcome.item_id.kind == crate::lock::ItemKind::Agent {
+            if outcome.item_id.kind == mars_schema::item::ItemKind::Agent {
                 outcome.action = ActionTaken::Removed;
             }
             outcome
@@ -250,7 +294,7 @@ pub fn suppress_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome>
 pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
     outcomes
         .iter()
-        .filter(|outcome| outcome.item_id.kind != crate::lock::ItemKind::Agent)
+        .filter(|outcome| outcome.item_id.kind != mars_schema::item::ItemKind::Agent)
         .cloned()
         .collect()
 }
@@ -258,11 +302,12 @@ pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
 #[cfg(test)]
 mod skill_surface_tests {
     use super::*;
-    use crate::compiler::agents::HarnessKind;
     use crate::config::AgentEmission;
-    use crate::lock::{ItemId, ItemKind};
+    use crate::lock::ItemId;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::{DestPath, ItemName};
+    use mars_schema::HarnessId;
+    use mars_schema::item::ItemKind;
 
     #[test]
     fn native_agent_emission_defaults_to_standalone_auto() {
@@ -330,7 +375,7 @@ mod skill_surface_tests {
     #[test]
     fn agent_copy_supersedes_meridian_managed_auto() {
         let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessKind::Claude],
+            harnesses: vec![HarnessId::Claude],
             include_fanout: false,
         };
         assert!(matches!(
@@ -342,7 +387,7 @@ mod skill_surface_tests {
     #[test]
     fn agent_copy_supersedes_never_emission() {
         let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessKind::Claude],
+            harnesses: vec![HarnessId::Claude],
             include_fanout: false,
         };
         assert!(matches!(
@@ -354,7 +399,7 @@ mod skill_surface_tests {
     #[test]
     fn agent_emission_always_takes_precedence_over_agent_copy() {
         let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessKind::Claude],
+            harnesses: vec![HarnessId::Claude],
             include_fanout: false,
         };
         assert_eq!(

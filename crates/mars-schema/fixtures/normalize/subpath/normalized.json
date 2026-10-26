@@ -1,0 +1,91 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "mono/tools/pkg",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "agent-skills",
+        "source": {
+          "name": "mono",
+          "subpath": "tools/pkg"
+        },
+        "selected_items": [
+          "skills/inside/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "agent-skills",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "mono/tools/pkg"
+              ]
+            ],
+            "fields": {
+              "name": "mono/tools/pkg",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "inside",
+            "source_path": "skills/inside/SKILL.md",
+            "output_path": "skills/inside/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "inside"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "inside",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

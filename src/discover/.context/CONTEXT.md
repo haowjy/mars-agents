@@ -1,40 +1,44 @@
 # src/discover/ — Source Item Discovery
 
-Discovers package-provided agents, skills, hooks, and bootstrap docs before resolve/sync installs them.
+`mars-schema` is the authority for Agent and skill selection, including Claude plugin and
+marketplace manifests and skill trees (`inspect`, `normalize`). Resolver and plugin paths call the
+binary-only inventory here for hooks and bootstrap documents, then combine it with
+`Prepared.definitions`; they do not run the compatibility all-kind walk.
 
 ## Contract
 
-Discovery is convention-based. A single bounded recursive walk starts at the rooted package directory and scans any directory named, up to `MAX_DISCOVERY_WALK_DEPTH = 5`:
+`discover` selects the kinds `mars-schema` does not own: hooks and bootstrap documents
+(`discover_binary_owned_items`). `package_items` adds the package's Agents and skills from the
+`Prepared` result each caller already holds (`definition_item` maps one definition; a skill's item
+path is the parent of its output path). Nothing here walks a tree for Agents or skills, and nothing
+may: crate preparation owns those definitions.
 
-- `agents/` for `*.md` agent profiles
-- `skills/` for child directories containing `SKILL.md`
-- `bootstrap/` for child directories containing `BOOTSTRAP.md`
-
-The same walk is used for packages with `mars.toml`, packages without `mars.toml`, and local `.mars-src/` roots.
+Bootstrap discovery is convention-based. It uses `mars_schema::discover::walk_dirs`, the one bounded walk the crate selects Agents and skills with, and scans each directory named `bootstrap/` it reaches for child directories containing `BOOTSTRAP.md`. The walk owns the boundary (depth five, hidden directories, the skip list, `[plugin].dir`, generated plugin trees); nothing here keeps a copy of it.
 
 Hooks are the exception to the layered walk: only direct children of the
 package-root `hooks/` directory are discovered. The compiler and general item
 discovery share that directory enumerator, so a hook cannot be listed and then
 fail resolution because a second scanner searched a different root.
 During target construction, strict hook parsing supplies the corresponding
-`DiscoveredItem`s back to the convention walk, preserving grounding and collision
-checks without parsing `hook.toml` twice.
+`DiscoveredItem`s, preserving collision checks without parsing `hook.toml` twice.
 
-After convention scanning, discovery is globally grounded to the shallowest logical layer that contains convention items. Agents, skills, and bootstrap docs are treated as one package layer: if `skills/foo` exists at the package layer, deeper `examples/skills/bar` or vendored nested containers are ignored. If the only convention items are nested, that nested layer becomes the grounded package layer and is still discovered.
+Bootstrap documents are grounded to the shallowest logical layer that contains any: deeper
+vendored `bootstrap/` containers are ignored. Grounding sees only bootstrap documents, not Agents or
+skills.
 
 ## Current-package self inputs
 
-`local_source` opts into this walk only when the project declares `[package]`,
-then selects agents/skills after grounding (other convention kinds still affect
-the occupied layer). `.mars-src` is discovered separately and wins matching
-`(kind, name)` definitions before staging. Removing shallower items can promote
-nested distribution items; there is no permanent `cw/` exclusion.
+`local_source` takes the project's Agents and skills from preparation when the project declares
+`[package]`. `.mars-src` is discovered separately and wins matching `(kind, name)` definitions
+before staging.
 
 Directories containing a valid `.mars-plugin.json` are generated plugin trees and are
-excluded at any depth, including hook and MCP discovery, with one info diagnostic per skipped
-path. A valid package-relative `[plugin].dir` is a stronger source boundary: discovery excludes it
-by path without reporting it, even before a sentinel exists, so the package's own committed output
-never adds noise to `sync` or `check`. Canonical staging applies the sentinel boundary before any
+excluded wherever the bounded walk meets them (the walk checks the marker of each directory it is
+about to enter, and never scans the tree for markers), including hook and bootstrap discovery, with one
+info diagnostic per skipped path. A valid package-relative `[plugin].dir`, which the crate reads
+from `mars.toml`, is a stronger source boundary: the walk excludes it by path without reporting
+it, even before a sentinel exists, so the package's own committed output never adds noise to
+`sync` or `check`. Canonical staging applies the sentinel boundary before any
 downstream copy or hash; those lower-level primitives remain byte-faithful. The authored-tree
 filesystem walk also protects local-source installs that bypass whole-package staging. Other
 configured non-hidden output trees remain discoverable; use hidden targets for those authored-root
@@ -53,17 +57,17 @@ subpath = ".claude"
 dialect = "claude"
 ```
 
-With that rooting, `agents/` and `skills/` are non-hidden children of the effective package root and are discovered normally.
+With that rooting, the foreign `agents/` and `skills/` are non-hidden children of the effective package root and `normalize` reads them.
 
 ## Root `SKILL.md`
 
-A package-root `SKILL.md` is a flat-root skill fallback only when no agents or skills were found by convention. Bootstrap docs can still accompany a flat-root skill through explicit plugin-manifest declarations.
+A package-root `SKILL.md` is a flat-root skill that preparation reports with an output path of `SKILL.md`; `definition_item` gives it the item path ".". Bootstrap docs can still accompany it through explicit plugin-manifest declarations. A root skill of a manifest-free dependency is relocated to `skills/<slug>/` by `normalize`.
 
 ## Manifest declarations
 
-Claude plugin manifests (`.claude-plugin/plugin.json` and `marketplace.json`) are explicit declarations, not auto-scanning. Their `./` paths are normalized, checked to stay under the package root, and then scanned/registered according to the declared item kind.
+Only `bootstrapDocs` is read from `.claude-plugin/plugin.json` and `marketplace.json` here; the paths are normalized, checked to stay under the package root, and registered as bootstrap docs. Skills and Agents a manifest lists are the schema crate's (`claude::manifest`), where the manifest's lists add to or replace the default folders as Claude does.
 
-Manifest-declared items and convention items share one duplicate rule: if two discovered items have the same `(kind, name)`, discovery raises `DiscoveryCollision`. There is no precedence order or silent shadowing inside a single source.
+Hooks and bootstrap documents share one duplicate rule: if two discovered items have the same `(kind, name)`, discovery raises `DiscoveryCollision`. Two Agents or two skills with one slug are the crate's `import.duplicate-slug` error, reported by preparation. There is no precedence order or silent shadowing inside a single source.
 
 ## Rationale
 

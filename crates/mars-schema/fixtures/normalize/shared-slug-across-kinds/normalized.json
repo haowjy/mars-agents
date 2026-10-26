@@ -1,0 +1,135 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "selected_items": [
+          "agents/review.md",
+          "skills/review/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "package"
+              ]
+            ],
+            "fields": {
+              "name": "package",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "review",
+            "source_path": "agents/review.md",
+            "output_path": "agents/review.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "review"
+                ],
+                [
+                  "description",
+                  "An agent."
+                ]
+              ],
+              "fields": {
+                "name": "review",
+                "description": "An agent.",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "You are an agent.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "review",
+            "source_path": "skills/review/SKILL.md",
+            "output_path": "skills/review/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "review"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "review",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

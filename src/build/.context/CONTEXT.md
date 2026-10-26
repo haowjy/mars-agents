@@ -16,18 +16,16 @@ must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configura
 caches, or installed harnesses. `plugin::output::stage` owns staging and sentinel publication;
 its lock-owning `StagedPlugin` alone replaces the destination when published.
 
-The publish variant of rooted-package staging selects graph-filtered item roots, eligible MCP server
-directories, and all hook roots (for strict pre-filter compatibility validation) rather than
-walking the package checkout. Staging and the input fingerprint share that typed item/MCP inventory.
-Manifestless foreign sources separately copy manifest metadata with declarations filtered to
-selected items. The one authored walker takes a symlink policy: publication dereferences only links
-whose canonical targets remain inside the owning package and rejects special files, while sync uses
-its historical follow behavior. Repo tooling and filtered-out items are ignored. The
-root-package fingerprint includes inventory kinds, but not generated catalog metadata. Flat-root
-skills keep authored resources but exclude standard repo tooling and top-level special filesystem
-nodes from their publication inventory. Skill rename content is written once into graph staging
-before native projection, and plain derived-tree copies omit hook fragment paths belonging only to
-other targets.
+Plugin staging materializes each graph node's prepared package — its manifest, definition bytes and
+listed payload — then copies the binary-owned hook, MCP, bootstrap and source-manifest surfaces. It
+does not walk the checkout for definitions, and a manifestless foreign source materializes in the
+schema v1 layout `normalize` gave it. The input fingerprint is separate: it walks the root package's
+discovered item and MCP server-directory inventory, confines links to the package, rejects special
+files, and includes inventory kinds but not generated catalog metadata. Staging's binary-owned
+subtree copies use sync's historical follow behavior. Flat-root skills keep authored resources but
+exclude standard repo tooling and top-level special filesystem nodes from their publication
+inventory. Skill rename content is written once into graph staging before native projection, and
+plain derived-tree copies omit hook fragment paths belonging only to other targets.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three tree
 identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. `build/plugin/spec.rs`
@@ -256,7 +254,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, 
            ├─ models::ensure_fresh()                   (catalog for native slug + probes)
            ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)
-           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, network, autocompact)
+           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, network, alias compaction)
            └─ runnable::resolve_routing()              (populate Routing with aggregate report)
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)

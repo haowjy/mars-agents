@@ -15,17 +15,17 @@ use std::path::Path;
 
 use super::metadata::PackageMetadata;
 use super::tree::{claude, cursor, opencode};
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::harness_descriptor::{CompilerHarnessDescriptor, descriptor};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::plugin_metadata::GeneratedRootFile;
 use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
+use mars_schema::HarnessId;
 
 pub(super) type AgentPolicy = fn(
     &str,
-    &crate::frontmatter::Frontmatter,
+    &mars_schema::frontmatter::Frontmatter,
     &TargetItem,
     &mut DiagnosticCollector,
 ) -> Result<String, MarsError>;
@@ -198,7 +198,7 @@ impl PluginRoot {
 pub(super) struct TreeProfile {
     /// Staged directory name and the report's tree key.
     pub(super) key: &'static str,
-    pub(super) harness: HarnessKind,
+    pub(super) harness: HarnessId,
     pub(super) root_file: RootFile,
     pub(super) dropped_agent_fields: &'static [&'static str],
     pub(super) approximate_lowers_to_dropped: bool,

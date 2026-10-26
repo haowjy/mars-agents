@@ -1,0 +1,30 @@
+{
+  "classification": {
+    "kind": "invalid"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [],
+      "fields": null,
+      "body": null,
+      "diagnostics": [
+        {
+          "code": "manifest.package-required",
+          "severity": "error",
+          "path": [
+            "package"
+          ],
+          "message": "manifest requires a [package] table"
+        }
+      ]
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [],
+  "payload": [],
+  "diagnostics": {}
+}

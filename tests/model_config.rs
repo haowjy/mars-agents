@@ -916,7 +916,7 @@ model = "gemini-2.5-pro"
         "expected invalid harness diagnostic, stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("valid harnesses: claude, codex, pi, cursor, opencode"),
+        stderr.contains("valid harnesses: claude, codex, pi, opencode, cursor"),
         "expected valid harness list, stderr:\n{stderr}"
     );
 }

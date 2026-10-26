@@ -1,0 +1,69 @@
+{
+  "gh": {
+    "kind": "plugin",
+    "dialect": {
+      "dialect": "claude",
+      "evidence": {
+        "source": "predicted",
+        "paths": [
+          ".claude-plugin/plugin.json"
+        ]
+      }
+    },
+    "also_found": [],
+    "name": "gh",
+    "version": "0.3.0",
+    "description": "From GitHub",
+    "plugins": [],
+    "items": [
+      {
+        "kind": "skill",
+        "slug": "remote-skill",
+        "source_path": "skills/remote-skill/SKILL.md",
+        "skill_root": "skills/remote-skill",
+        "output_path": "skills/remote-skill/SKILL.md"
+      }
+    ],
+    "diagnostics": {}
+  },
+  "market": {
+    "kind": "plugin",
+    "dialect": {
+      "dialect": "claude",
+      "evidence": {
+        "source": "predicted",
+        "paths": [
+          ".claude-plugin/marketplace.json"
+        ]
+      }
+    },
+    "also_found": [],
+    "name": "market",
+    "plugins": [],
+    "items": [],
+    "diagnostics": {}
+  },
+  "subdir": {
+    "kind": "plugin",
+    "dialect": {
+      "dialect": "claude",
+      "evidence": {
+        "source": "predicted",
+        "paths": []
+      }
+    },
+    "also_found": [],
+    "name": "subdir",
+    "plugins": [],
+    "items": [
+      {
+        "kind": "skill",
+        "slug": "deep",
+        "source_path": "skills/deep/SKILL.md",
+        "skill_root": "skills/deep",
+        "output_path": "skills/deep/SKILL.md"
+      }
+    ],
+    "diagnostics": {}
+  }
+}

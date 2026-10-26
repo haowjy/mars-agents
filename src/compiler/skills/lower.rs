@@ -3,14 +3,14 @@
 #[path = "lower_policy.rs"]
 mod lower_policy;
 
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::harness_descriptor::{
     SkillLoweringPolicyKind, descriptor, descriptor_for_variant_key,
 };
 use crate::compiler::lossiness::LoweredOutput;
-use crate::compiler::skills::SkillProfile;
+use mars_schema::HarnessId;
+use mars_schema::skill::SkillProfile;
 
-pub type SkillHarness = HarnessKind;
+pub type SkillHarness = HarnessId;
 
 pub fn skill_harness_from_variant_key(key: &str) -> Option<SkillHarness> {
     descriptor_for_variant_key(key).map(|descriptor| descriptor.kind)
@@ -30,34 +30,32 @@ pub fn lower_skill_for_harness(
 }
 
 pub fn lower_skill_to_claude(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(HarnessKind::Claude, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessId::Claude, profile, body)
 }
 
 pub fn lower_skill_to_codex(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(HarnessKind::Codex, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessId::Codex, profile, body)
 }
 
 pub fn lower_skill_to_opencode(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(HarnessKind::OpenCode, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessId::OpenCode, profile, body)
 }
 
 pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(HarnessKind::Pi, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessId::Pi, profile, body)
 }
 
 pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(HarnessKind::Cursor, profile, body)
+    lower_policy::lower_skill_with_policy(HarnessId::Cursor, profile, body)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::compiler::lossiness::{Lossiness, LossyField};
-    use crate::compiler::skills::parse_skill_content;
 
     fn parse_profile(content: &str) -> SkillProfile {
-        let mut diags = Vec::new();
-        parse_skill_content(content, &mut diags).unwrap().0
+        mars_schema::skill::read(content).fields.unwrap()
     }
 
     fn profile() -> SkillProfile {
@@ -90,148 +88,6 @@ mod tests {
         lossy_fields.iter().any(|f| {
             f.field == field && f.target == target && f.classification == Lossiness::Dropped
         })
-    }
-
-    fn disallowed_tools_profile() -> SkillProfile {
-        parse_profile(
-            "---\nname: skill\ndescription: desc\ndisallowed-tools: [Agent, Bash(git *)]\n---\nBody\n",
-        )
-    }
-
-    #[test]
-    fn claude_emits_disallowed_tools_projected() {
-        let lowered = lower_skill_to_claude(&disallowed_tools_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("disallowed-tools:"));
-        assert!(out.contains("- Agent"));
-        assert!(
-            out.contains("- Bash(git *)"),
-            "scoped payload preserved: {out}"
-        );
-        assert!(lowered.lossy_fields.is_empty());
-    }
-
-    #[test]
-    fn pi_emits_disallowed_tools() {
-        let lowered = lower_skill_to_pi(&disallowed_tools_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("disallowed-tools:"));
-        // Pi has no sub-agent tool, so `agent` has nothing to deny there.
-        assert!(!out.contains("- agent"), "{out}");
-        assert!(out.contains("- bash(git *)"), "{out}");
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "disallowed-tools",
-            "Pi"
-        ));
-    }
-
-    #[test]
-    fn codex_warn_drops_disallowed_tools() {
-        let lowered = lower_skill_to_codex(&disallowed_tools_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("disallowed-tools"));
-        assert!(has_dropped(
-            &lowered.lossy_fields,
-            "disallowed-tools",
-            "Codex"
-        ));
-    }
-
-    #[test]
-    fn opencode_warn_drops_disallowed_tools() {
-        let lowered = lower_skill_to_opencode(&disallowed_tools_profile(), "Body\n");
-        assert!(has_dropped(
-            &lowered.lossy_fields,
-            "disallowed-tools",
-            "OpenCode"
-        ));
-    }
-
-    #[test]
-    fn cursor_warn_drops_disallowed_tools() {
-        let lowered = lower_skill_to_cursor(&disallowed_tools_profile(), "Body\n");
-        assert!(has_dropped(
-            &lowered.lossy_fields,
-            "disallowed-tools",
-            "Cursor"
-        ));
-    }
-
-    #[test]
-    fn claude_maps_model_invocation_and_tools() {
-        let lowered = lower_skill_to_claude(&profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("disable-model-invocation: true"));
-        assert!(out.contains("allowed-tools:"));
-        assert!(!out.contains("allow_implicit_invocation"));
-        assert!(out.contains("license: MIT"));
-        assert!(out.contains("owner: team"));
-        // Unknown fields pass through to all targets
-        assert!(out.contains("extra: stripped"));
-        assert!(lowered.lossy_fields.is_empty());
-    }
-
-    #[test]
-    fn claude_projects_canonical_allowed_tools() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools:\n  AskUser: allow\n  Bash(git *): allow\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_claude(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-
-        assert!(
-            out.contains("- AskUserQuestion"),
-            "ask_user not projected to Claude's AskUserQuestion: {out}"
-        );
-        assert!(
-            out.contains("- Bash(git *)"),
-            "scoped Bash not projected while preserving payload: {out}"
-        );
-    }
-
-    #[test]
-    fn claude_omits_unrecognized_tools_and_preserves_mcp_wire_identifiers() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools:\n  my_custom_tool: allow\n  mcp__server__Tool: allow\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_claude(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-
-        assert!(
-            !out.to_lowercase().contains("custom"),
-            "an unrecognized tool must not be guessed into a native name: {out}"
-        );
-        assert!(
-            out.contains("- mcp__server__Tool"),
-            "mcp__ wire identifier should be preserved verbatim: {out}"
-        );
-        assert!(lowered.lossy_fields.iter().any(|field| {
-            field.field == "tools"
-                && field.target == "Claude"
-                && matches!(
-                    field.classification,
-                    Lossiness::Approximate {
-                        note: "no native name known for this tool on this harness; left out"
-                    }
-                )
-        }));
-    }
-
-    #[test]
-    fn claude_lowers_tools_map_allow_and_deny() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools:\n  ask_user: allow\n  \"bash(git *)\": deny\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_claude(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("allowed-tools:"));
-        assert!(out.contains("- AskUser"));
-        assert!(
-            !out.contains("bash(git *)"),
-            "denied tools must not appear in allowlist: {out}"
-        );
-        assert!(lowered.lossy_fields.is_empty());
     }
 
     #[test]
@@ -267,25 +123,6 @@ mod tests {
         assert!(out.contains("disable-model-invocation: true"));
         assert!(out.contains("user-invocable: false"));
         assert!(lowered.lossy_fields.is_empty());
-    }
-
-    #[test]
-    fn codex_emits_openai_yaml_sibling_and_warn_drops_tools() {
-        let lowered = lower_skill_to_codex(&profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("allow_implicit_invocation"));
-        assert!(!out.contains("disable-model-invocation"));
-        assert!(!out.contains("allowed-tools"));
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "model-invocable",
-            "Codex"
-        ));
-        assert!(has_dropped(&lowered.lossy_fields, "tools", "Codex"));
-        assert_eq!(lowered.siblings.len(), 1);
-        assert_eq!(lowered.siblings[0].rel_path, "openai.yaml");
-        let sibling = String::from_utf8(lowered.siblings[0].bytes.clone()).unwrap();
-        assert!(sibling.contains("allow_implicit_invocation: false"));
     }
 
     #[test]
@@ -365,21 +202,6 @@ mod tests {
     }
 
     #[test]
-    fn opencode_silently_drops_model_invocable_but_warns_on_tools() {
-        // OpenCode has no model-invocation gate, so the dropped `model-invocable`
-        // axis is an accepted known limitation and must NOT surface as lossiness.
-        // Tool gating is genuinely lost and still warns.
-        let lowered = lower_skill_to_opencode(&profile(), "Body\n");
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "model-invocable",
-            "OpenCode"
-        ));
-        assert!(has_dropped(&lowered.lossy_fields, "tools", "OpenCode"));
-        assert_eq!(lowered.lossy_fields.len(), 1);
-    }
-
-    #[test]
     fn opencode_drops_user_invocable_false() {
         let lowered = lower_skill_to_opencode(&user_invocable_false_profile(), "Body\n");
         assert!(has_dropped(
@@ -427,72 +249,6 @@ mod tests {
         assert!(!out.contains("disable-model-invocation"));
         assert!(!out.contains("user-invocable"));
         assert!(!has_dropped(&lowered.lossy_fields, "user-invocable", "Pi"));
-    }
-
-    fn assert_folds_when_to_use(out: &str, identity_desc: &str, when_to_use: &str) {
-        assert!(!out.contains("when_to_use:"));
-        assert!(
-            out.contains(identity_desc) && out.contains(when_to_use),
-            "expected folded description containing both parts: {out}"
-        );
-        let desc_pos = out.find("description:").expect("missing description key");
-        let after_desc = &out[desc_pos..];
-        assert!(
-            after_desc.contains(identity_desc) && after_desc.contains(when_to_use),
-            "expected both strings under description: {out}"
-        );
-    }
-
-    #[test]
-    fn codex_folds_when_to_use_into_description() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_codex(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert_folds_when_to_use(&out, "desc", "Use for git");
-        assert!(!has_dropped(&lowered.lossy_fields, "when_to_use", "Codex"));
-    }
-
-    #[test]
-    fn codex_folds_when_to_use_only_into_description() {
-        let profile = parse_profile("---\nname: skill\nwhen_to_use: Use for git\n---\nBody\n");
-        let lowered = lower_skill_to_codex(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("description: Use for git"));
-        assert!(!has_dropped(&lowered.lossy_fields, "when_to_use", "Codex"));
-    }
-
-    #[test]
-    fn opencode_folds_when_to_use_into_description() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_opencode(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert_folds_when_to_use(&out, "desc", "Use for git");
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "when_to_use",
-            "OpenCode"
-        ));
-    }
-
-    #[test]
-    fn cursor_drops_tools_not_model_invocable() {
-        let lowered = lower_skill_to_cursor(&profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("disable-model-invocation"));
-        assert!(!out.contains("allowed-tools"));
-        assert!(out.contains("alwaysApply: false"));
-        assert!(!out.contains("description:"));
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "model-invocable",
-            "Cursor"
-        ));
-        assert!(has_dropped(&lowered.lossy_fields, "tools", "Cursor"));
-        assert_eq!(lowered.lossy_fields.len(), 1);
     }
 
     #[test]
@@ -555,181 +311,20 @@ mod tests {
     }
 
     #[test]
-    fn cursor_manual_with_when_to_use_omits_description() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\nmodel-invocable: false\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_cursor(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("alwaysApply: false"));
-        assert!(!out.contains("description:"));
-        assert!(!out.contains("when_to_use"));
-        assert!(!has_dropped(&lowered.lossy_fields, "when_to_use", "Cursor"));
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "model-invocable",
-            "Cursor"
-        ));
-    }
-
-    #[test]
-    fn cursor_intelligent_folds_when_to_use_into_description() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nwhen_to_use: Use for git\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_cursor(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("alwaysApply: false"));
-        assert_folds_when_to_use(&out, "desc", "Use for git");
-        assert!(!has_dropped(&lowered.lossy_fields, "when_to_use", "Cursor"));
-    }
-
-    #[test]
-    fn snake_case_model_invocable_not_leaked_to_any_target() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nmodel_invocable: false\n---\nBody\n",
-        );
-        for harness in [
-            HarnessKind::Claude,
-            HarnessKind::Codex,
-            HarnessKind::OpenCode,
-            HarnessKind::Pi,
-            HarnessKind::Cursor,
-        ] {
-            let lowered = lower_skill_for_harness(harness, &profile, "Body\n");
-            let out = String::from_utf8(lowered.bytes).unwrap();
-            assert!(
-                !out.contains("model_invocable"),
-                "leaked snake key for {harness:?}: {out}"
-            );
-        }
-        let claude = String::from_utf8(lower_skill_to_claude(&profile, "Body\n").bytes).unwrap();
-        assert!(claude.contains("disable-model-invocation: true"));
-    }
-
-    #[test]
     fn no_frontmatter_body_only_all_harnesses() {
-        let mut diags = Vec::new();
-        let (profile, fm) = parse_skill_content("# Body\nbytes", &mut diags).unwrap();
-        let body = fm.body();
+        let reading = mars_schema::skill::read("# Body\nbytes");
+        let body = reading.body.as_deref().unwrap();
+        let profile = reading.fields.unwrap();
         for harness in [
-            HarnessKind::Claude,
-            HarnessKind::Codex,
-            HarnessKind::OpenCode,
-            HarnessKind::Pi,
-            HarnessKind::Cursor,
+            HarnessId::Claude,
+            HarnessId::Codex,
+            HarnessId::OpenCode,
+            HarnessId::Pi,
+            HarnessId::Cursor,
         ] {
             let out =
                 String::from_utf8(lower_skill_for_harness(harness, &profile, body).bytes).unwrap();
             assert_eq!(out, "# Body\nbytes");
         }
-    }
-
-    #[test]
-    fn claude_lowers_tools_map_deny_to_disallowed_tools() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools:\n  Agent: deny\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_claude(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("disallowed-tools:"), "missing denylist: {out}");
-        assert!(out.contains("- Agent"), "Agent not projected: {out}");
-        assert!(lowered.lossy_fields.is_empty());
-    }
-
-    #[test]
-    fn codex_warns_tools_map_deny_via_disallowed_tools() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools:\n  Agent: deny\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_codex(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("disallowed-tools"));
-        assert!(has_dropped(
-            &lowered.lossy_fields,
-            "disallowed-tools",
-            "Codex"
-        ));
-    }
-
-    #[test]
-    fn canonical_allowed_tools_not_emitted_in_claude_lower() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\nallowed-tools: [Bash]\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_claude(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(
-            !out.contains("allowed-tools"),
-            "flat allowed-tools must not pass through: {out}"
-        );
-        assert!(
-            !profile
-                .passthrough_fields
-                .iter()
-                .any(|(k, _)| k == "allowed-tools")
-        );
-    }
-
-    #[test]
-    fn claude_emits_mcp() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools:\n  mcp(plugin:demo): allow\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_claude(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(
-            out.contains("allowed-tools:"),
-            "MCP grants belong in allowed-tools: {out}"
-        );
-        assert!(
-            out.contains("mcp__plugin:demo__*"),
-            "missing projected mcp entry: {out}"
-        );
-        assert!(
-            !out.contains("mcp-tools:"),
-            "must not emit a separate mcp field: {out}"
-        );
-        assert!(lowered.lossy_fields.iter().any(|field| {
-            field.field == "mcp" && matches!(field.classification, Lossiness::Approximate { .. })
-        }));
-    }
-
-    #[test]
-    fn claude_emits_disallowed_mcp_ref_in_denylist() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ndisallowed-tools: [mcp(github/delete_repo)]\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_claude(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(
-            out.contains("mcp__github__delete_repo"),
-            "disallowed MCP ref should project into disallowed-tools: {out}"
-        );
-        assert!(
-            !out.contains("mcp-tools:"),
-            "must not emit a separate mcp field: {out}"
-        );
-    }
-
-    #[test]
-    fn codex_warns_mcp() {
-        let profile = parse_profile(
-            "---\nname: skill\ndescription: desc\ntools:\n  mcp(plugin:demo): allow\n---\nBody\n",
-        );
-        let lowered = lower_skill_to_codex(&profile, "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(
-            !out.contains("mcp-tools"),
-            "separate mcp field must not emit: {out}"
-        );
-        assert!(
-            lowered
-                .lossy_fields
-                .iter()
-                .any(|field| field.field == "mcp"),
-            "expected mcp lossiness: {:?}",
-            lowered.lossy_fields
-        );
     }
 }

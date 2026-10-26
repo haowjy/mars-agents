@@ -14,6 +14,7 @@ mod context;
 mod filter;
 mod package;
 mod path;
+mod plugin;
 mod provider;
 mod publish;
 mod requires;
@@ -29,6 +30,7 @@ use indexmap::IndexMap;
 
 pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
+pub(crate) use plugin::plugin_list;
 pub(crate) use provider::RealSourceProvider;
 pub(crate) use publish::resolve_publish_graph_from_config;
 pub use publish::{PublishLens, resolve_publish_graph};
@@ -37,14 +39,13 @@ pub(crate) use requires::{
 };
 pub use types::*;
 
-pub(crate) use package::{
-    PackageResolutionState, PendingSource, RegisteredPackage,
-    stage_rooted_package_for_publish_inputs,
-};
+pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
 #[cfg(test)]
 pub(crate) use path::apply_subpath;
 
-use crate::config::{EffectiveConfig, Manifest, SourceSpec};
+#[cfg(test)]
+use crate::config::Manifest;
+use crate::config::{EffectiveConfig, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
@@ -167,6 +168,7 @@ pub trait SourceFetcher {
 }
 
 /// Reads source manifests for transitive dependency discovery.
+#[cfg(test)]
 pub trait ManifestReader {
     fn read_manifest(
         &self,
@@ -176,8 +178,16 @@ pub trait ManifestReader {
 }
 
 /// Composite trait used by `resolve()`.
+#[cfg(not(test))]
+pub trait SourceProvider: VersionLister + SourceFetcher {}
+#[cfg(not(test))]
+impl<T> SourceProvider for T where T: VersionLister + SourceFetcher {}
+
+/// Unit-test providers may inject manifests without writing fixture files.
+#[cfg(test)]
 pub trait SourceProvider: VersionLister + SourceFetcher + ManifestReader {}
 
+#[cfg(test)]
 impl<T> SourceProvider for T where T: VersionLister + SourceFetcher + ManifestReader {}
 
 /// Resolve the full dependency graph from config.
@@ -393,12 +403,15 @@ pub fn resolve(
         );
 
         for skill_dep in skill_deps {
-            let resolved_skill = resolve_skill_ref(
+            let Some(resolved_skill) = resolve_skill_ref(
                 &skill_dep,
                 &pending_item,
                 ctx.registry(),
                 ctx.version_constraints(),
-            )?;
+            )?
+            else {
+                continue;
+            };
             if is_item_excluded(
                 ctx.materialization_filters(),
                 ctx.registry(),

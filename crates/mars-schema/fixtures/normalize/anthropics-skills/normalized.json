@@ -1,0 +1,266 @@
+{
+  "kind": "marketplace",
+  "packages": [
+    {
+      "id": "document-skills",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {
+          "name": "skills"
+        },
+        "marketplace": {
+          "plugin": "document-skills",
+          "plugin_source": {
+            "kind": "local",
+            "path": ""
+          }
+        },
+        "selected_items": [
+          "skills/pdf/SKILL.md",
+          "skills/xlsx/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/marketplace.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "document-skills"
+              ],
+              [
+                "description",
+                "Documents"
+              ]
+            ],
+            "fields": {
+              "name": "document-skills",
+              "version": "",
+              "description": "Documents",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "pdf",
+            "source_path": "skills/pdf/SKILL.md",
+            "output_path": "skills/pdf/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "pdf"
+                ],
+                [
+                  "description",
+                  "Work with PDFs."
+                ],
+                [
+                  "license",
+                  "Proprietary"
+                ]
+              ],
+              "fields": {
+                "name": "pdf",
+                "description": "Work with PDFs.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": "Proprietary",
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Use scripts/extract.py to read forms.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "xlsx",
+            "source_path": "skills/xlsx/SKILL.md",
+            "output_path": "skills/xlsx/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "xlsx"
+                ],
+                [
+                  "description",
+                  "Spreadsheets."
+                ],
+                [
+                  "license",
+                  "Proprietary"
+                ]
+              ],
+              "fields": {
+                "name": "xlsx",
+                "description": "Spreadsheets.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": "Proprietary",
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/pdf/scripts/extract.py",
+            "output_path": "skills/pdf/scripts/extract.py"
+          }
+        ],
+        "diagnostics": {
+          "skills/pdf/SKILL.md": [
+            {
+              "code": "skill.needs-scripts",
+              "severity": "warning",
+              "path": [],
+              "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "example-skills",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {
+          "name": "skills"
+        },
+        "marketplace": {
+          "plugin": "example-skills",
+          "plugin_source": {
+            "kind": "local",
+            "path": ""
+          }
+        },
+        "selected_items": [
+          "skills/skill-creator/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/marketplace.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "example-skills"
+              ],
+              [
+                "description",
+                "Examples"
+              ]
+            ],
+            "fields": {
+              "name": "example-skills",
+              "version": "",
+              "description": "Examples",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "skill-creator",
+            "source_path": "skills/skill-creator/SKILL.md",
+            "output_path": "skills/skill-creator/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "skill-creator"
+                ],
+                [
+                  "description",
+                  "Make skills."
+                ]
+              ],
+              "fields": {
+                "name": "skill-creator",
+                "description": "Make skills.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/skill-creator/agents/analyzer.md",
+            "output_path": "skills/skill-creator/agents/analyzer.md"
+          },
+          {
+            "source_path": "skills/skill-creator/references/schema.md",
+            "output_path": "skills/skill-creator/references/schema.md"
+          }
+        ],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

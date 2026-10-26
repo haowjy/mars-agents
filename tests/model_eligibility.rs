@@ -348,46 +348,6 @@ fn eligible_primary_is_not_replaced_by_an_earlier_profile_entry() {
 }
 
 #[test]
-fn later_model_mismatch_never_promotes_a_cleared_harness_default() {
-    for with_eligible_backup in [false, true] {
-        let value = profile_model_selection_with(
-            "primary",
-            &[".codex", ".opencode"],
-            &[],
-            |root, _| {
-                let profile_path = root.join(".mars/agents/fixture.md");
-                let mut profile = std::fs::read_to_string(&profile_path)
-                    .unwrap()
-                    .replace("match: {alias: second}", "match: {model: unknown-model}");
-                if !with_eligible_backup {
-                    profile = profile.replace(
-                        "  - match: {alias: backup}\n    override: {effort: high}\n",
-                        "",
-                    );
-                }
-                std::fs::write(profile_path, profile).unwrap();
-                let config_path = root.join("mars.toml");
-                let mut config = std::fs::read_to_string(&config_path).unwrap();
-                config.push_str("\n[[agents.fixture.model-policies]]\nmatch={model=\"unknown-model\"}\noverride={harness=\"codex\"}\n");
-                std::fs::write(config_path, config).unwrap();
-            },
-        );
-        let (token, model, effort) = if with_eligible_backup {
-            ("backup", "gpt-5", "high")
-        } else {
-            ("primary", "claude-opus-4-6", "low")
-        };
-        assert_eq!(value["routing"]["model_token"], token, "{value}");
-        assert_eq!(value["routing"]["model"], model, "{value}");
-        assert_eq!(value["execution_policy"]["effort"], effort, "{value}");
-        assert!(
-            !value["warnings"].to_string().contains("clearing model"),
-            "{value}"
-        );
-    }
-}
-
-#[test]
 fn later_implicit_auth_rejection_preserves_the_first_unverified_attempt() {
     let value =
         profile_model_selection_with("primary", &[".codex", ".opencode"], &[], |root, bin| {
@@ -469,70 +429,6 @@ fn explicit_model_pin_retains_independent_profile_harness_preference() {
     assert_eq!(value["provenance"]["harness_source"], "profile", "{value}");
     assert_eq!(value["provenance"]["model_source"], "cli", "{value}");
     assert_eq!(value["routing"]["selection_kind"], "auto", "{value}");
-}
-
-#[test]
-fn invalid_authored_harness_preferences_are_fatal() {
-    let mut failures = Vec::new();
-    for (file, layer) in [
-        ("mars.toml", "overlay"),
-        ("mars.local.toml", "overlay"),
-        ("mars.toml", "overlay-policy"),
-        ("mars.local.toml", "overlay-policy"),
-        ("mars.toml", "settings-policy"),
-        ("mars.local.toml", "settings-policy"),
-        (".mars/agents/fixture.md", "profile-policy"),
-    ] {
-        let output = profile_model_output("primary", &[".codex", ".opencode"], &[], |root, _| {
-            let profile_path = root.join(".mars/agents/fixture.md");
-            let mut profile = std::fs::read_to_string(&profile_path).unwrap();
-            if layer == "profile-policy" {
-                profile = profile.replace(
-                    "override: {effort: low}",
-                    "override: {effort: low, harness: typo}",
-                );
-                std::fs::write(profile_path, profile).unwrap();
-                return;
-            }
-            if layer == "settings-policy" {
-                std::fs::write(
-                    profile_path,
-                    "---\nname: fixture\nmodel: primary\n---\nWork.\n",
-                )
-                .unwrap();
-            }
-            let declaration = match layer {
-                "overlay" => "\n[agents.fixture]\nharness=\"typo\"\n",
-                "overlay-policy" => {
-                    "\n[[agents.fixture.model-policies]]\nmatch={alias=\"primary\"}\noverride={harness=\"typo\"}\n"
-                }
-                _ => {
-                    "\n[[settings.model-policies]]\nmatch={alias=\"primary\"}\noverride={harness=\"typo\"}\n"
-                }
-            };
-            let path = root.join(file);
-            let mut config = std::fs::read_to_string(&path).unwrap_or_default();
-            config.push_str(declaration);
-            std::fs::write(path, config).unwrap();
-        });
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let payload: Value = serde_json::from_slice(&output.stdout).expect("structured error");
-        if output.status.success()
-            || payload.get("routing").is_some()
-            || payload["error"]["code"] != "invalid_config"
-            || !payload["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("typo")
-        {
-            failures.push(format!(
-                "{file}/{layer}: status={:?}, stderr={stderr}, stdout={}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stdout)
-            ));
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]

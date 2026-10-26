@@ -1,0 +1,21 @@
+{
+  "kind": "schema-1",
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "helper",
+      "source_path": "agents/helper.md",
+      "output_path": "agents/helper.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "authored",
+      "source_path": "skills/authored/SKILL.md",
+      "skill_root": "skills/authored",
+      "output_path": "skills/authored/SKILL.md"
+    }
+  ],
+  "diagnostics": {}
+}

@@ -1,0 +1,157 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "agent-skills",
+        "source": {},
+        "selected_items": [
+          "skills/main/SKILL.md",
+          "skills/shared/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "agent-skills",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "package"
+              ]
+            ],
+            "fields": {
+              "name": "package",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "main",
+            "source_path": "skills/main/SKILL.md",
+            "output_path": "skills/main/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "main"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "main",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "See [guide](guide.md), [shared](../shared/README.md), [repo script](../../scripts/build.sh), [site](https://example.com/x) and [top](#heading), [draft](../dropped/SKILL.md).\n\n```\n[ignored](../nope.md)\n```\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "shared",
+            "source_path": "skills/shared/SKILL.md",
+            "output_path": "skills/shared/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "shared"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "shared",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/main/guide.md",
+            "output_path": "skills/main/guide.md"
+          },
+          {
+            "source_path": "skills/shared/README.md",
+            "output_path": "skills/shared/README.md"
+          }
+        ],
+        "diagnostics": {
+          "skills/main/SKILL.md": [
+            {
+              "code": "skill.needs-scripts",
+              "severity": "warning",
+              "path": [],
+              "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
+            },
+            {
+              "code": "skill.reference-to-skill",
+              "severity": "warning",
+              "path": [],
+              "message": "links to `../shared/README.md`, a file of skill `shared`; stored it would be `skills/shared/README.md`, and that skill is imported"
+            },
+            {
+              "code": "skill.outside-reference",
+              "severity": "warning",
+              "path": [],
+              "message": "links to `../../scripts/build.sh`, which is outside the skill and is not imported"
+            },
+            {
+              "code": "skill.reference-to-skill",
+              "severity": "warning",
+              "path": [],
+              "message": "links to `../dropped/SKILL.md`, a file of skill `dropped`; stored it would be `skills/dropped/SKILL.md`, and that skill is not imported"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

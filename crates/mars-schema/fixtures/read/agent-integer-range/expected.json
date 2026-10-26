@@ -1,0 +1,76 @@
+{
+  "frontmatter": [
+    [
+      "x-fits",
+      9007199254740991
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "x-fits"
+      ],
+      "message": "unknown field `x-fits` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "x-big"
+      ],
+      "message": "unknown field `x-big` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+    },
+    {
+      "code": "field.value",
+      "severity": "warning",
+      "path": [
+        "harness-overrides",
+        "flow",
+        "big"
+      ],
+      "message": "agent field `harness-overrides.flow.big` has invalid value `12345678901234567890`; allowed: integer within ±(2^53 − 1)"
+    },
+    {
+      "code": "yaml.non-json-value",
+      "severity": "error",
+      "path": [
+        "x-big"
+      ],
+      "message": "integer 9007199254740993 is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
+    },
+    {
+      "code": "yaml.non-json-value",
+      "severity": "error",
+      "path": [
+        "harness-overrides"
+      ],
+      "message": "integer 12345678901234567890 is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
+    }
+  ]
+}

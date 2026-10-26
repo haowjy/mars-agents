@@ -1,0 +1,34 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "demo"
+    ],
+    [
+      "schema",
+      1
+    ],
+    [
+      "description",
+      "kept"
+    ]
+  ],
+  "fields": {
+    "name": "demo",
+    "version": "",
+    "description": "kept",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "manifest.version-missing",
+      "severity": "warning",
+      "path": [
+        "package",
+        "version"
+      ],
+      "message": "package version is missing"
+    }
+  ]
+}

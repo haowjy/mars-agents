@@ -4,37 +4,27 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
-use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
-use crate::compiler::tool_names::OverlayToolName;
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
-use crate::dialect::Dialect;
 use crate::error::{ConfigError, MarsError};
-use crate::permission_set::{PermissionSet, merge_permission_set};
 use crate::types::managed_cmd;
 use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
+use mars_schema::dialect::Dialect;
+use mars_schema::model_policy::ModelPolicyRule;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
+pub use mars_schema::package::PackageMetadata as PackageInfo;
+use mars_schema::permission_set::{PermissionSet, merge_permission_set};
+use mars_schema::tool_names::OverlayToolName;
 
 pub mod layering;
 pub mod migrations;
-pub mod network;
 pub mod routing_settings;
+mod save;
 pub mod targets;
 mod user;
-
-pub use network::{NetworkHost, NetworkPolicy};
-
-pub(crate) const NETWORK_SETTINGS_KEYS: &str = "default_network (or default-network), network-allow (or network_allow), network-deny (or network_deny)";
-pub(crate) const NETWORK_OVERLAY_KEYS: &str =
-    "network, network-allow (or network_allow), network-deny (or network_deny)";
-
-pub(crate) fn looks_like_network_key(key: &str) -> bool {
-    key.starts_with("network")
-        || key.starts_with("default_network")
-        || key.starts_with("default-network")
-}
 
 pub use layering::{
     merged_settings, overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays,
@@ -66,33 +56,6 @@ pub struct Config {
     pub agents: IndexMap<String, AgentOverlay>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub skills: IndexMap<String, SkillOverlay>,
-}
-
-/// Package metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct PackageInfo {
-    pub name: String,
-    pub version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authors: Option<toml::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub homepage: Option<toml::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub license: Option<toml::Value>,
-    #[serde(
-        default,
-        rename = "requires-mars",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub requires_mars: Option<String>,
-    #[serde(
-        default,
-        rename = "requires-meridian",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub requires_meridian: Option<String>,
 }
 
 pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), ConfigError> {
@@ -198,11 +161,17 @@ pub struct InstallDep {
     pub subpath: Option<SourceSubpath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Inbound lift dialect for this dependency (see `crate::dialect::Dialect`).
+    /// Inbound lift dialect for this dependency (see `mars_schema::dialect::Dialect`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialect: Option<Dialect>,
+    /// The plugin to install from the marketplace at this source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
     #[serde(flatten)]
     pub filter: FilterConfig,
+    /// Keys Mars does not read here; kept so load can warn about them.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Backwards-compatible alias during migration.
@@ -216,6 +185,7 @@ pub struct ManifestDep {
     pub path: Option<PathBuf>,
     pub subpath: Option<SourceSubpath>,
     pub version: Option<String>,
+    pub plugin: Option<String>,
     pub filter: FilterConfig,
 }
 
@@ -235,39 +205,11 @@ pub struct Manifest {
 /// the source belong to that source's project, not to its dependents.
 #[derive(Deserialize)]
 struct SourceManifestSections {
-    package: Option<SourcePackageInfo>,
+    package: Option<toml::Value>,
     #[serde(default)]
     dependencies: IndexMap<SourceName, InstallDep>,
     #[serde(default)]
     models: IndexMap<String, crate::models::ModelAlias>,
-}
-
-/// Dependency consumers need only package identity and compatibility floors.
-/// Plugin publishing metadata is intentionally ignored here, even when a
-/// newer package writes a form this Mars build does not understand.
-#[derive(Deserialize)]
-struct SourcePackageInfo {
-    name: String,
-    version: String,
-    #[serde(default, rename = "requires-mars")]
-    requires_mars: Option<String>,
-    #[serde(default, rename = "requires-meridian")]
-    requires_meridian: Option<String>,
-}
-
-impl From<SourcePackageInfo> for PackageInfo {
-    fn from(package: SourcePackageInfo) -> Self {
-        Self {
-            name: package.name,
-            version: package.version,
-            description: None,
-            authors: None,
-            homepage: None,
-            license: None,
-            requires_mars: package.requires_mars,
-            requires_meridian: package.requires_meridian,
-        }
-    }
 }
 
 /// Shared include/exclude/rename filter configuration for a source.
@@ -291,12 +233,15 @@ pub struct FilterConfig {
 ///
 /// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
 /// fails `mars.toml` instead of reaching the policy.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentOverlayTools {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<PermissionSet<OverlayToolName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disallowed: Option<PermissionSet<OverlayToolName>>,
+    /// Keys Mars does not read here (a retired `mcp`); kept so a stale one can be reported.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 impl AgentOverlayTools {
@@ -315,7 +260,7 @@ pub struct AgentOverlay {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effort: Option<String>,
+    pub effort: Option<mars_schema::agent::EffortLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -336,10 +281,6 @@ pub struct AgentOverlay {
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_deny: PermissionSet<NetworkHost>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autocompact: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autocompact_pct: Option<i64>,
     #[serde(
         default,
         alias = "model-invocable",
@@ -381,8 +322,9 @@ pub struct SkillOverlay {
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
-    #[serde(default, skip_serializing_if = "AgentOverlayTools::is_empty")]
-    pub tools: AgentOverlayTools,
+    /// Keys Mars does not read here (a retired `tools` table), kept to report them.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 impl SkillOverlay {
@@ -390,243 +332,6 @@ impl SkillOverlay {
         self.description.is_none()
             && self.model_invocable.is_none()
             && self.user_invocable.is_none()
-            && self.tools.is_empty()
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "kebab-case")]
-pub enum ModelPolicyMatchType {
-    Model,
-    Alias,
-    ModelGlob,
-}
-
-/// Shared model-policy rule type used by profile frontmatter, agent overlays,
-/// and settings-level model policies.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelPolicyRule {
-    pub match_type: ModelPolicyMatchType,
-    pub match_value: String,
-    pub no_fallback: bool,
-    pub(crate) overrides: serde_yaml::Mapping,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModelPolicyRuleParseError {
-    RuleMustBeMapping { found: String },
-    MatchMissing,
-    MatchMustBeMapping { found: String },
-    MatchMustContainExactlyOne { found: String },
-    MatchKeyMustBeString { found: String },
-    UnknownMatchKey { key: String },
-    MatchValueMustBeString { key: String, found: String },
-    MatchValueEmpty { key: String },
-    OverrideMustBeMapping { found: String },
-    NetworkOverrideInvalid { found: String },
-    NetworkHostsNotAllowed { key: String },
-    NoFallbackMustBeBoolean { found: String },
-}
-
-impl ModelPolicyRuleParseError {
-    fn deserialize_message(&self) -> String {
-        match self {
-            Self::MatchMustContainExactlyOne { .. }
-            | Self::MatchMissing
-            | Self::MatchMustBeMapping { .. } => {
-                "model policy `match` must contain exactly one of model, alias, model-glob"
-                    .to_string()
-            }
-            Self::MatchKeyMustBeString { .. } => {
-                "model policy `match` key must be a string".to_string()
-            }
-            Self::MatchValueMustBeString { .. } => {
-                "model policy `match` value must be a string".to_string()
-            }
-            Self::MatchValueEmpty { .. } => {
-                "model policy `match` value must be a non-empty string".to_string()
-            }
-            Self::UnknownMatchKey { key } => {
-                format!(
-                    "unknown model policy match key `{key}`; expected model, alias, or model-glob"
-                )
-            }
-            Self::OverrideMustBeMapping { .. } => {
-                "model policy `override` must be a mapping".to_string()
-            }
-            Self::NetworkOverrideInvalid { found } => {
-                format!(
-                    "model policy override `network` has invalid value `{found}`; allowed: {}",
-                    NetworkPolicy::ALLOWED
-                )
-            }
-            Self::NetworkHostsNotAllowed { key } => {
-                format!(
-                    "model policy override `{key}` is not supported; set it on settings, the profile, an agent overlay, or the CLI"
-                )
-            }
-            Self::NoFallbackMustBeBoolean { .. } => {
-                "model policy `no-fallback` must be a boolean".to_string()
-            }
-            Self::RuleMustBeMapping { .. } => "model policy rule must be a mapping".to_string(),
-        }
-    }
-}
-
-fn validate_model_policy_network_override(
-    overrides: &serde_yaml::Mapping,
-) -> Result<(), ModelPolicyRuleParseError> {
-    for key in ["network-allow", "network-deny"] {
-        if overrides.contains_key(serde_yaml::Value::String(key.to_string())) {
-            return Err(ModelPolicyRuleParseError::NetworkHostsNotAllowed {
-                key: key.to_string(),
-            });
-        }
-    }
-    let Some(value) = overrides.get(serde_yaml::Value::String("network".to_string())) else {
-        return Ok(());
-    };
-    let Some(value_string) = value.as_str() else {
-        return Err(ModelPolicyRuleParseError::NetworkOverrideInvalid {
-            found: serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
-        });
-    };
-    if value_string.parse::<NetworkPolicy>().is_err() {
-        return Err(ModelPolicyRuleParseError::NetworkOverrideInvalid {
-            found: value_string.to_string(),
-        });
-    }
-    Ok(())
-}
-
-pub fn parse_model_policy_rule_value(
-    value: &serde_yaml::Value,
-) -> Result<ModelPolicyRule, ModelPolicyRuleParseError> {
-    let rule = value
-        .as_mapping()
-        .ok_or_else(|| ModelPolicyRuleParseError::RuleMustBeMapping {
-            found: format!("{value:?}"),
-        })?;
-
-    let match_value = rule.get(serde_yaml::Value::String("match".to_string()));
-    let match_mapping = match match_value {
-        Some(value) => {
-            value
-                .as_mapping()
-                .ok_or_else(|| ModelPolicyRuleParseError::MatchMustBeMapping {
-                    found: format!("{value:?}"),
-                })?
-        }
-        None => return Err(ModelPolicyRuleParseError::MatchMissing),
-    };
-
-    let mut entries = match_mapping.iter();
-    let Some((match_key, match_value)) = entries.next() else {
-        return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
-            found: format!("{match_mapping:?}"),
-        });
-    };
-    if entries.next().is_some() {
-        return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
-            found: format!("{match_mapping:?}"),
-        });
-    }
-
-    let key =
-        match_key
-            .as_str()
-            .ok_or_else(|| ModelPolicyRuleParseError::MatchKeyMustBeString {
-                found: format!("{match_key:?}"),
-            })?;
-    let value =
-        match_value
-            .as_str()
-            .ok_or_else(|| ModelPolicyRuleParseError::MatchValueMustBeString {
-                key: key.to_string(),
-                found: format!("{match_value:?}"),
-            })?;
-    let match_value = value.trim().to_string();
-    if match_value.is_empty() {
-        return Err(ModelPolicyRuleParseError::MatchValueEmpty {
-            key: key.to_string(),
-        });
-    }
-
-    let match_type = match key {
-        "model" => ModelPolicyMatchType::Model,
-        "alias" => ModelPolicyMatchType::Alias,
-        "model-glob" => ModelPolicyMatchType::ModelGlob,
-        _ => {
-            return Err(ModelPolicyRuleParseError::UnknownMatchKey {
-                key: key.to_string(),
-            });
-        }
-    };
-
-    let overrides = match rule.get(serde_yaml::Value::String("override".to_string())) {
-        None | Some(serde_yaml::Value::Null) => serde_yaml::Mapping::new(),
-        Some(value) => value.as_mapping().cloned().ok_or_else(|| {
-            ModelPolicyRuleParseError::OverrideMustBeMapping {
-                found: format!("{value:?}"),
-            }
-        })?,
-    };
-    validate_model_policy_network_override(&overrides)?;
-
-    let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {
-        None | Some(serde_yaml::Value::Null) => false,
-        Some(serde_yaml::Value::Bool(value)) => *value,
-        Some(value) => {
-            return Err(ModelPolicyRuleParseError::NoFallbackMustBeBoolean {
-                found: format!("{value:?}"),
-            });
-        }
-    };
-
-    Ok(ModelPolicyRule {
-        match_type,
-        match_value,
-        no_fallback,
-        overrides,
-    })
-}
-
-impl<'de> Deserialize<'de> for ModelPolicyRule {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_yaml::Value::deserialize(deserializer)?;
-        parse_model_policy_rule_value(&value)
-            .map_err(|err| serde::de::Error::custom(err.deserialize_message()))
-    }
-}
-
-impl Serialize for ModelPolicyRule {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut map = serializer.serialize_map(None)?;
-        let match_key = match self.match_type {
-            ModelPolicyMatchType::Model => "model",
-            ModelPolicyMatchType::Alias => "alias",
-            ModelPolicyMatchType::ModelGlob => "model-glob",
-        };
-
-        let mut match_clause = serde_yaml::Mapping::new();
-        match_clause.insert(
-            serde_yaml::Value::String(match_key.to_string()),
-            serde_yaml::Value::String(self.match_value.clone()),
-        );
-        map.serialize_entry("match", &match_clause)?;
-        if !self.overrides.is_empty() {
-            map.serialize_entry("override", &self.overrides)?;
-        }
-        if self.no_fallback {
-            map.serialize_entry("no-fallback", &self.no_fallback)?;
-        }
-        map.end()
     }
 }
 
@@ -653,7 +358,6 @@ pub struct LocalConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct LocalSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
@@ -699,6 +403,9 @@ pub struct LocalSettings {
     pub meridian: MeridianSettings,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
+    /// Keys Mars does not read, as in `Settings`: kept, and the stale ones warn.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -904,6 +611,18 @@ impl Settings {
         self.meridian.agent_copy.as_ref()
     }
 
+    /// The network keys a project sets in `[settings]` (or inherits from the user config).
+    pub fn network_keys(&self) -> Vec<&'static str> {
+        [
+            ("default-network", self.default_network.is_some()),
+            ("network-allow", !self.network_allow.entries().is_empty()),
+            ("network-deny", !self.network_deny.entries().is_empty()),
+        ]
+        .into_iter()
+        .filter_map(|(key, set)| set.then_some(key))
+        .collect()
+    }
+
     /// Fanout agent list from `[settings.meridian.fanout]`.
     pub fn meridian_fanout_agents(&self) -> &[String] {
         self.meridian
@@ -993,23 +712,6 @@ pub struct EffectiveDependency {
 const CONFIG_FILE: &str = "mars.toml";
 const LOCAL_CONFIG_FILE: &str = "mars.local.toml";
 
-fn apply_user_network_settings(effective: &mut EffectiveProjectConfig) -> Result<(), MarsError> {
-    let Some(user) = user::load()? else {
-        return Ok(());
-    };
-    effective.warnings.extend(user.warnings);
-    if effective.settings.default_network.is_none() {
-        effective.settings.default_network = user.default_network;
-    }
-    let mut allow = user.network_allow.entries().to_vec();
-    merge_permission_set(&mut allow, &effective.settings.network_allow);
-    effective.settings.network_allow = PermissionSet::Add(allow);
-    let mut deny = user.network_deny.entries().to_vec();
-    merge_permission_set(&mut deny, &effective.settings.network_deny);
-    effective.settings.network_deny = PermissionSet::Add(deny);
-    Ok(())
-}
-
 fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
     content: &str,
     path: &Path,
@@ -1086,7 +788,12 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
             ConfigError::Io(e)
         }
     })?;
-    let mut config: Config = parse_without_removed_visibility(&content, &path)?;
+    parse_config(&content, &path)
+}
+
+pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
+    let mut config: Config = parse_without_removed_visibility(content, path)?;
+    validate_agent_overlays(path, &config.agents)?;
     migrate_legacy_source_urls(&mut config);
     Ok(config)
 }
@@ -1098,49 +805,12 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 ///
 /// Converts `InstallDep` entries to `ManifestDep`, preserving both URL and
 /// path dependencies.
+#[cfg(test)]
 pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let path = source_root.join(CONFIG_FILE);
-    let diagnostics = Vec::new();
     match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            // A package manifest may also contain consumer-only settings. They
-            // are not this project's settings and cannot require the consumer
-            // to migrate an upstream package before syncing it.
-            let parsed: SourceManifestSections =
-                toml::from_str(&content).map_err(|e| crate::error::ConfigError::Invalid {
-                    message: format!("failed to parse {}: {e}", path.display()),
-                })?;
-            let Some(package) = parsed.package else {
-                return Ok((None, diagnostics));
-            };
-            let package = package.into();
-            // Convert InstallDep → ManifestDep, preserving both URL and path deps
-            let deps: IndexMap<String, ManifestDep> = parsed
-                .dependencies
-                .into_iter()
-                .map(|(name, entry)| {
-                    (
-                        name.to_string(),
-                        ManifestDep {
-                            url: entry.url,
-                            path: entry.path,
-                            subpath: entry.subpath,
-                            version: entry.version,
-                            filter: entry.filter,
-                        },
-                    )
-                })
-                .collect();
-            Ok((
-                Some(Manifest {
-                    package,
-                    dependencies: deps,
-                    models: parsed.models,
-                }),
-                diagnostics,
-            ))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, diagnostics)),
+        Ok(content) => parse_manifest(&content, &path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, Vec::new())),
         Err(source) => Err(MarsError::Io {
             operation: "read manifest config".to_string(),
             path,
@@ -1149,12 +819,78 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
     }
 }
 
+/// Interpret consumer-owned manifest sections from bytes already normalized by
+/// `mars-schema`. Schema diagnostics are supplied by the prepared result and are
+/// deliberately not regenerated here.
+pub(crate) fn parse_prepared_manifest(
+    content: &str,
+    authored_path: &Path,
+    package: Option<&PackageInfo>,
+) -> Result<Option<Manifest>, MarsError> {
+    let parsed: SourceManifestSections =
+        toml::from_str(content).map_err(|error| crate::error::ConfigError::Invalid {
+            message: format!("failed to parse {}: {error}", authored_path.display()),
+        })?;
+    let Some(_) = parsed.package else {
+        return Ok(None);
+    };
+    let Some(package) = package.cloned() else {
+        return Ok(None);
+    };
+    let dependencies = parsed
+        .dependencies
+        .into_iter()
+        .map(|(name, entry)| {
+            (
+                name.to_string(),
+                ManifestDep {
+                    url: entry.url,
+                    path: entry.path,
+                    subpath: entry.subpath,
+                    version: entry.version,
+                    plugin: entry.plugin,
+                    filter: entry.filter,
+                },
+            )
+        })
+        .collect();
+    Ok(Some(Manifest {
+        package,
+        dependencies,
+        models: parsed.models,
+    }))
+}
+
+#[cfg(test)]
+fn parse_manifest(
+    content: &str,
+    path: &Path,
+) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
+    let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
+    let parsed: toml::Value = toml::from_str(content).map_err(crate::error::ConfigError::Parse)?;
+    if parsed.get("package").is_none() {
+        return Ok((None, Vec::new()));
+    }
+    let reading = mars_schema::manifest::read(content);
+    for diagnostic in &reading.diagnostics {
+        diagnostics.schema(diagnostic, &format!("manifest `{}`", path.display()), false);
+    }
+    if reading.fields.is_none() {
+        return Ok((None, diagnostics.drain()));
+    }
+    Ok((
+        parse_prepared_manifest(content, path, reading.fields.as_ref())?,
+        diagnostics.drain(),
+    ))
+}
+
 /// Load mars.local.toml (returns Default if absent).
 pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let local: LocalConfig = parse_without_removed_visibility(&content, &path)?;
+            validate_agent_overlays(&path, &local.agents)?;
             Ok(local)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
@@ -1252,31 +988,167 @@ struct ProjectConfigWarning {
     message: String,
 }
 
+/// Overlay keys Mars once read and now ignores.
+const STALE_AGENT_OVERLAY_KEYS: &[&str] = &["autocompact", "autocompact_pct"];
+
+const NETWORK_SETTINGS_KEYS: &str = "default_network (or default-network), network-allow (or network_allow), network-deny (or network_deny)";
+const NETWORK_OVERLAY_KEYS: &str =
+    "network, network-allow (or network_allow), network-deny (or network_deny)";
+
+/// A key that looks like network policy and is none Mars reads. It is ignored, so a mistyped
+/// `network-deny` would lose its deny without a word; the warning keeps the loss visible.
+fn looks_like_network_key(key: &str) -> bool {
+    key.starts_with("network")
+        || key.starts_with("default_network")
+        || key.starts_with("default-network")
+}
+
+fn network_key_warnings(
+    surface: &str,
+    unknown: &BTreeMap<String, toml::Value>,
+    accepted: &str,
+) -> Vec<ProjectConfigWarning> {
+    unknown
+        .keys()
+        .filter(|key| looks_like_network_key(key))
+        .map(|key| ProjectConfigWarning {
+            code: "unknown-network-key",
+            message: format!(
+                "{surface}: unknown network key `{key}` is ignored; accepted keys: {accepted}"
+            ),
+        })
+        .collect()
+}
+
+fn stale_overlay_warnings(
+    file: &str,
+    agents: &IndexMap<String, AgentOverlay>,
+) -> Vec<ProjectConfigWarning> {
+    let mut warnings = Vec::new();
+    let mut stale = |surface: String| {
+        warnings.push(ProjectConfigWarning {
+            code: "stale-config-key",
+            message: format!("{file} {surface} is no longer read and is ignored; delete it"),
+        });
+    };
+    for (name, overlay) in agents {
+        for key in STALE_AGENT_OVERLAY_KEYS {
+            if overlay.unknown.contains_key(*key) {
+                stale(format!("[agents.{name}] `{key}`"));
+            }
+        }
+        if overlay.tools.unknown.contains_key("mcp") {
+            stale(format!(
+                "[agents.{name}.tools] `mcp` (put MCP grants in `allowed` as \"mcp(server)\")"
+            ));
+        }
+    }
+    warnings
+}
+
+/// `approval` and `sandbox` in an overlay take the same values as in an Agent file (`effort` is
+/// typed, so an invalid one fails when `mars.toml` is read).
+fn validate_agent_overlays(
+    file: &Path,
+    agents: &IndexMap<String, AgentOverlay>,
+) -> Result<(), MarsError> {
+    use mars_schema::agent::{ApprovalMode, SandboxMode};
+    for (name, overlay) in agents {
+        let values = [
+            (
+                "approval",
+                overlay.approval.as_deref(),
+                overlay
+                    .approval
+                    .as_deref()
+                    .and_then(ApprovalMode::parse)
+                    .is_some(),
+                ApprovalMode::ALLOWED,
+            ),
+            (
+                "sandbox",
+                overlay.sandbox.as_deref(),
+                overlay
+                    .sandbox
+                    .as_deref()
+                    .and_then(SandboxMode::parse)
+                    .is_some(),
+                SandboxMode::ALLOWED,
+            ),
+        ];
+        for (key, value, valid, allowed) in values {
+            if let Some(value) = value
+                && !valid
+            {
+                return Err(ConfigError::Invalid {
+                    message: format!(
+                        "{}: [agents.{name}] `{key}` has invalid value `{value}`; allowed: {allowed}",
+                        file.display()
+                    ),
+                }
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectConfigWarning> {
-    let mut warnings = network_key_warnings(
-        "mars.toml [settings]",
-        &config.settings.unknown,
-        NETWORK_SETTINGS_KEYS,
-    )
-    .into_iter()
-    .map(|message| ProjectConfigWarning {
-        code: "unknown-network-key",
-        message,
-    })
-    .collect::<Vec<_>>();
-    for (name, overlay) in &config.agents {
-        warnings.extend(
-            network_key_warnings(
-                &format!("mars.toml [agents.{name}]"),
+    let mut warnings = Vec::new();
+    for (file, agents, skills, settings) in [
+        (
+            "mars.toml",
+            &config.agents,
+            &config.skills,
+            &config.settings.unknown,
+        ),
+        (
+            "mars.local.toml",
+            &local.agents,
+            &local.skills,
+            &local.settings.unknown,
+        ),
+    ] {
+        warnings.extend(network_key_warnings(
+            &format!("{file} [settings]"),
+            settings,
+            NETWORK_SETTINGS_KEYS,
+        ));
+        warnings.extend(stale_overlay_warnings(file, agents));
+        for (name, overlay) in agents {
+            warnings.extend(network_key_warnings(
+                &format!("{file} [agents.{name}]"),
                 &overlay.unknown,
                 NETWORK_OVERLAY_KEYS,
-            )
-            .into_iter()
-            .map(|message| ProjectConfigWarning {
-                code: "unknown-network-key",
-                message,
-            }),
-        );
+            ));
+        }
+        for (name, overlay) in skills {
+            if overlay.unknown.contains_key("tools") {
+                warnings.push(ProjectConfigWarning {
+                    code: "stale-config-key",
+                    message: format!(
+                        "{file} [skills.{name}.tools] is no longer read and is ignored; delete it"
+                    ),
+                });
+            }
+        }
+    }
+    for (table, dependencies) in [
+        ("dependencies", &config.dependencies),
+        ("local-dependencies", &config.local_dependencies),
+    ] {
+        for (name, dependency) in dependencies {
+            for key in dependency.unknown.keys() {
+                warnings.push(ProjectConfigWarning {
+                    code: "field.unknown",
+                    message: format!(
+                        "mars.toml [{table}.{name}]: unknown dependency field `{key}` is preserved"
+                    ),
+                });
+            }
+        }
+    }
+    for (name, overlay) in &config.agents {
         warnings.extend(tool_overlay_warnings(
             "mars.toml",
             &format!("[agents.{name}.tools]"),
@@ -1285,37 +1157,9 @@ fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectC
         ));
     }
     for (name, overlay) in &local.agents {
-        warnings.extend(
-            network_key_warnings(
-                &format!("mars.local.toml [agents.{name}]"),
-                &overlay.unknown,
-                NETWORK_OVERLAY_KEYS,
-            )
-            .into_iter()
-            .map(|message| ProjectConfigWarning {
-                code: "unknown-network-key",
-                message,
-            }),
-        );
         warnings.extend(tool_overlay_warnings(
             "mars.local.toml",
             &format!("[agents.{name}.tools]"),
-            &overlay.tools,
-            None,
-        ));
-    }
-    for (name, overlay) in &config.skills {
-        warnings.extend(tool_overlay_warnings(
-            "mars.toml",
-            &format!("[skills.{name}.tools]"),
-            &overlay.tools,
-            local.skills.get(name).map(|local| &local.tools),
-        ));
-    }
-    for (name, overlay) in &local.skills {
-        warnings.extend(tool_overlay_warnings(
-            "mars.local.toml",
-            &format!("[skills.{name}.tools]"),
             &overlay.tools,
             None,
         ));
@@ -1365,20 +1209,6 @@ fn tool_overlay_warnings(
     .collect()
 }
 
-fn network_key_warnings(
-    surface: &str,
-    unknown: &BTreeMap<String, toml::Value>,
-    accepted: &str,
-) -> Vec<String> {
-    unknown
-        .keys()
-        .filter(|key| looks_like_network_key(key))
-        .map(|key| {
-            format!("{surface}: unknown network key `{key}` is ignored; accepted keys: {accepted}")
-        })
-        .collect()
-}
-
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
     let mut effective = load_project_config_layers(root)?.effective;
     apply_user_network_settings(&mut effective)?;
@@ -1389,6 +1219,25 @@ pub fn load_user_effective_project_config() -> Result<EffectiveProjectConfig, Ma
     let mut effective = EffectiveProjectConfig::default();
     apply_user_network_settings(&mut effective)?;
     Ok(effective)
+}
+
+/// Folds the user config's network defaults under the project's: the user mode applies only
+/// when the project sets none, and host lists merge user-first so project deny entries stay.
+fn apply_user_network_settings(effective: &mut EffectiveProjectConfig) -> Result<(), MarsError> {
+    let Some(user) = user::load()? else {
+        return Ok(());
+    };
+    effective.warnings.extend(user.warnings);
+    if effective.settings.default_network.is_none() {
+        effective.settings.default_network = user.default_network;
+    }
+    let mut allow = user.network_allow.entries().to_vec();
+    merge_permission_set(&mut allow, &effective.settings.network_allow);
+    effective.settings.network_allow = PermissionSet::Add(allow);
+    let mut deny = user.network_deny.entries().to_vec();
+    merge_permission_set(&mut deny, &effective.settings.network_deny);
+    effective.settings.network_deny = PermissionSet::Add(deny);
+    Ok(())
 }
 
 pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {
@@ -1419,7 +1268,7 @@ pub fn merge_with_root(
         .into_iter()
         .map(|warning| Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: warning.code,
+            code: warning.code.into(),
             message: warning.message,
             context: None,
             category: Some(DiagnosticCategory::Validation),
@@ -1478,6 +1327,13 @@ pub fn merge_with_root(
             }
         };
 
+        validate_plugin_selector(
+            name.as_ref(),
+            entry.plugin.as_deref(),
+            entry.subpath.as_ref(),
+            entry.dialect,
+        )?;
+
         // Validate filter combinations
         validate_filter(&entry.filter, name.as_ref())?;
 
@@ -1486,7 +1342,8 @@ pub fn merge_with_root(
         let rename = entry.filter.rename.clone().unwrap_or_default();
 
         let subpath = entry.subpath.clone();
-        let declared_source_id = source_id_for_spec(root, &base_spec, subpath.clone());
+        let declared_source_id =
+            source_id_for_spec(root, &base_spec, subpath.clone(), entry.plugin.as_deref());
 
         // Check if this source has a local override
         let spec = if let Some(ov) = local.overrides.get(name) {
@@ -1495,7 +1352,8 @@ pub fn merge_with_root(
             base_spec
         };
         let dialect = entry.dialect;
-        let effective_source_id = source_id_for_spec(root, &spec, subpath.clone());
+        let effective_source_id =
+            source_id_for_spec(root, &spec, subpath.clone(), entry.plugin.as_deref());
 
         dependencies.insert(
             name.clone(),
@@ -1544,7 +1402,7 @@ fn deprecated_agents_target_diagnostics(settings: &Settings) -> Vec<Diagnostic> 
 fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
     Diagnostic {
         level: DiagnosticLevel::Warning,
-        code: "deprecated-agents-target",
+        code: "deprecated-agents-target".into(),
         message: format!(
             "`.agents` is a deprecated link target. Run `{}` to remove it. Skills are now emitted to native harness dirs automatically.",
             managed_cmd("mars unlink .agents"),
@@ -1628,26 +1486,65 @@ impl FilterConfig {
     }
 }
 
-fn source_id_for_spec(root: &Path, spec: &SourceSpec, subpath: Option<SourceSubpath>) -> SourceId {
-    match spec {
+pub(crate) fn source_id_for_spec(
+    root: &Path,
+    spec: &SourceSpec,
+    subpath: Option<SourceSubpath>,
+    plugin: Option<&str>,
+) -> SourceId {
+    let id = match spec {
         SourceSpec::Git(git) => {
             let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
                 git.url.as_ref(),
             ));
-            SourceId::git_with_subpath(canonical_url, subpath.clone())
+            SourceId::git_with_subpath(canonical_url, subpath)
         }
-        SourceSpec::Path(path) => match SourceId::path_with_subpath(root, path, subpath.clone()) {
-            Ok(id) => id,
-            Err(_) => {
+        SourceSpec::Path(path) => SourceId::path_with_subpath(root, path, subpath.clone())
+            .unwrap_or_else(|_| {
                 let canonical = if path.is_absolute() {
                     path.clone()
                 } else {
                     root.join(path)
                 };
-                SourceId::Path { canonical, subpath }
-            }
-        },
+                SourceId::Path {
+                    canonical,
+                    subpath,
+                    plugin: None,
+                }
+            }),
+    };
+    id.with_plugin(plugin.map(str::to_owned))
+}
+
+/// `plugin` picks one plugin of the marketplace at the source's root, read as a Claude
+/// marketplace; a `subpath` or `dialect` would name a different root or reading.
+pub(crate) fn validate_plugin_selector(
+    name: &str,
+    plugin: Option<&str>,
+    subpath: Option<&SourceSubpath>,
+    dialect: Option<Dialect>,
+) -> Result<(), ConfigError> {
+    let Some(plugin) = plugin else {
+        return Ok(());
+    };
+    let invalid = |message: String| ConfigError::Invalid { message };
+    if !mars_schema::claude::manifest::is_plugin_name(plugin) {
+        return Err(invalid(format!(
+            "source `{name}` has `plugin = \"{plugin}\"`; a plugin name is {}",
+            mars_schema::claude::manifest::PLUGIN_NAME_RULE
+        )));
     }
+    if subpath.is_some() {
+        return Err(invalid(format!(
+            "source `{name}` has both `plugin` and `subpath` — a marketplace is read at the root of its source, and the marketplace entry says where the plugin is"
+        )));
+    }
+    if dialect.is_some() {
+        return Err(invalid(format!(
+            "source `{name}` has both `plugin` and `dialect` — a marketplace plugin is read as a Claude plugin"
+        )));
+    }
+    Ok(())
 }
 
 fn migrate_legacy_source_urls(config: &mut Config) {
@@ -1669,209 +1566,27 @@ fn should_upgrade_legacy_git_url(url: &str) -> bool {
     !url.contains("://") && !url.starts_with("git@") && url.contains('/') && url.contains('.')
 }
 
-/// Write mars.toml atomically.
+/// Write mars.toml, changing only what differs from the file as it stands.
 pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
     let path = root.join(CONFIG_FILE);
-    let content = toml::to_string_pretty(config).map_err(|e| ConfigError::Invalid {
-        message: format!("failed to serialize config: {e}"),
-    })?;
-    let reparsed: Config = toml::from_str(&content).map_err(|e| ConfigError::Invalid {
-        message: format!("refusing to save config: serialized output failed to parse: {e}"),
-    })?;
-    validate_save_roundtrip(config, &reparsed)?;
-    crate::fs::atomic_write(&path, content.as_bytes())
+    save::save_document(&path, config, |text| parse_config(text, &path))
 }
 
-fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), MarsError> {
-    if reparsed.plugin != original.plugin {
-        return Err(ConfigError::Invalid {
-            message: "refusing to save config: [plugin] changed during roundtrip".to_string(),
-        }
-        .into());
-    }
-    if reparsed.dependencies.len() != original.dependencies.len() {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: dependency count changed during roundtrip ({} -> {})",
-                original.dependencies.len(),
-                reparsed.dependencies.len()
-            ),
-        }
-        .into());
-    }
-
-    if reparsed.local_dependencies.len() != original.local_dependencies.len() {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: local-dependencies count changed during roundtrip ({} -> {})",
-                original.local_dependencies.len(),
-                reparsed.local_dependencies.len()
-            ),
-        }
-        .into());
-    }
-
-    if reparsed.settings.managed_root != original.settings.managed_root {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.managed_root changed during roundtrip ({:?} -> {:?})",
-                original.settings.managed_root, reparsed.settings.managed_root
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.default_harness != original.settings.default_harness {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.default_harness changed during roundtrip ({:?} -> {:?})",
-                original.settings.default_harness, reparsed.settings.default_harness
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.default_model != original.settings.default_model {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.default_model changed during roundtrip ({:?} -> {:?})",
-                original.settings.default_model, reparsed.settings.default_model
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.default_network != original.settings.default_network
-        || reparsed.settings.network_allow != original.settings.network_allow
-        || reparsed.settings.network_deny != original.settings.network_deny
-    {
-        return Err(ConfigError::Invalid {
-            message: "refusing to save config: network settings changed during roundtrip"
-                .to_string(),
-        }
-        .into());
-    }
-    if reparsed.settings.harness_order != original.settings.harness_order {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.harness_order changed during roundtrip ({:?} -> {:?})",
-                original.settings.harness_order, reparsed.settings.harness_order
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.provider_order != original.settings.provider_order {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.provider_order changed during roundtrip ({:?} -> {:?})",
-                original.settings.provider_order, reparsed.settings.provider_order
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.catalog_providers != original.settings.catalog_providers {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.catalog_providers changed during roundtrip ({:?} -> {:?})",
-                original.settings.catalog_providers, reparsed.settings.catalog_providers
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.agent_emission != original.settings.agent_emission {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.agent_emission changed during roundtrip ({:?} -> {:?})",
-                original.settings.agent_emission, reparsed.settings.agent_emission
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.meridian.agent_copy != original.settings.meridian.agent_copy {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.meridian.agent_copy changed during roundtrip ({:?} -> {:?})",
-                original.settings.meridian.agent_copy, reparsed.settings.meridian.agent_copy
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.meridian.fanout != original.settings.meridian.fanout {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.meridian.fanout changed during roundtrip ({:?} -> {:?})",
-                original.settings.meridian.fanout, reparsed.settings.meridian.fanout
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.model_policies != original.settings.model_policies {
-        return Err(ConfigError::Invalid {
-            message: "refusing to save config: settings.model_policies changed during roundtrip"
-                .to_string(),
-        }
-        .into());
-    }
-    if reparsed.agents != original.agents {
-        return Err(ConfigError::Invalid {
-            message: "refusing to save config: agents changed during roundtrip".to_string(),
-        }
-        .into());
-    }
-
-    for (name, dep) in &original.dependencies {
-        let Some(reparsed_dep) = reparsed.dependencies.get(name) else {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "refusing to save config: dependency `{name}` missing after roundtrip"
-                ),
-            }
-            .into());
-        };
-
-        if reparsed_dep != dep {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "refusing to save config: dependency `{name}` changed during roundtrip"
-                ),
-            }
-            .into());
-        }
-    }
-
-    for (name, dep) in &original.local_dependencies {
-        let Some(reparsed_dep) = reparsed.local_dependencies.get(name) else {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "refusing to save config: local-dependency `{name}` missing after roundtrip"
-                ),
-            }
-            .into());
-        };
-
-        if reparsed_dep != dep {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "refusing to save config: local-dependency `{name}` changed during roundtrip"
-                ),
-            }
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-/// Write mars.local.toml atomically.
+/// Write mars.local.toml, changing only what differs from the file as it stands.
 pub fn save_local(root: &Path, local: &LocalConfig) -> Result<(), MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
-    let content = toml::to_string_pretty(local).map_err(|e| ConfigError::Invalid {
-        message: format!("failed to serialize local config: {e}"),
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())
+    save::save_document(&path, local, |text| {
+        let local: LocalConfig = parse_without_removed_visibility(text, &path)?;
+        validate_agent_overlays(&path, &local.agents)?;
+        Ok(local)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::{ModelAlias, ModelSpec};
+    use mars_schema::model_policy::ModelPolicyMatchType;
     use tempfile::TempDir;
 
     #[test]
@@ -2360,6 +2075,7 @@ url = "https://github.com/org/base.git"
 [package]
 name = "pkg"
 version = "1.2.3"
+schema = 1
 
 [dependencies.base]
 url = "https://github.com/org/base.git"
@@ -2437,15 +2153,13 @@ sandbox = "default"
 network = "allowlist"
 network_allow = { replace = ["GitHub.COM.", "*.example.com"] }
 network-deny = ["blocked.example"]
-autocompact = 1200
-autocompact_pct = 80
 user_invocable = false
 model-invocable = true
 tools.disallowed = ["Bash(rm *)", "Write"]
 
 [[agents.tech-lead.model-policies]]
 match = { alias = "gpt55" }
-override = { harness = "opencode", effort = "low" }
+override = { effort = "low" }
 no-fallback = true
 
 [settings]
@@ -2478,8 +2192,6 @@ override = { effort = "high" }
             ["github.com", "*.example.com"]
         );
         assert_eq!(config.settings.default_network, Some(NetworkPolicy::Deny));
-        assert_eq!(overlay.autocompact, Some(1200));
-        assert_eq!(overlay.autocompact_pct, Some(80));
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
         assert_eq!(
@@ -2530,82 +2242,8 @@ override = { effort = "high" }
         }
     }
 
-    #[test]
-    fn parse_skill_overlay_tools_and_invocability() {
-        let config: Config = toml::from_str(
-            r#"
-[skills.planning]
-description = "Planning overlay"
-user_invocable = false
-model-invocable = true
-tools.disallowed = ["Agent", "Write"]
-tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
-"#,
-        )
-        .unwrap();
-
-        let overlay = config.skills.get("planning").expect("planning overlay");
-        assert_eq!(overlay.description.as_deref(), Some("Planning overlay"));
-        assert_eq!(overlay.user_invocable, Some(false));
-        assert_eq!(overlay.model_invocable, Some(true));
-        assert_eq!(
-            overlay_tool_strings(overlay.tools.disallowed.as_ref().unwrap().entries()),
-            ["Agent", "Write"]
-        );
-        assert_eq!(
-            overlay_tool_strings(overlay.tools.allowed.as_ref().unwrap().entries()),
-            ["Bash(git *)", "mcp(plugin:demo)"]
-        );
-        assert!(overlay.tools.allowed.as_ref().unwrap().replaces());
-    }
-
     fn overlay_tool_strings(names: &[OverlayToolName]) -> Vec<String> {
         names.iter().cloned().map(String::from).collect()
-    }
-
-    #[test]
-    fn merged_skill_overlays_replace_fields_and_compose_permissions() {
-        let mut base_skills = IndexMap::new();
-        base_skills.insert(
-            "planning".to_string(),
-            SkillOverlay {
-                description: Some("Base description".to_string()),
-                model_invocable: Some(true),
-                user_invocable: Some(true),
-                tools: AgentOverlayTools {
-                    allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
-                    ..AgentOverlayTools::default()
-                },
-            },
-        );
-
-        let mut local_skills = IndexMap::new();
-        local_skills.insert(
-            "planning".to_string(),
-            SkillOverlay {
-                description: Some("Local description".to_string()),
-                user_invocable: Some(false),
-                tools: AgentOverlayTools {
-                    allowed: Some(vec!["Bash(git *)".to_string().try_into().unwrap()].into()),
-                    ..AgentOverlayTools::default()
-                },
-                ..SkillOverlay::default()
-            },
-        );
-        let local = LocalConfig {
-            skills: local_skills,
-            ..LocalConfig::default()
-        };
-
-        let merged = overlay_skill_overlays(&base_skills, &local.skills);
-        let composed = merged.get("planning").expect("planning overlay");
-        assert_eq!(composed.description.as_deref(), Some("Local description"));
-        assert_eq!(composed.model_invocable, None);
-        assert_eq!(composed.user_invocable, Some(false));
-        assert_eq!(
-            overlay_tool_strings(composed.tools.allowed.as_ref().unwrap().entries()),
-            ["Read", "Bash(git *)"]
-        );
     }
 
     #[test]
@@ -2649,18 +2287,20 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                 description: Some("project description".to_string()),
                 model: Some("gpt55".to_string()),
                 harness: Some("codex".to_string()),
-                effort: Some("high".to_string()),
+                effort: Some(mars_schema::agent::EffortLevel::High),
                 network: Some(NetworkPolicy::Deny),
                 network_deny: vec!["project.example".parse().unwrap()].into(),
                 tools: AgentOverlayTools {
                     allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
                     disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
+                    ..Default::default()
                 },
                 model_policies: Some(vec![ModelPolicyRule {
                     match_type: ModelPolicyMatchType::Alias,
                     match_value: "project-policy".to_string(),
                     no_fallback: false,
-                    overrides: serde_yaml::Mapping::new(),
+                    overrides: Default::default(),
+                    when: None,
                 }]),
                 unknown: BTreeMap::from([(
                     "project_future".to_string(),
@@ -2688,6 +2328,7 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                     disallowed: Some(PermissionSet::Replace {
                         replace: vec!["Agent".to_string().try_into().unwrap()],
                     }),
+                    ..Default::default()
                 },
                 unknown: BTreeMap::from([("local_future".to_string(), toml::Value::Boolean(true))]),
                 ..AgentOverlay::default()
@@ -2745,20 +2386,6 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
                 .is_empty(),
             "an authored empty local list should replace the project list"
         );
-    }
-
-    #[test]
-    fn load_local_rejects_unknown_local_settings_fields() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.local.toml"),
-            "[settings]\nnot_supported = true\n",
-        )
-        .unwrap();
-
-        let err = load_local(dir.path()).unwrap_err().to_string();
-        assert!(err.contains("unknown field"), "unexpected error: {err}");
-        assert!(err.contains("not_supported"), "unexpected error: {err}");
     }
 
     #[test]
@@ -2849,13 +2476,15 @@ tools.allowed = { replace = ["Bash(git *)", "mcp(plugin:demo)"] }
             match_type: ModelPolicyMatchType::Alias,
             match_value: "gpt55".to_string(),
             no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
+            overrides: Default::default(),
+            when: None,
         };
         let local_rule = ModelPolicyRule {
             match_type: ModelPolicyMatchType::Alias,
             match_value: "gptmini".to_string(),
             no_fallback: false,
-            overrides: serde_yaml::Mapping::new(),
+            overrides: Default::default(),
+            when: None,
         };
         let settings = Settings {
             targets: Some(vec![".claude".to_string(), ".codex".to_string()]),
@@ -3051,9 +2680,9 @@ allowed = { replace = ["Bash"] }
         let warnings = effective
             .warnings
             .iter()
-            .filter(|warning| warning.contains(".tools]"))
+            .filter(|warning| warning.contains(".tools]."))
             .collect::<Vec<_>>();
-        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(
             warnings
                 .iter()
@@ -3061,10 +2690,6 @@ allowed = { replace = ["Bash"] }
         );
         assert!(warnings.iter().any(|warning| {
             warning.contains("mars.toml [agents.coder.tools].allowed")
-                && warning.contains("mars.local.toml")
-        }));
-        assert!(warnings.iter().any(|warning| {
-            warning.contains("mars.toml [skills.review.tools].disallowed")
                 && warning.contains("mars.local.toml")
         }));
         assert!(
@@ -3172,6 +2797,8 @@ future_key = "allowed"
                         version: Some("v1.0".into()),
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -3206,6 +2833,8 @@ future_key = "allowed"
                         version: Some("v1.0".into()),
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -3255,6 +2884,8 @@ future_key = "allowed"
                         version: Some("v1.0".into()),
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -3287,7 +2918,8 @@ future_key = "allowed"
             &source.source_id,
             SourceId::Path {
                 canonical,
-                subpath: Some(sp)
+                subpath: Some(sp),
+                plugin: None,
             } if canonical == &canonical_override && sp.as_str() == "plugins/foo"
         ));
     }
@@ -3306,6 +2938,8 @@ future_key = "allowed"
                         version: None,
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -3463,67 +3097,6 @@ only_agents = true
     }
 
     #[test]
-    fn save_roundtrip_guard_rejects_dependency_count_loss() {
-        let mut original = Config::default();
-        original.dependencies.insert(
-            "base".into(),
-            DependencyEntry {
-                url: Some("https://github.com/org/base.git".into()),
-                path: None,
-                subpath: None,
-                version: Some("v1.0".into()),
-                dialect: None,
-                filter: FilterConfig::default(),
-            },
-        );
-
-        let reparsed = Config::default();
-        let err = validate_save_roundtrip(&original, &reparsed).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("dependency count changed"),
-            "unexpected error: {msg}"
-        );
-    }
-
-    #[test]
-    fn save_roundtrip_guard_rejects_managed_root_loss() {
-        let original = Config {
-            settings: Settings {
-                managed_root: Some(".agents".into()),
-                targets: None,
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-        let reparsed = Config::default();
-        let err = validate_save_roundtrip(&original, &reparsed).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("settings.managed_root changed"),
-            "unexpected error: {msg}"
-        );
-    }
-
-    #[test]
-    fn save_roundtrip_guard_rejects_harness_order_loss() {
-        let original = Config {
-            settings: Settings {
-                harness_order: Some(vec!["pi".into(), "codex".into()]),
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-        let reparsed = Config::default();
-        let err = validate_save_roundtrip(&original, &reparsed).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("settings.harness_order changed"),
-            "unexpected error: {msg}"
-        );
-    }
-
-    #[test]
     fn parse_only_skills_filter() {
         let toml_str = r#"
 [dependencies.base]
@@ -3631,6 +3204,8 @@ exclude = ["deprecated"]
                         version: None,
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -4059,6 +3634,7 @@ url = "https://github.com/org/prompter.git"
 [package]
 name = "my-package"
 version = "1.0.0"
+schema = 1
 
 [dependencies.base]
 url = "https://github.com/org/base.git"
@@ -4140,6 +3716,8 @@ skills = ["prompt-helper"]
                 version: None,
                 dialect: None,
                 filter: FilterConfig::default(),
+                plugin: None,
+                unknown: Default::default(),
             },
         );
         let config = Config {

@@ -1,0 +1,7 @@
+[package]
+name = "demo"
+version = "1.0.0"
+visibility = "public"
+
+[agents.demo]
+model = "opus"

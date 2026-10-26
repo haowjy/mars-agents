@@ -1,0 +1,8 @@
+{
+  "source": {
+    "name": "toolbox-repo",
+    "url": "https://github.com/acme/toolbox",
+    "requested_ref": "main",
+    "resolved_commit": "0123456789abcdef0123456789abcdef01234567"
+  }
+}

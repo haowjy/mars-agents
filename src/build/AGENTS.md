@@ -32,18 +32,19 @@ data URL. A build warning reports fragments with no recognizable default export,
 isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
 and one fragment's load or setup failure does not block later hooks.
 
-Publication staging and input fingerprinting share a typed inventory of item roots and MCP server
-directories. Graph filters narrow each staged dependency to what target collection can publish,
-except that every hook root remains available for the strict pre-filter compatibility check. A
-single authored walker takes the policy: publication confines links to the package and rejects
-special files, while sync retains its historical follow behavior. Manifestless foreign sources
-separately copy manifest metadata with declarations rewritten to the selected typed inventory, so
-rediscovery does not require excluded paths. The root-package input fingerprint includes inventory
-kinds and authored bytes, but never Mars-generated catalog metadata. Repo tooling and filtered-out
-items are not staged. A flat-root skill retains authored root resources but its publication
-inventory excludes standard tooling directories and top-level special filesystem nodes. Installed
-skill frontmatter is written once into graph staging before every tree projects it; derived skill
-and hook trees then use the plain copier, with other-target hook fragments excluded.
+Publication staging materializes each graph node's prepared package — manifest, definitions and
+listed payload — then copies the binary-owned hook, MCP, bootstrap and source-manifest surfaces. A
+manifestless foreign source materializes in the schema v1 layout `normalize` gave it, so rediscovery
+does not require excluded paths. Target collection applies the graph filters, except that every hook
+root remains available for the strict pre-filter compatibility check. The input fingerprint walks
+the root package's discovered item and MCP server-directory inventory separately; the single
+authored walker confines links to the package and rejects special files there, while sync and
+staging's binary-owned subtree copies retain sync's historical follow behavior. The fingerprint
+includes inventory kinds and authored bytes, but never Mars-generated catalog metadata. A flat-root
+skill retains authored root resources but its publication inventory excludes standard tooling
+directories and top-level special filesystem nodes. Installed skill frontmatter is written once into
+graph staging before every tree projects it; derived skill and hook trees then use the plain copier,
+with other-target hook fragments excluded.
 
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading project
 config, a lockfile, `.mars/`, or host model state. The implicit target selection is the set of built
@@ -158,7 +159,6 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 
 **REAL warnings** (user can act on them):
 - Linked harness constraints blocked auto-routing
-- An `allowlist` mode with no allowed hosts failed closed to `deny`
 
 **NOT warnings** (go to routing/provenance fields, or to a `tools.rules[].note`):
 - Permission gaps: a tool name Mars does not recognize, a harness with no switch for a tool,

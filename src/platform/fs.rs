@@ -134,6 +134,11 @@ pub fn atomic_copy_file(source: &Path, dest: &Path) -> Result<(), MarsError> {
     atomic_write(dest, &content)
 }
 
+/// Atomically replace one durable text or binary file.
+pub fn atomic_write_file(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
+    atomic_write(dest, content)
+}
+
 /// Atomic directory copy: deep copy source tree (following symlinks) to tmp, rename to dest.
 pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
@@ -144,6 +149,121 @@ pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
     let tmp_path = tmp_dir.keep();
 
     replace_generated_dir(&tmp_path, dest)
+}
+
+const PENDING_STAGING_GENERATION: &str = ".staging.pending";
+
+/// Scratch generation that holds every normalized package tree until the
+/// compiler's diagnostic gate passes. A real sync owns the reserved project path
+/// (an early return removes it; an interrupted process leaves it for the next
+/// lock holder). A dry run owns a temporary directory outside the project, so it
+/// leaves the project's files as it found them.
+pub(crate) struct PendingStagingGeneration {
+    location: GenerationLocation,
+}
+
+enum GenerationLocation {
+    Project(PathBuf),
+    Scratch(tempfile::TempDir),
+}
+
+impl PendingStagingGeneration {
+    pub(crate) fn create(mars_dir: &Path) -> Result<Self, MarsError> {
+        fs::create_dir_all(mars_dir)?;
+        let path = mars_dir.join(PENDING_STAGING_GENERATION);
+        fs::create_dir(&path)?;
+        Ok(Self {
+            location: GenerationLocation::Project(path),
+        })
+    }
+
+    pub(crate) fn scratch() -> Result<Self, MarsError> {
+        Ok(Self {
+            location: GenerationLocation::Scratch(tempfile::TempDir::new()?),
+        })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        match &self.location {
+            GenerationLocation::Project(path) => path,
+            GenerationLocation::Scratch(dir) => dir.path(),
+        }
+    }
+}
+
+impl Drop for PendingStagingGeneration {
+    fn drop(&mut self) {
+        // A scratch directory removes itself.
+        if let GenerationLocation::Project(path) = &self.location {
+            let _ = safe_remove(path);
+        }
+    }
+}
+
+/// Remove only the pending canonical generation owned by sync.
+pub(crate) fn recover_pending_staging(mars_dir: &Path) -> Result<bool, MarsError> {
+    let pending = mars_dir.join(PENDING_STAGING_GENERATION);
+    if pending.symlink_metadata().is_err() {
+        return Ok(false);
+    }
+    safe_remove(&pending)?;
+    Ok(true)
+}
+
+/// Remove skill directories a killed install staged under `.mars/skills/` but never renamed
+/// into place.
+///
+/// [`crate::fs::atomic_install_dir`] stages a whole skill there as a `tempfile` directory
+/// (`.tmp` plus six alphanumerics) and renames it into place; a SIGKILL between the two leaves
+/// the copy behind, invisible to `mars.lock`, `provided.lock` and every reader. The caller holds
+/// the sync lock, so no live Mars run owns the name, and a dot-prefixed entry at this level is
+/// never installed content: skill discovery skips hidden directories. Returns whether anything
+/// was reclaimed.
+pub(crate) fn recover_interrupted_skill_installs(mars_dir: &Path) -> Result<bool, MarsError> {
+    let skills_dir = mars_dir.join("skills");
+    match fs::symlink_metadata(&skills_dir) {
+        Ok(metadata) if metadata.is_dir() => {}
+        // Nothing staged to reclaim. A file or link here is someone else's obstruction, which the
+        // apply reports in place of this sweep.
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(io_context("inspect canonical skills", &skills_dir, error)),
+    }
+    let entries = fs::read_dir(&skills_dir)
+        .map_err(|error| io_context("read canonical skills", &skills_dir, error))?;
+    let mut reclaimed = false;
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() || !is_tempfile_name(&entry.file_name()) {
+            continue;
+        }
+        safe_remove(&entry.path())?;
+        reclaimed = true;
+    }
+    Ok(reclaimed)
+}
+
+/// One of `tempfile`'s generated names: `.tmp` and six ASCII alphanumerics.
+fn is_tempfile_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .and_then(|name| name.strip_prefix(".tmp"))
+        .is_some_and(|rest| {
+            rest.len() == 6 && rest.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+}
+
+/// Publish the already-materialized pending generation by rename.
+pub(crate) fn publish_staging_generation(source: &Path, mars_dir: &Path) -> Result<(), MarsError> {
+    let pending = mars_dir.join(PENDING_STAGING_GENERATION);
+    if source != pending {
+        return Err(MarsError::InvalidRequest {
+            message: format!(
+                "staging publication source must be the reserved generation `{}`",
+                pending.display()
+            ),
+        });
+    }
+    replace_generated_dir(&pending, &mars_dir.join("staging"))
 }
 
 /// Whether two regular files have identical byte content.
@@ -354,6 +474,27 @@ fn collect_relative_tree_entries(
     Ok(None)
 }
 
+/// The mode Mars installs for a copied file: readable and writable, plus the source's executable
+/// bits. This is the one notion of "executable" the copy path has, so anything that compares an
+/// installed tree with its source asks the same question.
+pub(crate) fn installed_mode(metadata: &fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        0o644 | (metadata.permissions().mode() & 0o111)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        0o644
+    }
+}
+
+/// Whether a copied file would land executable (any execute bit set).
+pub(crate) fn is_executable(metadata: &fs::Metadata) -> bool {
+    installed_mode(metadata) & 0o111 != 0
+}
+
 /// Recursively copy a directory, following symlinks on the source side.
 ///
 /// Uses `fs::metadata` (not `symlink_metadata`) to follow symlinks.
@@ -392,8 +533,10 @@ fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsErr
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let mode = 0o644 | (metadata.permissions().mode() & 0o111);
-                fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))?;
+                fs::set_permissions(
+                    &dest_path,
+                    fs::Permissions::from_mode(installed_mode(&metadata)),
+                )?;
             }
         } else {
             return Err(std::io::Error::new(

@@ -1,3 +1,4 @@
+use mars_schema::item::ItemKind;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -10,9 +11,10 @@ use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::discover;
 use crate::error::MarsError;
 use crate::hash;
-use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, ItemKind, LockFile, LockIndex};
+use crate::lock::ItemId;
 use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
+use crate::sync::ownership::Ownership;
 use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};
 
 /// What the `.mars/` canonical store should look like after sync.
@@ -45,6 +47,27 @@ struct SelectedMcp {
 }
 
 impl TargetState {
+    pub(crate) fn rebase_source_root(&mut self, from: &Path, to: &Path) {
+        fn rebase(path: &mut PathBuf, from: &Path, to: &Path) {
+            if let Ok(relative) = path.strip_prefix(from) {
+                *path = to.join(relative);
+            }
+        }
+
+        for item in self.items.values_mut() {
+            rebase(&mut item.source_path, from, to);
+        }
+        for hook in self.selected_hooks.values_mut() {
+            rebase(&mut hook.item.hook_dir, from, to);
+        }
+        for hook in &mut self.exported_hooks {
+            rebase(&mut hook.hook_dir, from, to);
+        }
+        for mcp in &mut self.selected_mcp {
+            rebase(&mut mcp.item.source_path, from, to);
+        }
+    }
+
     pub(crate) fn exported_hooks(&self) -> &[crate::compiler::hooks::ParsedHookItem] {
         &self.exported_hooks
     }
@@ -290,10 +313,13 @@ pub fn build_with_collisions_and_diag(
             .iter()
             .map(|hook| hook.discovered_item(&node.rooted_ref.package_root))
             .collect::<Vec<_>>();
-        let discovered = discover::discover_resolved_source_with_hooks(
+        let discovered = discover::package_items(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
-            &discovered_hooks,
+            node.prepared
+                .as_ref()
+                .expect("production graph nodes retain prepared packages"),
+            Some(&discovered_hooks),
             diag,
         )?;
 
@@ -689,48 +715,49 @@ pub struct UnmanagedCollision {
 
 /// Detect target installs that would overwrite unmanaged on-disk content.
 ///
-/// If a target destination already exists but is not tracked in the lock file,
-/// treat it as user-authored content and report it as a collision so callers can
-/// skip installation while leaving existing files untouched.
-pub fn check_unmanaged_collisions(
+/// If a target destination already exists but Mars does not own it (`mars.lock` claims it or a
+/// provider installed it), treat it as user-authored content and report it as a collision so
+/// callers can skip installation while leaving existing files untouched.
+pub(crate) fn check_unmanaged_collisions(
     install_target: &Path,
-    lock: &LockFile,
+    owns: &Ownership,
     target: &TargetState,
     force: bool,
 ) -> Vec<UnmanagedCollision> {
-    let mut collisions = Vec::new();
-    let lock_index = LockIndex::new(lock);
+    target
+        .items
+        .values()
+        .filter(|target_item| unmanaged_collision(install_target, owns, target_item, force))
+        .map(|target_item| UnmanagedCollision {
+            source_name: target_item.source_name.clone(),
+            path: target_item.dest_path.clone(),
+        })
+        .collect()
+}
 
-    for (dest_key, target_item) in &target.items {
-        if lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, dest_key) {
-            continue;
-        }
-
-        let disk_path = target_item.dest_path.resolve(install_target);
-        if disk_path.exists() {
-            if force {
-                continue;
-            }
-            // Check if disk content matches what we'd install — if so,
-            // this is a partial prior install (crash recovery), not an
-            // unmanaged user file. Safe to overwrite.
-            let hash_path = hash_path_for_kind(&disk_path, target_item.id.kind);
-            if let Ok(disk_hash) = hash::compute_hash(&hash_path, target_item.id.kind)
-                && target_item
-                    .expected_installed_hash()
-                    .is_ok_and(|expected| disk_hash == expected.as_str())
-            {
-                continue;
-            }
-
-            collisions.push(UnmanagedCollision {
-                source_name: target_item.source_name.clone(),
-                path: target_item.dest_path.clone(),
-            });
-        }
+/// Whether installing one item would overwrite content Mars does not own.
+pub(crate) fn unmanaged_collision(
+    install_target: &Path,
+    owns: &Ownership,
+    target_item: &TargetItem,
+    force: bool,
+) -> bool {
+    if owns.owns(&target_item.dest_path) {
+        return false;
     }
 
-    collisions
+    let disk_path = target_item.dest_path.resolve(install_target);
+    if !disk_path.exists() || force {
+        return false;
+    }
+    // Disk content matching what we'd install is a partial prior install (crash
+    // recovery), not an unmanaged user file. Safe to overwrite.
+    let matches_install = hash::compute_hash(&disk_path, target_item.id.kind).is_ok_and(|hash| {
+        target_item
+            .expected_installed_hash()
+            .is_ok_and(|expected| hash == expected.as_str())
+    });
+    !matches_install
 }
 
 fn apply_item_rename(
@@ -755,7 +782,7 @@ fn apply_item_rename(
 
 /// Construct the default destination path for an item.
 /// Uses string formatting to guarantee forward slashes on all platforms.
-fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
+pub(crate) fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
     let path_str = match kind {
         ItemKind::Agent => format!("agents/{name}.md"),
         ItemKind::Skill => format!("skills/{name}"),
@@ -878,21 +905,12 @@ fn join_parent_leaf(parent: &str, leaf: &str) -> String {
     }
 }
 
-fn hash_path_for_kind(path: &Path, kind: ItemKind) -> PathBuf {
-    if kind == ItemKind::BootstrapDoc {
-        path.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::*;
     use crate::lock::LockFile;
+    use crate::provided::ProvidedNames;
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
     use crate::types::SourceId;
@@ -940,12 +958,16 @@ mod tests {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
                             subpath: None,
+                            plugin: None,
                         }
                     },
                     rooted_ref: crate::resolve::RootedSourceRef {
                         checkout_root: tree.path().to_path_buf(),
+                        authored_root: tree.path().to_path_buf(),
                         package_root: tree.path().to_path_buf(),
+                        plugin: None,
                     },
+                    prepared: crate::package_prepare::prepare_tree_for_test(name, tree.path()),
                     resolved_ref: ResolvedRef {
                         source_name: name.into(),
                         version: None,
@@ -977,6 +999,7 @@ mod tests {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
                             subpath: None,
+                            plugin: None,
                         }
                     },
                     source_id: if let Some(u) = url {
@@ -985,6 +1008,7 @@ mod tests {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
                             subpath: None,
+                            plugin: None,
                         }
                     },
                     spec,
@@ -1018,11 +1042,15 @@ mod tests {
             source_id: SourceId::Path {
                 canonical: root.clone(),
                 subpath: None,
+                plugin: None,
             },
             rooted_ref: crate::resolve::RootedSourceRef {
                 checkout_root: root.clone(),
+                authored_root: root.clone(),
                 package_root: root.clone(),
+                plugin: None,
             },
+            prepared: None,
             resolved_ref: ResolvedRef {
                 source_name: name.into(),
                 version: None,
@@ -1066,10 +1094,12 @@ mod tests {
                         declared_source_id: SourceId::Path {
                             canonical: path.clone(),
                             subpath: None,
+                            plugin: None,
                         },
                         source_id: SourceId::Path {
                             canonical: path.clone(),
                             subpath: None,
+                            plugin: None,
                         },
                         spec: SourceSpec::Path(path),
                         subpath: None,
@@ -1600,8 +1630,12 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, "# user-authored").unwrap();
 
-        let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
+        let collisions = check_unmanaged_collisions(
+            install_root.path(),
+            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
+            &target,
+            false,
+        );
         assert_eq!(collisions.len(), 1);
         assert_eq!(collisions[0].source_name.as_ref(), "base");
         assert_eq!(collisions[0].path.as_str(), "agents/coder.md");
@@ -1630,8 +1664,12 @@ mod tests {
         fs::write(&existing, content).unwrap();
 
         // Should skip collision — disk content matches planned install (crash recovery)
-        let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
+        let collisions = check_unmanaged_collisions(
+            install_root.path(),
+            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
+            &target,
+            false,
+        );
         assert!(collisions.is_empty());
     }
 
@@ -1656,8 +1694,12 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, "# different user content").unwrap();
 
-        let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
+        let collisions = check_unmanaged_collisions(
+            install_root.path(),
+            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
+            &target,
+            false,
+        );
         assert_eq!(collisions.len(), 1);
         assert_eq!(collisions[0].source_name.as_ref(), "base");
         assert_eq!(collisions[0].path.as_str(), "agents/coder.md");
@@ -1683,8 +1725,12 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, "# stale cache content").unwrap();
 
-        let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, true);
+        let collisions = check_unmanaged_collisions(
+            install_root.path(),
+            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
+            &target,
+            true,
+        );
         assert!(collisions.is_empty());
     }
 }

@@ -48,23 +48,15 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
 
         // Check for conflict markers
-        if item.kind == crate::lock::ItemKind::Agent
+        if item.kind == mars_schema::item::ItemKind::Agent
             && super::conflict_markers::file_has_conflict_markers(&disk_path)
         {
             errors.push(format!("{dest_path_str} has unresolved conflict markers"));
         }
 
-        // Check checksum matches
-        match hash::compute_hash(&disk_path, item.kind) {
-            Ok(disk_hash) => {
-                if disk_hash != item.installed_checksum {
-                    // Not necessarily an issue — could be a local modification
-                    // But we report it as informational
-                }
-            }
-            Err(e) => {
-                errors.push(format!("can't hash {dest_path_str}: {e}"));
-            }
+        // A differing checksum is a local modification, not a fault; only an unreadable item is.
+        if let Err(e) = hash::compute_hash(&disk_path, item.kind) {
+            errors.push(format!("can't hash {dest_path_str}: {e}"));
         }
     }
 
@@ -96,7 +88,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     {
         use std::collections::HashSet;
 
-        let installed = crate::discover::discover_installed(&mars_dir)?;
+        let installed = installed_items(&mars_dir)?;
 
         // Warn on legacy symlinks found in managed directories.
         for item in installed.agents.iter().chain(installed.skills.iter()) {
@@ -106,51 +98,54 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(false)
             {
-                let kind = if item.id.kind == crate::lock::ItemKind::Agent {
+                let kind = if item.kind == mars_schema::item::ItemKind::Agent {
                     "agent"
                 } else {
                     "skill"
                 };
                 warnings.push(format!(
                     "legacy symlinked {kind} `{}` detected in managed dir — run `{cmd}` to normalize to copied content",
-                    item.id.name,
+                    item.name,
                     cmd = managed_cmd("mars sync"),
                 ));
             }
         }
 
-        let available_skills: HashSet<String> = installed
-            .skills
-            .iter()
-            .map(|s| s.id.name.to_string())
-            .collect();
+        let available_skills: HashSet<String> =
+            installed.skills.iter().map(|s| s.name.clone()).collect();
 
         let agents_for_check: Vec<(String, std::path::PathBuf)> = installed
             .agents
             .iter()
-            .map(|a| (a.id.name.to_string(), a.path.clone()))
+            .map(|a| (a.name.clone(), a.path.clone()))
             .collect();
 
-        if let Ok(warnings) = crate::validate::check_deps(&agents_for_check, &available_skills) {
-            for w in &warnings {
-                match w {
-                    crate::validate::ValidationWarning::MissingSkill {
-                        agent,
-                        skill_name,
-                        suggestion,
-                    } => {
-                        let msg = match suggestion {
-                            Some(s) => format!(
-                                "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
-                                agent.name
-                            ),
-                            None => format!(
-                                "agent `{}` references missing skill `{skill_name}` — \
-                                 add a source that provides it, or create it locally in skills/{skill_name}/",
-                                agent.name
-                            ),
-                        };
-                        errors.push(msg);
+        if let Ok(missing) = crate::validate::check_deps(&agents_for_check, &available_skills) {
+            for w in &missing {
+                if let crate::validate::ValidationWarning::MissingSkill {
+                    agent,
+                    skill_name,
+                    suggestion,
+                } = w
+                {
+                    let msg = match suggestion {
+                        Some(s) => format!(
+                            "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
+                            agent.name
+                        ),
+                        None => format!(
+                            "agent `{}` references missing skill `{skill_name}` — \
+                             add a source that provides it, or create it locally in skills/{skill_name}/",
+                            agent.name
+                        ),
+                    };
+                    // Doctor has no manifest to judge a declaration against, and no record to say
+                    // whether a host supplies the name: a provider-shaped name is indistinguishable
+                    // from a typo (`nope__meridain`), so it warns with the wording any missing
+                    // skill gets, where a plain name is an error.
+                    match mars_schema::provider::provider_of(skill_name) {
+                        Some(_) => warnings.push(msg),
+                        None => errors.push(msg),
                     }
                 }
             }
@@ -294,6 +289,46 @@ fn check_target_divergence(
     divergence_count
 }
 
+struct InstalledItem {
+    kind: mars_schema::item::ItemKind,
+    name: String,
+    path: std::path::PathBuf,
+}
+
+struct InstalledItems {
+    agents: Vec<InstalledItem>,
+    skills: Vec<InstalledItem>,
+}
+
+/// The Agents and skills installed under the managed root, selected by the same preparation as
+/// any package, so user-created local ones count too.
+fn installed_items(mars_dir: &std::path::Path) -> Result<InstalledItems, MarsError> {
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    let prepared = crate::package_prepare::prepare_authored(
+        mars_dir,
+        mars_schema::prepare::PrepareContext::AuthoredLocal,
+        Some(mars_schema::dialect::Dialect::MarsNative),
+        &mut diag,
+    )?;
+    let mut installed = InstalledItems {
+        agents: Vec::new(),
+        skills: Vec::new(),
+    };
+    for definition in &prepared.definitions {
+        let item = crate::discover::definition_item(definition, &definition.source_path);
+        let record = InstalledItem {
+            kind: item.id.kind,
+            name: definition.slug.clone(),
+            path: mars_dir.join(&item.source_path),
+        };
+        match record.kind {
+            mars_schema::item::ItemKind::Agent => installed.agents.push(record),
+            _ => installed.skills.push(record),
+        }
+    }
+    Ok(installed)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -327,7 +362,7 @@ mod tests {
         }
         let item = crate::lock::LockedItemV2 {
             source: "test-source".into(),
-            kind: crate::lock::ItemKind::Agent,
+            kind: mars_schema::item::ItemKind::Agent,
             version: None,
             source_checksum: expected_hash.clone().into(),
             outputs,

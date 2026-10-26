@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use super::{NetworkHost, NetworkPolicy};
+use mars_schema::network::{NetworkHost, NetworkPolicy};
+use mars_schema::permission_set::PermissionSet;
+
 use crate::error::{ConfigError, MarsError};
-use crate::permission_set::PermissionSet;
 
 #[derive(Debug, Default, Deserialize)]
 struct UserConfigFile {

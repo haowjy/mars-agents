@@ -1,8 +1,8 @@
-use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
+use mars_schema::HarnessId;
 
 use super::super::spec::{
     Finish, NameRule, PluginHarnessSpec, PluginRoot, RootFile, TreeProfile,
@@ -12,7 +12,7 @@ use crate::plugin_metadata::CURSOR_ROOT_FILE;
 
 pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     key: "cursor",
-    harness: HarnessKind::Cursor,
+    harness: HarnessId::Cursor,
     root_file: RootFile::Marketplace {
         file: CURSOR_ROOT_FILE,
         catalog_directory: ".cursor-plugin",
@@ -37,7 +37,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
 
 fn preserve_agent(
     lowered: &str,
-    _source: &crate::frontmatter::Frontmatter,
+    _source: &mars_schema::frontmatter::Frontmatter,
     _item: &TargetItem,
     _diag: &mut DiagnosticCollector,
 ) -> Result<String, MarsError> {

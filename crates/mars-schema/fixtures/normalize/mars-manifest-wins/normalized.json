@@ -1,0 +1,87 @@
+{
+  "kind": "schema-1",
+  "packages": [
+    {
+      "id": "native",
+      "provenance": {
+        "translator": "{version}",
+        "source": {},
+        "selected_items": [
+          "skills/native/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "schema-1"
+        },
+        "manifest": {
+          "source_path": "mars.toml",
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "name",
+                "native"
+              ],
+              [
+                "version",
+                "1.0.0"
+              ],
+              [
+                "schema",
+                1
+              ]
+            ],
+            "fields": {
+              "name": "native",
+              "version": "1.0.0",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "none"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "native",
+            "source_path": "skills/native/SKILL.md",
+            "output_path": "skills/native/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "native"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "native",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

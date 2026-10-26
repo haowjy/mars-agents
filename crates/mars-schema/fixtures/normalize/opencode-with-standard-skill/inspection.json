@@ -1,0 +1,37 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "opencode",
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        "agents/reviewer.md"
+      ]
+    }
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "reviewer",
+      "source_path": "agents/reviewer.md",
+      "output_path": "agents/reviewer.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "fmt",
+      "source_path": "skills/fmt/SKILL.md",
+      "skill_root": "skills/fmt",
+      "output_path": "skills/fmt/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "lint",
+      "source_path": "skills/lint/SKILL.md",
+      "skill_root": "skills/lint",
+      "output_path": "skills/lint/SKILL.md"
+    }
+  ],
+  "diagnostics": {}
+}

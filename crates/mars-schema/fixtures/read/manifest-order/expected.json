@@ -1,0 +1,160 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "p"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ],
+    [
+      "schema",
+      1
+    ],
+    [
+      "zeta",
+      {
+        "b": 1,
+        "a": 2
+      }
+    ],
+    [
+      "when",
+      "1979-05-27"
+    ],
+    [
+      "alpha",
+      [
+        "x",
+        {
+          "y": 1,
+          "x": 2
+        }
+      ]
+    ],
+    [
+      "table",
+      {
+        "second": 2,
+        "first": 1
+      }
+    ]
+  ],
+  "fields": {
+    "name": "p",
+    "version": "1.0.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "__proto__"
+      ],
+      "message": "unknown package field `__proto__` is preserved"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "alpha"
+      ],
+      "message": "unknown package field `alpha` is preserved"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "big"
+      ],
+      "message": "unknown package field `big` is preserved"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "meta"
+      ],
+      "message": "unknown package field `meta` is preserved"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "nan-value"
+      ],
+      "message": "unknown package field `nan-value` is preserved"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "table"
+      ],
+      "message": "unknown package field `table` is preserved"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "when"
+      ],
+      "message": "unknown package field `when` is preserved"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "zeta"
+      ],
+      "message": "unknown package field `zeta` is preserved"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "package",
+        "big"
+      ],
+      "message": "integer 9007199254740993 is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "package",
+        "nan-value"
+      ],
+      "message": "NaN and infinity have no JSON representation"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "package",
+        "__proto__"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "package",
+        "meta"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    }
+  ]
+}

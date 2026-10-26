@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::ItemKind;
+use mars_schema::item::ItemKind;
 
 #[test]
 fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
@@ -42,6 +42,7 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
                 None,
             ),
             rooted_ref: dummy_rooted_ref(),
+            prepared: None,
             resolved_ref: dummy_ref("dep"),
             manifest: None,
             deps: Vec::new(),

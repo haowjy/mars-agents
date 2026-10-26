@@ -12,3 +12,4 @@
 - Broader suite isolation (library and process tests): GitHub #167. Unknown
   skill-variant harness validation warning: #166; removing its ignored test did
   not implement that behavior.
+- **Dry run racing a real sync** (`src/sync/mod.rs`, `PendingStagingGeneration::scratch`): checked only by holding `flock` on Linux. Windows file locking and a dry run racing a sync that is mid-publish are unverified.

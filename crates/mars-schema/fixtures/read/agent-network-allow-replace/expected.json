@@ -1,0 +1,45 @@
+{
+  "frontmatter": [
+    [
+      "network",
+      "allowlist"
+    ],
+    [
+      "network-allow",
+      {
+        "replace": [
+          "only.example"
+        ]
+      }
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": "allowlist",
+    "network-allow": {
+      "replace": [
+        "only.example"
+      ]
+    },
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body",
+  "diagnostics": []
+}

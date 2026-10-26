@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 
 use crate::config::FilterMode;
-use crate::lock::ItemKind;
 use crate::types::{ItemName, SourceName};
+use mars_schema::item::ItemKind;
 
 use super::package::RegisteredPackage;
 

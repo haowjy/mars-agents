@@ -1,0 +1,42 @@
+{
+  "frontmatter": [
+    [
+      "model-invocable",
+      "true"
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-invocable"
+      ],
+      "message": "agent field `model-invocable` has invalid value `true`; allowed: boolean"
+    }
+  ]
+}

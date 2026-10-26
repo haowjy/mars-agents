@@ -15,6 +15,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::plan::{PlannedAction, SyncPlan};
+use mars_schema::item::ItemKind;
+
 use crate::{
     error::{LockError, MarsError},
     hash,
@@ -22,10 +24,17 @@ use crate::{
         self, CANONICAL_TARGET_ROOT, LockFile, LockIndex, LockedItemV2, OutputRecord, OutputState,
     },
     resolve::ResolvedGraph,
-    types::{ContentHash, DestPath, ItemKind, SourceName},
+    types::{ContentHash, DestPath, SourceName},
 };
 
 const INTENT_FILE: &str = ".mars/pending-canonical.json";
+
+/// Where a sync keeps its write intent. While this file exists, a sync died between
+/// journaling and publishing `mars.lock`, so destinations it may have written are not
+/// recorded anywhere else yet.
+pub(crate) fn intent_path(root: &Path) -> PathBuf {
+    root.join(INTENT_FILE)
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,7 +119,7 @@ fn lock_checksum(root: &Path) -> Result<Option<ContentHash>, MarsError> {
 }
 
 fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
-    let path = root.join(INTENT_FILE);
+    let path = intent_path(root);
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
@@ -403,7 +412,7 @@ pub(super) fn prepare(
         };
         validate(&intent)?;
         let bytes = serde_json::to_vec_pretty(&intent).map_err(invalid)?;
-        crate::fs::atomic_write_if_changed(&root.join(INTENT_FILE), &bytes)?;
+        crate::fs::atomic_write_if_changed(&intent_path(root), &bytes)?;
     } else {
         complete(root)?;
     }
@@ -413,7 +422,7 @@ pub(super) fn prepare(
 /// Discard after lock publication, or when no uncommitted outputs remain.
 /// A crash after publication is harmless: the installed lock claims take precedence.
 pub(super) fn complete(root: &Path) -> Result<(), MarsError> {
-    match fs::remove_file(root.join(INTENT_FILE)) {
+    match fs::remove_file(intent_path(root)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),

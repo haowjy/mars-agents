@@ -2,12 +2,13 @@ use std::path::Path;
 
 use crate::error::MarsError;
 use crate::fs::{atomic_install_dir, atomic_write};
-use crate::lock::{ItemId, ItemKind};
+use crate::lock::ItemId;
 use crate::platform::fs as fs_ops;
 use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
 pub use crate::sync::types::SyncOptions;
 use crate::types::{ContentHash, DestPath, ItemName, SourceName};
+use mars_schema::item::ItemKind;
 
 /// The result of applying the sync plan.
 #[derive(Debug, Clone)]
@@ -306,7 +307,7 @@ fn removal_path(root: &Path, dest_path: &DestPath, kind: ItemKind) -> std::path:
 mod tests {
     use super::*;
     use crate::hash;
-    use crate::lock::{ItemId, ItemKind, LockedItem};
+    use crate::lock::{ItemId, LockedItem};
     use crate::sync::plan::{PlannedAction, SyncPlan};
     use crate::sync::target::TargetItem;
     use std::fs;

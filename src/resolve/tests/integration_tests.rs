@@ -137,6 +137,8 @@ fn transitive_override_does_not_collapse_conflicting_declared_identities() {
             authors: None,
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: None,
             requires_meridian: None,
         },
@@ -148,6 +150,7 @@ fn transitive_override_does_not_collapse_conflicting_declared_identities() {
                 subpath: None,
                 version: None,
                 filter: crate::config::FilterConfig::default(),
+                plugin: None,
             },
         )]),
         models: IndexMap::new(),
@@ -306,6 +309,7 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
             subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
     let manifest_a = Manifest {
@@ -316,6 +320,8 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
             authors: None,
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: None,
             requires_meridian: None,
         },
@@ -398,6 +404,7 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
             subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
     let manifest_a = Manifest {
@@ -408,6 +415,8 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
             authors: None,
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: None,
             requires_meridian: None,
         },
@@ -733,6 +742,7 @@ fn latest_and_pinned_revisit_re_resolves_to_pinned_version() {
             subpath: None,
             version: None,
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
     let manifest_a = Manifest {
@@ -743,6 +753,8 @@ fn latest_and_pinned_revisit_re_resolves_to_pinned_version() {
             authors: None,
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: None,
             requires_meridian: None,
         },
@@ -807,6 +819,8 @@ fn normal_mode_falls_back_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -852,6 +866,8 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -916,17 +932,17 @@ fn local_path_source_resolves_transitive_path_dependencies() {
 
     std::fs::write(
         app.join("mars.toml"),
-        "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n[dependencies.shared]\npath = \"../shared\"\n",
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\nschema = 1\n\n[dependencies.shared]\npath = \"../shared\"\n",
     )
     .unwrap();
     std::fs::write(
         shared.join("mars.toml"),
-        "[package]\nname = \"shared\"\nversion = \"1.0.0\"\n\n[dependencies.planning]\npath = \"../planning\"\n",
+        "[package]\nname = \"shared\"\nversion = \"1.0.0\"\nschema = 1\n\n[dependencies.planning]\npath = \"../planning\"\n",
     )
     .unwrap();
     std::fs::write(
         planning.join("mars.toml"),
-        "[package]\nname = \"planning\"\nversion = \"1.0.0\"\n",
+        "[package]\nname = \"planning\"\nversion = \"1.0.0\"\nschema = 1\n",
     )
     .unwrap();
 
@@ -952,6 +968,7 @@ fn alphabetical_order_linear_chain() {
         ResolvedNode {
             source_name: "c".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
+            prepared: None,
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -963,6 +980,7 @@ fn alphabetical_order_linear_chain() {
         ResolvedNode {
             source_name: "b".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
+            prepared: None,
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -974,6 +992,7 @@ fn alphabetical_order_linear_chain() {
         ResolvedNode {
             source_name: "a".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
+            prepared: None,
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -994,6 +1013,7 @@ fn alphabetical_order_ignores_dependency_shape() {
         ResolvedNode {
             source_name: "a".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
+            prepared: None,
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1005,6 +1025,7 @@ fn alphabetical_order_ignores_dependency_shape() {
         ResolvedNode {
             source_name: "b".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
+            prepared: None,
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1016,6 +1037,7 @@ fn alphabetical_order_ignores_dependency_shape() {
         ResolvedNode {
             source_name: "c".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
+            prepared: None,
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1027,6 +1049,7 @@ fn alphabetical_order_ignores_dependency_shape() {
         ResolvedNode {
             source_name: "d".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/d"), None),
+            prepared: None,
             resolved_ref: dummy_ref("d"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1046,6 +1069,7 @@ fn alphabetical_order_no_deps() {
         ResolvedNode {
             source_name: "a".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
+            prepared: None,
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1057,6 +1081,7 @@ fn alphabetical_order_no_deps() {
         ResolvedNode {
             source_name: "b".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
+            prepared: None,
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1078,6 +1103,7 @@ fn alphabetical_order_is_stable_for_cycles() {
         ResolvedNode {
             source_name: "a".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
+            prepared: None,
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1089,6 +1115,7 @@ fn alphabetical_order_is_stable_for_cycles() {
         ResolvedNode {
             source_name: "b".into(),
             source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
+            prepared: None,
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
@@ -1139,6 +1166,8 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
             authors: None,
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: None,
             requires_meridian: None,
         },
@@ -1302,6 +1331,7 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
             subpath: None,
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
     let manifest_a = Manifest {
@@ -1312,6 +1342,8 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
             authors: None,
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: None,
             requires_meridian: None,
         },
@@ -1812,6 +1844,8 @@ fn restart_fresh_context_drops_removed_transitive_engine_fallback() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: None,
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1920,6 +1954,8 @@ fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -2249,6 +2285,8 @@ fn frozen_rejects_engine_incompatible_lock() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("locked".into()),
+            plugin: None,
+            content: None,
         },
     );
     let options = ResolveOptions {
@@ -2294,6 +2332,8 @@ fn incompatible_locked_version_warns_and_falls_back() {
             subpath: None,
             version: Some("v2.0.0".into()),
             commit: Some("locked".into()),
+            plugin: None,
+            content: None,
         },
     );
     let options = ResolveOptions {
@@ -2511,6 +2551,8 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("locked-a".into()),
+            plugin: None,
+            content: None,
         },
     );
     lock.dependencies.insert(
@@ -2521,6 +2563,8 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("locked-c".into()),
+            plugin: None,
+            content: None,
         },
     );
     let options = ResolveOptions {

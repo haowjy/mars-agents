@@ -1,0 +1,26 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "agent-skills",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "my-skill",
+      "source_path": "SKILL.md",
+      "skill_root": "",
+      "output_path": "skills/my-skill/SKILL.md",
+      "payload": [
+        "notes.md",
+        "scripts/run.sh"
+      ]
+    }
+  ],
+  "diagnostics": {}
+}

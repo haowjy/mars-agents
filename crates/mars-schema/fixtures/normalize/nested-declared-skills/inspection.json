@@ -1,0 +1,38 @@
+{
+  "kind": "plugin",
+  "dialect": {
+    "dialect": "claude",
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        ".claude-plugin/plugin.json"
+      ]
+    }
+  },
+  "also_found": [],
+  "name": "nest",
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "child",
+      "source_path": "skills/parent/child/SKILL.md",
+      "skill_root": "skills/parent/child",
+      "output_path": "skills/child/SKILL.md",
+      "payload": [
+        "skills/parent/child/data.txt"
+      ]
+    },
+    {
+      "kind": "skill",
+      "slug": "parent",
+      "source_path": "skills/parent/SKILL.md",
+      "skill_root": "skills/parent",
+      "output_path": "skills/parent/SKILL.md",
+      "payload": [
+        "skills/parent/guide.md"
+      ]
+    }
+  ],
+  "diagnostics": {}
+}

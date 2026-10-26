@@ -4,11 +4,10 @@ use std::path::Path;
 
 use serde_yaml::Value;
 
-use crate::compiler::skills::parse_skill_tool_policy;
-use crate::config::{AgentOverlayTools, SkillOverlay};
-use crate::frontmatter::Frontmatter;
+use crate::config::SkillOverlay;
 use crate::skill_source_name::flat_root_skill_source_name;
 use crate::types::RenameMap;
+use mars_schema::frontmatter::Frontmatter;
 
 /// Installed skill name for `[skills.<name>]` overlay lookup.
 ///
@@ -100,34 +99,10 @@ pub(crate) fn apply_skill_overlay(
         );
     }
 
-    if !overlay.tools.is_empty() {
-        changed |= apply_tool_overlay(&mut merged, &overlay.tools);
-    }
     (merged, changed)
 }
 
-/// Apply `[skills.<name>.tools]` through the same edit an agent overlay uses, then write the
-/// rules back, since sync lowers skills from this staged text. A skill's `tools:` only grants,
-/// so `allowed` makes no allowlist, and the skill's own deny and ask rules survive it.
-///
-/// Writing back replaces `tools:` and `disallowed-tools:` with what parsed. If any entry did not,
-/// the frontmatter stays as written: rewriting it would drop that entry, a malformed deny
-/// among them, and hide the error sync's own parse reports for it.
-fn apply_tool_overlay(fm: &mut Frontmatter, overlay: &AgentOverlayTools) -> bool {
-    let mut diags = Vec::new();
-    let before = parse_skill_tool_policy(fm, &mut diags);
-    if !diags.is_empty() {
-        return false;
-    }
-    let mut after = before.clone();
-    after.apply_overlay(overlay);
-    if after == before {
-        return false;
-    }
-    after.write_skill_frontmatter(fm);
-    true
-}
-
+/// Set the scalar skill fields that consumer overlays may author.
 fn set_string_field(fm: &mut Frontmatter, key: &str, value: &str) -> bool {
     if fm.get(key).and_then(Value::as_str) == Some(value) {
         return false;
@@ -150,71 +125,10 @@ fn set_bool_field(fm: &mut Frontmatter, key: &str, value: bool, aliases: &[&str]
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::AgentOverlayTools;
     use crate::types::ItemName;
 
     fn fm(yaml: &str) -> Frontmatter {
         Frontmatter::parse(&format!("---\n{yaml}---\n# Body\n")).unwrap()
-    }
-
-    #[test]
-    fn overlay_changes_description_and_tools() {
-        let overlay = SkillOverlay {
-            description: Some("Overridden".to_string()),
-            user_invocable: Some(false),
-            tools: AgentOverlayTools {
-                disallowed: Some(vec!["Agent".to_string().try_into().unwrap()].into()),
-                ..AgentOverlayTools::default()
-            },
-            ..SkillOverlay::default()
-        };
-        let (merged, changed) = apply_skill_overlay(
-            &fm("name: demo\ndescription: base\nuser-invocable: true\n"),
-            &overlay,
-        );
-        assert!(changed);
-        assert_eq!(
-            merged.get("description"),
-            Some(&Value::String("Overridden".into()))
-        );
-        assert_eq!(merged.get("user-invocable"), Some(&Value::Bool(false)));
-        assert_eq!(
-            merged.get("disallowed-tools"),
-            Some(&Value::Sequence(vec![Value::String("agent".into())]))
-        );
-    }
-
-    #[test]
-    fn overlay_allowed_adds_grants_and_keeps_the_skills_denies() {
-        let overlay = SkillOverlay {
-            tools: AgentOverlayTools {
-                allowed: Some(vec!["Bash(git *)".to_string().try_into().unwrap()].into()),
-                ..AgentOverlayTools::default()
-            },
-            ..SkillOverlay::default()
-        };
-        let (merged, changed) = apply_skill_overlay(
-            &fm(
-                "name: demo\ndescription: base\ntools:\n  read: allow\n  'bash(git push *)': deny\n",
-            ),
-            &overlay,
-        );
-        assert!(changed);
-        assert_eq!(
-            merged.get("tools"),
-            Some(&Value::Sequence(vec![
-                Value::String("read".into()),
-                Value::String("bash(git *)".into())
-            ]))
-        );
-        // The map-form deny survives, now in `disallowed-tools`, where a skill reads denies.
-        assert_eq!(
-            merged.get("disallowed-tools"),
-            Some(&Value::Sequence(vec![Value::String(
-                "bash(git push *)".into()
-            )]))
-        );
-        assert!(merged.get("allowed-tools").is_none());
     }
 
     #[test]

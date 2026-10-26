@@ -1,9 +1,12 @@
+use mars_schema::item::ItemKind;
 pub mod apply;
 pub mod diff;
 pub mod filter;
+mod local_items;
 pub mod mutation;
+pub(crate) mod ownership;
 pub mod plan;
-mod recovery;
+pub(crate) mod recovery;
 pub mod rewrite;
 pub mod target;
 pub mod types;
@@ -12,22 +15,21 @@ pub(crate) mod validate;
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::error::MarsError;
 use crate::fs::FileLock;
-use crate::hash;
-use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, ItemKind};
-use crate::lock::{LockFile, LockIndex};
+use crate::lock::LockFile;
 use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
-use crate::sync::target::{TargetItem, TargetState};
+use crate::sync::ownership::Ownership;
+use crate::sync::target::TargetState;
 use crate::types::managed_cmd;
-use crate::types::{ContentHash, DestPath, MarsContext, SourceName, SourceOrigin};
+use crate::types::{MarsContext, SourceName};
 use crate::validate::ValidationWarning;
 
 pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange};
@@ -138,23 +140,18 @@ pub(crate) struct LoadedConfig {
     pub local: LocalConfig,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
+    /// What `mars provide` installed here, read under the sync lock. Never written by sync.
+    pub provided: crate::provided::ProvidedNames,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock. A dry run holds it only when `.mars/sync.lock` already exists, and never creates it: it mutates nothing the lock guards.
     #[allow(dead_code)]
     pub sync_lock: Option<FileLock>,
-    /// Owns the dry-run staging directory. A preview used to stage under
-    /// `.mars/staging`, which left a new path in a package that does not
-    /// gitignore `.mars/`.
-    dry_run_staging: Option<tempfile::TempDir>,
 }
 
 impl LoadedConfig {
-    /// Directory that package trees are staged into for this run.
-    pub(crate) fn staging_root(&self, project_root: &Path) -> PathBuf {
-        match &self.dry_run_staging {
-            Some(dir) => dir.path().join("staging"),
-            None => project_root.join(".mars/staging"),
-        }
+    /// Whether a canonical destination is Mars-owned: claimed by `mars.lock` or provided.
+    pub(crate) fn ownership(&self) -> ownership::Ownership<'_> {
+        ownership::Ownership::new(&self.old_lock, &self.provided)
     }
 }
 
@@ -163,6 +160,9 @@ pub(crate) struct ResolvedState {
     pub loaded: LoadedConfig,
     pub graph: ResolvedGraph,
     pub upgrades_available: usize,
+    /// Owns every normalized package tree until the compiler has passed its
+    /// complete diagnostic gate. Durable staging is published only afterward.
+    pub preparation: crate::platform::fs::PendingStagingGeneration,
 }
 
 /// Phase 3: Desired target state after discovery + filtering.
@@ -201,7 +201,7 @@ pub(crate) struct SyncedState {
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
-    let ir = crate::reader::read(ctx, request, &mut diag)?;
+    let ir = crate::reader::read(ctx, request, &mut diag, true)?;
     let unreadable_hook_surfaces = &ir.resolved.graph.unreadable_hook_surfaces;
     if request.recovery.defers_on_unreadable() && !unreadable_hook_surfaces.is_empty() {
         persist_pending_config_mutation(ctx, &ir.resolved.loaded, request)?;
@@ -222,6 +222,19 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
         });
     }
     crate::compiler::compile(ctx, ir, request, &mut diag)
+}
+
+/// Run the same preparation/compiler path while returning schema errors as
+/// report data. Validation is dry-run only, so it never authorizes mutations.
+pub(crate) fn execute_validation(
+    ctx: &MarsContext,
+    request: &SyncRequest,
+) -> Result<SyncReport, MarsError> {
+    validate_request(request)?;
+    debug_assert!(request.options.dry_run);
+    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
+    let ir = crate::reader::read(ctx, request, &mut diag, false)?;
+    crate::compiler::compile_reporting(ctx, ir, request, &mut diag)
 }
 
 fn build_recovery_halt(
@@ -341,16 +354,30 @@ pub(crate) fn load_config(
     let mars_dir = project_root.join(".mars");
 
     // A dry run is a preview: it must leave the project's files as it found
-    // them, so it stages into a temporary directory and never creates the lock
-    // file. It still takes the flock when a real sync already created it:
-    // recovery reads `mars.lock` and the intent journal, and a publisher
-    // running between those reads would show it a torn snapshot.
-    let (sync_lock, dry_run_staging) = if request.options.dry_run {
-        let lock = crate::fs::FileLock::acquire_existing(&mars_dir.join("sync.lock"))?;
-        (lock, Some(tempfile::TempDir::new()?))
+    // them. It never creates the lock file or reclaims a pending generation,
+    // and stages in scratch space outside the project (`resolve_graph`). It
+    // still takes the flock when a real sync already created it: recovery reads
+    // `mars.lock` and the intent journal, and a publisher running between those
+    // reads would show it a torn snapshot.
+    let sync_lock = if request.options.dry_run {
+        crate::fs::FileLock::acquire_existing(&mars_dir.join("sync.lock"))?
     } else {
-        let sync_lock = crate::fs::FileLock::acquire(&mars_dir.join("sync.lock"))?;
-        (Some(sync_lock), None)
+        // The lock is the sole project-state write allowed before preparation's
+        // complete diagnostic gate. All package trees live in owned scratch space.
+        let lock = crate::fs::FileLock::acquire(&mars_dir.join("sync.lock"))?;
+        if crate::platform::fs::recover_pending_staging(&mars_dir)? {
+            diag.warn(
+                "sync-recovered-staging",
+                "reclaimed an interrupted canonical staging generation",
+            );
+        }
+        if crate::platform::fs::recover_interrupted_skill_installs(&mars_dir)? {
+            diag.warn(
+                "sync-recovered-skill-install",
+                "reclaimed an interrupted skill install left staged under .mars/skills",
+            );
+        }
+        Some(lock)
     };
 
     // Load config under lock (auto-init when mutating and missing).
@@ -362,7 +389,6 @@ pub(crate) fn load_config(
         },
         Err(err) => return Err(err),
     };
-
     // Apply config mutation.
     let dependency_changes = if let Some(m) = &request.mutation {
         mutation::apply_mutation(&mut config, m)?
@@ -428,14 +454,16 @@ pub(crate) fn load_config(
         );
     }
 
+    let provided = crate::provided::ProvidedNames::load(project_root, diag)?;
+
     Ok(LoadedConfig {
         config,
         local,
         effective,
         old_lock,
+        provided,
         dependency_changes,
         sync_lock,
-        dry_run_staging,
     })
 }
 
@@ -463,8 +491,12 @@ pub(crate) fn resolve_graph(
             (name.clone(), path)
         })
         .collect();
+    let preparation = if request.options.dry_run {
+        crate::platform::fs::PendingStagingGeneration::scratch()?
+    } else {
+        crate::platform::fs::PendingStagingGeneration::create(&ctx.project_root.join(".mars"))?
+    };
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
-        .with_staging_root(loaded.staging_root(&ctx.project_root))
         .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(
         &loaded.effective,
@@ -519,6 +551,7 @@ pub(crate) fn resolve_graph(
         loaded,
         graph,
         upgrades_available,
+        preparation,
     })
 }
 
@@ -529,15 +562,18 @@ pub(crate) struct PreparedTarget {
     pub explicit_renames: Vec<target::ExplicitRename>,
     pub collision_renames: Vec<target::CollisionRename>,
     pub dep_precedence: Vec<SourceName>,
-    pub warnings: Vec<crate::validate::ValidationWarning>,
 }
 
-/// Build, extend, rename, and validate one resolved graph target.
+/// Build, extend and rename one resolved graph target.
 ///
 /// Sync extends the dependency target with project-local items before the
 /// shared rename pass; publish builds use the graph target unchanged. Keeping
 /// the extension inside this function preserves the own-package shadowing
 /// rules while ensuring every caller gets the same finalization pipeline.
+///
+/// Skill refs are checked by each caller after this returns, with its own context: sync knows
+/// what this machine installed and what the project's own package declares, a plugin build has
+/// neither.
 pub(crate) fn prepare_target_state(
     graph: &crate::resolve::ResolvedGraph,
     effective: &EffectiveConfig,
@@ -557,15 +593,12 @@ pub(crate) fn prepare_target_state(
         }
     }
 
-    let warnings = validate::validate_skill_refs(&target);
-
     Ok(PreparedTarget {
         target,
         rename_index,
         explicit_renames,
         collision_renames,
         dep_precedence,
-        warnings,
     })
 }
 
@@ -584,210 +617,30 @@ pub(crate) fn build_target(
     // Use .mars/ as the canonical content root for diff/collision checks.
     let mars_dir = ctx.project_root.join(".mars");
     let managed_root = &mars_dir;
-    let staging_root = resolved.loaded.staging_root(&ctx.project_root);
 
     let PreparedTarget {
         target: mut target_state,
         explicit_renames: renames,
         collision_renames,
-        warnings,
         ..
     } = prepare_target_state(
         &resolved.graph,
         &resolved.loaded.effective,
         diag,
         |target_state, diag| {
-            let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
-            let old_lock_index = LockIndex::new(&resolved.loaded.old_lock);
-
-            for item in local_items {
-                // Hook config and materialization are both discovered from project-root
-                // `hooks/`; treating `.mars-src` hook directories as ordinary canonical
-                // items would bypass per-target identity.
-                if item.discovered.id.kind == ItemKind::Hook {
-                    continue;
-                }
-                let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
-                    && item.discovered.source_path == Path::new(".");
-                let excluded_paths = if is_flat_skill {
-                    let mut targets = resolved.loaded.effective.settings.managed_targets();
-                    targets.extend(resolved.loaded.old_lock.items.values().flat_map(|item| {
-                        item.outputs.iter().map(|output| output.target_root.clone())
-                    }));
-                    targets.sort();
-                    targets.dedup();
-                    crate::local_source::flat_skill_excluded_paths(
-                        &ctx.project_root,
-                        &item.disk_path(),
-                        &targets,
-                    )?
-                } else {
-                    Vec::new()
-                };
-                let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
-                let staged_path = crate::staging::stage_local_item(
-                    &item.disk_path(),
-                    item.discovered.id.kind,
-                    item.dialect,
-                    &resolved.loaded.effective.skills,
-                    &staging_root,
-                    &item_key,
-                    (item.discovered.id.kind == ItemKind::Skill)
-                        .then(|| item.discovered.id.name.as_str()),
-                    &excluded_paths,
-                    diag,
-                )?;
-                let source_path = staged_path;
-                let source_hash = if is_flat_skill {
-                    ContentHash::from(hash::compute_skill_hash_filtered(
-                        &source_path,
-                        crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
-                    )?)
-                } else {
-                    ContentHash::from(hash::compute_hash(&source_path, item.discovered.id.kind)?)
-                };
-                if item.discovered.id.kind == ItemKind::Agent
-                    && let Err(message) =
-                        crate::target::validate_agent_filename(item.discovered.id.name.as_str())
-                {
-                    diag.error_with_category(
-                        "invalid-agent-filename",
-                        format!("{message}; skipping local agent"),
-                        crate::diagnostic::DiagnosticCategory::Validation,
-                    );
-                    continue;
-                }
-                let dest_path =
-                    default_dest_path(item.discovered.id.kind, item.discovered.id.name.as_str());
-
-                if let Some(existing) = target_state.items.shift_remove(&dest_path)
-                    && existing.source_hash != source_hash
-                {
-                    diag.warn(
-                        "local-shadow",
-                        format!(
-                            "local {} `{}` shadows dependency `{}` {} `{}`",
-                            item.discovered.id.kind,
-                            item.discovered.id.name,
-                            existing.source_name,
-                            existing.id.kind,
-                            existing.id.name
-                        ),
-                    );
-                }
-
-                let disk_path = dest_path.resolve(managed_root);
-                let unowned_collision = !old_lock_index
-                    .contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-                    && disk_path.symlink_metadata().is_ok();
-                let adoptable = unowned_collision
-                    && force_adoptable_self_destination(
-                        &disk_path,
-                        managed_root,
-                        item.discovered.id.kind,
-                    );
-                if unowned_collision && !(request.options.force && adoptable) {
-                    let guidance = if adoptable {
-                        format!(
-                            "use `{}` to replace and adopt this regular destination",
-                            managed_cmd("mars sync --force")
-                        )
-                    } else {
-                        "relocate the destination and retry sync (force cannot adopt symlinks or wrong-shaped paths)".to_string()
-                    };
-                    return Err(MarsError::Source {
-                        source_name: local_source_name.to_string(),
-                        message: format!(
-                            "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; {guidance}",
-                            item.discovered.id.kind,
-                            item.discovered.id.name,
-                            item.disk_path().display(),
-                            disk_path.display(),
-                        ),
-                    });
-                }
-                if request.options.force && adoptable {
-                    let action = if request.options.dry_run {
-                        "would replace and adopt"
-                    } else {
-                        "will replace and adopt"
-                    };
-                    diag.warn(
-                        "self-adopt",
-                        format!(
-                            "selected self {} `{}` {action} existing canonical destination `{}`",
-                            item.discovered.id.kind,
-                            item.discovered.id.name,
-                            disk_path.display()
-                        ),
-                    );
-                }
-
-                target_state.items.insert(
-                    dest_path.clone(),
-                    TargetItem {
-                        id: ItemId {
-                            kind: item.discovered.id.kind,
-                            name: item.discovered.id.name.clone(),
-                        },
-                        source_name: local_source_name.clone(),
-                        source_path,
-                        dest_path,
-                        source_hash,
-                        is_flat_skill,
-                        rewritten_content: None,
-                    },
-                );
-            }
-
-            // Project-root hooks are authored outside `.mars-src`; materialize each whole
-            // directory into the canonical store so target sync can use normal item ownership.
-            let managed_targets = resolved.loaded.effective.settings.managed_targets();
-            for hook in
-                crate::compiler::hooks::discover_hook_items(&ctx.project_root, "_self", 0, 0, diag)?
-            {
-                for (target_name, dest_path, target_item) in
-                    target::hook_target_items(&hook, &local_source_name, &managed_targets)?
-                {
-                    if let Some(existing) = target_state.items.shift_remove(&dest_path)
-                        && existing.source_hash != target_item.source_hash
-                    {
-                        diag.warn(
-                    "local-shadow",
-                    format!(
-                        "local hook `{}` shadows dependency `{}` hook on target `{target_name}`",
-                        hook.def.name, existing.source_name
-                    ),
-                );
-                    }
-                    target_state.select_hook(&target_name, &target_item, hook.clone());
-                    let disk_path = dest_path.resolve(managed_root);
-                    if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-                        && disk_path.symlink_metadata().is_ok()
-                    {
-                        diag.warn("unmanaged-collision", format!("local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched", hook.def.name));
-                        continue;
-                    }
-                    target_state.items.insert(dest_path, target_item);
-                }
-            }
-
-            match crate::compiler::mcp::discover_mcp_items(&ctx.project_root, "_self", 0, diag) {
-                Ok(items) => {
-                    for item in items {
-                        target_state.select_mcp(item, &managed_targets);
-                    }
-                }
-                Err(error) => diag.warn(
-                    "mcp-discover",
-                    format!("failed to scan local MCP items: {error}"),
-                ),
-            }
+            local_items::merge_local_items(
+                ctx,
+                &resolved,
+                local_items,
+                request,
+                target_state,
+                diag,
+            )?;
 
             // Prevent managed installs from overwriting unmanaged files.
             let unmanaged_collisions = target::check_unmanaged_collisions(
                 managed_root,
-                &resolved.loaded.old_lock,
+                &resolved.loaded.ownership(),
                 target_state,
                 request.options.force,
             );
@@ -805,14 +658,28 @@ pub(crate) fn build_target(
         },
     )?;
 
+    // MCP collisions resolve before installation, so only the winning server's
+    // directory becomes an item. It lands beside each target's config like a hook
+    // directory, and removal prunes it through the same lock ownership.
     materialize_mcp_directories(
-        &resolved.loaded.old_lock,
         managed_root,
+        &resolved.loaded.ownership(),
         &mut target_state,
+        request.options.force,
         diag,
     )?;
 
-    validate::validate_skill_frontmatter_in_target(&target_state, diag);
+    let warnings = validate::validate_skill_refs(
+        &target_state,
+        &resolved.graph,
+        Some(&resolved.loaded.provided),
+        resolved
+            .loaded
+            .config
+            .package
+            .as_ref()
+            .map(|package| package.uses_providers.as_slice()),
+    );
 
     validate::warn_config_dangles_after_rename(
         &renames,
@@ -1195,28 +1062,8 @@ pub(crate) fn finalize(
         }
     }
 
-    for w in &state.applied.planned.targeted.warnings {
-        match w {
-            ValidationWarning::MissingSkill {
-                agent,
-                skill_name,
-                suggestion,
-            } => {
-                let msg = match suggestion {
-                    Some(s) => format!(
-                        "agent `{}` references missing skill `{}` (did you mean `{}`?)",
-                        agent.name, skill_name, s
-                    ),
-                    None => {
-                        format!(
-                            "agent `{}` references missing skill `{}`",
-                            agent.name, skill_name
-                        )
-                    }
-                };
-                diag.warn("missing-skill", msg);
-            }
-        }
+    for warning in &state.applied.planned.targeted.warnings {
+        diag.warn(warning.code(), warning.message());
     }
     let dependency_changes = state
         .applied
@@ -1311,12 +1158,12 @@ fn retry_tombstone_removals(
 /// exactly like hook directories, and tracked as ordinary canonical items so
 /// removal prunes them.
 fn materialize_mcp_directories(
-    old_lock: &LockFile,
     managed_root: &Path,
+    ownership: &Ownership<'_>,
     target_state: &mut TargetState,
+    force: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let old_lock_index = LockIndex::new(old_lock);
     let groups = target_state
         .selected_mcp_groups()
         .map(|(item, targets)| (item.clone(), targets.to_vec()))
@@ -1331,10 +1178,7 @@ fn materialize_mcp_directories(
             &source_name,
             &target_roots,
         )? {
-            let disk_path = dest_path.resolve(managed_root);
-            if !old_lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-                && disk_path.symlink_metadata().is_ok()
-            {
+            if target::unmanaged_collision(managed_root, ownership, &target_item, force) {
                 diag.warn(
                     "unmanaged-collision",
                     format!(
@@ -1348,46 +1192,6 @@ fn materialize_mcp_directories(
         }
     }
     Ok(())
-}
-
-fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
-    match kind {
-        ItemKind::Agent => DestPath::from(format!("agents/{name}.md")),
-        ItemKind::Skill => DestPath::from(format!("skills/{name}")),
-        ItemKind::Hook => DestPath::from(format!("hooks/{name}")),
-        ItemKind::McpServer => DestPath::from(format!("mcp/{name}")),
-        ItemKind::BootstrapDoc => DestPath::from(format!("bootstrap/{name}/BOOTSTRAP.md")),
-    }
-}
-
-fn force_adoptable_self_destination(path: &Path, managed_root: &Path, kind: ItemKind) -> bool {
-    let Some(relative) = path.strip_prefix(managed_root).ok() else {
-        return false;
-    };
-    let Ok(root_metadata) = managed_root.symlink_metadata() else {
-        return false;
-    };
-    if root_metadata.file_type().is_symlink() {
-        return false;
-    }
-    let mut current = managed_root.to_path_buf();
-    for component in relative.components() {
-        current.push(component.as_os_str());
-        let Ok(metadata) = current.symlink_metadata() else {
-            break;
-        };
-        if metadata.file_type().is_symlink() {
-            return false;
-        }
-    }
-    match path.symlink_metadata() {
-        Ok(metadata) => match kind {
-            ItemKind::Agent => metadata.is_file(),
-            ItemKind::Skill => metadata.is_dir(),
-            _ => false,
-        },
-        Err(_) => false,
-    }
 }
 
 fn validate_request(request: &SyncRequest) -> Result<(), MarsError> {
@@ -1417,10 +1221,10 @@ fn validate_targets(
     if let ResolutionMode::Maximize { targets, .. } = resolution {
         for name in targets {
             if !effective.dependencies.contains_key(name) {
-                return Err(MarsError::Source {
-                    source_name: name.to_string(),
-                    message: format!("dependency `{name}` not found in mars.toml"),
-                });
+                return Err(mutation::dependency_not_found(
+                    effective.dependencies.keys(),
+                    name,
+                ));
             }
         }
     }

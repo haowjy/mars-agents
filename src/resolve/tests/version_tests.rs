@@ -151,6 +151,8 @@ fn locked_version_preferred_when_satisfies_constraint() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some("abc".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -188,6 +190,8 @@ fn locked_version_ignored_when_constraint_changed() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("old-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -221,6 +225,8 @@ fn stale_lock_entry_with_mismatched_url_is_ignored_in_normal_sync() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("stale-lock-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -257,6 +263,8 @@ fn frozen_mode_errors_when_lock_entry_identity_url_mismatches_source() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("stale-lock-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -290,6 +298,8 @@ fn locked_commit_is_used_when_reachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -334,6 +344,8 @@ fn maximize_mode_ignores_locked_commit() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -397,6 +409,8 @@ fn latest_ignores_compatible_lock_and_resolves_to_newest() {
             subpath: None,
             version: Some("v2.0.0".into()),
             commit: Some("locked-v2".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -577,6 +591,8 @@ fn ref_pin_prefers_locked_commit_in_normal_sync() {
             subpath: None,
             version: Some("main".into()),
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -621,6 +637,8 @@ fn ref_pin_falls_back_when_locked_commit_unreachable_in_normal_sync() {
             subpath: None,
             version: Some("main".into()),
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -663,6 +681,8 @@ fn frozen_ref_pin_replays_locked_commit_exactly() {
             subpath: None,
             version: Some("main".into()),
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -724,6 +744,8 @@ fn frozen_ref_pin_errors_when_locked_commit_missing() {
             subpath: None,
             version: Some("main".into()),
             commit: None,
+            plugin: None,
+            content: None,
         },
     );
 
@@ -758,6 +780,8 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("main".into()),
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -797,6 +821,8 @@ fn ref_pin_selector_mismatch_ignores_locked_commit_in_normal_sync() {
             subpath: None,
             version: Some("main".into()),
             commit: Some("stale-main-sha".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -841,6 +867,8 @@ fn ref_pin_selector_missing_ignores_locked_commit_in_normal_sync() {
             subpath: None,
             version: None,
             commit: Some("stale-main-sha".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -887,6 +915,8 @@ fn frozen_ref_pin_errors_when_selector_mismatches_requested_ref() {
             subpath: None,
             version: Some("main".into()),
             commit: Some("stale-main-sha".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -918,6 +948,8 @@ fn frozen_ref_pin_errors_when_selector_missing() {
             subpath: None,
             version: None,
             commit: Some("stale-main-sha".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -979,6 +1011,8 @@ fn maximize_with_specific_targets_replays_non_target_lock_entry() {
             subpath: None,
             version: Some("v2.0.0".into()),
             commit: Some("b-locked-sha".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1099,6 +1133,8 @@ fn untagged_source_uses_locked_commit_when_available() {
             subpath: None,
             version: None,
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1136,6 +1172,8 @@ fn untagged_source_falls_back_to_head_when_locked_commit_unreachable() {
             subpath: None,
             version: None,
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1173,6 +1211,8 @@ fn frozen_mode_errors_for_untagged_locked_commit_unreachable() {
             subpath: None,
             version: None,
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1211,6 +1251,8 @@ fn frozen_mode_replays_unversioned_locked_commit_even_when_tags_now_exist() {
             subpath: None,
             version: None,
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1259,6 +1301,8 @@ fn frozen_mode_errors_when_locked_semver_is_incompatible() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("old-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1288,6 +1332,8 @@ fn frozen_semver_malformed_lock_fails_before_listing_versions() {
             subpath: None,
             version: Some("not-a-semver".into()),
             commit: Some("a-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1320,6 +1366,8 @@ fn frozen_semver_replays_locked_commit_even_when_tag_missing_from_remote() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1374,6 +1422,8 @@ fn frozen_mode_errors_when_transitive_lock_entry_is_missing() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("a-locked".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1424,6 +1474,8 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("a-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
     lock.dependencies.insert(
@@ -1434,6 +1486,8 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some(unreachable.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1485,6 +1539,8 @@ fn r3_transitive_dep_replays_consumer_lock() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("a-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
     lock.dependencies.insert(
@@ -1495,6 +1551,8 @@ fn r3_transitive_dep_replays_consumer_lock() {
             subpath: None,
             version: Some("v1.2.0".into()),
             commit: Some("shared-locked-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1552,6 +1610,8 @@ fn transitive_locked_version_incompatible_falls_back_to_newest_compatible_in_nor
             subpath: None,
             version: Some("v0.9.0".into()),
             commit: Some("stale-shared-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1604,6 +1664,8 @@ fn transitive_locked_commit_unreachable_falls_back_in_normal_sync() {
             subpath: None,
             version: Some("v1.2.0".into()),
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1664,6 +1726,8 @@ fn r5_frozen_replays_transitive_from_lock() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("a-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
     lock.dependencies.insert(
@@ -1674,6 +1738,8 @@ fn r5_frozen_replays_transitive_from_lock() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1788,6 +1854,8 @@ fn r14_local_path_source_ignores_lock() {
             subpath: None,
             version: Some("v9.9.9".into()),
             commit: Some("ignored-commit".into()),
+            plugin: None,
+            content: None,
         },
     );
 

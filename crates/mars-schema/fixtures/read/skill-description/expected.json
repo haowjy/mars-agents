@@ -1,0 +1,28 @@
+{
+  "frontmatter": [
+    [
+      "description",
+      "useful"
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": "useful",
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    }
+  ]
+}

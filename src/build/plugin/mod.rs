@@ -12,8 +12,8 @@ mod tree;
 
 pub(crate) use inspect::inspect_validated;
 pub use inspect::{
-    PluginDirectoryState, PluginInputsState, PluginOutputState, PluginRootFileState,
-    PluginVersionState, inspect,
+    PluginBuilderState, PluginDirectoryState, PluginInputsState, PluginOutputState,
+    PluginRootFileState, PluginVersionState, inspect,
 };
 
 use std::path::{Path, PathBuf};
@@ -201,7 +201,20 @@ fn stage_plugin_inner(
             path: request.package_root.clone(),
             source,
         })?;
-    let lens = PublishLens::load(&package_root, diag)?;
+    let authored = std::sync::Arc::new(crate::package_prepare::prepare_authored(
+        &package_root,
+        mars_schema::prepare::PrepareContext::Package,
+        None,
+        diag,
+    )?);
+    diag.fail_on_errors()?;
+    let lens = PublishLens::from_prepared_manifest(
+        &package_root,
+        authored
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.normalized_bytes.as_slice()),
+    )?;
     let manifest = lens.manifest.as_ref().ok_or_else(|| {
         MarsError::Config(ConfigError::Invalid {
             message: format!(
@@ -228,21 +241,28 @@ fn stage_plugin_inner(
 
     let graph_staging = tempfile::TempDir::new()?;
     let effective = implicit_consumer_config(&lens, &root_source, &profiles)?;
+    let resolve_options = ResolveOptions::default()
+        .with_prepared_source(root_source.clone(), std::sync::Arc::clone(&authored));
     let mut graph = crate::resolve::resolve_publish_graph_from_config(
         &lens,
         &effective,
-        &ResolveOptions::default(),
+        &resolve_options,
         diag,
     )?;
-    stage_graph(
+    diag.fail_on_errors()?;
+    crate::staging::materialize_prepared_graph(
         &mut graph,
         &effective,
-        &graph_staging.path().join("graph"),
+        &graph_staging.path().join("resolve"),
         diag,
     )?;
     let mut prepared_target =
         crate::sync::prepare_target_state(&graph, &effective, diag, |_, _| Ok(()))?;
-    emit_missing_skill_warnings(&prepared_target.warnings, diag);
+    // A plugin build has no project-local items and carries no provided skills, so it passes no
+    // declarations and no installed record: every ref is judged by what the graph ships.
+    let warnings =
+        crate::sync::validate::validate_skill_refs(&prepared_target.target, &graph, None, None);
+    emit_missing_skill_warnings(&warnings, diag);
     materialize_rewritten_skills(&mut prepared_target.target)?;
 
     let aliases = crate::models::merged_model_aliases(
@@ -257,6 +277,7 @@ fn stage_plugin_inner(
         metadata: &metadata,
         root_source: &root_source,
         agent_overlays: &manifest.agents,
+        settings_policies: &manifest.settings.model_policies,
         aliases: &aliases,
         graph: &graph,
         target: &prepared_target.target,
@@ -269,7 +290,7 @@ fn stage_plugin_inner(
     tree::check_sources(&tree_input, &profiles, diag)?;
     let (staged_output, (built_trees, diagnostics, root_file_plan)) =
         output::stage(&out_dir, |staging| {
-            let inputs_hash = plugin_inputs_hash(&package_root)?;
+            let inputs_hash = plugin_inputs_hash_from_prepared(&package_root, &authored)?;
             let mut built_trees = Vec::with_capacity(profiles.len());
             for profile in &profiles {
                 let tree_root = staging.join(profile.key);
@@ -298,7 +319,7 @@ fn stage_plugin_inner(
             Ok((
                 crate::plugin_metadata::PluginSentinel {
                     schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
-                    mars_version: env!("CARGO_PKG_VERSION").to_string(),
+                    mars_version: crate::plugin_metadata::MARS_VERSION.to_string(),
                     plugin_name: plugin_name.clone(),
                     version: metadata.version.clone(),
                     inputs_hash,
@@ -337,7 +358,7 @@ fn materialize_rewritten_skills(
     target: &mut crate::sync::target::TargetState,
 ) -> Result<(), MarsError> {
     for item in target.items.values_mut() {
-        if item.id.kind != crate::lock::ItemKind::Skill {
+        if item.id.kind != mars_schema::item::ItemKind::Skill {
             continue;
         }
         if item.is_flat_skill {
@@ -413,93 +434,46 @@ fn implicit_consumer_config(
     })
 }
 
-fn stage_graph(
-    graph: &mut crate::resolve::ResolvedGraph,
-    effective: &EffectiveConfig,
-    staging_root: &Path,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    for source_name in graph.order.clone() {
-        let rooted = graph
-            .nodes
-            .get(&source_name)
-            .expect("resolved graph order names an existing node")
-            .rooted_ref
-            .clone();
-        let discovered = crate::discover::discover_resolved_source(
-            &rooted.package_root,
-            Some(source_name.as_str()),
-            diag,
-        )?;
-        let mut selected = crate::sync::target::apply_source_filters(
-            graph,
-            &source_name,
-            effective.dependencies.get(&source_name),
-            &discovered,
-            &rooted.package_root,
-        )?
-        .unwrap_or_default();
-        // Hook manifests are parsed strictly before source filters are applied.
-        // Keep every hook root in the staged tree so removed schemas and other
-        // compatibility errors cannot be hidden by an unrelated item filter.
-        for item in discovered
-            .iter()
-            .filter(|item| item.id.kind == crate::lock::ItemKind::Hook)
-        {
-            if !selected.contains(item) {
-                selected.push(item.clone());
-            }
-        }
-        let include_mcp = crate::sync::target::source_may_emit_mcp(graph, &source_name);
-        let inputs = crate::staging::publish_inputs_for_items(
-            &rooted.package_root,
-            &selected,
-            include_mcp,
-            diag,
-        )?;
-        let staged = crate::resolve::stage_rooted_package_for_publish_inputs(
-            &source_name,
-            rooted,
-            effective,
-            staging_root,
-            &inputs,
-            diag,
-        )?;
-        let node = graph
-            .nodes
-            .get_mut(&source_name)
-            .expect("resolved graph order names an existing node");
-        node.rooted_ref = staged.rooted;
-        if let crate::staging::HookSurfaceState::Unreadable { hook_names } = staged.hook_surface {
-            graph
-                .unreadable_hook_surfaces
-                .insert(source_name, hook_names);
-        }
-    }
-    Ok(())
-}
-
 fn emit_missing_skill_warnings(
     warnings: &[crate::validate::ValidationWarning],
     diag: &mut DiagnosticCollector,
 ) {
     for warning in warnings {
-        let crate::validate::ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } = warning;
-        let suffix = suggestion
-            .as_ref()
-            .map(|name| format!(" (did you mean `{name}`?)"))
-            .unwrap_or_default();
-        diag.warn(
-            "unresolved-reference",
-            format!(
-                "agent `{}` references skill `{skill_name}`, which is not shipped{suffix}",
-                agent.name
-            ),
-        );
+        match warning {
+            crate::validate::ValidationWarning::MissingSkill {
+                agent,
+                skill_name,
+                suggestion,
+            } => {
+                let suffix = suggestion
+                    .as_ref()
+                    .map(|name| format!(" (did you mean `{name}`?)"))
+                    .unwrap_or_default();
+                diag.warn(
+                    "unresolved-reference",
+                    format!(
+                        "agent `{}` references skill `{skill_name}`, which is not shipped{suffix}",
+                        agent.name
+                    ),
+                );
+            }
+            crate::validate::ValidationWarning::ProvidedSkillUnavailable {
+                agent,
+                skill_name,
+                provider,
+            } => {
+                // A plugin carries no host-provided skills: the host supplies this one at
+                // launch, wherever the plugin is installed.
+                diag.warn(
+                    warning.code(),
+                    format!(
+                        "agent `{}` references skill `{skill_name}`, which host program `{provider}` supplies at launch; this plugin ships without it",
+                        agent.name
+                    ),
+                );
+            }
+            other => diag.warn(other.code(), other.message()),
+        }
     }
 }
 
@@ -520,6 +494,21 @@ fn fail_on_diagnostic_errors(diagnostics: &[Diagnostic]) -> Result<(), MarsError
 
 /// Hash package-owned build inputs without resolving or fetching dependencies.
 pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsError> {
+    let mut diag = DiagnosticCollector::new();
+    let prepared = crate::package_prepare::prepare_authored(
+        package_root,
+        mars_schema::prepare::PrepareContext::Package,
+        None,
+        &mut diag,
+    )?;
+    diag.fail_on_errors()?;
+    plugin_inputs_hash_from_prepared(package_root, &prepared)
+}
+
+fn plugin_inputs_hash_from_prepared(
+    package_root: &Path,
+    prepared: &mars_schema::prepare::Prepared,
+) -> Result<String, MarsError> {
     let mut entries = std::collections::BTreeMap::new();
     let manifest_path = package_root.join("mars.toml");
     let raw_manifest = std::fs::read_to_string(&manifest_path)?;
@@ -553,7 +542,14 @@ pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsErro
     }
 
     let mut diag = DiagnosticCollector::new();
-    for input in crate::staging::discover_publish_inputs(package_root, None, &mut diag)? {
+    let mut items =
+        crate::discover::discover_binary_owned_items(package_root, None, None, &mut diag)?;
+    items.extend(
+        prepared.definitions.iter().map(|definition| {
+            crate::discover::definition_item(definition, &definition.source_path)
+        }),
+    );
+    for input in crate::staging::publish_inputs_for_items(package_root, &items, true, &mut diag)? {
         let source = package_root.join(&input.relative);
         let relative = crate::hash::portable_relative(package_root, &source).ok_or_else(|| {
             MarsError::InvalidRequest {

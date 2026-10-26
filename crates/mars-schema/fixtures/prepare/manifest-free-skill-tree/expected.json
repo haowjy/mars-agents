@@ -1,0 +1,51 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "agent-skills",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "definitions": [
+    {
+      "kind": "skill",
+      "slug": "demo",
+      "source_path": "skills/demo/SKILL.md",
+      "output_path": "skills/demo/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "demo"
+          ],
+          [
+            "description",
+            "Demo"
+          ]
+        ],
+        "fields": {
+          "name": "demo",
+          "description": "Demo",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [
+    {
+      "source_path": "skills/demo/script.py",
+      "output_path": "skills/demo/script.py"
+    }
+  ],
+  "diagnostics": {}
+}

@@ -32,12 +32,12 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
   emit, link-materialize. Extracted from `mod.rs` (was 1522 lines). Coexists with `native_agents/tests.rs`.
 - `native_agent_manifest.rs` — lock-then-native-agent-manifest persistence
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
-- `tool_policy.rs` — tool-policy parsing (`tools:` list-or-map, `disallowed-tools:`, inline `mcp(...)` grants) into one typed `EffectiveToolPolicy` of `ToolRule`s, the `mars.toml` overlay edit, and `EffectiveToolPolicy::project`, the one place a rule becomes harness-native names. Used by `agents/`, `skills/` and the launch bundle (`build/`).
+- `tool_policy.rs` — runtime projection, overlay merging and specificity over schema-owned tool rules. Authored parsing, vocabulary, aliases and native tables live in `mars-schema`.
 - `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
-- `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
-- `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
-- `tool_names.rs` — the capability vocabulary (canonical names + aliases), the `Capability` type and the `tool(pattern)` grammar
-- `tool_natives.rs` — explicit per-harness native tool tables, pinned by a test against each harness's real tool list. Nothing is derived by naming convention.
+- `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_prepared_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
+- `mars-schema::invocability` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
+- `mars-schema::tool_names` — the capability vocabulary, aliases and `tool(pattern)` grammar
+- `mars-schema::tool_natives` — explicit per-harness native tool tables. Nothing is derived by naming convention.
 - `harness_descriptor.rs` — typed compiler harness facts, including canonical and display names,
   target roots, variant keys, and lowering-policy selectors
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
@@ -68,7 +68,7 @@ This is necessary because native harnesses (Claude Code, Codex) don't understand
 alias system. `NativeModelRoutingRuntime` in `native_agents.rs` owns the merged alias
 registry, `.mars/models-cache.json`, catalog slugs, routing settings, one lazy
 capability session, and memoized `(model token, target harness)` decisions. It resolves
-profile `model` first, then model-policy candidates when fanout is enabled, and delegates
+profile `model` first, then model-policy candidates when consumer fanout is enabled, and delegates
 accept/reject to `routing::evaluate_candidates*` constrained to the target harness.
 
 ### Agent Surface Policy
@@ -84,7 +84,7 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
 
 ## Agent Compilation (`agents/`)
 
-- `mod.rs` — schema parser, `AgentProfile` from YAML frontmatter + markdown body
+- `mars-schema::agent` — the schema-v1 reader and `AgentProfile` authority
 - `lower.rs` — per-harness lowering with lossiness tracking. All lowerers accept a
   `model_field: &NativeModel` parameter (`Set(id)` or `Clear` for native compile;
   `Inherit` remains for direct lowerer tests). `lower_for_harness_with_model()`
@@ -96,41 +96,24 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   subagent/session-agent file. This guidance is a designed mapping, not warning-tier lossiness.
   Plugin builds pass qualified skill names into the same lowering path; their prose rewriter
   handles authored references separately.
-- `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
+- `mars_schema::HarnessId` — Claude, Codex, OpenCode, Cursor, Pi
 - `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
   lowerers omit them; Codex records all three as dropped, while other targets record them as
-  Meridian-only.
-
+  Meridian-only. They are read from the profile as it launches
+  (`build::policy::profile_for_model`), so an overlay and a model-policy `network` override
+  count. The `[settings]` network does not: it is the project's, and a plugin build never
+  receives the package's own.
 ### Harness Override Passthrough
 
-`harness-overrides.<harness>` blocks are target-native passthrough. Mars validates only the outer mapping shape and serializability; nested keys do not replace top-level Mars semantic fields. Unknown override harness keys are warnings and are preserved for forward compatibility.
+`harness-overrides.<harness>` blocks are target-native passthrough on Agents and skills. Mars validates only the outer mapping shape and serializability. Lowering writes each harness's own block into its native file (Markdown frontmatter; extra top-level keys after Codex's) and never another harness's; a key the lowering owns (`mars_schema::agent::LoweredField::keys`, `mars_schema::skill::LOWERED_KEYS`, Codex's seven) keeps Mars's value and the override is reported as `Dropped`. OpenCode's `permission` is the exception: Mars writes `deny` entries for the Agent's deny rules and merges them over the author's `harness-overrides.opencode.permission`, so only an entry that contradicts a deny is dropped. Unknown (non-override) keys reach no native file. Unknown override harness keys are warnings and are preserved for forward compatibility.
 
 ## Shared Tool Policy (`tool_policy.rs`)
 
-`EffectiveToolPolicy` is the one tool-gating model of **agents**, **skills** and the **launch
-bundle**: a list of `ToolRule { capability, pattern, action }`, parsed once into
-`AgentProfile.tools` / `SkillProfile.tools` by `parse_tool_policy`. `capability` is a
-`Capability` (`Any` for `*`, `Mcp(McpRef)`, a vocabulary `Builtin`, or the author's `Unknown`
-spelling), never a string with reserved values.
+`EffectiveToolPolicy` is the one tool-gating model for **agents** and launch bundles. The
+schema reader accepts only the v1 action-map form and stores
+`ToolRule { capability, pattern, action }` values. Consumer `[agents.*.tools]` overlays
+edit that rule list; skills do not carry tool policy in schema v1.
 
-- **Parse.** Deprecated `tools:` list → `allow` per entry and a warning; map → `allow` /
-  `deny` / `ask` per entry; `disallowed-tools:` → `deny`. Lists only grant for agents and
-  skills. An allowlist is a map with an explicit `'*': deny`. A profile
-  `tools: { replace: [...] }` is invalid; replacement tables exist only on consumer overlays.
-  A `bash` pattern `X:*` becomes `X *`.
-- **Overlay.** A `mars.toml` `[agents.x.tools]` / `[skills.x.tools]` overlay is
-  `EffectiveToolPolicy::apply_overlay`: one edit of the rule list for both. An agent's native
-  lowering and the bundle call it on the parsed profile; a skill's staging calls it and writes
-  the rules back, since sync lowers skills from the staged file. Plain permission lists add;
-  `{ replace = [...] }` clears lower rules for that action, including `'*': allow`. Plain lists
-  preserve wildcard rules; ask rules and an explicit `'*': deny` allowlist marker survive either
-  form. Overlay names are `OverlayToolName`s: parsed
-  with the profile grammar as `mars.toml` loads, so `apply_overlay`
-  never meets a name a profile would reject. Compatibility warnings are derived once from the
-  authored project/local constructs in `config::project_config_warnings`; policy consumers do not
-  model legacy resolution. Staging writes a skill back only when its own `tools:` /
-  `disallowed-tools:` parsed without a diagnostic: rewriting from a lossy parse would drop the bad
-  entry, a malformed deny among them, and hide the error sync reports for it.
 - **Project.** `EffectiveToolPolicy::project(harness)` is the only path from a rule to native
   permission names and unscoped harness tool names. Native agent lowering, skill lowering and the
   bundle read its `natives` / `gaps` / `overlaps`; never add a second projection path, or a

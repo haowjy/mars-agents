@@ -1,0 +1,22 @@
+{
+  "kind": "empty",
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "{version}",
+        "source": {},
+        "selected_items": []
+      },
+      "prepared": {
+        "classification": {
+          "kind": "empty"
+        },
+        "definitions": [],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

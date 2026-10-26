@@ -1,0 +1,42 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "demo"
+    ],
+    [
+      "description",
+      "hello"
+    ],
+    [
+      "x",
+      "hello"
+    ]
+  ],
+  "fields": {
+    "name": "demo",
+    "description": "hello",
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "yaml.anchor",
+      "severity": "error",
+      "path": [],
+      "message": "YAML anchors and aliases are not supported"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "x"
+      ],
+      "message": "unknown field `x` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+    }
+  ]
+}

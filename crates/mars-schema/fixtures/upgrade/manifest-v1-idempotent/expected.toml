@@ -1,0 +1,5 @@
+[package]
+name = "demo"
+version = "1.0.0"
+schema = 1 # keep this comment
+visibility = "legacy-but-v1-is-untouched"

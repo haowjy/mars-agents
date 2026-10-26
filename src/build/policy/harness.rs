@@ -1,11 +1,9 @@
-use crate::build::policy::{
-    MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField, matched_policy_string_override,
-};
-use crate::compiler::agents::HarnessKind;
+use crate::build::policy::{MatchedModelPolicy, PolicyInput, PolicySource, ResolvedField};
 use crate::config::AgentOverlay;
 use crate::error::{ConfigError, MarsError};
 use crate::models::ModelAlias;
 use crate::routing;
+use mars_schema::HarnessId;
 
 #[derive(Debug)]
 pub(super) struct HarnessResolution {
@@ -29,7 +27,7 @@ pub(super) fn resolve_harness<F>(
     input: &PolicyInput<'_>,
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
-    matched_policy: Option<&MatchedModelPolicy>,
+    _matched_policy: Option<&MatchedModelPolicy>,
     evidence: HarnessEvidence<'_>,
     probe_resolver: &mut dyn routing::ProbeResolver,
     auth_check: F,
@@ -43,27 +41,14 @@ where
         .and_then(|entry| entry.harness.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let policy_harness = matched_policy_string_override(matched_policy, "harness");
     let mut preference = resolve_harness_preference(
         input,
         overlay_harness,
-        policy_harness
-            .as_ref()
-            .filter(|field| field.source == PolicySource::OverlayModelPolicy)
-            .cloned(),
         profile_harness,
-        policy_harness
-            .as_ref()
-            .filter(|field| field.source == PolicySource::ProfileModelPolicy)
-            .cloned(),
-        policy_harness
-            .as_ref()
-            .filter(|field| field.source == PolicySource::SettingsModelPolicy)
-            .cloned(),
         alias.and_then(|entry| entry.harness.as_deref()),
     );
     if let Some(field) = preference.as_mut() {
-        field.value = crate::harness::registry::normalize_name(&field.value).ok_or_else(|| {
+        field.value = mars_schema::harness::normalize_name(&field.value).ok_or_else(|| {
             MarsError::Config(ConfigError::Invalid {
                 message: format!("invalid {} harness `{}`", field.source.label(), field.value),
             })
@@ -139,14 +124,10 @@ where
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_harness_preference(
     input: &PolicyInput<'_>,
     overlay_harness: Option<&str>,
-    overlay_policy_harness: Option<ResolvedField<String>>,
     profile_harness: Option<&str>,
-    profile_policy_harness: Option<ResolvedField<String>>,
-    settings_policy_harness: Option<ResolvedField<String>>,
     alias_harness: Option<&str>,
 ) -> Option<ResolvedField<String>> {
     if let Some(harness) = input.harness_override {
@@ -163,21 +144,12 @@ fn resolve_harness_preference(
             matched_rule: None,
         });
     }
-    if let Some(harness) = overlay_policy_harness {
-        return Some(harness);
-    }
     if let Some(harness) = profile_harness {
         return Some(ResolvedField {
             value: harness.to_string(),
             source: PolicySource::Profile,
             matched_rule: None,
         });
-    }
-    if let Some(harness) = profile_policy_harness {
-        return Some(harness);
-    }
-    if let Some(harness) = settings_policy_harness {
-        return Some(harness);
     }
     alias_harness.map(|harness| ResolvedField {
         value: harness.to_string(),
@@ -201,7 +173,7 @@ fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource 
     }
 }
 
-pub(super) fn harness_kind_to_str(harness: &HarnessKind) -> &'static str {
+pub(super) fn harness_kind_to_str(harness: &HarnessId) -> &'static str {
     crate::compiler::harness_descriptor::descriptor(*harness).canonical_id
 }
 
@@ -214,11 +186,11 @@ mod tests {
     use std::path::Path;
     use std::sync::LazyLock;
 
-    use crate::compiler::agents::AgentProfile;
-    use crate::compiler::agents::HarnessOverrides;
     use crate::models::ModelSpec;
     use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
     use crate::routing::MatchEvidence;
+    use mars_schema::agent::AgentProfile;
+    use mars_schema::harness_overrides::HarnessOverrides;
 
     static EMPTY_RUNTIME_ALIASES: LazyLock<IndexMap<String, ModelAlias>> =
         LazyLock::new(IndexMap::new);
@@ -227,11 +199,11 @@ mod tests {
         names.iter().map(|name| (*name).to_string()).collect()
     }
 
-    fn profile(harness: Option<HarnessKind>) -> AgentProfile {
+    fn profile(harness: Option<HarnessId>) -> AgentProfile {
         profile_with_model(harness, None)
     }
 
-    fn profile_with_model(harness: Option<HarnessKind>, model: Option<&str>) -> AgentProfile {
+    fn profile_with_model(harness: Option<HarnessId>, model: Option<&str>) -> AgentProfile {
         AgentProfile {
             name: None,
             description: None,
@@ -248,14 +220,11 @@ mod tests {
             network_allow: Default::default(),
             network_deny: Default::default(),
             effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            skills: crate::frontmatter::SkillsSpec::default(),
+            skills: mars_schema::frontmatter::SkillsSpec::default(),
             subagents: Vec::new(),
             tools: Default::default(),
             harness_overrides: HarnessOverrides::default(),
             model_policies: Vec::new(),
-            fanout: Vec::new(),
         }
     }
 
@@ -314,7 +283,6 @@ mod tests {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn evidence_for_model<'a>(
         model_id: &'a str,
         _model_token: &'a str,
@@ -373,7 +341,7 @@ mod tests {
 
         fn listing_evidence(
             &mut self,
-            _harness: crate::harness::registry::HarnessId,
+            _harness: mars_schema::HarnessId,
         ) -> crate::harness::host::ListingEvidence {
             crate::harness::host::ListingEvidence::default()
         }
@@ -408,7 +376,7 @@ mod tests {
     #[test]
     fn cli_override_is_explicit_and_skips_candidate_eval() {
         let installed = installed(&["codex", "pi"]);
-        let profile = profile(Some(HarnessKind::Claude));
+        let profile = profile(Some(HarnessId::Claude));
         let input = policy_input(&profile, None, Some("pi"));
         let mut probe_resolver = TestProbeResolver::default();
 
@@ -439,7 +407,7 @@ mod tests {
     #[test]
     fn missing_profile_preference_uses_order_even_with_model_override() {
         let installed = installed(&["opencode"]);
-        let profile = profile(Some(HarnessKind::Claude));
+        let profile = profile(Some(HarnessId::Claude));
         let input = policy_input(&profile, Some("gptmini"), None);
         let mut probe_resolver = TestProbeResolver::default();
 
@@ -472,7 +440,7 @@ mod tests {
     #[test]
     fn profile_harness_precedes_alias_when_model_not_overridden() {
         let installed = installed(&["codex", "pi"]);
-        let profile = profile(Some(HarnessKind::Codex));
+        let profile = profile(Some(HarnessId::Codex));
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 
@@ -502,7 +470,7 @@ mod tests {
     #[test]
     fn unavailable_profile_harness_pivots_to_candidate_evaluation() {
         let installed = installed(&["opencode"]);
-        let profile = profile(Some(HarnessKind::Claude));
+        let profile = profile(Some(HarnessId::Claude));
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver {
             opencode: Some(positive_opencode_probe()),
@@ -541,7 +509,7 @@ mod tests {
     #[test]
     fn unavailable_profile_harness_retains_unverified_candidate() {
         let installed = installed(&["opencode"]);
-        let profile = profile(Some(HarnessKind::Claude));
+        let profile = profile(Some(HarnessId::Claude));
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 
@@ -570,7 +538,7 @@ mod tests {
     #[test]
     fn unavailable_cli_harness_errors_without_pivoting() {
         let installed = installed(&["codex", "opencode"]);
-        let profile = profile(Some(HarnessKind::Claude));
+        let profile = profile(Some(HarnessId::Claude));
         let input = policy_input(&profile, None, Some("claude"));
         let mut probe_resolver = TestProbeResolver::default();
 
@@ -646,7 +614,7 @@ mod tests {
     #[test]
     fn invalid_config_default_harness_still_warnings_on_fixed_selection() {
         let installed = installed(&["pi"]);
-        let profile = profile(Some(HarnessKind::Pi));
+        let profile = profile(Some(HarnessId::Pi));
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 
@@ -671,7 +639,7 @@ mod tests {
     #[test]
     fn cli_fixed_harness_rejects_profile_model_on_no_model_match() {
         let installed = installed(&["opencode"]);
-        let profile = profile_with_model(Some(HarnessKind::Claude), Some("opus"));
+        let profile = profile_with_model(Some(HarnessId::Claude), Some("opus"));
         let input = policy_input(&profile, None, Some("opencode"));
         let mut probe_resolver = TestProbeResolver {
             opencode: Some(positive_opencode_probe()),
@@ -775,7 +743,7 @@ mod tests {
                 harness_scope: crate::config::targets::HarnessScope::Only(
                     linked_harnesses
                         .iter()
-                        .map(|name| crate::harness::registry::parse(name).unwrap())
+                        .map(|name| mars_schema::harness::parse(name).unwrap())
                         .collect(),
                 ),
                 opencode_probe_result: None,
@@ -786,7 +754,7 @@ mod tests {
         };
 
         let error = resolve_harness_test(&input, None, None, None, evidence, &mut probe_resolver)
-            .expect_err("empty harness route should fail before HarnessKind validation");
+            .expect_err("empty harness route should fail before HarnessId validation");
 
         let message = error.to_string();
         assert!(message.contains("LinkedHarnessConstraints"));
@@ -796,7 +764,7 @@ mod tests {
     #[test]
     fn overlay_model_pivots_away_from_profile_harness_on_provider_constraint() {
         let installed = installed(&["codex", "claude"]);
-        let profile = profile(Some(HarnessKind::Codex));
+        let profile = profile(Some(HarnessId::Codex));
         let input = policy_input(&profile, None, None);
         let mut probe_resolver = TestProbeResolver::default();
 

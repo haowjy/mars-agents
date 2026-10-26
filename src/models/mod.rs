@@ -227,7 +227,7 @@ impl<'de> Deserialize<'de> for ModelAlias {
                 harness::normalize_harness_name(harness_name).ok_or_else(|| {
                     serde::de::Error::custom(format!(
                         "invalid harness '{harness_name}'; valid harnesses: {}",
-                        harness::VALID_HARNESSES.join(", ")
+                        mars_schema::harness::names()
                     ))
                 })?,
             )
@@ -241,7 +241,7 @@ impl<'de> Deserialize<'de> for ModelAlias {
         }
         let default_effort = raw.default_effort.filter(|value| !value.trim().is_empty());
         if let Some(ref effort) = default_effort {
-            const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "auto"];
+            const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max", "auto"];
             if !VALID_EFFORTS.contains(&effort.as_str()) {
                 return Err(serde::de::Error::custom(format!(
                     "invalid default_effort '{effort}'; accepted values: {}",
@@ -2022,7 +2022,7 @@ match = ["claude-opus-*"]
 
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
         assert!(err.contains("invalid harness 'gemini'"));
-        assert!(err.contains("valid harnesses: claude, codex, pi, cursor, opencode"));
+        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor"));
     }
 
     #[test]

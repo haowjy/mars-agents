@@ -289,7 +289,7 @@ fn release_workflow_accepts_stable_and_rc_provenance() {
     assert!(workflow.contains("PYPI_VERSION=\"$TAG_VERSION\""));
     assert!(workflow.contains("Tag version ($TAG_VERSION) != Cargo.toml ($CARGO_VERSION)"));
     assert!(workflow.contains("Expected pyproject.toml version $PYPI_VERSION"));
-    assert!(workflow.contains("npm_packages=(npm/@meridian-flow/mars-agents*/package.json)"));
+    assert!(workflow.contains("npm_packages=(npm/@meridian-flow/*/package.json)"));
     assert!(workflow.contains("jq -r '.version // empty'"));
     assert!(workflow.contains("optionalDependencies // {} | to_entries[]"));
     assert!(workflow.contains("CHANGELOG.md missing release section for ${TAG_VERSION}"));
@@ -342,9 +342,12 @@ fn release_workflow_cargo_publish_only_ignores_already_uploaded_errors() {
     let workflow = read(".github/workflows/release.yml");
 
     assert!(workflow.contains("publish_stderr=\"$(mktemp)\""));
-    assert!(workflow.contains("if cargo publish 2> >(tee \"${publish_stderr}\" >&2); then"));
+    assert!(workflow.contains("if cargo publish --locked -p \"${package}\""));
     assert!(workflow.contains("grep -Eiq 'already (uploaded|published)|already exists'"));
-    assert!(workflow.contains("Crate version already published on crates.io; continuing."));
-    assert!(workflow.contains("cargo publish failed with an unexpected error."));
+    assert!(workflow.contains("${package} version already published on crates.io; continuing."));
+    assert!(workflow.contains("cargo publish failed for ${package} with an unexpected error."));
+    let schema = workflow.find("publish_crate mars-schema").unwrap();
+    let cli = workflow.find("publish_crate mars-agents").unwrap();
+    assert!(schema < cli, "mars-schema must publish before mars-agents");
     assert!(!workflow.contains("cargo publish || true"));
 }

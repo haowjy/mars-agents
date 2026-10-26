@@ -1,5 +1,4 @@
 //! Declarative per-harness agent lowering policies and shared pipeline.
-use crate::compiler::agents::{AgentProfile, HarnessKind};
 use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
 ///
@@ -13,16 +12,19 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 ///
-/// Launch-time fields (approval, sandbox, network, mode where not emitted, autocompact, …) are
+/// Launch-time fields (approval, sandbox, network, mode where not emitted, …) are
 /// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
 /// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
 /// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly. One exception:
 /// Codex lowers `network` as [`Lossiness::Dropped`], because its native artifact carries
 /// `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
-pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
-pub use crate::compiler::tool_policy::EffectiveToolPolicy;
-use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolAction};
-use crate::frontmatter::{Frontmatter, SkillsSpec};
+pub use crate::compiler::lossiness::{CODEX_MAX_EFFORT_NOTE, Lossiness, LossyField, LoweredOutput};
+use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
+use mars_schema::HarnessId;
+use mars_schema::agent::{AgentProfile, LoweredField};
+use mars_schema::frontmatter::SkillsSpec;
+pub use mars_schema::tool_policy::EffectiveToolPolicy;
+use mars_schema::tool_policy::ToolAction;
 
 // ---------------------------------------------------------------------------
 // Effective field access for target lowering
@@ -30,33 +32,31 @@ use crate::frontmatter::{Frontmatter, SkillsSpec};
 
 /// Effective field values read from top-level Mars semantics.
 struct Effective<'a> {
-    harness: HarnessKind,
     profile: &'a AgentProfile,
     tools: &'a EffectiveToolPolicy,
 }
 
 impl<'a> Effective<'a> {
-    fn new(profile: &'a AgentProfile, harness: HarnessKind) -> Self {
+    fn new(profile: &'a AgentProfile) -> Self {
         Self {
-            harness,
             profile,
             tools: &profile.tools,
         }
     }
 
-    fn effort(&self) -> Option<&crate::compiler::agents::EffortLevel> {
+    fn effort(&self) -> Option<&mars_schema::agent::EffortLevel> {
         self.profile.effort.as_ref()
     }
 
-    fn approval(&self) -> Option<&crate::compiler::agents::ApprovalMode> {
+    fn approval(&self) -> Option<&mars_schema::agent::ApprovalMode> {
         self.profile.approval.as_ref()
     }
 
-    fn sandbox(&self) -> Option<&crate::compiler::agents::SandboxMode> {
+    fn sandbox(&self) -> Option<&mars_schema::agent::SandboxMode> {
         self.profile.sandbox.as_ref()
     }
 
-    fn network(&self) -> Option<&crate::compiler::agents::NetworkPolicy> {
+    fn network(&self) -> Option<&mars_schema::network::NetworkPolicy> {
         self.profile.network.as_ref()
     }
 
@@ -69,7 +69,7 @@ impl<'a> Effective<'a> {
     }
 
     fn skills(&self) -> &SkillsSpec {
-        self.profile.effective_skills(&self.harness)
+        &self.profile.skills
     }
 
     /// Whether the policy grants or asks about built-in tools, which only an allowlist
@@ -90,14 +90,6 @@ impl<'a> Effective<'a> {
 
     fn has_mcp_policy(&self) -> bool {
         self.tools.rules.iter().any(|rule| rule.is_mcp())
-    }
-
-    fn autocompact_pct(&self) -> Option<u8> {
-        self.profile.autocompact_pct
-    }
-
-    fn native_config(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
-        self.profile.effective_native_config(&self.harness)
     }
 }
 
@@ -170,9 +162,8 @@ fn record_agent_invocation_lossiness(
 /// Per agent-compilation-mapping.md V0 §10:
 /// - Preserved: name, description, model, tools, disallowed-tools, body
 /// - Skills: load is native-preloaded where supported; other channels use designed body guidance
-/// - Meridian-only (launch-time): approval, sandbox, network, mode, autocompact,
-///   autocompact_pct, model-policies, fanout
-/// - Dropped: harness, harness-overrides, legacy-models
+/// - Meridian-only (launch-time): approval, sandbox, mode,, model-policies, fanout
+/// - Dropped: harness, legacy-models. `harness-overrides.<harness>` keys are added unless Mars lowers that key
 ///
 /// What model field a lowered native agent should carry. The native compiler is the
 /// sole caller; this replaces a bare `Option<&str>` so "emit no model" is expressible
@@ -180,7 +171,7 @@ fn record_agent_invocation_lossiness(
 #[derive(Debug, Clone)]
 pub enum NativeModel {
     /// Emit the profile's own model verbatim (unpinned alias / fanout token).
-    #[allow(dead_code)]
+    #[cfg(test)]
     Inherit,
     /// Emit this resolved model id.
     Set(String),
@@ -191,22 +182,15 @@ pub enum NativeModel {
 impl NativeModel {
     /// The concrete model string to render for `profile`, or `None` for "no model".
     fn resolve<'a>(&'a self, profile: &'a AgentProfile) -> Option<&'a str> {
+        #[cfg(not(test))]
+        let _ = profile;
         match self {
+            #[cfg(test)]
             NativeModel::Inherit => profile.model.as_deref(),
             NativeModel::Set(model) => Some(model),
             NativeModel::Clear => None,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum AgentMarkdownField {
-    Identity,
-    Model,
-    Skills,
-    ClaudeTools,
-    ClaudeEffort,
-    Mode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -216,6 +200,9 @@ enum AgentLossinessStep {
     ModeDropped,
     ToolsDropped,
     DisallowedToolsDropped,
+    /// OpenCode: `deny` rules become `permission` entries, the one tool control its agent file
+    /// has (`tools` booleans are deprecated); what cannot be written is reported as dropped.
+    DisallowedToolsAsPermission,
     EffortApproximate(&'static str),
     McpApproximate(&'static str),
     McpDropped,
@@ -228,7 +215,7 @@ struct AgentLoweringPolicy {
     description: DescriptionPolicy,
     mode_note: Option<&'static str>,
     skills: AgentSkillsPolicy,
-    fields: &'static [AgentMarkdownField],
+    fields: &'static [LoweredField],
     lossiness: &'static [AgentLossinessStep],
 }
 
@@ -261,11 +248,11 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     // Claude ignores `skills:` when this file is selected with `claude --agent`.
     skills: AgentSkillsPolicy::NativePreloadWithReminder,
     fields: &[
-        AgentMarkdownField::Identity,
-        AgentMarkdownField::Model,
-        AgentMarkdownField::Skills,
-        AgentMarkdownField::ClaudeTools,
-        AgentMarkdownField::ClaudeEffort,
+        LoweredField::Identity,
+        LoweredField::Model,
+        LoweredField::Skills,
+        LoweredField::Tools,
+        LoweredField::Effort,
     ],
     lossiness: &[
         AgentLossinessStep::Approval,
@@ -281,15 +268,15 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     mode_note: None,
     skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
-        AgentMarkdownField::Identity,
-        AgentMarkdownField::Model,
-        AgentMarkdownField::Mode,
+        LoweredField::Identity,
+        LoweredField::Model,
+        LoweredField::Mode,
     ],
     lossiness: &[
         AgentLossinessStep::Approval,
         AgentLossinessStep::Sandbox,
         AgentLossinessStep::ToolsDropped,
-        AgentLossinessStep::DisallowedToolsDropped,
+        AgentLossinessStep::DisallowedToolsAsPermission,
         AgentLossinessStep::EffortApproximate("effort maps to --variant on subprocess only"),
         AgentLossinessStep::McpApproximate(
             "MCP grants on subprocess errors; streaming uses session payload",
@@ -301,13 +288,13 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 
 const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     description: DescriptionPolicy::CursorOneLine,
-    mode_note: Some("Cursor may use the same mode concept"),
+    mode_note: None,
     skills: AgentSkillsPolicy::NativePreload,
     fields: &[
-        AgentMarkdownField::Identity,
-        AgentMarkdownField::Model,
-        AgentMarkdownField::Skills,
-        AgentMarkdownField::Mode,
+        LoweredField::Identity,
+        LoweredField::Model,
+        LoweredField::Skills,
+        LoweredField::Mode,
     ],
     lossiness: &[
         AgentLossinessStep::Approval,
@@ -328,9 +315,9 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     mode_note: Some("Pi may use the same mode concept"),
     skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
-        AgentMarkdownField::Identity,
-        AgentMarkdownField::Model,
-        AgentMarkdownField::Mode,
+        LoweredField::Identity,
+        LoweredField::Model,
+        LoweredField::Mode,
     ],
     lossiness: &[
         AgentLossinessStep::Approval,
@@ -344,6 +331,69 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     ],
 };
 
+/// Entries of the profile's `harness-overrides.<harness>` block that may be written to the
+/// harness's native file: a key Mars lowers itself keeps Mars's value (`reserved`, or already
+/// present), and each such override is reported as dropped.
+fn native_overrides<'a>(
+    profile: &'a AgentProfile,
+    harness: HarnessId,
+    reserved: &[&str],
+    present: impl Fn(&str) -> bool,
+    target: &str,
+    lossy: &mut Vec<LossyField>,
+) -> Vec<(&'a str, serde_json::Value)> {
+    let Some(block) = profile.harness_overrides.get(&harness) else {
+        return Vec::new();
+    };
+    let mut allowed = Vec::new();
+    for (key, value) in block {
+        if reserved.contains(&key.as_str()) || present(key) {
+            lossy.push(LossyField {
+                field: format!("harness-overrides.{harness}.{key}"),
+                target: target.into(),
+                classification: Lossiness::Dropped,
+            });
+        } else {
+            allowed.push((key.as_str(), value.to_json()));
+        }
+    }
+    allowed
+}
+
+/// OpenCode's `permission` map: `deny` for each tool Mars denies, over the author's
+/// `harness-overrides.opencode.permission`. An entry of theirs that disagrees with a Mars deny is
+/// dropped, as for any key Mars lowers itself; the rest of their map is kept.
+fn opencode_permission(
+    denied: &[String],
+    author: Option<serde_json::Value>,
+    target: &str,
+    lossy: &mut Vec<LossyField>,
+) -> serde_yaml::Mapping {
+    let dropped = |field: String| LossyField {
+        field,
+        target: target.into(),
+        classification: Lossiness::Dropped,
+    };
+    let mut permission = match author.map(serde_yaml::to_value) {
+        Some(Ok(serde_yaml::Value::Mapping(map))) => map,
+        Some(_) => {
+            lossy.push(dropped("harness-overrides.opencode.permission".into()));
+            serde_yaml::Mapping::new()
+        }
+        None => serde_yaml::Mapping::new(),
+    };
+    for name in denied {
+        if let Some(existing) = permission.insert(yk(name), yv("deny"))
+            && existing != yv("deny")
+        {
+            lossy.push(dropped(format!(
+                "harness-overrides.opencode.permission.{name}"
+            )));
+        }
+    }
+    permission
+}
+
 fn yk(s: &str) -> serde_yaml::Value {
     serde_yaml::Value::String(s.to_string())
 }
@@ -353,7 +403,7 @@ fn yv(s: &str) -> serde_yaml::Value {
 }
 
 struct AgentLoweringCtx<'a> {
-    harness: HarnessKind,
+    harness: HarnessId,
     policy: &'static AgentLoweringPolicy,
     profile: &'a AgentProfile,
     model_field: &'a NativeModel,
@@ -362,17 +412,19 @@ struct AgentLoweringCtx<'a> {
     native_skills: Vec<String>,
     yaml: serde_yaml::Mapping,
     lossy: Vec<LossyField>,
+    /// Native names of the `deny` rules that lower to `permission` entries.
+    denied: Vec<String>,
 }
 
 impl<'a> AgentLoweringCtx<'a> {
     fn new(
-        harness: HarnessKind,
+        harness: HarnessId,
         policy: &'static AgentLoweringPolicy,
         profile: &'a AgentProfile,
         body: &str,
         model_field: &'a NativeModel,
     ) -> Self {
-        let eff = Effective::new(profile, harness);
+        let eff = Effective::new(profile);
         let lowered_skills = lower_agent_skills(eff.skills(), policy.skills, body);
         Self {
             harness,
@@ -384,17 +436,18 @@ impl<'a> AgentLoweringCtx<'a> {
             native_skills: lowered_skills.native_preload,
             yaml: serde_yaml::Mapping::new(),
             lossy: Vec::new(),
+            denied: Vec::new(),
         }
     }
 
-    fn apply_field(&mut self, field: AgentMarkdownField) {
+    fn apply_field(&mut self, field: LoweredField) {
         match field {
-            AgentMarkdownField::Identity => self.insert_identity(),
-            AgentMarkdownField::Model => self.insert_model(),
-            AgentMarkdownField::Skills => self.insert_skills(),
-            AgentMarkdownField::ClaudeTools => self.insert_claude_tools(),
-            AgentMarkdownField::ClaudeEffort => self.insert_claude_effort(),
-            AgentMarkdownField::Mode => self.insert_mode(),
+            LoweredField::Identity => self.insert_identity(),
+            LoweredField::Model => self.insert_model(),
+            LoweredField::Skills => self.insert_skills(),
+            LoweredField::Tools => self.insert_claude_tools(),
+            LoweredField::Effort => self.insert_claude_effort(),
+            LoweredField::Mode => self.insert_mode(),
         }
     }
 
@@ -488,8 +541,19 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn insert_claude_effort(&mut self) {
-        if let Some(effort) = self.eff.effort() {
-            self.yaml.insert(yk("effort"), yv(effort.claude_str()));
+        match self.eff.effort() {
+            // Claude Code accepts low|medium|high|xhigh|max and has no off value.
+            Some(mars_schema::agent::EffortLevel::None) => self.lossy.push(LossyField {
+                field: "effort".into(),
+                target: self.target_name().into(),
+                classification: Lossiness::Approximate {
+                    note: "Claude Code has no reasoning-off effort; omitted",
+                },
+            }),
+            Some(effort) => {
+                self.yaml.insert(yk("effort"), yv(effort.as_str()));
+            }
+            None => {}
         }
     }
 
@@ -521,8 +585,14 @@ impl<'a> AgentLoweringCtx<'a> {
                 self.eff.has_tool_denial(),
                 Lossiness::Dropped,
             ),
+            AgentLossinessStep::DisallowedToolsAsPermission => self.collect_denied_as_permission(),
             AgentLossinessStep::EffortApproximate(note) => {
-                if self.eff.effort().is_some() {
+                // `none` writes nothing for these harnesses, so there is nothing to approximate.
+                if self
+                    .eff
+                    .effort()
+                    .is_some_and(|effort| *effort != mars_schema::agent::EffortLevel::None)
+                {
                     self.lossy.push(LossyField {
                         field: "effort".into(),
                         target: self.target_name().into(),
@@ -549,14 +619,37 @@ impl<'a> AgentLoweringCtx<'a> {
         }
     }
 
+    /// A scoped rule (`bash(git *)`) has no `name: deny` spelling, so it is reported, not written.
+    fn collect_denied_as_permission(&mut self) {
+        let target = self.target_name();
+        let projection = self.eff.tools.project(self.harness);
+        let denied = native_tools_for_action(
+            &projection,
+            ToolAction::Deny,
+            "disallowed-tools",
+            target,
+            &mut self.lossy,
+        );
+        let (scoped, unscoped): (Vec<_>, Vec<_>) =
+            denied.into_iter().partition(|name| name.contains('('));
+        if !scoped.is_empty() {
+            self.lossy.push(LossyField {
+                field: format!("disallowed-tools ({} is scoped)", scoped.join(", ")),
+                target: target.into(),
+                classification: Lossiness::Dropped,
+            });
+        }
+        self.denied = unscoped;
+    }
+
     fn record_approval(&mut self) {
         let Some(_) = self.eff.approval() else {
             return;
         };
-        let classification = if self.harness == HarnessKind::Cursor {
+        let classification = if self.harness == HarnessId::Cursor {
             // Cursor maps approval to CLI flags — approximate, target-enforced gap.
             Lossiness::Approximate {
-                note: "auto maps to --force, yolo to --yolo; confirm has no Cursor equivalent and falls back to default",
+                note: "auto maps to --force, never to --yolo; confirm has no Cursor equivalent and falls back to default",
             }
         } else {
             // Launch-time: Meridian applies approval at spawn via harness projection.
@@ -573,7 +666,7 @@ impl<'a> AgentLoweringCtx<'a> {
         let Some(_) = self.eff.sandbox() else {
             return;
         };
-        let classification = if self.harness == HarnessKind::Cursor {
+        let classification = if self.harness == HarnessId::Cursor {
             // Cursor sandbox is a coarse enabled/disabled mapping — target-enforced gap.
             Lossiness::Approximate {
                 note: "Cursor only supports enabled/disabled; workspace-write and danger-full-access both map to disabled",
@@ -616,33 +709,43 @@ impl<'a> AgentLoweringCtx<'a> {
             Lossiness::MeridianOnly,
         );
         self.record_if_present(
-            "autocompact",
-            self.profile.autocompact.is_some(),
-            Lossiness::MeridianOnly,
-        );
-        self.record_if_present(
-            "autocompact_pct",
-            self.eff.autocompact_pct().is_some(),
-            Lossiness::MeridianOnly,
-        );
-        self.record_if_present(
             "model-policies",
             !self.profile.model_policies.is_empty(),
             Lossiness::MeridianOnly,
         );
-        self.record_if_present(
-            "fanout",
-            !self.profile.fanout.is_empty(),
-            Lossiness::MeridianOnly,
-        );
-        self.record_if_present(
-            "native-config",
-            self.eff.native_config().is_some(),
-            Lossiness::MeridianOnly,
-        );
     }
 
-    fn finish(self) -> LoweredOutput {
+    fn finish(mut self) -> LoweredOutput {
+        let reserved = self
+            .policy
+            .fields
+            .iter()
+            .flat_map(|field| field.keys().iter().copied())
+            .collect::<Vec<_>>();
+        let mut overrides = native_overrides(
+            self.profile,
+            self.harness,
+            &reserved,
+            |key| self.yaml.contains_key(yk(key)),
+            self.target_name(),
+            &mut self.lossy,
+        );
+        if !self.denied.is_empty() {
+            let author = overrides
+                .iter()
+                .position(|(key, _)| *key == "permission")
+                .map(|at| overrides.remove(at).1);
+            let permission =
+                opencode_permission(&self.denied, author, self.target_name(), &mut self.lossy);
+            self.yaml
+                .insert(yk("permission"), serde_yaml::Value::Mapping(permission));
+        }
+        for (key, value) in overrides {
+            self.yaml.insert(
+                yk(key),
+                serde_yaml::to_value(value).expect("override value should serialize"),
+            );
+        }
         LoweredOutput {
             bytes: render_markdown(self.yaml, &self.body),
             lossy_fields: self.lossy,
@@ -718,7 +821,7 @@ fn append_guidance(body: &str, guidance: &str) -> String {
     let line_ending = body_line_ending(body);
     let mut lowered = body.to_string();
 
-    let mut fences = crate::markdown::FenceTracker::default();
+    let mut fences = mars_schema::markdown::FenceTracker::default();
     for line in body.split_inclusive('\n') {
         fences.visit(line);
     }
@@ -787,7 +890,7 @@ fn render_markdown(yaml: serde_yaml::Mapping, body: &str) -> Vec<u8> {
 }
 
 fn lower_markdown_agent(
-    harness: HarnessKind,
+    harness: HarnessId,
     policy: &'static AgentLoweringPolicy,
     profile: &AgentProfile,
     body: &str,
@@ -805,12 +908,11 @@ fn lower_markdown_agent(
 
 pub fn lower_to_claude(
     profile: &AgentProfile,
-    _fm: &Frontmatter,
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
     lower_markdown_agent(
-        HarnessKind::Claude,
+        HarnessId::Claude,
         &CLAUDE_AGENT_POLICY,
         profile,
         body,
@@ -830,27 +932,39 @@ pub fn lower_to_claude(
 ///   (as developer_instructions)
 /// - Skills: designed body guidance (Codex has no native field)
 /// - Dropped: tools (no allowlist), disallowed-tools,
-///   mcp (approximate), network, mode, autocompact, model-policies, fanout
-/// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
+///   mcp (approximate), network, mode, model-policies, fanout
+/// - harness-overrides.codex entries are added as TOML keys unless Mars lowers that key itself
 pub fn lower_to_codex(
     profile: &AgentProfile,
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    let eff = Effective::new(profile, HarnessKind::Codex);
+    let eff = Effective::new(profile);
     let target = "Codex";
     let lowered_skills = lower_agent_skills(eff.skills(), AgentSkillsPolicy::BodyGuidance, body);
     let mut lossy = Vec::new();
 
-    // Effort — exact (lowered to model_reasoning_effort)
-    let effort_str = eff.effort().map(|e| e.as_str());
+    // Effort — exact (lowered to model_reasoning_effort), except `max`: Codex's levels end at `xhigh`.
+    let effort_str = match eff.effort() {
+        Some(mars_schema::agent::EffortLevel::Max) => {
+            lossy.push(LossyField {
+                field: "effort".into(),
+                target: target.into(),
+                classification: Lossiness::Approximate {
+                    note: CODEX_MAX_EFFORT_NOTE,
+                },
+            });
+            Some("xhigh")
+        }
+        other => other.map(|effort| effort.as_str()),
+    };
 
     // Sandbox — exact
     let sandbox_str = eff.sandbox().map(|s| s.as_str());
 
     // Approval — exact (lowered to approval_policy)
     let approval_policy = eff.approval().and_then(|a| {
-        use crate::compiler::agents::ApprovalMode;
+        use mars_schema::agent::ApprovalMode;
         match a {
             ApprovalMode::Default => None,
             ApprovalMode::Auto => Some("on-request"),
@@ -880,6 +994,19 @@ pub fn lower_to_codex(
         "Codex per-tool MCP gating lives in server config, not the tool list",
         &mut lossy,
     );
+    for (field, present) in [
+        ("network", eff.network().is_some()),
+        ("network-allow", eff.has_network_allow_hosts()),
+        ("network-deny", eff.has_network_deny_hosts()),
+    ] {
+        if present {
+            lossy.push(LossyField {
+                field: field.into(),
+                target: target.into(),
+                classification: Lossiness::Dropped,
+            });
+        }
+    }
     if profile.mode.is_some() {
         lossy.push(LossyField {
             field: "mode".into(),
@@ -887,58 +1014,9 @@ pub fn lower_to_codex(
             classification: Lossiness::MeridianOnly,
         });
     }
-    if profile.autocompact.is_some() {
-        lossy.push(LossyField {
-            field: "autocompact".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.network().is_some() {
-        lossy.push(LossyField {
-            field: "network".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.has_network_allow_hosts() {
-        lossy.push(LossyField {
-            field: "network-allow".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.has_network_deny_hosts() {
-        lossy.push(LossyField {
-            field: "network-deny".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.autocompact_pct().is_some() {
-        lossy.push(LossyField {
-            field: "autocompact_pct".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
     if !profile.model_policies.is_empty() {
         lossy.push(LossyField {
             field: "model-policies".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if !profile.fanout.is_empty() {
-        lossy.push(LossyField {
-            field: "fanout".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
-    if eff.native_config().is_some() {
-        lossy.push(LossyField {
-            field: "native-config".into(),
             target: target.into(),
             classification: Lossiness::MeridianOnly,
         });
@@ -974,7 +1052,34 @@ pub fn lower_to_codex(
             .then_some(lowered_skills.body.trim_end()),
     };
 
-    let out = toml::to_string_pretty(&doc).unwrap_or_default();
+    let mut out = toml::to_string_pretty(&doc).unwrap_or_default();
+    // The fields above are all top-level scalars, so the override tables can follow them.
+    let overrides = native_overrides(
+        profile,
+        HarnessId::Codex,
+        &[
+            "name",
+            "description",
+            "model",
+            "model_reasoning_effort",
+            "sandbox_mode",
+            "approval_policy",
+            "developer_instructions",
+        ],
+        |_| false,
+        target,
+        &mut lossy,
+    );
+    if !overrides.is_empty() {
+        let table = overrides
+            .into_iter()
+            .map(|(key, value)| {
+                let value = toml::Value::try_from(value).expect("override value should be TOML");
+                (key.to_owned(), value)
+            })
+            .collect::<toml::Table>();
+        out.push_str(&toml::to_string_pretty(&table).unwrap_or_default());
+    }
 
     LoweredOutput {
         bytes: out.into_bytes(),
@@ -994,7 +1099,7 @@ pub fn lower_to_opencode(
     model_field: &NativeModel,
 ) -> LoweredOutput {
     lower_markdown_agent(
-        HarnessKind::OpenCode,
+        HarnessId::OpenCode,
         &OPENCODE_AGENT_POLICY,
         profile,
         body,
@@ -1012,7 +1117,7 @@ pub fn lower_to_cursor_with_model(
     model_field: &NativeModel,
 ) -> LoweredOutput {
     lower_markdown_agent(
-        HarnessKind::Cursor,
+        HarnessId::Cursor,
         &CURSOR_AGENT_POLICY,
         profile,
         body,
@@ -1022,13 +1127,7 @@ pub fn lower_to_cursor_with_model(
 
 /// Lower an agent profile to Pi-native markdown format.
 pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel) -> LoweredOutput {
-    lower_markdown_agent(
-        HarnessKind::Pi,
-        &PI_AGENT_POLICY,
-        profile,
-        body,
-        model_field,
-    )
+    lower_markdown_agent(HarnessId::Pi, &PI_AGENT_POLICY, profile, body, model_field)
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,20 +1139,19 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel
 /// Returns `None` for unknown harnesses (should not happen if the profile was
 /// validated, but guards against future harness additions).
 pub fn lower_for_harness_with_model(
-    harness: &HarnessKind,
+    harness: &HarnessId,
     profile: &AgentProfile,
-    fm: &Frontmatter,
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
     match harness_descriptor::descriptor(*harness).agent_policy {
-        AgentLoweringPolicyKind::Claude => lower_to_claude(profile, fm, body, model_field),
+        AgentLoweringPolicyKind::Claude => lower_to_claude(profile, body, model_field),
         AgentLoweringPolicyKind::Codex => lower_to_codex(profile, body, model_field),
         AgentLoweringPolicyKind::Markdown => match harness {
-            HarnessKind::OpenCode => lower_to_opencode(profile, body, model_field),
-            HarnessKind::Cursor => lower_to_cursor_with_model(profile, body, model_field),
-            HarnessKind::Pi => lower_to_pi(profile, body, model_field),
-            HarnessKind::Claude | HarnessKind::Codex => {
+            HarnessId::OpenCode => lower_to_opencode(profile, body, model_field),
+            HarnessId::Cursor => lower_to_cursor_with_model(profile, body, model_field),
+            HarnessId::Pi => lower_to_pi(profile, body, model_field),
+            HarnessId::Claude | HarnessId::Codex => {
                 unreachable!("native policies handled above")
             }
         },

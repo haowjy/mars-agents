@@ -12,15 +12,128 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Executable bits are preserved and a removed server prunes its installed directories.
 
 ### Changed
-- Plugin specs are one registry: `build/plugin/spec.rs` holds every harness row pointing straight at
-  its `TreeProfile`, root files and finish writers are enums, README support cells render from the
-  computed support state, and staging has two entry points instead of an `Option` mode flag.
-  Generated root files are one declared table that tree rows name directly, and a test holds every
-  tree's catalog directory to it. A tree's plugin-root mapping is an enum instead of an optional
-  token; a runtime-resolved tree keeps the Mars token for its own code to substitute. A harness row's
-  agent evidence decides whether its plugin surface loads agents. No generated plugin output changes;
-  the README support table now restates tree-derived facts (Codex hooks, Grok agent fields, OpenCode
-  agents and hooks).
+- README plugin support table: cells are generated from what each plugin tree actually does. Grok
+  agents now list the Claude agent fields that are dropped; Codex and Grok hooks state the `claude`
+  fragment rule. Generated plugin output is unchanged.
+
+## [0.20.0] - 2026-10-26
+
+Schema v1: one versioned format for agent definitions, skills and the `[package]` table, read by `mars-schema` and shared with the npm package. See [Schema v1](docs/config/schema-v1.md) and [Migrating a package](docs/config/migrating-to-schema-v1.md).
+
+### Breaking
+- Sync reads every package as schema v1 before writing any installed content. An error (removed key, invalid value, `tools` list form, unclosed or non-mapping frontmatter, duplicate key, YAML anchor, `yes`, `no`, `on` or `off` in a boolean field) now fails `mars sync`, `mars add` and `mars upgrade` with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`); `mars check` exits 1. Before, sync installed such files with a warning. Unknown keys still warn and are kept. A package with no `schema` in `[package]` is upgraded in memory with one warning that names it; a tree with no `mars.toml` is translated by its dialect's rules, and a key or value translation cannot make schema v1 moves under `harness-overrides.<dialect>` (or is dropped when no harness reads it) with a warning that names it, so only an authored schema v1 file is refused for its fields.
+- Agent keys removed: `disallowed-tools` (write `tools: {name: deny}`), `fanout` (use `[settings.meridian.fanout]`), `models`, `mcp-tools`, `autocompact`, `autocompact_pct`, `model_invocable`, `user_invocable`, `network_allow` and `network_deny` (write `network-allow`, `network-deny`), a `tools` list, `permission` (now `harness-overrides.flow.permission`) and `approval: yolo` (now `never`).
+- Skill keys removed: `type` (now `metadata.type`; the launch bundle still reports `skill_type`), `when_to_use`, `tools`, `disallowed-tools`, `allowed-tools`, `model_invocable`, `user_invocable`, `invocation`, `disable-model-invocation`, `allow_implicit_invocation`. Skills carry no tool policy; `[skills.<name>.tools]` overlays are deleted.
+- `package.visibility` removed from the manifest.
+- Compaction comes only from `[models.<alias>]`. Agent and overlay `autocompact`/`autocompact_pct`, and `autocompact`, `autocompact_pct` and `harness` in `model-policies` overrides, are gone. A `model-policies` override sets only `effort`, `sandbox`, `approval` and `network`.
+- Precedence for effort, sandbox, approval and network: CLI, `[agents.<name>]` overlay, matching `model-policies` rule (overlay, then profile), the profile's own value, `[[settings.model-policies]]`, `[settings]` `default-network` (network only), alias `default_effort` (effort only). A profile rule's override now beats the profile's top-level value, which was the reverse. Example: `meridian-dev-workflow`'s `coder` has `effort: max` and a `deepseek` rule with `override: {effort: high}`; with `deepseek` its bundle's effort was `xhigh` and is now `high`, and `explorer` goes from `medium` to `low` the same way. To keep the top-level value, delete the rule's `effort` override.
+- An `[agents.<name>]` overlay with `approval = "yolo"` fails `mars.toml` loading. v0.19.0 passed `yolo` into the bundle. Write `never`.
+- A marketplace dependency with several plugins and no `plugin` is an error that lists them. Add `plugin = "<name>"` to the dependency entry (or run `mars add <marketplace> --plugin <name>`). A marketplace with one plugin keeps working without it.
+- After upgrading Mars, `mars sync --frozen` fails once with `lock file would change`: schema v1 changes the installed bytes of pre-v1 packages and so their checksums. Run `mars sync` once and commit `mars.lock`.
+- The launch bundle's `execution_policy.effort` can be `none`; the bundle stays version 4, so a consumer that maps efforts must handle it.
+
+### Added
+- `mars provide <provider>@<version>=<directory>` installs a host program's own skills into
+  `.mars/skills/` and records the names in `.mars/provided.lock`, a machine-local file no other
+  command writes. Nothing committed changes: `mars.toml`, `mars.lock` and every managed target stay
+  byte-identical, and provided skills are never projected. A fast path answers `up-to-date` without
+  the sync lock only when a re-plan would write nothing — the record matches the source and every
+  source skill is either claimed by a package or installed with its source bytes and executable
+  bit (installs are `0o644` plus the source's execute bits, so flipping a script's execute bit replaces the skill) — so a skill left
+  out earlier (shadowed, collided) installs once the blocker is gone, and a run whose plan changes
+  nothing writes nothing. A held lock answers `busy`, an interrupted sync answers `sync-pending` until `mars repair` or `mars sync` recovers it,
+  and a crash mid-apply converges on the next run, which reclaims a skill directory the killed run
+  left staged under `.mars/skills/`. `--json` reports the status, the recorded names
+  and per-name `installed`/`replaced`/`adopted`/`removed`/`shadowed`/`collisions`; shadowed names
+  and collisions are reported on every run while they last. `FileLock::try_acquire` is the one
+  non-blocking lock helper now shared with the model probing caches, which log a lock error and
+  skip the cache instead of reading it as contention.
+- `[package] uses-providers = ["meridian"]` names hosts that supply skills at sync time; each entry
+  must match `[a-z0-9][a-z0-9-]*`. A dependency's agent may list `<skill>__<provider>` for a
+  declared provider: the ref resolves, nothing is pulled, and sync continues with
+  `provided-skill-unavailable` where the host has not run `mars provide` (silent where it has).
+  A ref to an undeclared provider stays `skill not found` on every machine, with a conditional
+  `uses-providers` hint, as does a typo. The resolver never reads `.mars/provided.lock`, and
+  `mars.lock` is byte-identical with or without a host. See
+  [mars.toml](docs/config/mars-toml.md#provided-skills-and-uses-providers).
+- A package item or `.mars-src/` item that wants a destination a provider installed replaces it,
+  instead of `unmanaged-collision` or "blocked by unmanaged destination"; the next `mars provide`
+  reports it `shadowed` and drops its record. Sync treats a recorded destination as Mars-owned
+  through one ownership rule (`mars.lock` claim or provided).
+- In a package repository, sync warns `provided-skill-undeclared` for a local agent ref to a
+  provided skill whose provider is not in `uses-providers`. `mars check` (the publish gate, which
+  ignores `.mars/provided.lock`) passes a declared `<skill>__<provider>` ref and fails an undeclared
+  one naming `uses-providers`, with or without `[dependencies]`. `mars doctor` scans the canonical
+  store and warns, instead of erroring, on a missing `<skill>__<provider>` ref; it does not read the
+  record. Sync reads a corrupt or newer `provided.lock` as nothing provided, with one
+  `provided-lock-unusable` warning; a missing one is silent. A recorded
+  name counts as provided only while `.mars/skills/<name>` is a directory, so sync,
+  `mars validate --strict` and `mars doctor` agree when a package replaced a provided directory and
+  was later removed; ownership still follows the record, which covers directories a crash has not
+  left behind.
+- `[package] schema = 1`, the schema v1 format. It can still change in a 0.x minor release, listed in the CHANGELOG; from Mars 1.0 a change in meaning needs schema 2.
+- `mars migrate [--check]` upgrades a package's authored definitions to schema v1 in place. It rewrites only the top-level keys that change and keeps every other byte, including a body whose line endings differ from the frontmatter's; a rare full rewrite re-renders the frontmatter only and copies the body as authored. It never touches dependencies, `.mars/` or `mars.lock`, and in a consumer project migrates only `.mars-src/`.
+- `mars-schema` crate and `@meridian-flow/mars-schema` npm package (WebAssembly) with one reader for agents, skills and `mars.toml`: `read` returns a plain-object reading (file spellings, `null` for absent, `Uint8Array` bytes, mapping keys in file order) with stable diagnostics keyed by structured path; `emitValue` and `rewriteBlock` are a quote-safe YAML emitter for lossless editors; `vocabulary` publishes the tool capabilities, their aliases and each host's native tools, with a typed Flow table; `prepare`, `inspect` and `normalize` read a whole repository as packages. Fixture suites pin every behaviour and run in Rust and Node.
+- `inspect` and `normalize` read Claude plugins, marketplaces (`strict` and `source` rules) and bare skill trees as schema v1 packages with relocated `skills/<slug>/` and `agents/<slug>.md`, a generated `mars.toml` and provenance; commands, hooks and MCP definitions are reported as not imported. Skill tool keys are dropped with a warning, `type` and `version` move to `metadata`, an unquoted `description:` colon is repaired, and Agent `disallowedTools` merge into `tools`. Dependencies without `mars.toml` go through `normalize`; `agent-skills` is a dialect.
+- `plugin = "<name>"` on a dependency installs one plugin of the Claude marketplace at its `url` or `path`; each plugin is its own dependency, package and lock entry. A marketplace with exactly one plugin needs no `plugin`; with several, a dependency without one is an error that lists them. A plugin in another repository (`github`, `url` and `git-subdir` sources, at the entry's `sha`, else `ref`, else default branch) is fetched like any git source; `npm`, `archive` and `command` sources are refused naming the shape. `mars.lock` records the plugin and its content commit beside the marketplace's: `mars sync` replays both, `mars upgrade` re-reads the marketplace and resolves the content anew and reports a plugin whose source moved, and `--frozen` requires the locked content commit. Only a plugin dependency's lock entry gains `plugin` and `content`. `mars add <marketplace> --plugin <name>` writes the entry.
+- `effort: none` (and `--effort none`) asks for no reasoning effort and stays distinct from absent end to end. Codex writes `model_reasoning_effort = "none"`; Claude has no off value, so its agent file omits `effort` and reports the loss; OpenCode, Pi and Cursor write no effort field.
+- `when` on a `model-policies` rule (one non-empty line) describes when the rule's model fits. `mars models prompting @agent` prints the Agent's guide ahead of the alias's text, and the Agent inventory marks Agents that have one. `mars check` warns on a policy alias it cannot resolve, naming the agent and file.
+- `ls` and `work` are tool capabilities. `harness-overrides.flow` is a reserved namespace for Flow that Mars passes through and never interprets.
+- Reference pages for [schema v1](docs/config/schema-v1.md) and [migration](docs/config/migrating-to-schema-v1.md), and READMEs for the crate and the npm package.
+- `mars check` warns when committed plugin output was built by another Mars version than the running one (the sentinel's `mars_version`): a Mars upgrade can write different files for the same inputs, which the input fingerprint cannot see. Rebuild with `mars build plugin`.
+- `mars check` warns when a package that declares `schema = 1` has a `requires-mars` that allows a Mars older than `0.20.0`, the first release that reads schema 1. A plugin package with no `schema` keeps the `0.19.0` floor; the warning names one floor, the higher. v0.19.0 built `schema = 1` packages without complaint, and wrongly.
+
+### Changed
+- Installed files under `.mars/` get mode `0o644` plus the source's execute bits, the rule target projection already used; before, a skill, hook or bootstrap doc copied the source's full mode, so a `0600` file stayed unreadable to the group.
+- Mars prepares every package (dependencies, `.mars-src`, the local package, `mars check`, `validate`, `migrate`, publish inputs) through `mars_schema::prepare` before it mutates anything. The authored tree stays untouched; sync projects prepared bytes into the recoverable `.mars/.staging.pending` generation after the diagnostic gate and publishes it by rename. Relative path dependencies resolve from the authored origin. Pre-v1 `.mars-src` content is upgraded in memory with a warning that names `mars migrate`.
+- A package declaring `schema = 2` or higher is one `schema.newer` error ("package declares schema N; this Mars reads schema 1 — upgrade Mars") and nothing else.
+- Frontmatter is bounded: a block over 64 KiB (`frontmatter.too-large`) or with more than 64 open brackets (`frontmatter.too-deep`) is not parsed. Nested brackets stalled the YAML scanner for seconds at 64 KiB. `read`, `prepare` and the npm package apply the same limits.
+- Sync targets, lossiness preview, plugin builds and `doctor` take Agents and skills from the prepared package, not a second walk of the materialized tree; the binary's walk finds only hooks and bootstrap documents.
+- Native agent files (`.claude`, `.codex`, Cursor, plugin trees) resolve effort, sandbox, approval and network through the launch bundle's chain, minus the CLI layer, so `[agents.<name>]` scalars, the matching `model-policies` rule and `[[settings.model-policies]]` apply; an artifact that names no model gets only the overlay and top-level values.
+- A project's `[settings]` network (`default-network`, `network-allow`, `network-deny`) is reported once per Codex target (`project default-network is not projected to .codex`), not as a dropped field on every Agent; an Agent's own `network` keeps its per-Agent warning. Plugin builds ignore the package's own `[settings]` network.
+- `[agents.<name>]` and `[skills.<name>]` overlays are consumer configuration outside the schema; a dependency's own overlay tables are inert. Keys they no longer read are ignored with a warning that names them.
+
+- An unknown key in an Agent or skill reaches no native file (skills used to pass it to every harness); the `field.unknown` warning says to use `harness-overrides.<harness>`. Skills read `harness-overrides` like Agents.
+- `harness-overrides.<harness>` is written into that harness's native Agent and skill files and plugin trees (Codex: extra TOML keys), never another harness's. A key Mars lowers itself keeps Mars's value and the override is dropped with a warning.
+- Importing an OpenCode agent maps `tools: {write: false}` to `allow`/`deny` and keeps `permission`, `temperature` and the other OpenCode-only keys under `harness-overrides.opencode`; it failed `mars sync` before and v0.19.0 installed it.
+- Importing a Claude plugin keeps its Claude-only keys instead of deleting them: `color`, `maxTurns`, `permissionMode`, `memory`, `background`, `isolation`, `initialPrompt` and `hooks` on Agents, and `argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths` and `shell` on skills move unchanged to `harness-overrides.claude`, with an info message (`agent.claude-keys-moved`, `skill.claude-keys-moved`) in place of the old `*.claude-keys-dropped` warning; `mars sync` prints one line per package with the count of files translated.
+- `mars migrate` prints each key it removed, by code and file (and as `dropped` in `--json`), and maps `adaptive`/`disabled` effort in `model-policies` overrides as it does in `effort:`.
+- `[agents.<name>]` `effort`, `approval`, `sandbox` and `network` are checked when `mars.toml` loads; stale overlay keys (`autocompact*`, `tools.mcp`, `[skills.x.tools]`) warn by name, in `mars.toml` and `mars.local.toml` alike. The error lists `max`.
+- The pre-v1 upgrade (in memory and `mars migrate`) moves Claude-only keys to `harness-overrides.claude`, the same list the Claude importer uses, so a pre-v1 skill's `argument-hint` still reaches `.claude/`.
+- Commands that save `mars.toml` or `mars.local.toml` (`add`, `remove`, `link`, `unlink`, `override`, `init`, `models alias`, and sync mutations) edit the authored document: only the changed keys are touched, so comments, key order and unknown `[package]` and `[dependencies.<n>]` keys survive. Unknown dependency keys warn (`field.unknown`) like package keys. `mars add` then `mars remove` of the same dependency leaves `mars.toml` byte-identical. `mars init` writes `[dependencies]` only; v0.19.0 also wrote the default `[settings] models_cache_ttl_hours = 24`, which still applies when absent.
+- Removing a frontmatter key no longer reorders the keys after it.
+- `mars sync`, `check` and `doctor` warn once per pre-v1 package (`legacy-package`, with the count of files to upgrade) and no longer repeat each key the upgrade drops or moves; `mars migrate` lists those. The upgrade and `mars migrate` keep a CRLF file CRLF.
+- A Claude-only key that `harness-overrides.claude` already sets is dropped with a warning that names it, and the override wins; a `harness-overrides` or `claude` entry that is not a mapping leaves the keys in place with a warning.
+- Diagnostics keep the schema crate's own code (`yaml.non-json-value`, `skill.name-*`, `marketplace.*`) in `--json` output, not `schema-diagnostic`.
+- A skill's `disallowedTools` is a removed key like `allowed-tools`: the reader errors on it and the pre-v1 upgrade drops it with a warning. It used to be an unknown field.
+- "Valid harnesses" lists read claude, codex, pi, opencode, cursor.
+- The `@meridian-flow/mars-schema` `.wasm` builds for size (936 KB, 373 KB gzip, from 1.27 MB). Parsing is about 60% slower: 78 definitions read in 7.9 ms, from 4.8 ms.
+- `effort: max` is a level of its own, above `xhigh`, and no longer reads as `xhigh`: the bundle's `execution_policy.effort` carries `max` for every harness but Codex (a consumer that maps efforts must handle it; the bundle stays version 4), `mars build launch-bundle --effort` takes it, the `@meridian-flow/mars-schema` `Effort` type gains it, and a model alias's `default_effort` accepts it. Claude agent files and plugin trees write `xhigh` as `xhigh`; v0.19.0 wrote it as `max` because Claude Code had no other spelling. Codex tops out at `xhigh`, so a Codex file and a Codex bundle write `max` as `xhigh` and report it as approximately mapped. On Cursor, where the model slug carries the effort, `max` picks the `-max` variant, else the model's `-xhigh`, else `-high`, and warns.
+
+### Fixed
+- `mars sync` and `check` no longer walk `node_modules` and every other tree under a package looking for generated plugin output; one bounded walk checks the marker as it enters a directory.
+- A skill with a YAML anchor reads its fields and reports `yaml.anchor` beside them, as an Agent does; `mars agents` and `mars skills` list it instead of skipping it.
+- `mars check` prints its success line only when there are no errors.
+- `mars remove <repository>` after `mars add <repository> --plugin <name>` (or a `--subpath`) says `did you mean` and names the dependencies that start with `<repository>/`; the dependency is named `<repository>/<plugin>`.
+- Dependency `dialect` accepts `opencode` and the `open-code` spelling v0.19.0 required, and `agentskills`, `agent_skills`, `marsnative` and `mars_native` as the dialect parser does.
+- A `mars.local.toml` `[settings]` key Mars does not read is kept, as in `mars.toml`, instead of failing the load; one that looks like network policy warns by name.
+- A dependency with no `mars.toml` that carries keys only pre-v1 Mars defined (`fanout`, `models`, `model_invocable`, `approval: yolo`...) installs instead of failing as a foreign tree: those keys are rewritten one by one in whichever dialect the tree is read, so a `tools` list still restricts the agent and a sibling skill's `model_invocable` still renames, as in v0.19.0. A tree declared `dialect = "mars-native"` is upgraded as a pre-v1 package.
+- A dependency with no `mars.toml` and an OpenCode Agent (a `permission` map, or a `tools` map of booleans) is read as OpenCode without a declaration: `write: false` becomes `write: deny` and `permission` and `temperature` reach `.opencode/agents/` through `harness-overrides.opencode`.
+- A translation never moves a key Mars lowers itself (an Agent's `model`, `effort`, `tools`, `skills`, `mode`; a skill's `license`, `metadata`, `user-invocable`, `disable-model-invocation`, `alwaysApply`) under `harness-overrides`, where native lowering would discard it: an invalid entry of `tools` is dropped and the rest kept, an invalid scalar is dropped, each with a warning. Native lowering and the translation read one list per kind, both in `mars-schema`. The legacy upgrade drops what it cannot convert instead of writing it to `harness-overrides.flow`, which holds only `permission`.
+- Losing a restriction in a translation or upgrade (a `deny` or `ask` tool entry, a `network-deny` host, `network`, `permission`, `sandbox`, `approval`) is a change coded `field.restriction-lost`, naming the agent. `mars sync` prints it on every run, beside the count of files translated, and `mars migrate` lists it with the other keys it dropped (plain output and `--json` `dropped`, for `.mars-src` too). For a `permission` map the note says it is OpenCode's and to declare `dialect = "open-code"`. A `network-allow` or `network-deny` list with one bad entry keeps its valid entries and drops only the bad one, reported per entry.
+- Prediction: a skill's `allowed-tools` is a key the Agent Skills specification defines, so it no longer counts as Claude evidence, and Claude evidence found only on skills ranks below an Agent written the way only OpenCode writes one (a `permission` map). An OpenCode Agent beside a standard skill with `allowed-tools` reads as OpenCode, not Claude. A tree predicted OpenCode still reports `commands/` as not imported.
+- OpenCode agent files carry deny rules as `permission: {<tool>: deny}` (OpenCode's current tool control; `tools` booleans are deprecated), merged over the author's `harness-overrides.opencode.permission`. A scoped deny rule, an allow and an `ask` stay reported as dropped. An OpenCode agent imported with `tools: {write: false}` keeps its denial in `.opencode/agents/`; the file used to lose it.
+- `approval: yolo` in an Agent file is one error, not two.
+- `mars doctor` hashes a bootstrap document as its directory, so it no longer fails with `Not a directory` (v0.19.0 did too).
+- `mars check --root PATH` validates `PATH`; `--root` was ignored.
+- `mars add <dir> --plugin <name>` (or `plugin = "<name>"`) on a Mars package says it is a Mars package, read as one, and to drop `plugin`. It claimed the `.claude-plugin/marketplace.json` was missing when a package's own plugin output had put one at its root.
+- A Cursor plugin build no longer reports an Agent's `mode` as dropped (and `mars sync` no longer lists it as approximately mapped for `.cursor`): the Cursor agent file writes it.
+- The "effort maps to --variant on subprocess only" note (OpenCode, Cursor) and Pi's effort note no longer fire for `effort: none`, which writes nothing for those harnesses.
+- Colour codes are written only to a terminal: output piped or redirected carried raw escape codes unless `NO_COLOR` was set. `NO_COLOR` still turns colour off on a terminal.
+
+### Security
+- `mars sync` refuses a dependency holding a symlink that leaves the package (`authored package entry escapes package root`). v0.19.0 copied the target, such as `/etc/hostname`, into `.mars/`.
+- A dependency URL, tag, ref or locked commit that starts with `-` is refused before git runs (`--upload-pack=<cmd>` would run `<cmd>`), and `--` precedes the repository and the checked-out revision. `plugin` names are letters, digits, `-`, `_` and `.`, starting with a letter or digit, so `mars add <marketplace> --plugin ..` is an error. `mars-schema` refuses a marketplace entry's unsafe repository or ref (option-like, whitespace, `ext::`, `file://`, an absolute path, any scheme but `https://` and `ssh://`) as an `unsupported` source with a reason, and a `sha` that is not a full commit; a plugin name that is not a name is left out of the list. A marketplace can no longer name a local repository for a plugin.
 
 ## [0.19.0] - 2026-10-26
 

@@ -1,0 +1,11 @@
+[package]
+schema = 1
+name = "pkg"
+version = "0.1.0"
+description = "d"
+requires-mars = ">=0.18"
+requires-meridian = ">=0.1"
+authors = ["A"]
+homepage = "https://x"
+license = "MIT"
+uses-providers = ["meridian"]

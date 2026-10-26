@@ -276,6 +276,7 @@ pub(crate) fn prepare_rooted(
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
+        &format!("package `{package_name}`"),
         &|files| legacy_package_warning(package_name, files),
         diag,
     );
@@ -349,6 +350,10 @@ pub(crate) fn prepare_authored(
     report_diagnostics(
         &prepared,
         &source_label(root),
+        &match &package_name {
+            Some(name) => format!("package `{name}`"),
+            None => "authored `.mars-src` content".to_string(),
+        },
         &|files| match &package_name {
             Some(name) => legacy_package_warning(name, files),
             None => format!(
@@ -388,18 +393,38 @@ pub(crate) fn prepare_project(
 
 /// `label` names a package-relative path in a diagnostic. A dependency is named by its
 /// package (`meridian-base: skills/poc/SKILL.md`), never by where the cache keeps its
-/// archive; a project's own sources keep their real path.
+/// archive; a project's own sources keep their real path. `subject` names the package in the
+/// one-line summaries.
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     label: &dyn Fn(&str) -> String,
+    subject: &str,
     legacy_warning: &dyn Fn(usize) -> String,
     diag: &mut DiagnosticCollector,
 ) {
+    // Translating a foreign package moves Claude-only keys in many files, the same way each sync;
+    // a sync says how many files, and `mars_schema::prepare` lists them.
+    let mut files_with_moved_keys = 0;
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
+        let mut moved = false;
         for diagnostic in diagnostics {
-            diag.schema(diagnostic, &context, false);
+            if diagnostic.code.ends_with(".claude-keys-moved") {
+                moved = true;
+            } else {
+                diag.schema(diagnostic, &context, false);
+            }
         }
+        files_with_moved_keys += usize::from(moved);
+    }
+    if files_with_moved_keys > 0 {
+        diag.info(
+            "claude-keys-moved",
+            format!(
+                "{subject}: moved Claude-only keys to harness-overrides.claude in {files_with_moved_keys} file{}",
+                if files_with_moved_keys == 1 { "" } else { "s" }
+            ),
+        );
     }
     // The upgrade's own per-file notes (keys dropped, keys moved) are `upgrade_diagnostics`,
     // which `mars migrate` lists; a sync reports one warning per package with their count.

@@ -128,9 +128,6 @@ pub struct Prepared {
 }
 
 impl Prepared {
-    /// How many authored files preparation changed: the prepared bytes differ from the file, and
-    /// for a pre-v1 package `mars migrate` writes them back. A generated `mars.toml` has no file
-    /// to change and is not counted.
     /// The changes that lost a restriction (a `deny` or `ask` tool entry, `permission`,
     /// `sandbox`, `approval`), by source path. Unlike the rest of `changes`, a caller reports
     /// these on every run: each leaves an agent less restricted than its file says.
@@ -143,6 +140,9 @@ impl Prepared {
         })
     }
 
+    /// How many authored files preparation changed: the prepared bytes differ from the file, and
+    /// for a pre-v1 package `mars migrate` writes them back. A generated `mars.toml` has no file
+    /// to change and is not counted.
     pub fn changed_files(&self) -> usize {
         self.manifest
             .iter()

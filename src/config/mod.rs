@@ -736,6 +736,7 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
 pub(crate) fn parse_prepared_manifest(
     content: &str,
     authored_path: &Path,
+    package: Option<&PackageInfo>,
 ) -> Result<Option<Manifest>, MarsError> {
     let parsed: SourceManifestSections =
         toml::from_str(content).map_err(|error| crate::error::ConfigError::Invalid {
@@ -744,11 +745,9 @@ pub(crate) fn parse_prepared_manifest(
     let Some(_) = parsed.package else {
         return Ok(None);
     };
-    let package = mars_schema::manifest::read(content).fields.ok_or_else(|| {
-        crate::error::ConfigError::Invalid {
-            message: format!("invalid package metadata in {}", authored_path.display()),
-        }
-    })?;
+    let Some(package) = package.cloned() else {
+        return Ok(None);
+    };
     let dependencies = parsed
         .dependencies
         .into_iter()
@@ -789,7 +788,10 @@ fn parse_manifest(
     if reading.fields.is_none() {
         return Ok((None, diagnostics.drain()));
     }
-    Ok((parse_prepared_manifest(content, path)?, diagnostics.drain()))
+    Ok((
+        parse_prepared_manifest(content, path, reading.fields.as_ref())?,
+        diagnostics.drain(),
+    ))
 }
 
 /// Load mars.local.toml (returns Default if absent).

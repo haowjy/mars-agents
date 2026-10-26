@@ -264,7 +264,15 @@ pub(crate) fn prepared_rooted(
         .as_ref()
         .and_then(|manifest| std::str::from_utf8(&manifest.normalized_bytes).ok())
         .map(|content| {
-            crate::config::parse_prepared_manifest(content, &rooted.authored_root.join("mars.toml"))
+            let prepared_manifest = prepared
+                .manifest
+                .as_ref()
+                .expect("prepared manifest bytes came from a prepared manifest");
+            crate::config::parse_prepared_manifest(
+                content,
+                &rooted.authored_root.join("mars.toml"),
+                prepared_manifest.reading.fields.as_ref(),
+            )
         })
         .transpose()?
         .flatten();

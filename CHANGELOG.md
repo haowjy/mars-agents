@@ -76,6 +76,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - `mars add <dir> --plugin <name>` (or `plugin = "<name>"`) on a Mars package says it is a Mars package, read as one, and to drop `plugin`. It claimed the `.claude-plugin/marketplace.json` was missing when a package's own plugin output had put one at its root.
 - A Cursor plugin build no longer reports an Agent's `mode` as dropped (and `mars sync` no longer lists it as approximately mapped for `.cursor`): the Cursor agent file writes it.
 - The "effort maps to --variant on subprocess only" note (OpenCode, Cursor) and Pi's effort note no longer fire for `effort: none`, which writes nothing for those harnesses.
+- Colour codes are written only to a terminal: output piped or redirected carried raw escape codes unless `NO_COLOR` was set. `NO_COLOR` still turns colour off on a terminal.
 
 ### Security
 - `mars sync` refuses a dependency holding a symlink that leaves the package (`authored package entry escapes package root`). v0.19.0 copied the target, such as `/etc/hostname`, into `.mars/`.

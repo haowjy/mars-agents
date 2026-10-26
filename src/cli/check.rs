@@ -92,7 +92,12 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         .warnings
         .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);
     let mut diagnostics = publish_diag.drain();
-    diagnostics.extend(lossiness_diagnostics_for_check(&lens, args.verbose)?);
+    diagnostics.extend(lossiness_diagnostics_for_check(
+        &lens,
+        &prepared,
+        &authored_base,
+        args.verbose,
+    )?);
     let mut surfaced = Vec::new();
     for diagnostic in diagnostics {
         if diagnostic.level == crate::diagnostic::DiagnosticLevel::Error {
@@ -204,6 +209,8 @@ fn plugin_warnings(
 
 fn lossiness_diagnostics_for_check(
     lens: &crate::resolve::PublishLens,
+    prepared: &mars_schema::prepare::Prepared,
+    authored_root: &Path,
     verbose: bool,
 ) -> Result<Vec<crate::diagnostic::Diagnostic>, MarsError> {
     use crate::diagnostic::LossinessMode;
@@ -213,7 +220,12 @@ fn lossiness_diagnostics_for_check(
     } else {
         LossinessMode::Surface
     };
-    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(lens, mode)
+    crate::compiler::lossiness_preview::collect_prepared_source_lossiness_diagnostics(
+        lens,
+        prepared,
+        authored_root,
+        mode,
+    )
 }
 
 fn check_prepared(

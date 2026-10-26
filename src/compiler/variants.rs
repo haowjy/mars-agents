@@ -387,8 +387,49 @@ pub(crate) fn emit_staged_skill_lossiness_for_harness(
     Ok(())
 }
 
+pub(crate) fn emit_prepared_skill_lossiness_for_harness(
+    authored_skill_dir: &Path,
+    prepared_base_content: &str,
+    harness_key: &str,
+    skill_name: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let selected_content = match harness_skill_variant_path(authored_skill_dir, harness_key) {
+        Some(path) => fs::read_to_string(path)?,
+        None => prepared_base_content.to_owned(),
+    };
+    let _ = lower_skill_content_for_harness(
+        prepared_base_content,
+        &selected_content,
+        harness_key,
+        skill_name,
+        diag,
+        true,
+    )?;
+    Ok(())
+}
+
 fn lower_projected_skill_for_harness(
     source: &Path,
+    selected_content: &str,
+    harness_key: &str,
+    skill_name: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+    emit_schema_diags: bool,
+) -> Result<Option<crate::compiler::lossiness::LoweredOutput>, MarsError> {
+    let base_content = fs::read_to_string(source.join("SKILL.md"))?;
+    lower_skill_content_for_harness(
+        &base_content,
+        selected_content,
+        harness_key,
+        skill_name,
+        diag,
+        emit_schema_diags,
+    )
+}
+
+fn lower_skill_content_for_harness(
+    base_content: &str,
     selected_content: &str,
     harness_key: &str,
     skill_name: &str,
@@ -401,12 +442,8 @@ fn lower_projected_skill_for_harness(
     let Some(harness) = skill_harness_from_variant_key(harness_key) else {
         return Ok(None);
     };
-
-    let base_skill = source.join("SKILL.md");
-    let base_content = fs::read_to_string(&base_skill)?;
-
     let mut skill_diags = Vec::new();
-    let (profile, _) = match parse_skill_content(&base_content, &mut skill_diags) {
+    let (profile, _) = match parse_skill_content(base_content, &mut skill_diags) {
         Ok(parsed) => parsed,
         Err(_) => return Ok(None),
     };

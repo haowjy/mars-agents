@@ -144,6 +144,80 @@ pub fn collect_source_lossiness_diagnostics(
     Ok(diag.drain())
 }
 
+/// Lower an already prepared package without rediscovering or restaging it.
+pub fn collect_prepared_source_lossiness_diagnostics(
+    lens: &PublishLens,
+    prepared: &mars_schema::prepare::Prepared,
+    authored_root: &Path,
+    mode: LossinessMode,
+) -> Result<Vec<Diagnostic>, MarsError> {
+    let settings = &lens.effective.settings;
+    let native_skill_keys = native_skill_harness_keys(settings);
+    let configured_harnesses = configured_emit_harnesses(settings);
+    if native_skill_keys.is_empty() && configured_harnesses.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut diag = DiagnosticCollector::with_lossiness_mode(mode);
+    let agent_copy_spec = agent_copy::build_agent_copy_spec(
+        settings.meridian_agent_copy(),
+        &settings.managed_targets(),
+        &mut diag,
+    );
+    let policy = agent_surface_policy(
+        settings.agent_emission.as_ref(),
+        agent_copy_spec.as_ref(),
+        false,
+    );
+    let fanout_agents = settings.meridian_fanout_agents();
+    let models_cache = ModelsCache {
+        models: Vec::new(),
+        fetched_at: None,
+    };
+    let routing_settings = ResolvedRoutingSettings::from_settings(settings);
+    let empty_model_aliases = indexmap::IndexMap::new();
+    let model_aliases = lens
+        .manifest
+        .as_ref()
+        .map(|manifest| &manifest.models)
+        .unwrap_or(&empty_model_aliases);
+    let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
+        .then(|| {
+            NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
+        });
+
+    for definition in &prepared.definitions {
+        let content = String::from_utf8_lossy(&definition.normalized_bytes);
+        match definition.kind {
+            mars_schema::upgrade::DefinitionKind::Agent => collect_agent_content_lossiness(
+                &content,
+                &definition.slug,
+                &policy,
+                &configured_harnesses,
+                fanout_agents,
+                model_router.as_mut(),
+                &mut diag,
+            ),
+            mars_schema::upgrade::DefinitionKind::Skill => {
+                let source_path = authored_root.join(&definition.source_path);
+                let skill_dir = source_path.parent().unwrap_or(authored_root);
+                variants::validate_skill_variants(skill_dir, &definition.slug, &mut diag);
+                for harness_key in &native_skill_keys {
+                    variants::emit_prepared_skill_lossiness_for_harness(
+                        skill_dir,
+                        &content,
+                        harness_key,
+                        &definition.slug,
+                        &mut diag,
+                    )?;
+                }
+            }
+        }
+    }
+
+    Ok(diag.drain())
+}
+
 fn preview_staging_root_and_dialect(
     base: &Path,
     config: Option<&Config>,
@@ -219,10 +293,30 @@ fn collect_staged_agent_lossiness(
     model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
 ) {
-    let Some(model_router) = model_router else {
+    let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(content) = std::fs::read_to_string(path) else {
+    collect_agent_content_lossiness(
+        &content,
+        agent_name,
+        policy,
+        configured_harnesses,
+        fanout_agents,
+        model_router,
+        diag,
+    );
+}
+
+fn collect_agent_content_lossiness(
+    content: &str,
+    agent_name: &str,
+    policy: &crate::compiler::AgentSurfacePolicy,
+    configured_harnesses: &[HarnessId],
+    fanout_agents: &[String],
+    model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(model_router) = model_router else {
         return;
     };
     let Ok(fm) = frontmatter::parse(&content) else {

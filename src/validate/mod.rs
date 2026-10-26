@@ -110,11 +110,12 @@ pub(crate) fn undeclared_provider_hint(provider: &str) -> String {
     )
 }
 
-/// Parse skill dependencies from an installed item's frontmatter.
+/// Parse skill dependencies from an Agent file.
 ///
-/// Returns the `skills` list, or empty vec if no frontmatter, no skills
-/// field, or malformed YAML. Only reads the frontmatter block between
-/// `---` delimiters, not the full markdown body.
+/// The callers read files Mars or a provider wrote — an installed Agent under `.mars/`, or the
+/// staged copy a sync filters — so the read tolerates a pre-v1 spelling. Returns the `skills`
+/// list, or an empty vec if there is no frontmatter, no `skills` field, or malformed YAML, and
+/// reads only the frontmatter block between `---` delimiters, not the full markdown body.
 pub fn parse_item_skill_deps(item_path: &Path) -> Result<Vec<String>, MarsError> {
     let content = std::fs::read_to_string(item_path)?;
     Ok(mars_schema::read::installed_agent(&content)

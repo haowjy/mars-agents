@@ -250,11 +250,11 @@ fn fallback_flat_root_skill_uses_source_name_not_staged_dialect_dir() {
 #[test]
 fn fallback_flat_root_skill_overlay_applies_under_source_name() {
     use crate::config::SkillOverlay;
-    use crate::dialect::Dialect;
     use crate::staging::stage_canonical_source;
     use crate::types::RenameMap;
     use DiagnosticCollector;
     use indexmap::IndexMap;
+    use mars_schema::dialect::Dialect;
 
     let source = TempDir::new().unwrap();
     fs::write(
@@ -278,7 +278,7 @@ fn fallback_flat_root_skill_overlay_applies_under_source_name() {
     stage_canonical_source(
         source.path(),
         &staged_root,
-        Dialect::Codex,
+        Some(Dialect::Codex),
         &overrides,
         &RenameMap::new(),
         Some("base"),
@@ -302,11 +302,11 @@ fn fallback_flat_root_skill_overlay_applies_under_source_name() {
 #[test]
 fn fallback_flat_root_skill_overlay_applies_after_rename() {
     use crate::config::SkillOverlay;
-    use crate::dialect::Dialect;
     use crate::staging::stage_canonical_source;
     use crate::types::{ItemName, RenameMap};
     use DiagnosticCollector;
     use indexmap::IndexMap;
+    use mars_schema::dialect::Dialect;
 
     let source = TempDir::new().unwrap();
     fs::write(
@@ -332,7 +332,7 @@ fn fallback_flat_root_skill_overlay_applies_after_rename() {
     stage_canonical_source(
         source.path(),
         &staged_root,
-        Dialect::Codex,
+        Some(Dialect::Codex),
         &overrides,
         &renames,
         Some("base"),

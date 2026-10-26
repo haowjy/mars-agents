@@ -897,7 +897,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 subpath: None,
                 filter: FilterMode::All,
                 rename: crate::types::RenameMap::new(),
-                dialect: Some(crate::dialect::Dialect::Claude),
+                dialect: Some(mars_schema::dialect::Dialect::Claude),
             },
         )]),
         settings: Settings::default(),
@@ -992,7 +992,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
     );
 
     config.dependencies.get_mut("base").unwrap().dialect =
-        Some(crate::dialect::Dialect::MarsNative);
+        Some(mars_schema::dialect::Dialect::MarsNative);
     config.skills.clear();
     graph.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
     let (dialect_diff, _, dialect_lock) = apply_sync(&graph, &config, &overlay_lock);

@@ -25,7 +25,6 @@ use crate::compiler::variants;
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::config::{Config, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
-use crate::dialect::Dialect;
 use crate::error::MarsError;
 use crate::local_source::LOCAL_SOURCE_DIR;
 use crate::models::ModelsCache;
@@ -34,6 +33,7 @@ use crate::skill_source_name::flat_root_skill_source_name;
 use crate::target::TargetRegistry;
 use crate::types::RenameMap;
 use mars_schema::agent::parse_agent_profile;
+use mars_schema::dialect::Dialect;
 use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
 
@@ -225,29 +225,21 @@ pub fn collect_prepared_source_lossiness_diagnostics(
 fn preview_staging_root_and_dialect(
     base: &Path,
     config: Option<&Config>,
-) -> Result<(PathBuf, Dialect, Option<String>), MarsError> {
+) -> Result<(PathBuf, Option<Dialect>, Option<String>), MarsError> {
     let fallback_skill_name = preview_flat_skill_fallback_name(base, config);
     let is_consumer = is_consumer_project(base, config);
     if is_consumer {
         let local_root = base.join(LOCAL_SOURCE_DIR);
         if local_root.is_dir() {
-            return Ok((
-                local_root.clone(),
-                Dialect::resolve_local(None, &local_root),
-                fallback_skill_name,
-            ));
+            return Ok((local_root, Some(Dialect::MarsNative), fallback_skill_name));
         }
         return Ok((
             base.to_path_buf(),
-            Dialect::resolve_local(None, base),
+            Some(Dialect::MarsNative),
             fallback_skill_name,
         ));
     }
-    Ok((
-        base.to_path_buf(),
-        Dialect::resolve(None, base),
-        fallback_skill_name,
-    ))
+    Ok((base.to_path_buf(), None, fallback_skill_name))
 }
 
 /// Stable flat-root skill name for preview staging/discovery.

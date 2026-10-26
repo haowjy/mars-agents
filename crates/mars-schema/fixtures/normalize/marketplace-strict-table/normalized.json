@@ -250,6 +250,38 @@
       }
     },
     {
+      "id": "conflicting",
+      "provenance": {
+        "translator": "0.18.3",
+        "source": {},
+        "marketplace": {
+          "plugin": "conflicting",
+          "plugin_source": {
+            "kind": "local",
+            "path": "conflicting"
+          }
+        },
+        "selected_items": []
+      },
+      "prepared": {
+        "classification": {
+          "kind": "invalid"
+        },
+        "definitions": [],
+        "payload": [],
+        "diagnostics": {
+          ".claude-plugin/plugin.json": [
+            {
+              "code": "plugin.conflicting-manifests",
+              "severity": "error",
+              "path": [],
+              "message": "conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components"
+            }
+          ]
+        }
+      }
+    },
+    {
       "id": "entry-is-manifest",
       "provenance": {
         "translator": "0.18.3",
@@ -417,28 +449,12 @@
     }
   ],
   "diagnostics": {
-    ".": [
-      {
-        "code": "normalize.unreadable",
-        "severity": "error",
-        "path": [],
-        "message": "plugin `conflicting`: the package cannot be read"
-      }
-    ],
     ".claude-plugin/marketplace.json": [
       {
         "code": "marketplace.plugin-missing",
         "severity": "error",
         "path": [],
         "message": "plugin `missing`: `nowhere` does not exist in the marketplace"
-      }
-    ],
-    ".claude-plugin/plugin.json": [
-      {
-        "code": "plugin.conflicting-manifests",
-        "severity": "error",
-        "path": [],
-        "message": "plugin `conflicting`: conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components"
       }
     ]
   }

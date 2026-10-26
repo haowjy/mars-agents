@@ -7,13 +7,13 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
-use crate::dialect::Dialect;
 use crate::error::{ConfigError, MarsError};
 use crate::permission_set::PermissionSet;
 use crate::types::managed_cmd;
 use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
 };
+use mars_schema::dialect::Dialect;
 use mars_schema::model_policy::ModelPolicyRule;
 pub use mars_schema::package::PackageMetadata as PackageInfo;
 use mars_schema::tool_names::OverlayToolName;
@@ -158,7 +158,7 @@ pub struct InstallDep {
     pub subpath: Option<SourceSubpath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Inbound lift dialect for this dependency (see `crate::dialect::Dialect`).
+    /// Inbound lift dialect for this dependency (see `mars_schema::dialect::Dialect`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialect: Option<Dialect>,
     #[serde(flatten)]

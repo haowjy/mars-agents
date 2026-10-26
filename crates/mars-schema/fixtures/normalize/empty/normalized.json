@@ -1,14 +1,22 @@
 {
   "kind": "empty",
-  "packages": [],
-  "diagnostics": {
-    ".": [
-      {
-        "code": "normalize.empty",
-        "severity": "info",
-        "path": [],
-        "message": "has nothing to import"
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "0.18.3",
+        "source": {},
+        "selected_items": []
+      },
+      "prepared": {
+        "classification": {
+          "kind": "empty"
+        },
+        "definitions": [],
+        "payload": [],
+        "diagnostics": {}
       }
-    ]
-  }
+    }
+  ],
+  "diagnostics": {}
 }

@@ -16,11 +16,11 @@ use indexmap::IndexMap;
 
 use crate::config::SkillOverlay;
 use crate::diagnostic::DiagnosticCollector;
-use crate::dialect::Dialect;
 use crate::error::MarsError;
 use crate::platform::cache::safe_component;
 use crate::resolve::RootedSourceRef;
 use crate::types::{RenameMap, SourceName};
+use mars_schema::dialect::Dialect;
 use mars_schema::frontmatter::Frontmatter;
 use mars_schema::item::ItemKind;
 
@@ -210,7 +210,7 @@ fn copy_authored_subtree(
 pub(crate) fn stage_canonical_source(
     source_root: &Path,
     dest_root: &Path,
-    dialect: Dialect,
+    dialect: Option<Dialect>,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
@@ -224,14 +224,14 @@ pub(crate) fn stage_canonical_source(
         crate::package_prepare::prepare_authored_without_manifest(
             source_root,
             mars_schema::prepare::PrepareContext::AuthoredLocal,
-            Some(dialect),
+            dialect,
             diag,
         )?
     } else {
         crate::package_prepare::prepare_authored(
             source_root,
             mars_schema::prepare::PrepareContext::Package,
-            Some(dialect),
+            dialect,
             diag,
         )?
     };

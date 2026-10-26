@@ -13,8 +13,8 @@ use crate::claude::manifest::{
 };
 use crate::diagnostic::{SchemaDiagnostic, Severity};
 use crate::dialect::Dialect;
-use crate::dispatch::{AsPlugin, Kind, Layout};
-use crate::inspect::Hint;
+use crate::dispatch::{AsPlugin, Layout};
+use crate::inspect::{Hint, Kind};
 use crate::prepare::{
     ChangeRecord, Classification, PrepareContext, Prepared, PreparedManifest, RootOptions, Rooted,
     prepare_root,
@@ -271,9 +271,10 @@ fn normalize_plugin<T: TreeSource>(
     finish_package(rooted, request, Some(Origin { entry, content }), normalized);
 }
 
-/// Add the package, or say why it is left out. A package-level error (two skills with one
-/// slug, conflicting manifests, an unreadable manifest) refuses the package; a definition that
-/// cannot be read does not, because it imports unavailable with its error.
+/// Add the package. A package-level error (two skills with one slug, conflicting manifests,
+/// an unreadable manifest) is reported on the package, which then holds nothing to write; a
+/// definition that cannot be read does not do that, because it imports unavailable with its
+/// error.
 fn finish_package<T: TreeSource>(
     rooted: Rooted,
     request: &NormalizeRequest<'_, T>,
@@ -284,79 +285,24 @@ fn finish_package<T: TreeSource>(
         mut prepared,
         dispatched,
     } = rooted;
-    let label = origin
-        .as_ref()
-        .map(|origin| format!("plugin `{}`: ", origin.entry.name))
-        .unwrap_or_default();
-    let mut leave_out = |prepared: Prepared, reason: Option<SchemaDiagnostic>| {
-        for (path, diagnostics) in prepared.diagnostics {
-            for mut diagnostic in diagnostics {
-                diagnostic.message = format!("{label}{}", diagnostic.message);
-                normalized
-                    .diagnostics
-                    .entry(path.clone())
-                    .or_default()
-                    .push(diagnostic);
-            }
-        }
-        if let Some(reason) = reason {
-            normalized
-                .diagnostics
-                .entry(".".to_owned())
-                .or_default()
-                .push(reason);
-        }
-    };
-    let reason = |severity, code: &str, message: &str| {
-        SchemaDiagnostic::new(code, severity, Vec::new(), format!("{label}{message}"))
-    };
-    match prepared.classification {
-        Classification::Empty => {
-            leave_out(
-                prepared,
-                Some(reason(
-                    Severity::Info,
-                    "normalize.empty",
-                    "has nothing to import",
-                )),
-            );
-            return;
-        }
-        Classification::Invalid | Classification::SchemaNewer { .. } => {
-            leave_out(
-                prepared,
-                Some(reason(
-                    Severity::Error,
-                    "normalize.unreadable",
-                    "the package cannot be read",
-                )),
-            );
-            return;
-        }
-        _ => {}
-    }
-    if prepared
+    let refused = prepared
         .diagnostics
         .values()
         .flatten()
-        .any(SchemaDiagnostic::is_error)
-    {
-        leave_out(
-            prepared,
-            Some(reason(
-                Severity::Error,
-                "normalize.refused",
-                "the package has errors and was left out",
-            )),
-        );
-        return;
+        .any(SchemaDiagnostic::is_error);
+    if refused {
+        prepared.definitions.clear();
+        prepared.payload.clear();
     }
 
     let spec = match &dispatched.layout {
         Layout::Claude(spec) => Some(spec),
         _ => None,
     };
-    if prepared.manifest.is_none() {
+    if prepared.manifest.is_none()
+        && !refused
+        && matches!(prepared.classification, Classification::Foreign { .. })
+    {
         let name = spec
             .and_then(|spec| spec.name.clone())
             .or_else(|| origin.as_ref().map(|origin| origin.entry.name.clone()))
@@ -372,7 +318,7 @@ fn finish_package<T: TreeSource>(
         .as_ref()
         .and_then(|manifest| manifest.reading.fields.as_ref())
         .map(|package| package.name.clone())
-        .unwrap_or_default();
+        .unwrap_or_else(|| repository_name(request));
     let selected_items = prepared
         .definitions
         .iter()

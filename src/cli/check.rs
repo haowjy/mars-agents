@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use semver::Version;
 use serde::Serialize;
 
-use crate::dialect::Dialect;
 use crate::error::MarsError;
+use mars_schema::dialect::Dialect;
 
 use super::output;
 
@@ -63,7 +63,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         let prepared = crate::package_prepare::prepare_authored_without_manifest(
             &authored_base,
             mars_schema::prepare::PrepareContext::AuthoredLocal,
-            Some(Dialect::resolve_local(None, &authored_base)),
+            Some(Dialect::MarsNative),
             &mut publish_diag,
         )?;
         (
@@ -409,7 +409,7 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
         crate::package_prepare::prepare_authored_without_manifest(
             base,
             mars_schema::prepare::PrepareContext::AuthoredLocal,
-            Some(Dialect::resolve_local(None, base)),
+            Some(Dialect::MarsNative),
             &mut diag,
         )?
     } else {

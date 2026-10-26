@@ -5,26 +5,19 @@
 //! result onto binary diagnostics and materialization.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use mars_schema::dialect::Dialect;
+use mars_schema::inspect::{Hint, Kind};
+use mars_schema::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
 use mars_schema::prepare::{Classification, PrepareContext, Prepared};
 use mars_schema::tree::TreeSource;
 
 use crate::diagnostic::DiagnosticCollector;
-use crate::dialect::Dialect;
 use crate::error::MarsError;
-
-fn schema_dialect(dialect: Dialect) -> mars_schema::dialect::Dialect {
-    match dialect {
-        Dialect::Claude => mars_schema::dialect::Dialect::Claude,
-        Dialect::Codex => mars_schema::dialect::Dialect::Codex,
-        Dialect::OpenCode => mars_schema::dialect::Dialect::OpenCode,
-        Dialect::Cursor => mars_schema::dialect::Dialect::Cursor,
-        Dialect::MarsNative => mars_schema::dialect::Dialect::MarsNative,
-    }
-}
 
 /// Lazy, package-confined filesystem implementation of `TreeSource`.
 ///
@@ -230,7 +223,8 @@ pub(crate) struct PreparedRootedSource {
     pub hook_surface: crate::staging::HookSurfaceState,
 }
 
-/// Prepare one authored package exactly once without materializing it.
+/// Read one dependency exactly once without materializing it: `normalize` turns whatever the
+/// dependency is (a Mars package, a Claude plugin, a skill tree) into one schema v1 package.
 pub(crate) fn prepare_rooted(
     source_name: &crate::types::SourceName,
     rooted: crate::resolve::RootedSourceRef,
@@ -239,16 +233,48 @@ pub(crate) fn prepare_rooted(
 ) -> Result<PreparedRootedSource, MarsError> {
     let dependency = effective_config.dependencies.get(source_name);
     let source = DiskTreeSource::new(&rooted.authored_root)?;
-    let prepared = mars_schema::prepare::prepare(
-        &source,
-        PrepareContext::Package,
-        dependency
-            .and_then(|entry| entry.dialect)
-            .map(schema_dialect),
-    );
+    let request = NormalizeRequest {
+        tree: &source,
+        source: SourceInfo {
+            name: Some(source_name.to_string()),
+            ..SourceInfo::default()
+        },
+        hint: Hint {
+            dialect: dependency.and_then(|entry| entry.dialect),
+            ..Hint::default()
+        },
+        selection: Selection::default(),
+        remote_trees: BTreeMap::new(),
+    };
+    let mut normalized = normalize(&request);
     if let Some(error) = source.take_error() {
         return Err(error);
     }
+    for (path, diagnostics) in &normalized.diagnostics {
+        for diagnostic in diagnostics {
+            diag.schema(diagnostic, &format!("{source_name}: {path}"), false);
+        }
+    }
+    if normalized.kind == Kind::Marketplace
+        && (normalized.packages.len() != 1
+            || normalized
+                .diagnostics
+                .values()
+                .flatten()
+                .any(|diagnostic| diagnostic.code.starts_with("marketplace.")))
+    {
+        return Err(marketplace_choice_error(
+            source_name,
+            &source,
+            &request.hint,
+        ));
+    }
+    let [package] = normalized.packages.as_mut_slice() else {
+        return Err(MarsError::InvalidRequest {
+            message: format!("`{source_name}` did not normalize to exactly one package"),
+        });
+    };
+    let prepared = package.prepared.clone();
     let package_name = prepared
         .manifest
         .as_ref()
@@ -266,6 +292,27 @@ pub(crate) fn prepare_rooted(
     );
 
     prepared_rooted(rooted, Arc::new(prepared), diag)
+}
+
+/// A marketplace names several plugins, or one that cannot be read: the dependency must say
+/// which it wants.
+fn marketplace_choice_error(
+    source_name: &crate::types::SourceName,
+    source: &DiskTreeSource,
+    hint: &Hint,
+) -> MarsError {
+    let inspection = mars_schema::inspect::inspect(source, hint);
+    let plugins = inspection
+        .plugins
+        .iter()
+        .map(|plugin| format!("  {}", plugin.entry.name))
+        .collect::<Vec<_>>()
+        .join("\n");
+    MarsError::InvalidRequest {
+        message: format!(
+            "`{source_name}` is a marketplace with these plugins:\n{plugins}\nname the one to install with `plugin = \"<name>\"` on its dependency entry"
+        ),
+    }
 }
 
 pub(crate) fn prepared_rooted(
@@ -306,7 +353,7 @@ pub(crate) fn prepare_authored(
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?;
-    let prepared = mars_schema::prepare::prepare(&source, context, dialect.map(schema_dialect));
+    let prepared = mars_schema::prepare::prepare(&source, context, dialect);
     if let Some(error) = source.take_error() {
         return Err(error);
     }
@@ -327,7 +374,7 @@ pub(crate) fn prepare_authored_without_manifest(
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?.without_manifest();
-    let prepared = mars_schema::prepare::prepare(&source, context, dialect.map(schema_dialect));
+    let prepared = mars_schema::prepare::prepare(&source, context, dialect);
     if let Some(error) = source.take_error() {
         return Err(error);
     }

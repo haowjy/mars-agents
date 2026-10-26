@@ -7,7 +7,6 @@ pub mod config;
 pub(crate) mod content;
 pub mod curation;
 pub mod diagnostic;
-pub(crate) mod dialect;
 pub mod discover;
 pub mod error;
 pub mod fs;

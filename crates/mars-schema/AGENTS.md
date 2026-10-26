@@ -16,14 +16,14 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 | Module | Owns |
 |---|---|
 | `read` | `read(path, text)` and `read_definition(kind, text)`: the one way a definition is read; `Reading`, `DefinitionRead`, `Valid` |
-| `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; the removed-field and removed-value tables (`RemovedField`, `RemovedValue`, in `diagnostic`) |
+| `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; the removed-field and removed-value tables (`RemovedField`, `RemovedValue`, in `diagnostic`); `agent::LoweredField`, the Agent keys Mars lowers itself, which set-aside and native lowering both read |
 | `harness_overrides` | `harness-overrides` parsing and `HarnessOverrides`, shared by the Agent and skill readers |
 | `prepare` | `prepare`: classify one root, select, upgrade or translate, read; `Prepared`, `PrepareContext`, `Classification` |
 | `dispatch` | Classification order, layout choice, consumer-configuration detection, the dialect prediction (`DialectChoice` in `dialect`) |
 | `discover` | The one bounded walk (`walk`, `walk_dirs`, `excluded`), the Mars convention scan, payload assignment |
 | `claude/` | The Claude layout: `manifest` (plugin and marketplace manifests, merge and `strict` rules), `discover` (items and where they land), `translate` (skills and Agents tables), `checks` (warnings that depend on where a skill landed) |
 | `lift` | The Codex, Cursor and OpenCode lifts; the shared tool-name rewrite |
-| `set_aside` | The class guard: after a foreign or pre-v1 definition is translated, every key the strict reader still rejects is moved under `harness-overrides.<dialect>` (`flow` for pre-v1 Mars) or dropped, with one warning; `harness_overrides::move_keys_under` is the one mover |
+| `set_aside` | The class guard: after a foreign or pre-v1 definition is translated, every key the strict reader still rejects is moved under `harness-overrides.<dialect>` or dropped, with one warning. A key Mars lowers itself (`agent::LoweredField`, the list native lowering reads too) is never moved: a mapping or list loses only its rejected entries and a scalar is dropped. A lost restriction is a `field.restriction-lost` finding, not a counted change; `harness_overrides::move_keys_under` is the one mover |
 | `inspect`, `normalize` | `dispatch` and `prepare` over a whole repository; the generated `mars.toml` and provenance |
 | `upgrade` | The pre-v1 to v1 conversion, shared by `prepare` and `mars migrate` |
 | `package` | Versioned package metadata, `classify_manifest` |
@@ -48,7 +48,16 @@ Mars wrote is never evidence for the root. `upgrade::lift_mars_only_keys` applie
 before the rules of whichever dialect reads the definition: the invocability renames, the
 discarded Agent fields (`RemovedField::discarded`), the removed values (`REMOVED_AGENT_VALUES`),
 a scalar `permission` moved to `harness-overrides.flow` and the removed model-policy override
-keys. `permission` is not on that list as a key, because OpenCode defines it too.
+keys. `permission` is not on that list as a key, because OpenCode defines it too. Flow defines one key,
+`permission`, so that move is the only writer of `harness-overrides.flow`; the legacy upgrade drops
+what it cannot convert.
+
+Prediction from the items reads each dialect's own vocabulary and holds none itself:
+`claude::translate::EVIDENCE_KEYS` (narrower than that module's moved-key lists, because `model`,
+`effort`, `tools` and `hooks` also appear in Mars's own files, and the rewritten spellings are read in
+code, so it is not derived from them) and `lift::is_opencode_agent` (a `permission` map or a `tools` map
+of booleans: the two spellings `lift_opencode_agent` translates). Claude evidence wins over OpenCode's;
+a tree predicted OpenCode is read by Mars's convention walk, as when declared.
 
 `PrepareContext` is `Package` (a package root), `AuthoredLocal` (a consumer project's
 `.mars-src`) or `Project` (a directory that is either: a `mars.toml` with no `[package]` is

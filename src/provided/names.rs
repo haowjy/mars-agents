@@ -35,26 +35,27 @@ pub(crate) struct ProvidedNames {
 
 impl ProvidedNames {
     pub(crate) fn load(root: &Path, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
-        let loaded = ProvidedLock::load(root)?;
-        let Some(unusable) = loaded.unusable else {
-            let skills_dir = root.join(".mars").join("skills");
-            let recorded: HashSet<String> = loaded
-                .record
-                .providers()
-                .flat_map(|(_, provider)| provider.skills.iter().cloned())
-                .collect();
-            let installed = recorded
-                .iter()
-                .filter(|name| skills_dir.join(name).is_dir())
-                .cloned()
-                .collect();
-            return Ok(Self {
-                recorded,
-                installed,
-            });
+        let record = match ProvidedLock::load(root)? {
+            Ok(record) => record,
+            Err(unusable) => {
+                diag.warn("provided-lock-unusable", unusable.reader_message());
+                return Ok(Self::default());
+            }
         };
-        diag.warn("provided-lock-unusable", unusable.reader_message());
-        Ok(Self::default())
+        let skills_dir = root.join(".mars").join("skills");
+        let recorded: HashSet<String> = record
+            .providers()
+            .flat_map(|(_, provider)| provider.skills.iter().cloned())
+            .collect();
+        let installed = recorded
+            .iter()
+            .filter(|name| skills_dir.join(name).is_dir())
+            .cloned()
+            .collect();
+        Ok(Self {
+            recorded,
+            installed,
+        })
     }
 
     /// Whether a provider installed `name` here. A recorded name whose directory is gone — a

@@ -70,6 +70,17 @@ impl Unusable {
         }
     }
 
+    /// The writer's reading: the empty record it starts from, with the warning to report, because
+    /// adoption against the files on disk recovers the ownership a corrupt record can no longer
+    /// prove. A newer record is refused instead: this build must not overwrite another build's.
+    pub(crate) fn for_write(self) -> Result<(ProvidedLock, Option<String>), MarsError> {
+        let message = self.writer_message();
+        match self {
+            Self::Corrupt { .. } => Ok((ProvidedLock::default(), Some(message))),
+            Self::Newer { .. } => Err(MarsError::Config(ConfigError::Invalid { message })),
+        }
+    }
+
     /// What the writer says: a corrupt record is replaced, a newer one is refused.
     fn writer_message(&self) -> String {
         match self {
@@ -81,30 +92,6 @@ impl Unusable {
                 "{} uses provided lock version {version}; this Mars reads version {PROVIDED_LOCK_VERSION} — upgrade Mars to read it",
                 path.display()
             ),
-        }
-    }
-}
-
-/// A loaded record, with why it could not be read if it could not.
-pub(crate) struct LoadedProvidedLock {
-    /// The record. Empty when `unusable` is `Some`.
-    pub record: ProvidedLock,
-    pub unusable: Option<Unusable>,
-}
-
-impl LoadedProvidedLock {
-    /// The writer's reading: `mars provide` refuses a record a newer Mars wrote and drops a
-    /// corrupt one with its warning, because adoption against the files on disk rebuilds the
-    /// ownership a corrupt record can no longer prove.
-    pub(crate) fn for_write(self) -> Result<(ProvidedLock, Option<String>), MarsError> {
-        match self.unusable {
-            None => Ok((self.record, None)),
-            Some(unusable @ Unusable::Corrupt { .. }) => {
-                Ok((self.record, Some(unusable.writer_message())))
-            }
-            Some(unusable) => Err(MarsError::Config(ConfigError::Invalid {
-                message: unusable.writer_message(),
-            })),
         }
     }
 }
@@ -125,19 +112,14 @@ struct OutgoingProvidedLock<'a> {
 impl ProvidedLock {
     /// Read the project's record.
     ///
-    /// A corrupt file is [`Unusable::Corrupt`] with an empty record: its contents cannot be
-    /// trusted, and adoption against the files on disk recovers the ownership it can still
-    /// prove. An unknown version is [`Unusable::Newer`] with an empty record, because a newer
-    /// Mars wrote it and each side decides for itself: the writer refuses it, a reader ignores it.
-    pub(crate) fn load(root: &Path) -> Result<LoadedProvidedLock, MarsError> {
+    /// The outer error is I/O. The inner one says why the file cannot be read as this build's:
+    /// a corrupt file can be rebuilt from the files on disk, a newer one must not be touched.
+    pub(crate) fn load(root: &Path) -> Result<Result<ProvidedLock, Unusable>, MarsError> {
         let path = root.join(".mars").join(PROVIDED_LOCK_FILE);
         let content = match std::fs::read_to_string(&path) {
             Ok(content) => content,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(LoadedProvidedLock {
-                    record: ProvidedLock::default(),
-                    unusable: None,
-                });
+                return Ok(Ok(ProvidedLock::default()));
             }
             Err(source) => {
                 return Err(MarsError::Io {
@@ -149,46 +131,43 @@ impl ProvidedLock {
         };
         let wire: WireProvidedLock = match toml::from_str(&content) {
             Ok(wire) => wire,
-            Err(error) => return Ok(corrupt(&path, format!("failed to parse it: {error}"))),
+            Err(error) => return Ok(Err(corrupt(&path, format!("failed to parse it: {error}")))),
         };
         match wire.version {
             Some(version) if version == i64::from(PROVIDED_LOCK_VERSION) => {}
-            Some(version) => {
-                return Ok(LoadedProvidedLock {
-                    record: ProvidedLock::default(),
-                    unusable: Some(Unusable::Newer { path, version }),
-                });
+            Some(version) => return Ok(Err(Unusable::Newer { path, version })),
+            None => {
+                return Ok(Err(corrupt(
+                    &path,
+                    "it has no integer `version`".to_string(),
+                )));
             }
-            None => return Ok(corrupt(&path, "it has no integer `version`".to_string())),
         }
         for (provider, record) in &wire.providers {
             if let Some(name) = record.skills.iter().find(|name| !is_skill_dir_name(name)) {
-                return Ok(corrupt(
+                return Ok(Err(corrupt(
                     &path,
                     format!(
                         "provider `{provider}` records `{name}`, which is not a skill directory name"
                     ),
-                ));
+                )));
             }
             if let Some(name) = record
                 .skills
                 .iter()
                 .find(|name| provider_of(name) != Some(provider.as_str()))
             {
-                return Ok(corrupt(
+                return Ok(Err(corrupt(
                     &path,
                     format!(
                         "provider `{provider}` records `{name}`, which is not one of its own `<skill>__{provider}` names"
                     ),
-                ));
+                )));
             }
         }
-        Ok(LoadedProvidedLock {
-            record: ProvidedLock {
-                providers: wire.providers,
-            },
-            unusable: None,
-        })
+        Ok(Ok(ProvidedLock {
+            providers: wire.providers,
+        }))
     }
 
     pub(crate) fn provider(&self, provider: &str) -> Option<&ProviderRecord> {
@@ -219,13 +198,10 @@ impl ProvidedLock {
     }
 }
 
-fn corrupt(path: &Path, reason: String) -> LoadedProvidedLock {
-    LoadedProvidedLock {
-        record: ProvidedLock::default(),
-        unusable: Some(Unusable::Corrupt {
-            path: path.to_path_buf(),
-            reason,
-        }),
+fn corrupt(path: &Path, reason: String) -> Unusable {
+    Unusable::Corrupt {
+        path: path.to_path_buf(),
+        reason,
     }
 }
 

@@ -7,10 +7,6 @@
 //! [`EffectiveToolPolicy::project`] spells for a harness. Native agent lowering, skill lowering
 //! and the launch bundle all read that projection; nothing else turns a rule into native
 //! permission names or unscoped harness tool names.
-//!
-//! [`NON_CANONICAL_TOOL_FIELD_ALIASES`] is the single source for foreign spellings that
-//! must not appear in canonical/MarsNative profiles. Staging strips alias keys; the skill
-//! parser warns with the canonical replacement label.
 
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use crate::config::AgentOverlayTools;
@@ -822,6 +818,7 @@ mod tests {
         let overlay = AgentOverlayTools {
             allowed: Some(vec!["bash".to_string().try_into().unwrap()].into()),
             disallowed: Some(vec!["agent".to_string().try_into().unwrap()].into()),
+            ..Default::default()
         };
         let yaml = "tools:
   'bash(git push *)': deny
@@ -851,6 +848,7 @@ mod tests {
             disallowed: Some(PermissionSet::Replace {
                 replace: vec!["agent".to_string().try_into().unwrap()],
             }),
+            ..Default::default()
         };
         let mut replaced = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
         replaced.apply_overlay(&replacing);
@@ -863,6 +861,7 @@ mod tests {
         let empty_lists = AgentOverlayTools {
             allowed: Some(Vec::new().into()),
             disallowed: Some(Vec::new().into()),
+            ..Default::default()
         };
         let mut unchanged = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
         unchanged.apply_overlay(&empty_lists);
@@ -881,6 +880,7 @@ mod tests {
         let additive = AgentOverlayTools {
             allowed: Some(vec!["read".to_string().try_into().unwrap()].into()),
             disallowed: None,
+            ..Default::default()
         };
         let mut widened = agent_policy(wildcard_profile);
         widened.apply_overlay(&additive);

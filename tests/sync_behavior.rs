@@ -1280,9 +1280,12 @@ harness: cursor
 model: gpt55
 tools:
   mcp(plugin:cursor): allow
+model-policies:
+  - match: {model: gpt-6}
+    override: {effort: low}
 harness-overrides:
   opencode:
-    mcp-tools: []
+    opencode-only: true
   cursor:
     mcp-tools: [plugin:cursor]
     native-config:
@@ -1331,16 +1334,12 @@ path = "{}"
     );
     assert!(cursor_native.contains("# Cursor body"));
     assert!(
-        !cursor_native.contains("mcp-tools"),
-        "Cursor native agent artifacts should not claim native MCP tool support: {cursor_native}"
+        cursor_native.contains("mcp-tools") && cursor_native.contains("cursor.only"),
+        "the cursor override block is written to the Cursor file: {cursor_native}"
     );
     assert!(
-        !cursor_native.contains("native-config"),
-        "native-config is Meridian runtime-only in this slice: {cursor_native}"
-    );
-    assert!(
-        !cursor_native.contains("cursor.only"),
-        "native-config keys must not leak into native Cursor markdown: {cursor_native}"
+        !cursor_native.contains("opencode-only"),
+        "another harness's override block must not reach Cursor: {cursor_native}"
     );
 }
 

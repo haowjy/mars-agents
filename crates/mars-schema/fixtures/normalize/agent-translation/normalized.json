@@ -141,12 +141,22 @@
                   }
                 ],
                 [
+                  "effort",
+                  "high"
+                ],
+                [
                   "x-custom",
                   1
                 ],
                 [
-                  "effort",
-                  "high"
+                  "harness-overrides",
+                  {
+                    "claude": {
+                      "color": "purple",
+                      "initialPrompt": "/go",
+                      "maxTurns": 4
+                    }
+                  }
                 ]
               ],
               "fields": {
@@ -222,7 +232,13 @@
                     "action": "deny"
                   }
                 ],
-                "harness-overrides": {},
+                "harness-overrides": {
+                  "claude": {
+                    "color": "purple",
+                    "initialPrompt": "/go",
+                    "maxTurns": 4
+                  }
+                },
                 "model-policies": []
               },
               "body": "Body\n",
@@ -233,7 +249,7 @@
                   "path": [
                     "x-custom"
                   ],
-                  "message": "unknown field `x-custom` is preserved"
+                  "message": "unknown field `x-custom` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
                 }
               ]
             },
@@ -437,10 +453,10 @@
               "message": "inline `mcpServers` definitions are not converted; only the server names carry over"
             },
             {
-              "code": "agent.claude-keys-dropped",
-              "severity": "warning",
+              "code": "agent.claude-keys-moved",
+              "severity": "info",
               "path": [],
-              "message": "removed Claude-only keys: color, initialPrompt, maxTurns"
+              "message": "moved Claude-only keys to harness-overrides.claude: color, initialPrompt, maxTurns"
             }
           ]
         }

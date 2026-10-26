@@ -78,9 +78,13 @@ the previously owned native artifact behind.
 
 Mars does not merge `harness-overrides.<target>` into top-level profile values. Top-level fields are the semantic controls for native lowering, prompt assembly, tool policy, and launch-bundle execution policy.
 
-For launch bundles, Mars selects the `harness-overrides.<resolved-harness>` block and preserves that mapping exactly in `execution_policy.native_config`. The block is target-native passthrough: Mars validates the outer shape and serializability, then leaves nested keys and values alone.
+Each harness's own block is written into its native file: `harness-overrides.claude` into `.claude/agents/*.md` and the Claude plugin tree, `harness-overrides.codex` into the Codex TOML, and so on. A block never reaches another harness's file. Mars validates the outer shape and serializability, then leaves nested keys and values alone.
 
-Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. Codex native lowering still receives `effort: low`; the launch bundle carries `{ "effort": "high" }` under `execution_policy.native_config` for the harness/runtime to interpret.
+A key Mars lowers itself keeps Mars's value, whether or not the profile set it (`name`, `description`, `model`, `skills`, `tools`, `disallowed-tools` and `effort` for Claude; the fields of each target's table below). The override is dropped and the sync warns: ``agent `x`: 1 field dropped for .claude (harness-overrides.claude.model)``.
+
+For launch bundles, Mars also selects the `harness-overrides.<resolved-harness>` block and preserves that mapping exactly in `execution_policy.native_config`.
+
+Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. Codex native lowering writes `model_reasoning_effort = "low"` and adds the other Codex keys of the block; the launch bundle carries `{ "effort": "high" }` under `execution_policy.native_config` for the harness/runtime to interpret.
 
 `harness-overrides.flow` is a reserved consumer namespace, not a harness. It stays in `.mars/agents/` and is never lowered or selected for a launch. See [Schema v1](schema-v1.md#harness-overrides-and-the-flow-namespace).
 
@@ -143,7 +147,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `mode` | dropped | dropped |
 | `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
-| `harness-overrides` | dropped | meridian-only |
+| `harness-overrides` | the harness's own block, as extra keys | the harness's own block, as extra keys |
 | `harness` | dropped | dropped |
 
 `approval` and `sandbox` are applied at launch time by Meridian through its harness projection layer, not stored in the agent file. The same holds for the `effort`, `sandbox` and `approval` a matching `model-policies` rule or `[agents.<name>]` overlay sets: Mars resolves them for the native file with the [launch bundle's precedence](schema-v1.md#model-policies) minus the command line, so the file and the bundle agree.
@@ -499,9 +503,8 @@ Compact per-field, per-target classification:
 | `effort` | preserved | exact (`none` omitted with a warning) | exact | approximate | approximate | approximate |
 | `skills.load` | preserved | exact for subagents; approximate for `--agent` | approximate | approximate | exact | approximate |
 | `skills.available` | preserved | approximate | approximate | approximate | approximate | approximate |
-| matched `harness-overrides.<target>` passthrough | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
-| `harness-overrides` | preserved | passthrough | passthrough | passthrough | passthrough | passthrough |
+| `harness-overrides.<target>` | preserved | extra keys | extra keys | extra keys | extra keys | extra keys |
 | body | preserved | exact | approximate | exact | exact | exact |
 
 ## Stale Artifact Cleanup

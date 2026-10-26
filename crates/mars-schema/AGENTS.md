@@ -57,7 +57,9 @@ error in its diagnostics. `fixtures/normalize/<case>/` holds `input/`, `request.
 `agent`, `skill`, and `manifest` are the only readers for schema-v1 definitions. Their
 serialized reading and diagnostics are pinned by `fixtures/read/`; callers consume these
 types directly rather than reading owned frontmatter keys themselves. Unknown fields are
-preserved, while removed fields are errors.
+kept in the authored file but reach no native file (`field.unknown` points to
+`harness-overrides.<harness>`), while removed fields are errors. The Claude translation moves
+Claude-only keys under `harness-overrides.claude` instead of deleting them.
 
 `yaml-rust2` (with default features disabled) supplies the event scan that distinguishes YAML anchors, aliases, and explicit document-end markers from identical text inside scalars. `serde_yaml` remains the semantic parser and validity authority; the event scan does not produce field values.
 

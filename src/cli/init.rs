@@ -127,17 +127,21 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
         }
     }
 
-    let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
-    let lens = crate::resolve::PublishLens::load(&project_root, &mut publish_diag)?;
-    let mut diagnostics = publish_diag.drain();
-    diagnostics.extend(
-        crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
-            &lens,
-            crate::diagnostic::LossinessMode::Surface,
-        )?,
-    );
-    if !json && !diagnostics.is_empty() {
-        output::print_diagnostics(&diagnostics);
+    // Only a project that declares `[package]` publishes anything to check; a consumer
+    // has no package to read through the publish lens.
+    if crate::config::load(&project_root)?.package.is_some() {
+        let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
+        let lens = crate::resolve::PublishLens::load(&project_root, &mut publish_diag)?;
+        let mut diagnostics = publish_diag.drain();
+        diagnostics.extend(
+            crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
+                &lens,
+                crate::diagnostic::LossinessMode::Surface,
+            )?,
+        );
+        if !json && !diagnostics.is_empty() {
+            output::print_diagnostics(&diagnostics);
+        }
     }
 
     if json {

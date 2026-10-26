@@ -33,7 +33,7 @@
       "path": [
         "x-fits"
       ],
-      "message": "unknown field `x-fits` is preserved"
+      "message": "unknown field `x-fits` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
     },
     {
       "code": "field.unknown",
@@ -41,7 +41,7 @@
       "path": [
         "x-big"
       ],
-      "message": "unknown field `x-big` is preserved"
+      "message": "unknown field `x-big` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
     },
     {
       "code": "field.value",

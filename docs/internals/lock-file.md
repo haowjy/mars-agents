@@ -96,7 +96,7 @@ Each item key is the logical item identity (e.g., `agent/coder`, `skill/review`)
 | `source` | string | Dependency name that provided this item |
 | `kind` | string | `"agent"` or `"skill"` |
 | `version` | string? | Version from the source's resolved graph node |
-| `source_checksum` | string | SHA-256 of the original source content |
+| `source_checksum` | string | SHA-256 of the item as the package provides it after preparation (see below) |
 | `outputs` | array | Per-target materialized outputs |
 
 ### `[[items."<kind/name>".outputs]]`
@@ -118,7 +118,7 @@ not claim that the current bytes were installed by Mars.
 
 Each item tracks two checksums:
 
-- **`source_checksum`**: Hash of the content as it exists in the source tree, before any transformations. Used to detect when the source has changed (new version, upstream edit).
+- **`source_checksum`**: Hash of the content as the package provides it once Mars has prepared it as [schema v1](../config/schema-v1.md): a package with no `schema` is hashed after its in-memory upgrade, and a foreign layout after translation, so the bytes are not always the authored file's. It is taken before renames rewrite references. Used to detect when the source has changed (new version, upstream edit).
 
 - **`installed_checksum`**: Hash of what Mars actually wrote to one output. May differ from `source_checksum` when frontmatter rewriting or native-target lowering occurred. Used to detect whether that exact output changed locally.
 

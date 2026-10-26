@@ -145,9 +145,11 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         output::print_json(&json_report);
     } else {
         println!("  {} agents, {} skills", report.agents, report.skills);
-        println!(
-            "  source package validates for .mars/ canonical store and native harness targets"
-        );
+        if clean {
+            println!(
+                "  source package validates for .mars/ canonical store and native harness targets"
+            );
+        }
         println!();
 
         let has_non_info_diagnostics = diagnostics

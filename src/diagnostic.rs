@@ -124,6 +124,8 @@ impl DiagnosticCollector {
             "manifest.name-required" => "manifest.name-required",
             "manifest.version-missing" => "manifest.version-missing",
             "manifest.invalid-field" => "manifest.invalid-field",
+            "agent.claude-keys-moved" => "agent.claude-keys-moved",
+            "skill.claude-keys-moved" => "skill.claude-keys-moved",
             _ => "schema-diagnostic",
         };
         let message = format!("{context}: {}", diagnostic.message);
@@ -136,6 +138,8 @@ impl DiagnosticCollector {
         }
         if diagnostic.severity == Severity::Error && !errors_as_warnings {
             self.error_with_category(code, message, DiagnosticCategory::Validation);
+        } else if diagnostic.severity == Severity::Info {
+            self.info(code, message);
         } else if diagnostic.code == "field.unknown" {
             self.warn_unknown_field(code, &diagnostic.message, context);
         } else {

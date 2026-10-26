@@ -169,7 +169,12 @@ So the Agent's own policy wins over its top-level field: top-level `effort` is t
 
 ## harness-overrides and the flow namespace
 
-`harness-overrides.<name>` holds configuration that one consumer owns. Mars checks only that it is a map of serializable values, keeps it in the installed file, and passes the block for the resolved harness to the launcher as `execution_policy.native_config`. It never replaces a top-level field of the same name.
+`harness-overrides.<name>` holds configuration that one consumer owns, on an Agent or a skill. Mars checks only that it is a map of serializable values and keeps it in the installed file. It does two things with a harness block:
+
+- **Native file.** The block for a harness is written into that harness's own Agent or skill file (frontmatter for Markdown, top-level keys for Codex TOML), and into that harness's plugin tree. No other harness sees it. A key Mars lowers itself (`model`, `tools`, `effort`, `description` and the rest) keeps Mars's value; the override is dropped with a warning that names it.
+- **Launch bundle.** The block for the resolved harness reaches the launcher as `execution_policy.native_config`.
+
+It never replaces a top-level field of the same name.
 
 ```yaml
 harness-overrides:
@@ -182,6 +187,10 @@ harness-overrides:
 - A name that is one of the five harnesses is a harness block.
 - **`flow` is reserved** for Meridian Flow. It is not a harness: routing never sees it and Mars never interprets its keys. It is the home of Flow-only keys, such as `permission` (formerly a top-level key).
 - Any other name is a warning (`harness.unknown`) and the block is kept.
+
+### Unknown keys
+
+An unknown key is a warning (`field.unknown`) and stays in the authored file, but it reaches **no** native file, in Agents and skills alike. Harness-specific keys belong under `harness-overrides.<harness>`, where they go to that harness alone.
 
 ## Tool capabilities
 

@@ -148,13 +148,13 @@ mod tests {
 
     #[test]
     fn claude_harness_override_does_not_replace_mcp() {
-        let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(plugin:base): allow\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
+        let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(plugin:base): allow\nharness-overrides:\n  claude:\n    tools: [plugin:claude]\n    color: red\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
-            !text.contains("mcp-tools:"),
-            "MCP grants belong in tools:, not a separate field: {text}"
+            text.contains("color: red"),
+            "non-conflicting override should be written: {text}"
         );
         assert!(
             text.contains("mcp__plugin:base__*"),
@@ -244,23 +244,23 @@ mod tests {
     }
 
     #[test]
-    fn codex_native_config_lossiness_uses_matching_override() {
-        let content = "---\nname: r\nharness-overrides:\n  codex:\n    native-config:\n      sandbox_workspace_write.network_access: true\n---\n# body";
+    fn codex_override_adds_keys_and_never_replaces_lowered_ones() {
+        let content = "---\nname: r\neffort: low\nharness-overrides:\n  codex:\n    custom_key: 1\n    model_reasoning_effort: high\n  claude:\n    color: red\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(text.contains("custom_key = 1"), "{text}");
+        assert!(text.contains("model_reasoning_effort = \"low\""), "{text}");
         assert!(
-            out.lossy_fields.iter().any(|field| {
-                field.field == "native-config"
-                    && field.target == "Codex"
-                    && matches!(field.classification, Lossiness::MeridianOnly)
-            }),
-            "native-config should be reported as meridian-only in codex lowering: {:?}",
-            out.lossy_fields
-                .iter()
-                .map(|field| (&field.field, &field.target))
-                .collect::<Vec<_>>()
+            !text.contains("color"),
+            "claude overrides must not reach Codex: {text}"
         );
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "harness-overrides.codex.model_reasoning_effort"
+                && matches!(field.classification, Lossiness::Dropped)
+        }));
     }
+
     // --- 3.3: OpenCode lowering ---
 
     #[test]
@@ -358,12 +358,13 @@ mod tests {
             "cursor override should keep mcp lossiness",
         );
         assert!(
-            cursor.lossy_fields.iter().any(|field| {
-                field.field == "native-config"
-                    && field.target == "Cursor"
-                    && matches!(field.classification, Lossiness::MeridianOnly)
-            }),
-            "cursor native-config should be reported as meridian-only",
+            String::from_utf8(cursor.bytes)
+                .unwrap()
+                .contains("native-config:")
+                && !String::from_utf8(opencode.bytes)
+                    .unwrap()
+                    .contains("cursor.only"),
+            "each harness gets only its own override block",
         );
     }
 

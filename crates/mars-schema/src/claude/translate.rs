@@ -11,9 +11,11 @@ use crate::lift::{claude_task_to_agent, lift_foreign_tools};
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
 use crate::tool_policy;
 
-/// Skill keys Claude reads and schema v1 does not carry. `tools` and the `allowed-tools`
+/// Skill keys Claude reads and schema v1 does not define. They move to
+/// `harness-overrides.claude`, which only `.claude/` output receives. (`model` and `effort`
+/// have v1 meaning on Agents only; a skill carries neither.) `tools` and the `allowed-tools`
 /// family have their own warning.
-const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
+pub(crate) const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "argument-hint",
     "arguments",
     "model",
@@ -34,7 +36,7 @@ const SKILL_TOOL_KEYS: &[&str] = &[
     "disallowedTools",
 ];
 
-const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
+pub(crate) const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "color",
     "initialPrompt",
     "maxTurns",
@@ -64,6 +66,51 @@ fn warn(diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String) {
         Vec::new(),
         message,
     ));
+}
+
+/// Move the listed keys, in file order and unchanged, under `harness-overrides.claude`. An
+/// override already written there wins over a moved key of the same name.
+pub(crate) fn move_to_claude_overrides(
+    fm: &mut Frontmatter,
+    keys: &[&str],
+    code: &str,
+    diagnostics: &mut Vec<SchemaDiagnostic>,
+) -> bool {
+    let moved = fm
+        .keys()
+        .into_iter()
+        .filter(|key| keys.contains(&key.as_str()))
+        .filter_map(|key| fm.remove(&key).map(|value| (key, value)))
+        .collect::<Vec<_>>();
+    if moved.is_empty() {
+        return false;
+    }
+    let mut overrides = match fm.remove("harness-overrides") {
+        Some(Value::Mapping(existing)) => existing,
+        _ => Mapping::new(),
+    };
+    let claude_key = Value::String("claude".into());
+    let mut claude = match overrides.remove(&claude_key) {
+        Some(Value::Mapping(existing)) => existing,
+        _ => Mapping::new(),
+    };
+    let names = moved
+        .iter()
+        .map(|(key, _)| key.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    for (key, value) in moved.iter().cloned() {
+        claude.entry(Value::String(key)).or_insert(value);
+    }
+    overrides.insert(claude_key, Value::Mapping(claude));
+    fm.insert("harness-overrides", Value::Mapping(overrides));
+    diagnostics.push(SchemaDiagnostic::new(
+        code,
+        Severity::Info,
+        Vec::new(),
+        format!("moved Claude-only keys to harness-overrides.claude: {names}"),
+    ));
+    true
 }
 
 fn remove_keys(fm: &mut Frontmatter, keys: &[&str]) -> Vec<String> {
@@ -170,15 +217,12 @@ fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
         );
     }
 
-    let claude_only = remove_keys(fm, CLAUDE_ONLY_SKILL_KEYS);
-    if !claude_only.is_empty() {
-        changed = true;
-        warn(
-            diagnostics,
-            "skill.claude-keys-dropped",
-            format!("removed Claude-only keys: {}", claude_only.join(", ")),
-        );
-    }
+    changed |= move_to_claude_overrides(
+        fm,
+        CLAUDE_ONLY_SKILL_KEYS,
+        "skill.claude-keys-moved",
+        diagnostics,
+    );
     changed
 }
 
@@ -251,15 +295,12 @@ fn lift_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
         changed = true;
     }
 
-    let claude_only = remove_keys(fm, CLAUDE_ONLY_AGENT_KEYS);
-    if !claude_only.is_empty() {
-        changed = true;
-        warn(
-            diagnostics,
-            "agent.claude-keys-dropped",
-            format!("removed Claude-only keys: {}", claude_only.join(", ")),
-        );
-    }
+    changed |= move_to_claude_overrides(
+        fm,
+        CLAUDE_ONLY_AGENT_KEYS,
+        "agent.claude-keys-moved",
+        diagnostics,
+    );
     changed
 }
 

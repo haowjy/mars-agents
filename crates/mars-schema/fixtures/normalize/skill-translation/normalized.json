@@ -155,14 +155,6 @@
                   "Does it all. When asked about everything."
                 ],
                 [
-                  "model-invocable",
-                  false
-                ],
-                [
-                  "x-custom",
-                  "kept"
-                ],
-                [
                   "user-invocable",
                   false
                 ],
@@ -180,6 +172,26 @@
                     "team": "core",
                     "type": "reference",
                     "version": "1.4"
+                  }
+                ],
+                [
+                  "x-custom",
+                  "kept"
+                ],
+                [
+                  "model-invocable",
+                  false
+                ],
+                [
+                  "harness-overrides",
+                  {
+                    "claude": {
+                      "argument-hint": "[file]",
+                      "model": "sonnet",
+                      "hooks": {
+                        "PreToolUse": []
+                      }
+                    }
                   }
                 ]
               ],
@@ -204,7 +216,7 @@
                   "path": [
                     "x-custom"
                   ],
-                  "message": "unknown field `x-custom` is preserved"
+                  "message": "unknown field `x-custom` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
                 }
               ]
             },
@@ -324,10 +336,10 @@
               "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
             },
             {
-              "code": "skill.claude-keys-dropped",
-              "severity": "warning",
+              "code": "skill.claude-keys-moved",
+              "severity": "info",
               "path": [],
-              "message": "removed Claude-only keys: argument-hint, model, hooks"
+              "message": "moved Claude-only keys to harness-overrides.claude: argument-hint, model, hooks"
             }
           ],
           "skills/mismatch/SKILL.md": [

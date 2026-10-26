@@ -21,6 +21,7 @@ use mars_schema::tool_names::OverlayToolName;
 pub mod layering;
 pub mod migrations;
 pub mod routing_settings;
+mod save;
 pub mod targets;
 
 pub use layering::{
@@ -166,6 +167,9 @@ pub struct InstallDep {
     pub plugin: Option<String>,
     #[serde(flatten)]
     pub filter: FilterConfig,
+    /// Keys Mars does not read here; kept so load can warn about them.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Backwards-compatible alias during migration.
@@ -227,12 +231,15 @@ pub struct FilterConfig {
 ///
 /// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
 /// fails `mars.toml` instead of reaching the policy.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentOverlayTools {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<PermissionSet<OverlayToolName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disallowed: Option<PermissionSet<OverlayToolName>>,
+    /// Keys Mars does not read here (a retired `mcp`); kept so a stale one can be reported.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 impl AgentOverlayTools {
@@ -297,6 +304,9 @@ pub struct SkillOverlay {
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
+    /// Keys Mars does not read here (a retired `tools` table), kept to report them.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 impl SkillOverlay {
@@ -702,13 +712,12 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
             ConfigError::Io(e)
         }
     })?;
-    let mut config: Config = parse_without_removed_visibility(&content, &path)?;
-    migrate_legacy_source_urls(&mut config);
-    Ok(config)
+    parse_config(&content, &path)
 }
 
 pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
     let mut config: Config = parse_without_removed_visibility(content, path)?;
+    validate_agent_overlays(path, &config.agents)?;
     migrate_legacy_source_urls(&mut config);
     Ok(config)
 }
@@ -805,6 +814,7 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let local: LocalConfig = parse_without_removed_visibility(&content, &path)?;
+            validate_agent_overlays(&path, &local.agents)?;
             Ok(local)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
@@ -902,8 +912,135 @@ struct ProjectConfigWarning {
     message: String,
 }
 
-fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectConfigWarning> {
+/// Overlay keys Mars once read and now ignores.
+const STALE_AGENT_OVERLAY_KEYS: &[&str] = &[
+    "network",
+    "network-allow",
+    "network-deny",
+    "autocompact",
+    "autocompact_pct",
+];
+
+fn stale_overlay_warnings(
+    file: &str,
+    agents: &IndexMap<String, AgentOverlay>,
+) -> Vec<ProjectConfigWarning> {
     let mut warnings = Vec::new();
+    let mut stale = |surface: String| {
+        warnings.push(ProjectConfigWarning {
+            code: "stale-config-key",
+            message: format!("{file} {surface} is no longer read and is ignored; delete it"),
+        });
+    };
+    for (name, overlay) in agents {
+        for key in STALE_AGENT_OVERLAY_KEYS {
+            if overlay.unknown.contains_key(*key) {
+                stale(format!("[agents.{name}] `{key}`"));
+            }
+        }
+        if overlay.tools.unknown.contains_key("mcp") {
+            stale(format!(
+                "[agents.{name}.tools] `mcp` (put MCP grants in `allowed` as \"mcp(server)\")"
+            ));
+        }
+    }
+    warnings
+}
+
+/// `effort`, `approval` and `sandbox` in an overlay take the same values as in an Agent file.
+fn validate_agent_overlays(
+    file: &Path,
+    agents: &IndexMap<String, AgentOverlay>,
+) -> Result<(), MarsError> {
+    use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
+    for (name, overlay) in agents {
+        let values = [
+            (
+                "effort",
+                overlay.effort.as_deref(),
+                overlay
+                    .effort
+                    .as_deref()
+                    .and_then(EffortLevel::parse)
+                    .is_some(),
+                "low, medium, high, xhigh, none",
+            ),
+            (
+                "approval",
+                overlay.approval.as_deref(),
+                overlay
+                    .approval
+                    .as_deref()
+                    .and_then(ApprovalMode::parse)
+                    .is_some(),
+                "default, auto, confirm, never",
+            ),
+            (
+                "sandbox",
+                overlay.sandbox.as_deref(),
+                overlay
+                    .sandbox
+                    .as_deref()
+                    .and_then(SandboxMode::parse)
+                    .is_some(),
+                "default, read-only, workspace-write, danger-full-access",
+            ),
+        ];
+        for (key, value, valid, allowed) in values {
+            if let Some(value) = value
+                && !valid
+            {
+                return Err(ConfigError::Invalid {
+                    message: format!(
+                        "{}: [agents.{name}] `{key}` has invalid value `{value}`; allowed: {allowed}",
+                        file.display()
+                    ),
+                }
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectConfigWarning> {
+    let mut warnings = stale_overlay_warnings("mars.toml", &config.agents);
+    warnings.extend(stale_overlay_warnings("mars.local.toml", &local.agents));
+    for (name, overlay) in config.skills.iter() {
+        if overlay.unknown.contains_key("tools") {
+            warnings.push(ProjectConfigWarning {
+                code: "stale-config-key",
+                message: format!(
+                    "mars.toml [skills.{name}.tools] is no longer read and is ignored; delete it"
+                ),
+            });
+        }
+    }
+    for (table, dependencies) in [
+        ("dependencies", &config.dependencies),
+        ("local-dependencies", &config.local_dependencies),
+    ] {
+        for (name, dependency) in dependencies {
+            for key in dependency.unknown.keys() {
+                warnings.push(ProjectConfigWarning {
+                    code: "field.unknown",
+                    message: format!(
+                        "mars.toml [{table}.{name}]: unknown dependency field `{key}` is preserved"
+                    ),
+                });
+            }
+        }
+    }
+    for key in ["default_network", "network-allow", "network-deny"] {
+        if config.settings.unknown.contains_key(key) {
+            warnings.push(ProjectConfigWarning {
+                code: "stale-config-key",
+                message: format!(
+                    "mars.toml [settings] `{key}` is no longer read and is ignored; delete it"
+                ),
+            });
+        }
+    }
     for (name, overlay) in &config.agents {
         warnings.extend(tool_overlay_warnings(
             "mars.toml",
@@ -1298,193 +1435,20 @@ fn should_upgrade_legacy_git_url(url: &str) -> bool {
     !url.contains("://") && !url.starts_with("git@") && url.contains('/') && url.contains('.')
 }
 
-/// Write mars.toml atomically.
+/// Write mars.toml, changing only what differs from the file as it stands.
 pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
     let path = root.join(CONFIG_FILE);
-    let content = toml::to_string_pretty(config).map_err(|e| ConfigError::Invalid {
-        message: format!("failed to serialize config: {e}"),
-    })?;
-    let reparsed: Config = toml::from_str(&content).map_err(|e| ConfigError::Invalid {
-        message: format!("refusing to save config: serialized output failed to parse: {e}"),
-    })?;
-    validate_save_roundtrip(config, &reparsed)?;
-    crate::fs::atomic_write(&path, content.as_bytes())
+    save::save_document(&path, config, |text| parse_config(text, &path))
 }
 
-fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), MarsError> {
-    if reparsed.plugin != original.plugin {
-        return Err(ConfigError::Invalid {
-            message: "refusing to save config: [plugin] changed during roundtrip".to_string(),
-        }
-        .into());
-    }
-    if reparsed.dependencies.len() != original.dependencies.len() {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: dependency count changed during roundtrip ({} -> {})",
-                original.dependencies.len(),
-                reparsed.dependencies.len()
-            ),
-        }
-        .into());
-    }
-
-    if reparsed.local_dependencies.len() != original.local_dependencies.len() {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: local-dependencies count changed during roundtrip ({} -> {})",
-                original.local_dependencies.len(),
-                reparsed.local_dependencies.len()
-            ),
-        }
-        .into());
-    }
-
-    if reparsed.settings.managed_root != original.settings.managed_root {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.managed_root changed during roundtrip ({:?} -> {:?})",
-                original.settings.managed_root, reparsed.settings.managed_root
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.default_harness != original.settings.default_harness {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.default_harness changed during roundtrip ({:?} -> {:?})",
-                original.settings.default_harness, reparsed.settings.default_harness
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.default_model != original.settings.default_model {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.default_model changed during roundtrip ({:?} -> {:?})",
-                original.settings.default_model, reparsed.settings.default_model
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.harness_order != original.settings.harness_order {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.harness_order changed during roundtrip ({:?} -> {:?})",
-                original.settings.harness_order, reparsed.settings.harness_order
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.provider_order != original.settings.provider_order {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.provider_order changed during roundtrip ({:?} -> {:?})",
-                original.settings.provider_order, reparsed.settings.provider_order
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.catalog_providers != original.settings.catalog_providers {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.catalog_providers changed during roundtrip ({:?} -> {:?})",
-                original.settings.catalog_providers, reparsed.settings.catalog_providers
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.agent_emission != original.settings.agent_emission {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.agent_emission changed during roundtrip ({:?} -> {:?})",
-                original.settings.agent_emission, reparsed.settings.agent_emission
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.meridian.agent_copy != original.settings.meridian.agent_copy {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.meridian.agent_copy changed during roundtrip ({:?} -> {:?})",
-                original.settings.meridian.agent_copy, reparsed.settings.meridian.agent_copy
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.meridian.fanout != original.settings.meridian.fanout {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "refusing to save config: settings.meridian.fanout changed during roundtrip ({:?} -> {:?})",
-                original.settings.meridian.fanout, reparsed.settings.meridian.fanout
-            ),
-        }
-        .into());
-    }
-    if reparsed.settings.model_policies != original.settings.model_policies {
-        return Err(ConfigError::Invalid {
-            message: "refusing to save config: settings.model_policies changed during roundtrip"
-                .to_string(),
-        }
-        .into());
-    }
-    if reparsed.agents != original.agents {
-        return Err(ConfigError::Invalid {
-            message: "refusing to save config: agents changed during roundtrip".to_string(),
-        }
-        .into());
-    }
-
-    for (name, dep) in &original.dependencies {
-        let Some(reparsed_dep) = reparsed.dependencies.get(name) else {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "refusing to save config: dependency `{name}` missing after roundtrip"
-                ),
-            }
-            .into());
-        };
-
-        if reparsed_dep != dep {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "refusing to save config: dependency `{name}` changed during roundtrip"
-                ),
-            }
-            .into());
-        }
-    }
-
-    for (name, dep) in &original.local_dependencies {
-        let Some(reparsed_dep) = reparsed.local_dependencies.get(name) else {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "refusing to save config: local-dependency `{name}` missing after roundtrip"
-                ),
-            }
-            .into());
-        };
-
-        if reparsed_dep != dep {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "refusing to save config: local-dependency `{name}` changed during roundtrip"
-                ),
-            }
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
-/// Write mars.local.toml atomically.
+/// Write mars.local.toml, changing only what differs from the file as it stands.
 pub fn save_local(root: &Path, local: &LocalConfig) -> Result<(), MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
-    let content = toml::to_string_pretty(local).map_err(|e| ConfigError::Invalid {
-        message: format!("failed to serialize local config: {e}"),
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())
+    save::save_document(&path, local, |text| {
+        let local: LocalConfig = parse_without_removed_visibility(text, &path)?;
+        validate_agent_overlays(&path, &local.agents)?;
+        Ok(local)
+    })
 }
 
 #[cfg(test)]
@@ -2146,6 +2110,7 @@ override = { effort = "high" }
                 tools: AgentOverlayTools {
                     allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
                     disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
+                    ..Default::default()
                 },
                 model_policies: Some(vec![ModelPolicyRule {
                     match_type: ModelPolicyMatchType::Alias,
@@ -2179,6 +2144,7 @@ override = { effort = "high" }
                     disallowed: Some(PermissionSet::Replace {
                         replace: vec!["Agent".to_string().try_into().unwrap()],
                     }),
+                    ..Default::default()
                 },
                 unknown: BTreeMap::from([("local_future".to_string(), toml::Value::Boolean(true))]),
                 ..AgentOverlay::default()
@@ -2461,7 +2427,7 @@ allowed = { replace = ["Bash"] }
         let warnings = effective
             .warnings
             .iter()
-            .filter(|warning| warning.contains(".tools]"))
+            .filter(|warning| warning.contains(".tools]."))
             .collect::<Vec<_>>();
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(
@@ -2579,6 +2545,7 @@ future_key = "allowed"
                         dialect: None,
                         filter: FilterConfig::default(),
                         plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -2614,6 +2581,7 @@ future_key = "allowed"
                         dialect: None,
                         filter: FilterConfig::default(),
                         plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -2664,6 +2632,7 @@ future_key = "allowed"
                         dialect: None,
                         filter: FilterConfig::default(),
                         plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -2717,6 +2686,7 @@ future_key = "allowed"
                         dialect: None,
                         filter: FilterConfig::default(),
                         plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -2874,68 +2844,6 @@ only_agents = true
     }
 
     #[test]
-    fn save_roundtrip_guard_rejects_dependency_count_loss() {
-        let mut original = Config::default();
-        original.dependencies.insert(
-            "base".into(),
-            DependencyEntry {
-                url: Some("https://github.com/org/base.git".into()),
-                path: None,
-                subpath: None,
-                version: Some("v1.0".into()),
-                dialect: None,
-                filter: FilterConfig::default(),
-                plugin: None,
-            },
-        );
-
-        let reparsed = Config::default();
-        let err = validate_save_roundtrip(&original, &reparsed).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("dependency count changed"),
-            "unexpected error: {msg}"
-        );
-    }
-
-    #[test]
-    fn save_roundtrip_guard_rejects_managed_root_loss() {
-        let original = Config {
-            settings: Settings {
-                managed_root: Some(".agents".into()),
-                targets: None,
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-        let reparsed = Config::default();
-        let err = validate_save_roundtrip(&original, &reparsed).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("settings.managed_root changed"),
-            "unexpected error: {msg}"
-        );
-    }
-
-    #[test]
-    fn save_roundtrip_guard_rejects_harness_order_loss() {
-        let original = Config {
-            settings: Settings {
-                harness_order: Some(vec!["pi".into(), "codex".into()]),
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-        let reparsed = Config::default();
-        let err = validate_save_roundtrip(&original, &reparsed).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("settings.harness_order changed"),
-            "unexpected error: {msg}"
-        );
-    }
-
-    #[test]
     fn parse_only_skills_filter() {
         let toml_str = r#"
 [dependencies.base]
@@ -3044,6 +2952,7 @@ exclude = ["deprecated"]
                         dialect: None,
                         filter: FilterConfig::default(),
                         plugin: None,
+                        unknown: Default::default(),
                     },
                 );
                 m
@@ -3555,6 +3464,7 @@ skills = ["prompt-helper"]
                 dialect: None,
                 filter: FilterConfig::default(),
                 plugin: None,
+                unknown: Default::default(),
             },
         );
         let config = Config {

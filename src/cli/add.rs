@@ -108,6 +108,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 dialect: parsed.entry.dialect,
                 plugin: parsed.entry.plugin,
                 filter: filter_config.clone(),
+                unknown: Default::default(),
             };
             Ok((parsed.name, entry))
         })
@@ -122,7 +123,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
             resolution: ResolutionMode::Normal,
             mutation: Some(ConfigMutation::UpsertDependency {
                 name: name.clone(),
-                entry,
+                entry: Box::new(entry),
             }),
             options: SyncOptions {
                 ignore_requires_mars: args.ignore_requires_mars,
@@ -247,6 +248,7 @@ fn parse_dependency_specifier(
             dialect: None,
             plugin: plugin.map(str::to_owned),
             filter: FilterConfig::default(),
+            unknown: Default::default(),
         },
     })
 }

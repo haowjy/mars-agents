@@ -138,23 +138,25 @@ In the launch bundle, a skill with no `metadata.type` has `skill_type` `referenc
 
 ---
 
-## Unknown Fields
+## `harness-overrides`
 
-Skill frontmatter fields not listed above are **passed through** to all native targets unchanged. Mars preserves unrecognized fields verbatim during lowering — harness-specific fields like Claude Code's `argument-hint` and `arguments` survive compilation and reach the target artifact. Each unknown field produces a `field.unknown` warning, so a typo is visible; the field is kept.
-
-This means you can add harness-native fields directly to your skill frontmatter and they will appear in the compiled output for every target. Mars does not validate or interpret them — it copies the YAML value as-is.
+A skill takes the same `harness-overrides` table as an Agent: a map of harness name to the native keys that harness's `SKILL.md` should carry. Mars writes the block for each harness into that harness's skill file (and plugin tree) and into no other. A key Mars lowers itself (`name`, `description`, `license`, `metadata`, `disable-model-invocation`, `user-invocable`, and Cursor's `alwaysApply`) keeps Mars's value; the override is dropped with a warning.
 
 ```yaml
 ---
 name: my-skill
 description: Does a thing
-argument-hint: "What should I review?"
-arguments:
-  - name: target
-    description: File or directory to review
-    required: true
+harness-overrides:
+  claude:
+    argument-hint: "What should I review?"
 ---
 ```
+
+Importing a Claude skill moves Claude's own keys (`argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) here, unchanged and in file order, with an info message (`skill.claude-keys-moved`). `.claude/` keeps them; no other harness sees them. `model` and `effort` have schema meaning on Agents only, so a skill's are Claude's.
+
+## Unknown Fields
+
+A skill frontmatter field not listed above is kept in the authored file but written to **no** native file, so a Claude-only key never leaks into a Codex or OpenCode skill. Each one produces a `field.unknown` warning that says where harness-specific keys belong: `harness-overrides.<harness>`.
 
 ## Per-Harness Lowering
 
@@ -172,7 +174,8 @@ Mars compiles universal frontmatter fields to each target's native field names d
 | `user-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | (omit) |
 | `license` | preserved | `license` | `license` | `license` | `license` | `license` |
 | `metadata` | preserved | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` |
-| unknown fields | preserved | passed through | passed through | passed through | passed through | passed through |
+| unknown fields | preserved | dropped | dropped | dropped | dropped | dropped |
+| `harness-overrides.<target>` | preserved | extra keys | extra keys | extra keys | extra keys | extra keys |
 
 ¹ Codex gets `openai.yaml` beside the skill's `SKILL.md` (`policy:` with `allow_implicit_invocation: false`) only when the source skill explicitly sets `model-invocable: false`. An absent or `true` value writes nothing, because Codex allows implicit invocation by default. The field never appears in the Codex `SKILL.md`.
 
@@ -264,7 +267,8 @@ against the project's configured managed targets.
 | `field.removed` | error | A removed key (see [Removed fields](#removed-fields)); the message names the replacement |
 | `field.required` | error | `name` or `description` is missing or empty in a skill with frontmatter |
 | `field.type` | error | A field has the wrong type, such as a non-string `metadata.type` or `model-invocable: yes` |
-| `field.unknown` | warning | An unknown field; it is preserved |
+| `field.unknown` | warning | An unknown field; it stays in the file and reaches no native file |
+| `skill.claude-keys-moved` | info | Import moved Claude-only keys to `harness-overrides.claude` |
 | `skill.no-frontmatter` | warning | A body-only skill |
 | `skill-field-dropped` | metadata | Internal lossiness metadata for fields with no native equivalent; used by verbose tooling, not a guaranteed user-visible warning |
 | `skill-variant-unknown-harness` | warning | Unknown harness key under `variants/` |

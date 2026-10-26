@@ -73,6 +73,7 @@ fn compose_tool_permission_sets(
             lower.disallowed.as_ref(),
             higher.disallowed.as_ref(),
         ),
+        unknown: higher.unknown.clone(),
     }
 }
 

@@ -266,6 +266,21 @@ fn push_agent_invalid(
     value: impl Into<String>,
     allowed: &'static str,
 ) {
+    push_invalid("agent", diags, path, value, allowed);
+}
+
+/// `field.unknown` text for Agents and skills: an unknown key stays in the authored file and
+/// reaches no native file.
+pub(crate) const UNKNOWN_FIELD_MESSAGE: &str = "unknown field `{key}` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`";
+
+/// A bad value for a field the item kind defines (`kind` is the noun in the message).
+pub(crate) fn push_invalid(
+    kind: &str,
+    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+    path: Vec<crate::diagnostic::PathSegment>,
+    value: impl Into<String>,
+    allowed: &'static str,
+) {
     use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, display_path};
     let value = value.into();
     let severity = if matches!(path.first(), Some(PathSegment::Key(key)) if key == "harness-overrides")
@@ -295,7 +310,7 @@ fn push_agent_invalid(
         "field.value",
         severity,
         path,
-        format!("agent field `{display_field}` has invalid value `{value}`; allowed: {allowed}"),
+        format!("{kind} field `{display_field}` has invalid value `{value}`; allowed: {allowed}"),
     ));
 }
 
@@ -352,13 +367,15 @@ fn push_unholdable_key(
 }
 
 fn parse_native_config_value(
+    kind: &str,
     path: &[crate::diagnostic::PathSegment],
     value: &Value,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> Option<OrderedValue> {
     match value {
         Value::Null => {
-            push_agent_invalid(
+            push_invalid(
+                kind,
                 diags,
                 path.to_vec(),
                 "null".to_string(),
@@ -374,7 +391,8 @@ fn parse_native_config_value(
                 || v.as_u64()
                     .is_some_and(|n| n > crate::ordered::MAX_SAFE_INTEGER)
             {
-                push_agent_invalid(
+                push_invalid(
+                    kind,
                     diags,
                     path.to_vec(),
                     v.to_string(),
@@ -389,7 +407,8 @@ fn parse_native_config_value(
                 match serde_json::Number::from_f64(float) {
                     Some(number) => Some(OrderedValue::Number(number)),
                     None => {
-                        push_agent_invalid(
+                        push_invalid(
+                            kind,
                             diags,
                             path.to_vec(),
                             float.to_string(),
@@ -399,7 +418,8 @@ fn parse_native_config_value(
                     }
                 }
             } else {
-                push_agent_invalid(
+                push_invalid(
+                    kind,
                     diags,
                     path.to_vec(),
                     crate::ordered::plain(value),
@@ -413,7 +433,7 @@ fn parse_native_config_value(
             for (index, entry) in seq.iter().enumerate() {
                 let mut child_path = path.to_vec();
                 child_path.push(crate::diagnostic::PathSegment::Index(index));
-                if let Some(parsed) = parse_native_config_value(&child_path, entry, diags) {
+                if let Some(parsed) = parse_native_config_value(kind, &child_path, entry, diags) {
                     out.push(parsed);
                 }
             }
@@ -423,7 +443,8 @@ fn parse_native_config_value(
             let mut out = IndexMap::new();
             for (key, entry) in mapping {
                 let Some(key_text) = key.as_str() else {
-                    push_agent_invalid(
+                    push_invalid(
+                        kind,
                         diags,
                         path.to_vec(),
                         crate::ordered::plain(key),
@@ -436,14 +457,15 @@ fn parse_native_config_value(
                 if push_unholdable_key(diags, &child_path, key_text) {
                     continue;
                 }
-                if let Some(parsed) = parse_native_config_value(&child_path, entry, diags) {
+                if let Some(parsed) = parse_native_config_value(kind, &child_path, entry, diags) {
                     out.insert(key_text.to_string(), parsed);
                 }
             }
             Some(OrderedValue::Object(out))
         }
         _ => {
-            push_agent_invalid(
+            push_invalid(
+                kind,
                 diags,
                 path.to_vec(),
                 crate::ordered::plain(value),
@@ -454,7 +476,9 @@ fn parse_native_config_value(
     }
 }
 
-fn parse_harness_overrides(
+/// `harness-overrides` of an Agent or skill; `kind` names the item in diagnostics.
+pub(crate) fn parse_harness_overrides(
+    kind: &str,
     val: &Value,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> HarnessOverrides {
@@ -462,7 +486,8 @@ fn parse_harness_overrides(
     let root = key_path("harness-overrides");
     let mut out = HarnessOverrides::default();
     let Some(mapping) = val.as_mapping() else {
-        push_agent_invalid(
+        push_invalid(
+            kind,
             diags,
             root.clone(),
             crate::ordered::plain(val),
@@ -473,7 +498,8 @@ fn parse_harness_overrides(
 
     for (k, v) in mapping {
         let Some(harness_name) = k.as_str() else {
-            push_agent_invalid(
+            push_invalid(
+                kind,
                 diags,
                 root.clone(),
                 crate::ordered::plain(k),
@@ -487,7 +513,8 @@ fn parse_harness_overrides(
             continue;
         }
         let Some(sub_mapping) = v.as_mapping() else {
-            push_agent_invalid(
+            push_invalid(
+                kind,
                 diags,
                 harness_path,
                 crate::ordered::plain(v),
@@ -503,7 +530,8 @@ fn parse_harness_overrides(
         let mut parsed = IndexMap::new();
         for (target_key, target_value) in sub_mapping {
             let Some(key_text) = target_key.as_str() else {
-                push_agent_invalid(
+                push_invalid(
+                    kind,
                     diags,
                     harness_path.clone(),
                     crate::ordered::plain(target_key),
@@ -516,7 +544,7 @@ fn parse_harness_overrides(
             if push_unholdable_key(diags, &value_path, key_text) {
                 continue;
             }
-            if let Some(value) = parse_native_config_value(&value_path, target_value, diags) {
+            if let Some(value) = parse_native_config_value(kind, &value_path, target_value, diags) {
                 parsed.insert(key_text.to_string(), value);
             }
         }
@@ -899,7 +927,7 @@ fn parse_agent_profile_inner(
                 }
             }
             "harness-overrides" => {
-                profile.harness_overrides = parse_harness_overrides(value, diags);
+                profile.harness_overrides = parse_harness_overrides("agent", value, diags);
             }
             "model-policies" => profile.model_policies = parse_model_policies(value, diags),
             _ => {
@@ -918,7 +946,7 @@ fn parse_agent_profile_inner(
                         "field.unknown",
                         Severity::Warning,
                         key_path(&key),
-                        format!("unknown field `{key}` is preserved"),
+                        UNKNOWN_FIELD_MESSAGE.replace("{key}", &key),
                     ));
                 }
             }

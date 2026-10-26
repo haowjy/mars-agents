@@ -9,7 +9,9 @@ mars migrate            # rewrite them
 mars check              # confirm the package is clean
 ```
 
-Review the result with `git diff` before you commit: `mars migrate` deletes some keys without a replacement and does not print what it dropped.
+`mars migrate` deletes some keys without a replacement and prints each one after the files it edited, grouped by code (`field.removed`, `skill.tools-dropped`), one line per file and key, none left out. `--json` carries the same list as `dropped`. Review the result with `git diff` before you commit.
+
+A value with no schema 1 meaning stops the run and names the file and key (``agents/b.md: agent field `model-policies[0].override.effort` has invalid value `bogus` ``). The legacy `effort` values `adaptive` and `disabled` are mapped to `medium` and `none`, in `effort:` and in a model policy's `override.effort`.
 
 ## What it changes
 
@@ -28,6 +30,7 @@ Review the result with `git diff` before you commit: `mars migrate` deletes some
 | Skill | `when_to_use: ...` | appended to `description` after a blank line |
 | Skill | `tools`, `disallowed-tools`, `allowed-tools` (and snake_case spellings) | **deleted** |
 | Skill | `model_invocable`, `user_invocable` | the hyphenated spelling |
+| Agent, skill | a key only Claude reads (Agent: `color`, `maxTurns`, `permissionMode`, `memory`, `background`, `isolation`, `initialPrompt`, `hooks`; skill: `argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) | moved to `harness-overrides.claude`, so `.claude/` keeps it and the other harnesses stop receiving it |
 
 Where a deleted key held something you still want, put it where schema 1 keeps it: compaction on the model alias (`[models.<alias>] autocompact = ...`), fan-out candidates in the consumer's `[settings.meridian.fanout]`, MCP grants as `mcp(server): allow` entries in `tools`, `models` as `model-policies`. `network` has no replacement because no consumer acted on it.
 
@@ -84,9 +87,9 @@ Running it again is a no-op: `definition format is already schema v1`.
 
 ## Consumer projects
 
-A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions; with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
+A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions (until then `mars sync` upgrades them in memory and warns: ``authored `.mars-src` content uses the pre-v1 format; run `mars migrate` ``); with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
 
-The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `default_network` or `network` in an overlay, are ignored without a warning; delete them. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
+The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `default_network` or `network` in an overlay, are ignored and warned about by name; delete them. An invalid overlay `effort`, `approval` or `sandbox` is an error. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
 
 ## A dependency that has not migrated
 
@@ -98,7 +101,7 @@ warning: package `legacy` uses the pre-v1 format; run `mars migrate` in its repo
 
 The warning names the package so you can ask its maintainer to migrate; nothing in your project needs to change, and the dependency's repository is not modified. The upgrade also drops a skill's tool keys with a warning that names the file.
 
-A dependency that declares `schema = 1` and breaks its rules is different: Mars reports each error with the file and the replacement and fails `mars sync` before it writes anything. A tree with no `mars.toml` is read by [Claude's rules](mars-toml.md#dialect) and then strictly, so it is not upgraded in memory; its removed keys are errors.
+A dependency that declares `schema = 1` and breaks its rules is different: Mars reports each error with the file and the replacement and fails `mars sync` before it writes anything. A tree with no `mars.toml` is not upgraded in memory. [Claude's rules](mars-toml.md#dialect) translate its definitions and the result is read strictly, so a removed Mars key such as `network` is an error.
 
 ## `mars migrate` and `mars upgrade`
 

@@ -89,9 +89,9 @@ Invalid harness names produce diagnostics (not hard errors) so commands continue
 
 `mars_schema::model_policy::ModelPolicyRule` — match by `model`, `alias`, or `model-glob` with optional overrides and `no-fallback` flag. The schema crate defines and validates it for agent overlays, settings, and profile frontmatter.
 
-## Save Roundtrip Validation
+## Saving
 
-`save()` validates the serialized config roundtrips identically before writing. Prevents data loss from serialization bugs.
+`save()` and `save_local()` share one path (`save.rs`). It reads the file as it stands (base), serializes base and the command's config (next), and applies only the differences to the authored `toml_edit` document, so a key the command did not change keeps its bytes, comments and order, and a key Mars does not model (an unknown `[package]` or `[dependencies.x]` key) is never lost. It then reparses its output and refuses to write unless that equals next. A missing file is written whole. Do not add a second writer for these files.
 
 ## Patterns
 

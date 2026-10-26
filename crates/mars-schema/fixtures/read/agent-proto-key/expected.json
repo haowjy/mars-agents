@@ -32,7 +32,7 @@
       "path": [
         "x-u"
       ],
-      "message": "unknown field `x-u` is preserved"
+      "message": "unknown field `x-u` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
     },
     {
       "code": "yaml.non-json-value",

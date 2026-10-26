@@ -13,7 +13,7 @@ version = "1.0.0"
 schema = 1
 ```
 
-- **Same bytes, same meaning.** Within schema 1 a key keeps its meaning and keeps being accepted. A minor Mars release can add an optional key. Changing what a key means, or removing one, needs `schema = 2`, with an upgrade path from 1.
+- **Not frozen before Mars 1.0.** While Mars is 0.x, a minor release may still change or remove a schema 1 key; the CHANGELOG lists each change, and `mars migrate` rewrites what it can. From Mars 1.0, schema 1 is fixed: the same bytes mean the same thing, a minor release only adds optional keys, and a change in meaning needs `schema = 2` with an upgrade path from 1.
 - **Strict.** A package that declares `schema = 1` is read as written. A key schema 1 removed, a value it does not allow, and a malformed file are errors that name the file and the replacement; there is no silent fallback. Unknown keys are preserved and reported as warnings.
 - **Published as data.** The key tables below, the tool vocabulary, and a corpus of input files with their expected readings are fixtures that Mars's tests and Flow's tests run. See [The contract as data](#the-contract-as-data).
 

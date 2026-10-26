@@ -399,14 +399,14 @@ from package `mcp/<name>/mcp.toml` files and are installed by `mars sync`.
 
 ### `harness-overrides`
 
-Per-harness target-native passthrough table. Mars selects the block matching the resolved harness and preserves its keys/values exactly for the launch bundle's `execution_policy.native_config`. Nested keys are target-native: Mars validates only that the block is a mapping of serializable values.
+Per-harness target-native passthrough table. Mars writes each harness's block into that harness's native file, and passes the block matching the resolved harness to the launch bundle's `execution_policy.native_config`. Nested keys are target-native: Mars validates only that the block is a mapping of serializable values.
 
-Top-level Mars fields remain the semantic controls for routing, prompt assembly, tool policy, skills, and execution policy. A key inside `harness-overrides.<harness>` does not replace the top-level field with the same name.
+Top-level Mars fields remain the semantic controls for routing, prompt assembly, tool policy, skills, and execution policy. A key inside `harness-overrides.<harness>` does not replace a field Mars lowers itself; it is dropped with a warning.
 
 ```yaml
 harness-overrides:
   claude:
-    customClaudeKey: true
+    color: red                # written to .claude/agents/<name>.md only
   codex:
     sandbox_workspace_write:  # Codex config keys, carried as written
       network_access: true
@@ -414,7 +414,9 @@ harness-overrides:
     permission: read          # Meridian Flow's own keys; reserved namespace
 ```
 
-The selected block reaches the launch bundle as `execution_policy.native_config`; the launcher decides how to apply it. For Meridian, Codex applies it as `-c` overrides.
+The block also reaches the launch bundle as `execution_policy.native_config`; the launcher decides how to apply it. For Meridian, Codex applies it as `-c` overrides.
+
+A Claude plugin's Claude-only keys (`color`, `maxTurns`, `permissionMode`, `memory`, `background`, `isolation`, `initialPrompt`, `hooks`) arrive here: importing the plugin moves them, unchanged and in file order, to `harness-overrides.claude`, so `.claude/` keeps them and no other harness sees them.
 
 Use top-level fields for Mars semantics. Use `harness-overrides` for harness-specific config Mars should carry without interpreting. `flow` is a reserved consumer namespace, not a harness: Mars keeps it and never interprets it, and routing never selects it. Any other unknown name is a warning, and its block is kept. See [Schema v1](schema-v1.md#harness-overrides-and-the-flow-namespace).
 
@@ -479,7 +481,7 @@ Mars reads every profile with the schema reader and reports diagnostics, each wi
 |---|---|
 | A removed key (`network`, `disallowed-tools`, `fanout`, ...), a list-form `tools`, an invalid value (`effort: ultra`, `approval: yolo`), malformed `model-policies`, an unclosed or non-mapping frontmatter, a duplicate key | Error |
 | An unknown harness name in `harness:` | Error |
-| An unknown top-level field | Warning — the field is preserved |
+| An unknown top-level field | Warning — the field stays in the file but reaches no native file; put harness-specific keys under `harness-overrides.<harness>` |
 | An unknown name in `harness-overrides` (other than `flow`) | Warning — the block is preserved |
 
 Errors fail `mars sync`, `mars check` and `mars validate` for the package that carries them, before anything is written. `mars check` exits 1 when it finds errors; `mars sync` exits 2. A profile of a package without `schema = 1` is upgraded in memory first, with one warning that names `mars migrate`; see [Migrating to schema v1](migrating-to-schema-v1.md).

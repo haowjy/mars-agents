@@ -40,9 +40,10 @@ mars init [TARGET] [--link DIR...]
 - Adds `mars.local.toml` and `.mars/` to `.gitignore`
 - Persists non-default `managed_root` in `[settings]`
 - Idempotent: re-running is a no-op for init, but still processes `--link`
-- Runs a **field-loss preview** against configured managed targets, reporting
-  what each target cannot express (lossiness diagnostics via
-  `collect_source_lossiness_diagnostics`)
+- When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
+  against configured managed targets, reporting what each target cannot express
+  (lossiness diagnostics via `collect_source_lossiness_diagnostics`). A consumer
+  project has no package to publish, so it gets no preview
 
 ```bash
 mars init                    # Default: .agents/
@@ -168,13 +169,13 @@ mars migrate [--check] [--root PATH] [--json]
 | Flag | Description |
 |---|---|
 | `--check` | List the files that would change and write nothing. Exits 1 if any file needs migration |
-| `--json` | `{check, changed, files, fully_rewritten_files}` |
+| `--json` | `{check, changed, files, fully_rewritten_files, dropped}`; `dropped` lists `{file, code, message}` for each key the migration removed |
 
 It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`) and every agent and skill definition, and writes only the files that change. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Comments, quoting, key order and the body of a definition stay as they were; only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
 
 In a consumer project (a `mars.toml` with no `[package]`), only `.mars-src/` is migrated; with none, the command says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories` and exits 0.
 
-It never touches `.mars/`, `mars.lock` or dependencies, so it is a different job from [`mars upgrade`](#mars-upgrade), which moves dependency versions. It deletes some keys without a replacement and does not print them, so read `git diff` afterwards. The rewrite table, an example diff and the handling of unmigrated dependencies are in [Migrating a package to schema v1](../config/migrating-to-schema-v1.md).
+It never touches `.mars/`, `mars.lock` or dependencies, so it is a different job from [`mars upgrade`](#mars-upgrade), which moves dependency versions. It deletes some keys without a replacement and prints each one after the files it edited, grouped by code with one line per file and key; read `git diff` as well. The rewrite table, an example diff and the handling of unmigrated dependencies are in [Migrating a package to schema v1](../config/migrating-to-schema-v1.md).
 
 ---
 
@@ -537,6 +538,7 @@ mars check [path]
 Does not require a mars project (no `mars.toml` needed). Validates:
 - `requires-mars` and `requires-meridian` syntax when `[package]` is present
 - Package structure: convention folders named `agents/`, `skills/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
+- Prints the `source package validates` line only when there are no errors
 - Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so removed keys, invalid values and malformed YAML are errors (exit 1), unknown keys warn, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
 - Frontmatter: name, description presence and consistency
 - Duplicate `(kind, name)` discoveries within the package

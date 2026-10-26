@@ -46,7 +46,15 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - Native agent files (`.claude`, `.codex`, Cursor, plugin trees) resolve effort, sandbox and approval through the launch bundle's chain, minus the CLI layer, so `[agents.<name>]` scalars, the matching `model-policies` rule and `[[settings.model-policies]]` apply; an artifact that names no model gets only the overlay and top-level values.
 - `[agents.<name>]` and `[skills.<name>]` overlays are consumer configuration outside the schema; a dependency's own overlay tables are inert. Keys they no longer read are ignored without a warning.
 
+- An unknown key in an Agent or skill reaches no native file (skills used to pass it to every harness); the `field.unknown` warning says to use `harness-overrides.<harness>`. Skills read `harness-overrides` like Agents.
+- `harness-overrides.<harness>` is written into that harness's native Agent and skill files and plugin trees (Codex: extra TOML keys), never another harness's. A key Mars lowers itself keeps Mars's value and the override is dropped with a warning.
+- Importing a Claude plugin keeps its Claude-only keys instead of deleting them: `color`, `maxTurns`, `permissionMode`, `memory`, `background`, `isolation`, `initialPrompt` and `hooks` on Agents, and `argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths` and `shell` on skills move unchanged to `harness-overrides.claude`, with an info message (`agent.claude-keys-moved`, `skill.claude-keys-moved`) in place of the old `*.claude-keys-dropped` warning.
+- `mars migrate` prints each key it removed, by code and file (and as `dropped` in `--json`), and maps `adaptive`/`disabled` effort in `model-policies` overrides as it does in `effort:`.
+- `[agents.<name>]` `effort`, `approval` and `sandbox` are checked when `mars.toml` loads (`approval = "yolo"` is an error); stale overlay keys (`network*`, `autocompact*`, `tools.mcp`, `[skills.x.tools]`, `[settings] default_network`) warn by name.
+- Removing a frontmatter key no longer reorders the keys after it.
+
 ### Fixed
+- `mars init` no longer reports `manifest requires a [package] table` in a consumer project, and `mars check` prints its success line only when there are no errors.
 - Dependency `dialect = "opencode"` now parses; `open-code` was the only spelling the config accepted.
 - Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,
   and malformed non-table `plugin` values survive config loading and saving so non-plugin commands

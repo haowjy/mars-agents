@@ -9,7 +9,9 @@ mars migrate            # rewrite them
 mars check              # confirm the package is clean
 ```
 
-Review the result with `git diff` before you commit: `mars migrate` deletes some keys without a replacement and does not print what it dropped.
+`mars migrate` deletes some keys without a replacement and prints each one after the files it edited, grouped by code (`field.removed`, `skill.tools-dropped`), one line per file and key, none left out. `--json` carries the same list as `dropped`. Review the result with `git diff` before you commit.
+
+A value with no schema 1 meaning stops the run and names the file and key (``agents/b.md: agent field `model-policies[0].override.effort` has invalid value `bogus` ``). The legacy `effort` values `adaptive` and `disabled` are mapped to `medium` and `none`, in `effort:` and in a model policy's `override.effort`.
 
 ## What it changes
 
@@ -86,7 +88,7 @@ Running it again is a no-op: `definition format is already schema v1`.
 
 A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions (until then `mars sync` upgrades them in memory and warns: ``authored `.mars-src` content uses the pre-v1 format; run `mars migrate` ``); with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
 
-The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `default_network` or `network` in an overlay, are ignored without a warning; delete them. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
+The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `default_network` or `network` in an overlay, are ignored and warned about by name; delete them. An invalid overlay `effort`, `approval` or `sandbox` is an error. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
 
 ## A dependency that has not migrated
 

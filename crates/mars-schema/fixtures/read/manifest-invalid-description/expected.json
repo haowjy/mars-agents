@@ -1,20 +1,20 @@
 {
   "frontmatter": [
     [
-      "description",
-      4
-    ],
-    [
       "name",
       "demo"
+    ],
+    [
+      "version",
+      "1.0.0"
     ],
     [
       "schema",
       1
     ],
     [
-      "version",
-      "1.0.0"
+      "description",
+      4
     ]
   ],
   "fields": null,

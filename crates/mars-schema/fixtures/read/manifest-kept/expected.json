@@ -1,26 +1,20 @@
 {
   "frontmatter": [
     [
-      "authors",
-      [
-        "A"
-      ]
-    ],
-    [
-      "description",
-      "d"
-    ],
-    [
-      "homepage",
-      "https://x"
-    ],
-    [
-      "license",
-      "MIT"
+      "schema",
+      1
     ],
     [
       "name",
       "pkg"
+    ],
+    [
+      "version",
+      "0.1.0"
+    ],
+    [
+      "description",
+      "d"
     ],
     [
       "requires-mars",
@@ -31,18 +25,24 @@
       ">=0.1"
     ],
     [
-      "schema",
-      1
+      "authors",
+      [
+        "A"
+      ]
+    ],
+    [
+      "homepage",
+      "https://x"
+    ],
+    [
+      "license",
+      "MIT"
     ],
     [
       "uses-providers",
       [
         "meridian"
       ]
-    ],
-    [
-      "version",
-      "0.1.0"
     ]
   ],
   "fields": {

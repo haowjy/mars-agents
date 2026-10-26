@@ -1,12 +1,12 @@
 {
   "frontmatter": [
     [
-      "name",
-      "pkg"
-    ],
-    [
       "schema",
       1
+    ],
+    [
+      "name",
+      "pkg"
     ],
     [
       "version",

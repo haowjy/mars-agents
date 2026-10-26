@@ -13,12 +13,12 @@
           "demo"
         ],
         [
-          "schema",
-          2
-        ],
-        [
           "version",
           "1.0.0"
+        ],
+        [
+          "schema",
+          2
         ]
       ],
       "fields": {

@@ -43,9 +43,12 @@ export interface Diagnostic {
 export interface DefinitionRead<Fields> {
   /**
    * Every top-level key with its value in file order, unknown keys included. A key whose
-   * value has no JSON form (a YAML tag, a non-string map key, an integer beyond ±(2^53 − 1)) is absent and has a
-   * `yaml.non-json-value` diagnostic. Mapping keys, nested ones included, are in file order (JavaScript lists integer-like keys such as `"1"` first). For `mars.toml`, the
-   * pairs of the `[package]` table.
+   * value has no JSON form is absent and has a `yaml.non-json-value` diagnostic
+   * (`toml.non-json-value` for `mars.toml`). That covers a YAML tag, a non-string map key,
+   * an integer beyond ±(2^53 − 1), NaN or infinity (TOML), and a `__proto__` key at any depth.
+   * Mapping keys, nested ones included, are in file order (JavaScript lists integer-like keys
+   * such as `"1"` first). For `mars.toml`, the pairs of the `[package]` table in file order;
+   * a TOML datetime is its TOML text, a string (`"1979-05-27"`).
    */
   frontmatter: [string, JsonValue][];
   /** Typed fields in file spellings; `null` when the file cannot be read at all. */

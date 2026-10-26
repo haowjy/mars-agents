@@ -2,12 +2,13 @@
 //!
 //! The reading's `frontmatter` holds the `[package]` table's pairs, unknown keys included.
 
+use crate::diagnostic::{SchemaDiagnostic, Severity, child_path};
 use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue};
 use crate::package::PackageMetadata;
 
 /// Read package identity while leaving consumer-only top-level tables outside the schema.
 pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
-    use crate::diagnostic::{SchemaDiagnostic, Severity, child_path, key_path};
+    use crate::diagnostic::key_path;
     let value: toml::Value = match toml::from_str(content) {
         Ok(value) => value,
         Err(error) => {
@@ -114,35 +115,86 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         }
     };
     crate::read::DefinitionRead {
-        frontmatter: package
-            .iter()
-            .filter_map(|(key, value)| Some((key.clone(), toml_json(value)?)))
-            .collect(),
+        frontmatter: package_pairs(content, &mut diagnostics),
         fields,
         body: None,
         diagnostics,
     }
 }
 
-/// `None` for an integer JavaScript cannot hold exactly.
-fn toml_json(value: &toml::Value) -> Option<OrderedValue> {
-    Some(match value {
-        toml::Value::String(v) => OrderedValue::String(v.clone()),
-        toml::Value::Integer(v) if v.unsigned_abs() > MAX_SAFE_INTEGER => return None,
-        toml::Value::Integer(v) => OrderedValue::Number((*v).into()),
-        toml::Value::Float(v) => {
-            serde_json::Number::from_f64(*v).map_or(OrderedValue::Null, OrderedValue::Number)
+/// The `[package]` pairs in file order, at every depth. A value JSON cannot hold exactly (an
+/// integer beyond ±(2^53 − 1), NaN, infinity, a `__proto__` key) leaves its pair out with a
+/// `toml.non-json-value` diagnostic; a datetime is its TOML text, a string.
+fn package_pairs(
+    content: &str,
+    diagnostics: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+) -> Vec<(String, OrderedValue)> {
+    use toml_edit::{DocumentMut, Item};
+    // `content` already parsed as TOML, and `[package]` exists.
+    let Ok(document) = content.parse::<DocumentMut>() else {
+        return Vec::new();
+    };
+    let Some(package) = document.get("package").and_then(Item::as_table_like) else {
+        return Vec::new();
+    };
+    let mut pairs = Vec::new();
+    for (key, item) in package.iter() {
+        match item_json(item).and_then(|value| reject_key(key).map(|()| value)) {
+            Ok(value) => pairs.push((key.to_owned(), value)),
+            Err(message) => diagnostics.push(SchemaDiagnostic::new(
+                "toml.non-json-value",
+                Severity::Error,
+                child_path("package", key),
+                message,
+            )),
         }
-        toml::Value::Boolean(v) => OrderedValue::Bool(*v),
-        toml::Value::Datetime(v) => OrderedValue::String(v.to_string()),
-        toml::Value::Array(values) => {
-            OrderedValue::Array(values.iter().map(toml_json).collect::<Option<_>>()?)
+    }
+    pairs
+}
+
+fn reject_key(key: &str) -> Result<(), String> {
+    crate::ordered::reject_unholdable_key(key)
+}
+
+fn item_json(item: &toml_edit::Item) -> Result<OrderedValue, String> {
+    use toml_edit::{Item, Value};
+    Ok(match item {
+        Item::None => OrderedValue::Null,
+        Item::Value(Value::String(v)) => OrderedValue::String(v.value().clone()),
+        Item::Value(Value::Integer(v)) => {
+            let n = *v.value();
+            if n.unsigned_abs() > MAX_SAFE_INTEGER {
+                return Err(format!(
+                    "integer {n} is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
+                ));
+            }
+            OrderedValue::Number(n.into())
         }
-        toml::Value::Table(table) => OrderedValue::Object(
-            table
+        Item::Value(Value::Float(v)) => serde_json::Number::from_f64(*v.value())
+            .map(OrderedValue::Number)
+            .ok_or("NaN and infinity have no JSON representation")?,
+        Item::Value(Value::Boolean(v)) => OrderedValue::Bool(*v.value()),
+        Item::Value(Value::Datetime(v)) => OrderedValue::String(v.value().to_string()),
+        Item::Value(Value::Array(values)) => OrderedValue::Array(
+            values
                 .iter()
-                .map(|(key, value)| Some((key.clone(), toml_json(value)?)))
-                .collect::<Option<_>>()?,
+                .map(|value| item_json(&Item::Value(value.clone())))
+                .collect::<Result<_, _>>()?,
         ),
+        Item::ArrayOfTables(tables) => OrderedValue::Array(
+            tables
+                .iter()
+                .map(|table| item_json(&Item::Table(table.clone())))
+                .collect::<Result<_, _>>()?,
+        ),
+        Item::Value(Value::InlineTable(_)) | Item::Table(_) => {
+            let table = item.as_table_like().expect("a table item is table-like");
+            let mut out = indexmap::IndexMap::new();
+            for (key, item) in table.iter() {
+                reject_key(key)?;
+                out.insert(key.to_owned(), item_json(item)?);
+            }
+            OrderedValue::Object(out)
+        }
     })
 }

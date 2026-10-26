@@ -1,0 +1,15 @@
+[package]
+name = "p"
+version = "1.0.0"
+schema = 1
+zeta = { b = 1, a = 2 }
+when = 1979-05-27
+big = 9007199254740993
+alpha = ["x", { y = 1, x = 2 }]
+nan-value = nan
+__proto__ = "x"
+meta = { nested = { z = 1, a = 2 }, "__proto__" = 1 }
+
+[package.table]
+second = 2
+first = 1

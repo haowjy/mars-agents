@@ -1,16 +1,16 @@
 {
   "frontmatter": [
     [
-      "description",
-      "kept"
-    ],
-    [
       "name",
       "demo"
     ],
     [
       "schema",
       1
+    ],
+    [
+      "description",
+      "kept"
     ]
   ],
   "fields": {

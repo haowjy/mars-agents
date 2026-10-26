@@ -5,15 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Plugin specs are one registry: `build/plugin/spec.rs` holds every harness row pointing straight at
-  its `TreeProfile`, root files and finish writers are enums, README support cells render from the
-  computed support state, and staging has two entry points instead of an `Option` mode flag.
-  Generated root files are one declared table that tree rows name directly, and a test holds every
-  tree's catalog directory to it. A tree's plugin-root mapping is an enum instead of an optional
-  token; a runtime-resolved tree keeps the Mars token for its own code to substitute. A harness row's
-  agent evidence decides whether its plugin surface loads agents. No generated plugin output changes;
-  the README support table now restates tree-derived facts (Codex hooks, Grok agent fields, OpenCode
-  agents and hooks).
+- README plugin support table: cells are generated from what each plugin tree actually does. Grok
+  agents now list the Claude agent fields that are dropped; Codex and Grok hooks state the `claude`
+  fragment rule. Generated plugin output is unchanged.
 
 ## [0.19.0] - 2026-10-26
 

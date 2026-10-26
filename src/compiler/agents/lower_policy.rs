@@ -573,7 +573,12 @@ impl<'a> AgentLoweringCtx<'a> {
             ),
             AgentLossinessStep::DisallowedToolsAsPermission => self.collect_denied_as_permission(),
             AgentLossinessStep::EffortApproximate(note) => {
-                if self.eff.effort().is_some() {
+                // `none` writes nothing for these harnesses, so there is nothing to approximate.
+                if self
+                    .eff
+                    .effort()
+                    .is_some_and(|effort| *effort != mars_schema::agent::EffortLevel::None)
+                {
                     self.lossy.push(LossyField {
                         field: "effort".into(),
                         target: self.target_name().into(),

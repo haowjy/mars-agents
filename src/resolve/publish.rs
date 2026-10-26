@@ -27,6 +27,41 @@ impl PublishLens {
         Self::load_with_schema_root(package_root, package_root, diag)
     }
 
+    pub(crate) fn from_prepared_manifest(
+        package_root: &Path,
+        normalized_manifest: Option<&[u8]>,
+    ) -> Result<Self, MarsError> {
+        let mut manifest = normalized_manifest
+            .map(|bytes| {
+                let content =
+                    std::str::from_utf8(bytes).map_err(|error| MarsError::InvalidRequest {
+                        message: format!("prepared mars.toml is not UTF-8: {error}"),
+                    })?;
+                crate::config::parse_config(content, &package_root.join("mars.toml"))
+            })
+            .transpose()?;
+        let mut config = manifest.clone().unwrap_or_default();
+        config.local_dependencies.clear();
+        if let Some(manifest) = &mut manifest {
+            manifest.local_dependencies.clear();
+        }
+        let (effective, diagnostics) =
+            crate::config::merge_with_root(config, LocalConfig::default(), package_root)?;
+        if let Some(error) = diagnostics
+            .into_iter()
+            .find(|diagnostic| diagnostic.level == crate::diagnostic::DiagnosticLevel::Error)
+        {
+            return Err(MarsError::InvalidRequest {
+                message: error.message,
+            });
+        }
+        Ok(Self {
+            package_root: package_root.to_path_buf(),
+            manifest,
+            effective,
+        })
+    }
+
     pub(crate) fn load_with_schema_root(
         package_root: &Path,
         schema_root: &Path,

@@ -33,6 +33,7 @@ fn schema_dialect(dialect: Dialect) -> mars_schema::dialect::Dialect {
 pub(crate) struct DiskTreeSource {
     root: PathBuf,
     canonical_root: PathBuf,
+    hide_manifest: bool,
     error: RefCell<Option<MarsError>>,
 }
 
@@ -46,8 +47,14 @@ impl DiskTreeSource {
         Ok(Self {
             root: root.to_path_buf(),
             canonical_root,
+            hide_manifest: false,
             error: RefCell::new(None),
         })
+    }
+
+    pub(crate) fn without_manifest(mut self) -> Self {
+        self.hide_manifest = true;
+        self
     }
 
     pub(crate) fn take_error(&self) -> Option<MarsError> {
@@ -102,6 +109,9 @@ impl DiskTreeSource {
 
 impl TreeSource for DiskTreeSource {
     fn read(&self, path: &str) -> Option<Vec<u8>> {
+        if self.hide_manifest && path == "mars.toml" {
+            return None;
+        }
         let logical = self.path(path)?;
         let actual = self.confined(&logical)?;
         match fs::metadata(&actual) {
@@ -130,6 +140,9 @@ impl TreeSource for DiskTreeSource {
     }
 
     fn is_file(&self, path: &str) -> bool {
+        if self.hide_manifest && path == "mars.toml" {
+            return false;
+        }
         self.path(path)
             .and_then(|path| self.confined(&path))
             .and_then(|path| fs::metadata(path).ok())
@@ -293,6 +306,21 @@ pub(crate) fn prepare_authored(
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?;
+    let prepared = mars_schema::prepare::prepare(&source, context, dialect.map(schema_dialect));
+    if let Some(error) = source.take_error() {
+        return Err(error);
+    }
+    report_diagnostics(&prepared, root, diag);
+    Ok(prepared)
+}
+
+pub(crate) fn prepare_authored_without_manifest(
+    root: &Path,
+    context: PrepareContext,
+    dialect: Option<Dialect>,
+    diag: &mut DiagnosticCollector,
+) -> Result<Prepared, MarsError> {
+    let source = DiskTreeSource::new(root)?.without_manifest();
     let prepared = mars_schema::prepare::prepare(&source, context, dialect.map(schema_dialect));
     if let Some(error) = source.take_error() {
         return Err(error);

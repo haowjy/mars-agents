@@ -60,53 +60,35 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         .ok()
         .and_then(|content| content.parse::<toml::Value>().ok())
         .is_some_and(|manifest| manifest.get("package").is_none());
-    let preparation = if consumer_config {
-        crate::staging::DefinitionPreparation::Foreign(Dialect::resolve_local(None, &authored_base))
-    } else {
-        crate::package_prepare::classify(
-            "checked package",
+    let (prepared, normalized_manifest) = if consumer_config {
+        let prepared = crate::package_prepare::prepare_authored_without_manifest(
             &authored_base,
+            mars_schema::prepare::PrepareContext::AuthoredLocal,
+            Some(Dialect::resolve_local(None, &authored_base)),
+            &mut publish_diag,
+        )?;
+        (prepared, None)
+    } else {
+        let prepared = crate::package_prepare::prepare_authored(
+            &authored_base,
+            mars_schema::prepare::PrepareContext::Package,
             None,
             &mut publish_diag,
-        )?
+        )?;
+        let manifest = prepared
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.normalized_bytes.clone());
+        (prepared, manifest)
     };
-    let prepared = tempfile::tempdir()?;
-    let excluded_symlinks = walkdir::WalkDir::new(&authored_base)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_symlink())
-        .filter_map(|entry| {
-            entry
-                .path()
-                .strip_prefix(&authored_base)
-                .ok()
-                .map(Path::to_path_buf)
-        })
-        .collect::<Vec<_>>();
-    let changed = crate::staging::stage_prepared_package(
+    let lens = crate::resolve::PublishLens::from_prepared_manifest(
         &authored_base,
-        prepared.path(),
-        preparation,
-        &excluded_symlinks,
-        &mut publish_diag,
+        normalized_manifest.as_deref(),
     )?;
-    if preparation == crate::staging::DefinitionPreparation::Legacy && changed {
-        publish_diag.warn_once(
-            "legacy-package",
-            "package `checked package` uses the pre-v1 format; run `mars migrate`",
-        );
-    }
-    let base = prepared.path();
-    let lens = crate::resolve::PublishLens::load_with_schema_root(
-        &authored_base,
-        base,
-        &mut publish_diag,
-    )?;
-    let mut report = check_dir_with_lens(base, &authored_base, Ok(&lens), &mut publish_diag)?;
+    let mut report = check_prepared(&prepared, &authored_base, &lens, &mut publish_diag)?;
     report
         .warnings
-        .extend(plugin_warnings(base, &lens, &mut publish_diag)?);
+        .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);
     let mut diagnostics = publish_diag.drain();
     diagnostics.extend(lossiness_diagnostics_for_check(&lens, args.verbose)?);
     let mut surfaced = Vec::new();
@@ -230,6 +212,154 @@ fn lossiness_diagnostics_for_check(
         LossinessMode::Surface
     };
     crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(lens, mode)
+}
+
+fn check_prepared(
+    prepared: &mars_schema::prepare::Prepared,
+    authored_root: &Path,
+    lens: &crate::resolve::PublishLens,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+) -> Result<CheckReport, MarsError> {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    if let Some(package) = lens
+        .manifest
+        .as_ref()
+        .and_then(|config| config.package.as_ref())
+        && let Err(error) = crate::resolve::validate_package_requirement_syntax(package)
+    {
+        errors.push(error.to_string());
+    }
+
+    let mut agent_names = HashMap::<String, PathBuf>::new();
+    let mut skill_names = HashMap::<String, PathBuf>::new();
+    let mut agent_skill_refs = Vec::<(String, Vec<String>)>::new();
+    for definition in &prepared.definitions {
+        let path = authored_root.join(&definition.source_path);
+        let linked_item = match definition.kind {
+            mars_schema::upgrade::DefinitionKind::Agent => path
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink()),
+            mars_schema::upgrade::DefinitionKind::Skill => path.parent().is_some_and(|root| {
+                root.symlink_metadata()
+                    .is_ok_and(|m| m.file_type().is_symlink())
+            }),
+        };
+        if linked_item {
+            warnings.push(format!(
+                "skipping symlinked {} `{}` — source packages should not contain symlinks",
+                match definition.kind {
+                    mars_schema::upgrade::DefinitionKind::Agent => "agent",
+                    mars_schema::upgrade::DefinitionKind::Skill => "skill",
+                },
+                definition.slug
+            ));
+            continue;
+        }
+        match &definition.reading {
+            mars_schema::prepare::PreparedDefinitionRead::Agent(reading) => {
+                let filename = path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                if let Some(profile) = &reading.fields {
+                    let name = profile.name.clone().unwrap_or_else(|| filename.clone());
+                    if profile.name.is_none() {
+                        warnings.push(format!("agent `{filename}` has no `name` in frontmatter"));
+                    }
+                    if profile.description.is_none() {
+                        warnings.push(format!("agent `{name}` has no `description`"));
+                    }
+                    if profile.name.is_some() && name != filename {
+                        warnings.push(format!(
+                            "agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"
+                        ));
+                    }
+                    if let Some(existing) = agent_names.insert(name.clone(), path.clone()) {
+                        errors.push(format!(
+                            "duplicate agent name `{name}` in {} and {}",
+                            existing.display(),
+                            path.display()
+                        ));
+                    }
+                    let skills = profile.skills.all();
+                    if !skills.is_empty() {
+                        agent_skill_refs.push((name, skills));
+                    }
+                }
+            }
+            mars_schema::prepare::PreparedDefinitionRead::Skill(reading) => {
+                let dirname = if definition.source_path == "SKILL.md" {
+                    definition.slug.clone()
+                } else {
+                    path.parent()
+                        .and_then(Path::file_name)
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(&definition.slug)
+                        .to_owned()
+                };
+                if let Some(profile) = &reading.fields {
+                    let name = profile.name.clone().unwrap_or_else(|| dirname.clone());
+                    if profile.name.is_some() && name != dirname {
+                        warnings.push(format!(
+                            "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
+                        ));
+                    }
+                    if let Some(existing) = skill_names.insert(name.clone(), path.clone()) {
+                        errors.push(format!(
+                            "duplicate skill name `{name}` in {} and {}",
+                            existing.display(),
+                            path.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if agent_names.is_empty() && skill_names.is_empty() {
+        errors.push("no agents or skills found — is this a mars source package?".to_string());
+    }
+    let available = skill_names
+        .keys()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    if has_package_dependencies(lens) {
+        match resolve_available_skills(lens, diag) {
+            Ok(graph_skills) => {
+                for (agent, refs) in &agent_skill_refs {
+                    for skill in refs {
+                        if !available.contains(skill.as_str()) && !graph_skills.contains_key(skill) {
+                            errors.push(format!(
+                                "agent `{agent}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
+                                format_searched_packages(&graph_skills)
+                            ));
+                        }
+                    }
+                }
+            }
+            Err(error) => errors.push(format!(
+                "dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
+            )),
+        }
+    } else {
+        for (agent, refs) in &agent_skill_refs {
+            for skill in refs {
+                if !available.contains(skill.as_str()) {
+                    warnings.push(format!(
+                        "external dependency: `{skill}` (referenced by: {agent})"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(CheckReport {
+        agents: agent_names.len(),
+        skills: skill_names.len(),
+        errors,
+        warnings,
+    })
 }
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
@@ -516,12 +646,13 @@ fn resolve_available_skills(
 
     let mut skills: HashMap<String, (String, String)> = HashMap::new();
     for (source_name, node) in &graph.nodes {
-        let discovered =
-            crate::discover::discover_resolved_source(&node.rooted_ref.package_root, None, diag)?;
         let package_filters = graph.filters.get(source_name);
-        for item in &discovered {
-            if item.id.kind == mars_schema::item::ItemKind::Skill
-                && item_passes_filters(item, package_filters)
+        let Some(prepared) = &node.prepared else {
+            continue;
+        };
+        for definition in &prepared.definitions {
+            if definition.kind == mars_schema::upgrade::DefinitionKind::Skill
+                && prepared_skill_passes_filters(definition, package_filters)
             {
                 let version_str = node
                     .resolved_ref
@@ -530,7 +661,7 @@ fn resolve_available_skills(
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 skills.insert(
-                    item.id.name.to_string(),
+                    definition.slug.clone(),
                     (source_name.to_string(), version_str),
                 );
             }
@@ -538,6 +669,23 @@ fn resolve_available_skills(
     }
 
     Ok(skills)
+}
+
+fn prepared_skill_passes_filters(
+    definition: &mars_schema::prepare::PreparedDefinition,
+    filters: Option<&Vec<crate::config::FilterMode>>,
+) -> bool {
+    let item = crate::discover::DiscoveredItem {
+        id: crate::lock::ItemId {
+            kind: mars_schema::item::ItemKind::Skill,
+            name: definition.slug.clone().into(),
+        },
+        source_path: PathBuf::from(&definition.source_path)
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf(),
+    };
+    item_passes_filters(&item, filters)
 }
 
 /// Returns true if a skill item would be installed given the accumulated filter constraints.

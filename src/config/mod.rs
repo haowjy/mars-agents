@@ -703,6 +703,12 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
     Ok(config)
 }
 
+pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
+    let mut config: Config = parse_without_removed_visibility(content, path)?;
+    migrate_legacy_source_urls(&mut config);
+    Ok(config)
+}
+
 /// Load source manifest data from mars.toml in a source tree root.
 ///
 /// Returns `None` when mars.toml is absent or when it has no `[package]`

@@ -104,24 +104,24 @@ pub struct Prepared {
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
     /// What upgrading a pre-v1 package changed or dropped, by source path (legacy keys, skill
     /// tool rules). `mars migrate` lists them; a caller that only reads the package reports
-    /// [`Prepared::needs_migration`] instead.
+    /// [`Prepared::files_to_migrate`] instead.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub upgrade_diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
 }
 
 impl Prepared {
-    /// A pre-v1 package whose authored files preparation changed: the changes are in
-    /// the prepared bytes, and `mars migrate` writes them back.
-    pub fn needs_migration(&self) -> bool {
-        self.classification == Classification::MarsLegacy
-            && (self
-                .manifest
-                .iter()
-                .any(|manifest| manifest.change != ChangeRecord::None)
-                || self
-                    .definitions
-                    .iter()
-                    .any(|definition| definition.change != ChangeRecord::None))
+    /// How many authored files of a pre-v1 package preparation changed: the changes are in the
+    /// prepared bytes, and `mars migrate` writes them back. Zero for any other classification.
+    pub fn files_to_migrate(&self) -> usize {
+        if self.classification != Classification::MarsLegacy {
+            return 0;
+        }
+        self.manifest
+            .iter()
+            .map(|manifest| &manifest.change)
+            .chain(self.definitions.iter().map(|definition| &definition.change))
+            .filter(|change| **change != ChangeRecord::None)
+            .count()
     }
 
     /// Every diagnostic by source path: package-level first, then the file's reading.

@@ -276,9 +276,7 @@ pub(crate) fn prepare_rooted(
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
-        &format!(
-            "package `{package_name}` uses the pre-v1 format; run `mars migrate` in its repository"
-        ),
+        &|files| legacy_package_warning(package_name, files),
         diag,
     );
 
@@ -344,12 +342,22 @@ pub(crate) fn prepare_authored(
         return Err(error);
     }
     // A package carries its manifest; authored content has none to name it by.
-    let legacy_warning = if prepared.manifest.is_some() {
-        package_legacy_warning(&prepared, root)
-    } else {
-        "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`".to_string()
-    };
-    report_diagnostics(&prepared, &source_label(root), &legacy_warning, diag);
+    let package_name = prepared
+        .manifest
+        .is_some()
+        .then(|| authored_package_name(&prepared, root));
+    report_diagnostics(
+        &prepared,
+        &source_label(root),
+        &|files| match &package_name {
+            Some(name) => legacy_package_warning(name, files),
+            None => format!(
+                "authored `.mars-src` content uses the pre-v1 format ({}); run `mars migrate`",
+                files_phrase(files)
+            ),
+        },
+        diag,
+    );
     Ok(prepared)
 }
 
@@ -384,7 +392,7 @@ pub(crate) fn prepare_project(
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     label: &dyn Fn(&str) -> String,
-    legacy_warning: &str,
+    legacy_warning: &dyn Fn(usize) -> String,
     diag: &mut DiagnosticCollector,
 ) {
     for (relative, diagnostics) in prepared.all_diagnostics() {
@@ -393,8 +401,11 @@ pub(crate) fn report_diagnostics(
             diag.schema(diagnostic, &context, false);
         }
     }
-    if prepared.needs_migration() {
-        diag.warn_once("legacy-package", legacy_warning);
+    // The upgrade's own per-file notes (keys dropped, keys moved) are `upgrade_diagnostics`,
+    // which `mars migrate` lists; a sync reports one warning per package with their count.
+    let files = prepared.files_to_migrate();
+    if files > 0 {
+        diag.warn_once("legacy-package", legacy_warning(files));
     }
 }
 
@@ -403,16 +414,30 @@ fn source_label(root: &Path) -> impl Fn(&str) -> String + '_ {
     move |relative| format!("source `{}`", root.join(relative).display())
 }
 
-fn package_legacy_warning(prepared: &Prepared, root: &Path) -> String {
-    let name = prepared
+fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
+    prepared
         .manifest
         .as_ref()
         .and_then(|manifest| manifest.reading.fields.as_ref())
         .map(|package| package.name.as_str())
         .filter(|name| !name.is_empty())
         .or_else(|| root.file_name().and_then(|name| name.to_str()))
-        .unwrap_or("unknown");
-    format!("package `{name}` uses the pre-v1 format; run `mars migrate` in its repository")
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn legacy_package_warning(name: &str, files: usize) -> String {
+    format!(
+        "package `{name}` uses the pre-v1 format ({}); run `mars migrate` in its repository",
+        files_phrase(files)
+    )
+}
+
+fn files_phrase(files: usize) -> String {
+    format!(
+        "{files} file{} to upgrade",
+        if files == 1 { "" } else { "s" }
+    )
 }
 
 /// Prepare a real on-disk tree for graph fixtures, with no dependency entry (so no dialect hint).

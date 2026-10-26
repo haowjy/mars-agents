@@ -24,7 +24,7 @@ Mars classifies a package root before it reads any definition:
 | `mars.toml` | Mars does |
 |---|---|
 | `[package] schema = 1` | Reads every definition strictly. Errors fail `mars sync`. |
-| `[package]` without `schema` | Treats the package as pre-v1: upgrades its definitions **in memory**, installs the upgraded text, and warns once per package: ``package `name` uses the pre-v1 format; run `mars migrate` in its repository``. The package's files are not touched. |
+| `[package]` without `schema` | Treats the package as pre-v1: upgrades its definitions **in memory**, installs the upgraded text, and warns once per package: ``package `name` uses the pre-v1 format (3 files to upgrade); run `mars migrate` in its repository``. The package's files are not touched. |
 | `schema` higher than 1, or not an integer | Refuses the package. A Mars that does not know the schema cannot read it. |
 | no `mars.toml` | The tree is a foreign layout (a Claude plugin, a marketplace, a tree of `SKILL.md` directories, a Codex, OpenCode or Cursor repository). Mars translates it into a schema v1 package and then reads that strictly; a tree of plain `agents/` and `skills/` folders is translated by Claude's rules, so a removed key in it is an error, not an upgrade. See [Dialect](mars-toml.md#dialect). |
 

@@ -87,7 +87,7 @@ Running it again is a no-op: `definition format is already schema v1`.
 
 ## Consumer projects
 
-A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions (until then `mars sync` upgrades them in memory and warns: ``authored `.mars-src` content uses the pre-v1 format; run `mars migrate` ``); with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
+A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions (until then `mars sync` upgrades them in memory and warns: ``authored `.mars-src` content uses the pre-v1 format (2 files to upgrade); run `mars migrate` ``); with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
 
 The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `default_network` or `network` in an overlay, are ignored and warned about by name; delete them. An invalid overlay `effort`, `approval` or `sandbox` is an error. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
 
@@ -96,10 +96,10 @@ The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, 
 A dependency without `schema = 1` still installs. Mars upgrades its definitions in memory with the same rules as `mars migrate`, installs the result into `.mars/`, and warns once per package:
 
 ```text
-warning: package `legacy` uses the pre-v1 format; run `mars migrate` in its repository
+warning: package `legacy` uses the pre-v1 format (3 files to upgrade); run `mars migrate` in its repository
 ```
 
-The warning names the package so you can ask its maintainer to migrate; nothing in your project needs to change, and the dependency's repository is not modified. The upgrade also drops a skill's tool keys with a warning that names the file.
+The warning names the package and how many of its files the upgrade changes, so you can ask its maintainer to migrate; nothing in your project needs to change, and the dependency's repository is not modified. The keys the upgrade dropped or moved, file by file, are listed only by `mars migrate` in the package's own repository.
 
 A dependency that declares `schema = 1` and breaks its rules is different: Mars reports each error with the file and the replacement and fails `mars sync` before it writes anything. A tree with no `mars.toml` is upgraded in memory like a pre-v1 package when it is declared `dialect = "mars-native"` or carries a key only pre-v1 Mars defined (`network`, `network-allow`, `network-deny`, `fanout`, `models`, `mcp-tools`, `autocompact`, `autocompact_pct`, `permission`, `model_invocable`, `user_invocable`) or `approval: yolo`. Any other tree with no `mars.toml` is read under [Claude's rules](mars-toml.md#dialect), which translate its definitions, and the result is read strictly.
 

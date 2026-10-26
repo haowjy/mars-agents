@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-26
+
 ### Added
 - `mars build plugin [PATH] [--out <dir>]` builds owned Claude, Cursor, and OpenCode plugin trees
   from a package's publish graph. Explicit output uses the nested

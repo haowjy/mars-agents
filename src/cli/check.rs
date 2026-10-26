@@ -376,21 +376,7 @@ fn check_prepared(
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let (prepared, manifest) = crate::package_prepare::prepare_project(base, &mut diag)?;
-    let lens = match crate::resolve::PublishLens::from_prepared_manifest(base, manifest.as_deref())
-    {
-        Ok(lens) => lens,
-        Err(error) => {
-            return Ok(CheckReport {
-                agents: 0,
-                skills: 0,
-                errors: vec![format!(
-                    "failed to load mars.toml for dependency checks: {error}\n  hint: fix mars.toml syntax (Windows paths in TOML must use `/` or escaped `\\\\`)"
-                )],
-                warnings: Vec::new(),
-            });
-        }
-    };
+    let (lens, prepared) = crate::resolve::PublishLens::load(base, &mut diag)?;
     let mut report = check_prepared(&prepared, base, &lens, &mut diag)?;
     for diagnostic in diag.drain() {
         let rendered = format!("[{}] {}", diagnostic.code, diagnostic.message);
@@ -958,20 +944,10 @@ mod tests {
         )
         .unwrap();
 
-        let report = super::check_dir(dir.path()).unwrap();
-        let joined = report.errors.join("\n");
+        let error = super::check_dir(dir.path()).unwrap_err().to_string();
         assert!(
-            joined.contains("failed to load mars.toml for dependency checks"),
-            "expected config parse/load error to surface: {joined}"
-        );
-        let has_local_warning = report
-            .warnings
-            .iter()
-            .any(|w| w.contains("external dependency: `missing-skill`"));
-        assert!(
-            !has_local_warning,
-            "must not silently fall back to local-only warnings on invalid config: {:?}",
-            report.warnings
+            error.contains("TOML parse error"),
+            "an invalid mars.toml must fail the check, not fall back to local-only warnings: {error}"
         );
     }
 }

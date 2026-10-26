@@ -968,7 +968,7 @@ fn validate_agent_overlays(
                     .as_deref()
                     .and_then(EffortLevel::parse)
                     .is_some(),
-                "low, medium, high, xhigh, none",
+                "none, low, medium, high, xhigh, max",
             ),
             (
                 "approval",

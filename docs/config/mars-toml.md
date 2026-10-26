@@ -397,7 +397,7 @@ disallowed = ["agent"]
 | `description` | string | Override the description written to native agent files |
 | `model` | string | Model token or alias for this agent |
 | `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`) |
-| `effort` | string | Effort level: `none`, `low`, `medium`, `high`, `xhigh`. See [Effort](schema-v1.md#effort) |
+| `effort` | string | Effort level: `none`, `low`, `medium`, `high`, `xhigh` (`max` is read as `xhigh`). See [Effort](schema-v1.md#effort) |
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `never` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
 | `model-invocable` | bool | Override the profile's `model-invocable` |

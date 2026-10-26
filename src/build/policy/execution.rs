@@ -73,7 +73,6 @@ struct PolicyFieldLayers<T> {
     cli: Option<T>,
     overlay: Option<T>,
     profile: Option<T>,
-    settings: Option<T>,
     alias: Option<T>,
 }
 
@@ -94,7 +93,6 @@ fn resolve_policy_field<T>(
         policy_override_by_source(matched_policy, key, ProfileModelPolicy),
         field_layer(Profile, layers.profile),
         policy_override_by_source(matched_policy, key, SettingsModelPolicy),
-        field_layer(PolicySource::Config, layers.settings),
         field_layer(Alias, layers.alias),
     ]
     .into_iter()
@@ -141,13 +139,13 @@ pub(super) fn resolve_effort(
             cli: cli.map(str::to_string),
             overlay: overlay
                 .and_then(|entry| entry.effort.as_deref())
-                .map(str::to_string),
+                .and_then(EffortLevel::parse)
+                .map(|level| level.as_str().to_string()),
             profile: profile
                 .effort
                 .as_ref()
                 .map(EffortLevel::as_str)
                 .map(str::to_string),
-            settings: None,
             alias: alias.and_then(|entry| entry.default_effort.clone()),
         },
     )
@@ -173,7 +171,6 @@ pub(super) fn resolve_approval(
                 .as_ref()
                 .map(ApprovalMode::as_str)
                 .map(str::to_string),
-            settings: None,
             alias: None,
         },
     )
@@ -199,7 +196,6 @@ pub(super) fn resolve_sandbox(
                 .as_ref()
                 .map(SandboxMode::as_str)
                 .map(str::to_string),
-            settings: None,
             alias: None,
         },
     )

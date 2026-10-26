@@ -27,15 +27,6 @@ pub(crate) const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "shell",
 ];
 
-const SKILL_TOOL_KEYS: &[&str] = &[
-    "tools",
-    "allowed-tools",
-    "allowed_tools",
-    "disallowed-tools",
-    "disallowed_tools",
-    "disallowedTools",
-];
-
 pub(crate) const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "color",
     "initialPrompt",
@@ -112,10 +103,12 @@ pub(crate) fn move_to_claude_overrides(
     true
 }
 
-fn remove_keys(fm: &mut Frontmatter, keys: &[&str]) -> Vec<String> {
-    keys.iter()
+fn remove_keys(
+    fm: &mut Frontmatter,
+    keys: impl IntoIterator<Item = &'static str>,
+) -> Vec<&'static str> {
+    keys.into_iter()
         .filter(|key| fm.remove(key).is_some())
-        .map(|key| (*key).to_owned())
         .collect()
 }
 
@@ -149,7 +142,7 @@ fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
     } else if fm.remove("disable-model-invocation").is_some() {
         changed = true;
     }
-    changed |= !remove_keys(fm, &["invocation", "allow_implicit_invocation"]).is_empty();
+    changed |= !remove_keys(fm, ["invocation", "allow_implicit_invocation"]).is_empty();
 
     // `type` and a top-level `version` live under `metadata`, which already holds string pairs.
     if matches!(fm.get("metadata"), None | Some(Value::Mapping(_))) {
@@ -196,7 +189,7 @@ fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
                 .iter()
                 .any(|entry| entry.starts_with("Bash"))
         });
-    let dropped = remove_keys(fm, SKILL_TOOL_KEYS);
+    let dropped = remove_keys(fm, crate::skill::tool_keys());
     if !dropped.is_empty() {
         changed = true;
         warn(

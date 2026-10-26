@@ -7,6 +7,7 @@ use crate::claude;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 use crate::item::DefinitionKind;
+use crate::{agent::REMOVED_AGENT_FIELDS, skill};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UpgradeResult {
@@ -265,18 +266,9 @@ fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
     rename_field(fm, "model_invocable", "model-invocable");
     rename_field(fm, "user_invocable", "user-invocable");
 
-    for key in [
-        "network",
-        "network-allow",
-        "network-deny",
-        "fanout",
-        "models",
-        "mcp-tools",
-        "autocompact",
-        "autocompact_pct",
-    ] {
-        if fm.remove(key).is_some() {
-            diagnostics.push(removed(&[key], key));
+    for field in REMOVED_AGENT_FIELDS.iter().filter(|field| field.discarded) {
+        if fm.remove(field.key).is_some() {
+            diagnostics.push(removed(&[field.key], field.key));
         }
     }
 
@@ -329,13 +321,7 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
         }
     }
 
-    for key in [
-        "tools",
-        "disallowed-tools",
-        "allowed-tools",
-        "disallowed_tools",
-        "allowed_tools",
-    ] {
+    for key in skill::tool_keys() {
         if fm.remove(key).is_some() {
             diagnostics.push(SchemaDiagnostic::new(
                 "skill.tools-dropped",

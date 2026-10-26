@@ -107,7 +107,9 @@ pub(crate) struct AsPlugin<'a> {
     pub at_marketplace_root: bool,
 }
 
-// Claude-only frontmatter keys that predict the Claude dialect.
+// Claude's own spellings that are enough evidence to predict the Claude dialect. Deliberately
+// narrower than the import's vocabulary (`claude::translate`, `skill::tool_keys`): `tools`, `model`
+// and `hooks` also appear in native files.
 const CLAUDE_KEYS: &[&str] = &[
     "allowed-tools",
     "disable-model-invocation",

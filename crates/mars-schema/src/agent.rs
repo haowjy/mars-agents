@@ -6,24 +6,26 @@ use crate::HarnessId;
 use crate::ordered::OrderedValue;
 use serde_yaml::Value;
 
+use crate::diagnostic::{RemovedField, unrecognized_field};
 use crate::frontmatter::{Frontmatter, SkillsSpec};
 use crate::invocability::parse_invocability_axis;
 use crate::model_policy::ModelPolicyRule;
 use crate::tool_policy::{self, EffectiveToolPolicy};
 
-const REMOVED_AGENT_FIELDS: &[(&str, &str)] = &[
-    ("disallowed-tools", "use `tools: {<capability>: deny}`"),
-    ("fanout", "use consumer `[settings.meridian.fanout]`"),
-    ("models", "use `model-policies`"),
-    ("mcp-tools", "put MCP capability references in `tools`"),
-    ("model_invocable", "use `model-invocable`"),
-    ("user_invocable", "use `user-invocable`"),
-    ("network", "remove this unenforced field"),
-    ("network-allow", "remove this unenforced field"),
-    ("network-deny", "remove this unenforced field"),
-    ("autocompact", "configure compaction on the model alias"),
-    ("autocompact_pct", "configure compaction on the model alias"),
-    (
+/// The legacy upgrade drops the `discarded` keys and rewrites the rest.
+pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
+    RemovedField::discarded("network", "remove this unenforced field"),
+    RemovedField::discarded("network-allow", "remove this unenforced field"),
+    RemovedField::discarded("network-deny", "remove this unenforced field"),
+    RemovedField::discarded("fanout", "use consumer `[settings.meridian.fanout]`"),
+    RemovedField::discarded("models", "use `model-policies`"),
+    RemovedField::discarded("mcp-tools", "put MCP capability references in `tools`"),
+    RemovedField::discarded("autocompact", "configure compaction on the model alias"),
+    RemovedField::discarded("autocompact_pct", "configure compaction on the model alias"),
+    RemovedField::replaced("disallowed-tools", "use `tools: {<capability>: deny}`"),
+    RemovedField::replaced("model_invocable", "use `model-invocable`"),
+    RemovedField::replaced("user_invocable", "use `user-invocable`"),
+    RemovedField::replaced(
         "permission",
         "move it under `harness-overrides.flow.permission`",
     ),
@@ -268,10 +270,6 @@ fn push_agent_invalid(
 ) {
     push_invalid("agent", diags, path, value, allowed);
 }
-
-/// `field.unknown` text for Agents and skills: an unknown key stays in the authored file and
-/// reaches no native file.
-pub(crate) const UNKNOWN_FIELD_MESSAGE: &str = "unknown field `{key}` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`";
 
 /// A bad value for a field the item kind defines (`kind` is the noun in the message).
 pub(crate) fn push_invalid(
@@ -930,26 +928,7 @@ fn read_fields(
                 profile.harness_overrides = parse_harness_overrides("agent", value, diags);
             }
             "model-policies" => profile.model_policies = parse_model_policies(value, diags),
-            _ => {
-                if let Some((_, replacement)) = REMOVED_AGENT_FIELDS
-                    .iter()
-                    .find(|(removed, _)| *removed == key)
-                {
-                    diags.push(SchemaDiagnostic::new(
-                        "field.removed",
-                        Severity::Error,
-                        key_path(&key),
-                        format!("`{key}` was removed; {replacement}"),
-                    ));
-                } else {
-                    diags.push(SchemaDiagnostic::new(
-                        "field.unknown",
-                        Severity::Warning,
-                        key_path(&key),
-                        UNKNOWN_FIELD_MESSAGE.replace("{key}", &key),
-                    ));
-                }
-            }
+            _ => diags.push(unrecognized_field(REMOVED_AGENT_FIELDS, &key)),
         }
     }
 

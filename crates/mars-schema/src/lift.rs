@@ -181,15 +181,8 @@ pub fn lift_frontmatter(
 
 fn drop_skill_tool_fields(fm: &mut Frontmatter) -> bool {
     let mut changed = false;
-    for field in [
-        "tools",
-        "allowed-tools",
-        "allowed_tools",
-        "disallowed-tools",
-        "disallowed_tools",
-        "disallowedTools",
-    ] {
-        changed |= fm.remove(field).is_some();
+    for key in crate::skill::tool_keys() {
+        changed |= fm.remove(key).is_some();
     }
     changed
 }

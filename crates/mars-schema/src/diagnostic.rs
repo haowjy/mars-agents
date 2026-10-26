@@ -61,6 +61,56 @@ impl SchemaDiagnostic {
     }
 }
 
+/// A frontmatter key a schema version removed, as the reader and the legacy upgrade share it.
+/// `advice` is what the reader tells the author. A `discarded` key has no replacement, so the
+/// upgrade and the foreign-dialect import drop it with a warning; every other removed key is
+/// renamed or moved by the upgrade, or left for the author.
+pub(crate) struct RemovedField {
+    pub key: &'static str,
+    pub advice: &'static str,
+    pub discarded: bool,
+}
+
+impl RemovedField {
+    pub(crate) const fn replaced(key: &'static str, advice: &'static str) -> Self {
+        Self {
+            key,
+            advice,
+            discarded: false,
+        }
+    }
+
+    pub(crate) const fn discarded(key: &'static str, advice: &'static str) -> Self {
+        Self {
+            key,
+            advice,
+            discarded: true,
+        }
+    }
+}
+
+/// What an Agent or skill reader reports for a key it has no field for: `field.removed` (an
+/// error) when `removed` lists it, else `field.unknown` (a warning). An unknown key stays in the
+/// authored file and reaches no native file.
+pub(crate) fn unrecognized_field(removed: &[RemovedField], key: &str) -> SchemaDiagnostic {
+    match removed.iter().find(|field| field.key == key) {
+        Some(field) => SchemaDiagnostic::new(
+            "field.removed",
+            Severity::Error,
+            key_path(key),
+            format!("`{key}` was removed; {}", field.advice),
+        ),
+        None => SchemaDiagnostic::new(
+            "field.unknown",
+            Severity::Warning,
+            key_path(key),
+            format!(
+                "unknown field `{key}` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+            ),
+        ),
+    }
+}
+
 pub fn key_path(field: impl Into<String>) -> Vec<PathSegment> {
     vec![PathSegment::Key(field.into())]
 }

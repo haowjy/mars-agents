@@ -23,6 +23,7 @@ fn skill_not_found_has_requester_and_search_context() {
             skill,
             required_by,
             searched,
+            ..
         }) => {
             assert_eq!(skill, "missing-skill");
             assert_eq!(required_by, "a/coder");

@@ -122,6 +122,25 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let available_skills: HashSet<String> =
             installed.skills.iter().map(|s| s.name.clone()).collect();
 
+        // The record says which providers this machine has installed. Doctor has no manifest, so
+        // it cannot read `uses-providers`: a provider-shaped name is a warning, and the record
+        // only chooses the wording.
+        let mut provided_diag = crate::diagnostic::DiagnosticCollector::new();
+        let provided =
+            match crate::provided::ProvidedNames::load(&ctx.project_root, &mut provided_diag) {
+                Ok(provided) => provided,
+                Err(error) => {
+                    errors.push(format!("provided.lock error: {error}"));
+                    crate::provided::ProvidedNames::default()
+                }
+            };
+        warnings.extend(
+            provided_diag
+                .drain()
+                .into_iter()
+                .map(|diagnostic| diagnostic.message),
+        );
+
         let agents_for_check: Vec<(String, std::path::PathBuf)> = installed
             .agents
             .iter()
@@ -136,16 +155,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                     suggestion,
                 } = w
                 {
-                    if mars_schema::provider::provider_of(skill_name).is_some() {
-                        // Doctor has no manifest, so it cannot tell a declared provider ref
-                        // from an undeclared one: a provider's skill is a warning here and
-                        // sync, which reads the manifest, is the authority.
-                        warnings.push(format!(
-                            "agent `{}` references skill `{skill_name}`, which a host program supplies (`mars provide`) and which is not installed here",
-                            agent.name,
-                        ));
-                        continue;
-                    }
                     let msg = match suggestion {
                         Some(s) => format!(
                             "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
@@ -157,7 +166,22 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                             agent.name
                         ),
                     };
-                    errors.push(msg);
+                    match mars_schema::provider::provider_of(skill_name) {
+                        // A provider this machine has installed: the host supplies the skill
+                        // and has not shipped it this time.
+                        Some(provider) if provided.records_provider(provider) => {
+                            warnings.push(format!(
+                                "agent `{}` references skill `{skill_name}`, which a host program supplies (`mars provide`) and which is not installed here",
+                                agent.name,
+                            ));
+                        }
+                        // Otherwise a name that merely fits the provider grammar is
+                        // indistinguishable from a typo, so it gets the wording any missing
+                        // skill gets. It still warns: doctor has no manifest to judge a
+                        // declaration against.
+                        Some(_) => warnings.push(msg),
+                        None => errors.push(msg),
+                    }
                 }
             }
         }

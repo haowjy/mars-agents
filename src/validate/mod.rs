@@ -127,6 +127,16 @@ pub(crate) fn classify_unresolved_ref<'a>(
     }
 }
 
+/// The hint for a `<skill>__<provider>` ref that no package ships and no package declares.
+///
+/// A name can look exactly like a host provider's and still be a typo, so the hint is
+/// conditional. `mars check` and the resolver's `SkillNotFound` print this one text.
+pub(crate) fn undeclared_provider_hint(provider: &str) -> String {
+    format!(
+        "if `{provider}` is a host that provides this skill, declare it in `[package] uses-providers`; otherwise check the name"
+    )
+}
+
 /// Generic: parse skill dependencies from any item's frontmatter.
 ///
 /// Returns the `skills` list, or empty vec if no frontmatter, no skills

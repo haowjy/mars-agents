@@ -430,26 +430,41 @@ fn emit_missing_skill_warnings(
     diag: &mut DiagnosticCollector,
 ) {
     for warning in warnings {
-        let crate::validate::ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } = warning
-        else {
-            diag.warn(warning.code(), warning.message());
-            continue;
-        };
-        let suffix = suggestion
-            .as_ref()
-            .map(|name| format!(" (did you mean `{name}`?)"))
-            .unwrap_or_default();
-        diag.warn(
-            "unresolved-reference",
-            format!(
-                "agent `{}` references skill `{skill_name}`, which is not shipped{suffix}",
-                agent.name
-            ),
-        );
+        match warning {
+            crate::validate::ValidationWarning::MissingSkill {
+                agent,
+                skill_name,
+                suggestion,
+            } => {
+                let suffix = suggestion
+                    .as_ref()
+                    .map(|name| format!(" (did you mean `{name}`?)"))
+                    .unwrap_or_default();
+                diag.warn(
+                    "unresolved-reference",
+                    format!(
+                        "agent `{}` references skill `{skill_name}`, which is not shipped{suffix}",
+                        agent.name
+                    ),
+                );
+            }
+            crate::validate::ValidationWarning::ProvidedSkillUnavailable {
+                agent,
+                skill_name,
+                provider,
+            } => {
+                // A plugin carries no host-provided skills: the host supplies this one at
+                // launch, wherever the plugin is installed.
+                diag.warn(
+                    warning.code(),
+                    format!(
+                        "agent `{}` references skill `{skill_name}`, which host program `{provider}` supplies at launch; this plugin ships without it",
+                        agent.name
+                    ),
+                );
+            }
+            other => diag.warn(other.code(), other.message()),
+        }
     }
 }
 

@@ -34,9 +34,10 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
   must match `[a-z0-9][a-z0-9-]*`. A dependency's agent may list `<skill>__<provider>` for a
   declared provider: the ref resolves, nothing is pulled, and sync continues with
   `provided-skill-unavailable` where the host has not run `mars provide` (silent where it has).
-  A ref to an undeclared provider stays `skill not found` on every machine, as does a typo. The
-  resolver never reads `.mars/provided.lock`, and `mars.lock` is byte-identical with or without a
-  host. See [mars.toml](docs/config/mars-toml.md#provided-skills-and-uses-providers).
+  A ref to an undeclared provider stays `skill not found` on every machine, with a conditional
+  `uses-providers` hint, as does a typo. The resolver never reads `.mars/provided.lock`, and
+  `mars.lock` is byte-identical with or without a host. See
+  [mars.toml](docs/config/mars-toml.md#provided-skills-and-uses-providers).
 - A package item or `.mars-src/` item that wants a destination a provider installed replaces it,
   instead of `unmanaged-collision` or "blocked by unmanaged destination"; the next `mars provide`
   reports it `shadowed` and drops its record. Sync treats a recorded destination as Mars-owned
@@ -45,8 +46,12 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
   provided skill whose provider is not in `uses-providers`. `mars check` (the publish gate, which
   ignores `.mars/provided.lock`) passes a declared `<skill>__<provider>` ref and fails an undeclared
   one naming `uses-providers`, with or without `[dependencies]`. `mars doctor` warns, instead of an
-  error, on a missing `<skill>__<provider>` ref. A missing, corrupt or newer `provided.lock` reads as
-  nothing provided, with one `provided-lock-unusable` warning.
+  error, on a missing `<skill>__<provider>` ref. A corrupt or newer `provided.lock` reads as
+  nothing provided, with one `provided-lock-unusable` warning; a missing one is silent. A recorded
+  name counts as provided only while `.mars/skills/<name>` is a directory, so sync,
+  `mars validate --strict` and `mars doctor` agree when a package replaced a provided directory and
+  was later removed; ownership still follows the record, which covers directories a crash has not
+  left behind.
 - `[package] schema = 1`, the schema v1 promise (same bytes, same meaning; a change needs schema 2), and `uses-providers` in the manifest.
 - `mars migrate [--check]` upgrades a package's authored definitions to schema v1 in place. It rewrites only the top-level keys that change and keeps every other byte, reports a rare full rewrite, never touches dependencies, `.mars/` or `mars.lock`, and in a consumer project migrates only `.mars-src/`.
 - `mars-schema` crate and `@meridian-flow/mars-schema` npm package (WebAssembly) with one reader for agents, skills and `mars.toml`: `read` returns a plain-object reading (file spellings, `null` for absent, `Uint8Array` bytes, mapping keys in file order) with stable diagnostics keyed by structured path; `emitValue` and `rewriteBlock` are a quote-safe YAML emitter for lossless editors; `vocabulary` publishes the tool capabilities, their aliases and each host's native tools, with a typed Flow table; `prepare`, `inspect` and `normalize` read a whole repository as packages. Fixture suites pin every behaviour and run in Rust and Node.

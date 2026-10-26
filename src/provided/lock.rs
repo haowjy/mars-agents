@@ -6,7 +6,7 @@
 //! reader either the old file or the new one.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -43,11 +43,70 @@ pub(crate) struct ProviderRecord {
     pub skills: Vec<String>,
 }
 
-/// A loaded record, with anything the file got wrong that the caller should report.
+/// Why a record cannot be read as this build's.
+///
+/// The two reasons differ in what the writer may do about them: a corrupt file can be rebuilt
+/// from the files on disk, while a newer one must not be touched.
+#[derive(Debug)]
+pub(crate) enum Unusable {
+    /// The file is not a record this build can parse: nothing in it can be trusted.
+    Corrupt { path: PathBuf, reason: String },
+    /// A newer Mars wrote it: reading part of another build's state is worse than reading none.
+    Newer { path: PathBuf, version: i64 },
+}
+
+impl Unusable {
+    /// What a reader says where it prints: the record is ignored for this run.
+    pub(crate) fn reader_message(&self) -> String {
+        match self {
+            Self::Corrupt { path, reason } => format!(
+                "{} is unusable ({reason}); ignoring it, so nothing is provided for this run",
+                path.display()
+            ),
+            Self::Newer { path, version } => format!(
+                "{} uses provided lock version {version}, which this Mars cannot read (it reads version {PROVIDED_LOCK_VERSION}); ignoring it, so nothing is provided for this run",
+                path.display()
+            ),
+        }
+    }
+
+    /// What the writer says: a corrupt record is replaced, a newer one is refused.
+    fn writer_message(&self) -> String {
+        match self {
+            Self::Corrupt { path, reason } => format!(
+                "{} is unusable ({reason}); starting from an empty provided record",
+                path.display()
+            ),
+            Self::Newer { path, version } => format!(
+                "{} uses provided lock version {version}; this Mars reads version {PROVIDED_LOCK_VERSION} — upgrade Mars to read it",
+                path.display()
+            ),
+        }
+    }
+}
+
+/// A loaded record, with why it could not be read if it could not.
 pub(crate) struct LoadedProvidedLock {
+    /// The record. Empty when `unusable` is `Some`.
     pub record: ProvidedLock,
-    /// The file is unusable: the record is empty and the next write replaces the file.
-    pub warnings: Vec<String>,
+    pub unusable: Option<Unusable>,
+}
+
+impl LoadedProvidedLock {
+    /// The writer's reading: `mars provide` refuses a record a newer Mars wrote and drops a
+    /// corrupt one with its warning, because adoption against the files on disk rebuilds the
+    /// ownership a corrupt record can no longer prove.
+    pub(crate) fn for_write(self) -> Result<(ProvidedLock, Option<String>), MarsError> {
+        match self.unusable {
+            None => Ok((self.record, None)),
+            Some(unusable @ Unusable::Corrupt { .. }) => {
+                Ok((self.record, Some(unusable.writer_message())))
+            }
+            Some(unusable) => Err(MarsError::Config(ConfigError::Invalid {
+                message: unusable.writer_message(),
+            })),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -66,10 +125,10 @@ struct OutgoingProvidedLock<'a> {
 impl ProvidedLock {
     /// Read the project's record.
     ///
-    /// A corrupt file is a warning and an empty record: its contents cannot be trusted, and
-    /// adoption against the files on disk recovers the ownership it can still prove. An
-    /// unknown version is an error, because a newer Mars wrote it and refusing is the only
-    /// answer that cannot lose that build's state.
+    /// A corrupt file is [`Unusable::Corrupt`] with an empty record: its contents cannot be
+    /// trusted, and adoption against the files on disk recovers the ownership it can still
+    /// prove. An unknown version is [`Unusable::Newer`] with an empty record, because a newer
+    /// Mars wrote it and each side decides for itself: the writer refuses it, a reader ignores it.
     pub(crate) fn load(root: &Path) -> Result<LoadedProvidedLock, MarsError> {
         let path = root.join(".mars").join(PROVIDED_LOCK_FILE);
         let content = match std::fs::read_to_string(&path) {
@@ -77,7 +136,7 @@ impl ProvidedLock {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(LoadedProvidedLock {
                     record: ProvidedLock::default(),
-                    warnings: Vec::new(),
+                    unusable: None,
                 });
             }
             Err(source) => {
@@ -95,12 +154,10 @@ impl ProvidedLock {
         match wire.version {
             Some(version) if version == i64::from(PROVIDED_LOCK_VERSION) => {}
             Some(version) => {
-                return Err(MarsError::Config(ConfigError::Invalid {
-                    message: format!(
-                        "{} uses provided lock version {version}; this Mars reads version {PROVIDED_LOCK_VERSION} — upgrade Mars to read it",
-                        path.display()
-                    ),
-                }));
+                return Ok(LoadedProvidedLock {
+                    record: ProvidedLock::default(),
+                    unusable: Some(Unusable::Newer { path, version }),
+                });
             }
             None => return Ok(corrupt(&path, "it has no integer `version`".to_string())),
         }
@@ -130,7 +187,7 @@ impl ProvidedLock {
             record: ProvidedLock {
                 providers: wire.providers,
             },
-            warnings: Vec::new(),
+            unusable: None,
         })
     }
 
@@ -165,10 +222,10 @@ impl ProvidedLock {
 fn corrupt(path: &Path, reason: String) -> LoadedProvidedLock {
     LoadedProvidedLock {
         record: ProvidedLock::default(),
-        warnings: vec![format!(
-            "{} is unusable ({reason}); starting from an empty provided record",
-            path.display()
-        )],
+        unusable: Some(Unusable::Corrupt {
+            path: path.to_path_buf(),
+            reason,
+        }),
     }
 }
 

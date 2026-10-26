@@ -60,9 +60,8 @@ pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport
             warnings,
         ));
     }
-    let loaded = ProvidedLock::load(root)?;
-    warnings.extend(loaded.warnings);
-    let mut record = loaded.record;
+    let (mut record, unusable) = ProvidedLock::load(root)?.for_write()?;
+    warnings.extend(unusable);
     let package_lock = crate::lock::load(root)?;
     let claims = LockIndex::new(&package_lock);
     let previous = record.provider(&spec.provider).cloned().unwrap_or_default();
@@ -137,8 +136,8 @@ fn plan_against_installed(
     entries: &ProvidedEntries,
     skills_dir: &Path,
 ) -> Result<Option<(ProviderRecord, Plan)>, MarsError> {
-    let loaded = ProvidedLock::load(root)?;
-    let Some(previous) = loaded.record.provider(&spec.provider).cloned() else {
+    let (record, _) = ProvidedLock::load(root)?.for_write()?;
+    let Some(previous) = record.provider(&spec.provider).cloned() else {
         return Ok(None);
     };
     if !matches_source(&previous, spec, entries) {

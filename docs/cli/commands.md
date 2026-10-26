@@ -675,14 +675,14 @@ component ending in `__<that provider>`; anything else makes the file corrupt
 (one warning, an empty record) rather than letting a record point a removal at
 another provider's directory.
 
-Other commands only read it. `mars sync` counts the recorded names as available
-for refs from a package that declares the provider in `uses-providers` (see
-[mars.toml](../config/mars-toml.md#provided-skills-and-uses-providers)), and treats a
-recorded destination as Mars-owned, so a package item or `.mars-src/` item that wants
-the same destination replaces it instead of colliding. A missing, corrupt or newer
-`provided.lock` reads as "nothing provided" with one `provided-lock-unusable` warning.
-`mars doctor` warns, rather than errors, on a missing `<skill>__<provider>` ref, since
-it has no manifest to read declarations from.
+Other commands only read it. `mars sync` counts a recorded name as available for refs from a
+package that declares the provider in `uses-providers` (see
+[mars.toml](../config/mars-toml.md#provided-skills-and-uses-providers)) only while
+`.mars/skills/<name>` is a directory, and treats a recorded destination as Mars-owned, so a
+package item or `.mars-src/` item that wants the same destination replaces it instead of
+colliding. A corrupt or newer `provided.lock` reads as "nothing provided" with one
+`provided-lock-unusable` warning; a missing one is silent. `mars doctor` warns, rather than
+errors, on a missing `<skill>__<provider>` ref, since it has no manifest to read declarations from.
 
 ---
 

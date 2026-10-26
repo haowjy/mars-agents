@@ -57,12 +57,12 @@ byte-equal adopt rule compare raw bytes. `mars_schema::skill::read` is used only
 
 `version = 1`, one `[providers.<name>]` table holding `version` (opaque, for display and change
 detection), `digest` and `skills`. No paths, no per-item checksums: `.mars/` is derived and
-gitignored, so nothing committed carries a provider, a path or a version. A corrupt file is a
-warning and an empty record (adoption recovers what the disk can prove); an unknown version is
-refused, because a newer Mars wrote it. A recorded name is validated before use as a single path
-component **and** as one of that table's own `<skill>__<provider>` names: the file is written by
-another build, and a name that belongs to another provider would otherwise let a record point a
-removal at that provider's directory.
+gitignored, so nothing committed carries a provider, a path or a version. A corrupt file is an
+empty record with a warning (adoption recovers what the disk can prove); an unknown version is an
+empty record that `mars provide` refuses and a reader ignores, because a newer Mars wrote it. A
+recorded name is validated before use as a single path component **and** as one of that table's own
+`<skill>__<provider>` names: the file is written by another build, and a name that belongs to
+another provider would otherwise let a record point a removal at that provider's directory.
 
 ## What readers see
 
@@ -81,6 +81,12 @@ on what a machine has installed. `owns(dest)` feeds `sync::ownership::Ownership`
 predicate: a destination is Mars-owned if `mars.lock` claims it or a provider installed it, so a
 package item (or a `.mars-src/` item) replaces a provided directory instead of colliding, on every
 machine. The next `mars provide` sees the claim in `mars.lock` and drops its record (`shadowed`).
+
+Availability is the disk's and ownership is the record's. `provides` answers true only while
+`.mars/skills/<name>` is a directory, decided once in `ProvidedNames::load`, because a recorded name
+with no directory is a leftover and a ref it "satisfies" is a ref an agent cannot load. `owns` takes
+the full record instead: owning an absent path is harmless, and a crash between a package's replace
+and the `mars.lock` write must still find the directory counted as Mars's.
 
 A sync that replaces a provided directory journals nothing (`sync/recovery.rs` journals only absent
 destinations), so a crash between the replace and the `mars.lock` write leaves the package's bytes

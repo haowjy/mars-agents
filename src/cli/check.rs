@@ -12,7 +12,7 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::error::MarsError;
-use crate::validate::{RefClass, classify_unresolved_ref};
+use crate::validate::{RefClass, classify_unresolved_ref, undeclared_provider_hint};
 use mars_schema::dialect::Dialect;
 
 use super::output;
@@ -374,7 +374,8 @@ fn check_prepared(
         .map(|package| package.uses_providers.as_slice());
     let undeclared_provider_error = |agent: &str, skill: &str, provider: &str| {
         format!(
-            "agent `{agent}` references skill `{skill}`, which is not in this package or its dependencies; if provider `{provider}` supplies it, declare `uses-providers = [\"{provider}\"]` under `[package]`"
+            "agent `{agent}` references skill `{skill}`, which is not in this package or its dependencies; {}",
+            undeclared_provider_hint(provider)
         )
     };
     if has_package_dependencies(lens) {

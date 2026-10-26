@@ -72,6 +72,7 @@ impl<'a> SkillResolver<'a> {
             skill: skill.to_string(),
             required_by: requester_package.to_string(),
             searched,
+            hint: None,
         })
     }
 
@@ -176,7 +177,8 @@ pub(crate) fn discovered_item_markdown_path(
 /// `uses-providers` and no package ships the skill: nothing is pulled and nothing is reported
 /// here, because sync's validator is the one reporter of what is installed. The answer depends
 /// on the package alone, never on what this machine has provided, so a package resolves the
-/// same everywhere. Any other missing skill is `SkillNotFound`.
+/// same everywhere. Any other missing skill is `SkillNotFound`; a name shaped like a provider's
+/// carries the conditional `uses-providers` hint, because no package declared that provider.
 pub(crate) fn resolve_skill_ref(
     skill: &ItemName,
     requester: &PendingItem,
@@ -198,16 +200,19 @@ pub(crate) fn resolve_skill_ref(
                 .map_or(&[][..], |manifest| {
                     manifest.package.uses_providers.as_slice()
                 });
-            if matches!(
-                validate::classify_unresolved_ref(skill.as_str(), Some(declared), None),
-                validate::RefClass::Unavailable { .. }
-            ) {
-                return Ok(None);
-            }
+            let hint = match validate::classify_unresolved_ref(skill.as_str(), Some(declared), None)
+            {
+                validate::RefClass::Unavailable { .. } => return Ok(None),
+                validate::RefClass::Missing {
+                    provider: Some(provider),
+                } => Some(validate::undeclared_provider_hint(provider)),
+                _ => None,
+            };
             return Err(ResolutionError::SkillNotFound {
                 skill: missing_skill,
                 required_by,
                 searched,
+                hint,
             }
             .into());
         }

@@ -2,8 +2,10 @@
 
 use super::*;
 use crate::config::*;
-use crate::lock::LockFile;
+use crate::lock::{ItemId, LockFile};
 use crate::resolve::{ResolvedGraph, ResolvedNode};
+use crate::sync::target::TargetItem;
+use crate::types::{ContentHash, DestPath};
 use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
 use std::fs;

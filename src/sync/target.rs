@@ -674,7 +674,7 @@ fn apply_item_rename(
 
 /// Construct the default destination path for an item.
 /// Uses string formatting to guarantee forward slashes on all platforms.
-fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
+pub(crate) fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
     let path_str = match kind {
         ItemKind::Agent => format!("agents/{name}.md"),
         ItemKind::Skill => format!("skills/{name}"),

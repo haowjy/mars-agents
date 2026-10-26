@@ -2,6 +2,7 @@ use mars_schema::item::ItemKind;
 pub mod apply;
 pub mod diff;
 pub mod filter;
+mod local_items;
 pub mod mutation;
 pub mod plan;
 pub(crate) mod recovery;
@@ -19,16 +20,14 @@ use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::error::MarsError;
 use crate::fs::FileLock;
-use crate::hash;
-use crate::lock::{CANONICAL_TARGET_ROOT, ItemId};
-use crate::lock::{LockFile, LockIndex};
+use crate::lock::LockFile;
 use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
-use crate::sync::target::{TargetItem, TargetState};
+use crate::sync::target::TargetState;
 use crate::types::managed_cmd;
-use crate::types::{ContentHash, DestPath, MarsContext, SourceName, SourceOrigin};
+use crate::types::{MarsContext, SourceName};
 use crate::validate::ValidationWarning;
 
 pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange};
@@ -597,177 +596,14 @@ pub(crate) fn build_target(
         &resolved.loaded.effective,
         diag,
         |target_state, diag| {
-            let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
-            let old_lock_index = LockIndex::new(&resolved.loaded.old_lock);
-            let managed_targets = resolved.loaded.effective.settings.managed_targets();
-
-            for item in local_items {
-                if let crate::local_source::LocalItemContent::Mcp(mcp) = &item.content {
-                    target_state.select_mcp(mcp.as_ref().clone(), &managed_targets);
-                    continue;
-                }
-                if let crate::local_source::LocalItemContent::Hook(hook) = &item.content {
-                    for (target_name, dest_path, target_item) in
-                        target::hook_target_items(hook, &local_source_name, &managed_targets)?
-                    {
-                        if let Some(existing) = target_state.items.shift_remove(&dest_path)
-                            && existing.source_hash != target_item.source_hash
-                        {
-                            diag.warn(
-                                "local-shadow",
-                                format!(
-                                    "local hook `{}` shadows dependency `{}` hook on target `{target_name}`",
-                                    hook.def.name, existing.source_name
-                                ),
-                            );
-                        }
-                        target_state.select_hook(&target_name, &target_item, hook.as_ref().clone());
-                        let disk_path = dest_path.resolve(managed_root);
-                        if !old_lock_index
-                            .contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-                            && disk_path.symlink_metadata().is_ok()
-                        {
-                            diag.warn(
-                                "unmanaged-collision",
-                                format!(
-                                    "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched",
-                                    hook.def.name
-                                ),
-                            );
-                            continue;
-                        }
-                        target_state.items.insert(dest_path, target_item);
-                    }
-                    continue;
-                }
-                let is_flat_skill = item.discovered.id.kind == ItemKind::Skill
-                    && item.discovered.source_path == Path::new(".");
-                let excluded_paths = if is_flat_skill {
-                    let mut targets = resolved.loaded.effective.settings.managed_targets();
-                    targets.extend(resolved.loaded.old_lock.items.values().flat_map(|item| {
-                        item.outputs.iter().map(|output| output.target_root.clone())
-                    }));
-                    targets.sort();
-                    targets.dedup();
-                    crate::local_source::flat_skill_excluded_paths(
-                        &ctx.project_root,
-                        &item.disk_path(),
-                        &targets,
-                    )?
-                } else {
-                    Vec::new()
-                };
-                let staging_root = resolved.preparation.path();
-                let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
-                let staged_path = crate::staging::materialize_local_prepared(
-                    &item,
-                    &resolved.loaded.effective.skills,
-                    staging_root,
-                    &item_key,
-                    &excluded_paths,
-                )?;
-                let source_path = staged_path;
-                let source_hash = if is_flat_skill {
-                    ContentHash::from(hash::compute_skill_hash_filtered(
-                        &source_path,
-                        crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL,
-                    )?)
-                } else {
-                    ContentHash::from(hash::compute_hash(&source_path, item.discovered.id.kind)?)
-                };
-                if item.discovered.id.kind == ItemKind::Agent
-                    && let Err(message) =
-                        crate::target::validate_agent_filename(item.discovered.id.name.as_str())
-                {
-                    diag.error_with_category(
-                        "invalid-agent-filename",
-                        format!("{message}; skipping local agent"),
-                        crate::diagnostic::DiagnosticCategory::Validation,
-                    );
-                    continue;
-                }
-                let dest_path =
-                    default_dest_path(item.discovered.id.kind, item.discovered.id.name.as_str());
-
-                if let Some(existing) = target_state.items.shift_remove(&dest_path)
-                    && existing.source_hash != source_hash
-                {
-                    diag.warn(
-                        "local-shadow",
-                        format!(
-                            "local {} `{}` shadows dependency `{}` {} `{}`",
-                            item.discovered.id.kind,
-                            item.discovered.id.name,
-                            existing.source_name,
-                            existing.id.kind,
-                            existing.id.name
-                        ),
-                    );
-                }
-
-                let disk_path = dest_path.resolve(managed_root);
-                let unowned_collision = !old_lock_index
-                    .contains_installed_output(CANONICAL_TARGET_ROOT, &dest_path)
-                    && disk_path.symlink_metadata().is_ok();
-                let adoptable = unowned_collision
-                    && force_adoptable_self_destination(
-                        &disk_path,
-                        managed_root,
-                        item.discovered.id.kind,
-                    );
-                if unowned_collision && !(request.options.force && adoptable) {
-                    let guidance = if adoptable {
-                        format!(
-                            "use `{}` to replace and adopt this regular destination",
-                            managed_cmd("mars sync --force")
-                        )
-                    } else {
-                        "relocate the destination and retry sync (force cannot adopt symlinks or wrong-shaped paths)".to_string()
-                    };
-                    return Err(MarsError::Source {
-                        source_name: local_source_name.to_string(),
-                        message: format!(
-                            "selected self {} `{}` from `{}` is blocked by unmanaged destination `{}`; {guidance}",
-                            item.discovered.id.kind,
-                            item.discovered.id.name,
-                            item.disk_path().display(),
-                            disk_path.display(),
-                        ),
-                    });
-                }
-                if request.options.force && adoptable {
-                    let action = if request.options.dry_run {
-                        "would replace and adopt"
-                    } else {
-                        "will replace and adopt"
-                    };
-                    diag.warn(
-                        "self-adopt",
-                        format!(
-                            "selected self {} `{}` {action} existing canonical destination `{}`",
-                            item.discovered.id.kind,
-                            item.discovered.id.name,
-                            disk_path.display()
-                        ),
-                    );
-                }
-
-                target_state.items.insert(
-                    dest_path.clone(),
-                    TargetItem {
-                        id: ItemId {
-                            kind: item.discovered.id.kind,
-                            name: item.discovered.id.name.clone(),
-                        },
-                        source_name: local_source_name.clone(),
-                        source_path,
-                        dest_path,
-                        source_hash,
-                        is_flat_skill,
-                        rewritten_content: None,
-                    },
-                );
-            }
+            local_items::merge_local_items(
+                ctx,
+                &resolved,
+                local_items,
+                request,
+                target_state,
+                diag,
+            )?;
 
             // Prevent managed installs from overwriting unmanaged files.
             let unmanaged_collisions = target::check_unmanaged_collisions(
@@ -1281,46 +1117,6 @@ fn retry_tombstone_removals(
         }
     }
     removed
-}
-
-fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
-    match kind {
-        ItemKind::Agent => DestPath::from(format!("agents/{name}.md")),
-        ItemKind::Skill => DestPath::from(format!("skills/{name}")),
-        ItemKind::Hook => DestPath::from(format!("hooks/{name}")),
-        ItemKind::McpServer => DestPath::from(format!("mcp/{name}")),
-        ItemKind::BootstrapDoc => DestPath::from(format!("bootstrap/{name}/BOOTSTRAP.md")),
-    }
-}
-
-fn force_adoptable_self_destination(path: &Path, managed_root: &Path, kind: ItemKind) -> bool {
-    let Some(relative) = path.strip_prefix(managed_root).ok() else {
-        return false;
-    };
-    let Ok(root_metadata) = managed_root.symlink_metadata() else {
-        return false;
-    };
-    if root_metadata.file_type().is_symlink() {
-        return false;
-    }
-    let mut current = managed_root.to_path_buf();
-    for component in relative.components() {
-        current.push(component.as_os_str());
-        let Ok(metadata) = current.symlink_metadata() else {
-            break;
-        };
-        if metadata.file_type().is_symlink() {
-            return false;
-        }
-    }
-    match path.symlink_metadata() {
-        Ok(metadata) => match kind {
-            ItemKind::Agent => metadata.is_file(),
-            ItemKind::Skill => metadata.is_dir(),
-            _ => false,
-        },
-        Err(_) => false,
-    }
 }
 
 fn validate_request(request: &SyncRequest) -> Result<(), MarsError> {

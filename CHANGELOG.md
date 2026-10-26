@@ -74,6 +74,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - `mars doctor` hashes a bootstrap document as its directory, so it no longer fails with `Not a directory` (v0.19.0 did too).
 - `mars check --root PATH` validates `PATH`; `--root` was ignored.
 - `mars add <dir> --plugin <name>` (or `plugin = "<name>"`) on a Mars package says it is a Mars package, read as one, and to drop `plugin`. It claimed the `.claude-plugin/marketplace.json` was missing when a package's own plugin output had put one at its root.
+- A Cursor plugin build no longer reports an Agent's `mode` as dropped (and `mars sync` no longer lists it as approximately mapped for `.cursor`): the Cursor agent file writes it.
 
 ### Security
 - `mars sync` refuses a dependency holding a symlink that leaves the package (`authored package entry escapes package root`). v0.19.0 copied the target, such as `/etc/hostname`, into `.mars/`.

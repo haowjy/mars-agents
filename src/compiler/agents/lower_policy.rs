@@ -274,7 +274,7 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 
 const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     description: DescriptionPolicy::CursorOneLine,
-    mode_note: Some("Cursor may use the same mode concept"),
+    mode_note: None,
     skills: AgentSkillsPolicy::NativePreload,
     fields: &[
         LoweredField::Identity,

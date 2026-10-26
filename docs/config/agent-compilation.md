@@ -365,7 +365,7 @@ YAML frontmatter + markdown body.
 | `model` | `model:` (internally adapted when deterministic mapping exists) | exact |
 | `skills.load` | `skills:` | exact |
 | `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
-| `mode` | `mode:` | approximate |
+| `mode` | `mode:` | exact |
 | body | body | exact |
 | `approval` | runtime-only (meridian projects `--force`/`--yolo`) | approximate |
 | `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | approximate |
@@ -488,7 +488,7 @@ Expected body-guided skill channels are documented mappings and do not emit warn
 
 ```
 warning: agent `coder`: 2 fields dropped for .codex (disallowed-tools, tools)
-warning: agent `reviewer`: 2 fields approximately mapped for .cursor (mode: Cursor may use the same mode concept; sandbox: Cursor only supports enabled/disabled)
+warning: agent `reviewer`: 1 field approximately mapped for .cursor (sandbox: Cursor only supports enabled/disabled)
 ```
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.

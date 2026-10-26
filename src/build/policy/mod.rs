@@ -5,7 +5,7 @@ use std::path::Path;
 use indexmap::IndexMap;
 
 use crate::build::bundle::ExecutionPolicy;
-use crate::config::{AgentOverlay, EffectiveProjectConfig, Settings};
+use crate::config::{AgentOverlay, EffectiveProjectConfig};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
@@ -642,22 +642,25 @@ pub(crate) struct ModelRef<'a> {
 /// The profile as it launches on one model: effort, approval, sandbox and network resolved
 /// through the launch bundle's precedence functions, with every layer known at sync time
 /// (overlay scalars, the first matching model policy across overlay, profile and settings, the
-/// profile's top-level fields, `[settings]` network defaults, the alias default effort); only
-/// the CLI layer is absent. `model` is `None` when the artifact emits no model: no policy or
-/// alias applies then.
+/// profile's top-level fields, the alias default effort); only the CLI layer is absent. `model`
+/// is `None` when the artifact emits no model: no policy or alias applies then.
+///
+/// Network comes from the Agent's own layers only (overlay, model-policy override, profile).
+/// The project's `[settings]` network is not the Agent's: a package build never receives it, and
+/// sync reports it once per target instead of once per Agent.
 ///
 /// `profile` is the overlay-resolved native profile, whose `model_policies` already start
 /// with the overlay's own, so they are matched here as one list ahead of the settings policies.
 pub(crate) fn profile_for_model(
     profile: &AgentProfile,
     overlay: Option<&AgentOverlay>,
-    settings: &Settings,
+    settings_policies: &[ModelPolicyRule],
     model: Option<ModelRef<'_>>,
 ) -> AgentProfile {
     use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
     let matched = model.as_ref().and_then(|model| {
         match_model_policy(
-            effective_policies(None, &profile.model_policies, &settings.model_policies),
+            effective_policies(None, &profile.model_policies, settings_policies),
             model.canonical_id,
             model.alias.map(|_| model.token),
         )
@@ -685,7 +688,7 @@ pub(crate) fn profile_for_model(
         profile,
         overlay,
         matched.as_ref(),
-        settings,
+        None,
     )
     .policy;
     resolved.network = network.mode;

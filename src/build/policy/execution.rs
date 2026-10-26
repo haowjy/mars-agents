@@ -58,7 +58,7 @@ pub(super) fn resolve_execution_policy(
         input.profile,
         overlay,
         matched_policy,
-        settings,
+        Some(settings),
     );
     let autocompact = alias_field(alias.and_then(|entry| entry.autocompact));
     let autocompact_pct = alias_field(alias.and_then(|entry| entry.autocompact_pct));
@@ -250,14 +250,14 @@ pub(super) struct ResolvedNetwork {
 }
 
 /// Network mode follows the shared precedence chain, with `[settings] default-network` below
-/// the model policies. Host sets merge in layer order (settings, profile, overlay, CLI) and
+/// the model policies. Native lowering passes no `settings`: see `profile_for_model`. Host sets merge in layer order (settings, profile, overlay, CLI) and
 /// come out sorted: the project's deny entries are never replaced by a higher layer.
 pub(super) fn resolve_network(
     cli: CliNetwork<'_>,
     profile: &AgentProfile,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-    settings: &Settings,
+    settings: Option<&Settings>,
 ) -> ResolvedNetwork {
     let mut mode = resolve_policy_field(
         "network",
@@ -267,18 +267,18 @@ pub(super) fn resolve_network(
             cli: cli.mode.cloned(),
             overlay: overlay.and_then(|entry| entry.network.clone()),
             profile: profile.network.clone(),
-            settings: settings.default_network.clone(),
+            settings: settings.and_then(|settings| settings.default_network.clone()),
             alias: None,
         },
     );
     let mut allow = merge_network_hosts(
-        &settings.network_allow,
+        settings.map(|settings| &settings.network_allow),
         &profile.network_allow,
         overlay.map(|entry| &entry.network_allow),
         cli.allow,
     );
     let mut deny = merge_network_hosts(
-        &settings.network_deny,
+        settings.map(|settings| &settings.network_deny),
         &profile.network_deny,
         overlay.map(|entry| &entry.network_deny),
         cli.deny,
@@ -311,16 +311,13 @@ pub(super) fn resolve_network(
 }
 
 fn merge_network_hosts(
-    settings: &PermissionSet<NetworkHost>,
+    settings: Option<&PermissionSet<NetworkHost>>,
     profile: &PermissionSet<NetworkHost>,
     overlay: Option<&PermissionSet<NetworkHost>>,
     cli: &[NetworkHost],
 ) -> Vec<NetworkHost> {
     let mut merged = Vec::new();
-    for layer in [Some(settings), Some(profile), overlay]
-        .into_iter()
-        .flatten()
-    {
+    for layer in [settings, Some(profile), overlay].into_iter().flatten() {
         merge_permission_set(&mut merged, layer);
     }
     merge_permission_set(&mut merged, &PermissionSet::Add(cli.to_vec()));

@@ -272,7 +272,7 @@ fn stage_plugin_inner(
         metadata: &metadata,
         root_source: &root_source,
         agent_overlays: &manifest.agents,
-        settings: &manifest.settings,
+        settings_policies: &manifest.settings.model_policies,
         aliases: &aliases,
         graph: &graph,
         target: &prepared_target.target,

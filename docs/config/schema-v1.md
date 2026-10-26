@@ -149,7 +149,7 @@ The mode resolves through the [precedence chain for `effort`, `sandbox` and `app
 - `allowlist` with no allowed host resolves to `deny` and warns.
 - `deny` empties both host sets, and `allow` empties the allow set.
 
-The launch bundle carries the result as `execution_policy.network` (`{mode, allow, deny}`), and `provenance.network_source` names the layer that set the mode: `cli`, `overlay`, `overlay-model-policy`, `profile`, `profile-model-policy`, `settings-model-policy`, `config` or `unset`. Mars does not enforce the policy; Meridian does. Native agent files resolve the same chain without the command-line layer and report `network` as meridian-only, or as dropped for Codex, whose native file keeps Codex's own network default. See [Agent profiles](agent-profiles.md#network).
+The launch bundle carries the result as `execution_policy.network` (`{mode, allow, deny}`), and `provenance.network_source` names the layer that set the mode: `cli`, `overlay`, `overlay-model-policy`, `profile`, `profile-model-policy`, `settings-model-policy`, `config` or `unset`. Mars does not enforce the policy; Meridian does. Native agent files and plugin trees resolve the same chain without the command-line layer and without `[settings]`, and report `network` as meridian-only, or as dropped for Codex, whose native file keeps Codex's own network default. See [Agent profiles](agent-profiles.md#network).
 
 ## Model policies
 

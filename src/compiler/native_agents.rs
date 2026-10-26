@@ -136,8 +136,7 @@ pub(crate) struct NativeModelRoutingRuntime<'a> {
     cache: &'a ModelsCache,
     catalog_model_slugs: Vec<String>,
     routing_settings: ResolvedRoutingSettings,
-    /// `[[settings.model-policies]]` and the network defaults: the lowest policy layer, known at
-    /// sync.
+    /// `[[settings.model-policies]]`: the lowest policy layer, known at sync.
     settings: crate::config::Settings,
     session: CapabilitySession,
     installed_for_native_targets: HashSet<String>,
@@ -157,8 +156,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         Self::with_session(aliases, cache, routing_settings, session)
     }
 
-    /// Settings model policies and network defaults join the native precedence chain, as in the
-    /// bundle.
+    /// Settings model policies join the native precedence chain, as in the bundle.
     pub(crate) fn with_settings(mut self, settings: crate::config::Settings) -> Self {
         self.settings = settings;
         self
@@ -285,7 +283,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         crate::build::policy::profile_for_model(
             profile,
             overlay,
-            &self.settings,
+            &self.settings.model_policies,
             resolved
                 .as_ref()
                 .map(|(token, resolved)| crate::build::policy::ModelRef {

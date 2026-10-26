@@ -42,7 +42,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 
 ### Changed
 - Mars prepares every package (dependencies, `.mars-src`, the local package, `mars check`, `validate`, `migrate`, publish inputs) through `mars_schema::prepare` before it mutates anything. The authored tree stays untouched; sync projects prepared bytes into the recoverable `.mars/.staging.pending` generation after the diagnostic gate and publishes it by rename. Relative path dependencies resolve from the authored origin. Pre-v1 `.mars-src` content is upgraded in memory with a warning that names `mars migrate`.
-- Sync targets, lossiness preview, plugin builds and `doctor` take Agents and skills from the prepared package, not a second walk of the materialized tree; the binary's walk finds only hooks, MCP items and bootstrap documents.
+- Sync targets, lossiness preview, plugin builds and `doctor` take Agents and skills from the prepared package, not a second walk of the materialized tree; the binary's walk finds only hooks and bootstrap documents.
 - Native agent files (`.claude`, `.codex`, Cursor, plugin trees) resolve effort, sandbox and approval through the launch bundle's chain, minus the CLI layer, so `[agents.<name>]` scalars, the matching `model-policies` rule and `[[settings.model-policies]]` apply; an artifact that names no model gets only the overlay and top-level values.
 - `[agents.<name>]` and `[skills.<name>]` overlays are consumer configuration outside the schema; a dependency's own overlay tables are inert. Keys they no longer read are ignored with a warning that names them.
 
@@ -54,8 +54,15 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - The pre-v1 upgrade (in memory and `mars migrate`) moves Claude-only keys to `harness-overrides.claude`, the same list the Claude importer uses, so a pre-v1 skill's `argument-hint` still reaches `.claude/`.
 - Commands that save `mars.toml` or `mars.local.toml` (`add`, `remove`, `link`, `unlink`, `override`, `init`, `models alias`, and sync mutations) edit the authored document: only the changed keys are touched, so comments, key order and unknown `[package]` and `[dependencies.<n>]` keys survive. Unknown dependency keys warn (`field.unknown`) like package keys. `mars add` then `mars remove` of the same dependency leaves `mars.toml` byte-identical.
 - Removing a frontmatter key no longer reorders the keys after it.
+- `mars sync`, `check` and `doctor` warn once per pre-v1 package (`legacy-package`) and no longer repeat each key the upgrade drops or moves; `mars migrate` lists those.
+- Diagnostics keep the schema crate's own code (`yaml.non-json-value`, `skill.name-*`, `marketplace.*`) in `--json` output, not `schema-diagnostic`.
+- A skill's `disallowedTools` is a removed key like `allowed-tools`: the reader errors on it and the pre-v1 upgrade drops it with a warning. It used to be an unknown field.
+- "Valid harnesses" lists read claude, codex, pi, opencode, cursor.
+- The `@meridian-flow/mars-schema` `.wasm` builds for size (936 KB, 373 KB gzip, from 1.27 MB). Parsing is about 60% slower: 78 definitions read in 7.9 ms, from 4.8 ms.
 
 ### Fixed
+- `mars sync` and `check` no longer walk `node_modules` and every other tree under a package looking for generated plugin output; one bounded walk checks the marker as it enters a directory.
+- A skill with a YAML anchor reads its fields and reports `yaml.anchor` beside them, as an Agent does; `mars agents` and `mars skills` list it instead of skipping it.
 - `mars init` no longer reports `manifest requires a [package] table` in a consumer project, and `mars check` prints its success line only when there are no errors.
 - Dependency `dialect = "opencode"` now parses; `open-code` was the only spelling the config accepted.
 - Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,

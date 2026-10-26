@@ -617,38 +617,47 @@ pub fn resolve_policy(
     })
 }
 
-/// The profile as it launches on one model: effort, approval and sandbox resolved with the
-/// launch bundle's precedence (matched profile model policy over the top-level field, the
-/// alias default effort last). Native artifacts lower this profile so they agree with the
-/// bundle. `token` is the model token the agent selected; `canonical_model_id` is what it
-/// resolves to. CLI, overlay scalars and settings policies are launch-time layers native
-/// files do not see.
+/// The model an artifact is lowered for: the token the agent selected, what it resolves to,
+/// and the alias behind it, if any.
+pub(crate) struct ModelRef<'a> {
+    pub token: &'a str,
+    pub canonical_id: &'a str,
+    pub alias: Option<&'a ModelAlias>,
+}
+
+/// The profile as it launches on one model: effort, approval and sandbox resolved through
+/// the launch bundle's precedence functions, with every layer known at sync time (overlay
+/// scalars, the first matching model policy across overlay, profile and settings, the
+/// profile's top-level fields, the alias default effort); only the CLI layer is absent.
+/// `model` is `None` when the artifact emits no model: no policy or alias applies then.
+///
+/// `profile` is the overlay-resolved native profile, whose `model_policies` already start
+/// with the overlay's own, so they are matched here as one list ahead of `settings_policies`.
 pub(crate) fn profile_for_model(
     profile: &AgentProfile,
-    token: &str,
-    canonical_model_id: &str,
-    alias: Option<&ModelAlias>,
+    overlay: Option<&AgentOverlay>,
+    settings_policies: &[ModelPolicyRule],
+    model: Option<ModelRef<'_>>,
 ) -> AgentProfile {
     use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
-    let matched = match_model_policy(
-        profile
-            .model_policies
-            .iter()
-            .enumerate()
-            .map(|(index, rule)| (PolicyLayer::Profile, index, rule)),
-        canonical_model_id,
-        alias.map(|_| token),
-    );
+    let matched = model.as_ref().and_then(|model| {
+        match_model_policy(
+            effective_policies(None, &profile.model_policies, settings_policies),
+            model.canonical_id,
+            model.alias.map(|_| model.token),
+        )
+    });
+    let alias = model.as_ref().and_then(|model| model.alias);
     let mut resolved = profile.clone();
-    resolved.effort = execution::resolve_effort(None, profile, alias, None, matched.as_ref())
+    resolved.effort = execution::resolve_effort(None, profile, alias, overlay, matched.as_ref())
         .value
         .as_deref()
         .and_then(EffortLevel::parse);
-    resolved.approval = execution::resolve_approval(None, profile, None, matched.as_ref())
+    resolved.approval = execution::resolve_approval(None, profile, overlay, matched.as_ref())
         .value
         .as_deref()
         .and_then(ApprovalMode::parse);
-    resolved.sandbox = execution::resolve_sandbox(None, profile, None, matched.as_ref())
+    resolved.sandbox = execution::resolve_sandbox(None, profile, overlay, matched.as_ref())
         .value
         .as_deref()
         .and_then(SandboxMode::parse);

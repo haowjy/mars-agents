@@ -131,6 +131,7 @@ fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
     assert_eq!(
         router.decision_for_profile(
             &profile_with_model("sonnet", HarnessId::Claude),
+            None,
             &HarnessId::Claude,
             false,
             true,
@@ -143,6 +144,7 @@ fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
     assert_eq!(
         router.decision_for_profile(
             &profile_with_model("raw-model-id", HarnessId::Codex),
+            None,
             &HarnessId::Codex,
             false,
             true,
@@ -152,6 +154,7 @@ fn native_model_routing_sets_pinned_alias_and_clears_unresolved_candidates() {
     assert_eq!(
         router.decision_for_profile(
             &profile_with_model("gpt-auto", HarnessId::Codex),
+            None,
             &HarnessId::Codex,
             false,
             true,
@@ -185,6 +188,7 @@ fn native_model_routing_resolves_auto_aliases_from_models_cache() {
     assert_eq!(
         router.decision_for_profile(
             &profile_with_model("sonnet", HarnessId::Claude),
+            None,
             &HarnessId::Cursor,
             false,
             true,
@@ -195,6 +199,7 @@ fn native_model_routing_resolves_auto_aliases_from_models_cache() {
     assert_eq!(
         router.decision_for_profile(
             &profile_with_model("sonnet", HarnessId::Claude),
+            None,
             &HarnessId::Claude,
             false,
             true,
@@ -230,6 +235,7 @@ fn native_model_routing_does_not_linked_fallback_foreign_provider_alias() {
     assert_eq!(
         router.decision_for_profile(
             &profile_with_model("deepseek", HarnessId::Claude),
+            None,
             &HarnessId::Claude,
             false,
             true,
@@ -458,6 +464,7 @@ fn parse_mars_agent(content: &str, stem: &str) -> MarsCanonicalAgent {
         agent_name,
         canonical_dest_path: format!("agents/{stem}.md"),
         profile,
+        overlay: None,
         fm,
     }
 }

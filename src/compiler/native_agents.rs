@@ -65,6 +65,9 @@ pub(crate) struct MarsCanonicalAgent {
     pub agent_name: String,
     pub canonical_dest_path: String,
     pub profile: mars_schema::agent::AgentProfile,
+    /// The consumer's `[agents.<name>]` overlay, already merged into `profile` except for
+    /// the scalar layers that outrank model policies.
+    pub overlay: Option<crate::config::AgentOverlay>,
     pub fm: mars_schema::frontmatter::Frontmatter,
 }
 
@@ -134,6 +137,8 @@ pub(crate) struct NativeModelRoutingRuntime<'a> {
     cache: &'a ModelsCache,
     catalog_model_slugs: Vec<String>,
     routing_settings: ResolvedRoutingSettings,
+    /// `[[settings.model-policies]]`: the lowest policy layer, known at sync.
+    settings_policies: Vec<mars_schema::model_policy::ModelPolicyRule>,
     session: CapabilitySession,
     installed_for_native_targets: HashSet<String>,
     memo: HashMap<(String, String, Option<String>), Option<String>>,
@@ -150,6 +155,15 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
         });
         Self::with_session(aliases, cache, routing_settings, session)
+    }
+
+    /// Settings model policies join the native precedence chain, as in the bundle.
+    pub(crate) fn with_settings_policies(
+        mut self,
+        policies: Vec<mars_schema::model_policy::ModelPolicyRule>,
+    ) -> Self {
+        self.settings_policies = policies;
+        self
     }
 
     fn with_session(
@@ -170,6 +184,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             cache,
             catalog_model_slugs: crate::models::catalog_model_slugs(cache),
             routing_settings,
+            settings_policies: Vec::new(),
             session,
             installed_for_native_targets,
             memo: HashMap::new(),
@@ -179,6 +194,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     pub(crate) fn decision_for_profile(
         &mut self,
         profile: &mars_schema::agent::AgentProfile,
+        overlay: Option<&crate::config::AgentOverlay>,
         target_harness: &mars_schema::HarnessId,
         include_fanout: bool,
         emit_all: bool,
@@ -191,7 +207,8 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             {
                 continue;
             }
-            if let Some(model_id) = self.route_candidate(profile, &candidate.token, target_harness)
+            if let Some(model_id) =
+                self.route_candidate(profile, overlay, &candidate.token, target_harness)
             {
                 return NativeModelDecision::Set {
                     model_id,
@@ -258,31 +275,39 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         }
     }
 
-    /// The profile as it launches on the model `token` routes to; see
-    /// [`crate::build::policy::profile_for_model`].
+    /// The profile as it launches on the model `token` routes to, or with no model at all
+    /// (`None`); see [`crate::build::policy::profile_for_model`].
     pub(crate) fn profile_for_token(
         &self,
         profile: &mars_schema::agent::AgentProfile,
-        token: &str,
-    ) -> Option<mars_schema::agent::AgentProfile> {
-        let resolved = self.resolve_candidate(token)?;
-        Some(crate::build::policy::profile_for_model(
+        overlay: Option<&crate::config::AgentOverlay>,
+        token: Option<&str>,
+    ) -> mars_schema::agent::AgentProfile {
+        let resolved = token.and_then(|token| Some((token, self.resolve_candidate(token)?)));
+        crate::build::policy::profile_for_model(
             profile,
-            token,
-            &resolved.model_id,
-            resolved.alias,
-        ))
+            overlay,
+            &self.settings_policies,
+            resolved
+                .as_ref()
+                .map(|(token, resolved)| crate::build::policy::ModelRef {
+                    token,
+                    canonical_id: &resolved.model_id,
+                    alias: resolved.alias,
+                }),
+        )
     }
 
     fn route_candidate(
         &mut self,
         profile: &mars_schema::agent::AgentProfile,
+        overlay: Option<&crate::config::AgentOverlay>,
         token: &str,
         target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
         let memo_effort = if *target_harness == mars_schema::HarnessId::Cursor {
-            self.profile_for_token(profile, token)
-                .and_then(|resolved| resolved.effort)
+            self.profile_for_token(profile, overlay, Some(token))
+                .effort
                 .map(|effort| effort.as_str().to_string())
         } else {
             None
@@ -296,7 +321,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             return cached.clone();
         }
 
-        let routed = self.route_candidate_uncached(profile, token, target_harness);
+        let routed = self.route_candidate_uncached(profile, overlay, token, target_harness);
         self.memo.insert(key, routed.clone());
         routed
     }
@@ -304,6 +329,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     fn route_candidate_uncached(
         &mut self,
         profile: &mars_schema::agent::AgentProfile,
+        overlay: Option<&crate::config::AgentOverlay>,
         token: &str,
         target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
@@ -357,7 +383,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             }
 
             return self.native_model_id(
-                profile,
+                AgentRef { profile, overlay },
                 token,
                 target_harness,
                 &resolved,
@@ -385,7 +411,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
     fn native_model_id(
         &mut self,
-        profile: &mars_schema::agent::AgentProfile,
+        agent: AgentRef<'_>,
         token: &str,
         target_harness: &mars_schema::HarnessId,
         resolved: &NativeResolvedModel<'_>,
@@ -416,17 +442,13 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             return Some(resolved.model_id.clone());
         }
 
-        let effort = crate::build::policy::profile_for_model(
-            profile,
-            token,
-            &resolved.model_id,
-            resolved.alias,
-        )
-        .effort
-        .map_or_else(
-            || "medium".to_string(),
-            |effort| effort.as_str().to_string(),
-        );
+        let effort = self
+            .profile_for_token(agent.profile, agent.overlay, Some(token))
+            .effort
+            .map_or_else(
+                || "medium".to_string(),
+                |effort| effort.as_str().to_string(),
+            );
         let Some(cursor_probe) = self.session.cursor_probe_result() else {
             return Some(routed_model_id.to_string());
         };
@@ -581,6 +603,7 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             agent_name,
             canonical_dest_path,
             profile,
+            overlay: None,
             fm,
         });
     }
@@ -664,7 +687,10 @@ fn desired_native_agent_outputs(
         )
     }) {
         for NativeEmission { harness, .. } in qualifying_agent_emissions(
-            &agent.profile,
+            AgentRef {
+                profile: &agent.profile,
+                overlay: agent.overlay.as_ref(),
+            },
             &agent.agent_name,
             policy,
             ctx.fanout_agents,
@@ -741,7 +767,10 @@ pub(crate) fn compile_native_agents<'a>(
     for agent in mars_agents {
         let effective_profile = &agent.profile;
         for emission in qualifying_agent_emissions(
-            effective_profile,
+            AgentRef {
+                profile: effective_profile,
+                overlay: agent.overlay.as_ref(),
+            },
             &agent.agent_name,
             policy,
             ctx.fanout_agents,
@@ -814,6 +843,14 @@ pub(crate) fn effective_native_profile(
     effective
 }
 
+/// An agent's native profile with the consumer overlay whose scalar layers outrank its
+/// model policies.
+#[derive(Clone, Copy)]
+pub(crate) struct AgentRef<'a> {
+    pub profile: &'a mars_schema::agent::AgentProfile,
+    pub overlay: Option<&'a crate::config::AgentOverlay>,
+}
+
 /// One native artifact to lower: the harness, its model field, and the profile as it
 /// launches on that model.
 pub(crate) struct NativeEmission {
@@ -824,7 +861,7 @@ pub(crate) struct NativeEmission {
 
 /// Harnesses and native model fields that would receive lowered agent artifacts.
 pub(crate) fn qualifying_agent_emissions(
-    profile: &mars_schema::agent::AgentProfile,
+    agent: AgentRef<'_>,
     agent_name: &str,
     policy: &AgentSurfacePolicy,
     fanout_agents: &[String],
@@ -834,6 +871,7 @@ pub(crate) fn qualifying_agent_emissions(
 ) -> Vec<NativeEmission> {
     use mars_schema::HarnessId;
 
+    let AgentRef { profile, overlay } = agent;
     let in_scope = |harness: &HarnessId| harness_scope.is_none_or(|scope| scope.contains(harness));
 
     match policy {
@@ -845,18 +883,16 @@ pub(crate) fn qualifying_agent_emissions(
                     continue;
                 }
                 emissions.push(
-                    match model_router.decision_for_profile(profile, harness, true, true) {
+                    match model_router.decision_for_profile(profile, overlay, harness, true, true) {
                         NativeModelDecision::Set { model_id, token } => NativeEmission {
                             harness: *harness,
                             model: crate::compiler::agents::lower::NativeModel::Set(model_id),
-                            profile: model_router
-                                .profile_for_token(profile, &token)
-                                .unwrap_or_else(|| profile.clone()),
+                            profile: model_router.profile_for_token(profile, overlay, Some(&token)),
                         },
                         NativeModelDecision::Clear | NativeModelDecision::Skip => NativeEmission {
                             harness: *harness,
                             model: crate::compiler::agents::lower::NativeModel::Clear,
-                            profile: profile.clone(),
+                            profile: model_router.profile_for_token(profile, overlay, None),
                         },
                     },
                 );
@@ -873,15 +909,13 @@ pub(crate) fn qualifying_agent_emissions(
                 if !in_scope(harness) {
                     continue;
                 }
-                if let NativeModelDecision::Set { model_id, token } =
-                    model_router.decision_for_profile(profile, harness, effective_fanout, false)
+                if let NativeModelDecision::Set { model_id, token } = model_router
+                    .decision_for_profile(profile, overlay, harness, effective_fanout, false)
                 {
                     emissions.push(NativeEmission {
                         harness: *harness,
                         model: crate::compiler::agents::lower::NativeModel::Set(model_id),
-                        profile: model_router
-                            .profile_for_token(profile, &token)
-                            .unwrap_or_else(|| profile.clone()),
+                        profile: model_router.profile_for_token(profile, overlay, Some(&token)),
                     });
                 }
             }
@@ -1132,6 +1166,7 @@ fn resolve_native_agent_profiles(
                 agent_name: agent.agent_name.clone(),
                 canonical_dest_path: agent.canonical_dest_path.clone(),
                 profile,
+                overlay: agent_overlays.get(&agent.agent_name).cloned(),
                 fm: agent.fm.clone(),
             }
         })
@@ -1187,6 +1222,7 @@ pub(crate) fn materialize_native_agents_after_link(
     let routing_settings = ResolvedRoutingSettings::from_settings(&input.effective.settings);
     let mut model_router = (!matches!(policy, AgentSurfacePolicy::SuppressAll)).then(|| {
         NativeModelRoutingRuntime::collect(&model_aliases, &models_cache, routing_settings)
+            .with_settings_policies(input.effective.settings.model_policies.clone())
     });
     // Per-agent overlays merged from mars.toml + mars.local.toml (link path lacks the
     // project-level effective.agents map the sync path carries).

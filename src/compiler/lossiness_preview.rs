@@ -19,7 +19,7 @@ use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::compiler::harness_descriptor::configured_emit_harnesses;
 use crate::compiler::native_agents::{
-    NativeEmission, NativeModelRoutingRuntime, qualifying_agent_emissions,
+    AgentRef, NativeEmission, NativeModelRoutingRuntime, qualifying_agent_emissions,
 };
 use crate::compiler::variants;
 use crate::config::routing_settings::ResolvedRoutingSettings;
@@ -105,6 +105,7 @@ pub fn collect_source_lossiness_diagnostics(
     let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
         .then(|| {
             NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
+                .with_settings_policies(settings.model_policies.clone())
         });
 
     let discovered = crate::discover::discover_resolved_source(
@@ -186,6 +187,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
     let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
         .then(|| {
             NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
+                .with_settings_policies(settings.model_policies.clone())
         });
 
     for definition in &prepared.definitions {
@@ -335,7 +337,10 @@ fn collect_agent_content_lossiness(
         model,
         profile,
     } in qualifying_agent_emissions(
-        &profile,
+        AgentRef {
+            profile: &profile,
+            overlay: None,
+        },
         agent_name,
         policy,
         fanout_agents,

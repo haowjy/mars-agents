@@ -203,6 +203,7 @@ pub(super) struct TreeInput<'a> {
     pub metadata: &'a PackageMetadata,
     pub root_source: &'a SourceName,
     pub agent_overlays: &'a IndexMap<String, crate::config::AgentOverlay>,
+    pub settings_policies: &'a [mars_schema::model_policy::ModelPolicyRule],
     pub aliases: &'a IndexMap<String, crate::models::ModelAlias>,
     pub graph: &'a ResolvedGraph,
     pub target: &'a TargetState,
@@ -477,13 +478,27 @@ fn write_agent(
         tree_profile.native_model_aliases,
         input.aliases,
     );
-    if let Some(token) = effective.model.as_deref() {
-        let alias = input.aliases.get(token);
-        let canonical = alias
+    // Policies apply only to a model the file names, as in native lowering.
+    let token = effective.model.as_deref().filter(|_| {
+        matches!(
+            model.native,
+            crate::compiler::agents::lower::NativeModel::Set(_)
+        )
+    });
+    let alias = token.and_then(|token| input.aliases.get(token));
+    let model_ref = token.map(|token| crate::build::policy::ModelRef {
+        token,
+        canonical_id: alias
             .and_then(|alias| alias.pinned_model_id())
-            .unwrap_or(token);
-        effective = crate::build::policy::profile_for_model(&effective, token, canonical, alias);
-    }
+            .unwrap_or(token),
+        alias,
+    });
+    effective = crate::build::policy::profile_for_model(
+        &effective,
+        overlay,
+        input.settings_policies,
+        model_ref,
+    );
     let lowered = lower_for_harness_with_model(
         &tree_profile.harness,
         &effective,

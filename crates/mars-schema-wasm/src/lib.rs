@@ -49,13 +49,11 @@ pub fn vocabulary() -> Result<JsValue, JsValue> {
 /// Prepare a package from `{files: {path: Uint8Array}, context, declaredDialect}`.
 #[wasm_bindgen]
 pub fn prepare(input: JsValue) -> Result<JsValue, JsValue> {
-    let input: serde_json::Value = from_js(input)?;
-    let files = input.get("files").cloned().ok_or_else(|| JsValue::from_str("prepare requires files"))?;
-    let files: std::collections::BTreeMap<String, Vec<u8>> = serde_wasm_bindgen::from_value(
-        serde_wasm_bindgen::to_value(&files).map_err(|e| JsValue::from_str(&e.to_string()))?
-    ).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let tree = mars_schema::tree::FileTree::from_files(files).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let context = match input.get("context").and_then(|v| v.as_str()).unwrap_or("package") {
+    #[derive(serde::Deserialize)]
+    struct Input { files: std::collections::BTreeMap<String, Vec<u8>>, context: Option<String> }
+    let input: Input = serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let tree = mars_schema::tree::FileTree::from_files(input.files).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let context = match input.context.as_deref().unwrap_or("package") {
         "authored-local" => mars_schema::prepare::PrepareContext::AuthoredLocal,
         _ => mars_schema::prepare::PrepareContext::Package,
     };

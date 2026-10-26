@@ -340,7 +340,6 @@ pub struct LocalConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct LocalSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
@@ -366,6 +365,9 @@ pub struct LocalSettings {
     pub meridian: MeridianSettings,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
+    /// Keys Mars does not read, as in `Settings`: kept, and the stale ones warn.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -912,6 +914,9 @@ struct ProjectConfigWarning {
     message: String,
 }
 
+/// `[settings]` keys Mars once read and now ignores, in `mars.toml` and `mars.local.toml` alike.
+const STALE_SETTINGS_KEYS: &[&str] = &["default_network", "network-allow", "network-deny"];
+
 /// Overlay keys Mars once read and now ignores.
 const STALE_AGENT_OVERLAY_KEYS: &[&str] = &[
     "network",
@@ -1004,16 +1009,41 @@ fn validate_agent_overlays(
 }
 
 fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectConfigWarning> {
-    let mut warnings = stale_overlay_warnings("mars.toml", &config.agents);
-    warnings.extend(stale_overlay_warnings("mars.local.toml", &local.agents));
-    for (name, overlay) in config.skills.iter() {
-        if overlay.unknown.contains_key("tools") {
-            warnings.push(ProjectConfigWarning {
-                code: "stale-config-key",
-                message: format!(
-                    "mars.toml [skills.{name}.tools] is no longer read and is ignored; delete it"
-                ),
-            });
+    let mut warnings = Vec::new();
+    for (file, agents, skills, settings) in [
+        (
+            "mars.toml",
+            &config.agents,
+            &config.skills,
+            &config.settings.unknown,
+        ),
+        (
+            "mars.local.toml",
+            &local.agents,
+            &local.skills,
+            &local.settings.unknown,
+        ),
+    ] {
+        warnings.extend(stale_overlay_warnings(file, agents));
+        for (name, overlay) in skills {
+            if overlay.unknown.contains_key("tools") {
+                warnings.push(ProjectConfigWarning {
+                    code: "stale-config-key",
+                    message: format!(
+                        "{file} [skills.{name}.tools] is no longer read and is ignored; delete it"
+                    ),
+                });
+            }
+        }
+        for key in STALE_SETTINGS_KEYS {
+            if settings.contains_key(*key) {
+                warnings.push(ProjectConfigWarning {
+                    code: "stale-config-key",
+                    message: format!(
+                        "{file} [settings] `{key}` is no longer read and is ignored; delete it"
+                    ),
+                });
+            }
         }
     }
     for (table, dependencies) in [
@@ -1029,16 +1059,6 @@ fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectC
                     ),
                 });
             }
-        }
-    }
-    for key in ["default_network", "network-allow", "network-deny"] {
-        if config.settings.unknown.contains_key(key) {
-            warnings.push(ProjectConfigWarning {
-                code: "stale-config-key",
-                message: format!(
-                    "mars.toml [settings] `{key}` is no longer read and is ignored; delete it"
-                ),
-            });
         }
     }
     for (name, overlay) in &config.agents {
@@ -2192,20 +2212,6 @@ override = { effort = "high" }
                 .is_empty(),
             "an authored empty local list should replace the project list"
         );
-    }
-
-    #[test]
-    fn load_local_rejects_unknown_local_settings_fields() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.local.toml"),
-            "[settings]\nnot_supported = true\n",
-        )
-        .unwrap();
-
-        let err = load_local(dir.path()).unwrap_err().to_string();
-        assert!(err.contains("unknown field"), "unexpected error: {err}");
-        assert!(err.contains("not_supported"), "unexpected error: {err}");
     }
 
     #[test]

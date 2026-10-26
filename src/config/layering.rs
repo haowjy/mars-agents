@@ -106,6 +106,7 @@ impl LocalSettings {
             && self.agent_emission.is_none()
             && self.meridian.is_empty()
             && self.model_policies.is_none()
+            && self.unknown.is_empty()
     }
 
     pub(crate) fn overlay_settings(&self, base: &Settings) -> (Settings, TargetSource) {

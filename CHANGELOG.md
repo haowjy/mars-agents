@@ -48,8 +48,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
   one naming `uses-providers`, with or without `[dependencies]`. `mars doctor` scans the canonical
   store and warns, instead of erroring, on a missing `<skill>__<provider>` ref; it does not read the
   record. Sync reads a corrupt or newer `provided.lock` as nothing provided, with one
-  `provided-lock-unusable` warning; a missing one is silent.
- A recorded
+  `provided-lock-unusable` warning; a missing one is silent. A recorded
   name counts as provided only while `.mars/skills/<name>` is a directory, so sync,
   `mars validate --strict` and `mars doctor` agree when a package replaced a provided directory and
   was later removed; ownership still follows the record, which covers directories a crash has not

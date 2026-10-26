@@ -44,6 +44,30 @@ pub struct DependencyUpsertChange {
     pub new_filter: FilterConfig,
 }
 
+/// The error for a dependency name `mars.toml` does not have. A dependency added with a subpath or
+/// `--plugin` is named `<repository>/<path or plugin>`, so the bare repository name finds nothing:
+/// the names that start with it are listed.
+pub(crate) fn dependency_not_found<'a>(
+    names: impl Iterator<Item = &'a SourceName>,
+    name: &SourceName,
+) -> MarsError {
+    let prefix = format!("{name}/");
+    let similar: Vec<String> = names
+        .map(ToString::to_string)
+        .filter(|candidate| candidate.starts_with(&prefix))
+        .map(|candidate| format!("`{candidate}`"))
+        .collect();
+    let hint = if similar.is_empty() {
+        String::new()
+    } else {
+        format!("; did you mean {}?", similar.join(", "))
+    };
+    MarsError::Source {
+        source_name: name.to_string(),
+        message: format!("dependency `{name}` not found in mars.toml{hint}"),
+    }
+}
+
 pub(crate) fn apply_mutation(
     config: &mut Config,
     mutation: &ConfigMutation,
@@ -61,10 +85,7 @@ pub(crate) fn apply_mutation(
         }
         ConfigMutation::RemoveDependency { name } => {
             if !config.dependencies.contains_key(name) {
-                return Err(MarsError::Source {
-                    source_name: name.to_string(),
-                    message: format!("dependency `{name}` not found in mars.toml"),
-                });
+                return Err(dependency_not_found(config.dependencies.keys(), name));
             }
             config.dependencies.shift_remove(name);
             Ok(Vec::new())
@@ -75,14 +96,13 @@ pub(crate) fn apply_mutation(
             from,
             to,
         } => {
-            let dep =
-                config
-                    .dependencies
-                    .get_mut(source_name)
-                    .ok_or_else(|| MarsError::Source {
-                        source_name: source_name.to_string(),
-                        message: format!("dependency `{source_name}` not found in mars.toml"),
-                    })?;
+            if !config.dependencies.contains_key(source_name) {
+                return Err(dependency_not_found(
+                    config.dependencies.keys(),
+                    source_name,
+                ));
+            }
+            let dep = &mut config.dependencies[source_name];
             let rename_map = dep.filter.rename.get_or_insert_with(RenameMap::new);
             rename_map.insert(ItemName::from(from.as_str()), ItemName::from(to.as_str()));
             Ok(Vec::new())

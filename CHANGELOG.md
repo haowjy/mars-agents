@@ -71,6 +71,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - `mars sync` and `check` no longer walk `node_modules` and every other tree under a package looking for generated plugin output; one bounded walk checks the marker as it enters a directory.
 - A skill with a YAML anchor reads its fields and reports `yaml.anchor` beside them, as an Agent does; `mars agents` and `mars skills` list it instead of skipping it.
 - `mars check` prints its success line only when there are no errors.
+- `mars remove <repository>` after `mars add <repository> --plugin <name>` (or a `--subpath`) says `did you mean` and names the dependencies that start with `<repository>/`; the dependency is named `<repository>/<plugin>`.
 - Dependency `dialect` accepts `opencode` and the `open-code` spelling v0.19.0 required, and `agentskills`, `agent_skills`, `marsnative` and `mars_native` as the dialect parser does.
 - A `mars.local.toml` `[settings]` key Mars no longer reads (`default_network` and the like) warns by name as in `mars.toml`, instead of failing the load.
 - A dependency with no `mars.toml` whose definitions carry a key only pre-v1 Mars defined (`network`, `fanout`, `models`...) or `approval: yolo`, or that is declared `dialect = "mars-native"`, is upgraded as a pre-v1 package instead of failing as a foreign tree.

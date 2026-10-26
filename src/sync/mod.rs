@@ -1362,10 +1362,10 @@ fn validate_targets(
     if let ResolutionMode::Maximize { targets, .. } = resolution {
         for name in targets {
             if !effective.dependencies.contains_key(name) {
-                return Err(MarsError::Source {
-                    source_name: name.to_string(),
-                    message: format!("dependency `{name}` not found in mars.toml"),
-                });
+                return Err(mutation::dependency_not_found(
+                    effective.dependencies.keys(),
+                    name,
+                ));
             }
         }
     }

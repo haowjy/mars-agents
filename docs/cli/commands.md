@@ -115,6 +115,8 @@ mars remove <name>
 
 Removes the named dependency from `mars.toml` and runs sync to clean up installed items. Whole-source removal only; to narrow a source's installed items, use `mars add` with updated filters.
 
+A dependency added with `--subpath`, `--plugin` or a path in the specifier is named `<repository>/<path or plugin>` (`mars add anthropics/skills --plugin claude-api` is `skills/claude-api`). `mars remove skills` finds nothing and names the dependencies that start with `skills/`; remove one by its full name.
+
 ---
 
 ## `mars sync`

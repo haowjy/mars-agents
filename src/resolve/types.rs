@@ -147,11 +147,30 @@ pub struct ResolvedNode {
 /// Source checkout provenance and rooted package boundary.
 #[derive(Debug, Clone)]
 pub struct RootedSourceRef {
+    /// The checkout the package's files came from: the marketplace's for a local plugin, the
+    /// plugin's own repository for a remote one.
     pub checkout_root: PathBuf,
-    /// Immutable package origin after applying `subpath`.
+    /// Immutable package origin after applying `subpath` (or the plugin's root).
     pub authored_root: PathBuf,
     /// Current materialized content view. Relative dependencies must never use this.
     pub package_root: PathBuf,
+    /// Set when the package is one plugin of a marketplace.
+    pub plugin: Option<PluginRoot>,
+}
+
+/// A marketplace plugin as acquired: kept with the rooted package so that preparing it again
+/// (a restart pass) reads it through the same marketplace entry, never a fresh fetch.
+#[derive(Debug, Clone)]
+pub struct PluginRoot {
+    pub hint: mars_schema::inspect::PluginHint,
+    /// Where the plugin's files came from; recorded in the lock.
+    pub content: crate::lock::LockedContent,
+}
+
+impl PluginRoot {
+    pub fn name(&self) -> &str {
+        &self.hint.entry.name
+    }
 }
 
 /// How a version constraint was specified.

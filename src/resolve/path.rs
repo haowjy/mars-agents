@@ -1,8 +1,7 @@
 use std::path::Path;
 
-use crate::config::SourceSpec;
 use crate::error::MarsError;
-use crate::types::{SourceId, SourceName, SourceSubpath, SourceUrl};
+use crate::types::{SourceName, SourceSubpath};
 
 use super::types::RootedSourceRef;
 
@@ -94,33 +93,6 @@ pub(crate) fn apply_subpath(
         checkout_root: checkout_root.to_path_buf(),
         authored_root: package_root.clone(),
         package_root,
+        plugin: None,
     })
-}
-
-pub(crate) fn source_id_for_pending_spec(
-    base_root: &Path,
-    spec: &SourceSpec,
-    subpath: Option<SourceSubpath>,
-) -> SourceId {
-    match spec {
-        SourceSpec::Git(git) => {
-            let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
-                git.url.as_ref(),
-            ));
-            SourceId::git_with_subpath(canonical_url, subpath)
-        }
-        SourceSpec::Path(path) => {
-            match SourceId::path_with_subpath(base_root, path, subpath.clone()) {
-                Ok(id) => id,
-                Err(_) => {
-                    let canonical = if path.is_absolute() {
-                        path.clone()
-                    } else {
-                        base_root.join(path)
-                    };
-                    SourceId::Path { canonical, subpath }
-                }
-            }
-        }
-    }
 }

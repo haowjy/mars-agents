@@ -14,6 +14,7 @@ mod context;
 mod filter;
 mod package;
 mod path;
+mod plugin;
 mod provider;
 mod publish;
 mod requires;
@@ -29,6 +30,7 @@ use indexmap::IndexMap;
 
 pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
+pub(crate) use plugin::plugin_list;
 pub(crate) use provider::RealSourceProvider;
 pub(crate) use publish::resolve_publish_graph_from_config;
 pub use publish::{PublishLens, resolve_publish_graph};

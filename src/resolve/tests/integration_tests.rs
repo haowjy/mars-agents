@@ -150,6 +150,7 @@ fn transitive_override_does_not_collapse_conflicting_declared_identities() {
                 subpath: None,
                 version: None,
                 filter: crate::config::FilterConfig::default(),
+                plugin: None,
             },
         )]),
         models: IndexMap::new(),
@@ -308,6 +309,7 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
             subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
     let manifest_a = Manifest {
@@ -402,6 +404,7 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
             subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
     let manifest_a = Manifest {
@@ -739,6 +742,7 @@ fn latest_and_pinned_revisit_re_resolves_to_pinned_version() {
             subpath: None,
             version: None,
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
     let manifest_a = Manifest {
@@ -815,6 +819,8 @@ fn normal_mode_falls_back_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -860,6 +866,8 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
             subpath: None,
             version: Some("v1.1.0".into()),
             commit: Some(unreachable_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1323,6 +1331,7 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
             subpath: None,
             version: Some(">=1.0.0".to_string()),
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
     let manifest_a = Manifest {
@@ -1835,6 +1844,8 @@ fn restart_fresh_context_drops_removed_transitive_engine_fallback() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: None,
+            plugin: None,
+            content: None,
         },
     );
 
@@ -1943,6 +1954,8 @@ fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some(locked_commit.into()),
+            plugin: None,
+            content: None,
         },
     );
 
@@ -2272,6 +2285,8 @@ fn frozen_rejects_engine_incompatible_lock() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("locked".into()),
+            plugin: None,
+            content: None,
         },
     );
     let options = ResolveOptions {
@@ -2317,6 +2332,8 @@ fn incompatible_locked_version_warns_and_falls_back() {
             subpath: None,
             version: Some("v2.0.0".into()),
             commit: Some("locked".into()),
+            plugin: None,
+            content: None,
         },
     );
     let options = ResolveOptions {
@@ -2534,6 +2551,8 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("locked-a".into()),
+            plugin: None,
+            content: None,
         },
     );
     lock.dependencies.insert(
@@ -2544,6 +2563,8 @@ fn engine_exclusions_survive_restart_and_prevent_oscillation() {
             subpath: None,
             version: Some("v1.0.0".into()),
             commit: Some("locked-c".into()),
+            plugin: None,
+            content: None,
         },
     );
     let options = ResolveOptions {

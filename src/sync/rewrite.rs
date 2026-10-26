@@ -471,11 +471,13 @@ mod tests {
                 source_id: SourceId::Path {
                     canonical: root.to_path_buf(),
                     subpath: None,
+                    plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: root.to_path_buf(),
                     authored_root: root.to_path_buf(),
                     package_root: root.to_path_buf(),
+                    plugin: None,
                 },
                 prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
@@ -716,11 +718,13 @@ mod tests {
                 source_id: SourceId::Path {
                     canonical: dir.path().to_path_buf(),
                     subpath: None,
+                    plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: dir.path().to_path_buf(),
                     authored_root: dir.path().to_path_buf(),
                     package_root: dir.path().to_path_buf(),
+                    plugin: None,
                 },
                 prepared: None,
                 resolved_ref: crate::source::ResolvedRef {

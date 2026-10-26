@@ -123,6 +123,7 @@ fn apply_dependency_upsert(
         existing.url = entry.url.clone();
         existing.path = entry.path.clone();
         existing.version = entry.version.clone();
+        existing.plugin = entry.plugin.clone();
         // Atomic filter replacement: when any filter field is set on the
         // incoming entry, replace the entire filter config (minus rename).
         // This prevents mixed-mode states like agents + only_skills.
@@ -178,6 +179,7 @@ mod tests {
                 agents: Some(vec!["reviewer".into()]),
                 ..FilterConfig::default()
             },
+            plugin: None,
         };
         apply_mutation(
             &mut config,
@@ -200,6 +202,7 @@ mod tests {
                 only_skills: true,
                 ..FilterConfig::default()
             },
+            plugin: None,
         };
         apply_mutation(
             &mut config,
@@ -232,6 +235,7 @@ mod tests {
                 agents: Some(vec!["coder".into()]),
                 ..FilterConfig::default()
             },
+            plugin: None,
         };
         apply_mutation(
             &mut config,
@@ -250,6 +254,7 @@ mod tests {
             version: Some("v2".into()),
             dialect: None,
             filter: FilterConfig::default(),
+            plugin: None,
         };
         apply_mutation(
             &mut config,
@@ -286,6 +291,7 @@ mod tests {
                 rename: Some(rename_map),
                 ..FilterConfig::default()
             },
+            plugin: None,
         };
         apply_mutation(
             &mut config,
@@ -307,6 +313,7 @@ mod tests {
                 only_skills: true,
                 ..FilterConfig::default()
             },
+            plugin: None,
         };
         apply_mutation(
             &mut config,
@@ -343,6 +350,7 @@ mod tests {
                     version: Some("v1".into()),
                     dialect: None,
                     filter: FilterConfig::default(),
+                    plugin: None,
                 },
             ),
             (
@@ -354,6 +362,7 @@ mod tests {
                     version: Some("v2".into()),
                     dialect: None,
                     filter: FilterConfig::default(),
+                    plugin: None,
                 },
             ),
         ];
@@ -377,6 +386,7 @@ mod tests {
                 agents: Some(vec!["reviewer".into()]),
                 ..FilterConfig::default()
             },
+            plugin: None,
         };
         apply_mutation(
             &mut config,
@@ -397,6 +407,7 @@ mod tests {
                 only_skills: true,
                 ..FilterConfig::default()
             },
+            plugin: None,
         };
         let changes = apply_mutation(
             &mut config,

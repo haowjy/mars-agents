@@ -859,12 +859,14 @@ mod tests {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
                             subpath: None,
+                            plugin: None,
                         }
                     },
                     rooted_ref: crate::resolve::RootedSourceRef {
                         checkout_root: tree.path().to_path_buf(),
                         authored_root: tree.path().to_path_buf(),
                         package_root: tree.path().to_path_buf(),
+                        plugin: None,
                     },
                     prepared: crate::package_prepare::prepare_tree_for_test(name, tree.path()),
                     resolved_ref: ResolvedRef {
@@ -898,6 +900,7 @@ mod tests {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
                             subpath: None,
+                            plugin: None,
                         }
                     },
                     source_id: if let Some(u) = url {
@@ -906,6 +909,7 @@ mod tests {
                         SourceId::Path {
                             canonical: tree.path().to_path_buf(),
                             subpath: None,
+                            plugin: None,
                         }
                     },
                     spec,
@@ -939,11 +943,13 @@ mod tests {
             source_id: SourceId::Path {
                 canonical: root.clone(),
                 subpath: None,
+                plugin: None,
             },
             rooted_ref: crate::resolve::RootedSourceRef {
                 checkout_root: root.clone(),
                 authored_root: root.clone(),
                 package_root: root.clone(),
+                plugin: None,
             },
             prepared: None,
             resolved_ref: ResolvedRef {
@@ -989,10 +995,12 @@ mod tests {
                         declared_source_id: SourceId::Path {
                             canonical: path.clone(),
                             subpath: None,
+                            plugin: None,
                         },
                         source_id: SourceId::Path {
                             canonical: path.clone(),
                             subpath: None,
+                            plugin: None,
                         },
                         spec: SourceSpec::Path(path),
                         subpath: None,

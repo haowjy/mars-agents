@@ -2,7 +2,10 @@ use mars_schema::item::ItemKind;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
+use crate::config::{
+    EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec, source_id_for_spec,
+    validate_plugin_selector,
+};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
 use crate::error::{ConfigError, MarsError, ResolutionError};
@@ -15,7 +18,7 @@ use super::SourceProvider;
 use super::constraint::parse_version_constraint;
 use super::context::ResolverContext;
 use super::filter::is_unfiltered_request;
-use super::path::{apply_subpath, source_id_for_pending_spec};
+use super::path::apply_subpath;
 use super::requires::{EngineRequirementFailure, check_package_requirements};
 use super::types::{PendingItem, ResolveOptions, ResolvedNode, VersionConstraint};
 use super::version::resolve_single_source;
@@ -75,6 +78,27 @@ impl RegisteredPackage {
             .keys()
             .filter(|(kind, _)| *kind == ItemKind::Skill)
             .map(|(_, name)| name)
+    }
+}
+
+/// A resolved source as a package root: the source below its `subpath`, or the plugin the
+/// dependency names out of the marketplace the source holds.
+fn root_package(
+    pending_src: &PendingSource,
+    resolved: &crate::source::ResolvedRef,
+    provider: &dyn SourceProvider,
+    locked: Option<&LockFile>,
+    options: &ResolveOptions,
+    diag: &mut DiagnosticCollector,
+) -> Result<super::RootedSourceRef, MarsError> {
+    if pending_src.source_id.plugin().is_some() {
+        super::plugin::acquire(pending_src, resolved, provider, locked, options, diag)
+    } else {
+        apply_subpath(
+            &pending_src.name,
+            &resolved.tree_path,
+            pending_src.subpath.as_ref(),
+        )
     }
 }
 
@@ -205,11 +229,8 @@ pub(crate) fn resolve_package_bottom_up(
                 });
 
                 if ref_changed {
-                    let new_rooted = apply_subpath(
-                        &pending_src.name,
-                        &new_ref.tree_path,
-                        pending_src.subpath.as_ref(),
-                    )?;
+                    let new_rooted =
+                        root_package(pending_src, &new_ref, provider, locked, options, diag)?;
                     let staged = prepare_package(
                         &pending_src.name,
                         new_rooted,
@@ -311,11 +332,7 @@ pub(crate) fn resolve_package_bottom_up(
                 diag,
             ) {
                 Ok(ref_) => {
-                    let rooted = apply_subpath(
-                        &pending_src.name,
-                        &ref_.tree_path,
-                        pending_src.subpath.as_ref(),
-                    )?;
+                    let rooted = root_package(pending_src, &ref_, provider, locked, options, diag)?;
                     let staged = prepare_package(
                         &pending_src.name,
                         rooted,
@@ -731,6 +748,12 @@ pub(crate) fn collect_manifest_requests(
         let dep_name_typed = SourceName::from(dep_name.clone());
         let dep_subpath = dep_spec.subpath.clone();
         let dep_filter = dep_spec.filter.to_mode();
+        validate_plugin_selector(
+            dep_name,
+            dep_spec.plugin.as_deref(),
+            dep_subpath.as_ref(),
+            None,
+        )?;
 
         let (declared_spec, declared_constraint) = match (&dep_spec.url, &dep_spec.path) {
             (Some(url), None) => (
@@ -763,16 +786,24 @@ pub(crate) fn collect_manifest_requests(
                 .into());
             }
         };
-        let declared_source_id =
-            source_id_for_pending_spec(package_root, &declared_spec, dep_subpath.clone());
+        let declared_source_id = source_id_for_spec(
+            package_root,
+            &declared_spec,
+            dep_subpath.clone(),
+            dep_spec.plugin.as_deref(),
+        );
         let (dep_spec_resolved, dep_constraint) =
             if let Some(path) = options.source_overrides.get(&dep_name_typed) {
                 (SourceSpec::Path(path.clone()), VersionConstraint::Latest)
             } else {
                 (declared_spec, declared_constraint)
             };
-        let effective_source_id =
-            source_id_for_pending_spec(package_root, &dep_spec_resolved, dep_subpath.clone());
+        let effective_source_id = source_id_for_spec(
+            package_root,
+            &dep_spec_resolved,
+            dep_subpath.clone(),
+            dep_spec.plugin.as_deref(),
+        );
         requests.push(PendingSource {
             name: dep_name_typed,
             declared_source_id,

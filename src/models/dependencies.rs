@@ -183,11 +183,13 @@ mod tests {
             source_id: SourceId::Path {
                 canonical: canonical.clone(),
                 subpath: None,
+                plugin: None,
             },
             rooted_ref: crate::resolve::RootedSourceRef {
                 checkout_root: canonical.clone(),
                 authored_root: canonical.clone(),
                 package_root: canonical.clone(),
+                plugin: None,
             },
             prepared: None,
             resolved_ref: crate::source::ResolvedRef {
@@ -212,10 +214,12 @@ mod tests {
                     declared_source_id: SourceId::Path {
                         canonical: canonical.clone(),
                         subpath: None,
+                        plugin: None,
                     },
                     source_id: SourceId::Path {
                         canonical: canonical.clone(),
                         subpath: None,
+                        plugin: None,
                     },
                     spec: SourceSpec::Path(canonical),
                     subpath: None,

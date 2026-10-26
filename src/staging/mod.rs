@@ -60,6 +60,7 @@ pub(crate) fn materialize_prepared_rooted(
             checkout_root: rooted.checkout_root,
             authored_root: rooted.authored_root,
             package_root: destination,
+            plugin: rooted.plugin,
         },
         hook_surface,
     ))

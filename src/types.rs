@@ -471,23 +471,34 @@ pub fn managed_cmd(cmd: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// Stable source identity used for resolver deduplication.
+///
+/// `plugin` selects one plugin of a marketplace at the source: two plugins of one marketplace
+/// are two packages, so the selector is part of the identity.
 #[derive(Hash, Eq, PartialEq, Clone, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum SourceId {
     Git {
         url: SourceUrl,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subpath: Option<SourceSubpath>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plugin: Option<String>,
     },
     Path {
         canonical: PathBuf,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subpath: Option<SourceSubpath>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plugin: Option<String>,
     },
 }
 
 impl SourceId {
     pub fn git_with_subpath(url: SourceUrl, subpath: Option<SourceSubpath>) -> Self {
-        Self::Git { url, subpath }
+        Self::Git {
+            url,
+            subpath,
+            plugin: None,
+        }
     }
     pub fn path_with_subpath(
         base: &Path,
@@ -500,28 +511,54 @@ impl SourceId {
             base.join(relative_or_absolute)
         };
         let canonical = dunce::canonicalize(&candidate)?;
-        Ok(Self::Path { canonical, subpath })
+        Ok(Self::Path {
+            canonical,
+            subpath,
+            plugin: None,
+        })
+    }
+
+    pub fn with_plugin(mut self, selector: Option<String>) -> Self {
+        match &mut self {
+            Self::Git { plugin, .. } | Self::Path { plugin, .. } => *plugin = selector,
+        }
+        self
+    }
+
+    pub fn plugin(&self) -> Option<&str> {
+        match self {
+            Self::Git { plugin, .. } | Self::Path { plugin, .. } => plugin.as_deref(),
+        }
     }
 }
 
 impl fmt::Display for SourceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Git { url, subpath } => {
+        let (subpath, plugin) = match self {
+            Self::Git {
+                url,
+                subpath,
+                plugin,
+            } => {
                 write!(f, "git:{url}")?;
-                if let Some(subpath) = subpath {
-                    write!(f, "@{subpath}")?;
-                }
-                Ok(())
+                (subpath, plugin)
             }
-            Self::Path { canonical, subpath } => {
+            Self::Path {
+                canonical,
+                subpath,
+                plugin,
+            } => {
                 write!(f, "path:{}", canonical.display())?;
-                if let Some(subpath) = subpath {
-                    write!(f, "@{subpath}")?;
-                }
-                Ok(())
+                (subpath, plugin)
             }
+        };
+        if let Some(subpath) = subpath {
+            write!(f, "@{subpath}")?;
         }
+        if let Some(plugin) = plugin {
+            write!(f, " (plugin {plugin})")?;
+        }
+        Ok(())
     }
 }
 

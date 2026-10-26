@@ -279,6 +279,26 @@ pub struct LockedSource {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitHash>,
+    /// The marketplace plugin installed from this source. `url`, `version` and `commit` above
+    /// are then the marketplace's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
+    /// Where `plugin`'s files came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<LockedContent>,
+}
+
+/// The tree a marketplace plugin was read from. A plugin in the marketplace's own repository
+/// repeats the marketplace's `url` and `commit` with its path as `subpath`; with a marketplace
+/// at a local path, a local plugin has only its `subpath`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LockedContent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<SourceUrl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subpath: Option<SourceSubpath>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<CommitHash>,
 }
 
 /// V2 locked item: one logical item with per-output records.
@@ -854,6 +874,8 @@ pub fn build(
                 subpath: None,
                 version: None,
                 commit: None,
+                plugin: None,
+                content: None,
             },
         );
     }
@@ -1338,8 +1360,10 @@ fn checksum_is_empty(checksum: &ContentHash) -> bool {
 
 fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
     let (url, path, subpath) = match &node.source_id {
-        SourceId::Git { url, subpath } => (Some(url.clone()), None, subpath.clone()),
-        SourceId::Path { canonical, subpath } => (
+        SourceId::Git { url, subpath, .. } => (Some(url.clone()), None, subpath.clone()),
+        SourceId::Path {
+            canonical, subpath, ..
+        } => (
             None,
             Some(canonical.to_string_lossy().to_string()),
             subpath.clone(),
@@ -1352,6 +1376,16 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
         subpath,
         version: node.resolved_ref.version_tag.clone(),
         commit: node.resolved_ref.commit.clone(),
+        plugin: node
+            .rooted_ref
+            .plugin
+            .as_ref()
+            .map(|plugin| plugin.name().to_owned()),
+        content: node
+            .rooted_ref
+            .plugin
+            .as_ref()
+            .map(|plugin| plugin.content.clone()),
     }
 }
 
@@ -1386,6 +1420,8 @@ mod tests {
                 subpath: None,
                 version: Some("v1.0.0".into()),
                 commit: Some("abc123".into()),
+                plugin: None,
+                content: None,
             },
         );
 
@@ -2504,6 +2540,7 @@ installed_checksum = "sha256:222"
                     checkout_root: PathBuf::from("/tmp/cache/base"),
                     authored_root: PathBuf::from("/tmp/cache/base/plugins/base"),
                     package_root: PathBuf::from("/tmp/cache/base/plugins/base"),
+                    plugin: None,
                 },
                 prepared: None,
                 resolved_ref: ResolvedRef {
@@ -2524,11 +2561,13 @@ installed_checksum = "sha256:222"
                 source_id: SourceId::Path {
                     canonical: path_canonical.clone(),
                     subpath: Some(crate::types::SourceSubpath::new("plugins/local").unwrap()),
+                    plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/local"),
                     authored_root: PathBuf::from("/tmp/cache/local/plugins/local"),
                     package_root: PathBuf::from("/tmp/cache/local/plugins/local"),
+                    plugin: None,
                 },
                 prepared: None,
                 resolved_ref: ResolvedRef {
@@ -2561,6 +2600,8 @@ installed_checksum = "sha256:222"
                 subpath: None,
                 version: Some("v0.0.1".into()),
                 commit: Some("deadbeef".into()),
+                plugin: None,
+                content: None,
             },
         );
         let old_lock = LockFile {
@@ -2618,6 +2659,7 @@ installed_checksum = "sha256:222"
                     checkout_root: PathBuf::from("/tmp/cache/base"),
                     authored_root: PathBuf::from("/tmp/cache/base"),
                     package_root: PathBuf::from("/tmp/cache/base"),
+                    plugin: None,
                 },
                 prepared: None,
                 resolved_ref: ResolvedRef {
@@ -2673,6 +2715,8 @@ installed_checksum = "sha256:222"
                     subpath: None,
                     version: None,
                     commit: None,
+                    plugin: None,
+                    content: None,
                 },
             )]),
             items: IndexMap::from([(

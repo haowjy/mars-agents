@@ -80,11 +80,13 @@ fn make_graph_config(
                 source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: tree_path.clone(),
                     authored_root: tree_path.clone(),
                     package_root: tree_path.clone(),
+                    plugin: None,
                 },
                 prepared: crate::package_prepare::prepare_tree_for_test(name, &tree_path),
                 resolved_ref: crate::source::ResolvedRef {
@@ -106,10 +108,12 @@ fn make_graph_config(
                 declared_source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 spec: SourceSpec::Path(tree_path),
                 subpath: None,
@@ -143,6 +147,7 @@ fn path_dependency_entry(path: &std::path::Path) -> DependencyEntry {
         subpath: None,
         version: None,
         dialect: None,
+        plugin: None,
         filter: FilterConfig::default(),
     }
 }
@@ -154,6 +159,7 @@ fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> Depen
         subpath: None,
         version: Some(version.to_string()),
         dialect: None,
+        plugin: None,
         filter,
     }
 }
@@ -518,6 +524,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     checkout_root: PathBuf::from(format!("/tmp/{name}")),
                     authored_root: PathBuf::from(format!("/tmp/{name}")),
                     package_root: PathBuf::from(format!("/tmp/{name}")),
+                    plugin: None,
                 },
                 prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
@@ -612,6 +619,7 @@ fn planned_bump_entries_bump_all_outdated_pins() {
             version: None,
             dialect: None,
             filter: FilterConfig::default(),
+            plugin: None,
         },
     );
 
@@ -888,10 +896,12 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 declared_source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 spec: SourceSpec::Path(tree_path.clone()),
                 subpath: None,
@@ -912,6 +922,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 checkout_root: tree_path.clone(),
                 authored_root: tree_path.clone(),
                 package_root: tree_path.clone(),
+                plugin: None,
             },
             cfg,
             &mut diag,

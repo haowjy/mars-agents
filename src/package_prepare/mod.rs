@@ -241,6 +241,7 @@ pub(crate) fn prepare_rooted(
         },
         hint: Hint {
             dialect: dependency.and_then(|entry| entry.dialect),
+            plugin: rooted.plugin.as_ref().map(|plugin| plugin.hint.clone()),
             ..Hint::default()
         },
         selection: Selection::default(),
@@ -255,7 +256,23 @@ pub(crate) fn prepare_rooted(
             diag.schema(diagnostic, &format!("{source_name}: {path}"), false);
         }
     }
-    if normalized.kind == Kind::Marketplace
+    if let Some(plugin) = &rooted.plugin {
+        // The plugin was chosen from its marketplace; what is wrong is the plugin itself.
+        if let Some(refusal) = normalized
+            .diagnostics
+            .values()
+            .flatten()
+            .find(|diagnostic| diagnostic.is_error() && diagnostic.code.starts_with("marketplace."))
+        {
+            return Err(MarsError::InvalidRequest {
+                message: format!(
+                    "`{source_name}`, plugin `{}`: {}",
+                    plugin.name(),
+                    refusal.message
+                ),
+            });
+        }
+    } else if normalized.kind == Kind::Marketplace
         && (normalized.packages.len() != 1
             || normalized
                 .diagnostics
@@ -302,15 +319,10 @@ fn marketplace_choice_error(
     hint: &Hint,
 ) -> MarsError {
     let inspection = mars_schema::inspect::inspect(source, hint);
-    let plugins = inspection
-        .plugins
-        .iter()
-        .map(|plugin| format!("  {}", plugin.entry.name))
-        .collect::<Vec<_>>()
-        .join("\n");
     MarsError::InvalidRequest {
         message: format!(
-            "`{source_name}` is a marketplace with these plugins:\n{plugins}\nname the one to install with `plugin = \"<name>\"` on its dependency entry"
+            "`{source_name}` is a marketplace with these plugins:\n{}\nname the one to install with `--plugin <name>` on `mars add`, or `plugin = \"<name>\"` on its dependency entry",
+            crate::resolve::plugin_list(&inspection.plugins)
         ),
     }
 }
@@ -448,6 +460,7 @@ pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Optio
         checkout_root: root.to_path_buf(),
         authored_root: root.to_path_buf(),
         package_root: root.to_path_buf(),
+        plugin: None,
     };
     let prepared = prepare_rooted(
         &name.into(),

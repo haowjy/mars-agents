@@ -161,6 +161,9 @@ pub struct InstallDep {
     /// Inbound lift dialect for this dependency (see `mars_schema::dialect::Dialect`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialect: Option<Dialect>,
+    /// The plugin to install from the marketplace at this source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
     #[serde(flatten)]
     pub filter: FilterConfig,
 }
@@ -176,6 +179,7 @@ pub struct ManifestDep {
     pub path: Option<PathBuf>,
     pub subpath: Option<SourceSubpath>,
     pub version: Option<String>,
+    pub plugin: Option<String>,
     pub filter: FilterConfig,
 }
 
@@ -759,6 +763,7 @@ pub(crate) fn parse_prepared_manifest(
                     path: entry.path,
                     subpath: entry.subpath,
                     version: entry.version,
+                    plugin: entry.plugin,
                     filter: entry.filter,
                 },
             )
@@ -1057,6 +1062,13 @@ pub fn merge_with_root(
             }
         };
 
+        validate_plugin_selector(
+            name.as_ref(),
+            entry.plugin.as_deref(),
+            entry.subpath.as_ref(),
+            entry.dialect,
+        )?;
+
         // Validate filter combinations
         validate_filter(&entry.filter, name.as_ref())?;
 
@@ -1065,7 +1077,8 @@ pub fn merge_with_root(
         let rename = entry.filter.rename.clone().unwrap_or_default();
 
         let subpath = entry.subpath.clone();
-        let declared_source_id = source_id_for_spec(root, &base_spec, subpath.clone());
+        let declared_source_id =
+            source_id_for_spec(root, &base_spec, subpath.clone(), entry.plugin.as_deref());
 
         // Check if this source has a local override
         let spec = if let Some(ov) = local.overrides.get(name) {
@@ -1074,7 +1087,8 @@ pub fn merge_with_root(
             base_spec
         };
         let dialect = entry.dialect;
-        let effective_source_id = source_id_for_spec(root, &spec, subpath.clone());
+        let effective_source_id =
+            source_id_for_spec(root, &spec, subpath.clone(), entry.plugin.as_deref());
 
         dependencies.insert(
             name.clone(),
@@ -1207,26 +1221,62 @@ impl FilterConfig {
     }
 }
 
-fn source_id_for_spec(root: &Path, spec: &SourceSpec, subpath: Option<SourceSubpath>) -> SourceId {
-    match spec {
+pub(crate) fn source_id_for_spec(
+    root: &Path,
+    spec: &SourceSpec,
+    subpath: Option<SourceSubpath>,
+    plugin: Option<&str>,
+) -> SourceId {
+    let id = match spec {
         SourceSpec::Git(git) => {
             let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
                 git.url.as_ref(),
             ));
-            SourceId::git_with_subpath(canonical_url, subpath.clone())
+            SourceId::git_with_subpath(canonical_url, subpath)
         }
-        SourceSpec::Path(path) => match SourceId::path_with_subpath(root, path, subpath.clone()) {
-            Ok(id) => id,
-            Err(_) => {
+        SourceSpec::Path(path) => SourceId::path_with_subpath(root, path, subpath.clone())
+            .unwrap_or_else(|_| {
                 let canonical = if path.is_absolute() {
                     path.clone()
                 } else {
                     root.join(path)
                 };
-                SourceId::Path { canonical, subpath }
-            }
-        },
+                SourceId::Path {
+                    canonical,
+                    subpath,
+                    plugin: None,
+                }
+            }),
+    };
+    id.with_plugin(plugin.map(str::to_owned))
+}
+
+/// `plugin` picks one plugin of the marketplace at the source's root, read as a Claude
+/// marketplace; a `subpath` or `dialect` would name a different root or reading.
+pub(crate) fn validate_plugin_selector(
+    name: &str,
+    plugin: Option<&str>,
+    subpath: Option<&SourceSubpath>,
+    dialect: Option<Dialect>,
+) -> Result<(), ConfigError> {
+    let Some(plugin) = plugin else {
+        return Ok(());
+    };
+    let invalid = |message: String| ConfigError::Invalid { message };
+    if plugin.trim().is_empty() {
+        return Err(invalid(format!("source `{name}` has an empty `plugin`")));
     }
+    if subpath.is_some() {
+        return Err(invalid(format!(
+            "source `{name}` has both `plugin` and `subpath` — a marketplace is read at the root of its source, and the marketplace entry says where the plugin is"
+        )));
+    }
+    if dialect.is_some() {
+        return Err(invalid(format!(
+            "source `{name}` has both `plugin` and `dialect` — a marketplace plugin is read as a Claude plugin"
+        )));
+    }
+    Ok(())
 }
 
 fn migrate_legacy_source_urls(config: &mut Config) {
@@ -2528,6 +2578,7 @@ future_key = "allowed"
                         version: Some("v1.0".into()),
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
                     },
                 );
                 m
@@ -2562,6 +2613,7 @@ future_key = "allowed"
                         version: Some("v1.0".into()),
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
                     },
                 );
                 m
@@ -2611,6 +2663,7 @@ future_key = "allowed"
                         version: Some("v1.0".into()),
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
                     },
                 );
                 m
@@ -2643,7 +2696,8 @@ future_key = "allowed"
             &source.source_id,
             SourceId::Path {
                 canonical,
-                subpath: Some(sp)
+                subpath: Some(sp),
+                plugin: None,
             } if canonical == &canonical_override && sp.as_str() == "plugins/foo"
         ));
     }
@@ -2662,6 +2716,7 @@ future_key = "allowed"
                         version: None,
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
                     },
                 );
                 m
@@ -2830,6 +2885,7 @@ only_agents = true
                 version: Some("v1.0".into()),
                 dialect: None,
                 filter: FilterConfig::default(),
+                plugin: None,
             },
         );
 
@@ -2987,6 +3043,7 @@ exclude = ["deprecated"]
                         version: None,
                         dialect: None,
                         filter: FilterConfig::default(),
+                        plugin: None,
                     },
                 );
                 m
@@ -3497,6 +3554,7 @@ skills = ["prompt-helper"]
                 version: None,
                 dialect: None,
                 filter: FilterConfig::default(),
+                plugin: None,
             },
         );
         let config = Config {

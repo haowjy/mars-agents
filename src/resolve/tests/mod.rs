@@ -363,6 +363,7 @@ fn make_manifest(name: &str, version: &str, deps: Vec<(&str, &str, &str)>) -> Ma
                 subpath: None,
                 version: Some(dep_ver.to_string()),
                 filter: crate::config::FilterConfig::default(),
+                plugin: None,
             },
         );
     }
@@ -411,6 +412,7 @@ fn make_manifest_with_filters(
                 subpath: None,
                 version: Some(dep_ver.to_string()),
                 filter: dep_filter,
+                plugin: None,
             },
         );
     }
@@ -520,6 +522,7 @@ fn source_id_for_spec(spec: &SourceSpec, subpath: Option<SourceSubpath>) -> Sour
         SourceSpec::Path(path) => SourceId::Path {
             canonical: path.clone(),
             subpath,
+            plugin: None,
         },
     }
 }
@@ -539,5 +542,6 @@ fn dummy_rooted_ref() -> RootedSourceRef {
         checkout_root: PathBuf::new(),
         authored_root: PathBuf::new(),
         package_root: PathBuf::new(),
+        plugin: None,
     }
 }

@@ -93,6 +93,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 subpath: parsed.entry.subpath,
                 version: parsed.entry.version,
                 dialect: parsed.entry.dialect,
+                plugin: None,
                 filter: filter_config.clone(),
             };
             Ok((parsed.name, entry))
@@ -229,6 +230,7 @@ fn parse_dependency_specifier(
             subpath,
             version: parsed.version,
             dialect: None,
+            plugin: None,
             filter: FilterConfig::default(),
         },
     })

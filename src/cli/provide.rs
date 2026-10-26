@@ -111,7 +111,7 @@ fn applied_summary(report: &ProvideReport) -> String {
     }
     let what = format!("provided {}@{}", report.provider, report.version);
     if parts.is_empty() {
-        return format!("{what}: record is current");
+        return format!("{what}: record updated");
     }
     format!("{what}: {}", parts.join(", "))
 }

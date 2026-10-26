@@ -128,6 +128,7 @@ A host program (Meridian) can install skills of its own with [`mars provide`](..
 [package]
 name = "my-agents"
 version = "0.1.0"
+schema = 1
 requires-mars = ">=0.20.0"
 uses-providers = ["meridian"]
 ```

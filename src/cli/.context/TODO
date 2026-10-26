@@ -3,3 +3,9 @@
 - `version.rs::require_validate_pass` leaves an untracked `.mars/` directory after its
   dry-run. Make validation avoid creating canonical state or remove only the state that
   this invocation created, so an aborted release can be rerun from a clean tree.
+- `provide.rs`: a provided bundle is host-authored v1 and read strictly (pre-v1 translation
+  covers only dependency trees), so one removed key in one skill refuses the whole bundle
+  with exit 2. meridian-cli falls back to its wheel skills on exit 2 without printing
+  Mars's error, so a later Mars that removes a key would silently downgrade an older
+  Meridian. Either refuse per skill, or have meridian-cli print the
+  `provided-skill-invalid` message.

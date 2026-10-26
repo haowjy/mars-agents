@@ -26,7 +26,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
   the sync lock only when a re-plan would write nothing — the record matches the source and every
   source skill is either claimed by a package or installed with its source bytes — so a skill left
   out earlier (shadowed, collided) installs once the blocker is gone, and a run whose plan changes
-  nothing writes nothing. A held lock answers `busy`, an interrupted sync answers `sync-pending`,
+  nothing writes nothing. A held lock answers `busy`, an interrupted sync answers `sync-pending` until `mars repair` or `mars sync` recovers it,
   and a crash mid-apply converges on the next run. `--json` reports the status, the recorded names
   and per-name `installed`/`replaced`/`adopted`/`removed`/`shadowed`/`collisions`; shadowed names
   and collisions are reported on every run while they last. `FileLock::try_acquire` is the one

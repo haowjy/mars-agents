@@ -660,7 +660,7 @@ after the run), `installed`, `replaced`, `adopted`, `removed`, `shadowed`,
 | `up-to-date` | A re-plan would write nothing: `provided.lock` and the installed trees already match the source |
 | `applied` | Skills were installed, replaced, adopted or removed |
 | `busy` | Another Mars process holds `.mars/sync.lock`; nothing was written |
-| `sync-pending` | An interrupted sync owns canonical destinations; run `mars repair` first |
+| `sync-pending` | An interrupted sync owns canonical destinations; run `mars repair` (or `mars sync`) to recover, then provide again |
 
 All four exit 0. Validation failures exit 2: `provided-name-invalid` (a name or
 `SKILL.md` `name` that is not `<skill>__<provider>`) and `provided-skill-invalid`

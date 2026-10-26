@@ -266,10 +266,10 @@ pub fn build_with_collisions_and_diag(
             .iter()
             .map(|hook| hook.discovered_item(&node.rooted_ref.package_root))
             .collect::<Vec<_>>();
-        let discovered = discover::discover_resolved_source_with_hooks(
+        let discovered = discover::discover_source_with_hooks(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
-            &discovered_hooks,
+            Some(&discovered_hooks),
             diag,
         )?;
 

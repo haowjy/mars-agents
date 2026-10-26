@@ -108,7 +108,7 @@ pub fn collect_source_lossiness_diagnostics(
                 .with_settings_policies(settings.model_policies.clone())
         });
 
-    let discovered = crate::discover::discover_resolved_source(
+    let discovered = crate::discover::discover_source(
         staging.path(),
         fallback_skill_name.as_deref(),
         &mut diag,

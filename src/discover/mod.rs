@@ -35,8 +35,6 @@ const AGENTS_DIR_NAME: &str = "agents";
 const SKILLS_DIR_NAME: &str = "skills";
 const HOOKS_DIR_NAME: &str = "hooks";
 const BOOTSTRAP_DIR_NAME: &str = "bootstrap";
-const MANIFEST_SKILL_KEYS: &[&str] = &["skills", "skill_paths", "skillPaths"];
-const MANIFEST_AGENT_KEYS: &[&str] = &["agents", "agent_paths", "agentPaths"];
 const MANIFEST_BOOTSTRAP_KEYS: &[&str] = &["bootstrapDocs", "bootstrap_docs"];
 
 /// An item discovered in a source tree by filesystem convention.
@@ -57,7 +55,8 @@ struct LayeredItem {
     layer: usize,
 }
 
-/// Discover items by conventional mars package layout.
+/// Discover items by conventional mars package layout, plus bootstrap docs a plugin manifest
+/// declares.
 pub fn discover_source(
     tree_path: &Path,
     fallback_name: Option<&str>,
@@ -66,69 +65,17 @@ pub fn discover_source(
     discover_source_with_hooks(tree_path, fallback_name, None, diag)
 }
 
-fn discover_source_with_hooks(
+/// Discover a rooted source while reusing hook definitions parsed by the compiler.
+pub(crate) fn discover_source_with_hooks(
     tree_path: &Path,
     fallback_name: Option<&str>,
     parsed_hooks: Option<&[DiscoveredItem]>,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    let items = discover_convention_items(tree_path, fallback_name, parsed_hooks, diag)?;
-    finalize_items(fallback_name.unwrap_or("unknown-source"), items)
-}
-
-/// Discover items from a source without a mars.toml manifest.
-pub fn discover_manifestless_source(
-    package_root: &Path,
-    source_name: Option<&str>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<DiscoveredItem>, MarsError> {
-    discover_manifestless_source_with_hooks(package_root, source_name, None, diag)
-}
-
-fn discover_manifestless_source_with_hooks(
-    package_root: &Path,
-    source_name: Option<&str>,
-    parsed_hooks: Option<&[DiscoveredItem]>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<DiscoveredItem>, MarsError> {
-    let label = source_name.unwrap_or("unknown-source");
-    let convention_items =
-        discover_convention_items(package_root, source_name, parsed_hooks, diag)?;
-
-    let mut items = convention_items;
-    items.append(&mut discover_manifest_declared_items(
-        package_root,
-        label,
-        diag,
-    )?);
+    let label = fallback_name.unwrap_or("unknown-source");
+    let mut items = discover_convention_items(tree_path, fallback_name, parsed_hooks, diag)?;
+    items.append(&mut declared_bootstrap_items(tree_path, label, diag)?);
     finalize_items(label, items)
-}
-
-/// Shared dispatcher for rooted-source discovery.
-pub fn discover_resolved_source(
-    package_root: &Path,
-    source_name: Option<&str>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<DiscoveredItem>, MarsError> {
-    if package_root.join("mars.toml").is_file() {
-        discover_source(package_root, source_name, diag)
-    } else {
-        discover_manifestless_source(package_root, source_name, diag)
-    }
-}
-
-/// Discover a rooted source while reusing hook definitions parsed by the compiler.
-pub(crate) fn discover_resolved_source_with_hooks(
-    package_root: &Path,
-    source_name: Option<&str>,
-    parsed_hooks: &[DiscoveredItem],
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<DiscoveredItem>, MarsError> {
-    if package_root.join("mars.toml").is_file() {
-        discover_source_with_hooks(package_root, source_name, Some(parsed_hooks), diag)
-    } else {
-        discover_manifestless_source_with_hooks(package_root, source_name, Some(parsed_hooks), diag)
-    }
 }
 
 fn discover_convention_items(
@@ -431,81 +378,31 @@ fn scan_bootstrap_dir(
     Ok(())
 }
 
-fn scan_manifest_declared_path(
+fn scan_declared_bootstrap_path(
     package_root: &Path,
     configured_plugin_dir: Option<&Path>,
-    declared_path: &DeclaredPath,
+    declared_path: &Path,
     items: &mut Vec<DiscoveredItem>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut visited = HashSet::new();
-    let candidate = package_root.join(&declared_path.relative_path);
+    let candidate = package_root.join(declared_path);
     if path_is_in_generated_plugin_tree(package_root, configured_plugin_dir, &candidate, diag) {
         return Ok(());
     }
-    match declared_path.kind {
-        ItemKind::Skill => {
-            if candidate.join("SKILL.md").is_file() {
-                register_skill_dir(
-                    package_root,
-                    &declared_path.relative_path,
-                    items,
-                    &mut visited,
-                )?;
-            } else if candidate.is_dir() {
-                scan_skill_dir(
-                    package_root,
-                    &declared_path.relative_path,
-                    items,
-                    &mut visited,
-                    diag,
-                )?;
-            }
-        }
-        ItemKind::Agent => {
-            if candidate.is_file()
-                && candidate.extension().and_then(|ext| ext.to_str()) == Some("md")
-            {
-                register_agent_file(&declared_path.relative_path, items, &mut visited);
-            } else if candidate.is_dir() {
-                scan_agent_dir(
-                    package_root,
-                    &declared_path.relative_path,
-                    items,
-                    &mut visited,
-                )?;
-            }
-        }
-        ItemKind::BootstrapDoc => {
-            if candidate.join("BOOTSTRAP.md").is_file() {
-                register_bootstrap_doc(
-                    package_root,
-                    &declared_path.relative_path,
-                    items,
-                    &mut visited,
-                )?;
-            } else if candidate
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name == "BOOTSTRAP.md")
-                && candidate.is_file()
-                && let Some(parent) = declared_path.relative_path.parent()
-            {
-                register_bootstrap_doc(package_root, parent, items, &mut visited)?;
-            } else if candidate.is_dir() {
-                scan_bootstrap_dir(
-                    package_root,
-                    &declared_path.relative_path,
-                    items,
-                    &mut visited,
-                    diag,
-                )?;
-            }
-        }
-        // New config kinds not yet handled by source discovery.
-        ItemKind::Hook | ItemKind::McpServer => {}
+    if candidate.join("BOOTSTRAP.md").is_file() {
+        register_bootstrap_doc(package_root, declared_path, items, &mut visited)?;
+    } else if candidate
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "BOOTSTRAP.md")
+        && candidate.is_file()
+        && let Some(parent) = declared_path.parent()
+    {
+        register_bootstrap_doc(package_root, parent, items, &mut visited)?;
+    } else if candidate.is_dir() {
+        scan_bootstrap_dir(package_root, declared_path, items, &mut visited, diag)?;
     }
-
     Ok(())
 }
 
@@ -589,7 +486,8 @@ fn register_bootstrap_doc(
     Ok(())
 }
 
-fn discover_manifest_declared_items(
+/// Bootstrap docs a plugin manifest declares with `bootstrapDocs`.
+fn declared_bootstrap_items(
     package_root: &Path,
     source_name: &str,
     diag: &mut DiagnosticCollector,
@@ -599,8 +497,8 @@ fn discover_manifest_declared_items(
     }
     let mut items = Vec::new();
     let configured_plugin_dir = configured_plugin_dir(package_root);
-    for declared_path in collect_manifest_declared_paths(package_root, source_name, None)? {
-        scan_manifest_declared_path(
+    for declared_path in declared_bootstrap_paths(package_root, source_name)? {
+        scan_declared_bootstrap_path(
             package_root,
             configured_plugin_dir.as_deref(),
             &declared_path,
@@ -657,21 +555,11 @@ pub(crate) fn discover_bootstrap_surfaces(
         .into_iter()
         .map(|item| item.item)
         .collect();
-    if !package_root.join("mars.toml").is_file() {
-        for declared in collect_manifest_declared_paths(
-            package_root,
-            "unknown-source",
-            Some(ItemKind::BootstrapDoc),
-        )? {
-            scan_manifest_declared_path(
-                package_root,
-                configured_plugin_dir.as_deref(),
-                &declared,
-                &mut items,
-                diag,
-            )?;
-        }
-    }
+    items.extend(declared_bootstrap_items(
+        package_root,
+        "unknown-source",
+        diag,
+    )?);
     finalize_items("unknown-source", items)
 }
 
@@ -784,11 +672,10 @@ fn dedupe_items_by_path(items: Vec<DiscoveredItem>) -> Vec<DiscoveredItem> {
     deduped
 }
 
-fn collect_manifest_declared_paths(
+fn declared_bootstrap_paths(
     package_root: &Path,
     source_name: &str,
-    kind_filter: Option<ItemKind>,
-) -> Result<Vec<DeclaredPath>, MarsError> {
+) -> Result<Vec<PathBuf>, MarsError> {
     let mut declared = Vec::new();
     for manifest in SOURCE_MANIFEST_PATHS {
         let path = package_root.join(manifest);
@@ -800,22 +687,18 @@ fn collect_manifest_declared_paths(
             source_name: source_name.to_string(),
             message: format!("failed to parse plugin manifest `{}`: {e}", path.display()),
         })?;
-        declared.extend(parse_declared_paths(&json));
+        declared.extend(parse_declared_bootstrap_paths(&json));
     }
 
-    let mut resolved = Vec::new();
-    let mut seen = HashSet::new();
+    let mut resolved: Vec<PathBuf> = Vec::new();
     for raw in declared {
-        if kind_filter.is_some_and(|kind| raw.kind != kind) {
+        if !raw.starts_with("./") {
             continue;
         }
-        if !raw.raw_path.starts_with("./") {
-            continue;
-        }
-        let normalized = normalize_manifest_declared_path(&raw.raw_path).ok_or_else(|| {
+        let normalized = normalize_manifest_declared_path(&raw).ok_or_else(|| {
             MarsError::ManifestDeclaredPathEscape {
                 source_name: source_name.to_string(),
-                manifest_path: raw.raw_path.display().to_string(),
+                manifest_path: raw.display().to_string(),
                 package_root: package_root.to_path_buf(),
             }
         })?;
@@ -823,14 +706,14 @@ fn collect_manifest_declared_paths(
         if !candidate.exists() {
             return Err(MarsError::ManifestDeclaredPathMissing {
                 source_name: source_name.to_string(),
-                manifest_path: raw.raw_path.display().to_string(),
+                manifest_path: raw.display().to_string(),
                 package_root: package_root.to_path_buf(),
             });
         }
         let canonical = dunce::canonicalize(&candidate).map_err(|_| {
             MarsError::ManifestDeclaredPathMissing {
                 source_name: source_name.to_string(),
-                manifest_path: raw.raw_path.display().to_string(),
+                manifest_path: raw.display().to_string(),
                 package_root: package_root.to_path_buf(),
             }
         })?;
@@ -844,16 +727,13 @@ fn collect_manifest_declared_paths(
         if !canonical.starts_with(&canonical_root) {
             return Err(MarsError::ManifestDeclaredPathEscape {
                 source_name: source_name.to_string(),
-                manifest_path: raw.raw_path.display().to_string(),
+                manifest_path: raw.display().to_string(),
                 package_root: package_root.to_path_buf(),
             });
         }
         let rel = relative_to(package_root, &candidate)?;
-        if seen.insert((raw.kind, rel.clone())) {
-            resolved.push(DeclaredPath {
-                kind: raw.kind,
-                relative_path: rel,
-            });
+        if !resolved.contains(&rel) {
+            resolved.push(rel);
         }
     }
     Ok(resolved)
@@ -923,67 +803,34 @@ fn read_dir_paths_sorted(dir: &Path) -> Result<Vec<PathBuf>, MarsError> {
     Ok(paths)
 }
 
-fn parse_declared_paths(json: &Value) -> Vec<RawDeclaredPath> {
+fn parse_declared_bootstrap_paths(json: &Value) -> Vec<PathBuf> {
     let Some(map) = json.as_object() else {
         return Vec::new();
     };
-
     let mut declared = Vec::new();
-    for key in MANIFEST_SKILL_KEYS {
-        if let Some(value) = map.get(*key) {
-            collect_declared_paths_from_value(ItemKind::Skill, value, &mut declared);
-        }
-    }
-    for key in MANIFEST_AGENT_KEYS {
-        if let Some(value) = map.get(*key) {
-            collect_declared_paths_from_value(ItemKind::Agent, value, &mut declared);
-        }
-    }
     for key in MANIFEST_BOOTSTRAP_KEYS {
         if let Some(value) = map.get(*key) {
-            collect_declared_paths_from_value(ItemKind::BootstrapDoc, value, &mut declared);
+            collect_declared_paths_from_value(value, &mut declared);
         }
     }
     declared
 }
 
-fn collect_declared_paths_from_value(
-    kind: ItemKind,
-    value: &Value,
-    declared: &mut Vec<RawDeclaredPath>,
-) {
+fn collect_declared_paths_from_value(value: &Value, declared: &mut Vec<PathBuf>) {
     match value {
-        Value::String(path) => declared.push(RawDeclaredPath {
-            kind,
-            raw_path: PathBuf::from(path),
-        }),
+        Value::String(path) => declared.push(PathBuf::from(path)),
         Value::Array(values) => {
             for child in values {
-                collect_declared_paths_from_value(kind, child, declared);
+                collect_declared_paths_from_value(child, declared);
             }
         }
         Value::Object(map) => {
             if let Some(path) = map.get("path").and_then(|value| value.as_str()) {
-                declared.push(RawDeclaredPath {
-                    kind,
-                    raw_path: PathBuf::from(path),
-                });
+                declared.push(PathBuf::from(path));
             }
         }
         _ => {}
     }
-}
-
-#[derive(Debug, Clone)]
-struct RawDeclaredPath {
-    kind: ItemKind,
-    raw_path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-struct DeclaredPath {
-    kind: ItemKind,
-    relative_path: PathBuf,
 }
 
 fn sort_items(items: &mut [DiscoveredItem]) {

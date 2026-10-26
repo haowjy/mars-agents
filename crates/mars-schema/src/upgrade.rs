@@ -54,7 +54,7 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
 
     let edited_paths = changed_mapping_paths(original.mapping(), frontmatter.mapping());
 
-    let fallback = frontmatter.render();
+    let fallback = with_line_ending_of(text, frontmatter.render());
     let minimally_edited = edit_top_level_blocks(text, original.mapping(), frontmatter.mapping())
         .and_then(|edited| {
             Frontmatter::parse(&edited)
@@ -98,11 +98,34 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
         ]);
     }
     Ok(UpgradeResult {
-        text: document.to_string(),
+        text: with_line_ending_of(text, document.to_string()),
         diagnostics,
         fully_rewritten: false,
         edited_paths,
     })
+}
+
+/// Whether the file's first line ends in `\r\n`.
+fn is_crlf(text: &str) -> bool {
+    text.find('\n')
+        .is_some_and(|end| text.as_bytes()[..end].ends_with(b"\r"))
+}
+
+/// `written` uses `\n` where the upgrade added lines; a CRLF file stays CRLF.
+fn with_line_ending_of(original: &str, written: String) -> String {
+    if !is_crlf(original) {
+        return written;
+    }
+    let mut out = String::with_capacity(written.len() + written.len() / 16);
+    let mut previous = '\0';
+    for character in written.chars() {
+        if character == '\n' && previous != '\r' {
+            out.push('\r');
+        }
+        out.push(character);
+        previous = character;
+    }
+    out
 }
 
 fn changed_mapping_paths(before: &Mapping, after: &Mapping) -> Vec<Vec<PathSegment>> {
@@ -143,6 +166,7 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
         return None;
     }
 
+    let render = |key: &str, value: &Value| with_line_ending_of(text, render_block(key, value));
     let mut output = String::with_capacity(text.len());
     output.push_str(prefix);
     let first_key_offset = blocks.first().map_or(yaml.len(), |block| block.start);
@@ -159,7 +183,7 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
             if before_value == after_value {
                 output.push_str(block.text);
             } else {
-                output.push_str(&render_block(block.key, after_value));
+                output.push_str(&render(block.key, after_value));
             }
             emitted.push(block.key);
         }
@@ -171,9 +195,9 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
             continue;
         }
         if !output.ends_with('\n') {
-            output.push('\n');
+            output.push_str(&with_line_ending_of(text, "\n".to_owned()));
         }
-        output.push_str(&render_block(key, value));
+        output.push_str(&render(key, value));
     }
     output.push_str(suffix);
     Some(output)

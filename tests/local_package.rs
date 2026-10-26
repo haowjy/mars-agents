@@ -53,7 +53,7 @@ fn full_pipeline_with_local_package_and_custom_target() {
 
     // 5. Add [package] section and create local items
     let mut config_str = config_content.clone();
-    config_str.push_str("\n[package]\nname = \"test-project\"\nversion = \"1.0.0\"\n");
+    config_str.push_str("\n[package]\nname = \"test-project\"\nversion = \"1.0.0\"\nschema = 1\n");
     fs::write(project.child("mars.toml").path(), &config_str).unwrap();
 
     // Create local agent and skill under the local package source root.
@@ -208,7 +208,7 @@ fn sync_prefers_mars_src_local_items_over_repo_root() {
 
     fs::write(
         project.child("mars.toml").path(),
-        "[dependencies]\n\n[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n",
+        "[dependencies]\n\n[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nschema = 1\n",
     )
     .unwrap();
 

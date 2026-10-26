@@ -52,6 +52,9 @@ pub(crate) struct ProvideReport {
     /// Destinations Mars did not create and cannot adopt; left untouched. Reported on every run
     /// while the directory stays in the way.
     pub collisions: Vec<String>,
+    /// Diagnostics this run produced: schema warnings from the bundle, and a `provided.lock` it
+    /// could not use. JSON carries them on every status; plain text prints them only for
+    /// `applied`, so a no-op launch stays quiet.
     pub warnings: Vec<String>,
 }
 

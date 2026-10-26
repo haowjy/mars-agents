@@ -662,10 +662,10 @@ All four exit 0. Validation failures exit 2: `provided-name-invalid` (a name or
 Mars only deletes names its own record lists. A directory it did not create is
 adopted when its bytes match the source and reported as `collisions` otherwise; a
 provided skill whose destination a package owns is reported as `shadowed` and left
-to the package. Both are reported on every run while they last, from either
-status path, not only on the run that first saw them. Plain text prints source
-diagnostics (schema warnings) only for `applied`; `--json` carries them in
-`warnings` on every status.
+to the package. Both are reported on every run while they last, from the fast
+path and the locked one alike, not only on the run that first saw them. Plain
+text prints source diagnostics (schema warnings) only for `applied`; `--json`
+carries them in `warnings` on every status.
 
 `.mars/provided.lock` is machine-local (`version = 1`, one `[providers.<name>]`
 table per provider with `version`, `digest` and `skills`). `digest` is `pending`

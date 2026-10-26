@@ -3,6 +3,7 @@
 use serde_yaml::{Mapping, Value};
 use toml_edit::{DocumentMut, Item};
 
+use crate::claude;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 
@@ -292,6 +293,13 @@ fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
     replace_scalar(fm, "approval", "yolo", "never");
     move_permission(fm);
     strip_model_policy_overrides(fm, diagnostics);
+    // A pre-v1 file passed unknown keys to every harness; Claude's own keep reaching Claude.
+    claude::translate::move_to_claude_overrides(
+        fm,
+        claude::translate::CLAUDE_ONLY_AGENT_KEYS,
+        "agent.claude-keys-moved",
+        diagnostics,
+    );
 }
 
 fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
@@ -345,6 +353,13 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
             ));
         }
     }
+
+    claude::translate::move_to_claude_overrides(
+        fm,
+        claude::translate::CLAUDE_ONLY_SKILL_KEYS,
+        "skill.claude-keys-moved",
+        diagnostics,
+    );
 }
 
 fn upgrade_tools(fm: &mut Frontmatter) {

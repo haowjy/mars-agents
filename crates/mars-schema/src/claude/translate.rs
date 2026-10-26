@@ -15,7 +15,7 @@ use crate::tool_policy;
 /// `harness-overrides.claude`, which only `.claude/` output receives. (`model` and `effort`
 /// have v1 meaning on Agents only; a skill carries neither.) `tools` and the `allowed-tools`
 /// family have their own warning.
-const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
+pub(crate) const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "argument-hint",
     "arguments",
     "model",
@@ -36,7 +36,7 @@ const SKILL_TOOL_KEYS: &[&str] = &[
     "disallowedTools",
 ];
 
-const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
+pub(crate) const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "color",
     "initialPrompt",
     "maxTurns",
@@ -70,7 +70,7 @@ fn warn(diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String) {
 
 /// Move the listed keys, in file order and unchanged, under `harness-overrides.claude`. An
 /// override already written there wins over a moved key of the same name.
-fn move_to_claude_overrides(
+pub(crate) fn move_to_claude_overrides(
     fm: &mut Frontmatter,
     keys: &[&str],
     code: &str,

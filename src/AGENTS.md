@@ -84,7 +84,7 @@ sync/build → resolve ← source
 - Windows is first-class. No POSIX-only assumptions in paths, process launching, or filesystem operations.
 - No VCS dependency — walk to filesystem root via `Path::parent()`, not `.git` boundaries.
 - Execution-policy precedence for effort, sandbox, and approval: CLI > agent overlay > overlay
-  model policy > YAML profile > profile model policy > settings model policy > project/local
+  model policy > profile model policy > YAML profile > settings model policy > project/local
   settings > user config > harness default. There is no environment-variable policy layer.
   Compaction is resolved only from the selected model alias.
 - Resolve first, then act — zero mutations if any error detected during resolution.

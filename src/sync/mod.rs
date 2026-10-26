@@ -152,7 +152,7 @@ pub(crate) struct ResolvedState {
     pub upgrades_available: usize,
     /// Owns every normalized package tree until the compiler has passed its
     /// complete diagnostic gate. Durable staging is published only afterward.
-    pub preparation: tempfile::TempDir,
+    pub preparation: crate::platform::fs::PendingStagingGeneration,
 }
 
 /// Phase 3: Desired target state after discovery + filtering.
@@ -463,7 +463,8 @@ pub(crate) fn resolve_graph(
             (name.clone(), path)
         })
         .collect();
-    let preparation = tempfile::tempdir()?;
+    let preparation =
+        crate::platform::fs::PendingStagingGeneration::create(&ctx.project_root.join(".mars"))?;
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
         .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(

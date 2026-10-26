@@ -46,6 +46,27 @@ struct SelectedMcp {
 }
 
 impl TargetState {
+    pub(crate) fn rebase_source_root(&mut self, from: &Path, to: &Path) {
+        fn rebase(path: &mut PathBuf, from: &Path, to: &Path) {
+            if let Ok(relative) = path.strip_prefix(from) {
+                *path = to.join(relative);
+            }
+        }
+
+        for item in self.items.values_mut() {
+            rebase(&mut item.source_path, from, to);
+        }
+        for hook in self.selected_hooks.values_mut() {
+            rebase(&mut hook.item.hook_dir, from, to);
+        }
+        for hook in &mut self.exported_hooks {
+            rebase(&mut hook.hook_dir, from, to);
+        }
+        for mcp in &mut self.selected_mcp {
+            rebase(&mut mcp.item.source_path, from, to);
+        }
+    }
+
     pub(crate) fn exported_hooks(&self) -> &[crate::compiler::hooks::ParsedHookItem] {
         &self.exported_hooks
     }

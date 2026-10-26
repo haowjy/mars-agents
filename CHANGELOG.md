@@ -31,10 +31,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Binary package consumers now prepare authored trees through `mars-schema`, retain authored
   origins independently from materialized paths, and resolve transitive path dependencies from
   those origins.
-- Package preparation now normalizes dependency, local, check, validation, migration, and publish inputs in
-  owned scratch space; strict diagnostics block every project mutation except the sync lock, while
-  validation retains its structured report and staging has one owner per package. Migration and legacy staging discover definitions
-  without rewriting supporting Markdown inside skills.
+- Package preparation now normalizes dependency, local, check, validation, migration, and publish
+  inputs before mutation. Prepared manifest readings remain authoritative, so validation preserves
+  specific structured diagnostics. Local and dependency projections retain binary-owned bootstrap,
+  hook, and MCP surfaces alongside prepared Agents and skills. Sync materializes directly into the
+  recoverable `.mars/.staging.pending` generation and publishes it by rename; legacy warnings name
+  each package and direct authors to `mars migrate`. Migration and legacy staging discover
+  definitions without rewriting supporting Markdown inside skills.
 - Schema-v1 readers now preserve UTF-8 BOMs, distinguish YAML structure from scalar text, and
   report empty identities, malformed reference lists, metadata types, and zero-based policy paths.
 - `mars migrate` now preserves untouched frontmatter bytes, identifies rare full-frontmatter

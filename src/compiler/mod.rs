@@ -94,15 +94,29 @@ fn compile_inner(
     if enforce_diagnostic_gate {
         diag.fail_on_errors()?;
     }
-    if !request.options.dry_run {
-        crate::platform::fs::publish_staging_generation(
-            planned.targeted.resolved.preparation.path(),
-            &ctx.project_root.join(".mars"),
-        )?;
-    }
-
     // Phase 5: persist config mutations, apply plan to canonical store.
-    let applied = apply_plan(ctx, planned, request)?;
+    let mut applied = apply_plan(ctx, planned, request)?;
+    if !request.options.dry_run {
+        let pending = applied
+            .planned
+            .targeted
+            .resolved
+            .preparation
+            .path()
+            .to_path_buf();
+        let published = ctx.project_root.join(".mars/staging");
+        crate::platform::fs::publish_staging_generation(&pending, &ctx.project_root.join(".mars"))?;
+        applied
+            .planned
+            .targeted
+            .target
+            .rebase_source_root(&pending, &published);
+        for node in applied.planned.targeted.resolved.graph.nodes.values_mut() {
+            if let Ok(relative) = node.rooted_ref.package_root.strip_prefix(&pending) {
+                node.rooted_ref.package_root = published.join(relative);
+            }
+        }
+    }
 
     // Phase 3.2 / 3.3: Native agent surfaces — scan once; reconcile + compile after target sync.
     let effective_settings = &applied.planned.targeted.resolved.loaded.effective.settings;

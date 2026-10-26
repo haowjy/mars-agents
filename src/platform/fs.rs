@@ -153,6 +153,31 @@ pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
 
 const PENDING_STAGING_GENERATION: &str = ".staging.pending";
 
+/// Project-owned scratch generation. A normal early return removes it; an
+/// interrupted process leaves the one reserved path for the next lock holder.
+pub(crate) struct PendingStagingGeneration {
+    path: PathBuf,
+}
+
+impl PendingStagingGeneration {
+    pub(crate) fn create(mars_dir: &Path) -> Result<Self, MarsError> {
+        fs::create_dir_all(mars_dir)?;
+        let path = mars_dir.join(PENDING_STAGING_GENERATION);
+        fs::create_dir(&path)?;
+        Ok(Self { path })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PendingStagingGeneration {
+    fn drop(&mut self) {
+        let _ = safe_remove(&self.path);
+    }
+}
+
 /// Remove only the pending canonical generation owned by sync.
 pub(crate) fn recover_pending_staging(mars_dir: &Path) -> Result<bool, MarsError> {
     let pending = mars_dir.join(PENDING_STAGING_GENERATION);
@@ -163,19 +188,16 @@ pub(crate) fn recover_pending_staging(mars_dir: &Path) -> Result<bool, MarsError
     Ok(true)
 }
 
-/// Publish canonical staging through an identifiable generation. A process
-/// interrupted after the copy leaves exactly `.mars/.staging.pending`, which
-/// the next lock holder reclaims without touching unrelated temporary paths.
+/// Publish the already-materialized pending generation by rename.
 pub(crate) fn publish_staging_generation(source: &Path, mars_dir: &Path) -> Result<(), MarsError> {
-    fs::create_dir_all(mars_dir)?;
     let pending = mars_dir.join(PENDING_STAGING_GENERATION);
-    if pending.symlink_metadata().is_ok() {
-        safe_remove(&pending)?;
-    }
-    fs::create_dir(&pending)?;
-    if let Err(error) = copy_dir_following_symlinks(source, &pending) {
-        let _ = safe_remove(&pending);
-        return Err(error);
+    if source != pending {
+        return Err(MarsError::InvalidRequest {
+            message: format!(
+                "staging publication source must be the reserved generation `{}`",
+                pending.display()
+            ),
+        });
     }
     replace_generated_dir(&pending, &mars_dir.join("staging"))
 }

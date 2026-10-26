@@ -207,7 +207,10 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         },
         graph,
         upgrades_available: 0,
-        preparation: tempfile::tempdir().unwrap(),
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -265,7 +268,10 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
         },
         graph,
         upgrades_available: 0,
-        preparation: tempfile::tempdir().unwrap(),
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -342,7 +348,10 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
         },
         graph,
         upgrades_available: 0,
-        preparation: tempfile::tempdir().unwrap(),
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -400,7 +409,10 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         },
         graph,
         upgrades_available: 0,
-        preparation: tempfile::tempdir().unwrap(),
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -460,7 +472,10 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
         },
         graph,
         upgrades_available: 0,
-        preparation: tempfile::tempdir().unwrap(),
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {

@@ -122,7 +122,11 @@ pub(crate) fn acquire(
             };
             (rooted, content, false)
         }
-        PluginSource::Unsupported { .. } => unreachable!("an unsupported source is refused"),
+        PluginSource::Unsupported { reason } => {
+            return Err(invalid(format!(
+                "plugin `{plugin_name}` of `{name}` cannot be installed: {reason}"
+            )));
+        }
     };
 
     report_move(pending, locked, plugin_name, &content, diag);

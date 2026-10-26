@@ -413,15 +413,12 @@ fn lower_skill_content_for_harness(
     emit_schema_diags: bool,
 ) -> Result<Option<crate::compiler::lossiness::LoweredOutput>, MarsError> {
     use crate::compiler::skills::lower::{lower_skill_for_harness, skill_harness_from_variant_key};
-    use mars_schema::skill::parse_skill_content;
 
     let Some(harness) = skill_harness_from_variant_key(harness_key) else {
         return Ok(None);
     };
-    let mut skill_diags = Vec::new();
-    let (profile, _) = match parse_skill_content(base_content, &mut skill_diags) {
-        Ok(parsed) => parsed,
-        Err(_) => return Ok(None),
+    let Some(profile) = mars_schema::skill::read(base_content).fields else {
+        return Ok(None);
     };
 
     if !profile.has_frontmatter {

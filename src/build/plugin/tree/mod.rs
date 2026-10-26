@@ -296,10 +296,7 @@ fn check_agent_source(
         .rewritten_content
         .as_deref()
         .unwrap_or(&authored_content);
-    let mut parse_diags = Vec::new();
-    mars_schema::agent::parse_agent_content(content, &mut parse_diags)
-        .map_err(|error| invalid_item("agent", item, error.to_string()))?;
-    emit_agent_parse_diagnostics(item, &parse_diags, diag)
+    emit_agent_parse_diagnostics(item, &mars_schema::agent::read(content).diagnostics, diag)
 }
 
 pub(super) fn write_tree(
@@ -461,10 +458,22 @@ fn write_agent(
 ) -> Result<Option<ModelFallbackReason>, MarsError> {
     let authored_content = std::fs::read_to_string(&item.source_path)?;
     let content = item.rewritten_content.clone().unwrap_or(authored_content);
-    let mut ignored_parse_diags = Vec::new();
-    let (profile, frontmatter) =
-        mars_schema::agent::parse_agent_content(&content, &mut ignored_parse_diags)
-            .map_err(|error| invalid_item("agent", item, error.to_string()))?;
+    // `check_agent_source` already reported the file's diagnostics, so only a file with no
+    // fields to lower fails here. The authored frontmatter carries the keys a plugin keeps
+    // that no native file would.
+    let reading = mars_schema::agent::read(&content);
+    let (Some(profile), Some(body)) = (reading.fields, reading.body) else {
+        return Err(invalid_item(
+            "agent",
+            item,
+            reading
+                .diagnostics
+                .first()
+                .map_or("unreadable".to_owned(), |d| d.message().to_owned()),
+        ));
+    };
+    let source = mars_schema::frontmatter::parse(&content)
+        .map_err(|error| invalid_item("agent", item, error.to_string()))?;
 
     let overlay = (item.source_name == *input.root_source)
         .then(|| agent_overlay_name(item, input.collision_renames))
@@ -499,13 +508,8 @@ fn write_agent(
         input.settings_policies,
         model_ref,
     );
-    let lowered = lower_for_harness_with_model(
-        &tree_profile.harness,
-        &effective,
-        &frontmatter,
-        frontmatter.body(),
-        &model.native,
-    );
+    let lowered =
+        lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
     let plugin_lossy_fields;
     let lossy_fields = if tree_profile.format.approximate_lowers_to_dropped {
         plugin_lossy_fields = lowered
@@ -539,7 +543,7 @@ fn write_agent(
             item.id.name
         ))
     })?;
-    let lowered = agent_policy(&lowered, &frontmatter, item, diag)?;
+    let lowered = agent_policy(&lowered, &source, item, diag)?;
     let qualified = qualify_body_references(&lowered, &body_refs)?;
 
     let path = root.join("agents").join(format!("{}.md", item.id.name));

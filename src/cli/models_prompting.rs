@@ -11,7 +11,7 @@ use crate::build::policy::{PolicyInput, resolve_policy};
 use crate::error::MarsError;
 use crate::models::{self, ModelAlias};
 use crate::types::MarsContext;
-use mars_schema::agent::{AgentProfile, parse_agent_content};
+use mars_schema::agent::AgentProfile;
 use mars_schema::item::ItemKind;
 
 #[derive(Debug, Parser)]
@@ -183,22 +183,17 @@ fn load_prompt_agents(ctx: &MarsContext) -> Result<Vec<PromptAgent>, MarsError> 
             }
         };
 
-        let mut diags = Vec::new();
-        let (profile, _fm) = match parse_agent_content(&content, &mut diags) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+        let profile = match mars_schema::agent::read(&content).into_valid() {
+            Ok(valid) => valid.fields,
+            Err(error) => {
+                eprintln!(
+                    "warning: skipping {}: {}",
+                    disk_path.display(),
+                    error.message()
+                );
                 continue;
             }
         };
-        if let Some(fatal) = diags.iter().find(|diag| diag.is_error()) {
-            eprintln!(
-                "warning: skipping {}: {}",
-                disk_path.display(),
-                fatal.message()
-            );
-            continue;
-        }
 
         let stem = prompt_path_stem(&disk_path);
         let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());

@@ -13,6 +13,8 @@ use serde::Serialize;
 
 use crate::error::MarsError;
 
+use mars_schema::read::Reading;
+
 use super::output;
 
 /// Arguments for `mars check`.
@@ -61,8 +63,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         lens.manifest.as_ref().map(|config| &config.models),
     );
     for definition in &prepared.definitions {
-        let mars_schema::prepare::PreparedDefinitionRead::Agent(reading) = &definition.reading
-        else {
+        let Reading::Agent(reading) = &definition.reading else {
             continue;
         };
         let Some(profile) = reading.fields.as_ref() else {
@@ -264,7 +265,7 @@ fn check_prepared(
             continue;
         }
         match &definition.reading {
-            mars_schema::prepare::PreparedDefinitionRead::Agent(reading) => {
+            Reading::Agent(reading) => {
                 let filename = path
                     .file_stem()
                     .and_then(|name| name.to_str())
@@ -296,7 +297,7 @@ fn check_prepared(
                     }
                 }
             }
-            mars_schema::prepare::PreparedDefinitionRead::Skill(reading) => {
+            Reading::Skill(reading) => {
                 let dirname = if definition.source_path == "SKILL.md" {
                     definition.slug.clone()
                 } else {
@@ -322,6 +323,8 @@ fn check_prepared(
                     }
                 }
             }
+            // A prepared definition is an Agent or a skill, as its `kind` says.
+            Reading::Manifest(_) => {}
         }
     }
 

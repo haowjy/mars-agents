@@ -48,7 +48,6 @@ pub(crate) struct NativeAgentCompileCtx<'a> {
 struct NativeAgentEmit<'a> {
     harness: &'a mars_schema::HarnessId,
     profile: &'a mars_schema::agent::AgentProfile,
-    fm: &'a mars_schema::frontmatter::Frontmatter,
     body: &'a str,
     agent_name: &'a str,
     canonical_dest_path: &'a str,
@@ -68,7 +67,7 @@ pub(crate) struct MarsCanonicalAgent {
     /// The consumer's `[agents.<name>]` overlay, already merged into `profile` except for
     /// the scalar layers that outrank model policies.
     pub overlay: Option<crate::config::AgentOverlay>,
-    pub fm: mars_schema::frontmatter::Frontmatter,
+    pub body: String,
 }
 
 pub(crate) struct MarsAgentScan {
@@ -545,8 +544,6 @@ fn is_native_agent_dest_path(dest_rel: &str) -> bool {
 }
 
 pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) -> MarsAgentScan {
-    use mars_schema::agent::parse_agent_content;
-
     let agents_dir = mars_dir.join("agents");
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
         return MarsAgentScan {
@@ -581,17 +578,21 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             }
         };
 
-        let mut agent_diags = Vec::new();
-        let (profile, fm) = match parse_agent_content(&content, &mut agent_diags) {
-            Ok(r) => r,
-            Err(e) => {
-                diag.warn(
-                    "native-agent-parse",
-                    format!("could not parse {}: {e}", path.display()),
-                );
-                failed_canonical_paths.insert(canonical_dest_path);
-                continue;
-            }
+        let reading = mars_schema::agent::read(&content);
+        let (Some(profile), Some(body)) = (reading.fields, reading.body) else {
+            diag.warn(
+                "native-agent-parse",
+                format!(
+                    "could not parse {}: {}",
+                    path.display(),
+                    reading
+                        .diagnostics
+                        .first()
+                        .map_or("unreadable", |d| d.message())
+                ),
+            );
+            failed_canonical_paths.insert(canonical_dest_path);
+            continue;
         };
 
         let agent_name = profile
@@ -604,7 +605,7 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             canonical_dest_path,
             profile,
             overlay: None,
-            fm,
+            body,
         });
     }
 
@@ -782,8 +783,7 @@ pub(crate) fn compile_native_agents<'a>(
                 &NativeAgentEmit {
                     harness: &emission.harness,
                     profile: &emission.profile,
-                    fm: &agent.fm,
-                    body: agent.fm.body(),
+                    body: &agent.body,
                     agent_name: &agent.agent_name,
                     canonical_dest_path: &agent.canonical_dest_path,
                     model: &emission.model,
@@ -933,13 +933,8 @@ fn emit_lowered_native_agent(
     use crate::compiler::agents::lower::lower_for_harness_with_model;
     use crate::surface_ownership::{self, SurfaceCopyDecision};
 
-    let lowered = lower_for_harness_with_model(
-        agent.harness,
-        agent.profile,
-        agent.fm,
-        agent.body,
-        agent.model,
-    );
+    let lowered =
+        lower_for_harness_with_model(agent.harness, agent.profile, agent.body, agent.model);
 
     crate::compiler::lossiness::emit_agent_lossiness_warnings(
         agent.agent_name,
@@ -1167,7 +1162,7 @@ fn resolve_native_agent_profiles(
                 canonical_dest_path: agent.canonical_dest_path.clone(),
                 profile,
                 overlay: agent_overlays.get(&agent.agent_name).cloned(),
-                fm: agent.fm.clone(),
+                body: agent.body.clone(),
             }
         })
         .collect()

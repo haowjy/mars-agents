@@ -457,15 +457,15 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
 }
 
 fn parse_mars_agent(content: &str, stem: &str) -> MarsCanonicalAgent {
-    let mut agent_diags = Vec::new();
-    let (profile, fm) = mars_schema::agent::parse_agent_content(content, &mut agent_diags).unwrap();
+    let reading = mars_schema::agent::read(content);
+    let (profile, body) = (reading.fields.unwrap(), reading.body.unwrap());
     let agent_name = profile.name.clone().unwrap_or_else(|| stem.to_string());
     MarsCanonicalAgent {
         agent_name,
         canonical_dest_path: format!("agents/{stem}.md"),
         profile,
         overlay: None,
-        fm,
+        body,
     }
 }
 

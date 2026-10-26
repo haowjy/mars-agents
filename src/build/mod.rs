@@ -19,7 +19,7 @@ use crate::cli::MarsContext;
 use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
 use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
-use mars_schema::agent::{AgentProfile, parse_agent_content};
+use mars_schema::agent::AgentProfile;
 use mars_schema::frontmatter::SkillsSpec;
 
 pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
@@ -61,35 +61,27 @@ pub fn build_launch_bundle(
                 source,
             })?;
 
-        let mut parse_diags = Vec::new();
-        let (parsed_profile, frontmatter) = parse_agent_content(&agent_content, &mut parse_diags)
-            .map_err(|err| {
-            MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "failed to parse agent `{agent}` from {}: {err}",
-                    agent_path.display()
-                ),
-            })
-        })?;
-
-        if let Some(fatal) = parse_diags.iter().find(|diag| diag.is_error()) {
-            return Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "agent `{agent}` has invalid frontmatter in {}: {}",
-                    agent_path.display(),
-                    fatal.message()
-                ),
-            }));
-        }
+        let valid = mars_schema::agent::read(&agent_content)
+            .into_valid()
+            .map_err(|error| {
+                MarsError::Config(ConfigError::Invalid {
+                    message: format!(
+                        "agent `{agent}` has invalid frontmatter in {}: {}",
+                        agent_path.display(),
+                        error.message()
+                    ),
+                })
+            })?;
 
         warnings.extend(
-            parse_diags
+            valid
+                .warnings
                 .iter()
                 .map(|diag| format!("agent `{agent}`: {}", diag.message())),
         );
-        agent_body = Some(frontmatter.body().to_string());
+        agent_body = Some(valid.body);
         agent_source_path = Some(agent_path);
-        profile = parsed_profile;
+        profile = valid.fields;
     } else {
         profile = empty_agent_profile();
         agent_body = None;

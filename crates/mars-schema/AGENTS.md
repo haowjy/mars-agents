@@ -58,9 +58,14 @@ with one slug, conflicting manifests) leaves the package holding nothing to writ
 error in its diagnostics. `fixtures/normalize/<case>/` holds `input/`, `request.json`,
 `inspection.json`, `normalized.json` and the file maps under `expected/<package id>/`.
 
-`agent`, `skill`, and `manifest` are the only readers for schema-v1 definitions. Their
-serialized reading and diagnostics are pinned by `fixtures/read/`; callers consume these
-types directly rather than reading owned frontmatter keys themselves. Unknown fields are
+`agent`, `skill`, and `manifest` are the only readers for schema-v1 definitions. An Agent or
+skill is read one way, `read::read_definition`: the structure-preserving parse (an anchor or a
+document-end marker is a diagnostic beside the fields, never a refusal to read them), then the
+kind's field reader. `agent::read`, `skill::read`, `read::read` and `prepare` are that function,
+and the binary reads definitions through them (`DefinitionRead::into_valid` for a caller that
+refuses a file with any error). Their serialized reading and diagnostics are pinned by
+`fixtures/read/`; callers consume these types directly rather than reading owned frontmatter
+keys themselves. Unknown fields are
 kept in the authored file but reach no native file (`field.unknown` points to
 `harness-overrides.<harness>`), while removed fields are errors. The Claude translation moves
 Claude-only keys under `harness-overrides.claude` instead of deleting them.

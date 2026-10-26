@@ -6,7 +6,7 @@ use crate::HarnessId;
 use crate::ordered::OrderedValue;
 use serde_yaml::Value;
 
-use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
+use crate::frontmatter::{Frontmatter, SkillsSpec};
 use crate::invocability::parse_invocability_axis;
 use crate::model_policy::ModelPolicyRule;
 use crate::tool_policy::{self, EffectiveToolPolicy};
@@ -195,7 +195,7 @@ impl HarnessOverrides {
 
 /// Strongly-typed representation of an agent profile's frontmatter.
 ///
-/// Parsed from YAML frontmatter by [`parse_agent_profile`].
+/// Parsed from YAML frontmatter by [`read`].
 /// Used for:
 /// - Compile-time validation (mode values, passthrough shape)
 /// - Dual-surface routing (harness → output target)
@@ -793,7 +793,7 @@ fn read_skills(value: &Value, diags: &mut Vec<crate::diagnostic::SchemaDiagnosti
     }
 }
 
-fn parse_agent_profile_inner(
+fn read_fields(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> AgentProfile {
@@ -956,45 +956,7 @@ fn parse_agent_profile_inner(
     profile
 }
 
-pub fn parse_agent_profile(
-    fm: &Frontmatter,
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> AgentProfile {
-    parse_agent_profile_inner(fm, diags)
-}
-
-pub fn parse_agent_content(
-    content: &str,
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> Result<(AgentProfile, Frontmatter), FrontmatterError> {
-    let fm = Frontmatter::parse(content)?;
-    let profile = parse_agent_profile(&fm, diags);
-    Ok((profile, fm))
-}
-
 /// Read an Agent definition through the versioned schema contract.
 pub fn read(content: &str) -> crate::read::DefinitionRead<AgentProfile> {
-    let mut diagnostics = Vec::new();
-    match Frontmatter::parse_preserving_structure(content) {
-        Ok((frontmatter, structural_errors)) => {
-            diagnostics.extend(
-                structural_errors
-                    .iter()
-                    .map(crate::diagnostic::frontmatter_error),
-            );
-            let fields = parse_agent_profile_inner(&frontmatter, &mut diagnostics);
-            crate::read::DefinitionRead {
-                frontmatter: crate::read::frontmatter_json(frontmatter.mapping(), &mut diagnostics),
-                fields: Some(fields),
-                body: Some(frontmatter.body().to_string()),
-                diagnostics,
-            }
-        }
-        Err(error) => crate::read::DefinitionRead {
-            frontmatter: Vec::new(),
-            fields: None,
-            body: None,
-            diagnostics: vec![crate::diagnostic::frontmatter_error(&error)],
-        },
-    }
+    crate::read::read_with(content, read_fields)
 }

@@ -9,7 +9,7 @@ use crate::dialect::Dialect;
 use crate::discover::{SelectedDefinition, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 use crate::frontmatter::Frontmatter;
-use crate::read::DefinitionRead;
+use crate::read::{DefinitionRead, Reading, read_definition};
 use crate::tree::TreeSource;
 use crate::upgrade::{DefinitionKind, UpgradeResult};
 
@@ -93,16 +93,9 @@ pub struct PreparedDefinition {
     /// The normalized file; crosses to JavaScript as a `Uint8Array`.
     #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
-    pub reading: PreparedDefinitionRead,
+    /// The Agent or skill reading `kind` names.
+    pub reading: Reading,
     pub change: ChangeRecord,
-}
-
-/// Serializes as the bare [`DefinitionRead`]; `PreparedDefinition::kind` names the variant.
-#[derive(Debug, Clone, Serialize)]
-#[serde(untagged)]
-pub enum PreparedDefinitionRead {
-    Agent(DefinitionRead<crate::agent::AgentProfile>),
-    Skill(DefinitionRead<crate::skill::SkillProfile>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -396,12 +389,7 @@ fn prepare_manifest(
         .or_default()
         .extend(upgraded);
     let reading = std::str::from_utf8(&normalized_bytes).map_or_else(
-        |_| DefinitionRead {
-            frontmatter: Vec::new(),
-            fields: None,
-            body: None,
-            diagnostics: invalid_utf8.into_iter().collect(),
-        },
+        |_| DefinitionRead::unread(invalid_utf8.into_iter().collect()),
         crate::manifest::read,
     );
     PreparedManifest {
@@ -423,34 +411,24 @@ fn prepare_definition(
     upgrade_diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedDefinition {
     let Some(bytes) = source.read(&selected.source_path) else {
-        let diagnostic = SchemaDiagnostic::new(
-            "definition.read-missing",
-            Severity::Error,
-            Vec::new(),
-            "selected definition could not be read",
-        );
-        let reading = match selected.kind {
-            DefinitionKind::Agent => PreparedDefinitionRead::Agent(empty_reading(Some(diagnostic))),
-            DefinitionKind::Skill => PreparedDefinitionRead::Skill(empty_reading(Some(diagnostic))),
-        };
         return PreparedDefinition {
             kind: selected.kind,
             slug: selected.slug.clone(),
             source_path: selected.source_path.clone(),
             output_path: selected.output_path.clone(),
             normalized_bytes: Vec::new(),
-            reading,
+            reading: unreadable(
+                selected.kind,
+                SchemaDiagnostic::new(
+                    "definition.read-missing",
+                    Severity::Error,
+                    Vec::new(),
+                    "selected definition could not be read",
+                ),
+            ),
             change: ChangeRecord::None,
         };
     };
-    let invalid_utf8 = std::str::from_utf8(&bytes).err().map(|error| {
-        SchemaDiagnostic::new(
-            "text.invalid-utf8",
-            Severity::Error,
-            Vec::new(),
-            format!("definition is not UTF-8: {error}"),
-        )
-    });
     let (normalized_bytes, change, found) = match std::str::from_utf8(&bytes) {
         Ok(text) => match classification {
             Classification::MarsLegacy => {
@@ -489,16 +467,18 @@ fn prepare_definition(
         .or_default()
         .extend(found);
 
-    let text = std::str::from_utf8(&normalized_bytes).ok();
-    let reading = match (selected.kind, text) {
-        (DefinitionKind::Agent, Some(text)) => {
-            PreparedDefinitionRead::Agent(crate::agent::read(text))
-        }
-        (DefinitionKind::Skill, Some(text)) => {
-            PreparedDefinitionRead::Skill(crate::skill::read(text))
-        }
-        (DefinitionKind::Agent, None) => PreparedDefinitionRead::Agent(empty_reading(invalid_utf8)),
-        (DefinitionKind::Skill, None) => PreparedDefinitionRead::Skill(empty_reading(invalid_utf8)),
+    // Only text is upgraded or translated, so these bytes are the file's when they are not text.
+    let reading = match std::str::from_utf8(&normalized_bytes) {
+        Ok(text) => read_definition(selected.kind, text),
+        Err(error) => unreadable(
+            selected.kind,
+            SchemaDiagnostic::new(
+                "text.invalid-utf8",
+                Severity::Error,
+                Vec::new(),
+                format!("definition is not UTF-8: {error}"),
+            ),
+        ),
     };
 
     PreparedDefinition {
@@ -567,21 +547,11 @@ fn translate_foreign(
     }
 }
 
-impl PreparedDefinitionRead {
-    fn diagnostics(&self) -> &[SchemaDiagnostic] {
-        match self {
-            Self::Agent(reading) => &reading.diagnostics,
-            Self::Skill(reading) => &reading.diagnostics,
-        }
-    }
-}
-
-fn empty_reading<T>(diagnostic: Option<SchemaDiagnostic>) -> DefinitionRead<T> {
-    DefinitionRead {
-        frontmatter: Vec::new(),
-        fields: None,
-        body: None,
-        diagnostics: diagnostic.into_iter().collect(),
+/// A definition with no fields to read, only why.
+fn unreadable(kind: DefinitionKind, diagnostic: SchemaDiagnostic) -> Reading {
+    match kind {
+        DefinitionKind::Agent => Reading::Agent(DefinitionRead::unread(vec![diagnostic])),
+        DefinitionKind::Skill => Reading::Skill(DefinitionRead::unread(vec![diagnostic])),
     }
 }
 

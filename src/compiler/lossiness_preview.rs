@@ -27,8 +27,6 @@ use crate::models::ModelsCache;
 use crate::resolve::PublishLens;
 use crate::target::TargetRegistry;
 use mars_schema::HarnessId;
-use mars_schema::agent::parse_agent_profile;
-use mars_schema::frontmatter;
 
 /// Native harness variant keys for skill projection on configured managed targets.
 fn native_skill_harness_keys(settings: &Settings) -> Vec<String> {
@@ -132,15 +130,14 @@ fn collect_agent_content_lossiness(
     let Some(model_router) = model_router else {
         return;
     };
-    let Ok(fm) = frontmatter::parse(content) else {
+    let Ok(mars_schema::read::Valid {
+        fields: profile,
+        body,
+        ..
+    }) = mars_schema::agent::read(content).into_valid()
+    else {
         return;
     };
-    let mut agent_diags = Vec::new();
-    let profile = parse_agent_profile(&fm, &mut agent_diags);
-    if agent_diags.iter().any(|d| d.is_error()) {
-        return;
-    }
-    let body = fm.body();
     for NativeEmission {
         harness,
         model,
@@ -157,7 +154,7 @@ fn collect_agent_content_lossiness(
         configured_harnesses,
         model_router,
     ) {
-        let lowered = lower_for_harness_with_model(&harness, &profile, &fm, body, &model);
+        let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
         crate::compiler::lossiness::emit_agent_lossiness_warnings(
             agent_name,
             &lowered.lossy_fields,

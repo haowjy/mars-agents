@@ -20,7 +20,7 @@ pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::AgentProfile;
-use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
+use mars_schema::frontmatter::SkillsSpec;
 pub use mars_schema::tool_policy::EffectiveToolPolicy;
 use mars_schema::tool_policy::ToolAction;
 
@@ -824,7 +824,6 @@ fn lower_markdown_agent(
 
 pub fn lower_to_claude(
     profile: &AgentProfile,
-    _fm: &Frontmatter,
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
@@ -1033,12 +1032,11 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel
 pub fn lower_for_harness_with_model(
     harness: &HarnessId,
     profile: &AgentProfile,
-    fm: &Frontmatter,
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
     match harness_descriptor::descriptor(*harness).agent_policy {
-        AgentLoweringPolicyKind::Claude => lower_to_claude(profile, fm, body, model_field),
+        AgentLoweringPolicyKind::Claude => lower_to_claude(profile, body, model_field),
         AgentLoweringPolicyKind::Codex => lower_to_codex(profile, body, model_field),
         AgentLoweringPolicyKind::Markdown => match harness {
             HarnessId::OpenCode => lower_to_opencode(profile, body, model_field),

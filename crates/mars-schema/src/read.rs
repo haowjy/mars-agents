@@ -3,17 +3,30 @@
 use serde::Serialize;
 
 use crate::diagnostic::SchemaDiagnostic;
+use crate::frontmatter::Frontmatter;
 use crate::ordered::OrderedValue;
+use crate::upgrade::DefinitionKind;
 
 /// The serialized v1 reading of one schema-owned file.
 ///
-/// Serializes as the bare [`DefinitionRead`]; the caller knows the kind from the path.
+/// Serializes as the bare [`DefinitionRead`]; the caller knows the kind from the path (or, in
+/// a prepared package, from the definition's `kind`).
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum Reading {
     Manifest(DefinitionRead<crate::package::PackageMetadata>),
     Agent(DefinitionRead<crate::agent::AgentProfile>),
     Skill(DefinitionRead<crate::skill::SkillProfile>),
+}
+
+impl Reading {
+    pub fn diagnostics(&self) -> &[SchemaDiagnostic] {
+        match self {
+            Self::Manifest(reading) => &reading.diagnostics,
+            Self::Agent(reading) => &reading.diagnostics,
+            Self::Skill(reading) => &reading.diagnostics,
+        }
+    }
 }
 
 /// `read` was given a path that is not a schema-owned file.
@@ -33,12 +46,48 @@ pub fn read(path: &str, text: &str) -> Result<Reading, UnrecognizedPath> {
                 .strip_suffix(".md")
                 .is_some_and(|slug| !slug.is_empty()) =>
         {
-            Ok(Reading::Agent(crate::agent::read(text)))
+            Ok(read_definition(DefinitionKind::Agent, text))
         }
         ["skills", slug, "SKILL.md"] if !slug.is_empty() => {
-            Ok(Reading::Skill(crate::skill::read(text)))
+            Ok(read_definition(DefinitionKind::Skill, text))
         }
         _ => Err(UnrecognizedPath(path.to_owned())),
+    }
+}
+
+/// Read one Agent or skill file, the one way: the structure-preserving parse (an anchor, a
+/// document-end marker and the like are diagnostics beside the fields, never a refusal to read
+/// them), then the kind's field reader. `agent::read`, `skill::read`, `read` and `prepare`
+/// are this function.
+pub(crate) fn read_definition(kind: DefinitionKind, text: &str) -> Reading {
+    match kind {
+        DefinitionKind::Agent => Reading::Agent(crate::agent::read(text)),
+        DefinitionKind::Skill => Reading::Skill(crate::skill::read(text)),
+    }
+}
+
+/// The structure-preserving parse and ordered frontmatter shared by the Agent and skill
+/// readers; `fields` is the kind's field reader. Diagnostics come in the order structure,
+/// fields, then values with no JSON form.
+pub(crate) fn read_with<T>(
+    text: &str,
+    fields: impl FnOnce(&Frontmatter, &mut Vec<SchemaDiagnostic>) -> T,
+) -> DefinitionRead<T> {
+    match Frontmatter::parse_preserving_structure(text) {
+        Ok((frontmatter, structural_errors)) => {
+            let mut diagnostics = structural_errors
+                .iter()
+                .map(crate::diagnostic::frontmatter_error)
+                .collect::<Vec<_>>();
+            let fields = fields(&frontmatter, &mut diagnostics);
+            DefinitionRead {
+                frontmatter: frontmatter_json(frontmatter.mapping(), &mut diagnostics),
+                fields: Some(fields),
+                body: Some(frontmatter.body().to_string()),
+                diagnostics,
+            }
+        }
+        Err(error) => DefinitionRead::unread(vec![crate::diagnostic::frontmatter_error(&error)]),
     }
 }
 
@@ -49,6 +98,61 @@ pub struct DefinitionRead<T> {
     pub fields: Option<T>,
     pub body: Option<String>,
     pub diagnostics: Vec<SchemaDiagnostic>,
+}
+
+/// A definition with no errors: see [`DefinitionRead::into_valid`].
+#[derive(Debug, Clone)]
+pub struct Valid<T> {
+    pub fields: T,
+    pub body: String,
+    pub warnings: Vec<SchemaDiagnostic>,
+}
+
+impl<T> DefinitionRead<T> {
+    /// A file that could not be read: no fields, only why.
+    pub(crate) fn unread(diagnostics: Vec<SchemaDiagnostic>) -> Self {
+        Self {
+            frontmatter: Vec::new(),
+            fields: None,
+            body: None,
+            diagnostics,
+        }
+    }
+
+    /// The typed fields, or why there are none: the frontmatter cannot be parsed at all.
+    pub fn into_fields(self) -> Result<T, String> {
+        self.fields.ok_or_else(|| {
+            self.diagnostics
+                .first()
+                .map_or("unreadable".to_owned(), |diagnostic| {
+                    diagnostic.message.clone()
+                })
+        })
+    }
+
+    /// What a caller that acts on the file needs: the fields, the body and the warnings that
+    /// came with them, or the first error. A file with any error is refused whole.
+    pub fn into_valid(self) -> Result<Valid<T>, SchemaDiagnostic> {
+        if let Some(error) = self
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.is_error())
+        {
+            return Err(error.clone());
+        }
+        match (self.fields, self.body) {
+            (Some(fields), Some(body)) => Ok(Valid {
+                fields,
+                body,
+                warnings: self.diagnostics,
+            }),
+            _ => unreachable!("a reading with no error has its fields and body"),
+        }
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics.iter().any(SchemaDiagnostic::is_error)
+    }
 }
 
 pub(crate) fn frontmatter_json(

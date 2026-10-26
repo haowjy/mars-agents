@@ -95,5 +95,34 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "name",
+      "  "
+    ],
+    [
+      "model",
+      ""
+    ],
+    [
+      "skills",
+      {
+        "available": false,
+        "load": [
+          "ok",
+          3,
+          ""
+        ]
+      }
+    ],
+    [
+      "subagents",
+      [
+        "ok",
+        3,
+        ""
+      ]
+    ]
+  ],
   "unknown": []
 }

@@ -26,5 +26,21 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "name",
+      "demo"
+    ],
+    [
+      "description",
+      "demo"
+    ],
+    [
+      "metadata",
+      {
+        "type": 12
+      }
+    ]
+  ],
   "unknown": []
 }

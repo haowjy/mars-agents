@@ -33,5 +33,13 @@
     "skill_type": "coding",
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "metadata",
+      {
+        "type": "coding"
+      }
+    ]
+  ],
   "unknown": []
 }

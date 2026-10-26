@@ -39,6 +39,14 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "disallowed-tools",
+      [
+        "write"
+      ]
+    ]
+  ],
   "unknown": [
     [
       "disallowed-tools",

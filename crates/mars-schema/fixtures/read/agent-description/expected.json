@@ -27,5 +27,11 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "description",
+      "writes"
+    ]
+  ],
   "unknown": []
 }

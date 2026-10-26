@@ -33,5 +33,13 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "tools",
+      {
+        "read": "allow"
+      }
+    ]
+  ],
   "unknown": []
 }

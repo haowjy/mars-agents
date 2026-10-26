@@ -31,5 +31,11 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "compatibility",
+      "mars"
+    ]
+  ],
   "unknown": []
 }

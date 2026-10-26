@@ -39,6 +39,12 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "allowed-tools",
+      "read"
+    ]
+  ],
   "unknown": [
     [
       "allowed-tools",

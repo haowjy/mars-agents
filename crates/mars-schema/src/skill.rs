@@ -231,6 +231,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<SkillProfile> {
         Ok(frontmatter) => {
             let (fields, unknown) = parse_skill_profile_inner(&frontmatter, &mut diagnostics, true);
             crate::read::DefinitionRead {
+                frontmatter: crate::read::frontmatter_json(frontmatter.mapping(), &mut diagnostics),
                 fields: Some(fields),
                 body: Some(frontmatter.body().to_string()),
                 unknown,
@@ -238,6 +239,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<SkillProfile> {
             }
         }
         Err(error) => crate::read::DefinitionRead {
+            frontmatter: Vec::new(),
             fields: None,
             body: None,
             unknown: Vec::new(),

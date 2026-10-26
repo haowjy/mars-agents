@@ -39,6 +39,12 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "disable-model-invocation",
+      true
+    ]
+  ],
   "unknown": [
     [
       "disable-model-invocation",

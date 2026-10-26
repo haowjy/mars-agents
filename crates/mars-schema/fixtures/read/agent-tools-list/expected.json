@@ -36,5 +36,13 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "tools",
+      [
+        "read"
+      ]
+    ]
+  ],
   "unknown": []
 }

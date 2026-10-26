@@ -39,6 +39,12 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "when_to_use",
+      "now"
+    ]
+  ],
   "unknown": [
     [
       "when_to_use",

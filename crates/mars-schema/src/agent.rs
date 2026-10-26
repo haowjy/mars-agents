@@ -883,6 +883,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<AgentProfile> {
             );
             let (fields, unknown) = parse_agent_profile_inner(&frontmatter, &mut diagnostics);
             crate::read::DefinitionRead {
+                frontmatter: crate::read::frontmatter_json(frontmatter.mapping(), &mut diagnostics),
                 fields: Some(fields),
                 body: Some(frontmatter.body().to_string()),
                 unknown,
@@ -890,6 +891,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<AgentProfile> {
             }
         }
         Err(error) => crate::read::DefinitionRead {
+            frontmatter: Vec::new(),
             fields: None,
             body: None,
             unknown: Vec::new(),

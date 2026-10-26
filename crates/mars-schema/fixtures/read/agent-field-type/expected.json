@@ -36,5 +36,11 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "model-invocable",
+      "true"
+    ]
+  ],
   "unknown": []
 }

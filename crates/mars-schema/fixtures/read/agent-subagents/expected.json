@@ -29,5 +29,13 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "subagents",
+      [
+        "child"
+      ]
+    ]
+  ],
   "unknown": []
 }

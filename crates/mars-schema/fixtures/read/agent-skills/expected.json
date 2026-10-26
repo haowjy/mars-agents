@@ -31,5 +31,18 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "skills",
+      {
+        "available": [
+          "b"
+        ],
+        "load": [
+          "a"
+        ]
+      }
+    ]
+  ],
   "unknown": []
 }

@@ -9,6 +9,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         Ok(value) => value,
         Err(error) => {
             return crate::read::DefinitionRead {
+                frontmatter: Vec::new(),
                 fields: None,
                 body: None,
                 unknown: Vec::new(),
@@ -23,6 +24,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
     };
     let Some(package) = value.get("package").and_then(toml::Value::as_table) else {
         return crate::read::DefinitionRead {
+            frontmatter: Vec::new(),
             fields: None,
             body: None,
             unknown: Vec::new(),
@@ -116,6 +118,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         }
     };
     crate::read::DefinitionRead {
+        frontmatter: Vec::new(),
         fields,
         body: None,
         unknown,

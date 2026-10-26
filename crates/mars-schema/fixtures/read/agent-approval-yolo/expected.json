@@ -44,5 +44,11 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "approval",
+      "yolo"
+    ]
+  ],
   "unknown": []
 }

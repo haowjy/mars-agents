@@ -44,6 +44,12 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "model_invocable",
+      false
+    ]
+  ],
   "unknown": [
     [
       "model_invocable",

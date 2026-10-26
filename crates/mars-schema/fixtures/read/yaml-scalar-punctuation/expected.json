@@ -27,5 +27,15 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "name",
+      "coder"
+    ],
+    [
+      "description",
+      "...\nExample: &reference\nAlias: *x\n"
+    ]
+  ],
   "unknown": []
 }

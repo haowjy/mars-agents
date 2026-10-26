@@ -36,6 +36,14 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "mcp-tools",
+      [
+        "x"
+      ]
+    ]
+  ],
   "unknown": [
     [
       "mcp-tools",

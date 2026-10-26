@@ -23,5 +23,11 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "description",
+      "useful"
+    ]
+  ],
   "unknown": []
 }

@@ -39,6 +39,12 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "allow_implicit_invocation",
+      true
+    ]
+  ],
   "unknown": [
     [
       "allow_implicit_invocation",

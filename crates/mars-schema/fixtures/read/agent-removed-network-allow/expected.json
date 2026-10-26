@@ -36,6 +36,14 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "network-allow",
+      [
+        "x"
+      ]
+    ]
+  ],
   "unknown": [
     [
       "network-allow",

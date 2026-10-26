@@ -39,5 +39,11 @@
     "skill_type": null,
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "metadata",
+      "nope"
+    ]
+  ],
   "unknown": []
 }

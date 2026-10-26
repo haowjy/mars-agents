@@ -36,6 +36,12 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "autocompact_pct",
+      80
+    ]
+  ],
   "unknown": [
     [
       "autocompact_pct",

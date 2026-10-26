@@ -294,6 +294,7 @@ fn prepare_manifest(
         .extend(upgrade_diagnostics);
     let reading = std::str::from_utf8(&normalized_bytes).map_or_else(
         |_| DefinitionRead {
+            frontmatter: Vec::new(),
             fields: None,
             body: None,
             unknown: Vec::new(),
@@ -461,6 +462,7 @@ impl PreparedDefinitionRead {
 
 fn empty_reading<T>(diagnostic: Option<SchemaDiagnostic>) -> DefinitionRead<T> {
     DefinitionRead {
+        frontmatter: Vec::new(),
         fields: None,
         body: None,
         unknown: Vec::new(),

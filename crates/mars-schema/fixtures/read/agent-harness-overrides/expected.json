@@ -1,16 +1,6 @@
 {
   "body": "body",
-  "diagnostics": [
-    {
-      "code": "harness.unknown",
-      "message": "unknown harness override `flow`; preserving passthrough block",
-      "path": [
-        "harness-overrides",
-        "flow"
-      ],
-      "severity": "warning"
-    }
-  ],
+  "diagnostics": [],
   "fields": {
     "approval": null,
     "description": null,
@@ -41,5 +31,15 @@
     },
     "user_invocable": true
   },
+  "frontmatter": [
+    [
+      "harness-overrides",
+      {
+        "flow": {
+          "permission": "read"
+        }
+      }
+    ]
+  ],
   "unknown": []
 }

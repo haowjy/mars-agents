@@ -19,6 +19,19 @@ pub struct BuildArgs {
 pub enum BuildCommand {
     /// Build a harness-targeted launch scaffold/bundle for an agent or ad-hoc launch.
     LaunchBundle(LaunchBundleArgs),
+
+    /// Build plugin trees from a package and its resolved dependency graph.
+    Plugin(PluginArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct PluginArgs {
+    /// Package directory containing mars.toml (default: detected project root).
+    pub path: Option<PathBuf>,
+
+    /// Destination for the generated plugin output.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
 }
 
 fn parse_harness(value: &str) -> Result<HarnessId, String> {
@@ -168,10 +181,51 @@ pub struct LaunchBundleArgs {
     pub no_refresh_models: bool,
 }
 
-pub fn run(args: &BuildArgs, ctx: &MarsContext, _json: bool) -> Result<i32, MarsError> {
+pub fn run(args: &BuildArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         BuildCommand::LaunchBundle(subargs) => run_launch_bundle(subargs, ctx),
+        BuildCommand::Plugin(subargs) => run_plugin(subargs, ctx, json),
     }
+}
+
+fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+    let package_root = match &args.path {
+        Some(path) if path.is_absolute() => path.clone(),
+        Some(path) => std::env::current_dir()?.join(path),
+        None => ctx.project_root.clone(),
+    };
+    let manifest = crate::config::load(&package_root)?;
+    let metadata = crate::build::plugin::validate_plugin_build(&manifest)?;
+    let destination = args
+        .out
+        .clone()
+        .map(crate::build::plugin::PluginBuildDestination::Out)
+        .unwrap_or(crate::build::plugin::PluginBuildDestination::Configured);
+    let report = crate::build::plugin::build_plugin(&crate::build::plugin::PluginBuildRequest {
+        package_root,
+        destination,
+        metadata,
+        version: None,
+    })?;
+
+    if json {
+        crate::cli::output::print_json(&report);
+    } else {
+        crate::cli::output::print_diagnostics(&report.diagnostics);
+        for tree in &report.trees {
+            crate::cli::output::print_success(&format!(
+                "built plugin `{}` tree `{}` at {} ({} agents, {} skills, {} hooks, {} MCP servers)",
+                report.plugin_name,
+                tree.tree.as_str(),
+                tree.output.display(),
+                tree.components.agents,
+                tree.components.skills,
+                tree.components.hooks,
+                tree.components.mcp_servers,
+            ));
+        }
+    }
+    Ok(0)
 }
 
 fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, MarsError> {

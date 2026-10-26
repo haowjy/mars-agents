@@ -57,12 +57,18 @@ mars.toml + mars.local.toml
 
 | Phase | Struct | Key contents |
 |---|---|---|
-| 1 | `LoadedConfig` | `Config`, `LocalConfig`, `EffectiveConfig`, `old_lock`, `_sync_lock` |
+| 1 | `LoadedConfig` | `Config`, `LocalConfig`, `EffectiveConfig`, `old_lock`, `sync_lock` (only when `.mars/sync.lock` already exists, on a dry run), dry-run staging dir |
 | 2 | `ResolvedState` | `LoadedConfig` + `ResolvedGraph` + `model_aliases` |
 | 3 | `TargetedState` | `ResolvedState` + `TargetState` + renames + validation warnings |
 | 4 | `PlannedState` | `TargetedState` + `SyncPlan` |
 | 5 | `AppliedState` | `PlannedState` + `ApplyResult` |
 | 6 | `SyncedState` | `AppliedState` + `Vec<TargetSyncOutcome>` |
+
+In a dry run, phase 1 takes the sync flock only when `.mars/sync.lock` already exists (it never
+creates it) and phases 2–3 stage into a temporary directory instead of `.mars/staging`, so a
+preview (`mars sync --diff`, `mars validate`, `mars version`'s validation) creates no project
+paths. Taking an existing lock keeps the preview from reading `mars.lock` and the intent journal
+while a real sync rewrites them.
 
 A `DiagnosticCollector` is threaded through all phases. No `eprintln!` in library code — all warnings/info go through structured diagnostics.
 

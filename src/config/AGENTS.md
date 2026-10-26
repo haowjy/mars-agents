@@ -17,13 +17,24 @@ pipeline operates on EffectiveConfig only
 
 | Type | Role |
 |---|---|
-| `Config` | Full mars.toml: package, dependencies, local-dependencies, settings, models, agents |
+| `Config` | Full mars.toml: package, plugin, dependencies, local-dependencies, settings, models, agents |
+| `Config.plugin` | Raw `plugin` TOML value, preserved without applying publish defaults |
 | `LocalConfig` | Gitignored dev overrides: source path swaps, local agent overlays |
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
 | `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`) |
 | `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
 | `NetworkPolicy` / `NetworkHost` | Shared typed parsers for every mode and host surface |
+
+`load()` parses `plugin` and the plugin-only `[package]` fields `authors`, `homepage`, and
+`license` as raw TOML values. It applies no publish defaults and validates none of their content,
+so config-saving commands round-trip authored values without making publish metadata a sync
+boundary. Typed plugin metadata and harness specs live in `build/plugin/metadata.rs`; plugin build
+validation owns their defaults and semantics, while `mars check` converts the same validation
+error into a warning. Keep `PackageInfo` flat and easy to extend with the planned catch-all for
+unknown package keys. Dependency `load_manifest()` uses a narrow package view
+(identity and engine floors) and ignores plugin-only metadata even when its shape is invalid for the
+package being built.
 
 `AgentOverlayTools` holds permission sets of `OverlayToolName`s (`compiler/tool_names.rs`, a
 leaf grammar module): a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the

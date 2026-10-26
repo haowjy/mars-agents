@@ -201,7 +201,7 @@ pub(crate) fn resolve_package_bottom_up(
                         &pending_src.name,
                         new_rooted,
                         effective_config,
-                        options,
+                        options.staging_root.as_deref(),
                         diag,
                     )?;
                     ctx.set_pending_restart(
@@ -293,7 +293,7 @@ pub(crate) fn resolve_package_bottom_up(
                         &pending_src.name,
                         rooted,
                         effective_config,
-                        options,
+                        options.staging_root.as_deref(),
                         diag,
                     )?;
                     (ref_, staged.rooted, staged.hook_surface)
@@ -425,6 +425,7 @@ pub(crate) fn resolve_package_bottom_up(
     let discovered = discover::discover_resolved_source(
         &rooted_ref.package_root,
         Some(pending_src.name.as_ref()),
+        diag,
     )?;
     let mut items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem> = IndexMap::new();
     for item in &discovered {
@@ -584,30 +585,54 @@ fn engine_unsatisfiable_error(
     })
 }
 
-fn stage_rooted_package(
+pub(crate) fn stage_rooted_package(
     source_name: &SourceName,
     rooted: super::types::RootedSourceRef,
     effective_config: &EffectiveConfig,
-    options: &ResolveOptions,
+    staging_root: Option<&Path>,
     diag: &mut DiagnosticCollector,
 ) -> Result<staging::StagedRootedSource, MarsError> {
-    let Some(staging_root) = options.staging_root.as_deref() else {
+    let Some(staging_root) = staging_root else {
         return Ok(staging::StagedRootedSource {
             rooted,
             hook_surface: staging::HookSurfaceState::Readable,
         });
     };
-
     let dep = effective_config.dependencies.get(source_name);
     let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
-    let renames = dep.map(|entry| entry.rename.clone()).unwrap_or_default();
+    let empty_renames = crate::types::RenameMap::new();
+    let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
     staging::stage_rooted_source(
         source_name,
         rooted,
         staging::RootedStageOptions { dialect },
         &effective_config.skills,
-        &renames,
+        renames,
         staging_root,
+        diag,
+    )
+}
+
+pub(crate) fn stage_rooted_package_for_publish_inputs(
+    source_name: &SourceName,
+    rooted: super::types::RootedSourceRef,
+    effective_config: &EffectiveConfig,
+    staging_root: &Path,
+    inputs: &[staging::PublishInput],
+    diag: &mut DiagnosticCollector,
+) -> Result<staging::StagedRootedSource, MarsError> {
+    let dep = effective_config.dependencies.get(source_name);
+    let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
+    let empty_renames = crate::types::RenameMap::new();
+    let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
+    staging::stage_rooted_source_for_publish_inputs(
+        source_name,
+        rooted,
+        staging::RootedStageOptions { dialect },
+        &effective_config.skills,
+        renames,
+        staging_root,
+        inputs,
         diag,
     )
 }

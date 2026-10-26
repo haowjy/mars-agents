@@ -26,7 +26,9 @@ pub struct TargetState {
     // canonical path prunes `items` so post-sync lowering can report the missing winner.
     selected_hooks: IndexMap<DestPath, SelectedHook>,
     selected_mcp: Vec<SelectedMcp>,
-    mcp_discovery_warnings: Vec<String>,
+    // Keep exported graph hooks even when none of the managed targets select
+    // one of their fragments. Plugin diagnostics need to report that omission.
+    exported_hooks: Vec<crate::compiler::hooks::ParsedHookItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +45,10 @@ struct SelectedMcp {
 }
 
 impl TargetState {
+    pub(crate) fn exported_hooks(&self) -> &[crate::compiler::hooks::ParsedHookItem] {
+        &self.exported_hooks
+    }
+
     pub(crate) fn selected_hooks(
         &self,
     ) -> impl Iterator<Item = (&str, &crate::compiler::hooks::ParsedHookItem)> {
@@ -130,25 +136,13 @@ impl TargetState {
         }
     }
 
-    pub(crate) fn mcp_discovery_warnings(&self) -> impl Iterator<Item = &str> {
-        self.mcp_discovery_warnings.iter().map(String::as_str)
-    }
-
-    pub(crate) fn record_mcp_discovery_warning(&mut self, message: String, local: bool) {
-        if local {
-            self.mcp_discovery_warnings.insert(0, message);
-        } else {
-            self.mcp_discovery_warnings.push(message);
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn from_items(items: IndexMap<DestPath, TargetItem>) -> Self {
         Self {
             items,
             selected_hooks: IndexMap::new(),
             selected_mcp: Vec::new(),
-            mcp_discovery_warnings: Vec::new(),
+            exported_hooks: Vec::new(),
         }
     }
 }
@@ -170,12 +164,36 @@ pub struct TargetItem {
     pub rewritten_content: Option<String>,
 }
 
+impl TargetItem {
+    /// Hash of the bytes/tree mars intends to install after in-memory rewrites.
+    pub(crate) fn expected_installed_hash(&self) -> Result<ContentHash, MarsError> {
+        let Some(content) = &self.rewritten_content else {
+            return Ok(self.source_hash.clone());
+        };
+        let hash = match self.id.kind {
+            ItemKind::Skill => crate::hash::compute_skill_hash_with_override(
+                &self.source_path,
+                "SKILL.md",
+                content.as_bytes(),
+                if self.is_flat_skill {
+                    crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL
+                } else {
+                    &[]
+                },
+            )?,
+            _ => crate::hash::hash_bytes(content.as_bytes()),
+        };
+        Ok(ContentHash::from(hash))
+    }
+}
+
 /// Explicit skill rename that changes the installed skill name.
 #[derive(Debug, Clone)]
-pub struct ExplicitSkillRename {
+pub struct ExplicitRename {
     pub original_name: ItemName,
     pub new_name: ItemName,
     pub source_name: SourceName,
+    pub kind: ItemKind,
 }
 
 /// Automatic rename applied when multiple sources target the same destination.
@@ -190,17 +208,19 @@ pub fn build_with_collisions_and_diag(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
     diag: &mut DiagnosticCollector,
-) -> Result<(TargetState, Vec<ExplicitSkillRename>, Vec<CollisionRename>), MarsError> {
+) -> Result<(TargetState, Vec<ExplicitRename>, Vec<CollisionRename>), MarsError> {
     let mut collected_items = Vec::new();
     let mut target = TargetState {
         items: IndexMap::new(),
         selected_hooks: IndexMap::new(),
         selected_mcp: Vec::new(),
-        mcp_discovery_warnings: Vec::new(),
+        exported_hooks: Vec::new(),
     };
-    let mut explicit_skill_renames = Vec::new();
+    let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
-    let hook_depths = graph.dependency_depths();
+    // Hooks and MCP share shortest graph distance as their precedence key.
+    // Keeping one definition avoids a second meaning of dependency depth.
+    let dependency_depths = graph.dependency_depths(&config.dependencies);
     let decl_orders = graph.dependency_decl_orders(&config.dependencies);
 
     for source_name in &graph.order {
@@ -213,7 +233,7 @@ pub fn build_with_collisions_and_diag(
         let parsed_hooks = crate::compiler::hooks::discover_resolved_hook_items(
             node,
             source_name,
-            hook_depths.get(source_name).copied().unwrap_or(1),
+            dependency_depths.get(source_name).copied().unwrap_or(1),
             decl_orders
                 .get(source_name)
                 .copied()
@@ -228,6 +248,7 @@ pub fn build_with_collisions_and_diag(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
             &discovered_hooks,
+            diag,
         )?;
 
         if source_may_emit_mcp(graph, source_name) {
@@ -235,9 +256,10 @@ pub fn build_with_collisions_and_diag(
                 .get(source_name)
                 .copied()
                 .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
-            match crate::compiler::mcp::discover_mcp_items(
+            match crate::compiler::mcp::discover_mcp_items_at_depth(
                 &node.rooted_ref.package_root,
                 source_name.as_str(),
+                dependency_depths.get(source_name).copied().unwrap_or(1),
                 decl_order,
                 diag,
             ) {
@@ -249,19 +271,20 @@ pub fn build_with_collisions_and_diag(
                         }
                     }
                 }
-                Err(error) => target.record_mcp_discovery_warning(
+                Err(error) => diag.warn(
+                    "mcp-discover",
                     format!("failed to scan MCP items in `{source_name}`: {error}"),
-                    false,
                 ),
             }
         }
 
-        let Some(filters) = graph
-            .filters
-            .get(source_name)
-            .filter(|filters| !filters.is_empty())
-            .cloned()
-            .or_else(|| source_config.map(|source| vec![source.filter.clone()]))
+        let Some(filtered) = apply_source_filters(
+            graph,
+            source_name,
+            source_config,
+            &discovered,
+            &node.rooted_ref.package_root,
+        )?
         else {
             // No materialization request reached this transitive source.
             continue;
@@ -271,8 +294,6 @@ pub fn build_with_collisions_and_diag(
             .map(|s| &s.rename)
             .cloned()
             .unwrap_or_default();
-
-        let filtered = apply_filter_union(&discovered, &filters, &node.rooted_ref.package_root)?;
 
         for item in filtered {
             if item.id.kind == ItemKind::Hook {
@@ -284,6 +305,7 @@ pub fn build_with_collisions_and_diag(
                 if parsed.def.visibility != crate::compiler::visibility::Visibility::Exported {
                     continue;
                 }
+                target.exported_hooks.push(parsed.clone());
                 for (target_name, _dest_path, target_item) in
                     hook_target_items(parsed, source_name, &managed_target_roots)?
                 {
@@ -316,11 +338,14 @@ pub fn build_with_collisions_and_diag(
                 );
                 continue;
             }
-            if item.id.kind == ItemKind::Skill && dest_name != item.id.name {
-                explicit_skill_renames.push(ExplicitSkillRename {
+            if matches!(item.id.kind, ItemKind::Agent | ItemKind::Skill)
+                && dest_name != item.id.name
+            {
+                explicit_renames.push(ExplicitRename {
                     original_name: item.id.name.clone(),
                     new_name: dest_name.clone(),
                     source_name: source_name.clone(),
+                    kind: item.id.kind,
                 });
             }
 
@@ -361,7 +386,7 @@ pub fn build_with_collisions_and_diag(
 
     target.items = items;
 
-    Ok((target, explicit_skill_renames, collision_renames))
+    Ok((target, explicit_renames, collision_renames))
 }
 
 fn mcp_target_roots(
@@ -378,12 +403,31 @@ fn mcp_target_roots(
         .collect()
 }
 
-fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
+pub(crate) fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
     graph.filters.get(source_name).is_none_or(|filters| {
         filters
             .iter()
             .any(|filter| matches!(filter, FilterMode::All | FilterMode::Exclude(_)))
     })
+}
+
+pub(crate) fn apply_source_filters(
+    graph: &ResolvedGraph,
+    source_name: &SourceName,
+    source_config: Option<&crate::config::EffectiveDependency>,
+    discovered: &[discover::DiscoveredItem],
+    package_root: &Path,
+) -> Result<Option<Vec<discover::DiscoveredItem>>, MarsError> {
+    let Some(filters) = graph
+        .filters
+        .get(source_name)
+        .filter(|filters| !filters.is_empty())
+        .cloned()
+        .or_else(|| source_config.map(|source| vec![source.filter.clone()]))
+    else {
+        return Ok(None);
+    };
+    apply_filter_union(discovered, &filters, package_root).map(Some)
 }
 
 pub(crate) fn hook_target_items(
@@ -566,7 +610,9 @@ pub fn check_unmanaged_collisions(
             // unmanaged user file. Safe to overwrite.
             let hash_path = hash_path_for_kind(&disk_path, target_item.id.kind);
             if let Ok(disk_hash) = hash::compute_hash(&hash_path, target_item.id.kind)
-                && disk_hash == target_item.source_hash.as_str()
+                && target_item
+                    .expected_installed_hash()
+                    .is_ok_and(|expected| disk_hash == expected.as_str())
             {
                 continue;
             }
@@ -904,6 +950,30 @@ mod tests {
             "shared".to_string(),
             "leaf".to_string(),
         ];
+        let direct_dependencies = ["direct-short", "direct-long"]
+            .into_iter()
+            .map(|name| {
+                let path = PathBuf::from(format!("/tmp/{name}"));
+                (
+                    SourceName::from(name),
+                    EffectiveDependency {
+                        declared_source_id: SourceId::Path {
+                            canonical: path.clone(),
+                            subpath: None,
+                        },
+                        source_id: SourceId::Path {
+                            canonical: path.clone(),
+                            subpath: None,
+                        },
+                        spec: SourceSpec::Path(path),
+                        subpath: None,
+                        filter: FilterMode::All,
+                        rename: RenameMap::new(),
+                        dialect: None,
+                    },
+                )
+            })
+            .collect();
 
         for run in 0..128 {
             let mut insertion_order = definitions.clone();
@@ -923,7 +993,7 @@ mod tests {
                 version_constraints: HashMap::new(),
                 unreadable_hook_surfaces: std::collections::BTreeMap::new(),
             };
-            let depths = graph.dependency_depths();
+            let depths = graph.dependency_depths(&direct_dependencies);
             let mut emitted_order = graph.order.clone();
             emitted_order.sort_by_key(|name| (depths[name], name.clone()));
             assert_eq!(
@@ -1003,7 +1073,10 @@ mod tests {
         let (target, renames, _) =
             build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
                 .unwrap();
-        assert!(renames.is_empty());
+        assert_eq!(renames.len(), 1);
+        assert_eq!(renames[0].kind, ItemKind::Agent);
+        assert_eq!(renames[0].original_name.as_str(), "old-name");
+        assert_eq!(renames[0].new_name.as_str(), "new-name");
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/new-name.md"));
         assert_eq!(target.items["agents/new-name.md"].id.name, "new-name");

@@ -59,6 +59,10 @@ the reason as lossiness or a bundle rule `note` and never broaden permissions.
 Non-Claude native agent artifacts do not emit tool lists; MCP lossiness is recorded at
 lower time. The launch bundle's `tools.rules` is authoritative for spawn-time tool policy.
 
+Native agent reconciliation is claim-driven: derive the exact emission set for the current run,
+then prune every prior in-scope native output claim outside it. Current source names cannot identify
+stale artifacts after dependency removal or rename.
+
 ## Inbound lift
 
 `staging/lift.rs` calls `parse_foreign_mcp_token` to convert Claude `mcp__…` and Cursor

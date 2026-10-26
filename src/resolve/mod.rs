@@ -30,13 +30,17 @@ use indexmap::IndexMap;
 pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
 pub(crate) use provider::RealSourceProvider;
+pub(crate) use publish::resolve_publish_graph_from_config;
 pub use publish::{PublishLens, resolve_publish_graph};
 pub(crate) use requires::{
-    check_consumer_package_requirements, validate_package_requirement_syntax,
+    check_consumer_package_requirements, requirement_has_floor, validate_package_requirement_syntax,
 };
 pub use types::*;
 
-pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
+pub(crate) use package::{
+    PackageResolutionState, PendingSource, RegisteredPackage,
+    stage_rooted_package_for_publish_inputs,
+};
 #[cfg(test)]
 pub(crate) use path::apply_subpath;
 

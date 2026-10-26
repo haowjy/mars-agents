@@ -297,18 +297,14 @@ fn link_suppress_all_reconciles_selective_native_target() {
             "agents/coder.toml".into(),
             "sha256:coder-toml".into(),
         ));
-    let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
-    let removed = reconcile_native_agent_surfaces_without_model_routing(
+    let removed = reconcile_native_agent_surfaces(
         &NativeAgentReconcileCtx {
-            policy: AgentSurfacePolicy::SuppressAll,
             project_root: dir.path(),
-            outcomes: &[],
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: Some(&[HarnessKind::Claude]),
-            fanout_agents: &[],
         },
-        &mars_agents,
+        &HashSet::new(),
         &mut diag,
     );
 
@@ -325,64 +321,28 @@ fn link_suppress_all_reconciles_selective_native_target() {
 }
 
 #[test]
-fn reconcile_selective_removes_native_when_agent_stops_qualifying() {
+fn reconcile_removes_native_claim_not_in_desired_set() {
     let dir = TempDir::new().unwrap();
-    let mars_agents_dir = dir.path().join(".mars").join("agents");
-    std::fs::create_dir_all(&mars_agents_dir).unwrap();
-    std::fs::write(
-        mars_agents_dir.join("coder.md"),
-        "---\nname: coder\nmodel: opus\n---\n# Coder\n",
-    )
-    .unwrap();
-
     let claude_agents = dir.path().join(".claude").join("agents");
     std::fs::create_dir_all(&claude_agents).unwrap();
     std::fs::write(claude_agents.join("coder.md"), "# Native\n").unwrap();
 
-    let spec = agent_copy::AgentCopySpec {
-        harnesses: vec![HarnessKind::Claude],
-        include_fanout: false,
-    };
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: Some("openai".to_string()),
-            },
-        },
-    );
-
     let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
     let mut diag = DiagnosticCollector::new();
-    let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
-    let cache = empty_models_cache();
-    let mut router = test_router(&aliases, &cache);
     reconcile_native_agent_surfaces(
         &NativeAgentReconcileCtx {
-            policy: AgentSurfacePolicy::EmitSelective(spec),
             project_root: dir.path(),
-            outcomes: &[],
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: None,
-            fanout_agents: &[],
         },
-        &mars_agents,
-        &mut router,
+        &HashSet::new(),
         &mut diag,
     );
 
     assert!(
         !dir.path().join(".claude/agents/coder.md").exists(),
-        "openai-bound model should not qualify for claude selective reconcile"
+        "a prior native claim outside this run's exact emission set must be removed"
     );
 }
 
@@ -457,14 +417,6 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
     }
 
     let dir = TempDir::new().unwrap();
-    let mars_agents_dir = dir.path().join(".mars").join("agents");
-    std::fs::create_dir_all(&mars_agents_dir).unwrap();
-    std::fs::write(
-        mars_agents_dir.join("coder.md"),
-        "---\nname: coder\nmodel: opus\n---\n# Coder\n",
-    )
-    .unwrap();
-
     let claude_agents = dir.path().join(".claude").join("agents");
     std::fs::create_dir_all(&claude_agents).unwrap();
     let native_path = claude_agents.join("coder.md");
@@ -475,44 +427,16 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
         mode: 0o755,
     };
 
-    let spec = agent_copy::AgentCopySpec {
-        harnesses: vec![HarnessKind::Claude],
-        include_fanout: false,
-    };
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: Some("openai".to_string()),
-            },
-        },
-    );
-
     let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
     let mut diag = DiagnosticCollector::new();
-    let mars_agents = scan_mars_agents(&dir.path().join(".mars"), &mut diag);
-    let cache = empty_models_cache();
-    let mut router = test_router(&aliases, &cache);
     let removed = reconcile_native_agent_surfaces(
         &NativeAgentReconcileCtx {
-            policy: AgentSurfacePolicy::EmitSelective(spec),
             project_root: dir.path(),
-            outcomes: &[],
             old_lock: &lock,
             dry_run: false,
             selective_harness_scope: None,
-            fanout_agents: &[],
         },
-        &mars_agents,
-        &mut router,
+        &HashSet::new(),
         &mut diag,
     );
 

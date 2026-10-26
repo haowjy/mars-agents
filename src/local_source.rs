@@ -39,7 +39,7 @@ pub fn discover_local_items(
 ) -> Result<Vec<LocalDiscoveredItem>, MarsError> {
     let root = preferred_local_source_root(project_root);
     let dialect = Dialect::resolve_local(None, &root);
-    let mut selected: Vec<_> = discover::discover_source(&root, Some("_self"))?
+    let mut selected: Vec<_> = discover::discover_source(&root, Some("_self"), diag)?
         .into_iter()
         .map(|discovered| LocalDiscoveredItem {
             discovered,
@@ -49,7 +49,7 @@ pub fn discover_local_items(
         .collect();
 
     if let Some(name) = package_name {
-        for discovered in discover::discover_source(project_root, Some(name))? {
+        for discovered in discover::discover_source(project_root, Some(name), diag)? {
             if !matches!(discovered.id.kind, ItemKind::Agent | ItemKind::Skill) {
                 continue;
             }

@@ -1,5 +1,9 @@
 use crate::diagnostic::DiagnosticCollector;
 
+pub(crate) fn default_visibility() -> String {
+    "local".to_string()
+}
+
 /// Whether an effectful package item crosses a package boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibility {

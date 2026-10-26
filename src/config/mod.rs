@@ -45,6 +45,8 @@ pub use layering::{
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<PackageInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<toml::Value>,
     #[serde(default)]
     pub dependencies: IndexMap<SourceName, InstallDep>,
     /// Local-only dependencies — installed when syncing this repo but NOT
@@ -73,6 +75,12 @@ pub struct PackageInfo {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authors: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<toml::Value>,
     #[serde(
         default,
         rename = "requires-mars",
@@ -85,6 +93,46 @@ pub struct PackageInfo {
         skip_serializing_if = "Option::is_none"
     )]
     pub requires_meridian: Option<String>,
+}
+
+pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), ConfigError> {
+    const SOURCE_DIRS: &[&str] = &["agents", "skills", "hooks", "bootstrap"];
+
+    if dir.as_os_str().is_empty() {
+        return Err(ConfigError::Invalid {
+            message: "mars.toml [plugin].dir cannot be empty".to_string(),
+        });
+    }
+    for component in dir.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "mars.toml [plugin].dir `{}` must be a relative path inside the package without `.` or `..` components",
+                    dir.display()
+                ),
+            });
+        };
+        let name = name.to_str().ok_or_else(|| ConfigError::Invalid {
+            message: "mars.toml [plugin].dir must be valid Unicode".to_string(),
+        })?;
+        if name.starts_with('.') {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "mars.toml [plugin].dir `{}` cannot use a dot directory",
+                    dir.display()
+                ),
+            });
+        }
+        if SOURCE_DIRS.contains(&name) {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "mars.toml [plugin].dir `{}` cannot use the source convention directory `{name}`",
+                    dir.display()
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 mod toml_path_serde {
@@ -187,11 +235,39 @@ pub struct Manifest {
 /// the source belong to that source's project, not to its dependents.
 #[derive(Deserialize)]
 struct SourceManifestSections {
-    package: Option<PackageInfo>,
+    package: Option<SourcePackageInfo>,
     #[serde(default)]
     dependencies: IndexMap<SourceName, InstallDep>,
     #[serde(default)]
     models: IndexMap<String, crate::models::ModelAlias>,
+}
+
+/// Dependency consumers need only package identity and compatibility floors.
+/// Plugin publishing metadata is intentionally ignored here, even when a
+/// newer package writes a form this Mars build does not understand.
+#[derive(Deserialize)]
+struct SourcePackageInfo {
+    name: String,
+    version: String,
+    #[serde(default, rename = "requires-mars")]
+    requires_mars: Option<String>,
+    #[serde(default, rename = "requires-meridian")]
+    requires_meridian: Option<String>,
+}
+
+impl From<SourcePackageInfo> for PackageInfo {
+    fn from(package: SourcePackageInfo) -> Self {
+        Self {
+            name: package.name,
+            version: package.version,
+            description: None,
+            authors: None,
+            homepage: None,
+            license: None,
+            requires_mars: package.requires_mars,
+            requires_meridian: package.requires_meridian,
+        }
+    }
 }
 
 /// Shared include/exclude/rename filter configuration for a source.
@@ -1037,6 +1113,7 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
             let Some(package) = parsed.package else {
                 return Ok((None, diagnostics));
             };
+            let package = package.into();
             // Convert InstallDep → ManifestDep, preserving both URL and path deps
             let deps: IndexMap<String, ManifestDep> = parsed
                 .dependencies
@@ -1606,6 +1683,12 @@ pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
 }
 
 fn validate_save_roundtrip(original: &Config, reparsed: &Config) -> Result<(), MarsError> {
+    if reparsed.plugin != original.plugin {
+        return Err(ConfigError::Invalid {
+            message: "refusing to save config: [plugin] changed during roundtrip".to_string(),
+        }
+        .into());
+    }
     if reparsed.dependencies.len() != original.dependencies.len() {
         return Err(ConfigError::Invalid {
             message: format!(
@@ -1857,6 +1940,206 @@ path = "../local-agents"
         assert!(config.package.is_some());
         assert!(config.dependencies.contains_key("base"));
         assert!(config.dependencies.contains_key("local"));
+    }
+
+    #[test]
+    fn plugin_config_applies_defaults_from_package() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[package]
+name = "example-plugin"
+version = "1.2.3"
+description = "Package description"
+authors = [{ name = "Example Author", email = "author@example.com" }]
+homepage = "https://example.com/plugin"
+license = "MIT"
+
+[plugin]
+"#,
+        )
+        .unwrap();
+
+        let config = load(dir.path()).unwrap();
+        let package = config.package.as_ref().unwrap();
+        let plugin = config.plugin.as_ref().unwrap();
+        assert!(plugin.as_table().is_some_and(toml::Table::is_empty));
+        assert_eq!(
+            package.authors.as_ref().and_then(toml::Value::as_array),
+            Some(&vec![toml::Value::Table(toml::Table::from_iter([
+                (
+                    "name".to_string(),
+                    toml::Value::String("Example Author".to_string())
+                ),
+                (
+                    "email".to_string(),
+                    toml::Value::String("author@example.com".to_string())
+                ),
+            ]))])
+        );
+        assert_eq!(
+            package.homepage.as_ref().and_then(toml::Value::as_str),
+            Some("https://example.com/plugin")
+        );
+        assert_eq!(
+            package.license.as_ref().and_then(toml::Value::as_str),
+            Some("MIT")
+        );
+
+        let metadata = crate::build::plugin::validate_plugin_build(&config).unwrap();
+        assert_eq!(metadata.dir, Path::new("plugin"));
+        assert_eq!(metadata.name, "example-plugin");
+        assert_eq!(metadata.marketplace, "example-plugin");
+        assert_eq!(metadata.description.as_deref(), Some("Package description"));
+        assert_eq!(metadata.harnesses.len(), 5);
+        assert_eq!(metadata.authors[0].name, "Example Author");
+        assert_eq!(
+            metadata.authors[0].email.as_deref(),
+            Some("author@example.com")
+        );
+    }
+
+    #[test]
+    fn plugin_config_parses_explicit_values() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            r#"
+[package]
+name = "example-package"
+version = "1.2.3"
+description = "Package description"
+authors = ["Example Author <author@example.com>"]
+
+[plugin]
+dir = "generated/plugin"
+name = "custom-plugin"
+marketplace = "custom-marketplace"
+description = "Plugin description"
+harnesses = ["claude", "cursor"]
+"#,
+        )
+        .unwrap();
+
+        let config = load(dir.path()).unwrap();
+        let plugin = config.plugin.as_ref().unwrap();
+        assert_eq!(
+            plugin
+                .as_table()
+                .and_then(|plugin| plugin.get("dir"))
+                .and_then(toml::Value::as_str),
+            Some("generated/plugin")
+        );
+        let metadata = crate::build::plugin::validate_plugin_build(&config).unwrap();
+        assert_eq!(metadata.dir, Path::new("generated/plugin"));
+        assert_eq!(metadata.name, "custom-plugin");
+        assert_eq!(metadata.marketplace, "custom-marketplace");
+        assert_eq!(metadata.description.as_deref(), Some("Plugin description"));
+        assert_eq!(metadata.authors[0].name, "Example Author");
+        assert_eq!(
+            metadata.authors[0].email.as_deref(),
+            Some("author@example.com")
+        );
+        assert_eq!(
+            metadata
+                .harnesses
+                .iter()
+                .map(|harness| harness.key)
+                .collect::<Vec<_>>(),
+            vec!["claude", "cursor"]
+        );
+
+        save(dir.path(), &config).unwrap();
+        let reloaded = load(dir.path()).unwrap();
+        assert_eq!(reloaded.plugin, config.plugin);
+    }
+
+    #[test]
+    fn plugin_build_rejects_unsafe_directories() {
+        for (plugin_dir, expected) in [
+            ("", "cannot be empty"),
+            ("/tmp/plugin", "must be a relative path"),
+            ("../plugin", "without `.` or `..`"),
+            (".", "without `.` or `..`"),
+            (".generated", "cannot use a dot directory"),
+            ("generated/.private", "cannot use a dot directory"),
+            ("skills/plugin", "source convention directory `skills`"),
+        ] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(
+                dir.path().join("mars.toml"),
+                format!(
+                    "[package]\nname = \"example-plugin\"\nversion = \"1.0.0\"\n\n[plugin]\ndir = {plugin_dir:?}\n"
+                ),
+            )
+            .unwrap();
+
+            let config = load(dir.path()).unwrap();
+            let error = crate::build::plugin::validate_plugin_build(&config)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(
+                error.contains(expected),
+                "dir {plugin_dir:?} should report {expected:?}, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_build_rejects_unknown_harnesses_and_pi() {
+        for harness in ["unknown", "pi"] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(
+                dir.path().join("mars.toml"),
+                format!(
+                    "[package]\nname = \"example-plugin\"\nversion = \"1.0.0\"\n\n[plugin]\nharnesses = [{harness:?}]\n"
+                ),
+            )
+            .unwrap();
+
+            let config = load(dir.path()).unwrap();
+            let error = crate::build::plugin::validate_plugin_build(&config)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(
+                error.contains(&format!("unknown harness `{harness}`"))
+                    && error.contains("expected one of: claude, codex, grok, cursor, opencode"),
+                "harness {harness:?} should be refused, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_build_validates_name_for_each_listed_harness() {
+        for (harness, name, expected) in [
+            ("claude", "bad:name", "Claude names"),
+            ("codex", "bad--name", "Codex names"),
+            ("grok", "bad/name", "Grok reads the Claude tree"),
+            ("cursor", "Bad_name", "Cursor names"),
+            ("opencode", "_bad-name", "OpenCode names"),
+        ] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(
+                dir.path().join("mars.toml"),
+                format!(
+                    "[package]\nname = \"fallback-name\"\nversion = \"1.0.0\"\n\n[plugin]\nname = {name:?}\nharnesses = [{harness:?}]\n"
+                ),
+            )
+            .unwrap();
+
+            let config = load(dir.path()).unwrap();
+            let error = crate::build::plugin::validate_plugin_build(&config)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(
+                error.contains(expected),
+                "name {name:?} for {harness} should report {expected:?}, got: {error}"
+            );
+        }
     }
 
     #[test]

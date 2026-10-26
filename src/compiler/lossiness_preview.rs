@@ -104,8 +104,11 @@ pub fn collect_source_lossiness_diagnostics(
             NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
         });
 
-    let discovered =
-        crate::discover::discover_resolved_source(staging.path(), fallback_skill_name.as_deref())?;
+    let discovered = crate::discover::discover_resolved_source(
+        staging.path(),
+        fallback_skill_name.as_deref(),
+        &mut diag,
+    )?;
     for item in discovered {
         match item.id.kind {
             ItemKind::Agent => {

@@ -3,3 +3,10 @@
 - Decide whether a dependency `exclude = [...]` filter applies to MCP server names. Today
   `Exclude` still selects every MCP server from that source; changing this is a user-facing
   behavior decision and needs a changelog entry.
+- **p9434 Low 2:** `src/compiler/native_agents.rs:623` and `:853` derive native-agent emissions
+  separately for reconcile and compile. Plan `(agent, harness, model, destination)` once, use the
+  destination set for reconcile, and emit from the same plan so the rules and model-router pass
+  cannot drift.
+- **p9434 Low 4:** `src/compiler/mcp/mod.rs:103` wraps MCP discovery with a source-name-derived
+  magic depth and has one production caller. Fold it into `discover_mcp_items_at_depth` and make
+  that caller pass depth `0` explicitly.

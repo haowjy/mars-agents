@@ -14,13 +14,10 @@ pub enum ConfigError {
     )]
     ProjectRootNotFound { start: PathBuf },
 
-    #[error("invalid config: {message}")]
+    #[error("{message}")]
     Invalid { message: String },
 
-    #[error(
-        "invalid config: {}: {message}",
-        path.display()
-    )]
+    #[error("{}: {message}", path.display())]
     RemovedHookSchema {
         path: PathBuf,
         message: &'static str,
@@ -133,6 +130,13 @@ pub enum ResolutionError {
 /// Top-level error type aggregating all module errors
 #[derive(Debug, thiserror::Error)]
 pub enum MarsError {
+    #[error("{source}")]
+    WithDiagnostics {
+        diagnostics: Vec<crate::diagnostic::Diagnostic>,
+        #[source]
+        source: Box<MarsError>,
+    },
+
     #[error("config error: {0}")]
     Config(#[from] ConfigError),
 
@@ -292,6 +296,7 @@ impl MarsError {
     /// - 3: source, I/O, HTTP, or git CLI error
     pub fn exit_code(&self) -> i32 {
         match self {
+            MarsError::WithDiagnostics { source, .. } => source.exit_code(),
             MarsError::Link { .. }
             | MarsError::Config(_)
             | MarsError::Lock(_)
@@ -318,6 +323,20 @@ impl MarsError {
             MarsError::ResolutionRestartNeeded { .. } => {
                 unreachable!("ResolutionRestartNeeded is an internal signal caught by resolve()")
             }
+        }
+    }
+
+    pub fn diagnostics(&self) -> &[crate::diagnostic::Diagnostic] {
+        match self {
+            Self::WithDiagnostics { diagnostics, .. } => diagnostics,
+            _ => &[],
+        }
+    }
+
+    pub fn root_cause(&self) -> &Self {
+        match self {
+            Self::WithDiagnostics { source, .. } => source.root_cause(),
+            _ => self,
         }
     }
 }

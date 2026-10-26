@@ -202,26 +202,31 @@ pub fn dispatch(cli: Cli) -> i32 {
     match dispatch_result(cli) {
         Ok(code) => code,
         Err(err) => {
+            let cause = err.root_cause();
             if json {
-                let (code, message, report) = match &err {
+                let (code, message, report) = match cause {
                     MarsError::Selection {
                         code,
                         message,
                         report,
                     } => (*code, message.clone(), Some(report)),
-                    MarsError::Config(_) => ("invalid_config", err.to_string(), None),
-                    _ => ("command_failed", err.to_string(), None),
+                    MarsError::Config(_) => ("invalid_config", cause.to_string(), None),
+                    _ => ("command_failed", cause.to_string(), None),
                 };
                 let mut payload =
                     serde_json::json!({ "error": { "code": code, "message": message } });
+                if !err.diagnostics().is_empty() {
+                    payload["diagnostics"] = serde_json::json!(err.diagnostics());
+                }
                 if let Some(report) = report {
                     payload["route_trace"] = serde_json::json!(report);
                 }
                 println!("{}", payload);
             } else {
-                eprintln!("error: {err}");
+                output::print_diagnostics(err.diagnostics());
+                eprintln!("error: {cause}");
             }
-            if !json && matches!(err, MarsError::Lock(LockError::Corrupt { .. })) {
+            if !json && matches!(cause, MarsError::Lock(LockError::Corrupt { .. })) {
                 eprintln!(
                     "hint: run `{}` to rebuild from mars.toml + dependencies",
                     managed_cmd("mars repair")
@@ -285,6 +290,8 @@ fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
         cmd,
         Command::Build(build::BuildArgs {
             command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs { agent: None, .. })
+        }) | Command::Build(build::BuildArgs {
+            command: build::BuildCommand::Plugin(build::PluginArgs { path: Some(_), .. })
         }) | Command::Models(models::ModelsArgs {
             command: models::ModelsCommand::RefreshCatalog(_),
         })

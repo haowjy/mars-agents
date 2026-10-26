@@ -6,8 +6,13 @@
 
 mod lift;
 mod overlay;
+mod publish;
 
 pub(crate) use lift::cursor_manual_rule_shape;
+pub(crate) use publish::{
+    PublishInput, discover_inputs as discover_publish_inputs,
+    inputs_for_items as publish_inputs_for_items,
+};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,8 +60,54 @@ pub(crate) fn stage_rooted_source(
     staging_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<StagedRootedSource, MarsError> {
+    stage_rooted_source_with_policy(
+        source_name,
+        rooted,
+        options,
+        skill_overrides,
+        renames,
+        staging_root,
+        diag,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stage_rooted_source_for_publish_inputs(
+    source_name: &SourceName,
+    rooted: RootedSourceRef,
+    options: RootedStageOptions,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    staging_root: &Path,
+    inputs: &[PublishInput],
+    diag: &mut DiagnosticCollector,
+) -> Result<StagedRootedSource, MarsError> {
+    stage_rooted_source_with_policy(
+        source_name,
+        rooted,
+        options,
+        skill_overrides,
+        renames,
+        staging_root,
+        diag,
+        Some(inputs),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_rooted_source_with_policy(
+    source_name: &SourceName,
+    rooted: RootedSourceRef,
+    options: RootedStageOptions,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    staging_root: &Path,
+    diag: &mut DiagnosticCollector,
+    publish_inputs: Option<&[PublishInput]>,
+) -> Result<StagedRootedSource, MarsError> {
     let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
-    stage_canonical_source(
+    stage_canonical_source_with_policy(
         &rooted.package_root,
         &staged_package_root,
         options.dialect,
@@ -64,8 +115,9 @@ pub(crate) fn stage_rooted_source(
         renames,
         Some(source_name.as_ref()),
         diag,
+        publish_inputs,
     )?;
-    let hook_surface = detect_unreadable_hook_surface(&staged_package_root)?;
+    let hook_surface = detect_unreadable_hook_surface(&staged_package_root, diag)?;
     Ok(StagedRootedSource {
         rooted: RootedSourceRef {
             checkout_root: rooted.checkout_root,
@@ -75,8 +127,11 @@ pub(crate) fn stage_rooted_source(
     })
 }
 
-fn detect_unreadable_hook_surface(package_root: &Path) -> Result<HookSurfaceState, MarsError> {
-    let hook_dirs = crate::discover::discover_hook_directories(package_root)?;
+fn detect_unreadable_hook_surface(
+    package_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<HookSurfaceState, MarsError> {
+    let hook_dirs = crate::discover::discover_hook_directories(package_root, diag)?;
     let mut hook_names = std::collections::BTreeSet::new();
     for hook_dir in hook_dirs {
         let manifest = hook_dir.join("hook.toml");
@@ -107,21 +162,55 @@ pub(crate) fn stage_canonical_source(
     fallback_skill_name: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    if dest_root.exists() {
-        fs::remove_dir_all(dest_root)?;
-    }
-    fs::create_dir_all(dest_root)?;
-    copy_and_lift_tree(
+    stage_canonical_source_with_policy(
         source_root,
         dest_root,
-        source_root,
         dialect,
         skill_overrides,
         renames,
         fallback_skill_name,
-        &[],
         diag,
+        None,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_canonical_source_with_policy(
+    source_root: &Path,
+    dest_root: &Path,
+    dialect: Dialect,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    fallback_skill_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
+    publish_inputs: Option<&[PublishInput]>,
+) -> Result<(), MarsError> {
+    if dest_root.exists() {
+        fs::remove_dir_all(dest_root)?;
+    }
+    fs::create_dir_all(dest_root)?;
+    match publish_inputs {
+        None => copy_and_lift_tree(
+            source_root,
+            dest_root,
+            dialect,
+            skill_overrides,
+            renames,
+            fallback_skill_name,
+            &[],
+            diag,
+        ),
+        Some(inputs) => publish::copy_and_lift_inputs(
+            source_root,
+            dest_root,
+            dialect,
+            skill_overrides,
+            renames,
+            fallback_skill_name,
+            inputs,
+            diag,
+        ),
+    }
 }
 
 /// Stage a single local item path (agent file or skill directory).
@@ -159,6 +248,7 @@ pub(crate) fn stage_local_item(
                 })?);
             process_markdown_file(
                 source_path,
+                source_path,
                 &dest_file,
                 kind,
                 &mut StageOverlayContext {
@@ -178,7 +268,6 @@ pub(crate) fn stage_local_item(
             copy_and_lift_tree(
                 source_path,
                 &dest,
-                source_path,
                 dialect,
                 skill_overrides,
                 &RenameMap::new(),
@@ -211,7 +300,6 @@ struct StageOverlayContext<'a> {
 fn copy_and_lift_tree(
     source_root: &Path,
     dest_root: &Path,
-    current: &Path,
     dialect: Dialect,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
@@ -219,47 +307,22 @@ fn copy_and_lift_tree(
     excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let mut entries: Vec<_> = fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-
+    let entries = crate::fs::authored_tree_entries(
+        source_root,
+        excluded_paths,
+        crate::fs::AuthoredSymlinkPolicy::Follow,
+        diag,
+    )?;
     for entry in entries {
-        let src_path = entry.path();
-        let rel = src_path
-            .strip_prefix(source_root)
-            .map_err(|_| MarsError::Source {
-                source_name: "staging".to_string(),
-                message: format!(
-                    "staging traversal escaped source root at {}",
-                    src_path.display()
-                ),
-            })?;
-        // Filter before descending: local flat skills contain their own staging tree.
-        if excluded_paths
-            .iter()
-            .any(|excluded| rel.starts_with(excluded))
-        {
-            continue;
-        }
-        let dest_path = dest_root.join(rel);
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
+        let dest_path = dest_root.join(&entry.relative);
+        if entry.kind == crate::fs::AuthoredEntryKind::Directory {
             fs::create_dir_all(&dest_path)?;
-            copy_and_lift_tree(
-                source_root,
-                dest_root,
-                &src_path,
-                dialect,
-                skill_overrides,
-                renames,
-                fallback_skill_name,
-                excluded_paths,
-                diag,
-            )?;
-        } else if should_lift_markdown(&src_path) {
-            let kind = item_kind_for_markdown(&src_path);
+        } else if should_lift_markdown(&entry.relative) {
+            let src_path = entry.source;
+            let kind = item_kind_for_markdown(&entry.relative);
             process_markdown_file(
                 &src_path,
+                &source_root.join(&entry.relative),
                 &dest_path,
                 kind,
                 &mut StageOverlayContext {
@@ -276,7 +339,7 @@ fn copy_and_lift_tree(
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::copy(&src_path, &dest_path)?;
+            fs::copy(&entry.source, &dest_path)?;
         }
     }
     Ok(())
@@ -302,6 +365,7 @@ fn item_kind_for_markdown(path: &Path) -> ItemKind {
 
 fn process_markdown_file(
     src: &Path,
+    logical_src: &Path,
     dest: &Path,
     kind: ItemKind,
     ctx: &mut StageOverlayContext<'_>,
@@ -314,7 +378,7 @@ fn process_markdown_file(
         .then(|| {
             ctx.skill_overlay_key.map(str::to_owned).or_else(|| {
                 skill_overlay_lookup_name(
-                    src,
+                    logical_src,
                     ctx.package_root,
                     ctx.renames,
                     ctx.fallback_skill_name,
@@ -341,14 +405,15 @@ fn process_markdown_file(
                     .map(str::to_owned)
                     .or_else(|| {
                         skill_overlay_lookup_name(
-                            src,
+                            logical_src,
                             ctx.package_root,
                             ctx.renames,
                             ctx.fallback_skill_name,
                         )
                     })
                     .or_else(|| {
-                        src.parent()
+                        logical_src
+                            .parent()
                             .and_then(|p| p.file_name())
                             .and_then(|n| n.to_str())
                             .map(str::to_owned)

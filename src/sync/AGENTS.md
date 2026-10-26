@@ -78,6 +78,19 @@ This protects new canonical writes, not native/config emission (#149).
 Preexisting outputs selected for explicit force adoption are intentionally not journaled: a later
 apply failure leaves the lock unpublished, and the next sync must use `--force` again.
 
+### Dry Runs
+
+A dry run (`mars sync --diff`, `mars validate`/`export`, `mars version`'s
+validation pass) leaves the project's files as it found them: it stages into a
+temporary directory owned by `LoadedConfig` and never creates `.mars/staging` or
+`.mars/sync.lock`. It still takes the sync flock when a real sync already
+created the lock file, because recovery reads `mars.lock` and the intent
+journal and a publisher running between those reads would show it a torn
+snapshot; `FileLock::acquire_existing` opens without creating. A package repo
+that does not gitignore `.mars/` therefore gains no path a later clean-tree
+check or `git add -A` would pick up (issue #201). Any new phase that writes
+project state must honor `request.options.dry_run`.
+
 ### Key Operations
 
 | Function | Responsibility |
@@ -98,9 +111,18 @@ does not change that path.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
 visibility, dependency collisions, and local shadowing therefore choose config entries once for
-both installation and config lowering. Hook selection survives an install skip so post-target-sync
-lowering can issue the genuine not-installed warning; it carries the selected `TargetItem` hash so
-the installed check does not re-hash the source. Config lowering must not rediscover items.
+both installation and config lowering. It separately retains every filtered, exported graph hook, selected or
+not; plugin builds read that list for omission diagnostics, and sync never reads it. Hook selection survives an install skip so post-target-sync lowering
+can issue the genuine not-installed warning; it carries the selected `TargetItem` hash so the
+installed check does not re-hash the source. Config lowering must not rediscover items.
+
+Plugin builds and sync both use `prepare_target_state` for graph collection, optional local
+extension, rename application, and validation. MCP discovery warnings enter the diagnostic
+collector where discovery fails rather than riding `TargetState`, so every caller sees them.
+`RenameIndex::visible_renames` exposes the same own-package-first, then
+dependency-declaration-order view per item kind for frontmatter and body references; callers must not
+reconstruct that precedence. Renamed skill and agent frontmatter carries the installed name;
+the authored source tree remains untouched and the install layer applies the in-memory rewrite.
 
 ## Lossiness Gating
 

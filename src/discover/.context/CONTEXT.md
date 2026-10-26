@@ -30,10 +30,15 @@ the occupied layer). `.mars-src` is discovered separately and wins matching
 `(kind, name)` definitions before staging. Removing shallower items can promote
 nested distribution items; there is no permanent `cw/` exclusion.
 
-Configured non-hidden output trees are not excluded from discovery. For example,
-`out/native/skills/demo/SKILL.md` can suppress the authored root `SKILL.md` fallback
-on the next run. Use hidden targets for authored-root convergence. Flat-resource
-staging exclusions cannot repair this earlier source-selection decision.
+Directories containing a valid `.mars-plugin.json` are generated plugin trees and are
+excluded at any depth, including hook and MCP discovery, with one info diagnostic per skipped
+path. A valid package-relative `[plugin].dir` is a stronger source boundary: discovery excludes it
+by path without reporting it, even before a sentinel exists, so the package's own committed output
+never adds noise to `sync` or `check`. Canonical staging applies the sentinel boundary before any
+downstream copy or hash; those lower-level primitives remain byte-faithful. The authored-tree
+filesystem walk also protects local-source installs that bypass whole-package staging. Other
+configured non-hidden output trees remain discoverable; use hidden targets for those authored-root
+flows.
 
 ## Hidden directories
 

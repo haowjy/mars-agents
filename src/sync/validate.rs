@@ -4,12 +4,11 @@
 //! Called from `build_target` against the post-prune, post-rewrite target state.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ItemKind;
 use crate::sync::LoadedConfig;
-use crate::sync::target::{CollisionRename, ExplicitSkillRename, TargetState};
+use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::validate::ValidationWarning;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
@@ -64,34 +63,24 @@ pub(crate) fn validate_skill_frontmatter_in_target(
 }
 
 fn validate_skill_frontmatter_at_source(
-    source_path: &Path,
+    source_path: &std::path::Path,
     skill_name: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    let skill_md = if source_path.is_dir() {
-        source_path.join("SKILL.md")
-    } else {
-        source_path.to_path_buf()
-    };
-    let Ok(content) = std::fs::read_to_string(&skill_md) else {
-        return;
-    };
-    let mut skill_diags = Vec::new();
-    let _ = crate::compiler::skills::parse_skill_content(&content, &mut skill_diags);
-    crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
+    crate::compiler::skills::emit_skill_schema_diags_from_source(source_path, skill_name, diag);
 }
 
 pub(crate) fn warn_config_dangles_after_rename(
-    explicit_skill_renames: &[ExplicitSkillRename],
+    explicit_renames: &[ExplicitRename],
     collision_renames: &[CollisionRename],
     target: &TargetState,
     loaded: &LoadedConfig,
     diag: &mut DiagnosticCollector,
 ) {
     let mut renamed: HashMap<(ItemKind, String), Vec<String>> = HashMap::new();
-    for r in explicit_skill_renames {
+    for r in explicit_renames {
         renamed
-            .entry((ItemKind::Skill, r.original_name.to_string()))
+            .entry((r.kind, r.original_name.to_string()))
             .or_default()
             .push(r.new_name.to_string());
     }

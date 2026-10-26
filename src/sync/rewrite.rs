@@ -6,7 +6,7 @@
 //! so guards such as "same source still owns the unrenamed item" see only items
 //! that will actually be installed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
@@ -14,7 +14,7 @@ use crate::error::MarsError;
 use crate::frontmatter;
 use crate::lock::ItemKind;
 use crate::resolve::ResolvedGraph;
-use crate::sync::target::{CollisionRename, ExplicitSkillRename, TargetState};
+use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::types::{DestPath, ItemName, SourceName};
 
 type ContentRewriteFn =
@@ -27,16 +27,20 @@ pub struct RenameIndex {
     skill_renames: HashMap<ItemName, Vec<(ItemName, SourceName)>>,
     /// Subagent original_name -> [(installed_name, source_name)].
     subagent_renames: HashMap<ItemName, Vec<(ItemName, SourceName)>>,
+    /// Installed agents whose authored `name:` must follow their destination.
+    renamed_agents: HashSet<(SourceName, ItemName)>,
+    /// Installed skills whose authored `name:` must follow their destination.
+    renamed_skills: HashSet<(SourceName, ItemName)>,
 }
 
 impl RenameIndex {
     pub fn new(
-        explicit_skill_renames: &[ExplicitSkillRename],
+        explicit_renames: &[ExplicitRename],
         collision_renames: &[CollisionRename],
         target: &TargetState,
     ) -> Self {
         let mut index = Self::default();
-        let mut skill_collision_final_names: HashMap<(SourceName, ItemName), ItemName> =
+        let mut collision_final_names: HashMap<(SourceName, ItemKind, ItemName), ItemName> =
             HashMap::new();
 
         for rename in collision_renames {
@@ -46,13 +50,33 @@ impl RenameIndex {
 
             let renames = match rename.kind {
                 ItemKind::Skill => {
-                    skill_collision_final_names.insert(
-                        (rename.source_name.clone(), rename.original_name.clone()),
+                    collision_final_names.insert(
+                        (
+                            rename.source_name.clone(),
+                            rename.kind,
+                            rename.original_name.clone(),
+                        ),
                         rename.new_name.clone(),
                     );
+                    index
+                        .renamed_skills
+                        .insert((rename.source_name.clone(), rename.new_name.clone()));
                     &mut index.skill_renames
                 }
-                ItemKind::Agent => &mut index.subagent_renames,
+                ItemKind::Agent => {
+                    collision_final_names.insert(
+                        (
+                            rename.source_name.clone(),
+                            rename.kind,
+                            rename.original_name.clone(),
+                        ),
+                        rename.new_name.clone(),
+                    );
+                    index
+                        .renamed_agents
+                        .insert((rename.source_name.clone(), rename.new_name.clone()));
+                    &mut index.subagent_renames
+                }
                 _ => continue,
             };
             push_rename(
@@ -63,15 +87,34 @@ impl RenameIndex {
             );
         }
 
-        for rename in explicit_skill_renames {
-            let installed_name = skill_collision_final_names
-                .get(&(rename.source_name.clone(), rename.new_name.clone()))
+        for rename in explicit_renames {
+            let installed_name = collision_final_names
+                .get(&(
+                    rename.source_name.clone(),
+                    rename.kind,
+                    rename.new_name.clone(),
+                ))
                 .unwrap_or(&rename.new_name);
-            if !target_has_item(target, &rename.source_name, ItemKind::Skill, installed_name) {
+            if !target_has_item(target, &rename.source_name, rename.kind, installed_name) {
                 continue;
             }
+            let renames = match rename.kind {
+                ItemKind::Skill => {
+                    index
+                        .renamed_skills
+                        .insert((rename.source_name.clone(), installed_name.clone()));
+                    &mut index.skill_renames
+                }
+                ItemKind::Agent => {
+                    index
+                        .renamed_agents
+                        .insert((rename.source_name.clone(), installed_name.clone()));
+                    &mut index.subagent_renames
+                }
+                _ => continue,
+            };
             push_rename(
-                &mut index.skill_renames,
+                renames,
                 rename.original_name.clone(),
                 installed_name.clone(),
                 rename.source_name.clone(),
@@ -82,11 +125,36 @@ impl RenameIndex {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.skill_renames.is_empty() && self.subagent_renames.is_empty()
+        self.skill_renames.is_empty()
+            && self.subagent_renames.is_empty()
+            && self.renamed_agents.is_empty()
+            && self.renamed_skills.is_empty()
+    }
+
+    /// Installed-name rewrites visible from one source package.
+    ///
+    /// This is the same own-package-first, then dependency-order rule used by
+    /// `apply_renames`. Plugin builds also need it for markdown body references,
+    /// which are outside sync's canonical frontmatter rewrite.
+    pub(crate) fn visible_renames(
+        &self,
+        target: &TargetState,
+        graph: &ResolvedGraph,
+        dep_precedence: &[SourceName],
+        source_name: &SourceName,
+        kind: ItemKind,
+    ) -> IndexMap<String, String> {
+        let source_deps = ordered_agent_deps(graph, source_name, dep_precedence);
+        let renames = match kind {
+            ItemKind::Skill => &self.skill_renames,
+            ItemKind::Agent => &self.subagent_renames,
+            _ => unreachable!("only agents and skills have rename references"),
+        };
+        renames_for_agent(target, source_name, &source_deps, kind, renames)
     }
 }
 
-/// Apply explicit and collision renames to each agent in one content update.
+/// Apply installed names to renamed skills, then rewrite agent references.
 pub fn apply_renames(
     target: &mut TargetState,
     index: &RenameIndex,
@@ -99,6 +167,35 @@ pub fn apply_renames(
         return Ok(warnings);
     }
 
+    for item in target.items.values_mut().filter(|item| {
+        item.id.kind == ItemKind::Skill
+            && index
+                .renamed_skills
+                .contains(&(item.source_name.clone(), item.id.name.clone()))
+    }) {
+        let skill_path = item.source_path.join("SKILL.md");
+        let content = match std::fs::read_to_string(&skill_path) {
+            Ok(content) => content,
+            Err(error) => {
+                warnings.push(format!(
+                    "warning: could not rewrite skill name in {}: {error}",
+                    skill_path.display()
+                ));
+                continue;
+            }
+        };
+        match frontmatter::parse(&content) {
+            Ok(mut skill) => {
+                skill.insert("name", serde_yaml::Value::String(item.id.name.to_string()));
+                item.rewritten_content = Some(skill.render());
+            }
+            Err(error) => warnings.push(format!(
+                "warning: could not rewrite skill name in {}: {error}",
+                skill_path.display()
+            )),
+        }
+    }
+
     // For each agent in target, check if it references any renamed items.
     let agent_keys: Vec<DestPath> = target
         .items
@@ -108,7 +205,7 @@ pub fn apply_renames(
         .collect();
 
     for key in agent_keys {
-        let (source_path, source_name, content) = {
+        let (source_path, source_name, installed_name, content) = {
             let item = &target.items[&key];
             let content = match &item.rewritten_content {
                 Some(content) => content.clone(),
@@ -117,30 +214,43 @@ pub fn apply_renames(
                     Err(_) => continue,
                 },
             };
-            (item.source_path.clone(), item.source_name.clone(), content)
+            (
+                item.source_path.clone(),
+                item.source_name.clone(),
+                item.id.name.clone(),
+                content,
+            )
         };
 
-        let agent_deps = ordered_agent_deps(graph, &source_name, dep_precedence);
-        let skill_renames = renames_for_agent(
-            target,
-            &source_name,
-            &agent_deps,
-            ItemKind::Skill,
-            &index.skill_renames,
-        );
-        let subagent_renames = renames_for_agent(
-            target,
-            &source_name,
-            &agent_deps,
-            ItemKind::Agent,
-            &index.subagent_renames,
-        );
-        if skill_renames.is_empty() && subagent_renames.is_empty() {
+        let skill_renames =
+            index.visible_renames(target, graph, dep_precedence, &source_name, ItemKind::Skill);
+        let subagent_renames =
+            index.visible_renames(target, graph, dep_precedence, &source_name, ItemKind::Agent);
+        let rewrite_name = index
+            .renamed_agents
+            .contains(&(source_name.clone(), installed_name.clone()));
+        if skill_renames.is_empty() && subagent_renames.is_empty() && !rewrite_name {
             continue;
         }
 
         let mut rewritten_content = content;
         let mut changed = false;
+        if rewrite_name {
+            match frontmatter::parse(&rewritten_content) {
+                Ok(mut frontmatter) => {
+                    frontmatter.insert(
+                        "name",
+                        serde_yaml::Value::String(installed_name.to_string()),
+                    );
+                    rewritten_content = frontmatter.render();
+                    changed = true;
+                }
+                Err(error) => warnings.push(format!(
+                    "warning: could not rewrite agent name in {}: {error}",
+                    source_path.display()
+                )),
+            }
+        }
         rewrite_content_for_agent(
             &mut rewritten_content,
             &skill_renames,
@@ -293,7 +403,7 @@ mod tests {
     use crate::hash;
     use crate::lock::{ItemId, ItemKind};
     use crate::resolve::ResolvedGraph;
-    use crate::sync::target::{CollisionRename, ExplicitSkillRename, TargetItem, TargetState};
+    use crate::sync::target::{CollisionRename, ExplicitRename, TargetItem, TargetState};
     use crate::types::SourceId;
     use indexmap::IndexMap;
     use std::fs;
@@ -366,7 +476,7 @@ mod tests {
 
     fn apply_test_renames(
         target: &mut TargetState,
-        explicit_skill_renames: &[ExplicitSkillRename],
+        explicit_skill_renames: &[ExplicitRename],
         collision_renames: &[CollisionRename],
         graph: &ResolvedGraph,
         dep_precedence: &[SourceName],
@@ -425,7 +535,8 @@ mod tests {
         );
 
         let mut target = TargetState::from_items(items);
-        let renames = vec![ExplicitSkillRename {
+        let renames = vec![ExplicitRename {
+            kind: ItemKind::Skill,
             original_name: "plan".into(),
             new_name: "plan__org_base".into(),
             source_name: "source-a".into(),
@@ -473,7 +584,8 @@ mod tests {
         );
 
         let mut target = TargetState::from_items(items);
-        let renames = vec![ExplicitSkillRename {
+        let renames = vec![ExplicitRename {
+            kind: ItemKind::Skill,
             original_name: "plan".into(),
             new_name: "plan__org_base".into(),
             source_name: "source-a".into(),
@@ -558,12 +670,14 @@ mod tests {
 
         let mut target = TargetState::from_items(items);
         let renames = vec![
-            ExplicitSkillRename {
+            ExplicitRename {
+                kind: ItemKind::Skill,
                 original_name: "planning".into(),
                 new_name: "planning__org_b".into(),
                 source_name: "source-b".into(),
             },
-            ExplicitSkillRename {
+            ExplicitRename {
+                kind: ItemKind::Skill,
                 original_name: "planning".into(),
                 new_name: "planning__org_c".into(),
                 source_name: "source-c".into(),
@@ -828,7 +942,8 @@ mod tests {
         );
 
         let mut target = TargetState::from_items(items);
-        let explicit_renames = vec![ExplicitSkillRename {
+        let explicit_renames = vec![ExplicitRename {
+            kind: ItemKind::Skill,
             original_name: "planning".into(),
             new_name: "shared".into(),
             source_name: "source-a".into(),

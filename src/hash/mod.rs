@@ -31,6 +31,27 @@ pub fn compute_skill_hash_filtered(
     compute_dir_hash_filtered(dir, excluded_top_level)
 }
 
+/// Compute a skill tree hash with one file's installed bytes substituted.
+pub(crate) fn compute_skill_hash_with_override(
+    dir: &Path,
+    relative_path: &str,
+    content: &[u8],
+    excluded_top_level: &[&str],
+) -> Result<String, MarsError> {
+    let mut entries = Vec::new();
+    collect_file_hashes(dir, dir, &mut entries, excluded_top_level)?;
+    let Some((_, hash)) = entries.iter_mut().find(|(path, _)| path == relative_path) else {
+        return Err(MarsError::InvalidRequest {
+            message: format!(
+                "skill tree {} does not contain {relative_path}",
+                dir.display()
+            ),
+        });
+    };
+    *hash = hash_bytes(content);
+    Ok(hash_file_manifest(entries))
+}
+
 /// Compute SHA-256 of raw bytes.
 ///
 /// Returns `"sha256:<64-char-lowercase-hex>"`.
@@ -72,6 +93,45 @@ pub(crate) fn hash_file_manifest(mut entries: Vec<(String, String)>) -> String {
     hash_bytes(manifest.as_bytes())
 }
 
+/// Hash every regular file below `root`, rejecting indirection and special files.
+pub(crate) fn strict_file_hashes(
+    root: &Path,
+    excluded_top_level: &[&str],
+) -> Result<std::collections::BTreeMap<String, String>, MarsError> {
+    let snapshot =
+        match crate::platform::fs::directory_tree_snapshot_filtered(root, excluded_top_level)? {
+            crate::platform::fs::DirectoryTreeSnapshotResult::Snapshot(snapshot)
+                if snapshot.is_strict() =>
+            {
+                snapshot
+            }
+            crate::platform::fs::DirectoryTreeSnapshotResult::NonUnicode(path) => {
+                return Err(MarsError::InvalidRequest {
+                    message: format!("path must be valid Unicode: {}", path.display()),
+                });
+            }
+            crate::platform::fs::DirectoryTreeSnapshotResult::Snapshot(_)
+            | crate::platform::fs::DirectoryTreeSnapshotResult::Unavailable => {
+                return Err(MarsError::InvalidRequest {
+                    message: format!(
+                        "directory tree must contain only directories and regular files: {}",
+                        root.display()
+                    ),
+                });
+            }
+        };
+    Ok(snapshot.file_hash_manifest_entries().into_iter().collect())
+}
+
+pub(crate) fn portable_relative(root: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(root)
+        .ok()?
+        .components()
+        .map(|component| component.as_os_str().to_str().map(str::to_owned))
+        .collect::<Option<Vec<_>>>()
+        .map(|components| components.join("/"))
+}
+
 /// Recursively collect (relative_path, hash) pairs for all files in a directory.
 fn collect_file_hashes(
     root: &Path,
@@ -88,16 +148,12 @@ fn collect_file_hashes(
         if is_excluded_top_level(rel_path, excluded_top_level) {
             continue;
         }
-
         if file_type.is_dir() {
             collect_file_hashes(root, &path, entries, excluded_top_level)?;
         } else {
             // Build forward-slash relative path from components for cross-platform determinism
-            let rel_path: String = rel_path
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
+            let rel_path = portable_relative(root, &path)
+                .unwrap_or_else(|| rel_path.to_string_lossy().replace('\\', "/"));
             let content = fs::read(&path)?;
             let hash = hash_bytes(&content);
             entries.push((rel_path, hash));

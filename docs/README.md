@@ -81,6 +81,12 @@ Mars accepts several source forms:
 
 ## Documentation
 
+### Guides
+
+| Document | Contents |
+|---|---|
+| [plugin-authoring.md](plugin-authoring.md) | Configure, build, check, release, and install multi-harness plugins |
+
 ### Config
 
 | Document | Contents |

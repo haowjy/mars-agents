@@ -34,26 +34,15 @@ pub struct ResolvedGraph {
 }
 
 impl ResolvedGraph {
-    pub(crate) fn dependency_depths(&self) -> HashMap<SourceName, usize> {
-        let mut remaining_dependents: HashMap<SourceName, usize> = HashMap::new();
-        for name in &self.order {
-            remaining_dependents.insert(name.clone(), 0);
-        }
-        for name in &self.order {
-            let Some(node) = self.nodes.get(name) else {
-                continue;
-            };
-            for dep in &node.deps {
-                if self.nodes.contains_key(dep) {
-                    *remaining_dependents.entry(dep.clone()).or_insert(0) += 1;
-                }
-            }
-        }
-
+    /// Shortest dependency distance from the consumer's direct declarations.
+    pub(crate) fn dependency_depths(
+        &self,
+        dependencies: &IndexMap<SourceName, EffectiveDependency>,
+    ) -> HashMap<SourceName, usize> {
         let mut depths = HashMap::new();
         let mut queue = VecDeque::new();
-        for name in &self.order {
-            if remaining_dependents.get(name) == Some(&0) {
+        for name in dependencies.keys() {
+            if self.nodes.contains_key(name) && !depths.contains_key(name) {
                 depths.insert(name.clone(), 1);
                 queue.push_back(name.clone());
             }
@@ -63,15 +52,12 @@ impl ResolvedGraph {
             let current_depth = depths[&current];
             if let Some(node) = self.nodes.get(&current) {
                 for dep in &node.deps {
-                    let Some(remaining) = remaining_dependents.get_mut(dep) else {
+                    if !self.nodes.contains_key(dep) {
                         continue;
-                    };
-                    depths
-                        .entry(dep.clone())
-                        .and_modify(|depth| *depth = (*depth).max(current_depth + 1))
-                        .or_insert(current_depth + 1);
-                    *remaining -= 1;
-                    if *remaining == 0 {
+                    }
+                    let candidate = current_depth + 1;
+                    if depths.get(dep).is_none_or(|depth| candidate < *depth) {
+                        depths.insert(dep.clone(), candidate);
                         queue.push_back(dep.clone());
                     }
                 }

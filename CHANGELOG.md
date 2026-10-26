@@ -4,6 +4,55 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `mars build plugin [PATH] [--out <dir>]` builds owned Claude, Cursor, and OpenCode plugin trees
+  from a package's publish graph. Explicit output uses the nested
+  `<dir>/{claude,cursor,opencode}/` layout with a root `.mars-plugin.json` sentinel.
+- `[plugin]` configures committed output, identity, marketplace, description, and harnesses.
+  Configured builds also generate the Claude and Cursor catalogs and root OpenCode `package.json`;
+  `[package]` supplies author, homepage, and license metadata.
+- `mars check` reports stale, hand-edited, skipped, or root-conflicted configured plugin output and
+  warns when plugin packages do not require Mars 0.19.0 or newer.
+- Build and commit configured multi-harness plugin output during `mars version`, with rollback-safe
+  publication and a `--no-plugins` escape hatch.
+- Plugin builds refuse source symlinks that leave the package, and special files, so published
+  output never carries files from outside it. `[package].authors` takes `"Name <email>"` strings or
+  `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
+
+### Fixed
+- `mars sync --diff` and `mars version`'s validation pass no longer create `.mars/` state: a dry
+  run stages in a temporary directory and never creates a sync lock (it takes an existing one so a
+  concurrent real sync cannot show it a torn snapshot), so a package repo that does not gitignore
+  `.mars/` stays clean for the next release.
+- OpenCode sync now registers MCP servers under native `mcp` entries with `{env:VAR}`
+  environment references and records each written entry in `mars.lock`. Legacy `mcpServers`
+  entries Mars owns migrate on the next sync, and stale cleanup removes only the section the lock
+  names, so same-named user entries survive. A non-object `mcp` value fails sync before any write.
+- A failed MCP config write keeps the lock records of unchanged entries, which are still on disk,
+  so a later sync can still remove them. It used to drop every record for that target.
+- OpenCode sync now warns when a hook fragment lacks the required default `{ id, setup }` export,
+  matching plugin builds while still installing the fragment.
+- Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,
+  and malformed non-table `plugin` values survive config loading and saving so non-plugin commands
+  can continue while `mars check` and plugin builds report the invalid value.
+- Native agent compilation now preserves `skills.load` versus `skills.available`: Claude and
+  Cursor no longer preload available-only skills, while every target receives `/name` body
+  guidance for skills its per-agent format cannot preload. Claude also repeats load guidance as a
+  reminder for `--agent`, whose session path does not honor the native preload field.
+- Hook order now follows shortest dependency depth, changing only when a direct dependency is
+  also reached transitively. Codex users may need to re-trust moved hooks once with `/hooks`.
+- Discovery, MCP discovery and staging skip any directory holding a valid `.mars-plugin.json`
+  (generated plugin output), so a committed plugin tree is never re-imported as package source.
+  A package's own configured `[plugin].dir` is excluded directly and silently from its `sync` and
+  `check`; other generated trees still report each skipped path.
+- Explicitly or automatically renamed agents and skills now carry their installed names in
+  frontmatter, and `subagents:` references follow explicit agent renames as well as collision
+  renames. Native agent sync also removes prior claims that are absent from the current emission
+  set, including outputs left by dependency removals and renames.
+- MCP server collisions now prefer the shallowest package, then dependency declaration order,
+  so a package's own server cannot lose to a transitive dependency.
+- Skill and hook copies now preserve source executable bits.
+
 ## [0.18.4] - 2026-10-25
 
 ### Changed

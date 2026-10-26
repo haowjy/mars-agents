@@ -33,7 +33,8 @@ pub mod visibility;
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
 pub(crate) use native_agents::{
-    NativeAgentLinkMaterializeCtx, RemovedNativeOutput, materialize_native_agents_after_link,
+    NativeAgentLinkMaterializeCtx, RemovedNativeOutput, effective_native_profile,
+    materialize_native_agents_after_link,
 };
 pub use native_agents::{
     native_agent_orphan_preserve_paths, selective_native_orphan_preserve_paths,
@@ -106,7 +107,7 @@ pub fn compile(
                 routing_settings,
             )
         });
-    let mars_agents = native_agents::scan_mars_agents(&mars_dir, diag);
+    let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
 
     // Phase 6: install canonical content before emitting config that refers to it.
     let mut synced = sync_targets(ctx, applied, request, agent_surface_policy.clone(), diag);
@@ -143,13 +144,10 @@ pub fn compile(
     };
     let fanout_agents = loaded.effective.settings.meridian_fanout_agents();
     let native_reconcile_ctx = native_agents::NativeAgentReconcileCtx {
-        policy: agent_surface_policy.clone(),
         project_root: &ctx.project_root,
-        outcomes,
         old_lock,
         dry_run: request.options.dry_run,
         selective_harness_scope: None,
-        fanout_agents,
     };
     let native_compile_ctx = if matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll) {
         None
@@ -173,7 +171,7 @@ pub fn compile(
     ) = native_agents::run_native_agent_post_sync_lifecycle(
         &native_reconcile_ctx,
         &agent_surface_policy,
-        &mars_agents,
+        &mars_agent_scan,
         &agent_overlays,
         native_compile_ctx.as_ref(),
         native_model_router.as_mut(),

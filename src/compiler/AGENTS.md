@@ -38,6 +38,8 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `invocability.rs` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
 - `tool_names.rs` — the capability vocabulary (canonical names + aliases), the `Capability` type and the `tool(pattern)` grammar
 - `tool_natives.rs` — explicit per-harness native tool tables, pinned by a test against each harness's real tool list. Nothing is derived by naming convention.
+- `harness_descriptor.rs` — typed compiler harness facts, including canonical and display names,
+  target roots, variant keys, and lowering-policy selectors
 - `agents/` — `AgentProfile` schema parser + per-harness lowering with model alias resolution
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — selected MCP servers and hooks → target config files
@@ -88,6 +90,12 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   `Inherit` remains for direct lowerer tests). `lower_for_harness_with_model()`
   dispatches to the correct lowerer, ensuring emitted native artifacts carry concrete
   model IDs rather than aliases.
+- `lower_policy.rs` owns capability-aware agent skill lowering. Claude and Cursor native
+  `skills:` fields receive `skills.load` only; body guidance carries `skills.available`, plus
+  `skills.load` on targets without per-agent preload and on Claude's dual-use
+  subagent/session-agent file. This guidance is a designed mapping, not warning-tier lossiness.
+  Plugin builds pass qualified skill names into the same lowering path; their prose rewriter
+  handles authored references separately.
 - `HarnessKind` — Claude, Codex, OpenCode, Cursor, Pi
 - `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
   lowerers omit them; Codex records all three as dropped, while other targets record them as
@@ -165,10 +173,11 @@ Universal schema parsing and native lowering. Skills support variant layouts per
 ## Config Entries (`config_entries/`)
 
 MCP servers and hooks are selected during the target build, then validated and written to target
-config files via adapters. `TargetState` carries each parsed item and its managed targets; preflight
-and emission consume that value instead of rediscovering package config entries. Sync checks a
-selected hook's installed directory after target sync, while a plugin build can lower the same pure
-selection without an installed directory.
+config files via adapters. `TargetState` carries each selected parsed item and its managed targets,
+plus filtered exported graph hooks for plugin omission diagnostics; preflight and emission consume
+the selected values instead of rediscovering package config entries. Sync checks a selected hook's
+installed directory after target sync, while a plugin build can lower the same pure selection
+without an installed directory.
 `lower_config_entries_for_target` owns per-target MCP collision resolution, native merge-fragment
 loading, and hook ordering. Callers supply the `${MARS_HOOK_DIR}` replacement through its
 hook-directory callback.
@@ -213,9 +222,9 @@ let policy = agent_surface_policy(Some(&AgentEmission::Auto), spec.as_ref(), tru
 **Reconcile:**
 ```rust
 let ctx = NativeAgentReconcileCtx {
-    policy, project_root, model_aliases, outcomes, old_lock, dry_run, selective_harness_scope,
+    project_root, old_lock, dry_run, selective_harness_scope,
 };
-let removed = reconcile_native_agent_surfaces(&ctx, &mars_agents, diag);
+let removed = reconcile_native_agent_surfaces(&ctx, &desired_outputs, diag);
 ```
 
 **Compile (EmitAll → every agent to every configured managed target):**
@@ -230,6 +239,9 @@ let outputs = compile_native_agents(&ctx, &AgentSurfacePolicy::EmitAll, &mars_ag
 ## Linked-target writes
 
 Native reconcile and dual-surface compile gate deletes and copies through `surface_ownership` (same rules as `target_sync`). See `src/target_sync/.context/CONTEXT.md`.
+Reconcile compares every prior native-agent lock claim in scope with the exact output set qualified
+for this run. It therefore removes old names and outputs belonging to dependencies that disappeared
+or stopped qualifying, rather than inferring cleanup from the current canonical agent list.
 File-mode hook emission also reserves its exact `OutputRecord` against the
 post-sync ownership lock before writing. Lock finalization retains every prior
 linked output unless its removal was positively confirmed, so failed filesystem

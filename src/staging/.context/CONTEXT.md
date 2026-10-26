@@ -15,7 +15,8 @@ Flat package skills filter control files, `.mars-src`, standard native roots, an
 (including existing resolved paths for aliases/absolute/dot-segment spellings)
 before traversal, because their source root contains `.mars/staging`. Filtering
 at install/hash time alone would recurse into the staging destination. This
-resource filter does not exclude output trees from package discovery.
+resource filter is combined with the shared authored-tree walk, which excludes
+valid generated plugin trees before any bytes reach staging.
 For a flat `.mars-src` skill, project output paths are rebased to the actual
 source root; similarly named authored resources are preserved.
 

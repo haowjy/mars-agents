@@ -28,15 +28,11 @@ pub struct HookTarget {
 struct RawHookDef {
     #[serde(default)]
     name: Option<String>,
-    #[serde(default = "default_visibility")]
+    #[serde(default = "crate::compiler::visibility::default_visibility")]
     visibility: String,
     targets: BTreeMap<String, HookTarget>,
     #[serde(default)]
     order: i32,
-}
-
-fn default_visibility() -> String {
-    "local".to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +53,15 @@ pub struct ParsedHookItem {
 }
 
 impl ParsedHookItem {
+    /// Fragment file this hook ships for `target`: the declared one, else the
+    /// target's default.
+    pub(crate) fn fragment_name(&self, target: &str) -> String {
+        self.def.targets[target]
+            .fragment
+            .clone()
+            .unwrap_or_else(|| default_fragment_name(target))
+    }
+
     pub(crate) fn discovered_item(&self, package_root: &Path) -> crate::discover::DiscoveredItem {
         crate::discover::DiscoveredItem {
             id: crate::lock::ItemId {
@@ -135,7 +140,7 @@ pub fn discover_hook_items(
     decl_order: usize,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<ParsedHookItem>, MarsError> {
-    crate::discover::discover_hook_directories(package_root)?
+    crate::discover::discover_hook_directories(package_root, diag)?
         .into_iter()
         .map(|hook_dir| load_hook_item(&hook_dir, source_name, package_depth, decl_order, diag))
         .collect()
@@ -257,11 +262,7 @@ pub fn load_merge_fragment(
     emit_unchecked_warning: bool,
 ) -> Result<HookFragment, MarsError> {
     let target = &item.def.targets[target_name];
-    let fragment_name = target
-        .fragment
-        .clone()
-        .unwrap_or_else(|| default_fragment_name(target_name));
-    let path = item.hook_dir.join(&fragment_name);
+    let path = item.hook_dir.join(item.fragment_name(target_name));
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| invalid(&path, &format!("failed to read fragment: {error}")))?;
     let mut value: Value = serde_json::from_str(&raw)
@@ -327,11 +328,7 @@ pub fn load_file_fragment(
             ),
         ));
     }
-    let fragment_name = target
-        .fragment
-        .clone()
-        .unwrap_or_else(|| default_fragment_name(target_name));
-    let path = item.hook_dir.join(fragment_name);
+    let path = item.hook_dir.join(item.fragment_name(target_name));
     let raw = std::fs::read_to_string(&path)
         .map_err(|error| invalid(&path, &format!("failed to read fragment: {error}")))?;
     Ok(substitute_hook_dir(&raw, hook_dir))

@@ -168,11 +168,21 @@ fn nonhidden_output_promotion_remains_an_explicit_discovery_limitation() {
     dir.child("SKILL.md")
         .write_str("# Root before emission")
         .unwrap();
-    let before = discover::discover_source(dir.path(), Some("demo")).unwrap();
+    let before = discover::discover_source(
+        dir.path(),
+        Some("demo"),
+        &mut mars_agents::diagnostic::DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert_eq!(before[0].source_path, Path::new("."));
     sync(dir.path()).assert().success();
     assert!(!dir.child(".mars/skills/demo/out/native").exists());
-    let after = discover::discover_source(dir.path(), Some("demo")).unwrap();
+    let after = discover::discover_source(
+        dir.path(),
+        Some("demo"),
+        &mut mars_agents::diagnostic::DiagnosticCollector::new(),
+    )
+    .unwrap();
     assert_eq!(after[0].source_path, Path::new("out/native/skills/demo"));
     dir.child("SKILL.md")
         .write_str("# Root edit is now suppressed")
@@ -255,12 +265,12 @@ fn self_overlays_installed_names_after_explicit_and_collision_renames() {
                 project.path(),
                 &format!(".mars/agents/{dependency_agent}.md")
             ),
-            "# Dependency A"
+            format!("---\nname: {dependency_agent}\n---\n# Dependency A")
         );
         if collision {
             assert_eq!(
                 read(project.path(), ".mars/agents/writer__b.md"),
-                "# Dependency B"
+                "---\nname: writer__b\n---\n# Dependency B"
             );
         }
         project

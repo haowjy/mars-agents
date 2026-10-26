@@ -23,7 +23,6 @@ pub(super) struct RoutingResolution {
     pub(super) routing: Routing,
     /// Cursor folded the effort into `harness_model`, so the bundle carries none.
     pub(super) effort_consumed: bool,
-    pub(super) effort: Option<String>,
     pub(super) warnings: Vec<String>,
     pub(super) cursor_effort_outcome: CursorEffortOutcome,
 }
@@ -140,7 +139,6 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
     RoutingResolution {
         routing,
         effort_consumed,
-        effort,
         warnings,
         cursor_effort_outcome,
     }

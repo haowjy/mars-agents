@@ -79,6 +79,16 @@ jobs:
                 exit 1
               fi
             done < <(jq -r '.optionalDependencies // {} | to_entries[] | "\(.key)\t\(.value)"' "${pkg}")
+
+            lock="${pkg%package.json}package-lock.json"
+            if [[ -f "${lock}" ]]; then
+              for lock_version in "$(jq -r '.version // empty' "${lock}")" "$(jq -r '.packages[""].version // empty' "${lock}")"; do
+                if [[ "${lock_version}" != "${TAG_VERSION}" ]]; then
+                  echo "::error::${lock} version (${lock_version}) does not match release tag version (${TAG_VERSION})"
+                  exit 1
+                fi
+              done
+            fi
           done
 
           escaped_tag_version="$(sed 's/[][\\.^$*+?(){}|/-]/\\&/g' <<<"${TAG_VERSION}")"

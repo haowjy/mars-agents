@@ -71,10 +71,24 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         )?
     };
     let prepared = tempfile::tempdir()?;
+    let excluded_symlinks = walkdir::WalkDir::new(&authored_base)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_symlink())
+        .filter_map(|entry| {
+            entry
+                .path()
+                .strip_prefix(&authored_base)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .collect::<Vec<_>>();
     let changed = crate::staging::stage_prepared_package(
         &authored_base,
         prepared.path(),
         preparation,
+        &excluded_symlinks,
         &mut publish_diag,
     )?;
     if preparation == crate::staging::DefinitionPreparation::Legacy && changed {
@@ -89,7 +103,7 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         base,
         &mut publish_diag,
     )?;
-    let mut report = check_dir_with_lens(base, Ok(&lens), &mut publish_diag)?;
+    let mut report = check_dir_with_lens(base, &authored_base, Ok(&lens), &mut publish_diag)?;
     report
         .warnings
         .extend(plugin_warnings(base, &lens, &mut publish_diag)?);
@@ -221,11 +235,12 @@ fn lossiness_diagnostics_for_check(
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let lens = crate::resolve::PublishLens::load(base, &mut diag);
-    check_dir_with_lens(base, lens.as_ref(), &mut diag)
+    check_dir_with_lens(base, base, lens.as_ref(), &mut diag)
 }
 
 fn check_dir_with_lens(
     base: &Path,
+    authored_base: &Path,
     lens: Result<&crate::resolve::PublishLens, &MarsError>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<CheckReport, MarsError> {
@@ -251,9 +266,10 @@ fn check_dir_with_lens(
 
     for item in discovered {
         let path = base.join(&item.source_path);
+        let authored_path = authored_base.join(&item.source_path);
         match item.id.kind {
             mars_schema::item::ItemKind::Agent => {
-                if super::is_symlink(&path) {
+                if super::is_symlink(&authored_path) {
                     let name = path
                         .file_stem()
                         .and_then(|n| n.to_str())
@@ -324,7 +340,7 @@ fn check_dir_with_lens(
                     let dirname = item.id.name.to_string();
                     (dirname, base.join("SKILL.md"), base.join("SKILL.md"))
                 } else {
-                    if super::is_symlink(&path) {
+                    if super::is_symlink(&authored_path) {
                         let name = path
                             .file_name()
                             .and_then(|n| n.to_str())

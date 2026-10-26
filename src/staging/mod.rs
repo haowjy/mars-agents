@@ -194,17 +194,22 @@ pub(crate) fn stage_prepared_package(
     source_root: &Path,
     dest_root: &Path,
     preparation: DefinitionPreparation,
+    excluded_paths: &[PathBuf],
     diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
-    stage_canonical_source_with_policy(
+    if dest_root.exists() {
+        fs::remove_dir_all(dest_root)?;
+    }
+    fs::create_dir_all(dest_root)?;
+    copy_and_lift_tree(
         source_root,
         dest_root,
         preparation,
         &IndexMap::new(),
         &RenameMap::new(),
         None,
+        excluded_paths,
         diag,
-        None,
     )
 }
 

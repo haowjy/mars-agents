@@ -1035,6 +1035,7 @@ mod tests {
             "---\nname: test-agent\ndescription: test\n---\n# Test",
         )
         .unwrap();
+        let mars_toml = mars_toml.replacen("[package]\n", "[package]\nschema = 1\n", 1);
         std::fs::write(repo.path().join("mars.toml"), mars_toml).unwrap();
         run_git_test(repo.path(), ["add", "."]);
         run_git_test(repo.path(), ["commit", "-m", "init"]);

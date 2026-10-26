@@ -571,11 +571,11 @@ mod tests {
     }
 
     #[test]
-    fn list_form_only_grants_and_is_flagged_deprecated() {
+    fn v1_list_form_is_rejected_without_rules() {
         let yaml = "---\nname: a\ndescription: d\ntools: [read, grep]\n---\n";
         let mut diags = Vec::new();
         let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
-        assert_eq!(profile.tools.describe(), vec!["allow:read", "allow:grep"]);
+        assert!(profile.tools.rules.is_empty());
         assert!(!profile.tools.is_allowlist());
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "tools.list-form");

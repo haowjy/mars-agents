@@ -13,15 +13,6 @@ pub(crate) struct PublishInput {
     pub item_kinds: std::collections::BTreeSet<ItemKind>,
 }
 
-pub(crate) fn discover_inputs(
-    package_root: &Path,
-    fallback_name: Option<&str>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<PublishInput>, MarsError> {
-    let items = crate::discover::discover_resolved_source(package_root, fallback_name, diag)?;
-    inputs_for_items(package_root, &items, true, diag)
-}
-
 pub(crate) fn inputs_for_items(
     package_root: &Path,
     items: &[crate::discover::DiscoveredItem],

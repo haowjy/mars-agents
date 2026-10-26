@@ -271,7 +271,7 @@ fn stage_plugin_inner(
     tree::check_sources(&tree_input, &profiles, diag)?;
     let (staged_output, (built_trees, diagnostics, root_file_plan)) =
         output::stage(&out_dir, |staging| {
-            let inputs_hash = plugin_inputs_hash(&package_root)?;
+            let inputs_hash = plugin_inputs_hash_from_prepared(&package_root, &authored)?;
             let mut built_trees = Vec::with_capacity(profiles.len());
             for profile in &profiles {
                 let tree_root = staging.join(profile.tree().as_str());
@@ -458,6 +458,21 @@ fn fail_on_diagnostic_errors(diagnostics: &[Diagnostic]) -> Result<(), MarsError
 
 /// Hash package-owned build inputs without resolving or fetching dependencies.
 pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsError> {
+    let mut diag = DiagnosticCollector::new();
+    let prepared = crate::package_prepare::prepare_authored(
+        package_root,
+        mars_schema::prepare::PrepareContext::Package,
+        None,
+        &mut diag,
+    )?;
+    diag.fail_on_errors()?;
+    plugin_inputs_hash_from_prepared(package_root, &prepared)
+}
+
+fn plugin_inputs_hash_from_prepared(
+    package_root: &Path,
+    prepared: &mars_schema::prepare::Prepared,
+) -> Result<String, MarsError> {
     let mut entries = std::collections::BTreeMap::new();
     let manifest_path = package_root.join("mars.toml");
     let raw_manifest = std::fs::read_to_string(&manifest_path)?;
@@ -491,7 +506,32 @@ pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsErro
     }
 
     let mut diag = DiagnosticCollector::new();
-    for input in crate::staging::discover_publish_inputs(package_root, None, &mut diag)? {
+    let mut items = crate::discover::discover_binary_source(package_root, None, &mut diag)?;
+    items.extend(prepared.definitions.iter().map(|definition| {
+        let kind = match definition.kind {
+            mars_schema::upgrade::DefinitionKind::Agent => mars_schema::item::ItemKind::Agent,
+            mars_schema::upgrade::DefinitionKind::Skill => mars_schema::item::ItemKind::Skill,
+        };
+        let source_path =
+            if kind == mars_schema::item::ItemKind::Skill && definition.source_path == "SKILL.md" {
+                PathBuf::from(".")
+            } else if kind == mars_schema::item::ItemKind::Skill {
+                PathBuf::from(&definition.source_path)
+                    .parent()
+                    .expect("prepared skill source has a parent")
+                    .to_path_buf()
+            } else {
+                PathBuf::from(&definition.source_path)
+            };
+        crate::discover::DiscoveredItem {
+            id: crate::lock::ItemId {
+                kind,
+                name: definition.slug.clone().into(),
+            },
+            source_path,
+        }
+    }));
+    for input in crate::staging::publish_inputs_for_items(package_root, &items, true, &mut diag)? {
         let source = package_root.join(&input.relative);
         let relative = crate::hash::portable_relative(package_root, &source).ok_or_else(|| {
             MarsError::InvalidRequest {

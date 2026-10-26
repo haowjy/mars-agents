@@ -1,6 +1,8 @@
 # src/discover/ — Source Item Discovery
 
-Discovers binary-owned hooks and bootstrap documents. `mars-schema` is the authority for Agent and skill selection; the resolver replaces any Agent/skill observations from this compatibility walk with `Prepared.definitions`.
+`mars-schema` is the authority for Agent and skill selection. Resolver and plugin paths call the
+binary-only inventory here for hooks and bootstrap documents, then combine it with
+`Prepared.definitions`; they do not run the compatibility all-kind walk.
 
 ## Contract
 
@@ -10,7 +12,10 @@ Discovery is convention-based. A single bounded recursive walk starts at the roo
 - `skills/` for child directories containing `SKILL.md`
 - `bootstrap/` for child directories containing `BOOTSTRAP.md`
 
-The filesystem walk remains for hook/bootstrap policy and foreign plugin declarations. Do not add Agent or skill semantics here; crate preparation owns those definitions.
+The compatibility walk remains for callers that need a foreign all-kind view. The resolver's
+binary-only walk applies the same bootstrap grounding and plugin-declaration rules without scanning
+Agents or skills. Do not add Agent or skill semantics here; crate preparation owns those
+definitions.
 
 Hooks are the exception to the layered walk: only direct children of the
 package-root `hooks/` directory are discovered. The compiler and general item

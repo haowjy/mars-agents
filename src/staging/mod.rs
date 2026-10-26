@@ -6,7 +6,7 @@
 mod overlay;
 mod publish;
 
-pub(crate) use publish::discover_inputs as discover_publish_inputs;
+pub(crate) use publish::inputs_for_items as publish_inputs_for_items;
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -452,12 +452,11 @@ pub(crate) fn resolve_package_bottom_up(
         .map(|request| request.name.clone())
         .collect();
 
-    let mut discovered = discover::discover_resolved_source(
+    let mut discovered = discover::discover_binary_source(
         &rooted_ref.package_root,
         Some(pending_src.name.as_ref()),
         diag,
     )?;
-    discovered.retain(|item| !matches!(item.id.kind, ItemKind::Agent | ItemKind::Skill));
     discovered.extend(prepared.definitions.iter().map(|definition| {
         let kind = match definition.kind {
             mars_schema::upgrade::DefinitionKind::Agent => ItemKind::Agent,

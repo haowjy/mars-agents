@@ -675,6 +675,29 @@ pub(crate) fn discover_bootstrap_surfaces(
     finalize_items("unknown-source", items)
 }
 
+/// Discover the package item kinds whose schemas remain binary-owned.
+pub(crate) fn discover_binary_source(
+    package_root: &Path,
+    source_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
+) -> Result<Vec<DiscoveredItem>, MarsError> {
+    if generated_plugin_tree(package_root, diag) {
+        return Ok(Vec::new());
+    }
+    let mut items = discover_bootstrap_surfaces(package_root, diag)?;
+    let mut visited_hooks = HashSet::new();
+    let mut hooks = Vec::new();
+    scan_hook_dir(
+        package_root,
+        Path::new(HOOKS_DIR_NAME),
+        &mut hooks,
+        &mut visited_hooks,
+        diag,
+    )?;
+    items.extend(hooks);
+    finalize_items(source_name.unwrap_or("unknown-source"), items)
+}
+
 fn path_is_in_generated_plugin_tree(
     package_root: &Path,
     configured_plugin_dir: Option<&Path>,

@@ -243,7 +243,7 @@ fn ensure_target_list_contains(targets: &mut Vec<String>, target_name: &str) {
 fn deprecated_agents_target_diagnostic(target_name: &str) -> Option<Diagnostic> {
     (target_name == ".agents").then(|| Diagnostic {
         level: DiagnosticLevel::Warning,
-        code: "deprecated-agents-target",
+        code: "deprecated-agents-target".into(),
         message: format!(
             "`.agents` is a deprecated link target. Run `{}` to remove it. Skills are now emitted to native harness dirs automatically.",
             managed_cmd("mars unlink .agents"),

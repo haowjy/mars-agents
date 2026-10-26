@@ -13,7 +13,7 @@ use std::sync::Arc;
 use mars_schema::dialect::Dialect;
 use mars_schema::inspect::{Hint, Kind};
 use mars_schema::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
-use mars_schema::prepare::{Classification, PrepareContext, Prepared};
+use mars_schema::prepare::{PrepareContext, Prepared};
 use mars_schema::tree::TreeSource;
 
 use crate::diagnostic::DiagnosticCollector;
@@ -256,28 +256,24 @@ pub(crate) fn prepare_rooted(
             diag.schema(diagnostic, &format!("{source_name}: {path}"), false);
         }
     }
-    if let Some(plugin) = &rooted.plugin {
-        // The plugin was chosen from its marketplace; what is wrong is the plugin itself.
-        if let Some(refusal) = normalized
-            .diagnostics
-            .values()
-            .flatten()
-            .find(|diagnostic| diagnostic.is_error() && diagnostic.code.starts_with("marketplace."))
-        {
-            return Err(MarsError::InvalidRequest {
+    if normalized.kind == Kind::Marketplace {
+        return Err(match &rooted.plugin {
+            // The plugin was chosen from its marketplace; what is wrong is the plugin itself,
+            // which the crate refuses by reporting the root as a marketplace.
+            Some(plugin) => MarsError::InvalidRequest {
                 message: format!(
                     "`{source_name}`, plugin `{}`: {}",
                     plugin.name(),
-                    refusal.message
+                    normalized
+                        .diagnostics
+                        .values()
+                        .flatten()
+                        .find(|diagnostic| diagnostic.is_error())
+                        .map_or("it cannot be imported", |refusal| refusal.message.as_str())
                 ),
-            });
-        }
-    } else if normalized.kind == Kind::Marketplace {
-        return Err(marketplace_choice_error(
-            source_name,
-            &source,
-            &request.hint,
-        ));
+            },
+            None => marketplace_choice_error(source_name, &source, &request.hint),
+        });
     }
     let [package] = normalized.packages.as_mut_slice() else {
         return Err(MarsError::InvalidRequest {
@@ -402,24 +398,13 @@ pub(crate) fn report_diagnostics(
     legacy_warning: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    let mut warn_legacy = false;
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
         for diagnostic in diagnostics {
-            if diagnostic.code == "legacy-package" {
-                warn_legacy = true;
-                continue;
-            }
-            if prepared.classification == Classification::MarsLegacy
-                && diagnostic.code == "field.removed"
-                && diagnostic.message.starts_with("removed legacy key")
-            {
-                continue;
-            }
             diag.schema(diagnostic, &context, false);
         }
     }
-    if warn_legacy {
+    if prepared.needs_migration() {
         diag.warn_once("legacy-package", legacy_warning);
     }
 }

@@ -1,11 +1,14 @@
+use std::borrow::Cow;
+
 use serde::Serialize;
 
 /// A diagnostic message from library code.
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,
-    /// Machine-readable code, e.g. "shadow-collision", "manifest-path-dep".
-    pub code: &'static str,
+    /// Machine-readable code, e.g. "shadow-collision", "manifest-path-dep". A schema
+    /// diagnostic's code passes through unchanged.
+    pub code: Cow<'static, str>,
     /// Human-readable message.
     pub message: String,
     /// Optional context (source name, item path, etc.).
@@ -100,34 +103,7 @@ impl DiagnosticCollector {
     ) {
         use mars_schema::diagnostic::Severity;
 
-        let code = match diagnostic.code.as_str() {
-            "agent-schema-error" => "agent-schema-error",
-            "agent-schema-warning" => "agent-schema-warning",
-            "skill-schema-error" => "skill-schema-error",
-            "skill-schema-warning" => "skill-schema-warning",
-            "field.removed" => "field.removed",
-            "field.unknown" => "field.unknown",
-            "field.type" => "field.type",
-            "field.value" => "field.value",
-            "field.required" => "field.required",
-            "tools.list-form" => "tools.list-form",
-            "frontmatter.unclosed" => "frontmatter.unclosed",
-            "frontmatter.not-mapping" => "frontmatter.not-mapping",
-            "yaml.anchor" => "yaml.anchor",
-            "yaml.document-end" => "yaml.document-end",
-            "yaml.duplicate-key" => "yaml.duplicate-key",
-            "yaml.invalid" => "yaml.invalid",
-            "skill.no-frontmatter" => "skill.no-frontmatter",
-            "harness.unknown" => "harness.unknown",
-            "toml.invalid" => "toml.invalid",
-            "manifest.package-required" => "manifest.package-required",
-            "manifest.name-required" => "manifest.name-required",
-            "manifest.version-missing" => "manifest.version-missing",
-            "manifest.invalid-field" => "manifest.invalid-field",
-            "agent.claude-keys-moved" => "agent.claude-keys-moved",
-            "skill.claude-keys-moved" => "skill.claude-keys-moved",
-            _ => "schema-diagnostic",
-        };
+        let code = Cow::Owned(diagnostic.code.clone());
         let message = format!("{context}: {}", diagnostic.message);
         if self
             .diagnostics
@@ -149,14 +125,14 @@ impl DiagnosticCollector {
 
     /// One warning per unknown field name, listing every file that carries it: the first file
     /// is reported as an ordinary warning, and each further one extends the same warning.
-    fn warn_unknown_field(&mut self, code: &'static str, text: &str, context: &str) {
+    fn warn_unknown_field(&mut self, code: Cow<'static, str>, text: &str, context: &str) {
         let sites = self.unknown_field_sites.entry(text.to_owned()).or_default();
         if sites.iter().any(|site| site == context) {
             return;
         }
         sites.push(context.to_owned());
         if sites.len() == 1 {
-            self.warn(code, format!("{context}: {text}"));
+            self.warn(code.clone(), format!("{context}: {text}"));
             return;
         }
         let message = format!("{text} (in {} files: {})", sites.len(), sites.join(", "));
@@ -239,10 +215,10 @@ impl DiagnosticCollector {
         self.lossiness_mode.surfaces_lossiness()
     }
 
-    pub fn error(&mut self, code: &'static str, message: impl Into<String>) {
+    pub fn error(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Error,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: None,
@@ -251,7 +227,7 @@ impl DiagnosticCollector {
 
     pub fn error_with_category(
         &mut self,
-        code: &'static str,
+        code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
@@ -260,17 +236,17 @@ impl DiagnosticCollector {
         }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Error,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: Some(category),
         });
     }
 
-    pub fn warn(&mut self, code: &'static str, message: impl Into<String>) {
+    pub fn warn(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: None,
@@ -291,7 +267,7 @@ impl DiagnosticCollector {
 
     pub fn warn_with_category(
         &mut self,
-        code: &'static str,
+        code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
@@ -300,18 +276,18 @@ impl DiagnosticCollector {
         }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: Some(category),
         });
     }
 
-    pub fn info(&mut self, code: &'static str, message: impl Into<String>) {
+    pub fn info(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
         let message = message.into();
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Info,
-            code,
+            code: code.into(),
             message,
             context: None,
             category: None,
@@ -332,7 +308,7 @@ impl DiagnosticCollector {
 
     pub fn info_with_category(
         &mut self,
-        code: &'static str,
+        code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
@@ -341,7 +317,7 @@ impl DiagnosticCollector {
         }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Info,
-            code,
+            code: code.into(),
             message: message.into(),
             context: None,
             category: Some(category),
@@ -350,13 +326,13 @@ impl DiagnosticCollector {
 
     pub fn warn_with_context(
         &mut self,
-        code: &'static str,
+        code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
         context: impl Into<String>,
     ) {
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
-            code,
+            code: code.into(),
             message: message.into(),
             context: Some(context.into()),
             category: None,
@@ -488,7 +464,7 @@ pub fn compatibility_preflight(
             if bin < req {
                 Some(Diagnostic {
                     level: DiagnosticLevel::Error,
-                    code: "compat-version",
+                    code: "compat-version".into(),
                     message: format!(
                         "this project requires mars >= {min} but the installed binary is {binary_version}; \
                          upgrade with: cargo install mars-agents"
@@ -505,7 +481,7 @@ pub fn compatibility_preflight(
             // unknown version scheme → don't hard-block the consumer).
             Some(Diagnostic {
                 level: DiagnosticLevel::Warning,
-                code: "compat-version-parse",
+                code: "compat-version-parse".into(),
                 message: format!(
                     "could not compare mars version `{binary_version}` against requirement `{min}`; \
                      proceeding with defaults"
@@ -721,7 +697,7 @@ mod tests {
     fn display_shows_error_prefix() {
         let d = Diagnostic {
             level: DiagnosticLevel::Error,
-            code: "test",
+            code: "test".into(),
             message: "something broke".to_string(),
             context: None,
             category: None,
@@ -733,7 +709,7 @@ mod tests {
     fn display_shows_warning_prefix() {
         let d = Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: "test",
+            code: "test".into(),
             message: "heads up".to_string(),
             context: None,
             category: None,

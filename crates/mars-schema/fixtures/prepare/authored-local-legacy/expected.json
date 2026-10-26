@@ -60,14 +60,5 @@
     }
   ],
   "payload": [],
-  "diagnostics": {
-    "agents/local.md": [
-      {
-        "code": "legacy-package",
-        "severity": "warning",
-        "path": [],
-        "message": "package uses the pre-v1 format; apply the reported authored-file changes"
-      }
-    ]
-  }
+  "diagnostics": {}
 }

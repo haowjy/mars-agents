@@ -77,11 +77,11 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     report(args.check, pending, dropped, json)
 }
 
-/// Package-level diagnostics are what upgrading removed (legacy keys, skill tool rules);
+/// The upgrade's diagnostics are what upgrading removed (legacy keys, skill tool rules);
 /// each is listed with its file, none truncated.
 fn dropped_keys(project_root: &Path, authored_root: &Path, prepared: &Prepared) -> Vec<DroppedKey> {
     let mut dropped = Vec::new();
-    for (source_path, diagnostics) in &prepared.diagnostics {
+    for (source_path, diagnostics) in &prepared.upgrade_diagnostics {
         let file = relative_path(project_root, &authored_root.join(source_path));
         for diagnostic in diagnostics {
             dropped.push(DroppedKey {

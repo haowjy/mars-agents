@@ -230,10 +230,15 @@ export interface Prepared {
   definitions: PreparedDefinition[];
   payload: { source_path: string; output_path: string }[];
   /**
-   * Package-level diagnostics by source path: discovery, upgrade and translation (`skill.*`,
-   * `agent.*`, `import.*`). A file's own reading diagnostics are on its `reading`.
+   * Package-level diagnostics by source path: discovery and translation (`skill.*`, `agent.*`,
+   * `import.*`). A file's own reading diagnostics are on its `reading`.
    */
   diagnostics: { [sourcePath: string]: Diagnostic[] };
+  /**
+   * What upgrading a pre-v1 package (`classification.kind === "mars-legacy"`) changed or dropped,
+   * by source path (legacy keys, skill tool rules). Absent when empty.
+   */
+  upgrade_diagnostics?: { [sourcePath: string]: Diagnostic[] };
 }
 
 /**

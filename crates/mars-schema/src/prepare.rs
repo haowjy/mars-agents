@@ -111,12 +111,32 @@ pub struct Prepared {
     pub manifest: Option<PreparedManifest>,
     pub definitions: Vec<PreparedDefinition>,
     pub payload: Vec<PayloadEntry>,
-    /// Package-level diagnostics by source path: discovery and upgrade. A definition's
-    /// own reading diagnostics live on its `reading` only; see [`Prepared::all_diagnostics`].
+    /// Package-level diagnostics by source path: discovery and foreign-dialect translation. A
+    /// definition's own reading diagnostics live on its `reading` only; see
+    /// [`Prepared::all_diagnostics`].
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
+    /// What upgrading a pre-v1 package changed or dropped, by source path (legacy keys, skill
+    /// tool rules). `mars migrate` lists them; a caller that only reads the package reports
+    /// [`Prepared::needs_migration`] instead.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub upgrade_diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
 }
 
 impl Prepared {
+    /// A pre-v1 package whose authored files preparation changed: the changes are in
+    /// the prepared bytes, and `mars migrate` writes them back.
+    pub fn needs_migration(&self) -> bool {
+        self.classification == Classification::MarsLegacy
+            && (self
+                .manifest
+                .iter()
+                .any(|manifest| manifest.change != ChangeRecord::None)
+                || self
+                    .definitions
+                    .iter()
+                    .any(|definition| definition.change != ChangeRecord::None))
+    }
+
     /// Every diagnostic by source path: package-level first, then the file's reading.
     pub fn all_diagnostics(&self) -> BTreeMap<&str, Vec<&SchemaDiagnostic>> {
         let mut all: BTreeMap<&str, Vec<&SchemaDiagnostic>> = BTreeMap::new();
@@ -182,12 +202,14 @@ pub(crate) fn prepare_root(
     let classification = dispatched.classification.clone();
     let manifest_bytes = source.read("mars.toml");
     let mut diagnostics = std::mem::take(&mut dispatched.discovery.diagnostics);
+    let mut upgrade_diagnostics = BTreeMap::new();
 
     let mut manifest = manifest_bytes.as_deref().map(|bytes| {
         prepare_manifest(
             bytes,
             classification == Classification::MarsLegacy,
             &mut diagnostics,
+            &mut upgrade_diagnostics,
         )
     });
 
@@ -222,36 +244,13 @@ pub(crate) fn prepare_root(
                     all,
                     &selected_paths,
                     &mut diagnostics,
+                    &mut upgrade_diagnostics,
                 )
             })
             .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
-
-    if classification == Classification::MarsLegacy {
-        let changed_path = manifest
-            .as_ref()
-            .filter(|manifest| manifest.change != ChangeRecord::None)
-            .and_then(|manifest| manifest.source_path.clone())
-            .or_else(|| {
-                definitions
-                    .iter()
-                    .find(|definition| definition.change != ChangeRecord::None)
-                    .map(|definition| definition.source_path.clone())
-            });
-        if let Some(path) = changed_path {
-            diagnostics
-                .entry(path)
-                .or_default()
-                .push(SchemaDiagnostic::new(
-                    "legacy-package",
-                    Severity::Warning,
-                    Vec::new(),
-                    "package uses the pre-v1 format; apply the reported authored-file changes",
-                ));
-        }
-    }
 
     let payload = if can_read_definitions {
         payload_paths(
@@ -274,12 +273,14 @@ pub(crate) fn prepare_root(
         report_unconverted(source, &dispatched, &mut diagnostics);
     }
     diagnostics.retain(|_, diagnostics| !diagnostics.is_empty());
+    upgrade_diagnostics.retain(|_, diagnostics| !diagnostics.is_empty());
     let prepared = Prepared {
         classification,
         manifest: manifest.take(),
         definitions,
         payload,
         diagnostics,
+        upgrade_diagnostics,
     };
     Rooted {
         prepared,
@@ -353,6 +354,7 @@ fn prepare_manifest(
     bytes: &[u8],
     upgrade: bool,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
+    upgrade_diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedManifest {
     let invalid_utf8 = std::str::from_utf8(bytes).err().map(|error| {
         SchemaDiagnostic::new(
@@ -362,7 +364,7 @@ fn prepare_manifest(
             format!("mars.toml is not UTF-8: {error}"),
         )
     });
-    let (normalized_bytes, change, upgrade_diagnostics) = match std::str::from_utf8(bytes) {
+    let (normalized_bytes, change, upgraded) = match std::str::from_utf8(bytes) {
         Ok(text) if upgrade => match crate::upgrade::upgrade_manifest(text) {
             Ok(result) => upgrade_result(text, result),
             Err(error) => {
@@ -382,10 +384,10 @@ fn prepare_manifest(
         Ok(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
         Err(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
     };
-    diagnostics
+    upgrade_diagnostics
         .entry("mars.toml".to_string())
         .or_default()
-        .extend(upgrade_diagnostics);
+        .extend(upgraded);
     let reading = std::str::from_utf8(&normalized_bytes).map_or_else(
         |_| DefinitionRead {
             frontmatter: Vec::new(),
@@ -411,6 +413,7 @@ fn prepare_definition(
     all: &[SelectedDefinition],
     selected_paths: &BTreeSet<&str>,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
+    upgrade_diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedDefinition {
     let Some(bytes) = source.read(&selected.source_path) else {
         let diagnostic = SchemaDiagnostic::new(
@@ -441,7 +444,7 @@ fn prepare_definition(
             format!("definition is not UTF-8: {error}"),
         )
     });
-    let (normalized_bytes, change, upgrade_diagnostics) = match std::str::from_utf8(&bytes) {
+    let (normalized_bytes, change, found) = match std::str::from_utf8(&bytes) {
         Ok(text) => match classification {
             Classification::MarsLegacy => {
                 match crate::upgrade::upgrade_definition(selected.kind, text) {
@@ -468,10 +471,16 @@ fn prepare_definition(
         },
         Err(_) => (bytes.clone(), ChangeRecord::None, Vec::new()),
     };
-    diagnostics
-        .entry(selected.source_path.clone())
+    // What the pre-v1 upgrade did is for `mars migrate`; what translating a foreign file did
+    // is a finding about the package.
+    let into = if *classification == Classification::MarsLegacy {
+        upgrade_diagnostics
+    } else {
+        diagnostics
+    };
+    into.entry(selected.source_path.clone())
         .or_default()
-        .extend(upgrade_diagnostics);
+        .extend(found);
 
     let text = std::str::from_utf8(&normalized_bytes).ok();
     let reading = match (selected.kind, text) {

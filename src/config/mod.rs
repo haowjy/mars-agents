@@ -1140,7 +1140,7 @@ pub fn merge_with_root(
         .into_iter()
         .map(|warning| Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: warning.code,
+            code: warning.code.into(),
             message: warning.message,
             context: None,
             category: Some(DiagnosticCategory::Validation),
@@ -1274,7 +1274,7 @@ fn deprecated_agents_target_diagnostics(settings: &Settings) -> Vec<Diagnostic> 
 fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
     Diagnostic {
         level: DiagnosticLevel::Warning,
-        code: "deprecated-agents-target",
+        code: "deprecated-agents-target".into(),
         message: format!(
             "`.agents` is a deprecated link target. Run `{}` to remove it. Skills are now emitted to native harness dirs automatically.",
             managed_cmd("mars unlink .agents"),

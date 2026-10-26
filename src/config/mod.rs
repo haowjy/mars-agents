@@ -716,6 +716,7 @@ pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsErr
 ///
 /// Converts `InstallDep` entries to `ManifestDep`, preserving both URL and
 /// path dependencies.
+#[cfg(test)]
 pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let path = source_root.join(CONFIG_FILE);
     match std::fs::read_to_string(&path) {
@@ -771,6 +772,7 @@ pub(crate) fn parse_prepared_manifest(
     }))
 }
 
+#[cfg(test)]
 fn parse_manifest(
     content: &str,
     path: &Path,

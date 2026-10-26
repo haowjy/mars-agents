@@ -41,7 +41,9 @@ pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackag
 #[cfg(test)]
 pub(crate) use path::apply_subpath;
 
-use crate::config::{EffectiveConfig, Manifest, SourceSpec};
+#[cfg(test)]
+use crate::config::Manifest;
+use crate::config::{EffectiveConfig, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
@@ -164,6 +166,7 @@ pub trait SourceFetcher {
 }
 
 /// Reads source manifests for transitive dependency discovery.
+#[cfg(test)]
 pub trait ManifestReader {
     fn read_manifest(
         &self,
@@ -173,8 +176,16 @@ pub trait ManifestReader {
 }
 
 /// Composite trait used by `resolve()`.
+#[cfg(not(test))]
+pub trait SourceProvider: VersionLister + SourceFetcher {}
+#[cfg(not(test))]
+impl<T> SourceProvider for T where T: VersionLister + SourceFetcher {}
+
+/// Unit-test providers may inject manifests without writing fixture files.
+#[cfg(test)]
 pub trait SourceProvider: VersionLister + SourceFetcher + ManifestReader {}
 
+#[cfg(test)]
 impl<T> SourceProvider for T where T: VersionLister + SourceFetcher + ManifestReader {}
 
 /// Resolve the full dependency graph from config.

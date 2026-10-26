@@ -309,8 +309,8 @@ fn plan(
             Ok(metadata) => {
                 // Only a real directory can be byte-equal: a file or symlink at the name is
                 // something Mars did not install this way.
-                let same =
-                    metadata.is_dir() && tree_digest(&dest).as_deref() == Some(&skill.digest);
+                let same = metadata.is_dir()
+                    && entries::tree_digest(&dest).ok().as_deref() == Some(&skill.digest);
                 if recorded.contains(skill.name.as_str()) {
                     if same {
                         plan.keeps.push(index);
@@ -341,14 +341,4 @@ fn plan(
         plan.removals.push(name.clone());
     }
     Ok(plan)
-}
-
-/// The digest of an authored directory, or `None` when it is not a regular tree.
-///
-/// A destination that cannot be read as regular files is never byte-equal to the source, so it
-/// is a collision rather than an error: `mars provide` must not fail because of a file it does
-/// not own.
-fn tree_digest(dir: &Path) -> Option<String> {
-    let files = crate::hash::strict_file_hashes(dir, &[]).ok()?;
-    Some(crate::hash::hash_file_manifest(files.into_iter().collect()))
 }

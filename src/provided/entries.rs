@@ -5,7 +5,7 @@
 //! directory can be adopted instead of replaced. The schema reader is here only to refuse a
 //! skill the rest of Mars would silently drop; its warnings are reported, not enforced.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -15,20 +15,20 @@ use mars_schema::skill::SkillProfile;
 
 use super::spec::ProvideSpec;
 
-/// One skill directory, with the file digests that define its bytes.
+/// One skill directory and the digest of its bytes.
 #[derive(Debug)]
 pub(crate) struct ProvidedSkill {
     pub name: String,
     pub dir: PathBuf,
     /// SHA-256 of this skill's tree, in the same format package skills use.
     pub digest: String,
-    files: BTreeMap<String, String>,
 }
 
 /// Everything one `mars provide` call offers, validated and digested.
 pub(crate) struct ProvidedEntries {
     pub skills: Vec<ProvidedSkill>,
-    /// SHA-256 over `<name>/<path>` entries: it moves when any skill's bytes or the entry list do.
+    /// SHA-256 over `(name, skill digest)` pairs: it moves when any skill's bytes or the entry
+    /// list do, and leaves the per-skill digests as the one description of a tree's bytes.
     pub digest: String,
 }
 
@@ -69,22 +69,14 @@ pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<Strin
         let dir = skills_dir.join(&name);
         let profile = read_skill(&name, &dir, &mut warnings)?;
         check_name(spec, &name, &profile)?;
-        let files = crate::hash::strict_file_hashes(&dir, &[])?;
-        let digest = crate::hash::hash_file_manifest(files.clone().into_iter().collect());
-        skills.push(ProvidedSkill {
-            name,
-            dir,
-            digest,
-            files,
-        });
+        let digest = tree_digest(&dir)?;
+        skills.push(ProvidedSkill { name, dir, digest });
     }
 
-    let mut entries = Vec::new();
-    for skill in &skills {
-        for (path, hash) in &skill.files {
-            entries.push((format!("{}/{path}", skill.name), hash.clone()));
-        }
-    }
+    let entries = skills
+        .iter()
+        .map(|skill| (skill.name.clone(), skill.digest.clone()))
+        .collect();
     Ok((
         ProvidedEntries {
             digest: crate::hash::hash_file_manifest(entries),
@@ -92,6 +84,15 @@ pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<Strin
         },
         warnings,
     ))
+}
+
+/// The digest of a directory's regular files, in the format package skills use.
+///
+/// Strict: a directory holding a symlink or a special file is not a tree Mars installed, so a
+/// caller comparing a destination reads the error as "not byte-equal" rather than failing.
+pub(crate) fn tree_digest(dir: &Path) -> Result<String, MarsError> {
+    let files = crate::hash::strict_file_hashes(dir, &[])?;
+    Ok(crate::hash::hash_file_manifest(files.into_iter().collect()))
 }
 
 /// Read `SKILL.md` through the schema contract, failing on error-level diagnostics.

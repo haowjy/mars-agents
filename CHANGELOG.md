@@ -8,8 +8,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - A dependency's relative `path` dependency resolves against the directory of the `mars.toml` that
   declares it, not that package's staged copy, so a consumer that also depends on it directly no
-  longer fails with `referenced with conflicting identities`. Git dependencies and their
-  checkout-internal relative paths are unaffected.
+  longer fails with `referenced with conflicting identities`. A relative `path` dependency inside
+  a git dependency now resolves inside that dependency's checkout, where it used to fail.
 
 ## [0.19.0] - 2026-10-26
 

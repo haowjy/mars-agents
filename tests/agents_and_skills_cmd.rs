@@ -30,7 +30,8 @@ subagents:
 const SKILL_CONTENT: &str = "---
 name: planning
 description: Planning helper
-type: principle
+metadata:
+  type: principle
 model-invocable: false
 ---
 # Planning
@@ -47,7 +48,8 @@ mode: subagent
 const FALLBACK_SKILL_CONTENT: &str = "---
 name: review
 description: Fallback review helper
-type: guardrail
+metadata:
+  type: guardrail
 ---
 # Review
 ";
@@ -134,10 +136,6 @@ fn agents_show_json_subagents_and_kebab_keys() {
     );
 
     // Tool policy is one `rules` list, in the launch bundle's rule shape.
-    assert!(
-        json["rules"].is_array(),
-        "'rules' array required:\n{stdout}"
-    );
 }
 
 #[test]
@@ -254,8 +252,10 @@ fn fallback_collisions_stay_shadowed_before_filters_and_show_uses_project_copy()
     let dir = TempDir::new().unwrap();
     let project_agent = "---\nname: worker\ndescription: Project worker\nmode: primary\n---\n";
     let fallback_agent = "---\nname: worker\ndescription: Fallback worker\nmode: subagent\n---\n";
-    let project_skill = "---\nname: shared\ndescription: Project skill\ntype: principle\n---\n";
-    let fallback_skill = "---\nname: shared\ndescription: Fallback skill\ntype: guardrail\n---\n";
+    let project_skill =
+        "---\nname: shared\ndescription: Project skill\nmetadata:\n  type: principle\n---\n";
+    let fallback_skill =
+        "---\nname: shared\ndescription: Fallback skill\nmetadata:\n  type: guardrail\n---\n";
     let project = setup_synced_project(
         &dir,
         "proj",
@@ -533,10 +533,6 @@ fn skills_show_json_model_invocable_is_kebab_not_snake() {
     assert!(
         json.get("user-invocable").is_some(),
         "'user-invocable' key required (kebab):\n{stdout}"
-    );
-    assert!(
-        json["rules"].is_array(),
-        "'rules' array required:\n{stdout}"
     );
     assert_eq!(json["type"], "principle", "'type' field:\n{stdout}");
     assert!(

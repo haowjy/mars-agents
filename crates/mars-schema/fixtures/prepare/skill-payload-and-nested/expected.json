@@ -1,0 +1,89 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "claude",
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        ".claude-plugin/plugin.json"
+      ]
+    }
+  },
+  "definitions": [
+    {
+      "kind": "skill",
+      "slug": "nested",
+      "source_path": "skills/outer/nested/SKILL.md",
+      "output_path": "skills/nested/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "nested"
+          ],
+          [
+            "description",
+            "Nested"
+          ]
+        ],
+        "fields": {
+          "name": "nested",
+          "description": "Nested",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    },
+    {
+      "kind": "skill",
+      "slug": "outer",
+      "source_path": "skills/outer/SKILL.md",
+      "output_path": "skills/outer/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "outer"
+          ],
+          [
+            "description",
+            "Outer"
+          ]
+        ],
+        "fields": {
+          "name": "outer",
+          "description": "Outer",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [
+    {
+      "source_path": "skills/outer/guide.md",
+      "output_path": "skills/outer/guide.md"
+    },
+    {
+      "source_path": "skills/outer/nested/assets/data.bin",
+      "output_path": "skills/nested/assets/data.bin"
+    }
+  ],
+  "diagnostics": {}
+}

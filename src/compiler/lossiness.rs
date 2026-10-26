@@ -27,6 +27,11 @@ pub enum Lossiness {
     MeridianOnly,
 }
 
+/// Codex's highest effort is `xhigh`; `max` is written as `xhigh` in its native files and in
+/// the launch bundle.
+pub const CODEX_MAX_EFFORT_NOTE: &str =
+    "Codex has no effort above xhigh; `max` is written as `xhigh`";
+
 /// A secondary artifact emitted alongside the primary lowered file (e.g. Codex `openai.yaml`).
 #[derive(Debug, Clone)]
 pub struct LoweredSibling {
@@ -51,6 +56,28 @@ fn target_label(target: &str) -> String {
 
 fn summarize_fields(fields: &[&str]) -> String {
     fields.join(", ")
+}
+
+/// Warn once per target that project `[settings]` keys reach no native file of it: the
+/// settings belong to the project, so the per-Agent summaries do not carry them.
+pub fn emit_project_settings_dropped_warning(
+    keys: &[&str],
+    target: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    let (list, verb) = match keys {
+        [] => return,
+        [one] => ((*one).to_string(), "is"),
+        _ => (keys.join(", "), "are"),
+    };
+    diag.warn_with_category(
+        "project-setting-dropped",
+        format!(
+            "project {list} {verb} not projected to {}; native {target} agents keep {target}'s own network default",
+            target_label(target)
+        ),
+        DiagnosticCategory::Lossiness,
+    );
 }
 
 /// Emit deduplicated lossiness warnings for one lowered agent artifact.

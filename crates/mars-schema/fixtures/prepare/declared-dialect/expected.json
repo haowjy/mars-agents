@@ -1,0 +1,84 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "claude",
+    "evidence": {
+      "source": "declared",
+      "paths": []
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "native",
+      "source_path": "agents/native.md",
+      "output_path": "agents/native.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "native"
+          ],
+          [
+            "description",
+            "Native"
+          ],
+          [
+            "tools",
+            {
+              "*": "deny",
+              "Read": "allow",
+              "agent": "allow"
+            }
+          ]
+        ],
+        "fields": {
+          "name": "native",
+          "description": "Native",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [
+            {
+              "capability": "*",
+              "pattern": null,
+              "action": "deny"
+            },
+            {
+              "capability": "read",
+              "pattern": null,
+              "action": "allow"
+            },
+            {
+              "capability": "agent",
+              "pattern": null,
+              "action": "allow"
+            }
+          ],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "fully-rewritten"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {}
+}

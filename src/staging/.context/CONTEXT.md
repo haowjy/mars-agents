@@ -1,114 +1,24 @@
-# src/staging/ — Canonical Source Staging
+# Prepared package materialization
 
-Lift foreign-dialect package trees into a derived canonical source tree before
-discovery, validation, hash, and apply.
+`staging` is a filesystem projection of `mars_schema::Prepared`. It does not classify, discover,
+lift, upgrade, or validate Agent and skill definitions.
 
-## Placement
+For a resolved dependency, `materialize_prepared_rooted` projects the prepared manifest,
+definitions and listed payload into an owned scratch directory, then copies only the binary-owned
+hook, MCP, bootstrap and plugin-manifest surfaces (the `bootstrapDocs` declaration) before applying consumer skill overlays. It does
+not copy unrelated authored files. `RootedSourceRef.authored_root` remains the dependency origin;
+only `package_root`, the materialized content view, changes. A manifest-free dependency materializes in the schema v1 layout `normalize` gave it: `skills/<slug>/`, `agents/<slug>.md`, and the generated `mars.toml`.
 
-Staging runs in `resolve/package.rs` immediately after `apply_subpath` (and on
-version-override replay / restart). `RootedSourceRef.package_root` is repointed at
-the staged tree. Local project items stage in `sync/mod.rs` `build_target` after `.mars-src`
-has won over matching declared-package definitions. Declared-package items
-carry Mars-native dialect; `.mars-src` retains local inference.
+For local content, `materialize_local_prepared` writes one selected definition and its crate-listed
+payload under `_local/<item>`. Flat-skill exclusions are consumer policy and apply during this copy.
 
-Flat package skills filter control files, `.mars-src`, standard native roots, and configured or previously owned target paths
-(including existing resolved paths for aliases/absolute/dot-segment spellings)
-before traversal, because their source root contains `.mars/staging`. Filtering
-at install/hash time alone would recurse into the staging destination. This
-resource filter is combined with the shared authored-tree walk, which excludes
-valid generated plugin trees before any bytes reach staging.
-For a flat `.mars-src` skill, project output paths are rebased to the actual
-source root; similarly named authored resources are preserved.
+Graph and local-package prepared diagnostics gate before scratch materialization begins. Binary
+surface and compiler diagnostics then gate durable publication. A real sync builds the generation in
+place at `.mars/.staging.pending` (a dry run builds it in a temporary directory outside the project
+and publishes nothing), and publication renames that path over `.mars/staging`; nothing is copied.
+The next holder of `sync.lock` removes that exact pending path after an interruption; no
+temporary-name glob is reclaimed.
 
-```
-fetch → ResolvedRef.tree_path (global cache, read-only)
-  → apply_subpath → package_root
-      → stage_canonical_source → staged_root
-  → package_root := staged_root
-  → discover / hash / validate / apply
-```
-
-Discovery runs from the staged/rooted package directory. Its convention walk skips dot-prefixed child directories during default discovery; explicit dependency `subpath` can still make a hidden foreign container (for example `.claude`) the effective root, where its inner `agents/` and `skills/` directories are discovered normally. Foreign-container dialect inference chooses lift behavior only; it does not make hidden containers discovery roots.
-
-## Staging location
-
-Per-consumer under `<project>/.mars/staging/<source-name>/<dialect>/`.
-
-- Never mutates the global fetch cache (`ResolvedRef.tree_path`).
-- Dependency- and dialect-scoped paths make restaging deterministic for `--frozen`.
-- Same source bytes + same resolved dialect + same overrides ⇒ byte-identical staged tree.
-
-## `.mars/` store semantics
-
-The canonical store (`.mars/`) is installed from the **staged** tree, not raw
-fetched bytes. For inferred/default dialects with identity lift, content matches
-the source. With explicit non-`mars-native` dialect, foreign frontmatter is lifted to
-canonical mars fields per `staging/lift.rs`. Default/inferred `Claude` lift is
-idempotent on already-canonical map-form tool policies.
-
-## Non-canonical allowed-tools handling (MarsNative skills only)
-
-In `process_markdown_file` (mod.rs:271–312), MarsNative skills parse **RAW** frontmatter (before any lift) and call `push_non_canonical_tool_field_diags` → `"skill-schema-warning"` diagnostic. This runs BEFORE `lift_frontmatter_with_change` (lift.rs:41–55) strips the non-canonical aliases via `strip_non_canonical_tool_aliases`. The diagnostic inspects the original pre-mutation frontmatter; the strip operates on a separate clone. Both `.mars/` and `.claude/` end up clean (aliases removed from canonical store).
-
-Non-canonical aliases detected: `allowed-tools`, `allowed_tools` (→ `tools:`), plus `disallowed_tools` (→ `disallowed-tools:`).
-
-## `lift_frontmatter` (B3)
-
-```rust
-pub fn lift_frontmatter(
-    dialect: Dialect,
-    item_kind: ItemKind,
-    frontmatter: &Frontmatter,
-) -> Frontmatter
-```
-
-For `Dialect::MarsNative`, lift is limited to stripping non-canonical tool aliases. All other dialects apply their own key mapping (Claude, Codex, Cursor, OpenCode).
-
-Foreign scalar/list tool fields become canonical maps so imports never author deprecated
-list-form `tools:`. Claude agent `tools:` is restrictive, so it becomes `'*': deny` plus an
-`allow` entry per tool. Skill tool fields and `allowed-tools` / `allowed_tools` are grants, so
-they become `allow` entries without the wildcard. Existing map actions stay intact. Codex
-agent tool fields are dropped because the Codex native agent format has no such policy field;
-Codex skill tool grants follow the skill rule.
-
-C-skills applies `[skills.<name>]` overrides after lift in the same staging hook
-(`staging/overlay.rs`). Tool overlays project into canonical `tools:` /
-`disallowed-tools:` (including inline `mcp(...)` grants). Lookup key is the **installed**
-skill name (after explicit rename), matching `[skills.<name>]` in mars.toml — not the
-source directory basename alone. Flat/root `SKILL.md` skills use the discovered item
-name (dependency source name or configured fallback).
-
-## Inbound MCP lift
-
-Foreign MCP permission tokens in `tools:` / `disallowed-tools:` (and skill
-`allowed-tools` / `disallowedTools`) lift to canonical `mcp(...)` during dialect staging
-(`staging/lift.rs`):
-
-| Foreign form | Dialect | Lifts to |
-|---|---|---|
-| `mcp__server__tool`, `mcp__server__*`, `mcp__server`, `mcp__*` | Claude | `mcp(server/tool)`, `mcp(server/*)`, `mcp(*/*)` (segments verbatim) |
-| `Mcp(server:tool)` | Cursor | `mcp(server/tool)` (last `:` separates tool; namespaced server ids preserved) |
-| `mcpServers` | Claude | Appends `mcp(server)` entries to `tools:` (whole-server grant) |
-
-The removed `mcp-tools:` / `mcp_tools` field is rejected at parse time (`RemovedField`).
-Use a `tools:` map with `mcp(server): allow` instead. Projection to harness-native tokens:
-[`src/compiler/mcp_ref.rs`](../../compiler/mcp_ref.rs) — documented in
-[agent-compilation.md](../../../docs/config/agent-compilation.md#mcp-tool-policy-references).
-
-## Poor Man's module — `skill_source_name`
-
-Flat-root skill naming (`skill_source_name` in `src/skill_source_name.rs`) is the single canonical rule shared by discovery and staging overlay lookup. `staging/overlay.rs::skill_source_name` delegates to `flat_root_skill_source_name` for `SKILL.md` at package root, using the explicit `fallback_skill_name` when provided (dependency source name) or falling back to the package directory basename.
-
-## Threading
-
-- `EffectiveDependency.dialect` — explicit `[dependencies.<dep>].dialect`
-- `EffectiveDependency.rename` — overlay lookup uses installed names after rename
-- `EffectiveConfig.skills` — `[skills.<name>]` overlays applied in `process_markdown_file`
-- `ResolveOptions.staging_root` — set by sync to `.mars/staging`
-- `fallback_skill_name` — threaded into `process_markdown_file` via `StageOverlayContext`; used for flat-root skill overlay lookup and diagnostic messages
-
-Dialect resolution (`crate::dialect::Dialect::resolve`):
-
-1. explicit `dialect` key
-2. foreign container path (`.claude`, `.codex`, `.opencode`, `.cursor`)
-3. default `Claude` (including bare `skills/` / `agents/`)
+`overlay.rs` is the remaining semantic-looking code here because `[skills.<name>]` is consumer
+configuration. It must run after schema preparation and uses the installed name after dependency
+renames.

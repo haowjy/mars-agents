@@ -1,8 +1,8 @@
 use serde::Serialize;
 
-use crate::harness::registry::{self, HarnessId};
 use crate::models::harness_model::resolve_harness_model;
 use crate::routing::{Eligibility, RoutingTrace};
+use mars_schema::HarnessId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -113,7 +113,7 @@ pub fn from_routing_trace(
             runnable_paths: Vec::new(),
         },
         Eligibility::Eligible => {
-            let Some(harness) = registry::parse(&trace.harness) else {
+            let Some(harness) = mars_schema::harness::parse(&trace.harness) else {
                 return ModelAvailability {
                     status: AvailabilityStatus::Unavailable,
                     source: AvailabilitySource::RouteRejected,

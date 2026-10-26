@@ -10,9 +10,9 @@ use std::path::Path;
 use crate::config::FilterMode;
 use crate::discover;
 use crate::error::MarsError;
-use crate::lock::ItemKind;
 use crate::types::ItemName;
 use crate::validate;
+use mars_schema::item::ItemKind;
 
 /// Apply filter mode to discovered items.
 ///
@@ -127,6 +127,19 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// The tree's items, selected by preparation like any package's.
+    fn discover_items(root: &std::path::Path) -> Vec<discover::DiscoveredItem> {
+        let mut diag = DiagnosticCollector::new();
+        let prepared = crate::package_prepare::prepare_authored(
+            root,
+            mars_schema::prepare::PrepareContext::AuthoredLocal,
+            Some(mars_schema::dialect::Dialect::MarsNative),
+            &mut diag,
+        )
+        .unwrap();
+        discover::package_items(root, None, &prepared, None, &mut diag).unwrap()
+    }
+
     /// Helper: create a source tree with agents and skills
     fn make_source_tree(agents: &[(&str, &str)], skills: &[(&str, &str)]) -> TempDir {
         let dir = TempDir::new().unwrap();
@@ -155,8 +168,7 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[("planning", "# planning")],
         );
-        let discovered =
-            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
+        let discovered = discover_items(tree.path());
         let filtered = apply_filter(&discovered, &FilterMode::All, tree.path()).unwrap();
         assert_eq!(filtered.len(), 3);
     }
@@ -167,8 +179,7 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[],
         );
-        let discovered =
-            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
+        let discovered = discover_items(tree.path());
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Exclude(vec!["reviewer".into()]),
@@ -183,8 +194,7 @@ mod tests {
     #[test]
     fn filter_exclude_path_matches_mixed_separators_on_windows() {
         let tree = make_source_tree(&[("coder.md", "# coder")], &[]);
-        let discovered =
-            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
+        let discovered = discover_items(tree.path());
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Exclude(vec![r"agents\coder.md".into()]),
@@ -199,8 +209,7 @@ mod tests {
     #[test]
     fn filter_exclude_path_preserves_backslash_on_posix() {
         let tree = make_source_tree(&[("coder.md", "# coder")], &[]);
-        let discovered =
-            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
+        let discovered = discover_items(tree.path());
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Exclude(vec![r"agents\coder.md".into()]),
@@ -218,8 +227,7 @@ mod tests {
             &[("coder.md", "# coder"), ("reviewer.md", "# reviewer")],
             &[("planning", "# planning")],
         );
-        let discovered =
-            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
+        let discovered = discover_items(tree.path());
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Include {
@@ -245,8 +253,7 @@ mod tests {
                 ("review", "# Review skill"),
             ],
         );
-        let discovered =
-            discover::discover_source(tree.path(), None, &mut DiagnosticCollector::new()).unwrap();
+        let discovered = discover_items(tree.path());
         let filtered = apply_filter(
             &discovered,
             &FilterMode::Include {

@@ -4,13 +4,17 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::error::MarsError;
-use crate::types::ItemKind;
+use mars_schema::item::ItemKind;
 
 /// Compute SHA-256 of a file or directory (for skills).
 ///
 /// For agents (single `.md` file): SHA-256 of file content.
 /// For skills (directory): SHA-256 of sorted `(relative_path, file_hash)` pairs —
 /// deterministic regardless of filesystem ordering.
+///
+/// A bootstrap doc is hashed as its directory (`bootstrap/<name>/`), whether the caller holds
+/// that directory or its `BOOTSTRAP.md`, so an installed doc's path hashes the way the lock
+/// recorded it.
 ///
 /// Output format: `"sha256:<64-char-hex>"`.
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
@@ -19,7 +23,11 @@ pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
             let content = fs::read(path)?;
             Ok(hash_bytes(&content))
         }
-        ItemKind::Skill | ItemKind::Hook | ItemKind::BootstrapDoc => compute_dir_hash(path),
+        ItemKind::Skill | ItemKind::Hook => compute_dir_hash(path),
+        ItemKind::BootstrapDoc => {
+            let is_doc_file = path.file_name().is_some_and(|name| name == "BOOTSTRAP.md");
+            compute_dir_hash(path.parent().filter(|_| is_doc_file).unwrap_or(path))
+        }
     }
 }
 

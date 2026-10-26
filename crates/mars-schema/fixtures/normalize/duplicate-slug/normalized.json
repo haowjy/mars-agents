@@ -1,0 +1,37 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "selected_items": []
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "definitions": [],
+        "payload": [],
+        "diagnostics": {
+          "two/review/SKILL.md": [
+            {
+              "code": "import.duplicate-slug",
+              "severity": "error",
+              "path": [],
+              "message": "skill slug `review` is selected by both `one/review/SKILL.md` and `two/review/SKILL.md`"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

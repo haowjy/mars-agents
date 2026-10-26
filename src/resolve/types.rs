@@ -8,9 +8,10 @@ use semver::VersionReq;
 use super::compat::CompatibilityResult;
 use crate::config::{EffectiveDependency, FilterMode, Manifest};
 use crate::error::ResolutionError;
-use crate::lock::ItemKind;
 use crate::source::ResolvedRef;
 use crate::types::{ItemName, SourceId, SourceName};
+use mars_schema::claude::manifest::PluginSource;
+use mars_schema::item::ItemKind;
 
 /// The resolved dependency graph — all sources with concrete versions.
 ///
@@ -135,6 +136,8 @@ pub struct ResolvedNode {
     pub source_name: SourceName,
     pub source_id: SourceId,
     pub rooted_ref: RootedSourceRef,
+    /// Crate-owned semantic preparation result for this authored package.
+    pub prepared: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
     pub resolved_ref: ResolvedRef,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
@@ -145,8 +148,46 @@ pub struct ResolvedNode {
 /// Source checkout provenance and rooted package boundary.
 #[derive(Debug, Clone)]
 pub struct RootedSourceRef {
+    /// The checkout the package's files came from: the marketplace's for a local plugin, the
+    /// plugin's own repository for a remote one.
     pub checkout_root: PathBuf,
+    /// Immutable package origin after applying `subpath` (or the plugin's root).
+    pub authored_root: PathBuf,
+    /// Current materialized content view. Relative dependencies must never use this.
     pub package_root: PathBuf,
+    /// Set when the package is one plugin of a marketplace.
+    pub plugin: Option<PluginRoot>,
+}
+
+/// A marketplace plugin as acquired: kept with the rooted package so that preparing it again
+/// (a restart pass) reads it through the same marketplace entry, never a fresh fetch.
+#[derive(Debug, Clone)]
+pub struct PluginRoot {
+    pub hint: mars_schema::inspect::PluginHint,
+    /// Where the plugin's files came from.
+    pub content: crate::lock::LockedContent,
+    /// The dependency named this plugin; otherwise its marketplace lists only this one.
+    pub named: bool,
+}
+
+impl PluginRoot {
+    pub fn name(&self) -> &str {
+        &self.hint.entry.name
+    }
+
+    /// The plugin the lock records: only one the dependency named, so a lock written for a
+    /// dependency that never named one (v0.19.0's) still describes it.
+    pub fn locked_name(&self) -> Option<&str> {
+        self.named.then(|| self.name())
+    }
+
+    /// Where the plugin's files came from, when the lock must say: for a plugin the dependency
+    /// named, or one in another repository, which a later sync fetches again by this record. An
+    /// only plugin in the marketplace's own tree is the marketplace's commit and needs none.
+    pub fn locked_content(&self) -> Option<&crate::lock::LockedContent> {
+        (self.named || matches!(self.hint.entry.source, PluginSource::Remote { .. }))
+            .then_some(&self.content)
+    }
 }
 
 /// How a version constraint was specified.
@@ -391,7 +432,7 @@ pub enum ResolveMode {
 }
 
 /// Options controlling resolution behavior.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ResolveOptions {
     pub mode: ResolveMode,
     /// Running mars version override. Production uses the crate version.
@@ -400,10 +441,10 @@ pub struct ResolveOptions {
     pub meridian_version: Option<semver::Version>,
     pub ignore_requires_mars: bool,
     pub ignore_requires_meridian: bool,
-    /// Per-project directory for dependency-scoped canonical source staging.
-    pub staging_root: Option<std::path::PathBuf>,
     /// Local source substitutions, including names first introduced transitively.
     pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
+    pub(crate) prepared_sources:
+        indexmap::IndexMap<SourceName, std::sync::Arc<mars_schema::prepare::Prepared>>,
 }
 
 impl Default for ResolveOptions {
@@ -414,8 +455,8 @@ impl Default for ResolveOptions {
             meridian_version: None,
             ignore_requires_mars: false,
             ignore_requires_meridian: false,
-            staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
+            prepared_sources: indexmap::IndexMap::new(),
         }
     }
 }
@@ -439,8 +480,8 @@ impl ResolveOptions {
             meridian_version: None,
             ignore_requires_mars: false,
             ignore_requires_meridian: false,
-            staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
+            prepared_sources: indexmap::IndexMap::new(),
         }
     }
 
@@ -451,8 +492,8 @@ impl ResolveOptions {
             meridian_version: None,
             ignore_requires_mars: false,
             ignore_requires_meridian: false,
-            staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
+            prepared_sources: indexmap::IndexMap::new(),
         }
     }
 
@@ -466,14 +507,9 @@ impl ResolveOptions {
             meridian_version: None,
             ignore_requires_mars: false,
             ignore_requires_meridian: false,
-            staging_root: None,
             source_overrides: indexmap::IndexMap::new(),
+            prepared_sources: indexmap::IndexMap::new(),
         }
-    }
-
-    pub fn with_staging_root(mut self, staging_root: std::path::PathBuf) -> Self {
-        self.staging_root = Some(staging_root);
-        self
     }
 
     pub(crate) fn with_source_overrides(
@@ -481,6 +517,15 @@ impl ResolveOptions {
         source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     ) -> Self {
         self.source_overrides = source_overrides;
+        self
+    }
+
+    pub(crate) fn with_prepared_source(
+        mut self,
+        source_name: SourceName,
+        prepared: std::sync::Arc<mars_schema::prepare::Prepared>,
+    ) -> Self {
+        self.prepared_sources.insert(source_name, prepared);
         self
     }
 

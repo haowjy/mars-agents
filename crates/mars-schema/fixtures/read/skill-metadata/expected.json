@@ -1,0 +1,40 @@
+{
+  "frontmatter": [
+    [
+      "metadata",
+      {
+        "type": "coding"
+      }
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": {
+      "type": "coding"
+    }
+  },
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
+  ]
+}

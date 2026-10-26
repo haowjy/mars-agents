@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::compiler::tool_policy::ToolRule;
-use crate::config::{NetworkHost, NetworkPolicy};
+use mars_schema::network::{NetworkHost, NetworkPolicy};
+use mars_schema::tool_policy::ToolRule;
 
 pub const SLOT_PLACEHOLDER: &str = "###SLOT###";
 

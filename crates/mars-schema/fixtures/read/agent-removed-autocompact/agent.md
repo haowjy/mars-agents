@@ -1,0 +1,3 @@
+---
+autocompact: true
+---

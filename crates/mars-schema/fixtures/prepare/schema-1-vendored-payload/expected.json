@@ -1,0 +1,76 @@
+{
+  "classification": {
+    "kind": "schema-1"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "p"
+        ],
+        [
+          "version",
+          "0.1.0"
+        ],
+        [
+          "schema",
+          1
+        ]
+      ],
+      "fields": {
+        "name": "p",
+        "version": "0.1.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [
+    {
+      "kind": "skill",
+      "slug": "s",
+      "source_path": "skills/s/SKILL.md",
+      "output_path": "skills/s/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "s"
+          ],
+          [
+            "description",
+            "d"
+          ]
+        ],
+        "fields": {
+          "name": "s",
+          "description": "d",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [
+    {
+      "source_path": "skills/s/node_modules/m/i.js",
+      "output_path": "skills/s/node_modules/m/i.js"
+    }
+  ],
+  "diagnostics": {}
+}

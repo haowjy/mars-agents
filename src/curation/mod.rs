@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::targets::HarnessScope;
 use crate::error::{ConfigError, MarsError};
-use crate::harness::registry::{self, HarnessId};
+use crate::harness::registry;
 use crate::models::{self, possible::PossibleRow};
 use crate::routing::slug;
+use mars_schema::HarnessId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -155,7 +156,7 @@ impl<'a> PreparedRule<'a> {
         let mut literal_by_harness = BTreeMap::new();
         let mut full_match_harnesses = HashSet::new();
         if !rule.glob {
-            for harness in registry::all() {
+            for harness in mars_schema::harness::ALL {
                 if rule.harness.is_some_and(|id| id != *harness) {
                     continue;
                 }
@@ -485,7 +486,7 @@ impl RowKey {
 
 impl Rule {
     fn literal_target(&self, harness: HarnessId) -> Option<String> {
-        if let Some(native) = harness.native_provider()
+        if let Some(native) = registry::native_provider(harness)
             && let Some(parts) = slug::parse(&self.model)
         {
             if !slug::providers_match(parts.provider, native)
@@ -502,7 +503,7 @@ impl Rule {
     }
 
     fn declaration_issue(&self, harness: HarnessId) -> Option<&'static str> {
-        if let Some(native) = harness.native_provider() {
+        if let Some(native) = registry::native_provider(harness) {
             if self
                 .provider
                 .as_deref()
@@ -527,15 +528,14 @@ impl Rule {
     }
 
     fn declared_key(&self, harness: HarnessId) -> RowKey {
-        let parsed = if harness.native_provider().is_some()
+        let parsed = if registry::native_provider(harness).is_some()
             || matches!(harness, HarnessId::Pi | HarnessId::OpenCode)
         {
             slug::parse(&self.model)
         } else {
             None
         };
-        let provider = harness
-            .native_provider()
+        let provider = registry::native_provider(harness)
             .map(str::to_string)
             .or_else(|| parsed.as_ref().map(|parts| parts.provider.to_string()))
             .or_else(|| self.provider.clone());
@@ -545,7 +545,7 @@ impl Rule {
             .to_string();
         let launch = crate::models::harness_model::resolve_harness_model(
             harness,
-            if harness.native_provider().is_some() {
+            if registry::native_provider(harness).is_some() {
                 &model_id
             } else {
                 &self.model
@@ -592,7 +592,7 @@ fn validate_rules(path: &Path, action: &str, rules: Vec<RuleFile>) -> Result<Vec
             let harness = if rule.harness == "*" {
                 None
             } else {
-                Some(registry::parse(&rule.harness).ok_or_else(|| {
+                Some(mars_schema::harness::parse(&rule.harness).ok_or_else(|| {
                     invalid(format!(
                         "{}: [[{action}]] #{} has unknown harness `{}`",
                         path.display(),

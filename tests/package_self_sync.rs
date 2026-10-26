@@ -2,10 +2,10 @@ mod common;
 
 use assert_fs::{TempDir, prelude::*};
 use common::*;
-use mars_agents::{discover, frontmatter::Frontmatter};
+use mars_schema::frontmatter::Frontmatter;
 use std::{fs, path::Path};
 
-const PACKAGE: &str = "[package]\nname = 'demo'\nversion = '1.0.0'\n";
+const PACKAGE: &str = "[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n";
 const SETTINGS: &str = "[settings]\ntargets = ['.codex']\nagent_emission = 'never'\n";
 
 fn sync(root: &Path) -> assert_cmd::Command {
@@ -157,6 +157,29 @@ fn flat_package_uses_declared_name_and_filters_before_staging() {
     assert_eq!(read(dir.path(), ".native/custom/unrelated"), "user");
 }
 
+/// Where preparation selects the package's skills, by output path.
+fn skill_outputs(root: &Path) -> Vec<String> {
+    fn collect(root: &Path, dir: &Path, files: &mut Vec<(String, Vec<u8>)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect(root, &path, files);
+            } else {
+                let relative = path.strip_prefix(root).unwrap().to_string_lossy();
+                files.push((relative.replace('\\', "/"), std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(root, root, &mut files);
+    let tree = mars_schema::tree::FileTree::from_files(files).unwrap();
+    mars_schema::prepare::prepare(&tree, mars_schema::prepare::PrepareContext::Package, None)
+        .definitions
+        .into_iter()
+        .map(|definition| definition.output_path)
+        .collect()
+}
+
 #[test]
 fn nonhidden_output_promotion_remains_an_explicit_discovery_limitation() {
     let dir = TempDir::new().unwrap();
@@ -168,22 +191,12 @@ fn nonhidden_output_promotion_remains_an_explicit_discovery_limitation() {
     dir.child("SKILL.md")
         .write_str("# Root before emission")
         .unwrap();
-    let before = discover::discover_source(
-        dir.path(),
-        Some("demo"),
-        &mut mars_agents::diagnostic::DiagnosticCollector::new(),
-    )
-    .unwrap();
-    assert_eq!(before[0].source_path, Path::new("."));
+    let before = skill_outputs(dir.path());
+    assert_eq!(before[0], "SKILL.md");
     sync(dir.path()).assert().success();
     assert!(!dir.child(".mars/skills/demo/out/native").exists());
-    let after = discover::discover_source(
-        dir.path(),
-        Some("demo"),
-        &mut mars_agents::diagnostic::DiagnosticCollector::new(),
-    )
-    .unwrap();
-    assert_eq!(after[0].source_path, Path::new("out/native/skills/demo"));
+    let after = skill_outputs(dir.path());
+    assert_eq!(after[0], "out/native/skills/demo/SKILL.md");
     dir.child("SKILL.md")
         .write_str("# Root edit is now suppressed")
         .unwrap();

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::compiler::agents::HarnessKind;
 use crate::error::{ConfigError, MarsError};
 use crate::lock::CompiledNativeOutput;
 
@@ -42,7 +41,8 @@ fn agent_name_from_native_dest(path: &str) -> Option<String> {
 
 /// Native harness outputs recorded in the lock for agent items (canonical + linked targets).
 fn compiled_native_outputs_from_lock(lock: &crate::lock::LockFile) -> Vec<CompiledNativeOutput> {
-    use crate::lock::{CANONICAL_TARGET_ROOT, ItemKind};
+    use crate::lock::CANONICAL_TARGET_ROOT;
+    use mars_schema::item::ItemKind;
 
     let mut records = Vec::new();
     for item in lock.items.values() {
@@ -64,7 +64,7 @@ fn compiled_native_outputs_from_lock(lock: &crate::lock::LockFile) -> Vec<Compil
             if output.target_root == CANONICAL_TARGET_ROOT {
                 continue;
             }
-            if HarnessKind::from_target_dir(&output.target_root).is_none() {
+            if crate::harness::registry::harness_for_target(&output.target_root).is_none() {
                 continue;
             }
             let Some(installed_checksum) = output.installed_checksum() else {
@@ -87,10 +87,11 @@ fn manifest_agents_from_records(records: &[CompiledNativeOutput]) -> BTreeMap<St
         let Some(agent_name) = agent_name_from_native_dest(&record.dest_path) else {
             continue;
         };
-        let Some(harness_kind) = HarnessKind::from_target_dir(&record.target_root) else {
+        let Some(harness_kind) = crate::harness::registry::harness_for_target(&record.target_root)
+        else {
             continue;
         };
-        let harness = harness_kind.to_harness_id().as_str().to_string();
+        let harness = harness_kind.as_str().to_string();
         let harnesses = agents.entry(agent_name).or_default();
         if !harnesses.iter().any(|existing| existing == &harness) {
             harnesses.push(harness);
@@ -185,8 +186,9 @@ pub fn agent_is_native_for_harness(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::HarnessKind;
-    use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
+    use crate::lock::{LockFile, LockedItemV2, OutputRecord};
+    use mars_schema::HarnessId;
+    use mars_schema::item::ItemKind;
     use tempfile::TempDir;
 
     fn lock_with_agent_outputs(
@@ -227,8 +229,14 @@ mod tests {
             "agent/coder",
             "agents/coder.md",
             &[
-                (HarnessKind::Claude.target_dir(), "agents/coder.md"),
-                (HarnessKind::Codex.target_dir(), "agents/coder.toml"),
+                (
+                    crate::harness::registry::descriptor(HarnessId::Claude).default_target,
+                    "agents/coder.md",
+                ),
+                (
+                    crate::harness::registry::descriptor(HarnessId::Codex).default_target,
+                    "agents/coder.toml",
+                ),
             ],
         );
         let lock = {
@@ -247,7 +255,9 @@ mod tests {
                             "sha256:src".into(),
                         ),
                         OutputRecord::installed(
-                            HarnessKind::Claude.target_dir().to_string(),
+                            crate::harness::registry::descriptor(HarnessId::Claude)
+                                .default_target
+                                .to_string(),
                             "agents/frontend-coder.md".into(),
                             "sha256:native".into(),
                         ),
@@ -286,7 +296,10 @@ mod tests {
         let lock = lock_with_agent_outputs(
             "agent/coder",
             "agents/coder.md",
-            &[(HarnessKind::Claude.target_dir(), "agents/coder.md")],
+            &[(
+                crate::harness::registry::descriptor(HarnessId::Claude).default_target,
+                "agents/coder.md",
+            )],
         );
 
         write_native_agent_manifest_from_lock(dir.path(), &lock).unwrap();
@@ -310,7 +323,10 @@ mod tests {
         let lock = lock_with_agent_outputs(
             "agent/my-file",
             "agents/my-file.md",
-            &[(HarnessKind::Claude.target_dir(), "agents/logical-name.md")],
+            &[(
+                crate::harness::registry::descriptor(HarnessId::Claude).default_target,
+                "agents/logical-name.md",
+            )],
         );
 
         write_native_agent_manifest_from_lock(dir.path(), &lock).unwrap();
@@ -343,7 +359,10 @@ mod tests {
         let lock = lock_with_agent_outputs(
             "agent/z-agent",
             "agents/z-agent.md",
-            &[(HarnessKind::Claude.target_dir(), "agents/z-agent.md")],
+            &[(
+                crate::harness::registry::descriptor(HarnessId::Claude).default_target,
+                "agents/z-agent.md",
+            )],
         );
         let lock = {
             let mut lock = lock;
@@ -361,7 +380,9 @@ mod tests {
                             "sha256:src".into(),
                         ),
                         OutputRecord::installed(
-                            HarnessKind::Claude.target_dir().to_string(),
+                            crate::harness::registry::descriptor(HarnessId::Claude)
+                                .default_target
+                                .to_string(),
                             "agents/a-agent.md".into(),
                             "sha256:native".into(),
                         ),

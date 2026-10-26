@@ -1,0 +1,13 @@
+# src/fs follow-ups
+
+- Killed-install leftovers outside `.mars/skills/`. `platform::fs::recover_interrupted_skill_installs`
+  reclaims `.tmpXXXXXX` staging directories only under `.mars/skills/`. `atomic_install_dir` also
+  stages under `.mars/hooks/` and `.mars/bootstrap/` (`sync/apply.rs`), `atomic_copy_dir` and
+  `project_prepared_skill_for_target` stage inside target directories such as `.claude/skills/`,
+  and a SIGKILL between `atomic_install_dir`'s two renames leaves `.{name}.old`. Better than more
+  sweeps: stage every install in one Mars-owned scratch directory on the same filesystem, so the
+  leftover location is known.
+- Package sync ignores mode-only changes. `src/hash/` hashes bytes only, so a dependency that
+  flips a script's execute bit without changing its bytes keeps the old mode installed (older than
+  v0.19.0). `mars provide` folds the execute bit into its digest (`provided/entries.rs`); package
+  checksums could do the same, at the cost of one lock-checksum change.

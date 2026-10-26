@@ -1,0 +1,50 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "agent-skills",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "shallow",
+      "source_path": "docs/guides/a/b/shallow/SKILL.md",
+      "skill_root": "docs/guides/a/b/shallow",
+      "output_path": "skills/shallow/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "tdd",
+      "source_path": "skills/engineering/tdd/SKILL.md",
+      "skill_root": "skills/engineering/tdd",
+      "output_path": "skills/tdd/SKILL.md",
+      "payload": [
+        "skills/engineering/tdd/examples/SKILL.md",
+        "skills/engineering/tdd/notes.md"
+      ]
+    }
+  ],
+  "diagnostics": {
+    "skills/engineering/tdd/examples/SKILL.md": [
+      {
+        "code": "skill.nested-skill-md",
+        "severity": "warning",
+        "path": [],
+        "message": "`skills/engineering/tdd/examples/SKILL.md` is inside skill `tdd` and is kept as its payload, not imported as a skill"
+      }
+    ],
+    "vendor/out/.mars-plugin.json": [
+      {
+        "code": "generated-plugin-tree-skipped",
+        "severity": "info",
+        "path": [],
+        "message": "skipping generated plugin tree at `vendor/out` while reading authored package input"
+      }
+    ]
+  }
+}

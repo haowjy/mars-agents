@@ -1,0 +1,32 @@
+{
+  "classification": {
+    "kind": "schema-newer",
+    "schema": 2
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [],
+      "fields": null,
+      "body": null,
+      "diagnostics": [
+        {
+          "code": "schema.newer",
+          "severity": "error",
+          "path": [
+            "package",
+            "schema"
+          ],
+          "message": "package declares schema 2; this Mars (v{version}) reads schema 1 — upgrade Mars"
+        }
+      ]
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [],
+  "payload": [],
+  "diagnostics": {}
+}

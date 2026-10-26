@@ -1,0 +1,54 @@
+{
+  "frontmatter": [
+    [
+      "model-policies",
+      [
+        {
+          "match": {
+            "model": "gpt-6"
+          },
+          "override": {
+            "effort": "impossible"
+          }
+        }
+      ]
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-policies",
+        0,
+        "override",
+        "effort"
+      ],
+      "message": "agent field `model-policies[0].override.effort` has invalid value `impossible`; allowed: none, low, medium, high, xhigh, max"
+    }
+  ]
+}

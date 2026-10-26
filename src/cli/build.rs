@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
-use crate::config::{NetworkHost, NetworkPolicy};
 use crate::error::MarsError;
-use crate::harness::registry::HarnessId;
+use mars_schema::HarnessId;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
 
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
@@ -35,29 +35,33 @@ pub struct PluginArgs {
 }
 
 fn parse_harness(value: &str) -> Result<HarnessId, String> {
-    crate::harness::registry::parse(value).ok_or_else(|| {
+    mars_schema::harness::parse(value).ok_or_else(|| {
         format!(
             "unknown harness `{value}`; expected one of: {}",
-            crate::harness::registry::names().join(", ")
+            mars_schema::harness::names()
         )
     })
 }
 
 #[derive(Debug, Clone, ValueEnum)]
 enum EffortArg {
+    None,
     Low,
     Medium,
     High,
     Xhigh,
+    Max,
 }
 
 impl EffortArg {
     fn as_str(&self) -> &'static str {
         match self {
+            Self::None => "none",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
             Self::Xhigh => "xhigh",
+            Self::Max => "max",
         }
     }
 }
@@ -87,23 +91,6 @@ enum SandboxArg {
     ReadOnly,
     WorkspaceWrite,
     DangerFullAccess,
-}
-
-#[derive(Debug, Clone, ValueEnum)]
-enum NetworkArg {
-    Allow,
-    Deny,
-    Allowlist,
-}
-
-impl NetworkArg {
-    fn policy(&self) -> NetworkPolicy {
-        match self {
-            Self::Allow => NetworkPolicy::Allow,
-            Self::Deny => NetworkPolicy::Deny,
-            Self::Allowlist => NetworkPolicy::Allowlist,
-        }
-    }
 }
 
 impl SandboxArg {
@@ -156,9 +143,9 @@ pub struct LaunchBundleArgs {
     #[arg(long, value_enum)]
     sandbox: Option<SandboxArg>,
 
-    /// Override shell network access.
-    #[arg(long, value_enum)]
-    network: Option<NetworkArg>,
+    /// Override shell network access: allow, deny, or allowlist.
+    #[arg(long)]
+    network: Option<NetworkPolicy>,
 
     /// Add a host to the network allow set (repeatable).
     #[arg(long = "network-allow", action = ArgAction::Append)]
@@ -243,7 +230,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             effort: args.effort.as_ref().map(|e| e.as_str().to_string()),
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
-            network: args.network.as_ref().map(NetworkArg::policy),
+            network: args.network.clone(),
             network_allow: args.network_allow.clone(),
             network_deny: args.network_deny.clone(),
             extra_skills: args.extra_skills.clone(),

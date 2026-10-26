@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{Config, EffectiveConfig, LocalConfig};
 use crate::diagnostic::DiagnosticCollector;
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::source::GlobalCache;
 
 use super::provider::RealSourceProvider;
@@ -23,12 +23,31 @@ pub struct PublishLens {
 }
 
 impl PublishLens {
-    pub fn load(package_root: &Path, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
-        let mut manifest = match crate::config::load(package_root) {
-            Ok(config) => Some(config),
-            Err(MarsError::Config(ConfigError::NotFound { .. })) => None,
-            Err(err) => return Err(err),
-        };
+    /// Prepare `package_root` (a package or a consumer project) and read its lens.
+    pub fn load(
+        package_root: &Path,
+        diag: &mut DiagnosticCollector,
+    ) -> Result<(Self, mars_schema::prepare::Prepared), MarsError> {
+        let (prepared, manifest) = crate::package_prepare::prepare_project(package_root, diag)?;
+        Ok((
+            Self::from_prepared_manifest(package_root, manifest.as_deref())?,
+            prepared,
+        ))
+    }
+
+    pub(crate) fn from_prepared_manifest(
+        package_root: &Path,
+        normalized_manifest: Option<&[u8]>,
+    ) -> Result<Self, MarsError> {
+        let mut manifest = normalized_manifest
+            .map(|bytes| {
+                let content =
+                    std::str::from_utf8(bytes).map_err(|error| MarsError::InvalidRequest {
+                        message: format!("prepared mars.toml is not UTF-8: {error}"),
+                    })?;
+                crate::config::parse_config(content, &package_root.join("mars.toml"))
+            })
+            .transpose()?;
         let mut config = manifest.clone().unwrap_or_default();
         config.local_dependencies.clear();
         if let Some(manifest) = &mut manifest {
@@ -36,8 +55,14 @@ impl PublishLens {
         }
         let (effective, diagnostics) =
             crate::config::merge_with_root(config, LocalConfig::default(), package_root)?;
-        diag.extend(diagnostics);
-
+        if let Some(error) = diagnostics
+            .into_iter()
+            .find(|diagnostic| diagnostic.level == crate::diagnostic::DiagnosticLevel::Error)
+        {
+            return Err(MarsError::InvalidRequest {
+                message: error.message,
+            });
+        }
         Ok(Self {
             package_root: package_root.to_path_buf(),
             manifest,

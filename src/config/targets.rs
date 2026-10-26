@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::harness::registry::HarnessId;
+use mars_schema::HarnessId;
 
 /// Permission to route through configured harness targets. An empty set is not autodiscovery.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub enum HarnessScope {
 
 impl HarnessScope {
     pub fn permits(&self, harness: &str) -> bool {
-        crate::harness::registry::parse(harness).is_some_and(|id| match self {
+        mars_schema::harness::parse(harness).is_some_and(|id| match self {
             Self::Unrestricted => true,
             Self::Only(enabled) => enabled.contains(&id),
         })
@@ -123,10 +123,12 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
     }
 
     let bare = trimmed.strip_prefix('.').unwrap_or(trimmed);
-    if let Some(harness) = crate::harness::registry::parse(bare) {
+    if let Some(harness) = mars_schema::harness::parse(bare) {
         return NormalizedLink {
             raw: raw.to_string(),
-            target: harness.default_target().to_string(),
+            target: crate::harness::registry::descriptor(harness)
+                .default_target
+                .to_string(),
             harness: Some(harness),
             kind: LinkKind::KnownHarness,
         };

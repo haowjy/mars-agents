@@ -281,10 +281,7 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
         self.session.cursor_probe_result()
     }
 
-    fn listing_evidence(
-        &mut self,
-        harness: crate::harness::registry::HarnessId,
-    ) -> ListingEvidence {
+    fn listing_evidence(&mut self, harness: mars_schema::HarnessId) -> ListingEvidence {
         self.session.listing_evidence(harness)
     }
 }
@@ -639,7 +636,7 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
                 message: format!(
                     "invalid harness '{}'; valid harnesses: {}",
                     args.harness,
-                    models::harness::VALID_HARNESSES.join(", ")
+                    mars_schema::harness::names()
                 ),
             })
         })?;
@@ -1594,7 +1591,7 @@ description = "Old alias"
 
         let err = run_alias(&args, &ctx, false).unwrap_err().to_string();
         assert!(err.contains("invalid harness 'gemini'"));
-        assert!(err.contains("valid harnesses: claude, codex, pi, cursor, opencode"));
+        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor"));
     }
 
     #[test]

@@ -1,0 +1,36 @@
+{
+  "frontmatter": [
+    [
+      "license",
+      "MIT"
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": "MIT",
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
+  ]
+}

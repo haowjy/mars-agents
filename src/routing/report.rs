@@ -1,8 +1,8 @@
 use serde::Serialize;
 
 use crate::config::targets::{HarnessScope, LinkSource, TargetOrigin, TargetSource};
-use crate::harness::registry::{self, HarnessId};
 use crate::routing::RoutingTrace;
+use mars_schema::HarnessId;
 
 pub const ROUTE_DECISION_REPORT_VERSION: u32 = 3;
 
@@ -153,10 +153,10 @@ impl RouteDecisionReport {
                 } else {
                     "only"
                 },
-                enabled_harnesses: registry::names()
+                enabled_harnesses: mars_schema::harness::ALL
                     .iter()
-                    .filter(|name| scope.permits(name))
-                    .map(|name| name.to_string())
+                    .filter(|harness| scope.permits(harness.as_str()))
+                    .map(|harness| harness.to_string())
                     .collect(),
                 target_source: TargetSourceReport {
                     field: match source.field {
@@ -174,10 +174,10 @@ impl RouteDecisionReport {
                         .as_ref()
                         .map(|path| path.to_string_lossy().into_owned()),
                 },
-                excluded_harnesses: registry::names()
+                excluded_harnesses: mars_schema::harness::ALL
                     .iter()
-                    .filter(|name| excluded.iter().any(|id| id.as_str() == **name))
-                    .map(|name| name.to_string())
+                    .filter(|harness| excluded.contains(harness))
+                    .map(|harness| harness.to_string())
                     .collect(),
             },
             model_attempts: Vec::new(),

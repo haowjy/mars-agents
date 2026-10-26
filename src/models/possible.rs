@@ -6,10 +6,11 @@ use serde::Serialize;
 
 use crate::config::targets::HarnessScope;
 use crate::harness::host::{CapabilitySession, ListingEvidence};
-use crate::harness::registry::{self, HarnessId, ListingAuth};
+use crate::harness::registry::{self, ListingAuth};
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::probes::ProbeObservation;
 use crate::routing::slug;
+use mars_schema::HarnessId;
 
 use super::ModelsCache;
 
@@ -100,7 +101,7 @@ impl<'a> SessionPossibleSource<'a> {
         let installed = session
             .installed_harnesses()
             .iter()
-            .filter_map(|name| registry::parse(name))
+            .filter_map(|name| mars_schema::harness::parse(name))
             .collect();
         Self {
             catalog,
@@ -112,7 +113,7 @@ impl<'a> SessionPossibleSource<'a> {
     }
 
     pub fn all_rows(&mut self) -> Vec<PossibleRow> {
-        registry::all()
+        mars_schema::harness::ALL
             .iter()
             .flat_map(|harness| match self.rows_for(*harness) {
                 HarnessPossible::Listed(rows) => rows.clone(),
@@ -130,7 +131,7 @@ impl<'a> SessionPossibleSource<'a> {
             .filter_map(|(harness, state)| {
                 let retained = match state {
                     HarnessPossible::Unlisted(UnlistedReason::ListingUnavailable) => false,
-                    HarnessPossible::Listed(_) if harness.native_provider().is_none() => {
+                    HarnessPossible::Listed(_) if registry::native_provider(*harness).is_none() => {
                         if self.session.listing_evidence(*harness).latest_attempt_ok {
                             return None;
                         }
@@ -164,7 +165,7 @@ impl<'a> SessionPossibleSource<'a> {
         if !self.installed.contains(&harness) {
             return HarnessPossible::Unlisted(UnlistedReason::NotInstalled);
         }
-        if let Some(provider) = harness.native_provider() {
+        if let Some(provider) = registry::native_provider(harness) {
             let mut rows = self
                 .catalog
                 .models
@@ -258,7 +259,7 @@ fn project_enumerated(
     listing: ListingEvidence,
     observation: ProbeObservation,
 ) -> HarnessPossible {
-    let (probe, auth_gated) = match harness.class() {
+    let (probe, auth_gated) = match registry::descriptor(harness).class {
         crate::harness::registry::HarnessClass::ProbeBacked { listing } => {
             let probe = match harness {
                 HarnessId::Pi => ProbeKind::Pi,

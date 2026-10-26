@@ -1,0 +1,37 @@
+{
+  "frontmatter": [
+    [
+      "schema",
+      1
+    ],
+    [
+      "name",
+      "pkg"
+    ],
+    [
+      "version",
+      "0.1.0"
+    ],
+    [
+      "visibility",
+      "public"
+    ]
+  ],
+  "fields": {
+    "name": "pkg",
+    "version": "0.1.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "package",
+        "visibility"
+      ],
+      "message": "`package.visibility` was removed; remove it"
+    }
+  ]
+}

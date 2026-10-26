@@ -237,7 +237,7 @@ fn assert_config_entry_consistency_with_diagnostics(
     for item in lock
         .items
         .values()
-        .filter(|item| item.kind == mars_agents::lock::ItemKind::Hook)
+        .filter(|item| item.kind == mars_schema::item::ItemKind::Hook)
     {
         for output in &item.outputs {
             if output.target_root == ".mars"

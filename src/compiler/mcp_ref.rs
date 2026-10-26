@@ -1,210 +1,16 @@
-//! Canonical MCP tool references in `tools:` / `disallowed-tools:` lists.
-//!
-//! Mars expresses per-tool MCP gating with a scoped head `mcp(...)` where the inner
-//! payload names a server and optional tool, `/`-separated. Server and tool segments
-//! are preserved **verbatim** — MCP tool names are case-sensitive on every harness and
-//! must not be normalized during parse or projection.
-//!
-//! Foreign harness tokens (Claude `mcp__…`, Cursor `Mcp(server:tool)`) are parsed by
-//! [`parse_foreign_mcp_token`] during inbound lift and converted to canonical `mcp(...)`.
-//!
-//! `*` is the only wildcard:
-//! - `mcp(server)` — whole server (equivalent to `mcp(server/*)`)
-//! - `mcp(server/tool)` — one specific tool
-//! - `mcp(server/*)` — all tools on one server
-//! - `mcp(*/tool)` — a tool name across any server
-//! - `mcp(*/*)` — all MCP tools
+//! Projection of schema-owned MCP references to harness-native names.
 
-/// Human-readable grammar for valid `mcp(...)` tool-list entries (used in validation errors).
-pub(crate) const MCP_TOOL_NAME_GRAMMAR: &str = "valid mcp(server), mcp(server/tool), mcp(server/*), mcp(*/tool), or mcp(*/*) reference (* is the only wildcard; segments non-empty)";
+use mars_schema::mcp::{McpRef, McpSegment};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum McpSegment {
-    Any,
-    Named(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct McpRef {
-    pub server: McpSegment,
-    pub tool: McpSegment,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum McpRefParseError {
-    Empty,
-    EmptyServerSegment,
-    EmptyToolSegment,
-    TooManySegments,
-    WhitespaceOnly,
-}
-
-impl std::fmt::Display for McpRefParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.message())
-    }
-}
-
-impl McpRefParseError {
-    pub fn message(&self) -> &'static str {
-        match self {
-            Self::Empty => "MCP reference payload is empty",
-            Self::EmptyServerSegment => "MCP reference has an empty server segment",
-            Self::EmptyToolSegment => "MCP reference has an empty tool segment",
-            Self::TooManySegments => "MCP reference must have at most one '/' separator",
-            Self::WhitespaceOnly => "MCP reference payload is whitespace only",
-        }
-    }
-}
-
-impl std::fmt::Display for McpRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_canonical())
-    }
-}
-
-impl McpRef {
-    /// Canonical `mcp(server/tool)` spelling. Shorthand `mcp(server)` normalizes to `mcp(server/*)`.
-    pub fn to_canonical(&self) -> String {
-        format!("mcp({})", self.to_pattern())
-    }
-
-    /// The `server/tool` payload inside `mcp(...)`, as carried by an MCP tool rule.
-    pub fn to_pattern(&self) -> String {
-        format!(
-            "{}/{}",
-            segment_display(&self.server),
-            segment_display(&self.tool)
-        )
-    }
-}
-
-/// Parse a foreign harness MCP permission token into an [`McpRef`].
-///
-/// Returns `None` for non-MCP tool tokens (including already-canonical `mcp(...)` entries).
-///
-/// ## Claude wire form (`mcp__` prefix)
-///
-/// The first `__` after `mcp__` separates server from tool when a tool segment is present;
-/// if there is no further `__`, the remainder names a whole server. Segments are preserved
-/// verbatim (no case change).
-///
-/// | Token | `McpRef` |
-/// |---|---|
-/// | `mcp__server__tool` | `Named(server)`, `Named(tool)` |
-/// | `mcp__server__*` | `Named(server)`, `Any` |
-/// | `mcp__server` | `Named(server)`, `Any` |
-/// | `mcp__*` | `Any`, `Any` |
-///
-/// **Limitation:** server names cannot contain `__` reliably — the first `__` after `mcp__`
-/// is always treated as the server/tool boundary.
-///
-/// ## Cursor form (`Mcp(server:tool)`)
-///
-/// Colon-separated payload inside `Mcp(...)`. Only attempted when `dialect` is Cursor.
-pub(crate) fn parse_foreign_mcp_token(
-    raw: &str,
-    dialect: crate::dialect::Dialect,
-) -> Option<McpRef> {
-    let trimmed = raw.trim();
-
-    match dialect {
-        crate::dialect::Dialect::Cursor => {
-            if let Some(parsed) = parse_cursor_mcp_token(trimmed) {
-                return Some(parsed);
-            }
-        }
-        crate::dialect::Dialect::Claude => {
-            if let Some(parsed) = parse_claude_mcp_wire_token(trimmed) {
-                return Some(parsed);
-            }
-        }
-        // Phase 4+: Codex/OpenCode inbound MCP token forms if they gain tool-list MCP refs.
-        crate::dialect::Dialect::Codex
-        | crate::dialect::Dialect::OpenCode
-        | crate::dialect::Dialect::MarsNative => {}
-    }
-
-    // Already-canonical `mcp(...)` entries are not foreign tokens.
-    None
-}
-
-fn parse_claude_mcp_wire_token(raw: &str) -> Option<McpRef> {
-    const PREFIX: &str = "mcp__";
-    let remainder = match raw.get(..PREFIX.len()) {
-        Some(p) if p.eq_ignore_ascii_case(PREFIX) => &raw[PREFIX.len()..],
-        _ => return None,
-    };
-    if remainder.is_empty() {
-        return None;
-    }
-
-    match remainder.split_once("__") {
-        None => {
-            let server = parse_segment(remainder).ok()?;
-            Some(McpRef {
-                server,
-                tool: McpSegment::Any,
-            })
-        }
-        Some((server_part, tool_part)) => {
-            let server = parse_segment(server_part).ok()?;
-            let tool = parse_segment(tool_part).ok()?;
-            Some(McpRef { server, tool })
-        }
-    }
-}
-
-fn parse_cursor_mcp_token(raw: &str) -> Option<McpRef> {
-    let open = raw.find('(')?;
-    let head = raw[..open].trim();
-    if !head.eq_ignore_ascii_case("mcp") {
-        return None;
-    }
-    let inner = extract_scoped_payload(&raw[open..])?;
-    // Tool names are simple (no `:`); server ids may contain `:` (e.g. `plugin:context7:context7`).
-    let (server_part, tool_part) = inner.rsplit_once(':')?;
-    let server = parse_segment(server_part).ok()?;
-    let tool = parse_segment(tool_part).ok()?;
-    Some(McpRef { server, tool })
-}
-
-fn parse_segment(segment: &str) -> Result<McpSegment, McpRefParseError> {
-    let trimmed = segment.trim();
-    if trimmed.is_empty() {
-        return Err(McpRefParseError::Empty);
-    }
-    if trimmed == "*" {
-        Ok(McpSegment::Any)
-    } else {
-        Ok(McpSegment::Named(trimmed.to_string()))
-    }
-}
-
-/// Parse a full `mcp(...)` tool-list entry into an [`McpRef`].
-pub(crate) fn try_parse_mcp_tool_name(raw: &str) -> Option<McpRef> {
-    let trimmed = raw.trim();
-    let open = trimmed.find('(')?;
-    let head = trimmed[..open].trim();
-    if !head.eq_ignore_ascii_case("mcp") {
-        return None;
-    }
-    let payload = &trimmed[open..];
-    let inner = extract_scoped_payload(payload)?;
-    parse_mcp_ref(inner).ok()
-}
-
-fn extract_scoped_payload(payload: &str) -> Option<&str> {
-    let trimmed = payload.trim();
-    if trimmed.len() < 2 || !trimmed.starts_with('(') || !trimmed.ends_with(')') {
-        return None;
-    }
-    Some(&trimmed[1..trimmed.len() - 1])
-}
+#[cfg(test)]
+use mars_schema::mcp::{
+    ForeignMcpDialect, McpRefParseError, parse_foreign_mcp_token as parse_schema_mcp_token,
+    parse_mcp_ref, try_parse_mcp_tool_name,
+};
 
 fn segment_display(segment: &McpSegment) -> String {
     match segment {
-        McpSegment::Any => "*".to_string(),
+        McpSegment::Any => "*".to_owned(),
         McpSegment::Named(name) => name.clone(),
     }
 }
@@ -247,10 +53,7 @@ impl McpUnsupportedReason {
 ///
 /// Unknown harness ids passthrough canonical `mcp(server/tool)` rather than inventing
 /// a native wire form that might be wrong for that target.
-pub(crate) fn project_mcp_ref(
-    r: &McpRef,
-    harness: crate::compiler::agents::HarnessKind,
-) -> McpProjection {
+pub(crate) fn project_mcp_ref(r: &McpRef, harness: mars_schema::HarnessId) -> McpProjection {
     let descriptor = crate::compiler::harness_descriptor::descriptor(harness);
     match descriptor.mcp_projection {
         crate::compiler::harness_descriptor::McpProjectionPolicy::ClaudeToolList => {
@@ -298,38 +101,6 @@ fn project_opencode(r: &McpRef) -> McpProjection {
         segment_display(&r.server),
         segment_display(&r.tool)
     ))
-}
-
-/// Parse the inner payload of `mcp(...)`, without the surrounding parentheses.
-pub(crate) fn parse_mcp_ref(payload: &str) -> Result<McpRef, McpRefParseError> {
-    let trimmed = payload.trim();
-    if trimmed.is_empty() {
-        return Err(McpRefParseError::WhitespaceOnly);
-    }
-
-    match trimmed.split_once('/') {
-        None => {
-            let server = parse_segment(trimmed)?;
-            Ok(McpRef {
-                server,
-                tool: McpSegment::Any,
-            })
-        }
-        Some((server_part, tool_part)) => {
-            if trimmed.matches('/').count() > 1 {
-                return Err(McpRefParseError::TooManySegments);
-            }
-            let server = parse_segment(server_part).map_err(|err| match err {
-                McpRefParseError::Empty => McpRefParseError::EmptyServerSegment,
-                other => other,
-            })?;
-            let tool = parse_segment(tool_part).map_err(|err| match err {
-                McpRefParseError::Empty => McpRefParseError::EmptyToolSegment,
-                other => other,
-            })?;
-            Ok(McpRef { server, tool })
-        }
-    }
 }
 
 #[cfg(test)]
@@ -408,8 +179,6 @@ mod tests {
 
     #[test]
     fn parse_foreign_claude_mcp_wire_tokens() {
-        use crate::dialect::Dialect;
-
         let cases = [
             (
                 "mcp__github__create_issue",
@@ -449,7 +218,7 @@ mod tests {
         ];
 
         for (token, expected) in cases {
-            let parsed = parse_foreign_mcp_token(token, Dialect::Claude).unwrap();
+            let parsed = parse_schema_mcp_token(token, ForeignMcpDialect::Claude).unwrap();
             assert_eq!(parsed, expected, "token: {token}");
             assert_eq!(
                 try_parse_mcp_tool_name(&parsed.to_canonical()).unwrap(),
@@ -461,8 +230,6 @@ mod tests {
 
     #[test]
     fn parse_foreign_cursor_mcp_tokens() {
-        use crate::dialect::Dialect;
-
         let cases = [
             (
                 "Mcp(github:create_issue)",
@@ -495,31 +262,27 @@ mod tests {
         ];
 
         for (token, expected) in cases {
-            let parsed = parse_foreign_mcp_token(token, Dialect::Cursor).unwrap();
+            let parsed = parse_schema_mcp_token(token, ForeignMcpDialect::Cursor).unwrap();
             assert_eq!(parsed, expected, "token: {token}");
         }
     }
 
     #[test]
     fn parse_foreign_mcp_token_rejects_non_mcp_and_canonical() {
-        use crate::dialect::Dialect;
-
         for token in ["Read", "Bash(git *)", "mcp(github/tool)", "not_mcp__x"] {
             assert!(
-                parse_foreign_mcp_token(token, Dialect::Claude).is_none(),
+                parse_schema_mcp_token(token, ForeignMcpDialect::Claude).is_none(),
                 "expected None for {token}"
             );
         }
-        assert!(parse_foreign_mcp_token("mcp__github__tool", Dialect::Cursor).is_none());
+        assert!(parse_schema_mcp_token("mcp__github__tool", ForeignMcpDialect::Cursor).is_none());
     }
 
     #[test]
     fn parse_claude_mcp_wire_token_rejects_non_ascii_near_prefix_without_panic() {
-        use crate::dialect::Dialect;
-
         for token in ["mcp_é", "ab🚀cd"] {
             assert!(
-                parse_foreign_mcp_token(token, Dialect::Claude).is_none(),
+                parse_schema_mcp_token(token, ForeignMcpDialect::Claude).is_none(),
                 "expected None for {token:?}"
             );
         }
@@ -527,10 +290,8 @@ mod tests {
 
     #[test]
     fn parse_foreign_cursor_mcp_token_namespaced_server() {
-        use crate::dialect::Dialect;
-
         let token = "Mcp(plugin:context7:context7:create_issue)";
-        let parsed = parse_foreign_mcp_token(token, Dialect::Cursor).unwrap();
+        let parsed = parse_schema_mcp_token(token, ForeignMcpDialect::Cursor).unwrap();
         assert_eq!(
             parsed,
             McpRef {

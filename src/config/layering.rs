@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
 use super::{AgentOverlay, AgentOverlayTools, LocalConfig, LocalSettings, Settings, SkillOverlay};
-use crate::permission_set::{PermissionSet, compose_permission_sets};
+use mars_schema::permission_set::{PermissionSet, compose_permission_sets};
 
 fn overlay_map_replace_by_key<V: Clone>(
     base: &IndexMap<String, V>,
@@ -61,10 +61,8 @@ fn compose_agent_overlay(lower: &AgentOverlay, higher: &AgentOverlay) -> AgentOv
     merged
 }
 
-fn compose_skill_overlay(lower: &SkillOverlay, higher: &SkillOverlay) -> SkillOverlay {
-    let mut merged = higher.clone();
-    merged.tools = compose_tool_permission_sets(&lower.tools, &higher.tools);
-    merged
+fn compose_skill_overlay(_lower: &SkillOverlay, higher: &SkillOverlay) -> SkillOverlay {
+    higher.clone()
 }
 
 fn compose_tool_permission_sets(
@@ -77,6 +75,7 @@ fn compose_tool_permission_sets(
             lower.disallowed.as_ref(),
             higher.disallowed.as_ref(),
         ),
+        unknown: higher.unknown.clone(),
     }
 }
 
@@ -112,6 +111,7 @@ impl LocalSettings {
             && self.agent_emission.is_none()
             && self.meridian.is_empty()
             && self.model_policies.is_none()
+            && self.unknown.is_empty()
     }
 
     pub(crate) fn overlay_settings(&self, base: &Settings) -> (Settings, TargetSource) {

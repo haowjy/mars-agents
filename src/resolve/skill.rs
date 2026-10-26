@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
+#[cfg(test)]
 use crate::discover;
 use crate::error::{MarsError, ResolutionError};
-use crate::lock::ItemKind;
 use crate::types::{ItemName, SourceName};
 use crate::validate;
+use mars_schema::item::ItemKind;
 
 use super::package::RegisteredPackage;
 use super::types::{PendingItem, VersionConstraint};
@@ -70,6 +72,7 @@ impl<'a> SkillResolver<'a> {
             skill: skill.to_string(),
             required_by: requester_package.to_string(),
             searched,
+            hint: None,
         })
     }
 
@@ -113,15 +116,39 @@ pub(crate) fn parse_pending_item_skill_deps(
         return Ok(Vec::new());
     }
 
-    let Some(discovered) = package.item(pending_item.kind, &pending_item.item) else {
+    let Some(_discovered) = package.item(pending_item.kind, &pending_item.item) else {
         return Ok(Vec::new());
     };
-    let item_path =
-        discovered_item_markdown_path(&package.node.rooted_ref.package_root, discovered);
-    let skill_deps = validate::parse_item_skill_deps(&item_path)?;
+    let skill_deps = if let Some(prepared) = &package.node.prepared {
+        prepared
+            .definitions
+            .iter()
+            .find(|definition| {
+                definition.slug == pending_item.item.as_ref()
+                    && ItemKind::from(definition.kind) == pending_item.kind
+            })
+            .map(|definition| {
+                validate::extract_skills_from_content(&String::from_utf8_lossy(
+                    &definition.normalized_bytes,
+                ))
+            })
+            .unwrap_or_default()
+    } else {
+        #[cfg(test)]
+        {
+            let item_path =
+                discovered_item_markdown_path(&package.node.rooted_ref.package_root, _discovered);
+            validate::parse_item_skill_deps(&item_path)?
+        }
+        #[cfg(not(test))]
+        {
+            unreachable!("production resolver nodes retain prepared packages")
+        }
+    };
     Ok(skill_deps.into_iter().map(ItemName::from).collect())
 }
 
+#[cfg(test)]
 pub(crate) fn discovered_item_markdown_path(
     package_root: &Path,
     item: &discover::DiscoveredItem,
@@ -140,12 +167,20 @@ pub(crate) fn discovered_item_markdown_path(
     }
 }
 
+/// Resolve one skill ref of `requester` to the package item that supplies it.
+///
+/// `Ok(None)` defers a ref `x__p` to provider `p` when the requesting package declares `p` in
+/// `uses-providers` and no package ships the skill: nothing is pulled and nothing is reported
+/// here, because sync's validator is the one reporter of what is installed. The answer depends
+/// on the package alone, never on what this machine has provided, so a package resolves the
+/// same everywhere. Any other missing skill is `SkillNotFound`; a name shaped like a provider's
+/// carries the conditional `uses-providers` hint, because no package declared that provider.
 pub(crate) fn resolve_skill_ref(
     skill: &ItemName,
     requester: &PendingItem,
     registry: &IndexMap<SourceName, RegisteredPackage>,
     constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
-) -> Result<PendingItem, MarsError> {
+) -> Result<Option<PendingItem>, MarsError> {
     let required_by = format!("{}/{}", requester.package, requester.item);
     let resolver = SkillResolver { registry };
     let resolved_skill = match resolver.resolve(skill, &requester.package) {
@@ -155,10 +190,24 @@ pub(crate) fn resolve_skill_ref(
             searched,
             ..
         }) => {
+            let declared = registry
+                .get(&requester.package)
+                .and_then(|package| package.node.manifest.as_ref())
+                .map_or(&[][..], |manifest| {
+                    manifest.package.uses_providers.as_slice()
+                });
+            // A declared provider resolves wherever it supplies the skill; the resolver only
+            // needs the package's answer, never what this machine installed.
+            if validate::deferred_provider(skill.as_str(), Some(declared)).is_some() {
+                return Ok(None);
+            }
+            let hint = mars_schema::provider::provider_of(skill.as_str())
+                .map(validate::undeclared_provider_hint);
             return Err(ResolutionError::SkillNotFound {
                 skill: missing_skill,
                 required_by,
                 searched,
+                hint,
             }
             .into());
         }
@@ -174,14 +223,14 @@ pub(crate) fn resolve_skill_ref(
     let constraint = primary_package_constraint(constraints, &resolved_skill.package)
         .unwrap_or(&package.constraint)
         .clone();
-    Ok(PendingItem {
+    Ok(Some(PendingItem {
         package: resolved_skill.package,
         item: skill.clone(),
         kind: ItemKind::Skill,
         constraint,
         required_by,
         is_local: package.is_local,
-    })
+    }))
 }
 
 pub(crate) fn primary_package_constraint<'a>(

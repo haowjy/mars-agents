@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
+use crate::plugin_metadata::{MARS_VERSION, PluginSentinel, SENTINEL_FILE};
 
 use super::{configured_output_path, plugin_inputs_hash};
 
@@ -12,6 +12,7 @@ use super::{configured_output_path, plugin_inputs_hash};
 pub struct PluginOutputState {
     pub directory: PluginDirectoryState,
     pub inputs: Option<PluginInputsState>,
+    pub builder: Option<PluginBuilderState>,
     pub version: Option<PluginVersionState>,
     pub root_files: Vec<PluginRootFileState>,
     pub root_directories: BTreeSet<String>,
@@ -79,6 +80,27 @@ impl PluginInputsState {
             Self::Current => None,
             Self::Stale { output } => Some(format!(
                 "plugin output {} is older than its authored sources; rebuild it with `mars build plugin`",
+                output.display()
+            )),
+        }
+    }
+}
+
+/// Whether the running Mars wrote the output. The input fingerprint cannot see a Mars upgrade,
+/// which can write different files for the same inputs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginBuilderState {
+    Current,
+    Other { output: PathBuf, built: String },
+}
+
+impl PluginBuilderState {
+    /// A user-facing finding, or `None` when the running Mars built the output.
+    pub fn message(&self) -> Option<String> {
+        match self {
+            Self::Current => None,
+            Self::Other { output, built } => Some(format!(
+                "plugin output {} was built by Mars {built}, and this is Mars {MARS_VERSION}, which may write different files; rebuild it with `mars build plugin`",
                 output.display()
             )),
         }
@@ -331,6 +353,14 @@ pub(super) fn inspect_output(
             output: output.to_path_buf(),
         }
     };
+    let builder = if sentinel.mars_version == MARS_VERSION {
+        PluginBuilderState::Current
+    } else {
+        PluginBuilderState::Other {
+            output: output.to_path_buf(),
+            built: sentinel.mars_version.clone(),
+        }
+    };
     let version = if package_version == sentinel.version {
         PluginVersionState::Current
     } else {
@@ -350,6 +380,7 @@ pub(super) fn inspect_output(
     Ok(PluginOutputState {
         directory,
         inputs: Some(inputs),
+        builder: Some(builder),
         version: Some(version),
         root_files,
         root_directories: sentinel.root_directories,
@@ -364,6 +395,7 @@ fn without_sentinel(
     Ok(PluginOutputState {
         directory,
         inputs: None,
+        builder: None,
         version: None,
         root_files: inspect_root_files(package_root, expected_root_files, None, None)?,
         root_directories: BTreeSet::new(),

@@ -1,0 +1,3 @@
+---
+disallowed-tools: [write]
+---

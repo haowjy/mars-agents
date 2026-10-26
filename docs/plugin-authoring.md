@@ -20,7 +20,8 @@ description = "Example agents and skills"
 authors = ["Example Maintainer <maintainer@example.com>"]
 homepage = "https://github.com/example/example-agents"
 license = "MIT"
-requires-mars = ">=0.19.0"
+schema = 1
+requires-mars = ">=0.20.0"
 
 [plugin]
 dir = "plugin"
@@ -79,9 +80,13 @@ Run `mars check` before building or releasing. In addition to source validation,
 reports configured plugin output that is missing, stale, hand-edited, skipped, or in
 conflict with a package-root generated file. It also warns when:
 
-- `[package].requires-mars` does not require Mars 0.19.0 or newer;
+- `[package].requires-mars` allows a Mars older than 0.20.0, the first that reads
+  `schema = 1` (0.19.0 for a plugin package with no `schema`, the first that keeps
+  `[plugin]`);
 - plugin-only package or `[plugin]` metadata is invalid, including an unknown harness;
-- generated output records a different package version.
+- generated output records a different package version;
+- generated output was built by a different Mars version, which may write different files
+  for the same inputs.
 
 `mars check` does not rebuild output. Use `mars build plugin`, review the resulting diff,
 and run the check again.

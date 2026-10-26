@@ -1,6 +1,6 @@
 use crate::diagnostic::DiagnosticCollector;
-use crate::lock::ItemKind;
 use crate::sync::target::TargetState;
+use mars_schema::item::ItemKind;
 
 use super::tree::{self, BuiltTree, TreeProfile};
 use crate::plugin::{PluginHarnessSpec, Verification, VerificationLevel};

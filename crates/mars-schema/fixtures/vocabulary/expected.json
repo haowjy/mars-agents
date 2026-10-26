@@ -1,0 +1,926 @@
+{
+  "capabilities": [
+    {
+      "name": "bash",
+      "aliases": [
+        "shell",
+        "terminal",
+        "exec_command",
+        "shell_command"
+      ]
+    },
+    {
+      "name": "read",
+      "aliases": [
+        "cat",
+        "view",
+        "file_read"
+      ]
+    },
+    {
+      "name": "write",
+      "aliases": [
+        "file_write",
+        "apply_patch"
+      ]
+    },
+    {
+      "name": "edit",
+      "aliases": [
+        "sed",
+        "str_replace"
+      ]
+    },
+    {
+      "name": "agent",
+      "aliases": [
+        "subagent",
+        "spawn_agent"
+      ]
+    },
+    {
+      "name": "task",
+      "aliases": [
+        "todo_read",
+        "todoread",
+        "todo_write",
+        "todowrite",
+        "task_create",
+        "taskcreate",
+        "task_get",
+        "taskget",
+        "task_list",
+        "tasklist",
+        "task_update",
+        "taskupdate",
+        "update_plan"
+      ]
+    },
+    {
+      "name": "skill",
+      "aliases": []
+    },
+    {
+      "name": "workflow",
+      "aliases": []
+    },
+    {
+      "name": "glob",
+      "aliases": [
+        "find"
+      ]
+    },
+    {
+      "name": "grep",
+      "aliases": [
+        "rg",
+        "search",
+        "ripgrep"
+      ]
+    },
+    {
+      "name": "notebook",
+      "aliases": [
+        "jupyter",
+        "notebook_edit",
+        "notebookedit"
+      ]
+    },
+    {
+      "name": "web",
+      "aliases": []
+    },
+    {
+      "name": "web_search",
+      "aliases": [
+        "websearch"
+      ]
+    },
+    {
+      "name": "web_fetch",
+      "aliases": [
+        "webfetch",
+        "fetch",
+        "curl"
+      ]
+    },
+    {
+      "name": "ask_user",
+      "aliases": [
+        "askuser",
+        "request_user_input",
+        "ask_question",
+        "ask_user_question",
+        "askuserquestion"
+      ]
+    },
+    {
+      "name": "cron",
+      "aliases": []
+    },
+    {
+      "name": "notifications",
+      "aliases": [
+        "pushnotification",
+        "push_notification"
+      ]
+    },
+    {
+      "name": "plan_mode",
+      "aliases": [
+        "planmode",
+        "switch_mode"
+      ]
+    },
+    {
+      "name": "worktree",
+      "aliases": []
+    },
+    {
+      "name": "lsp",
+      "aliases": []
+    },
+    {
+      "name": "monitor",
+      "aliases": []
+    },
+    {
+      "name": "send_user_file",
+      "aliases": [
+        "senduserfile"
+      ]
+    },
+    {
+      "name": "schedule_wakeup",
+      "aliases": [
+        "schedulewakeup"
+      ]
+    },
+    {
+      "name": "remote_trigger",
+      "aliases": [
+        "remotetrigger"
+      ]
+    },
+    {
+      "name": "tool_search",
+      "aliases": [
+        "toolsearch"
+      ]
+    },
+    {
+      "name": "ls",
+      "aliases": []
+    },
+    {
+      "name": "work",
+      "aliases": []
+    },
+    {
+      "name": "image",
+      "aliases": [
+        "view_image"
+      ]
+    }
+  ],
+  "natives": {
+    "claude": {
+      "agent": {
+        "kind": "tools",
+        "tools": [
+          "Agent",
+          "SendMessage",
+          "ListAgents"
+        ]
+      },
+      "ask_user": {
+        "kind": "tools",
+        "tools": [
+          "AskUserQuestion"
+        ]
+      },
+      "bash": {
+        "kind": "tools",
+        "tools": [
+          "Bash"
+        ]
+      },
+      "cron": {
+        "kind": "tools",
+        "tools": [
+          "CronCreate",
+          "CronDelete",
+          "CronList"
+        ]
+      },
+      "edit": {
+        "kind": "scoped-tools",
+        "unscoped": [
+          "Edit",
+          "Write",
+          "NotebookEdit"
+        ],
+        "scoped": [
+          "Edit"
+        ],
+        "note": "Claude uses Edit(path) to scope every built-in file-editing tool"
+      },
+      "glob": {
+        "kind": "scoped-tools",
+        "unscoped": [
+          "Glob"
+        ],
+        "scoped": [
+          "Read"
+        ],
+        "note": "Claude scopes Glob paths through Read(path), which also covers other built-in file readers at that path"
+      },
+      "grep": {
+        "kind": "scoped-tools",
+        "unscoped": [
+          "Grep"
+        ],
+        "scoped": [
+          "Read"
+        ],
+        "note": "Claude scopes Grep paths through Read(path), which also covers other built-in file readers at that path"
+      },
+      "image": {
+        "kind": "no-switch",
+        "note": "claude views images through Read; no switch"
+      },
+      "ls": {
+        "kind": "absent"
+      },
+      "lsp": {
+        "kind": "tools",
+        "tools": [
+          "LSP"
+        ]
+      },
+      "monitor": {
+        "kind": "tools",
+        "tools": [
+          "Monitor"
+        ]
+      },
+      "notebook": {
+        "kind": "scoped-tools",
+        "unscoped": [
+          "NotebookEdit"
+        ],
+        "scoped": [
+          "Edit"
+        ],
+        "note": "Claude scopes NotebookEdit through Edit(path), which also covers other built-in file edits at that path"
+      },
+      "notifications": {
+        "kind": "tools",
+        "tools": [
+          "PushNotification"
+        ]
+      },
+      "plan_mode": {
+        "kind": "tools",
+        "tools": [
+          "EnterPlanMode",
+          "ExitPlanMode"
+        ]
+      },
+      "read": {
+        "kind": "tools",
+        "tools": [
+          "Read"
+        ]
+      },
+      "remote_trigger": {
+        "kind": "tools",
+        "tools": [
+          "RemoteTrigger"
+        ]
+      },
+      "schedule_wakeup": {
+        "kind": "tools",
+        "tools": [
+          "ScheduleWakeup"
+        ]
+      },
+      "send_user_file": {
+        "kind": "tools",
+        "tools": [
+          "SendUserFile"
+        ]
+      },
+      "skill": {
+        "kind": "tools",
+        "tools": [
+          "Skill"
+        ]
+      },
+      "task": {
+        "kind": "tools",
+        "tools": [
+          "TaskCreate",
+          "TaskGet",
+          "TaskList",
+          "TaskOutput",
+          "TaskUpdate",
+          "TaskStop",
+          "TodoWrite"
+        ]
+      },
+      "tool_search": {
+        "kind": "tools",
+        "tools": [
+          "ToolSearch"
+        ]
+      },
+      "web": {
+        "kind": "tools",
+        "tools": [
+          "WebSearch",
+          "WebFetch"
+        ]
+      },
+      "web_fetch": {
+        "kind": "tools",
+        "tools": [
+          "WebFetch"
+        ]
+      },
+      "web_search": {
+        "kind": "tools",
+        "tools": [
+          "WebSearch"
+        ]
+      },
+      "work": {
+        "kind": "absent"
+      },
+      "workflow": {
+        "kind": "tools",
+        "tools": [
+          "Workflow"
+        ]
+      },
+      "worktree": {
+        "kind": "tools",
+        "tools": [
+          "EnterWorktree",
+          "ExitWorktree"
+        ]
+      },
+      "write": {
+        "kind": "scoped-tools",
+        "unscoped": [
+          "Write"
+        ],
+        "scoped": [
+          "Edit"
+        ],
+        "note": "Claude scopes Write through Edit(path): an allow adds no practical write power because Write can replace the whole file, while a deny also refuses other built-in file edits at that path"
+      }
+    },
+    "codex": {
+      "agent": {
+        "kind": "tools",
+        "tools": [
+          "spawn_agent",
+          "send_input",
+          "resume_agent",
+          "wait_agent",
+          "close_agent",
+          "send_message",
+          "followup_task",
+          "interrupt_agent",
+          "list_agents"
+        ]
+      },
+      "ask_user": {
+        "kind": "tools",
+        "tools": [
+          "request_user_input"
+        ]
+      },
+      "bash": {
+        "kind": "tools",
+        "tools": [
+          "exec_command"
+        ]
+      },
+      "cron": {
+        "kind": "absent"
+      },
+      "edit": {
+        "kind": "tools",
+        "tools": [
+          "apply_patch"
+        ]
+      },
+      "glob": {
+        "kind": "no-switch",
+        "note": "codex finds files through its shell; no switch"
+      },
+      "grep": {
+        "kind": "no-switch",
+        "note": "codex searches files through its shell; no switch"
+      },
+      "image": {
+        "kind": "tools",
+        "tools": [
+          "view_image"
+        ]
+      },
+      "ls": {
+        "kind": "absent"
+      },
+      "lsp": {
+        "kind": "absent"
+      },
+      "monitor": {
+        "kind": "absent"
+      },
+      "notebook": {
+        "kind": "absent"
+      },
+      "notifications": {
+        "kind": "absent"
+      },
+      "plan_mode": {
+        "kind": "absent"
+      },
+      "read": {
+        "kind": "no-switch",
+        "note": "codex reads files through its shell; no switch"
+      },
+      "remote_trigger": {
+        "kind": "absent"
+      },
+      "schedule_wakeup": {
+        "kind": "absent"
+      },
+      "send_user_file": {
+        "kind": "absent"
+      },
+      "skill": {
+        "kind": "no-switch",
+        "note": "codex loads skills by reading files; no switch"
+      },
+      "task": {
+        "kind": "tools",
+        "tools": [
+          "update_plan"
+        ]
+      },
+      "tool_search": {
+        "kind": "tools",
+        "tools": [
+          "tool_search"
+        ]
+      },
+      "web": {
+        "kind": "tools",
+        "tools": [
+          "web_search"
+        ]
+      },
+      "web_fetch": {
+        "kind": "no-switch",
+        "note": "codex opens pages through hosted web_search; no separate switch"
+      },
+      "web_search": {
+        "kind": "tools",
+        "tools": [
+          "web_search"
+        ]
+      },
+      "work": {
+        "kind": "absent"
+      },
+      "workflow": {
+        "kind": "absent"
+      },
+      "worktree": {
+        "kind": "absent"
+      },
+      "write": {
+        "kind": "tools",
+        "tools": [
+          "apply_patch"
+        ]
+      }
+    },
+    "cursor": {
+      "agent": {
+        "kind": "tools",
+        "tools": [
+          "Task"
+        ]
+      },
+      "ask_user": {
+        "kind": "tools",
+        "tools": [
+          "AskQuestion"
+        ]
+      },
+      "bash": {
+        "kind": "tools",
+        "tools": [
+          "Shell"
+        ]
+      },
+      "edit": {
+        "kind": "tools",
+        "tools": [
+          "StrReplace"
+        ]
+      },
+      "glob": {
+        "kind": "tools",
+        "tools": [
+          "Glob"
+        ]
+      },
+      "grep": {
+        "kind": "tools",
+        "tools": [
+          "Grep"
+        ]
+      },
+      "ls": {
+        "kind": "absent"
+      },
+      "notebook": {
+        "kind": "tools",
+        "tools": [
+          "EditNotebook"
+        ]
+      },
+      "plan_mode": {
+        "kind": "tools",
+        "tools": [
+          "SwitchMode"
+        ]
+      },
+      "read": {
+        "kind": "tools",
+        "tools": [
+          "Read"
+        ]
+      },
+      "skill": {
+        "kind": "tools",
+        "tools": [
+          "Skill"
+        ]
+      },
+      "task": {
+        "kind": "tools",
+        "tools": [
+          "TodoWrite"
+        ]
+      },
+      "web": {
+        "kind": "tools",
+        "tools": [
+          "WebSearch",
+          "WebFetch"
+        ]
+      },
+      "web_fetch": {
+        "kind": "tools",
+        "tools": [
+          "WebFetch"
+        ]
+      },
+      "web_search": {
+        "kind": "tools",
+        "tools": [
+          "WebSearch"
+        ]
+      },
+      "work": {
+        "kind": "absent"
+      },
+      "write": {
+        "kind": "tools",
+        "tools": [
+          "Write"
+        ]
+      }
+    },
+    "flow": {
+      "agent": {
+        "kind": "tools",
+        "tools": [
+          "spawn",
+          "thread_message",
+          "thread_report",
+          "thread_ls",
+          "thread_history"
+        ]
+      },
+      "ask_user": {
+        "kind": "tools",
+        "tools": [
+          "ask"
+        ]
+      },
+      "edit": {
+        "kind": "tools",
+        "tools": [
+          "write"
+        ]
+      },
+      "glob": {
+        "kind": "tools",
+        "tools": [
+          "glob"
+        ]
+      },
+      "grep": {
+        "kind": "tools",
+        "tools": [
+          "grep"
+        ]
+      },
+      "ls": {
+        "kind": "tools",
+        "tools": [
+          "ls"
+        ]
+      },
+      "read": {
+        "kind": "tools",
+        "tools": [
+          "read"
+        ]
+      },
+      "skill": {
+        "kind": "tools",
+        "tools": [
+          "skill"
+        ]
+      },
+      "work": {
+        "kind": "tools",
+        "tools": [
+          "work"
+        ]
+      },
+      "write": {
+        "kind": "tools",
+        "tools": [
+          "write"
+        ]
+      }
+    },
+    "opencode": {
+      "agent": {
+        "kind": "tools",
+        "tools": [
+          "task"
+        ]
+      },
+      "ask_user": {
+        "kind": "tools",
+        "tools": [
+          "question"
+        ]
+      },
+      "bash": {
+        "kind": "tools",
+        "tools": [
+          "bash"
+        ]
+      },
+      "cron": {
+        "kind": "absent"
+      },
+      "edit": {
+        "kind": "tools",
+        "tools": [
+          "edit"
+        ]
+      },
+      "glob": {
+        "kind": "tools",
+        "tools": [
+          "glob"
+        ]
+      },
+      "grep": {
+        "kind": "tools",
+        "tools": [
+          "grep"
+        ]
+      },
+      "image": {
+        "kind": "no-switch",
+        "note": "opencode views images through read; no switch"
+      },
+      "ls": {
+        "kind": "tools",
+        "tools": [
+          "list"
+        ]
+      },
+      "lsp": {
+        "kind": "tools",
+        "tools": [
+          "lsp"
+        ]
+      },
+      "monitor": {
+        "kind": "absent"
+      },
+      "notebook": {
+        "kind": "absent"
+      },
+      "notifications": {
+        "kind": "absent"
+      },
+      "plan_mode": {
+        "kind": "tools",
+        "tools": [
+          "plan_enter",
+          "plan_exit"
+        ]
+      },
+      "read": {
+        "kind": "tools",
+        "tools": [
+          "read"
+        ]
+      },
+      "remote_trigger": {
+        "kind": "absent"
+      },
+      "schedule_wakeup": {
+        "kind": "absent"
+      },
+      "send_user_file": {
+        "kind": "absent"
+      },
+      "skill": {
+        "kind": "tools",
+        "tools": [
+          "skill"
+        ]
+      },
+      "task": {
+        "kind": "tools",
+        "tools": [
+          "todowrite"
+        ]
+      },
+      "tool_search": {
+        "kind": "absent"
+      },
+      "web": {
+        "kind": "tools",
+        "tools": [
+          "websearch",
+          "webfetch"
+        ]
+      },
+      "web_fetch": {
+        "kind": "tools",
+        "tools": [
+          "webfetch"
+        ]
+      },
+      "web_search": {
+        "kind": "tools",
+        "tools": [
+          "websearch"
+        ]
+      },
+      "work": {
+        "kind": "absent"
+      },
+      "workflow": {
+        "kind": "absent"
+      },
+      "worktree": {
+        "kind": "absent"
+      },
+      "write": {
+        "kind": "tools",
+        "tools": [
+          "edit"
+        ]
+      }
+    },
+    "pi": {
+      "agent": {
+        "kind": "absent"
+      },
+      "ask_user": {
+        "kind": "absent"
+      },
+      "bash": {
+        "kind": "tools",
+        "tools": [
+          "bash"
+        ]
+      },
+      "cron": {
+        "kind": "absent"
+      },
+      "edit": {
+        "kind": "tools",
+        "tools": [
+          "edit",
+          "write"
+        ]
+      },
+      "glob": {
+        "kind": "tools",
+        "tools": [
+          "find"
+        ]
+      },
+      "grep": {
+        "kind": "tools",
+        "tools": [
+          "grep"
+        ]
+      },
+      "image": {
+        "kind": "no-switch",
+        "note": "pi views images through read; no switch"
+      },
+      "ls": {
+        "kind": "tools",
+        "tools": [
+          "ls"
+        ]
+      },
+      "lsp": {
+        "kind": "absent"
+      },
+      "monitor": {
+        "kind": "absent"
+      },
+      "notebook": {
+        "kind": "absent"
+      },
+      "notifications": {
+        "kind": "absent"
+      },
+      "plan_mode": {
+        "kind": "absent"
+      },
+      "read": {
+        "kind": "tools",
+        "tools": [
+          "read"
+        ]
+      },
+      "remote_trigger": {
+        "kind": "absent"
+      },
+      "schedule_wakeup": {
+        "kind": "absent"
+      },
+      "send_user_file": {
+        "kind": "absent"
+      },
+      "skill": {
+        "kind": "no-switch",
+        "note": "pi loads skills by reading files; no switch"
+      },
+      "task": {
+        "kind": "absent"
+      },
+      "tool_search": {
+        "kind": "absent"
+      },
+      "web": {
+        "kind": "absent"
+      },
+      "web_fetch": {
+        "kind": "absent"
+      },
+      "web_search": {
+        "kind": "absent"
+      },
+      "work": {
+        "kind": "absent"
+      },
+      "workflow": {
+        "kind": "absent"
+      },
+      "worktree": {
+        "kind": "absent"
+      },
+      "write": {
+        "kind": "tools",
+        "tools": [
+          "write"
+        ]
+      }
+    }
+  }
+}

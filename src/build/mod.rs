@@ -7,19 +7,21 @@ pub mod prompt;
 use std::path::PathBuf;
 
 use crate::compiler::tool_policy::{
-    NativeStatus, OVERLAP_NOTE, RuleKind, ToolAction, project_platform_capability,
+    NativeStatus, OVERLAP_NOTE, RuleKind, ToolPolicyRuntime, project_platform_capability,
 };
 use crate::content::ContentRoots;
 use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
+use mars_schema::tool_policy::ToolAction;
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
 use crate::cli::MarsContext;
-use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
-use crate::config::{EffectiveProjectConfig, NetworkHost, NetworkPolicy};
+use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
-use crate::frontmatter::SkillsSpec;
+use mars_schema::agent::AgentProfile;
+use mars_schema::frontmatter::SkillsSpec;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
 
 pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 
@@ -29,7 +31,7 @@ pub struct LaunchBundleRequest {
     pub model: Option<String>,
     pub literal_model: bool,
     pub harness: Option<String>,
-    pub excluded_harnesses: Vec<crate::harness::registry::HarnessId>,
+    pub excluded_harnesses: Vec<mars_schema::HarnessId>,
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
@@ -63,35 +65,27 @@ pub fn build_launch_bundle(
                 source,
             })?;
 
-        let mut parse_diags = Vec::new();
-        let (parsed_profile, frontmatter) = parse_agent_content(&agent_content, &mut parse_diags)
-            .map_err(|err| {
-            MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "failed to parse agent `{agent}` from {}: {err}",
-                    agent_path.display()
-                ),
-            })
-        })?;
-
-        if let Some(fatal) = parse_diags.iter().find(|diag| diag.is_error()) {
-            return Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "agent `{agent}` has invalid frontmatter in {}: {}",
-                    agent_path.display(),
-                    fatal.message()
-                ),
-            }));
-        }
+        let valid = mars_schema::agent::read(&agent_content)
+            .into_valid()
+            .map_err(|error| {
+                MarsError::Config(ConfigError::Invalid {
+                    message: format!(
+                        "agent `{agent}` has invalid frontmatter in {}: {}",
+                        agent_path.display(),
+                        error.message()
+                    ),
+                })
+            })?;
 
         warnings.extend(
-            parse_diags
+            valid
+                .warnings
                 .iter()
                 .map(|diag| format!("agent `{agent}`: {}", diag.message())),
         );
-        agent_body = Some(frontmatter.body().to_string());
+        agent_body = Some(valid.body);
         agent_source_path = Some(agent_path);
-        profile = parsed_profile;
+        profile = valid.fields;
     } else {
         profile = empty_agent_profile();
         agent_body = None;
@@ -147,13 +141,10 @@ pub fn build_launch_bundle(
         _ => err,
     };
 
-    let effective_skills = resolve_effective_skills(&profile, &policy.routing.harness)
-        .map_err(with_selection_report)?;
-
     let prompt = compile_prompt_surface(
         &content_roots,
         agent_body.as_deref().unwrap_or(""),
-        &effective_skills,
+        &profile.skills,
         &request.extra_skills,
         &policy.routing.harness,
         &policy.routing.model_token,
@@ -208,14 +199,11 @@ fn empty_agent_profile() -> AgentProfile {
         network_allow: Default::default(),
         network_deny: Default::default(),
         effort: None,
-        autocompact: None,
-        autocompact_pct: None,
         skills: SkillsSpec::default(),
         subagents: Vec::new(),
         tools: Default::default(),
         harness_overrides: Default::default(),
         model_policies: Vec::new(),
-        fanout: Vec::new(),
     }
 }
 
@@ -236,7 +224,7 @@ fn load_effective_project_config_or_default(
 /// `native_status: unknown` and a `note`, and the consumer reports it. `mars sync` is where an
 /// author hears about a typo.
 fn resolve_bundle_tools(
-    profile: &crate::compiler::agents::AgentProfile,
+    profile: &mars_schema::agent::AgentProfile,
     harness: &str,
 ) -> Result<ToolsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;
@@ -285,14 +273,6 @@ fn resolve_bundle_tools(
         disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
         mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
     })
-}
-
-fn resolve_effective_skills(
-    profile: &crate::compiler::agents::AgentProfile,
-    harness: &str,
-) -> Result<SkillsSpec, MarsError> {
-    let descriptor = parse_harness_descriptor(harness)?;
-    Ok(profile.effective_skills(&descriptor.kind).clone())
 }
 
 fn parse_harness_descriptor(

@@ -14,8 +14,8 @@ The managed root's parent directory is the project root (where `mars.toml` and `
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | `check`: validation errors found; `resolve`: unresolved conflict markers remain |
-| `2` | Config, resolution, validation, lock, request, collision, or frozen-violation errors |
+| `1` | `check`: validation errors found; `migrate --check`: files need migration; `resolve`: unresolved conflict markers remain |
+| `2` | Config, resolution, validation, lock, request, collision, or frozen-violation errors, including a definition that breaks [schema v1](../config/schema-v1.md) |
 | `3` | I/O, source fetch, HTTP, or git CLI errors |
 
 ---
@@ -40,9 +40,10 @@ mars init [TARGET] [--link DIR...]
 - Adds `mars.local.toml` and `.mars/` to `.gitignore`
 - Persists non-default `managed_root` in `[settings]`
 - Idempotent: re-running is a no-op for init, but still processes `--link`
-- Runs a **field-loss preview** against configured managed targets, reporting
-  what each target cannot express (lossiness diagnostics via
-  `collect_source_lossiness_diagnostics`)
+- When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
+  against configured managed targets, reporting what each target cannot express
+  (lossiness diagnostics via `collect_prepared_source_lossiness_diagnostics`). A consumer
+  project has no package to publish, so it gets no preview
 
 ```bash
 mars init                    # Default: .agents/
@@ -63,6 +64,7 @@ mars add <source...> [filter flags]
 | Flag | Description |
 |---|---|
 | `--subpath PATH` | Install from a package rooted under a subdirectory (requires exactly one source) |
+| `--plugin NAME` | Install one plugin from the Claude marketplace at the source (requires exactly one source; cannot be combined with `--subpath`) |
 | `--agents NAME,...` | Install only named agents (include mode) |
 | `--skills NAME,...` | Install only named skills (include mode) |
 | `--exclude NAME,...` | Exclude named items |
@@ -70,7 +72,8 @@ mars add <source...> [filter flags]
 | `--only-agents` | Install only agents + transitive skill dependencies (skills those agents declare in frontmatter) |
 
 **Rules:**
-- `--subpath` requires exactly one source.
+- `--subpath` and `--plugin` require exactly one source.
+- A marketplace source with exactly one plugin installs it without `--plugin`. With several, `--plugin` is required: the error lists them and the dependency is not written.
 - Filter flags require exactly one source. Multi-source add is only for whole-source installs.
 - Re-adding an existing dependency updates it. Filter fields are replaced atomically when any filter flag is present; version-only changes preserve existing filters.
 - Source specifiers:
@@ -78,11 +81,13 @@ mars add <source...> [filter flags]
   - GitLab: `gitlab:group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo/-/tree/main/plugins/foo`
   - Generic git: `git@example.com:org/repo.git`, `git://host/org/repo.git`
   - Local paths
+- A dependency whose definitions break schema v1 is rejected before any content is written: the command exits 2 and `mars.toml` does not gain the dependency (see [sync](#mars-sync)).
 - Archive-download and direct file-download URLs are rejected in v1.
 
 Dependency naming model:
 - `mars add` uses the source specifier to derive a dependency name (for example, `meridian-flow/meridian-base` -> `meridian-base`).
 - That dependency name is the key stored in `mars.toml` under `[dependencies.<NAME>]`.
+- A marketplace plugin is named `<repo>/<plugin>` (`anthropics/skills` with `--plugin document-skills` -> `skills/document-skills`), as a subpath package is named `<repo>/<subpath>`.
 - Subsequent commands use that dependency name, not the source URL.
 
 ```bash
@@ -94,6 +99,7 @@ mars add ../my-local-agents
 mars add ../monorepo --subpath packages/agents
 mars add acme/ops --agents deployer,monitor
 mars add acme/toolkit --only-skills
+mars add anthropics/skills --plugin document-skills
 mars add source1 source2          # Multi-source (no filters)
 ```
 
@@ -108,6 +114,8 @@ mars remove <name>
 ```
 
 Removes the named dependency from `mars.toml` and runs sync to clean up installed items. Whole-source removal only; to narrow a source's installed items, use `mars add` with updated filters.
+
+A dependency added with `--subpath`, `--plugin` or a path in the specifier is named `<repository>/<path or plugin>` (`mars add anthropics/skills --plugin claude-api` is `skills/claude-api`). `mars remove skills` finds nothing and names the dependencies that start with `skills/`; remove one by its full name.
 
 ---
 
@@ -125,7 +133,7 @@ mars sync [--force] [--diff] [--frozen]
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode) |
 
-This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → target → diff → apply. Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
+This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). Warnings (`field.unknown`, the lossiness a target cannot express) are printed and the sync goes on. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
 ---
 
@@ -141,12 +149,35 @@ mars upgrade [names...]
 |---|---|
 | `names` | Specific dependency names to upgrade (default: all) |
 
-Uses maximize strategy instead of minimum version selection. Only git sources with semver constraints are upgradeable; path sources have no version to maximize.
+Uses maximize strategy instead of minimum version selection. Only git sources with semver constraints are upgradeable; path sources have no version to maximize. It moves dependency versions and never edits definitions: for that, see [`mars migrate`](#mars-migrate).
+
+A marketplace plugin is refreshed as a whole: Mars re-reads the marketplace at its ref, takes the plugin's current source from it and resolves the plugin's content commit anew, even when the marketplace itself did not change. A plugin whose source moved to another repository or path is reported (`plugin <name> of <dependency> moved: <old> -> <new>`).
 
 ```bash
 mars upgrade                 # Upgrade all
 mars upgrade base dev        # Upgrade specific deps
 ```
+
+---
+
+## `mars migrate`
+
+Rewrite the package's own definitions to [schema v1](../config/schema-v1.md), in place.
+
+```bash
+mars migrate [--check] [--root PATH] [--json]
+```
+
+| Flag | Description |
+|---|---|
+| `--check` | List the files that would change and write nothing. Exits 1 if any file needs migration |
+| `--json` | `{check, changed, files, fully_rewritten_files, dropped}`; `dropped` lists `{file, code, message}` for each key the migration removed |
+
+It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`) and every agent and skill definition, and writes only the files that change. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Quoting, key order and the body of a definition stay as they were, and a comment survives unless it belongs to a changed key's block (a comment written directly after a changed key's value is part of that block and is rewritten with it); only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
+
+In a consumer project (a `mars.toml` with no `[package]`), only `.mars-src/` is migrated; with none, the command says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories` and exits 0.
+
+It never touches `.mars/`, `mars.lock` or dependencies, so it is a different job from [`mars upgrade`](#mars-upgrade), which moves dependency versions. It deletes some keys without a replacement and prints each one after the files it edited, grouped by code with one line per file and key; read `git diff` as well. The rewrite table, an example diff and the handling of unmigrated dependencies are in [Migrating a package to schema v1](../config/migrating-to-schema-v1.md).
 
 ---
 
@@ -442,6 +473,24 @@ error translating the file's actual values; Mars does not rewrite config
 automatically. A dependency package's consumer-only settings are ignored by
 manifest loading and never require the consumer to migrate upstream files.
 
+### `mars models prompting`
+
+Print the prompting guidance for an alias or an Agent.
+
+```bash
+mars models prompting <reference> [--json]
+```
+
+A bare reference (`gpt55`) is a model alias and prints the alias's `prompting` text. `@name` is an Agent: Mars prints the guide the Agent's own `model-policies` rules declare, one line for each rule that has a `when`, ahead of the alias's text.
+
+```text
+$ mars models prompting @coder
+Model guide for coder:
+- model-glob `gpt-*`: for small edits
+```
+
+Each line is the rule's `match` kind and value, then its `when` text. `--json` returns `ref`, `ref_kind` (`agent` or `alias`), `agent_name`, `model_alias`, `model_name`, `found` and `prompting`. An unknown reference exits 1. The Agent inventory in a launch bundle marks Agents that have a guide with `mars models prompting @name`. See [`when`](../config/schema-v1.md#model-policies).
+
 ### `mars models resolve`
 
 Show the resolution chain for one alias.
@@ -482,28 +531,34 @@ Validate a source package before publishing.
 
 ```bash
 mars check [path]
+mars check --root PATH
 ```
 
 | Argument | Description |
 |---|---|
 | `path` | Directory to validate (default: current directory) |
+| `--root PATH` | The same directory, named as every other command names its root; giving it with `path` is an error |
 
 Does not require a mars project (no `mars.toml` needed). Validates:
 - `requires-mars` and `requires-meridian` syntax when `[package]` is present
 - Package structure: convention folders named `agents/`, `skills/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
+- Prints the `source package validates` line only when there are no errors
+- Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so removed keys, invalid values and malformed YAML are errors (exit 1), unknown keys warn, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
 - Frontmatter: name, description presence and consistency
 - Duplicate `(kind, name)` discoveries within the package
-- Skill dependency references (warns about external deps)
+- Skill dependency references (warns about external deps). A ref `<skill>__<provider>` passes when `[package] uses-providers` lists the provider; otherwise it is an error naming `uses-providers`, with or without `[dependencies]`. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine
 - Symlinks in source packages (warned as unsupported)
 - Missing `SKILL.md` in skill directories
-- Configured plugin output: missing/skipped builds, stale inputs or versions, hand-edited or
-  missing generated files, root files left holding an earlier build's output, and conflicts at
-  generated package-root paths
-- Plugin compatibility: unknown `[plugin].harnesses` values and a missing
-  `[package].requires-mars = ">=0.19.0"` (or higher) floor
+- Configured plugin output: missing/skipped builds, stale inputs, a different package or Mars
+  version, hand-edited or missing generated files, root files left holding an earlier build's
+  output, and conflicts at generated package-root paths
+- `[package].requires-mars` floor: `">=0.20.0"` (or higher) for a package that declares
+  `schema = 1`, the first Mars that reads it; `">=0.19.0"` for a plugin package with no
+  `schema`, the first that keeps `[plugin]`
+- Plugin compatibility: unknown `[plugin].harnesses` values
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
-preview** (`collect_source_lossiness_diagnostics`) against the configured managed
+preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed
 targets — reports what each native target cannot express from the source tree's
 agents and skills.
 
@@ -568,6 +623,80 @@ memory and rebuilds from config plus dependencies. The corrupt on-disk bytes
 are replaced only when the full pipeline finalizes successfully. If recovery
 encounters unreadable removed-schema hooks, it halts before materialization
 and leaves the corrupt lock untouched.
+
+---
+
+## `mars provide`
+
+Install a host program's own skills into `.mars/skills/`.
+
+```bash
+mars provide <provider>@<version>=<directory> [--root <dir>] [--json]
+```
+
+A host ships skills with its binary and hands Mars the directory holding them
+(Meridian runs this on every launch). Mars copies `<directory>/skills/*` into
+`.mars/skills/` and records the names in `.mars/provided.lock`, which no other
+command writes. It never touches `mars.toml`, `mars.lock` or a managed target,
+and provided skills are never projected into targets. `--root <dir>` must hold
+its own `mars.toml`; a directory without one is refused rather than walked up
+from, so a host always fills the root it named.
+
+| Field | Meaning |
+|---|---|
+| `<provider>` | The host's own namespace, separate from dependency keys. `[a-z0-9][a-z0-9-]*` |
+| `<version>` | Opaque, non-empty; recorded for display and change detection (host versions need not be semver) |
+| `<directory>` | Holds `skills/`; each entry is a directory named `<skill>__<provider>` whose `SKILL.md` has the same `name` |
+
+`skills/` entries starting with `_` or `.` are ignored, as are top-level files, so
+a Python package's `__init__.py`, `__pycache__/` and `AGENTS.md` are not skills.
+
+A skill is compared by each file's bytes and executable bit, since an installed copy
+is `0o644` plus the source's execute bits. Every installed file gets that mode, so
+adding or removing a file's execute bit replaces the installed skill on the next run, with or without a version bump.
+
+`--json` prints `status`, `provider`, `version`, `skills` (the recorded names
+after the run), `installed`, `replaced`, `adopted`, `removed`, `shadowed`,
+`collisions` and `warnings`. `status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `up-to-date` | A re-plan would write nothing: `provided.lock` and the installed trees already match the source |
+| `applied` | Skills were installed, replaced, adopted or removed |
+| `busy` | Another Mars process holds `.mars/sync.lock`; nothing was written |
+| `sync-pending` | An interrupted sync owns canonical destinations; run `mars repair` (or `mars sync`) to recover, then provide again |
+
+All four exit 0. Validation failures exit 2: `provided-name-invalid` (a name or
+`SKILL.md` `name` that is not `<skill>__<provider>`) and `provided-skill-invalid`
+(a missing `skills/` directory, a missing `SKILL.md`, or one the schema rejects).
+
+Mars only deletes names its own record lists. A directory it did not create is
+adopted when its bytes match the source and reported as `collisions` otherwise; a
+provided skill whose destination a package owns is reported as `shadowed` and left
+to the package. Both are reported on every run while they last, from the fast
+path and the locked one alike, not only on the run that first saw them. Plain
+text prints source diagnostics (schema warnings) only for `applied`; `--json`
+carries them in `warnings` on every status.
+
+`.mars/provided.lock` is machine-local (`version = 1`, one `[providers.<name>]`
+table per provider with `version`, `digest` and `skills`). `digest` is `pending`
+while an apply is in flight; the next run replans from the files on disk. The
+file is written by another build, so a recorded name must be a single path
+component ending in `__<that provider>`; anything else makes the file corrupt
+(one warning, an empty record) rather than letting a record point a removal at
+another provider's directory.
+
+`mars sync` reads it and never writes it. It counts a recorded name as available for refs from a
+package that declares the provider in `uses-providers` (see
+[mars.toml](../config/mars-toml.md#provided-skills-and-uses-providers)) only while
+`.mars/skills/<name>` is a directory, and treats a recorded destination as Mars-owned, so a
+package item or `.mars-src/` item that wants the same destination replaces it instead of
+colliding. A corrupt or newer `provided.lock` reads as "nothing provided" with one
+`provided-lock-unusable` warning; a missing one is silent. `mars doctor` warns, rather than
+errors, on a missing `<skill>__<provider>` ref, since it has no manifest to read declarations from
+and does not read the record: it scans the canonical store. See
+[canonical ownership](../internals/lock-file.md#canonical-ownership) for the rule the two records
+share.
 
 ---
 
@@ -661,16 +790,17 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 **Agent/profile mode** (`--agent <name>`):
 - Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
 - Requires a project with `mars sync` already run
-- Inherits all profile fields (model, harness, effort, approval, sandbox, network, skills, tools)
-- Model precedence is `--model` > profile model > `settings.default_model`.
+- Inherits the profile's fields (model, harness, effort, approval, sandbox, network, skills, tools, model-policies)
+- Model precedence is `--model` > the `[agents.<name>]` overlay > profile model > `settings.default_model`.
+- Effort, approval, sandbox and network follow the [precedence chain](../config/schema-v1.md#model-policies): CLI flag, overlay field, the first matching `model-policies` rule, the profile's own value, then (`network` only) the `[settings]` and user-config `default-network`, or (`effort` only) the alias's `default_effort`.
 
 | Flag | Description |
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
 | `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`). |
-| `--effort <level>` | Override effort: `low`, `medium`, `high`, `xhigh`. |
-| `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `yolo`. |
+| `--effort <level>` | Override effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. `none` asks for no reasoning effort and is written as `"effort": "none"` in the bundle; see [Effort](../config/schema-v1.md#effort) for what each harness does with it. |
+| `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |
 | `--sandbox <mode>` | Override sandbox: `default`, `read-only`, `workspace-write`, `danger-full-access`. |
 | `--network <mode>` | Override shell network mode: `allow`, `deny`, `allowlist`. Built-in web tools remain controlled by `tools: web`. |
 | `--network-allow <host>` | Add an allowed host. Repeatable; accepts exact hosts, IPs, `*.x`, and `**.x`. |
@@ -683,6 +813,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 {
   "version": 4,
   "agent": "agent-name-or-null",
+  "agent_source_path": "...",
   "agent_body": "raw-agent-markdown-body",
   "routing": {
     "model": "...",
@@ -698,12 +829,13 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
     "effort": "high",
     "approval": "auto",
     "sandbox": "workspace-write",
-    "network": {"mode": "allow", "allow": [], "deny": ["blocked.example"]},
+    "network": { "mode": "allow", "allow": [], "deny": ["blocked.example"] },
     "autocompact": null,
     "autocompact_pct": null,
     "timeout": null
   },
   "prompt_surface": { "..." },
+  "scaffold_slots": { "..." },
   "tools": {
     "capability_natives": {
       "agent": { "native": ["Agent", "SendMessage", "ListAgents"], "native_status": "known" },
@@ -728,6 +860,13 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
   "provenance": {
     "model_source": "cli|profile|project",
     "harness_source": "...",
+    "effort_source": "cli|overlay|overlay-model-policy|profile-model-policy|profile|settings-model-policy|alias|unset",
+    "approval_source": "...",
+    "sandbox_source": "...",
+    "network_source": "cli|overlay|overlay-model-policy|profile|profile-model-policy|settings-model-policy|config|unset",
+    "autocompact_source": "...",
+    "autocompact_pct_source": "...",
+    "matched_policy_rule": "profile:0",
     "selection_kind": "...",
     "match_evidence": "...",
     "candidates_tried": "..."
@@ -738,11 +877,14 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
+- `skills.*.skill_type` is the skill's `metadata.type`, or `reference` when it sets none.
+- `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is `none` when `--effort none` or a rule set it.
 - `execution_policy.network` is one resolved `{mode, allow, deny}` object. `mode` is
   `"allow"`, `"deny"`, `"allowlist"`, or `null`; Meridian resolves a remaining unset mode
   from the sandbox. Mars removes inert sets (`deny` removes both; `allow` removes `allow`) and
   turns an empty allowlist into `deny` with a warning. The field governs shell connections
-  only; `tools: web` separately governs built-in web tools.
+  only; `tools: web` separately governs built-in web tools. See [Network](../config/schema-v1.md#network).
+- Each `provenance.*_source` names the step of the precedence chain that supplied the value, and `matched_policy_rule` names the one `model-policies` rule that matched the chosen model (`profile:<index>`, `overlay:<index>` or `settings:<index>`), even when a higher step then set the field; it is absent when no rule matched.
 
 **`tools.capability_natives`** is always present, independent of the profile's tool policy. It
 maps the `agent` (sub-agent) and `task` (task-list) capabilities to the resolved harness's

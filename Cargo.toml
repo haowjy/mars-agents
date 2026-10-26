@@ -10,11 +10,28 @@ readme = "README.md"
 keywords = ["agents", "package-manager", "ai", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
+[workspace]
+members = [".", "crates/mars-schema", "crates/mars-schema-wasm"]
+resolver = "2"
+
+[profile.release]
+lto = true
+
+# The npm package's WebAssembly build (`scripts/build-schema-wasm.sh`): small rather than fast,
+# in every dependency too, which a `[profile.release.package.*]` override would also impose on
+# the native `mars` binary. At the same sources it is 23% smaller than release.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+codegen-units = 1
+strip = true
+
 [[bin]]
 name = "mars"
 path = "src/main.rs"
 
 [dependencies]
+mars-schema = { version = "0.19.0", path = "crates/mars-schema" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

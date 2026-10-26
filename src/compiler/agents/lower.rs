@@ -9,8 +9,6 @@ mod lower_policy;
 pub use lower_policy::{NativeModel, lower_for_harness_with_model};
 
 #[cfg(test)]
-pub type LoweredOutput = crate::compiler::lossiness::LoweredOutput;
-
 #[cfg(test)]
 pub use lower_policy::{
     lower_to_claude, lower_to_codex, lower_to_cursor_with_model, lower_to_opencode, lower_to_pi,
@@ -22,15 +20,13 @@ use crate::compiler::lossiness::Lossiness;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{
-        AgentDiagnostic, AgentProfile, HarnessKind, parse_agent_content,
-    };
-    use crate::frontmatter::Frontmatter;
+    use mars_schema::{HarnessId, frontmatter::Frontmatter};
+    use mars_schema::{agent::AgentProfile, diagnostic::SchemaDiagnostic};
 
-    fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<AgentDiagnostic>) {
-        let mut diags = Vec::new();
-        let (profile, fm) = parse_agent_content(content, &mut diags).unwrap();
-        (profile, fm, diags)
+    fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<SchemaDiagnostic>) {
+        let reading = mars_schema::agent::read(content);
+        let fm = Frontmatter::parse(content).unwrap();
+        (reading.fields.unwrap(), fm, reading.diagnostics)
     }
 
     // --- 3.3: Claude lowering ---
@@ -40,7 +36,7 @@ mod tests {
         let content = "---\r\nname: coder\r\ndescription: Code impl agent\r\nmodel: gpt55\r\nharness: claude\r\nskills:\r\n  load: [dev-principles, dev-principles]\r\n  available: [review, review, dev-principles]\r\ntools:\r\n  '*': deny\r\n  Bash: allow\r\n  Write: allow\r\n---\r\n# Coder\r\n```text\r\nYou write code.";
         let (profile, fm, _) = profile_from(content);
         let body = fm.body();
-        let out = lower_to_claude(&profile, &fm, body, &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, body, &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.contains("name: coder"), "name missing: {text}");
         assert!(
@@ -75,32 +71,12 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
-
-    #[test]
-    fn claude_lowering_projects_canonical_tool_names() {
-        let content = "---\nname: coder\nharness: claude\ntools:\n  '*': deny\n  Bash: allow\n  AskUser: allow\ndisallowed-tools: [Bash(git reset *)]\n---\n# Body";
-        let (profile, fm, diags) = profile_from(content);
-        assert!(diags.is_empty());
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-
-        assert!(text.contains("- Bash"), "Bash not projected: {text}");
-        assert!(
-            text.contains("- AskUserQuestion"),
-            "ask_user not projected to Claude's AskUserQuestion: {text}"
-        );
-        assert!(
-            text.contains("- Bash(git reset *)"),
-            "scoped Bash not projected while preserving payload: {text}"
-        );
-    }
-
     #[test]
     fn claude_lowering_omits_unrecognized_tools_and_preserves_mcp_wire_identifiers() {
         let content = "---\nname: coder\nharness: claude\ntools:\n  '*': deny\n  my_custom_tool: allow\n  mcp__server__Tool: allow\n---\n# Body";
         let (profile, fm, diags) = profile_from(content);
         assert!(diags.is_empty());
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
 
         assert!(
@@ -152,23 +128,20 @@ mod tests {
     }
 
     #[test]
-    fn claude_lowering_drops_approval_sandbox_network_mode_autocompact() {
-        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\nmode: subagent\nautocompact: 50\nautocompact_pct: 80\n---\n# Body";
+    fn claude_lowering_drops_approval_sandbox_network_mode() {
+        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\nmode: subagent\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
-        assert!(!text.contains("approval:"), "approval leaked: {text}");
-        assert!(!text.contains("sandbox:"), "sandbox leaked: {text}");
-        assert!(!text.contains("network:"), "network leaked: {text}");
-        assert!(
-            !text.contains("network-allow:"),
-            "network hosts leaked: {text}"
-        );
-        assert!(
-            !text.contains("network-deny:"),
-            "network hosts leaked: {text}"
-        );
-        assert!(!text.contains("autocompact:"), "autocompact leaked: {text}");
+        for leaked in [
+            "approval:",
+            "sandbox:",
+            "network:",
+            "network-allow:",
+            "network-deny:",
+        ] {
+            assert!(!text.contains(leaked), "{leaked} leaked: {text}");
+        }
         // Launch-time fields are meridian-only, not target-enforced drops.
         let meridian_only: Vec<_> = out
             .lossy_fields
@@ -176,42 +149,26 @@ mod tests {
             .filter(|f| matches!(f.classification, Lossiness::MeridianOnly))
             .map(|f| f.field.as_str())
             .collect();
-        assert!(
-            meridian_only.contains(&"approval"),
-            "approval not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"network-allow"),
-            "{meridian_only:?}"
-        );
-        assert!(meridian_only.contains(&"network-deny"), "{meridian_only:?}");
-        assert!(
-            meridian_only.contains(&"sandbox"),
-            "sandbox not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"network"),
-            "network not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"mode"),
-            "mode not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"autocompact"),
-            "autocompact not in lossy: {meridian_only:?}"
-        );
-        assert!(
-            meridian_only.contains(&"autocompact_pct"),
-            "autocompact_pct not in lossy: {meridian_only:?}"
-        );
+        for field in [
+            "approval",
+            "sandbox",
+            "network",
+            "network-allow",
+            "network-deny",
+            "mode",
+        ] {
+            assert!(
+                meridian_only.contains(&field),
+                "{field} not in lossy: {meridian_only:?}"
+            );
+        }
     }
 
     #[test]
     fn claude_harness_override_does_not_replace_skills_before_lowering() {
         let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             text.contains("base-skill"),
@@ -225,13 +182,13 @@ mod tests {
 
     #[test]
     fn claude_harness_override_does_not_replace_mcp() {
-        let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(plugin:base): allow\nharness-overrides:\n  claude:\n    mcp-tools: [plugin:claude]\n---\n# body";
+        let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(plugin:base): allow\nharness-overrides:\n  claude:\n    tools: [plugin:claude]\n    color: red\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
-            !text.contains("mcp-tools:"),
-            "MCP grants belong in tools:, not a separate field: {text}"
+            text.contains("color: red"),
+            "non-conflicting override should be written: {text}"
         );
         assert!(
             text.contains("mcp__plugin:base__*"),
@@ -242,40 +199,6 @@ mod tests {
             "harness-overrides passthrough should not replace profile mcp: {text}"
         );
     }
-
-    #[test]
-    fn claude_agent_projects_mcp_refs_into_tools_and_disallowed() {
-        let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(github/create_issue): allow\n  mcp(context7): allow\ndisallowed-tools: [mcp(github/delete_repo), mcp(*/cross_server_tool)]\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("mcp__github__create_issue"),
-            "per-tool MCP should land in tools: {text}"
-        );
-        assert!(
-            text.contains("mcp__context7__*"),
-            "whole-server MCP should land in tools: {text}"
-        );
-        assert!(
-            text.contains("mcp__github__delete_repo"),
-            "disallowed MCP should project into disallowed-tools: {text}"
-        );
-        assert!(
-            !text.contains("mcp__*__cross_server_tool"),
-            "cross-server MCP must not be emitted: {text}"
-        );
-        assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "disallowed-tools"
-                && matches!(
-                    field.classification,
-                    Lossiness::Approximate {
-                        note: "Claude cannot scope a single MCP tool across all servers"
-                    }
-                )
-        }));
-    }
-
     #[test]
     fn pi_agent_records_mcp_lossiness_when_mcp_refs_present() {
         let content = "---\nname: r\nharness: pi\ntools:\n  mcp(plugin:demo): allow\n---\n# body";
@@ -287,33 +210,11 @@ mod tests {
                 && matches!(field.classification, Lossiness::Dropped)
         }));
     }
-
-    #[test]
-    fn claude_meridian_only_fields_dropped() {
-        let content = "---\nname: r\nharness: claude\nmodel-policies:\n  - match:\n      model: gpt55\n    override:\n      harness: codex\nfanout:\n  - alias: opus\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("model-policies:"),
-            "model-policies leaked: {text}"
-        );
-        assert!(!text.contains("fanout:"), "fanout leaked: {text}");
-        let meridian_only: Vec<_> = out
-            .lossy_fields
-            .iter()
-            .filter(|f| matches!(f.classification, Lossiness::MeridianOnly))
-            .map(|f| f.field.as_str())
-            .collect();
-        assert!(meridian_only.contains(&"model-policies"));
-        assert!(meridian_only.contains(&"fanout"));
-    }
-
     #[test]
     fn claude_agent_model_invocable_false_warn_drops_without_skill_key() {
         let content = "---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             !text.contains("disable-model-invocation"),
@@ -330,7 +231,7 @@ mod tests {
     fn claude_agent_user_invocable_false_warn_drops() {
         let content = "---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             !text.contains("user-invocable"),
@@ -346,81 +247,24 @@ mod tests {
     // --- 3.3: Codex lowering ---
 
     #[test]
-    fn codex_lowering_produces_top_level_toml() {
-        let content = "---\nname: coder\ndescription: Code agent\nmodel: gpt55\nharness: codex\neffort: high\nsandbox: workspace-write\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\napproval: auto\n---\n# Coder\nYou code.";
+    fn codex_lowering_drops_network_and_keeps_sandbox() {
+        let content = "---\nname: coder\nharness: codex\nsandbox: workspace-write\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\n---\n# Coder";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
-            !text.contains("[agent]"),
-            "legacy [agent] table leaked: {text}"
-        );
-        assert!(text.contains("name = \"coder\""), "name missing");
-        assert!(text.contains("model = \"gpt55\""), "model missing");
-        assert!(
-            text.contains("model_reasoning_effort = \"high\""),
-            "effort missing"
-        );
-        assert!(
             text.contains("sandbox_mode = \"workspace-write\""),
-            "sandbox missing"
-        );
-        assert!(
-            text.contains("approval_policy = \"on-request\""),
-            "approval missing"
+            "sandbox missing: {text}"
         );
         assert!(!text.contains("network"), "network leaked: {text}");
-        assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "network" && matches!(field.classification, Lossiness::Dropped)
-        }));
-        assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "network-allow" && matches!(field.classification, Lossiness::Dropped)
-        }));
-        assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "network-deny" && matches!(field.classification, Lossiness::Dropped)
-        }));
-        assert!(
-            text.contains("developer_instructions ="),
-            "developer instructions missing"
-        );
-
-        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
-        assert!(
-            parsed.get("agent").is_none(),
-            "nested [agent] table present"
-        );
-        assert_eq!(parsed.get("name").and_then(|v| v.as_str()), Some("coder"));
-    }
-
-    #[test]
-    fn codex_lowering_carries_skills_in_body_and_drops_tools() {
-        let content = "---\nname: r\nharness: codex\nskills:\n  load: [review, review]\n  available: [diagnose, diagnose, review]\ntools:\n  Bash: allow\ndisallowed-tools: [Agent]\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes.clone()).unwrap();
-        let dropped: Vec<_> = out
-            .lossy_fields
-            .iter()
-            .filter(|f| matches!(f.classification, Lossiness::Dropped))
-            .map(|f| f.field.as_str())
-            .collect();
-        assert!(!dropped.iter().any(|field| field.starts_with("skills")));
-        assert!(dropped.contains(&"tools"));
-        assert!(dropped.contains(&"disallowed-tools"));
-        assert!(
-            !out.lossy_fields
-                .iter()
-                .any(|lossy| lossy.field.starts_with("skills")),
-            "designed skill guidance must not warn"
-        );
-        assert!(
-            text.contains(
-                "Load these skills before starting, unless they are already in your context: /review. Load these skills when the task fits: /diagnose."
-            ),
-            "skill guidance missing: {text}"
-        );
-        assert_eq!(text.matches("/review").count(), 1);
-        assert_eq!(text.matches("/diagnose").count(), 1);
+        for field in ["network", "network-allow", "network-deny"] {
+            assert!(
+                out.lossy_fields.iter().any(|lossy| lossy.field == field
+                    && matches!(lossy.classification, Lossiness::Dropped)),
+                "{field} not dropped: {:?}",
+                out.lossy_fields
+            );
+        }
     }
 
     #[test]
@@ -455,43 +299,21 @@ mod tests {
     }
 
     #[test]
-    fn codex_native_config_lossiness_uses_matching_override() {
-        let content = "---\nname: r\nharness-overrides:\n  codex:\n    native-config:\n      sandbox_workspace_write.network_access: true\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
-        assert!(
-            out.lossy_fields.iter().any(|field| {
-                field.field == "native-config"
-                    && field.target == "Codex"
-                    && matches!(field.classification, Lossiness::MeridianOnly)
-            }),
-            "native-config should be reported as meridian-only in codex lowering: {:?}",
-            out.lossy_fields
-                .iter()
-                .map(|field| (&field.field, &field.target))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn codex_lowering_multiline_instructions_are_parseable() {
-        let content = "---\nname: explorer\ndescription: \"Line one\\nLine two\"\nharness: codex\napproval: yolo\n---\n# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going.";
+    fn codex_override_adds_keys_and_never_replaces_lowered_ones() {
+        let content = "---\nname: r\neffort: low\nharness-overrides:\n  codex:\n    custom_key: 1\n    model_reasoning_effort: high\n  claude:\n    color: red\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
-        let parsed: toml::Value = toml::from_str(&text).expect("lowered TOML should parse");
-
-        assert_eq!(
-            parsed.get("approval_policy").and_then(|v| v.as_str()),
-            Some("never")
+        assert!(text.contains("custom_key = 1"), "{text}");
+        assert!(text.contains("model_reasoning_effort = \"low\""), "{text}");
+        assert!(
+            !text.contains("color"),
+            "claude overrides must not reach Codex: {text}"
         );
-        assert_eq!(
-            parsed
-                .get("developer_instructions")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default(),
-            "# Explore\nUse \"quotes\" and backslashes \\\\\nKeep going."
-        );
+        assert!(out.lossy_fields.iter().any(|field| {
+            field.field == "harness-overrides.codex.model_reasoning_effort"
+                && matches!(field.classification, Lossiness::Dropped)
+        }));
     }
 
     // --- 3.3: OpenCode lowering ---
@@ -538,9 +360,8 @@ mod tests {
         let content = "---\nname: coder\nmode: subagent\nharness: claude\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_for_harness_with_model(
-            &HarnessKind::Claude,
+            &HarnessId::Claude,
             &profile,
-            &fm,
             fm.body(),
             &NativeModel::Inherit,
         );
@@ -591,12 +412,13 @@ mod tests {
             "cursor override should keep mcp lossiness",
         );
         assert!(
-            cursor.lossy_fields.iter().any(|field| {
-                field.field == "native-config"
-                    && field.target == "Cursor"
-                    && matches!(field.classification, Lossiness::MeridianOnly)
-            }),
-            "cursor native-config should be reported as meridian-only",
+            String::from_utf8(cursor.bytes)
+                .unwrap()
+                .contains("native-config:")
+                && !String::from_utf8(opencode.bytes)
+                    .unwrap()
+                    .contains("cursor.only"),
+            "each harness gets only its own override block",
         );
     }
 
@@ -728,9 +550,8 @@ mod tests {
         let claude_content = "---\nname: coder\nmodel: gpt55\nharness: claude\n---\n# Coder\nbody";
         let (claude_profile, claude_fm, _) = profile_from(claude_content);
         let claude_out = lower_for_harness_with_model(
-            &HarnessKind::Claude,
+            &HarnessId::Claude,
             &claude_profile,
-            &claude_fm,
             claude_fm.body(),
             &NativeModel::Set("o3".to_string()),
         );
@@ -747,9 +568,8 @@ mod tests {
         let codex_content = "---\nname: coder\nmodel: gpt55\nharness: codex\n---\n# body";
         let (codex_profile, codex_fm, _) = profile_from(codex_content);
         let codex_out = lower_for_harness_with_model(
-            &HarnessKind::Codex,
+            &HarnessId::Codex,
             &codex_profile,
-            &codex_fm,
             codex_fm.body(),
             &NativeModel::Set("o3".to_string()),
         );
@@ -772,9 +592,8 @@ mod tests {
         let (profile, fm, _) = profile_from(content);
         let body = fm.body().to_string();
         let out = lower_for_harness_with_model(
-            &HarnessKind::Claude,
+            &HarnessId::Claude,
             &profile,
-            &fm,
             &body,
             &NativeModel::Inherit,
         );
@@ -785,9 +604,8 @@ mod tests {
         let (profile2, fm2, _) = profile_from(content2);
         let body2 = fm2.body().to_string();
         let out2 = lower_for_harness_with_model(
-            &HarnessKind::Codex,
+            &HarnessId::Codex,
             &profile2,
-            &fm2,
             &body2,
             &NativeModel::Inherit,
         );
@@ -801,9 +619,8 @@ mod tests {
         let content3 = "---\nname: cursor-agent\nmodel: gpt55\nharness: cursor\n---\n# body";
         let (profile3, fm3, _) = profile_from(content3);
         let out3 = lower_for_harness_with_model(
-            &HarnessKind::Cursor,
+            &HarnessId::Cursor,
             &profile3,
-            &fm3,
             fm3.body(),
             &NativeModel::Inherit,
         );

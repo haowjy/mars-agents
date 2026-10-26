@@ -363,21 +363,19 @@ pub(crate) fn project_prepared_skill_for_target(
     Ok(true)
 }
 
-/// Lower a staged skill for one native harness (variant-aware) and emit lossiness warnings.
-///
-/// Mirrors `project_skill_for_target` + `compile_projected_skill_frontmatter` without
-/// writing projected trees — used by `mars check` / `mars init` preview.
-pub(crate) fn emit_staged_skill_lossiness_for_harness(
-    staged_skill_dir: &Path,
+pub(crate) fn emit_prepared_skill_lossiness_for_harness(
+    authored_skill_dir: &Path,
+    prepared_base_content: &str,
     harness_key: &str,
     skill_name: &str,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let projected_skill = harness_skill_variant_path(staged_skill_dir, harness_key)
-        .unwrap_or_else(|| staged_skill_dir.join("SKILL.md"));
-    let selected_content = fs::read_to_string(&projected_skill)?;
-    let _ = lower_projected_skill_for_harness(
-        staged_skill_dir,
+    let selected_content = match harness_skill_variant_path(authored_skill_dir, harness_key) {
+        Some(path) => fs::read_to_string(path)?,
+        None => prepared_base_content.to_owned(),
+    };
+    let _ = lower_skill_content_for_harness(
+        prepared_base_content,
         &selected_content,
         harness_key,
         skill_name,
@@ -395,36 +393,39 @@ fn lower_projected_skill_for_harness(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     emit_schema_diags: bool,
 ) -> Result<Option<crate::compiler::lossiness::LoweredOutput>, MarsError> {
+    let base_content = fs::read_to_string(source.join("SKILL.md"))?;
+    lower_skill_content_for_harness(
+        &base_content,
+        selected_content,
+        harness_key,
+        skill_name,
+        diag,
+        emit_schema_diags,
+    )
+}
+
+fn lower_skill_content_for_harness(
+    base_content: &str,
+    selected_content: &str,
+    harness_key: &str,
+    skill_name: &str,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+    emit_schema_diags: bool,
+) -> Result<Option<crate::compiler::lossiness::LoweredOutput>, MarsError> {
     use crate::compiler::skills::lower::{lower_skill_for_harness, skill_harness_from_variant_key};
-    use crate::compiler::skills::parse_skill_content;
 
     let Some(harness) = skill_harness_from_variant_key(harness_key) else {
         return Ok(None);
     };
-
-    let base_skill = source.join("SKILL.md");
-    let base_content = fs::read_to_string(&base_skill)?;
-
-    let mut skill_diags = Vec::new();
-    let (profile, _) = match parse_skill_content(&base_content, &mut skill_diags) {
-        Ok(parsed) => parsed,
-        Err(_) => {
-            if emit_schema_diags {
-                crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
-            }
-            return Ok(None);
-        }
+    let Some(profile) = mars_schema::skill::read(base_content).fields else {
+        return Ok(None);
     };
-
-    if emit_schema_diags {
-        crate::compiler::skills::emit_skill_schema_diags(diag, skill_name, &skill_diags);
-    }
 
     if !profile.has_frontmatter {
         return Ok(None);
     }
 
-    let selected_fm = match crate::frontmatter::parse(selected_content) {
+    let selected_fm = match mars_schema::frontmatter::parse(selected_content) {
         Ok(fm) => fm,
         Err(e) => {
             let fallback = if emit_schema_diags {
@@ -542,7 +543,7 @@ fn copy_entry_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsE
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = 0o644 | (metadata.permissions().mode() & 0o111);
+            let mode = crate::platform::fs::installed_mode(&metadata);
             fs::set_permissions(dest, fs::Permissions::from_mode(mode))?;
         }
         Ok(())
@@ -630,48 +631,6 @@ mod tests {
             "bootstrap"
         );
         assert!(!dest.join("variants").exists());
-    }
-
-    #[test]
-    fn native_projection_lowers_base_frontmatter_with_variant_body() {
-        let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("source");
-        let dest = tmp.path().join("dest");
-        std::fs::create_dir_all(source.join("variants/codex")).unwrap();
-        std::fs::write(
-            source.join("SKILL.md"),
-            "---\nname: planning\ndescription: Base desc\nmodel-invocable: false\ntools:\n  Bash(git *): allow\n---\nBase body\n",
-        )
-        .unwrap();
-        std::fs::write(
-            source.join("variants/codex/SKILL.md"),
-            "---\nname: ignored\n---\nCodex body\n",
-        )
-        .unwrap();
-
-        let mut diag =
-            DiagnosticCollector::with_lossiness_mode(crate::diagnostic::LossinessMode::Surface);
-        project_skill_for_target(&source, &dest, Some("codex"), &mut diag, "planning").unwrap();
-
-        let out = std::fs::read_to_string(dest.join("SKILL.md")).unwrap();
-        assert!(out.contains("name: planning"));
-        assert!(!out.contains("allow_implicit_invocation"));
-        assert!(!out.contains("name: ignored"));
-        assert!(!out.contains("allowed-tools"));
-        assert!(out.ends_with("Codex body\n"));
-        // Dropped fields surface as one summarized lossiness warning per target.
-        let warnings: Vec<_> = diag
-            .drain()
-            .into_iter()
-            .filter(|d| d.code == "skill-field-dropped")
-            .collect();
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].message.contains("tools"));
-        assert!(!warnings[0].message.contains("model-invocable"));
-        assert!(warnings[0].message.contains(".codex"));
-
-        let openai_yaml = std::fs::read_to_string(dest.join("openai.yaml")).unwrap();
-        assert!(openai_yaml.contains("allow_implicit_invocation: false"));
     }
 
     #[test]

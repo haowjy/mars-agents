@@ -1,6 +1,6 @@
 use super::*;
-use crate::lock::ItemKind;
 use crate::resolve::compat::CompatibilityResult;
+use mars_schema::item::ItemKind;
 use semver::Version;
 use std::path::PathBuf;
 

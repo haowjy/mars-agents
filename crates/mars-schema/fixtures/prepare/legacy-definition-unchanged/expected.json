@@ -1,0 +1,77 @@
+{
+  "classification": {
+    "kind": "mars-legacy"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "version",
+          "1.0.0"
+        ],
+        [
+          "schema",
+          1
+        ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
+    },
+    "change": {
+      "kind": "edited",
+      "paths": [
+        [
+          "package",
+          "schema"
+        ]
+      ]
+    }
+  },
+  "definitions": [
+    {
+      "kind": "skill",
+      "slug": "steady",
+      "source_path": "skills/steady/SKILL.md",
+      "output_path": "skills/steady/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "steady"
+          ],
+          [
+            "description",
+            "Stable"
+          ]
+        ],
+        "fields": {
+          "name": "steady",
+          "description": "Stable",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {}
+}

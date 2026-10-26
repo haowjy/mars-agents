@@ -3,12 +3,12 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::hooks::ParsedHookItem;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::target::opencode::{McpServer, OpencodeAdapter};
 use crate::target::{ConfigEntry, TargetAdapter};
+use mars_schema::HarnessId;
 
 use super::super::metadata::PackageMetadata;
 use super::{TreeProfile, WrittenTreeContents};
@@ -19,7 +19,7 @@ const DATA_PLACEHOLDER: &str = "/*__MARS_PLUGIN_DATA__*/";
 
 pub(super) static PROFILE: TreeProfile = TreeProfile {
     format: &crate::plugin::OPENCODE_TREE_SPEC,
-    harness: HarnessKind::OpenCode,
+    harness: HarnessId::OpenCode,
     agents: None,
     native_model_aliases: &[],
     plugin_root_token: None,
@@ -189,18 +189,22 @@ fn write_package(
 fn skill_data(root: &Path, directory: &str) -> Result<SkillData, MarsError> {
     let path = root.join("skills").join(directory).join("SKILL.md");
     let content = std::fs::read_to_string(&path)?;
-    let frontmatter = crate::frontmatter::parse(&content).map_err(|error| {
+    let reading = mars_schema::skill::read(&content);
+    let fields = reading.fields.ok_or_else(|| {
         MarsError::Internal(format!(
-            "generated OpenCode skill {} has invalid frontmatter: {error}",
-            path.display()
+            "generated OpenCode skill {} has invalid frontmatter: {}",
+            path.display(),
+            reading
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
         ))
     })?;
     Ok(SkillData {
         directory: directory.to_string(),
-        name: frontmatter.name().unwrap_or(directory).to_string(),
-        description: frontmatter
-            .get("description")
-            .and_then(serde_yaml::Value::as_str)
-            .map(str::to_owned),
+        name: fields.name.unwrap_or_else(|| directory.to_string()),
+        description: fields.description,
     })
 }

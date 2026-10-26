@@ -363,6 +363,7 @@ fn make_manifest(name: &str, version: &str, deps: Vec<(&str, &str, &str)>) -> Ma
                 subpath: None,
                 version: Some(dep_ver.to_string()),
                 filter: crate::config::FilterConfig::default(),
+                plugin: None,
             },
         );
     }
@@ -374,6 +375,8 @@ fn make_manifest(name: &str, version: &str, deps: Vec<(&str, &str, &str)>) -> Ma
             authors: None,
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: None,
             requires_meridian: None,
         },
@@ -409,6 +412,7 @@ fn make_manifest_with_filters(
                 subpath: None,
                 version: Some(dep_ver.to_string()),
                 filter: dep_filter,
+                plugin: None,
             },
         );
     }
@@ -420,6 +424,8 @@ fn make_manifest_with_filters(
             authors: None,
             homepage: None,
             license: None,
+            schema: None,
+            uses_providers: Vec::new(),
             requires_mars: None,
             requires_meridian: None,
         },
@@ -472,7 +478,7 @@ fn resolve_with_report_details(
 fn write_minimal_package_marker(tree: &Path) {
     std::fs::write(
         tree.join("mars.toml"),
-        "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n",
+        "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nschema = 1\n",
     )
     .expect("write mars.toml");
 }
@@ -516,6 +522,7 @@ fn source_id_for_spec(spec: &SourceSpec, subpath: Option<SourceSubpath>) -> Sour
         SourceSpec::Path(path) => SourceId::Path {
             canonical: path.clone(),
             subpath,
+            plugin: None,
         },
     }
 }
@@ -533,6 +540,8 @@ fn dummy_ref(name: &str) -> ResolvedRef {
 fn dummy_rooted_ref() -> RootedSourceRef {
     RootedSourceRef {
         checkout_root: PathBuf::new(),
+        authored_root: PathBuf::new(),
         package_root: PathBuf::new(),
+        plugin: None,
     }
 }

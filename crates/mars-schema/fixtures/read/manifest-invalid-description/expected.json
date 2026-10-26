@@ -1,0 +1,32 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "demo"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ],
+    [
+      "schema",
+      1
+    ],
+    [
+      "description",
+      4
+    ]
+  ],
+  "fields": null,
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "manifest.invalid-field",
+      "severity": "error",
+      "path": [
+        "package"
+      ],
+      "message": "invalid package field: invalid type: integer `4`, expected a string\nin `description`\n"
+    }
+  ]
+}

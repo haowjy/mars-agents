@@ -1,45 +1,4 @@
-use std::fmt;
-
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HarnessId {
-    Claude,
-    Codex,
-    Pi,
-    #[serde(rename = "opencode")]
-    OpenCode,
-    Cursor,
-}
-
-impl HarnessId {
-    pub fn as_str(self) -> &'static str {
-        descriptor(self).name
-    }
-
-    pub fn default_target(self) -> &'static str {
-        descriptor(self).default_target
-    }
-
-    pub fn class(self) -> HarnessClass {
-        descriptor(self).class
-    }
-
-    /// Provider a native harness serves directly; `None` for probe-backed harnesses.
-    pub fn native_provider(self) -> Option<&'static str> {
-        match self.class() {
-            HarnessClass::Native { provider } => Some(provider),
-            HarnessClass::ProbeBacked { .. } => None,
-        }
-    }
-}
-
-impl fmt::Display for HarnessId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+use mars_schema::HarnessId;
 
 /// How a harness proves runtime support and authentication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,20 +97,6 @@ pub fn descriptors() -> &'static [HarnessDescriptor] {
     DESCRIPTORS
 }
 
-pub fn all() -> &'static [HarnessId] {
-    &[
-        HarnessId::Claude,
-        HarnessId::Codex,
-        HarnessId::Pi,
-        HarnessId::OpenCode,
-        HarnessId::Cursor,
-    ]
-}
-
-pub fn names() -> &'static [&'static str] {
-    &["claude", "codex", "pi", "cursor", "opencode"]
-}
-
 pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {
     DESCRIPTORS
         .iter()
@@ -159,27 +104,28 @@ pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {
         .expect("harness descriptor exists")
 }
 
-pub fn parse(name: &str) -> Option<HarnessId> {
-    let normalized = name.trim().to_ascii_lowercase();
+pub fn native_provider(id: HarnessId) -> Option<&'static str> {
+    match descriptor(id).class {
+        HarnessClass::Native { provider } => Some(provider),
+        HarnessClass::ProbeBacked { .. } => None,
+    }
+}
+
+pub fn harness_for_target(target: &str) -> Option<HarnessId> {
     DESCRIPTORS
         .iter()
-        .find(|descriptor| descriptor.name == normalized)
+        .find(|descriptor| descriptor.default_target == target)
         .map(|descriptor| descriptor.id)
-}
-
-pub fn is_known(name: &str) -> bool {
-    parse(name).is_some()
-}
-
-pub fn normalize_name(name: &str) -> Option<String> {
-    parse(name).map(|id| id.as_str().to_string())
 }
 
 pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
     let normalized = provider.trim().to_ascii_lowercase();
     DESCRIPTORS
         .iter()
-        .find(|descriptor| descriptor.id.native_provider() == Some(normalized.as_str()))
+        .find(|descriptor| match descriptor.class {
+            HarnessClass::Native { provider } => provider == normalized,
+            HarnessClass::ProbeBacked { .. } => false,
+        })
         .map(|descriptor| descriptor.id)
 }
 
@@ -208,23 +154,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_and_normalize_are_case_insensitive() {
-        assert_eq!(parse("OpenCode"), Some(HarnessId::OpenCode));
-        assert_eq!(normalize_name(" OpenCode "), Some("opencode".to_string()));
-        assert_eq!(parse("gemini"), None);
-    }
-
-    #[test]
-    fn serde_names_round_trip_registry_names() {
-        for &harness in all() {
-            let json = serde_json::to_string(&harness).unwrap();
-            assert_eq!(json, format!("\"{}\"", harness.as_str()));
-            assert_eq!(serde_json::from_str::<HarnessId>(&json).unwrap(), harness);
-        }
-        assert!(serde_json::from_str::<HarnessId>("\"open_code\"").is_err());
-    }
-
-    #[test]
     fn listing_auth_is_gated_only_for_credential_filtered_listings() {
         use HarnessId::*;
         for (harness, expected) in [
@@ -234,7 +163,7 @@ mod tests {
             (Cursor, Some(ListingAuth::Gated)),
             (OpenCode, Some(ListingAuth::Ungated)),
         ] {
-            let listing = match harness.class() {
+            let listing = match descriptor(harness).class {
                 HarnessClass::Native { .. } => None,
                 HarnessClass::ProbeBacked { listing } => Some(listing),
             };

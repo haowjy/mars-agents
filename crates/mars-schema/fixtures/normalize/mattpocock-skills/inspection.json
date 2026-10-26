@@ -1,0 +1,57 @@
+{
+  "kind": "marketplace",
+  "also_found": [],
+  "plugins": [
+    {
+      "entry": {
+        "name": "mattpocock-skills",
+        "description": "Engineering skills",
+        "source": {
+          "kind": "local",
+          "path": ""
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": true,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "diagnose",
+          "source_path": "skills/engineering/diagnose/SKILL.md",
+          "skill_root": "skills/engineering/diagnose",
+          "output_path": "skills/diagnose/SKILL.md",
+          "payload": [
+            "skills/engineering/diagnose/scripts/trace.sh"
+          ]
+        },
+        {
+          "kind": "skill",
+          "slug": "git-guardrails",
+          "source_path": "skills/misc/git-guardrails/SKILL.md",
+          "skill_root": "skills/misc/git-guardrails",
+          "output_path": "skills/git-guardrails/SKILL.md",
+          "payload": [
+            "skills/misc/git-guardrails/scripts/guard.sh"
+          ]
+        },
+        {
+          "kind": "skill",
+          "slug": "grill-me",
+          "source_path": "skills/productivity/grill-me/SKILL.md",
+          "skill_root": "skills/productivity/grill-me",
+          "output_path": "skills/grill-me/SKILL.md"
+        },
+        {
+          "kind": "skill",
+          "slug": "tdd",
+          "source_path": "skills/engineering/tdd/SKILL.md",
+          "skill_root": "skills/engineering/tdd",
+          "output_path": "skills/tdd/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    }
+  ],
+  "items": [],
+  "diagnostics": {}
+}

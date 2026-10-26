@@ -1,15 +1,15 @@
-use crate::compiler::agents::HarnessKind;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::{ConfigEntry, McpServerEntry};
+use mars_schema::HarnessId;
 
 use super::{StandardTreeOutput, TreeProfile, invalid_item};
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
 pub(super) static PROFILE: TreeProfile = TreeProfile {
     format: &crate::plugin::CLAUDE_TREE_SPEC,
-    harness: HarnessKind::Claude,
+    harness: HarnessId::Claude,
     agents: Some(apply_agent_policy),
     native_model_aliases: NATIVE_MODEL_ALIASES,
     plugin_root_token: Some("${CLAUDE_PLUGIN_ROOT}"),
@@ -99,11 +99,11 @@ fn write_plugin_mcp_json(
 
 fn apply_agent_policy(
     lowered: &str,
-    source: &crate::frontmatter::Frontmatter,
+    source: &mars_schema::frontmatter::Frontmatter,
     item: &TargetItem,
     diag: &mut DiagnosticCollector,
 ) -> Result<String, MarsError> {
-    let mut plugin = crate::frontmatter::parse(lowered)
+    let mut plugin = mars_schema::frontmatter::parse(lowered)
         .map_err(|error| invalid_item("agent", item, error.to_string()))?;
 
     // The universal agent schema does not interpret these Claude-native fields,

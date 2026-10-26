@@ -1,15 +1,16 @@
 # src/harness/ — Harness Identity & Capability Snapshot
 
-Canonical harness vocabulary (`registry`) and one-shot environment collection (`host`). Not routing, not model alias resolution.
+Schema-owned harness identity plus runtime descriptors (`registry`) and one-shot environment collection (`host`). Not routing, not model alias resolution.
 
 ## Mental Model
 
 ```
-registry.rs  →  HarnessId, descriptors, provider orders (pure data, no I/O)
+mars-schema  →  HarnessId, canonical names, authored-name parsing
+registry.rs  →  executable/auth descriptors, provider orders (pure data, no I/O)
 host.rs      →  PATH + probe caches  →  CapabilitySnapshot (clone, share)
 ```
 
-**Registry owns identity.** Valid harness names, native provider affinity, and evaluation order live only in `registry`. Other modules call `parse()` / `is_known()` — they do not maintain parallel harness lists.
+**Schema owns identity.** Valid harness names and parsing live in `mars_schema::harness`; native provider affinity and evaluation order live in the runtime registry.
 `HarnessId` JSON serializes to registry names (not Rust snake-case variant
 names): `OpenCode` is `opencode`, never `open_code`.
 
@@ -42,7 +43,7 @@ Catalog refresh flags (`--refresh-models`, `--no-refresh-models`) are resolved i
 
 ## Entry Points
 
-- `registry.rs` — `HarnessId`, `HarnessClass`, `provider_candidate_order`, `native_harness_for_provider`
+- `registry.rs` — `HarnessClass`, runtime descriptors, `provider_candidate_order`, `native_harness_for_provider`
 - `host.rs` — `collect_capability_snapshot`, `CapabilitySnapshot`, `ExecutableResolver`
 
 ## See Also

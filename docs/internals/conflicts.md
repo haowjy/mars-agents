@@ -63,6 +63,11 @@ alone.
 
 ## Unmanaged File Collisions
 
+A canonical destination is *unmanaged* when Mars does not own it: `mars.lock` does not claim it and
+`.mars/provided.lock` does not list it (see [canonical ownership](lock-file.md#canonical-ownership)).
+A destination either record owns is replaced by the item that wants it, so a package skill wins a
+provided skill's directory on every machine.
+
 For dependency items, an unmanaged canonical destination with different bytes is skipped with a warning (unless `--force` is used):
 
 ```

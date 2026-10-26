@@ -1,0 +1,115 @@
+{
+  "frontmatter": [
+    [
+      "model-policies",
+      [
+        {
+          "match": {
+            "alias": "opus"
+          },
+          "override": {
+            "network": false
+          }
+        },
+        {
+          "match": {
+            "alias": "sonnet"
+          },
+          "override": {
+            "network": "default"
+          }
+        },
+        {
+          "match": {
+            "alias": "haiku"
+          },
+          "override": {
+            "network-allow": [
+              "example.com"
+            ]
+          }
+        },
+        {
+          "match": {
+            "model": "gpt-6"
+          },
+          "override": {
+            "network-deny": [
+              "example.com"
+            ]
+          }
+        }
+      ]
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-policies",
+        0,
+        "override",
+        "network"
+      ],
+      "message": "agent field `model-policies[0].override.network` has invalid value `false`; allowed: allow, deny, allowlist"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-policies",
+        1,
+        "override",
+        "network"
+      ],
+      "message": "agent field `model-policies[1].override.network` has invalid value `default`; allowed: allow, deny, allowlist"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-policies",
+        2,
+        "override",
+        "network-allow"
+      ],
+      "message": "agent field `model-policies[2].override.network-allow` has invalid value `network-allow`; allowed: network host sets on settings, profile, overlay, or CLI"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-policies",
+        3,
+        "override",
+        "network-deny"
+      ],
+      "message": "agent field `model-policies[3].override.network-deny` has invalid value `network-deny`; allowed: network host sets on settings, profile, overlay, or CLI"
+    }
+  ]
+}

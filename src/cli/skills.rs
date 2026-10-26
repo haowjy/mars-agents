@@ -2,12 +2,9 @@
 
 use std::path::PathBuf;
 
-use crate::compiler::skills::{parse_skill_content, parse_skill_profile};
-use crate::compiler::tool_policy::ToolAction;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
-use crate::frontmatter;
-use crate::lock::ItemKind;
+use mars_schema::item::ItemKind;
 
 use super::output;
 
@@ -95,16 +92,13 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             }
         };
 
-        let fm = match frontmatter::parse(&content) {
-            Ok(fm) => fm,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", skill_md.display());
+        let profile = match mars_schema::skill::read(&content).into_fields() {
+            Ok(profile) => profile,
+            Err(why) => {
+                eprintln!("warning: skipping {}: {why}", skill_md.display());
                 continue;
             }
         };
-
-        let mut diags = Vec::new();
-        let profile = parse_skill_profile(&fm, &mut diags);
 
         if args.model_invocable && !profile.model_invocable {
             continue;
@@ -195,11 +189,10 @@ fn run_show(
             }
         };
 
-        let mut diags = Vec::new();
-        let (profile, _fm) = match parse_skill_content(&content, &mut diags) {
-            Ok(p) => p,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", skill_md.display());
+        let profile = match mars_schema::skill::read(&content).into_fields() {
+            Ok(profile) => profile,
+            Err(why) => {
+                eprintln!("warning: skipping {}: {why}", skill_md.display());
                 continue;
             }
         };
@@ -220,10 +213,6 @@ fn run_show(
                 "type": type_str,
                 "model-invocable": profile.model_invocable,
                 "user-invocable": profile.user_invocable,
-                "rules": profile.tools.rules,
-                // Deprecated: derived from `rules`; cannot carry `ask`, `*` or the capability.
-                "tools": profile.tools.rendered(ToolAction::Allow),
-                "disallowed-tools": profile.tools.rendered(ToolAction::Deny),
                 "scope": scope,
                 "source_path": skill_md,
             }));
@@ -235,7 +224,6 @@ fn run_show(
             println!("user-invocable:  {}", profile.user_invocable);
             println!("scope:         {scope}");
             println!("source_path:   {}", skill_md.display());
-            print_str_list("tool-rules", &profile.tools.describe());
         }
 
         return Ok(0);
@@ -243,14 +231,6 @@ fn run_show(
 
     eprintln!("error: skill `{name}` not found");
     Ok(1)
-}
-
-fn print_str_list(label: &str, items: &[String]) {
-    if items.is_empty() {
-        println!("{label}:          (none)");
-    } else {
-        println!("{label}:          {}", items.join(", "));
-    }
 }
 
 fn dir_name(path: &std::path::Path) -> String {

@@ -1,0 +1,4 @@
+---
+x:
+  &anchor hello
+---

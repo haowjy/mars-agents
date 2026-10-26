@@ -1,0 +1,216 @@
+{
+  "kind": "marketplace",
+  "packages": [
+    {
+      "id": "local",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {
+          "name": "sources",
+          "url": "https://github.com/acme/sources",
+          "resolved_commit": "1111111111111111111111111111111111111111"
+        },
+        "marketplace": {
+          "plugin": "local",
+          "plugin_source": {
+            "kind": "local",
+            "path": "plugins/local"
+          }
+        },
+        "selected_items": [
+          "skills/here/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "local"
+              ]
+            ],
+            "fields": {
+              "name": "local",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "here",
+            "source_path": "skills/here/SKILL.md",
+            "output_path": "skills/here/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "here"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "here",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {
+    ".claude-plugin/marketplace.json": [
+      {
+        "code": "marketplace.plugin-name-invalid",
+        "severity": "warning",
+        "path": [
+          "plugins",
+          15,
+          "name"
+        ],
+        "message": "plugin name `__proto__` is not usable (letters, digits, `-`, `_` and `.`, starting with a letter or digit); the entry was left out"
+      },
+      {
+        "code": "marketplace.plugin-name-invalid",
+        "severity": "warning",
+        "path": [
+          "plugins",
+          16,
+          "name"
+        ],
+        "message": "plugin name `../x` is not usable (letters, digits, `-`, `_` and `.`, starting with a letter or digit); the entry was left out"
+      },
+      {
+        "code": "marketplace.plugin-name-invalid",
+        "severity": "warning",
+        "path": [
+          "plugins",
+          17,
+          "name"
+        ],
+        "message": "plugin name `a\nb` is not usable (letters, digits, `-`, `_` and `.`, starting with a letter or digit); the entry was left out"
+      },
+      {
+        "code": "marketplace.remote-not-fetched",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `gh`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
+      },
+      {
+        "code": "marketplace.remote-not-fetched",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `pinned`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `subdir`: can't import from this source: `sha` is not a full 40-character commit"
+      },
+      {
+        "code": "marketplace.remote-not-fetched",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `market`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `from-npm`: can't import from this source: `npm` sources cannot be imported"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `archive`: can't import from this source: `archive` sources cannot be imported"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `opt-repo`: can't import from this source: repository `--upload-pack=touch /tmp/x` starts with `-`, which git reads as an option"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `ext-repo`: can't import from this source: repository `ext::sh-touch-x` is not an `https://` or `ssh://` URL or a `user@host:path` address"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `file-repo`: can't import from this source: repository `file:///etc/passwd` is a local repository; a marketplace entry names only network repositories"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `abs-repo`: can't import from this source: repository `/home/user/.ssh` is a local repository; a marketplace entry names only network repositories"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `git-scheme`: can't import from this source: repository `git://example.invalid/p` is not an `https://` or `ssh://` URL or a `user@host:path` address"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `opt-ref`: can't import from this source: ref `--output=/tmp/x` starts with `-`, which git reads as an option"
+      },
+      {
+        "code": "marketplace.plugin-unsupported",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `short-sha`: can't import from this source: `sha` is not a full 40-character commit"
+      },
+      {
+        "code": "marketplace.remote-not-fetched",
+        "severity": "warning",
+        "path": [],
+        "message": "plugin `scp-like`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
+      }
+    ]
+  }
+}

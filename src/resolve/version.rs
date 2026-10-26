@@ -95,18 +95,31 @@ fn locked_source_for_pending<'a>(
     Ok(None)
 }
 
-fn locked_source_matches_pending(locked_source: &LockedSource, pending: &PendingSource) -> bool {
+pub(super) fn locked_source_matches_pending(
+    locked_source: &LockedSource,
+    pending: &PendingSource,
+) -> bool {
     match &pending.source_id {
-        SourceId::Git { url, subpath } => {
+        SourceId::Git {
+            url,
+            subpath,
+            plugin,
+        } => {
             locked_source.path.is_none()
+                && locked_source.plugin.as_ref() == plugin.as_ref()
                 && locked_source
                     .url
                     .as_ref()
                     .is_some_and(|locked_url| git_urls_equivalent(locked_url, url))
                 && locked_source.subpath.as_ref() == subpath.as_ref()
         }
-        SourceId::Path { canonical, subpath } => {
+        SourceId::Path {
+            canonical,
+            subpath,
+            plugin,
+        } => {
             locked_source.url.is_none()
+                && locked_source.plugin.as_ref() == plugin.as_ref()
                 && locked_source.subpath.as_ref() == subpath.as_ref()
                 && locked_source.path.as_deref().is_some_and(|locked_path| {
                     crate::target::paths_equivalent(locked_path, &canonical.to_string_lossy())
@@ -121,7 +134,7 @@ fn git_urls_equivalent(locked_url: &SourceUrl, pending_url: &SourceUrl) -> bool 
 }
 
 fn locked_source_identity_string(locked_source: &LockedSource) -> String {
-    match (
+    let source = match (
         &locked_source.url,
         &locked_source.path,
         &locked_source.subpath,
@@ -146,6 +159,10 @@ fn locked_source_identity_string(locked_source: &LockedSource) -> String {
                 .map(|value| value.as_str())
                 .unwrap_or("none")
         ),
+    };
+    match &locked_source.plugin {
+        Some(plugin) => format!("{source} (plugin {plugin})"),
+        None => source,
     }
 }
 

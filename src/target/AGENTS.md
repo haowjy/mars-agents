@@ -72,7 +72,7 @@ let dest = adapter.default_dest_path(ItemKind::Agent, "coder").unwrap();
 **Adding a new target:**
 1. Create `src/target/<name>.rs` implementing `TargetAdapter`
 2. Register in `TargetRegistry::new()`
-3. Add to `HarnessKind` in `compiler/agents/mod.rs` if it's a harness target
+3. Add the stable id and authored name to `mars_schema::harness` if it is a harness target
 
 ## See Also
 

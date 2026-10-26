@@ -1,0 +1,607 @@
+use indexmap::{IndexMap, IndexSet};
+use serde_yaml::{Mapping, Value};
+
+/// Parsed markdown frontmatter and body.
+#[derive(Debug, Clone)]
+pub struct Frontmatter {
+    yaml: Mapping,
+    body: String,
+    has_frontmatter: bool,
+    has_bom: bool,
+}
+
+/// Structured agent skill references.
+///
+/// A flat `skills: [a, b]` list is represented as all `load` entries for
+/// backward compatibility. A structured `skills: { load: [...], available: [...] }`
+/// keeps the two launch-bundle channels separate.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct SkillsSpec {
+    pub load: Vec<String>,
+    pub available: Vec<String>,
+}
+
+impl SkillsSpec {
+    pub fn all(&self) -> Vec<String> {
+        self.load
+            .iter()
+            .chain(self.available.iter())
+            .cloned()
+            .collect()
+    }
+}
+
+/// The most frontmatter bytes a file may carry. Parsing time grows with the square of the
+/// nesting depth the text can hold, so an unbounded block is a way to stall a server that reads
+/// untrusted files; real frontmatter is a few hundred bytes.
+pub const MAX_FRONTMATTER_BYTES: usize = 64 * 1024;
+
+/// The deepest run of `[` and `{` the frontmatter may open, counted over the raw text. The
+/// YAML scanners take time quadratic in that depth, so a size cap alone still lets 64 KiB of `[`
+/// stall a parse for seconds; real frontmatter nests a few levels.
+pub const MAX_FLOW_DEPTH: usize = 64;
+
+/// Errors from frontmatter parsing.
+#[derive(Debug, thiserror::Error)]
+pub enum FrontmatterError {
+    #[error("frontmatter is {0} bytes; the limit is {MAX_FRONTMATTER_BYTES}")]
+    TooLarge(usize),
+
+    #[error("frontmatter nests `[` or `{{` more than {MAX_FLOW_DEPTH} deep")]
+    TooDeep,
+
+    #[error("malformed YAML frontmatter: {0}")]
+    MalformedYaml(#[from] serde_yaml::Error),
+
+    #[error("frontmatter is not closed with an exact `---` line")]
+    Unclosed,
+
+    #[error("YAML anchors and aliases are not supported")]
+    Anchor,
+
+    #[error("YAML document-end markers are not supported")]
+    DocumentEnd,
+
+    #[error(
+        "YAML syntax accepted by the semantic parser is unsupported by the structural scanner: {0}"
+    )]
+    UnsupportedSyntax(String),
+
+    #[error("frontmatter is not a YAML mapping")]
+    NotAMapping,
+}
+
+/// Parse markdown content into frontmatter and body.
+pub fn parse(content: &str) -> Result<Frontmatter, FrontmatterError> {
+    Frontmatter::parse(content)
+}
+
+impl Frontmatter {
+    /// Parse a markdown document into frontmatter + body.
+    pub fn parse(content: &str) -> Result<Self, FrontmatterError> {
+        let (frontmatter, mut structural_errors) = Self::parse_preserving_structure(content)?;
+        if structural_errors.is_empty() {
+            Ok(frontmatter)
+        } else {
+            Err(structural_errors.remove(0))
+        }
+    }
+
+    /// Parse semantic content while returning every structural refusal found.
+    ///
+    /// Schema readers use this to avoid losing an anchor diagnostic when the
+    /// structural parser later encounters syntax it cannot scan.
+    pub(crate) fn parse_preserving_structure(
+        content: &str,
+    ) -> Result<(Self, Vec<FrontmatterError>), FrontmatterError> {
+        let (has_bom, document) = content
+            .strip_prefix('\u{feff}')
+            .map_or((false, content), |document| (true, document));
+        let (first_line, after_first_line) = split_first_line(document);
+        if !is_delimiter_line(first_line) {
+            return Ok((
+                Self {
+                    yaml: Mapping::new(),
+                    body: content.to_string(),
+                    has_frontmatter: false,
+                    has_bom: false,
+                },
+                Vec::new(),
+            ));
+        }
+
+        let mut yaml_end = None;
+        let mut offset = 0usize;
+        for line in after_first_line.split_inclusive('\n') {
+            if is_delimiter_line(line) {
+                yaml_end = Some((offset, line.len()));
+                break;
+            }
+            offset += line.len();
+        }
+
+        let Some((yaml_len, closing_len)) = yaml_end else {
+            return Err(FrontmatterError::Unclosed);
+        };
+
+        if yaml_len > MAX_FRONTMATTER_BYTES {
+            return Err(FrontmatterError::TooLarge(yaml_len));
+        }
+        let yaml_text = &after_first_line[..yaml_len];
+        if exceeds_flow_depth(yaml_text) {
+            return Err(FrontmatterError::TooDeep);
+        }
+        let body_start = yaml_len + closing_len;
+        let body = after_first_line[body_start..].to_string();
+
+        if yaml_text.trim().is_empty() {
+            return Ok((
+                Self {
+                    yaml: Mapping::new(),
+                    body,
+                    has_frontmatter: true,
+                    has_bom,
+                },
+                Vec::new(),
+            ));
+        }
+
+        let value: Value = serde_yaml::from_str(yaml_text)?;
+        let structural_errors = validate_yaml_structure(yaml_text);
+        let yaml = match value {
+            Value::Mapping(mapping) => mapping,
+            Value::Null => Mapping::new(),
+            _ => return Err(FrontmatterError::NotAMapping),
+        };
+
+        Ok((
+            Self {
+                yaml,
+                body,
+                has_frontmatter: true,
+                has_bom,
+            },
+            structural_errors,
+        ))
+    }
+
+    /// Read all referenced skills as a flat list (`load` followed by `available`).
+    pub fn skills(&self) -> Vec<String> {
+        self.skills_structured().all()
+    }
+
+    /// Read `skills` in structured load/available form.
+    pub fn skills_structured(&self) -> SkillsSpec {
+        match self.get("skills") {
+            Some(Value::Mapping(mapping)) => SkillsSpec {
+                load: mapping
+                    .get(yaml_key("load"))
+                    .map(yaml_str_list)
+                    .unwrap_or_default(),
+                available: mapping
+                    .get(yaml_key("available"))
+                    .map(yaml_str_list)
+                    .unwrap_or_default(),
+            },
+            Some(value) => SkillsSpec {
+                load: yaml_str_list(value),
+                available: Vec::new(),
+            },
+            None => SkillsSpec::default(),
+        }
+    }
+
+    /// Read the `name` field if present.
+    pub fn name(&self) -> Option<&str> {
+        self.get("name").and_then(Value::as_str)
+    }
+
+    /// Read any YAML field by key.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.yaml.get(yaml_key(key))
+    }
+
+    /// Mutably read a YAML field by key.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        self.yaml.get_mut(yaml_key(key))
+    }
+
+    /// Markdown body after frontmatter.
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    /// Replace the Markdown body while preserving the parsed frontmatter.
+    pub fn set_body(&mut self, body: String) {
+        self.body = body;
+    }
+
+    /// Whether this document contains frontmatter delimiters.
+    pub fn has_frontmatter(&self) -> bool {
+        self.has_frontmatter
+    }
+
+    /// All frontmatter keys as strings.
+    pub fn keys(&self) -> Vec<String> {
+        self.yaml
+            .keys()
+            .filter_map(|k| k.as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// Parsed top-level YAML, for schema transforms that must verify an edited source.
+    pub(crate) fn mapping(&self) -> &Mapping {
+        &self.yaml
+    }
+
+    /// Insert or replace a top-level frontmatter field.
+    pub fn insert(&mut self, key: &str, value: Value) {
+        self.has_frontmatter = true;
+        self.yaml.insert(yaml_key(key), value);
+    }
+
+    /// Remove a top-level frontmatter field.
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        self.yaml.shift_remove(yaml_key(key))
+    }
+
+    /// Serialize back to full markdown.
+    pub fn render(&self) -> String {
+        if !self.has_frontmatter && self.yaml.is_empty() {
+            return self.body.clone();
+        }
+        let mut out = self.render_frontmatter();
+        out.push_str(&self.body);
+        out
+    }
+
+    /// Serialize only the frontmatter block, delimiters included.
+    ///
+    /// A caller that changes the frontmatter and must keep the authored body byte for byte
+    /// (`mars migrate`'s full rewrite) renders this and appends the parsed body itself.
+    pub(crate) fn render_frontmatter(&self) -> String {
+        if !self.has_frontmatter && self.yaml.is_empty() {
+            return String::new();
+        }
+
+        let mut out = if self.has_bom {
+            String::from("\u{feff}---\n")
+        } else {
+            String::from("---\n")
+        };
+        if !self.yaml.is_empty() {
+            let mut yaml = serde_yaml::to_string(&self.yaml)
+                .expect("serializing frontmatter mapping should succeed");
+            if let Some(stripped) = yaml.strip_prefix("---\n") {
+                yaml = stripped.to_string();
+            }
+            out.push_str(&yaml);
+            if !yaml.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        out.push_str("---\n");
+        out
+    }
+}
+
+/// Rename skills in frontmatter using exact-match replacement.
+fn rewrite_skills(fm: &mut Frontmatter, renames: &IndexMap<String, String>) -> IndexSet<String> {
+    let mut renamed = IndexSet::new();
+    let key = yaml_key("skills");
+    if let Some(value) = fm.yaml.get_mut(&key) {
+        rewrite_skill_value(value, renames, &mut renamed);
+    }
+
+    renamed
+}
+
+/// Rename subagents in frontmatter using exact-match replacement.
+fn rewrite_subagents(fm: &mut Frontmatter, renames: &IndexMap<String, String>) -> IndexSet<String> {
+    rewrite_string_list_field(fm, "subagents", renames)
+}
+
+/// Parse content, rewrite skills, and render updated content if changed.
+pub fn rewrite_content_skills(
+    content: &str,
+    renames: &IndexMap<String, String>,
+) -> Result<Option<String>, FrontmatterError> {
+    let mut fm = Frontmatter::parse(content)?;
+    let renamed = rewrite_skills(&mut fm, renames);
+    if renamed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(fm.render()))
+    }
+}
+
+/// Parse content, rewrite subagents, and render updated content if changed.
+pub fn rewrite_content_subagents(
+    content: &str,
+    renames: &IndexMap<String, String>,
+) -> Result<Option<String>, FrontmatterError> {
+    let mut fm = Frontmatter::parse(content)?;
+    let renamed = rewrite_subagents(&mut fm, renames);
+    if renamed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(fm.render()))
+    }
+}
+
+fn rewrite_string_list_field(
+    fm: &mut Frontmatter,
+    field_name: &str,
+    renames: &IndexMap<String, String>,
+) -> IndexSet<String> {
+    let mut renamed = IndexSet::new();
+    let key = yaml_key(field_name);
+    if let Some(value) = fm.yaml.get_mut(&key) {
+        rewrite_string_list_value(value, renames, &mut renamed);
+    }
+
+    renamed
+}
+
+fn yaml_str_list(val: &Value) -> Vec<String> {
+    match val {
+        Value::Sequence(seq) => seq
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+        Value::String(s) => vec![s.clone()],
+        _ => vec![],
+    }
+}
+
+fn rewrite_skill_value(
+    value: &mut Value,
+    renames: &IndexMap<String, String>,
+    renamed: &mut IndexSet<String>,
+) {
+    match value {
+        Value::Sequence(_) | Value::String(_) => rewrite_string_list_value(value, renames, renamed),
+        Value::Mapping(mapping) => {
+            for field in ["load", "available"] {
+                if let Some(child) = mapping.get_mut(yaml_key(field)) {
+                    rewrite_skill_value(child, renames, renamed);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_string_list_value(
+    value: &mut Value,
+    renames: &IndexMap<String, String>,
+    renamed: &mut IndexSet<String>,
+) {
+    match value {
+        Value::Sequence(seq) => {
+            for item in seq {
+                let Some(name) = item.as_str() else {
+                    continue;
+                };
+                if let Some(new_name) = renames.get(name) {
+                    renamed.insert(name.to_string());
+                    *item = Value::String(new_name.clone());
+                }
+            }
+        }
+        Value::String(name) => {
+            if let Some(new_name) = renames.get(name.as_str()) {
+                renamed.insert(name.clone());
+                *name = new_name.clone();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn exceeds_flow_depth(yaml: &str) -> bool {
+    let mut depth = 0usize;
+    for byte in yaml.bytes() {
+        match byte {
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_FLOW_DEPTH {
+                    return true;
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
+}
+
+fn split_first_line(content: &str) -> (&str, &str) {
+    match content.split_once('\n') {
+        Some((first, rest)) => (first, rest),
+        None => (content, ""),
+    }
+}
+
+fn is_delimiter_line(line: &str) -> bool {
+    line.strip_suffix('\n')
+        .unwrap_or(line)
+        .strip_suffix('\r')
+        .unwrap_or(line.strip_suffix('\n').unwrap_or(line))
+        == "---"
+}
+
+fn validate_yaml_structure(text: &str) -> Vec<FrontmatterError> {
+    use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
+    use yaml_rust2::scanner::Marker;
+
+    #[derive(Default)]
+    struct StructuralEvents {
+        anchor_or_alias: bool,
+        document_end: bool,
+        source: String,
+        char_to_byte: Vec<usize>,
+    }
+    impl MarkedEventReceiver for StructuralEvents {
+        fn on_event(&mut self, event: Event, marker: Marker) {
+            match event {
+                Event::Alias(_) | Event::Scalar(_, _, 1.., _) => self.anchor_or_alias = true,
+                Event::SequenceStart(1.., _) | Event::MappingStart(1.., _) => {
+                    self.anchor_or_alias = true;
+                }
+                Event::DocumentEnd => {
+                    let byte = self.char_to_byte.get(marker.index()).copied();
+                    if byte.is_some_and(|byte| self.source[byte..].starts_with("...")) {
+                        self.document_end = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut char_to_byte: Vec<usize> = text.char_indices().map(|(byte, _)| byte).collect();
+    char_to_byte.push(text.len());
+    let mut events = StructuralEvents {
+        source: text.to_owned(),
+        char_to_byte,
+        ..StructuralEvents::default()
+    };
+    // serde_yaml already accepted the document. The event parser is used only
+    // to distinguish YAML structure from identical text inside scalar values.
+    let parse_error = Parser::new_from_str(text).load(&mut events, true).err();
+    let mut errors = Vec::new();
+    if events.anchor_or_alias {
+        errors.push(FrontmatterError::Anchor);
+    }
+    if events.document_end {
+        errors.push(FrontmatterError::DocumentEnd);
+    }
+    if let Some(error) = parse_error {
+        errors.push(FrontmatterError::UnsupportedSyntax(error.to_string()));
+    }
+    errors
+}
+
+fn yaml_key(key: &str) -> Value {
+    Value::String(key.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_and_render_roundtrip() {
+        let input = "---\nname: coder\nskills:\n- plan\n- review\n---\n# Body\ntext";
+        let fm = Frontmatter::parse(input).unwrap();
+        assert_eq!(fm.name(), Some("coder"));
+        assert_eq!(fm.skills(), vec!["plan", "review"]);
+        assert_eq!(fm.body(), "# Body\ntext");
+        assert!(fm.has_frontmatter());
+
+        let rendered = fm.render();
+        let reparsed = Frontmatter::parse(&rendered).unwrap();
+        assert_eq!(reparsed.name(), Some("coder"));
+        assert_eq!(reparsed.skills(), vec!["plan", "review"]);
+        assert_eq!(reparsed.body(), "# Body\ntext");
+    }
+
+    #[test]
+    fn parse_without_frontmatter_keeps_body() {
+        let input = "# Markdown only\ntext";
+        let fm = parse(input).unwrap();
+        assert!(!fm.has_frontmatter());
+        assert!(fm.skills().is_empty());
+        assert_eq!(fm.body(), input);
+        assert_eq!(fm.render(), input);
+    }
+
+    #[test]
+    fn parse_empty_frontmatter_roundtrips_delimiters() {
+        let input = "---\n---\nbody";
+        let fm = Frontmatter::parse(input).unwrap();
+        assert!(fm.has_frontmatter());
+        assert!(fm.skills().is_empty());
+        assert_eq!(fm.body(), "body");
+        assert_eq!(fm.render(), input);
+    }
+
+    #[test]
+    fn parse_malformed_yaml_errors() {
+        let input = "---\ninvalid: [:\n---\nbody";
+        assert!(matches!(
+            Frontmatter::parse(input),
+            Err(FrontmatterError::MalformedYaml(_))
+        ));
+    }
+
+    #[test]
+    fn parse_flow_style_skills() {
+        let input = "---\nskills: [plan, review]\n---\nbody";
+        let fm = Frontmatter::parse(input).unwrap();
+        assert_eq!(fm.skills(), vec!["plan", "review"]);
+        assert_eq!(fm.skills_structured().load, vec!["plan", "review"]);
+        assert!(fm.skills_structured().available.is_empty());
+    }
+
+    #[test]
+    fn parse_structured_skills() {
+        let input = "---\nskills:\n  load: [principles]\n  available:\n    - planning\n    - spawn\n---\nbody";
+        let fm = Frontmatter::parse(input).unwrap();
+        assert_eq!(fm.skills(), vec!["principles", "planning", "spawn"]);
+        assert_eq!(fm.skills_structured().load, vec!["principles"]);
+        assert_eq!(fm.skills_structured().available, vec!["planning", "spawn"]);
+    }
+
+    #[test]
+    fn rewrite_structured_skills_preserves_split() {
+        let input = "---\nskills:\n  load: [plan]\n  available: [review]\n---\nbody\n";
+        let renames = IndexMap::from([
+            ("plan".to_string(), "plan__org".to_string()),
+            ("review".to_string(), "review__org".to_string()),
+        ]);
+
+        let rewritten = rewrite_content_skills(input, &renames).unwrap().unwrap();
+        let fm = Frontmatter::parse(&rewritten).unwrap();
+        assert_eq!(fm.skills_structured().load, vec!["plan__org"]);
+        assert_eq!(fm.skills_structured().available, vec!["review__org"]);
+    }
+
+    #[test]
+    fn rewrite_does_not_corrupt_substrings() {
+        let input = "---\nskills:\n- plan\n- planner\n- planning-extended\n---\nbody\n";
+        let renames = IndexMap::from([(
+            "plan".to_string(),
+            "plan__meridian-flow_meridian-base".to_string(),
+        )]);
+
+        let rewritten = rewrite_content_skills(input, &renames).unwrap().unwrap();
+        let fm = Frontmatter::parse(&rewritten).unwrap();
+        assert_eq!(
+            fm.skills(),
+            vec![
+                "plan__meridian-flow_meridian-base",
+                "planner",
+                "planning-extended"
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_subagents_uses_exact_matches() {
+        let input = "---\nsubagents:\n- web-researcher\n- web\n---\nbody\n";
+        let renames = IndexMap::from([(
+            "web-researcher".to_string(),
+            "web-researcher__source-a".to_string(),
+        )]);
+
+        let rewritten = rewrite_content_subagents(input, &renames).unwrap().unwrap();
+        let fm = Frontmatter::parse(&rewritten).unwrap();
+        assert_eq!(
+            fm.get("subagents").map(yaml_str_list).unwrap(),
+            vec!["web-researcher__source-a", "web"]
+        );
+    }
+}

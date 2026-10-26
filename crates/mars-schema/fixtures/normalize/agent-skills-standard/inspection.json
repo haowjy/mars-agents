@@ -1,0 +1,40 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "agent-skills",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "also_found": [
+    {
+      "dialect": "codex",
+      "paths": [
+        "skills/pdf/agents/openai.yaml"
+      ],
+      "weak": true
+    }
+  ],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "notes",
+      "source_path": "skills/notes/SKILL.md",
+      "skill_root": "skills/notes",
+      "output_path": "skills/notes/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "pdf",
+      "source_path": "skills/pdf/SKILL.md",
+      "skill_root": "skills/pdf",
+      "output_path": "skills/pdf/SKILL.md",
+      "payload": [
+        "skills/pdf/agents/openai.yaml"
+      ]
+    }
+  ],
+  "diagnostics": {}
+}

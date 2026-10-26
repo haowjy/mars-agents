@@ -1,0 +1,289 @@
+{
+  "kind": "plugin",
+  "packages": [
+    {
+      "id": "toolbox",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {
+          "name": "toolbox-repo",
+          "url": "https://github.com/acme/toolbox",
+          "requested_ref": "main",
+          "resolved_commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        "selected_items": [
+          "agents/helper.md",
+          "agents/plan.md",
+          "skills/plan/SKILL.md",
+          "skills/review/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/plugin.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "toolbox"
+              ],
+              [
+                "version",
+                "1.2.0"
+              ],
+              [
+                "description",
+                "Daily tools"
+              ]
+            ],
+            "fields": {
+              "name": "toolbox",
+              "version": "1.2.0",
+              "description": "Daily tools",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "helper",
+            "source_path": "agents/helper.md",
+            "output_path": "agents/helper.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "helper"
+                ],
+                [
+                  "description",
+                  "An agent."
+                ],
+                [
+                  "tools",
+                  {
+                    "*": "deny",
+                    "Read": "allow",
+                    "Grep": "allow"
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "helper",
+                "description": "An agent.",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "*",
+                    "pattern": null,
+                    "action": "deny"
+                  },
+                  {
+                    "capability": "read",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "grep",
+                    "pattern": null,
+                    "action": "allow"
+                  }
+                ],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "You are an agent.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "agent",
+            "slug": "plan",
+            "source_path": "agents/plan.md",
+            "output_path": "agents/plan.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "plan"
+                ],
+                [
+                  "description",
+                  "An agent."
+                ]
+              ],
+              "fields": {
+                "name": "plan",
+                "description": "An agent.",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "You are an agent.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "plan",
+            "source_path": "skills/plan/SKILL.md",
+            "output_path": "skills/plan/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "plan"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "plan",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "review",
+            "source_path": "skills/review/SKILL.md",
+            "output_path": "skills/review/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "review"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ],
+                [
+                  "model-invocable",
+                  false
+                ]
+              ],
+              "fields": {
+                "name": "review",
+                "description": "A skill.",
+                "model-invocable": false,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/review/checklist.md",
+            "output_path": "skills/review/checklist.md"
+          }
+        ],
+        "diagnostics": {
+          ".mcp.json": [
+            {
+              "code": "import.mcp-not-converted",
+              "severity": "warning",
+              "path": [],
+              "message": "MCP servers are not converted yet"
+            }
+          ],
+          "commands": [
+            {
+              "code": "import.commands-dropped",
+              "severity": "warning",
+              "path": [],
+              "message": "commands are not imported (convert one to a skill): commands/deploy.md"
+            }
+          ],
+          "hooks/hooks.json": [
+            {
+              "code": "import.hooks-not-converted",
+              "severity": "warning",
+              "path": [],
+              "message": "hooks are not converted yet"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

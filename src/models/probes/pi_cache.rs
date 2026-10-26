@@ -10,6 +10,7 @@ use crate::error::MarsError;
 
 const SCHEMA_VERSION: u32 = 3;
 const DEFAULT_TTL_SECS: u64 = 60;
+const LOCK_FILE: &str = ".pi.lock";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiProbeCacheEntry {
@@ -64,17 +65,8 @@ fn should_probe_pi(installed: &HashSet<String>, is_offline: bool) -> bool {
     !is_offline && installed.contains("pi")
 }
 
-fn cache_dir() -> Result<PathBuf, MarsError> {
-    let root = crate::platform::cache::global_cache_root()?;
-    Ok(root.join("availability"))
-}
-
 fn cache_path() -> Result<PathBuf, MarsError> {
-    Ok(cache_dir()?.join("pi.json"))
-}
-
-fn lock_path() -> Result<PathBuf, MarsError> {
-    Ok(cache_dir()?.join(".pi.lock"))
+    Ok(super::cache_dir()?.join("pi.json"))
 }
 
 fn ttl_secs() -> u64 {
@@ -120,66 +112,6 @@ fn write_cache_at(path: &Path, entry: &PiProbeCacheEntry) -> Result<(), MarsErro
     let json = serde_json::to_string_pretty(entry)
         .map_err(|e| MarsError::Internal(format!("pi probe cache serialize: {e}")))?;
     crate::fs::atomic_write(path, json.as_bytes())
-}
-
-struct FileLock {
-    _file: std::fs::File,
-}
-
-fn try_lock() -> Option<FileLock> {
-    lock_at(&lock_path().ok()?, true)
-}
-
-fn blocking_lock() -> Option<FileLock> {
-    lock_at(&lock_path().ok()?, false)
-}
-
-fn lock_at(path: &Path, nonblocking: bool) -> Option<FileLock> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok()?;
-    }
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
-        .ok()?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        let flags = if nonblocking {
-            libc::LOCK_EX | libc::LOCK_NB
-        } else {
-            libc::LOCK_EX
-        };
-        let ret = unsafe { libc::flock(file.as_raw_fd(), flags) };
-        if ret != 0 {
-            return None;
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Foundation::HANDLE;
-        use windows_sys::Win32::Storage::FileSystem::{
-            LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
-        };
-        let handle = file.as_raw_handle() as HANDLE;
-        let mut overlapped = unsafe { std::mem::zeroed() };
-        let flags = if nonblocking {
-            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY
-        } else {
-            LOCKFILE_EXCLUSIVE_LOCK
-        };
-        let ret = unsafe { LockFileEx(handle, flags, 0, 1, 0, &mut overlapped) };
-        if ret == 0 {
-            return None;
-        }
-    }
-
-    Some(FileLock { _file: file })
 }
 
 pub fn probe_cached(
@@ -303,7 +235,9 @@ fn trigger_background_refresh_with<S>(spawn_refresh: S)
 where
     S: Fn() -> Result<(), ()>,
 {
-    let Some(lock) = try_lock() else { return };
+    let Some(lock) = super::probe_lock(LOCK_FILE, "pi") else {
+        return;
+    };
     if let Some(entry) = read_cache_tolerant()
         && is_fresh(&entry)
         && is_usable_result(entry.result.as_ref())
@@ -323,7 +257,7 @@ where
     F: Fn() -> PiProbeResult,
 {
     use super::ObservedOutcome;
-    let lock = blocking_lock();
+    let lock = super::probe_lock_blocking(LOCK_FILE);
     if lock.is_none() {
         // Without the lock, do not overwrite a last-good listing or race a
         // background writer. It is still useful as support evidence.
@@ -505,7 +439,7 @@ fn persist_probe_attempt(
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
-    let Some(_lock) = blocking_lock() else {
+    let Some(_lock) = super::probe_lock_blocking(LOCK_FILE) else {
         return Ok(0);
     };
 

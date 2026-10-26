@@ -8,11 +8,11 @@ use super::models_common::{
     models_cache_ttl_hours,
 };
 use crate::build::policy::{PolicyInput, resolve_policy};
-use crate::compiler::agents::{AgentProfile, parse_agent_content};
 use crate::error::MarsError;
-use crate::lock::ItemKind;
 use crate::models::{self, ModelAlias};
 use crate::types::MarsContext;
+use mars_schema::agent::AgentProfile;
+use mars_schema::item::ItemKind;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -183,22 +183,17 @@ fn load_prompt_agents(ctx: &MarsContext) -> Result<Vec<PromptAgent>, MarsError> 
             }
         };
 
-        let mut diags = Vec::new();
-        let (profile, _fm) = match parse_agent_content(&content, &mut diags) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+        let profile = match mars_schema::agent::read(&content).into_valid() {
+            Ok(valid) => valid.fields,
+            Err(error) => {
+                eprintln!(
+                    "warning: skipping {}: {}",
+                    disk_path.display(),
+                    error.message()
+                );
                 continue;
             }
         };
-        if let Some(fatal) = diags.iter().find(|diag| diag.is_error()) {
-            eprintln!(
-                "warning: skipping {}: {}",
-                disk_path.display(),
-                fatal.message()
-            );
-            continue;
-        }
 
         let stem = prompt_path_stem(&disk_path);
         let agent_name = profile.name.as_deref().unwrap_or(stem.as_str());
@@ -265,12 +260,35 @@ fn prompt_target_for_agent(
         },
     )?;
 
-    Ok(prompt_target_for_routing(
-        Some(agent.name),
+    let mut target = prompt_target_for_routing(
+        Some(agent.name.clone()),
         PromptRefKind::Agent,
         &policy.routing,
         aliases,
-    ))
+    );
+    let guide = agent
+        .profile
+        .model_policies
+        .iter()
+        .filter_map(|entry| {
+            entry.when.as_ref().map(|when| {
+                let kind = match entry.match_type {
+                    mars_schema::model_policy::ModelPolicyMatchType::Alias => "alias",
+                    mars_schema::model_policy::ModelPolicyMatchType::Model => "model",
+                    mars_schema::model_policy::ModelPolicyMatchType::ModelGlob => "model-glob",
+                };
+                format!("- {kind} `{}`: {when}", entry.match_value)
+            })
+        })
+        .collect::<Vec<_>>();
+    if !guide.is_empty() {
+        let guide = format!("Model guide for {}:\n{}", agent.name, guide.join("\n"));
+        target.prompting = Some(match target.prompting.take() {
+            Some(generic) => format!("{guide}\n\n{generic}"),
+            None => guide,
+        });
+    }
+    Ok(target)
 }
 
 fn prompt_target_for_routing(

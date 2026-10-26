@@ -1,0 +1,77 @@
+{
+  "kind": "marketplace",
+  "also_found": [],
+  "plugins": [
+    {
+      "entry": {
+        "name": "document-skills",
+        "description": "Documents",
+        "source": {
+          "kind": "local",
+          "path": ""
+        },
+        "strict": false,
+        "lists": {
+          "skills": [
+            "./skills/pdf",
+            "./skills/xlsx"
+          ]
+        }
+      },
+      "at_marketplace_root": true,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "pdf",
+          "source_path": "skills/pdf/SKILL.md",
+          "skill_root": "skills/pdf",
+          "output_path": "skills/pdf/SKILL.md",
+          "payload": [
+            "skills/pdf/scripts/extract.py"
+          ]
+        },
+        {
+          "kind": "skill",
+          "slug": "xlsx",
+          "source_path": "skills/xlsx/SKILL.md",
+          "skill_root": "skills/xlsx",
+          "output_path": "skills/xlsx/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "example-skills",
+        "description": "Examples",
+        "source": {
+          "kind": "local",
+          "path": ""
+        },
+        "strict": false,
+        "lists": {
+          "skills": [
+            "./skills/skill-creator"
+          ]
+        }
+      },
+      "at_marketplace_root": true,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "skill-creator",
+          "source_path": "skills/skill-creator/SKILL.md",
+          "skill_root": "skills/skill-creator",
+          "output_path": "skills/skill-creator/SKILL.md",
+          "payload": [
+            "skills/skill-creator/agents/analyzer.md",
+            "skills/skill-creator/references/schema.md"
+          ]
+        }
+      ],
+      "diagnostics": {}
+    }
+  ],
+  "items": [],
+  "diagnostics": {}
+}

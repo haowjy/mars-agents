@@ -18,33 +18,33 @@ pipeline operates on EffectiveConfig only
 | Type | Role |
 |---|---|
 | `Config` | Full mars.toml: package, plugin, dependencies, local-dependencies, settings, models, agents |
+| `mars_schema::package::PackageMetadata` | Versioned `[package]` metadata, including `schema` and `uses-providers` |
 | `Config.plugin` | Raw `plugin` TOML value, preserved without applying publish defaults |
 | `LocalConfig` | Gitignored dev overrides: source path swaps, local agent overlays |
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
-| `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, `user_invocable`, `tools` (`AgentOverlayTools`) |
+| `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, and `user_invocable` |
 | `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
-| `NetworkPolicy` / `NetworkHost` | Shared typed parsers for every mode and host surface |
+| `user.rs` | Restricted user `config.toml` network tier (`default_network`, host sets) and ignored-key warnings, folded under the project's settings by `apply_user_network_settings` |
+| `mars_schema::network::{NetworkPolicy, NetworkHost}` | The typed parsers behind every mode and host surface: profile, overlay, settings, user config and CLI |
 
 `load()` parses `plugin` and the plugin-only `[package]` fields `authors`, `homepage`, and
 `license` as raw TOML values. It applies no publish defaults and validates none of their content,
 so config-saving commands round-trip authored values without making publish metadata a sync
 boundary. Typed plugin metadata and harness specs live in `build/plugin/metadata.rs`; plugin build
 validation owns their defaults and semantics, while `mars check` converts the same validation
-error into a warning. Keep `PackageInfo` flat and easy to extend with the planned catch-all for
-unknown package keys. Dependency `load_manifest()` uses a narrow package view
-(identity and engine floors) and ignores plugin-only metadata even when its shape is invalid for the
-package being built.
+error into a warning. Dependency `load_manifest()` reads package metadata through `mars-schema`;
+raw plugin-only values cannot block dependency consumption even when their shape is invalid for a
+plugin build.
 
-`AgentOverlayTools` holds permission sets of `OverlayToolName`s (`compiler/tool_names.rs`, a
-leaf grammar module): a tool name in `[agents.x.tools]` / `[skills.x.tools]` parses with the
-profile grammar as the config loads, and a malformed one fails the load. It keeps the author's
+`AgentOverlayTools` holds permission sets of `OverlayToolName`s (`mars_schema::tool_names`, a
+leaf grammar module): a tool name in `[agents.x.tools]` parses with the profile grammar as the
+config loads, and a malformed one fails the load. It keeps the author's
 spelling, so `save` does not rewrite it. This is the one place `config` reaches into `compiler`.
 Plain `tools.allowed` / `tools.disallowed` lists add to profile rules; a
 `{ replace = [...] }` table clears that action's lower rules, including `'*': allow`. Plain lists
 preserve wildcard rules; existing asks and the `'*': deny` allowlist marker survive both forms.
-Profile list-form `tools: [...]` is deprecated and only grants its named tools; package profiles
-cannot replace deny sets. The optional fields preserve absent versus authored-empty lists. During
+The optional fields preserve absent versus authored-empty lists. During
 the compatibility release, `project_config_warnings` warns once for each non-empty plain tool
 list from the raw project/local config; empty lists and replacement tables are silent.
 
@@ -56,11 +56,11 @@ list from the raw project/local config; empty lists and replacement tables are s
 - Model aliases are **replace-by-key**. Agent and skill overlays also replace the whole keyed
   entry, except their four network/tool permission sets compose across project and local entries.
 - Composition means a project tool list survives a matching local block that omits the list. A
-  local block that adds only a network set still replaces project scalars; repeat any project
-  scalar the local entry must retain.
-- Unknown project settings and agent-overlay keys remain forward-compatible. Network-looking
-  unknowns are retained and warned because silently dropping a deny would fail open.
-  `mars.local.toml [settings]` remains strict and rejects unknown keys.
+  local block that adds only a network or tool set still replaces project scalars; repeat any
+  project scalar the local entry must retain.
+- Unknown project and local settings and agent-overlay keys remain forward-compatible.
+  Network-looking unknowns are retained and warned (`unknown-network-key`) because silently
+  dropping a deny would fail open.
 - Removed `[settings.model_visibility]` is an error only for the consumer's
   project `mars.toml` and `mars.local.toml`. `load_manifest` parses only
   exported package sections, ignoring an upstream package's consumer settings.
@@ -93,11 +93,11 @@ Invalid harness names produce diagnostics (not hard errors) so commands continue
 
 ## Model Policies
 
-`ModelPolicyRule` — match by `model`, `alias`, or `model-glob` with optional overrides and `no-fallback` flag. Used in agent overlays, settings, and profile frontmatter.
+`mars_schema::model_policy::ModelPolicyRule` — match by `model`, `alias`, or `model-glob` with optional overrides and `no-fallback` flag. The schema crate defines and validates it for agent overlays, settings, and profile frontmatter.
 
-## Save Roundtrip Validation
+## Saving
 
-`save()` validates the serialized config roundtrips identically before writing. Prevents data loss from serialization bugs.
+`save()` and `save_local()` share one path (`save.rs`). It reads the file as it stands (base), serializes base and the command's config (next), and applies only the differences to the authored `toml_edit` document, so a key the command did not change keeps its bytes, comments and order, and a key Mars does not model (an unknown `[package]` or `[dependencies.x]` key) is never lost. It then reparses its output and refuses to write unless that equals next. A missing file is written whole. Do not add a second writer for these files.
 
 ## Patterns
 

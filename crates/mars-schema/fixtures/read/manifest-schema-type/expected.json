@@ -1,0 +1,29 @@
+{
+  "frontmatter": [
+    [
+      "schema",
+      "1"
+    ],
+    [
+      "name",
+      "pkg"
+    ],
+    [
+      "version",
+      "0.1.0"
+    ]
+  ],
+  "fields": null,
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "field.type",
+      "severity": "error",
+      "path": [
+        "package",
+        "schema"
+      ],
+      "message": "`package.schema` must be the integer 1"
+    }
+  ]
+}

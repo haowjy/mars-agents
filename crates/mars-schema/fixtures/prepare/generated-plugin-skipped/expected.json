@@ -1,0 +1,55 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "agent-skills",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "definitions": [
+    {
+      "kind": "skill",
+      "slug": "kept",
+      "source_path": "skills/kept/SKILL.md",
+      "output_path": "skills/kept/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "kept"
+          ],
+          [
+            "description",
+            "Kept"
+          ]
+        ],
+        "fields": {
+          "name": "kept",
+          "description": "Kept",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {
+    "vendor/out/.mars-plugin.json": [
+      {
+        "code": "generated-plugin-tree-skipped",
+        "severity": "info",
+        "path": [],
+        "message": "skipping generated plugin tree at `vendor/out` while reading authored package input"
+      }
+    ]
+  }
+}

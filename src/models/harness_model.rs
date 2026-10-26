@@ -1,5 +1,6 @@
-use crate::harness::registry::HarnessId;
+use crate::harness::registry;
 use crate::routing::slug;
+use mars_schema::HarnessId;
 
 use super::availability::{ResolvedRunnablePath, RunnableConfidence, RunnablePathSource};
 
@@ -23,7 +24,7 @@ pub fn resolve_harness_model(
         return passthrough(requested, mars_provider);
     }
 
-    if harness.native_provider().is_some() {
+    if registry::native_provider(harness).is_some() {
         let provider_matches = |provider: &str| {
             !provider.trim().is_empty()
                 && slug::provider_matches_native_harness(provider, harness.as_str())

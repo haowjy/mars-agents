@@ -1,0 +1,3 @@
+---
+allow_implicit_invocation: true
+---

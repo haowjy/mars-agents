@@ -1,0 +1,16 @@
+{
+  "kind": "invalid",
+  "also_found": [],
+  "plugins": [],
+  "items": [],
+  "diagnostics": {
+    ".claude-plugin/plugin.json": [
+      {
+        "code": "source-manifest.invalid-json",
+        "severity": "error",
+        "path": [],
+        "message": "failed to parse `.claude-plugin/plugin.json`: key must be a string at line 1 column 3"
+      }
+    ]
+  }
+}

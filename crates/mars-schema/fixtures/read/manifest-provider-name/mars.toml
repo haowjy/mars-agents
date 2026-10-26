@@ -1,0 +1,5 @@
+[package]
+schema = 1
+name = "pkg"
+version = "0.1.0"
+uses-providers = ["meridian", "Not_A-Provider", "a__b"]

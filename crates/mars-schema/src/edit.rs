@@ -17,7 +17,6 @@ fn emit(value: &Value, indent: usize) -> String {
         Value::String(v) if v.contains('\n') => {
             let mut out = String::from("|-\n");
             for line in v.lines() { out.push_str(&format!("{}{}\n", " ".repeat(indent + 2), line)); }
-            out.push_str(&" ".repeat(indent));
             out
         }
         Value::String(v) => serde_json::to_string(v).expect("JSON strings are serializable"),

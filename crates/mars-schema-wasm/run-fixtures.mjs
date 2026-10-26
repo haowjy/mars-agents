@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import YAML from "../../npm/@meridian-flow/mars-schema/node_modules/yaml/dist/index.js";
 const require = createRequire(import.meta.url);
 const wasm = require("../../npm/@meridian-flow/mars-schema/node/mars_schema_wasm.js");
 const root = new URL("../mars-schema/fixtures/", import.meta.url);
@@ -15,7 +16,8 @@ for (const dir of readDir("emit")) {
   const input = JSON.parse(readFileSync(new URL(`emit/${dir.name}/value.json`, root), "utf8"));
   const actual = wasm.emitValue(input.value, input.indent);
   const expected = readFileSync(new URL(`emit/${dir.name}/expected.txt`, root), "utf8").trimEnd();
-  if (actual !== expected) throw new Error(`emit fixture ${dir.name}: ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`);
+  if (actual.trimEnd() !== expected) throw new Error(`emit fixture ${dir.name}: ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`);
+  if (JSON.stringify(YAML.parse(actual)) !== JSON.stringify(input.value)) throw new Error(`YAML round-trip failed for ${dir.name}`);
 }
 function treeFiles(url, prefix = "") {
   const out = new Map();

@@ -59,10 +59,10 @@ pub fn prepare(input: JsValue) -> Result<JsValue, JsValue> {
     };
     let prepared = mars_schema::prepare::prepare(&tree, context, None);
     let mut value = serde_json::to_value(&prepared).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    if let Some(manifest) = value.get_mut("manifest") {
-        if let Some(source) = prepared.manifest.as_ref() {
-            manifest["normalized_bytes"] = serde_json::json!(source.normalized_bytes);
-        }
+    if let Some(manifest) = value.get_mut("manifest")
+        && let Some(source) = prepared.manifest.as_ref()
+    {
+        manifest["normalized_bytes"] = serde_json::json!(source.normalized_bytes);
     }
     if let Some(definitions) = value.get_mut("definitions").and_then(|v| v.as_array_mut()) {
         for (output, definition) in definitions.iter_mut().zip(prepared.definitions.iter()) {

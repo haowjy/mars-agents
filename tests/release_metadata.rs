@@ -289,7 +289,7 @@ fn release_workflow_accepts_stable_and_rc_provenance() {
     assert!(workflow.contains("PYPI_VERSION=\"$TAG_VERSION\""));
     assert!(workflow.contains("Tag version ($TAG_VERSION) != Cargo.toml ($CARGO_VERSION)"));
     assert!(workflow.contains("Expected pyproject.toml version $PYPI_VERSION"));
-    assert!(workflow.contains("npm_packages=(npm/@meridian-flow/mars-agents*/package.json)"));
+    assert!(workflow.contains("npm_packages=(npm/@meridian-flow/*/package.json)"));
     assert!(workflow.contains("jq -r '.version // empty'"));
     assert!(workflow.contains("optionalDependencies // {} | to_entries[]"));
     assert!(workflow.contains("CHANGELOG.md missing release section for ${TAG_VERSION}"));

@@ -11,12 +11,17 @@ fn build_launch_bundle_fails_on_unknown_agent_harness() {
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
-harness: not-a-harness
+harness: claude
 ---
 Review code changes."#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    std::fs::write(
+        project_root.join(".mars/agents/reviewer.md"),
+        agent_content.replace("harness: claude", "harness: not-a-harness"),
+    )
+    .unwrap();
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
@@ -32,12 +37,17 @@ fn build_launch_bundle_fails_on_invalid_top_level_agent_field_value() {
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
-model-invocable: nope
+model-invocable: true
 ---
 Review code changes."#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+    std::fs::write(
+        project_root.join(".mars/agents/reviewer.md"),
+        agent_content.replace("model-invocable: true", "model-invocable: nope"),
+    )
+    .unwrap();
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
@@ -45,30 +55,6 @@ Review code changes."#;
         .failure()
         .code(2)
         .stderr(predicates::str::contains("model-invocable"));
-}
-
-#[test]
-fn build_launch_bundle_rejects_duplicate_network_separator_spellings() {
-    let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-network-deny: [a.example]
-network_deny: [b.example]
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains(
-            "fields `network-deny` and `network_deny` are duplicate spellings",
-        ));
 }
 
 #[test]
@@ -110,7 +96,7 @@ Review code changes."#;
     let malformed_inventory_content = r#"---
 name: malformed
 model: claude-opus-4-6
-model-invocable: nope
+model-invocable: true
 ---
 Broken inventory entry."#;
 
@@ -125,6 +111,11 @@ Broken inventory entry."#;
         "",
     );
 
+    std::fs::write(
+        project_root.join(".mars/agents/malformed.md"),
+        malformed_inventory_content.replace("model-invocable: true", "model-invocable: nope"),
+    )
+    .unwrap();
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.env("PATH", replace_path_with(&bin_dir));
     cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);

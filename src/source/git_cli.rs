@@ -9,10 +9,25 @@ use crate::source::{AvailableVersion, GlobalCache};
 
 use super::git::parse_semver_tag;
 
+/// Dependency data (a URL, a tag or branch, a locked commit) reaches git as an argument, and one
+/// starting with `-` would be an option: `--upload-pack=<cmd>` runs `<cmd>`. Every function here
+/// refuses such a value before spawning git, and puts `--` before the repository where git has one.
+fn not_an_option(what: &str, value: &str) -> Result<(), MarsError> {
+    if value.starts_with('-') {
+        return Err(MarsError::Source {
+            source_name: value.to_string(),
+            message: format!("{what} `{value}` starts with `-`, which git would read as an option"),
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsError> {
-    let command_display = display_command(&["ls-remote", url, reference]);
+    not_an_option("URL", url)?;
+    not_an_option("ref", reference)?;
+    let command_display = display_command(&["ls-remote", "--", url, reference]);
     let output = run_git_with_ref(
-        &["ls-remote", url],
+        &["ls-remote", "--", url],
         reference,
         Path::new("."),
         "resolve remote git reference",
@@ -34,8 +49,9 @@ pub(crate) fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsEr
 
 /// Run `git ls-remote --tags <url>` and parse semver tags.
 pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
+    not_an_option("URL", url)?;
     let output = run_git(
-        &["ls-remote", "--tags", url],
+        &["ls-remote", "--tags", "--", url],
         Path::new("."),
         "list remote git tags",
     )?;
@@ -81,6 +97,9 @@ pub(crate) fn fetch_git_clone(
     sha: Option<&str>,
     cache: &GlobalCache,
 ) -> Result<PathBuf, MarsError> {
+    not_an_option("URL", url)?;
+    tag.map(|tag| not_an_option("tag", tag)).transpose()?;
+    sha.map(|sha| not_an_option("commit", sha)).transpose()?;
     let cache_name = git_cache_component(url)?;
     let cache_path = cache.git_dir().join(cache_name);
 
@@ -102,6 +121,7 @@ pub(crate) fn fetch_git_clone(
             args.push("--branch");
             args.push(tag_name);
         }
+        args.push("--");
         args.push(url);
         args.push(&cache_path_display);
 
@@ -117,7 +137,7 @@ pub(crate) fn fetch_git_clone(
     if was_cached {
         if let Some(sha) = sha {
             match run_git(
-                &["fetch", "--depth", "1", "origin", sha],
+                &["fetch", "--depth", "1", "--", "origin", sha],
                 &cache_path,
                 "fetch cached git commit",
             ) {
@@ -141,7 +161,7 @@ pub(crate) fn fetch_git_clone(
 
         if let Some(tag_name) = tag {
             run_git(
-                &["checkout", tag_name],
+                &["checkout", tag_name, "--"],
                 &cache_path,
                 "checkout cached git tag",
             )?;
@@ -149,7 +169,7 @@ pub(crate) fn fetch_git_clone(
 
         if let Some(sha) = sha {
             run_git(
-                &["checkout", sha],
+                &["checkout", sha, "--"],
                 &cache_path,
                 "checkout cached git commit",
             )?;
@@ -162,7 +182,7 @@ pub(crate) fn fetch_git_clone(
         }
     } else if let Some(sha) = sha {
         run_git(
-            &["checkout", sha],
+            &["checkout", sha, "--"],
             &cache_path,
             "checkout cloned git commit",
         )?;

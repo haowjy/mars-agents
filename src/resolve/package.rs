@@ -1,13 +1,15 @@
+use mars_schema::item::ItemKind;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::config::{EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec};
+use crate::config::{
+    EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec, source_id_for_spec,
+    validate_plugin_selector,
+};
 use crate::diagnostic::DiagnosticCollector;
-use crate::dialect::Dialect;
 use crate::discover;
 use crate::error::{ConfigError, MarsError, ResolutionError};
-use crate::lock::{ItemKind, LockFile};
-use crate::staging;
+use crate::lock::LockFile;
 use crate::types::{ItemName, SourceId, SourceName, SourceSubpath};
 use indexmap::IndexMap;
 
@@ -16,7 +18,6 @@ use super::SourceProvider;
 use super::constraint::parse_version_constraint;
 use super::context::ResolverContext;
 use super::filter::is_unfiltered_request;
-use super::path::{apply_subpath, source_id_for_pending_spec};
 use super::requires::{EngineRequirementFailure, check_package_requirements};
 use super::types::{PendingItem, ResolveOptions, ResolvedNode, VersionConstraint};
 use super::version::resolve_single_source;
@@ -76,6 +77,20 @@ impl RegisteredPackage {
             .keys()
             .filter(|(kind, _)| *kind == ItemKind::Skill)
             .map(|(_, name)| name)
+    }
+}
+
+fn prepare_package(
+    source_name: &SourceName,
+    rooted: crate::resolve::RootedSourceRef,
+    effective_config: &EffectiveConfig,
+    options: &ResolveOptions,
+    diag: &mut DiagnosticCollector,
+) -> Result<crate::package_prepare::PreparedRootedSource, MarsError> {
+    if let Some(prepared) = options.prepared_sources.get(source_name) {
+        crate::package_prepare::prepared_rooted(rooted, std::sync::Arc::clone(prepared), diag)
+    } else {
+        crate::package_prepare::prepare_rooted(source_name, rooted, effective_config, diag)
     }
 }
 
@@ -192,16 +207,19 @@ pub(crate) fn resolve_package_bottom_up(
                 });
 
                 if ref_changed {
-                    let new_rooted = apply_subpath(
-                        &pending_src.name,
-                        &new_ref.tree_path,
-                        pending_src.subpath.as_ref(),
+                    let new_rooted = super::plugin::root_package(
+                        pending_src,
+                        &new_ref,
+                        provider,
+                        locked,
+                        options,
+                        diag,
                     )?;
-                    let staged = stage_rooted_package(
+                    let staged = prepare_package(
                         &pending_src.name,
                         new_rooted,
                         effective_config,
-                        options.staging_root.as_deref(),
+                        options,
                         diag,
                     )?;
                     ctx.set_pending_restart(
@@ -270,9 +288,23 @@ pub(crate) fn resolve_package_bottom_up(
                     !exclusions.contains_key(&(pending_src.name.clone(), version.clone()))
                 })
             });
-    let (resolved_ref, rooted_ref, hook_surface, manifest) = loop {
-        let candidate = if let Some(value) = override_candidate.take() {
-            value
+    let (resolved_ref, rooted_ref, hook_surface, prepared, manifest) = loop {
+        let candidate = if let Some((resolved, rooted, _hook_surface)) = override_candidate.take() {
+            let prepared =
+                prepare_package(&pending_src.name, rooted, effective_config, options, diag)?;
+            let manifest = test_manifest_fallback(
+                provider,
+                &prepared.rooted.authored_root,
+                prepared.manifest,
+                diag,
+            )?;
+            (
+                resolved,
+                prepared.rooted,
+                prepared.hook_surface,
+                prepared.prepared,
+                manifest,
+            )
         } else {
             match resolve_single_source(
                 pending_src,
@@ -284,19 +316,34 @@ pub(crate) fn resolve_package_bottom_up(
                 diag,
             ) {
                 Ok(ref_) => {
-                    let rooted = apply_subpath(
-                        &pending_src.name,
-                        &ref_.tree_path,
-                        pending_src.subpath.as_ref(),
+                    let rooted = super::plugin::root_package(
+                        pending_src,
+                        &ref_,
+                        provider,
+                        locked,
+                        options,
+                        diag,
                     )?;
-                    let staged = stage_rooted_package(
+                    let staged = prepare_package(
                         &pending_src.name,
                         rooted,
                         effective_config,
-                        options.staging_root.as_deref(),
+                        options,
                         diag,
                     )?;
-                    (ref_, staged.rooted, staged.hook_surface)
+                    let manifest = test_manifest_fallback(
+                        provider,
+                        &staged.rooted.authored_root,
+                        staged.manifest,
+                        diag,
+                    )?;
+                    (
+                        ref_,
+                        staged.rooted,
+                        staged.hook_surface,
+                        staged.prepared,
+                        manifest,
+                    )
                 }
                 Err(MarsError::Resolution(ResolutionError::VersionConflict { .. }))
                     if !rejected.is_empty() =>
@@ -312,14 +359,14 @@ pub(crate) fn resolve_package_bottom_up(
                 Err(error) => return Err(error),
             }
         };
-        let manifest = provider.read_manifest(&candidate.1.package_root, diag)?;
-        let failures = manifest
+        let failures = candidate
+            .4
             .as_ref()
             .map(|manifest| check_package_requirements(&manifest.package, options))
             .transpose()?
             .unwrap_or_default();
         if failures.is_empty() {
-            break (candidate.0, candidate.1, candidate.2, manifest);
+            break candidate;
         }
 
         let label = candidate_version_label(&candidate.0);
@@ -416,15 +463,17 @@ pub(crate) fn resolve_package_bottom_up(
         });
     }
     let manifest_requests =
-        collect_manifest_requests(pending_src, &rooted_ref.package_root, &manifest, options)?;
+        collect_manifest_requests(pending_src, &rooted_ref.authored_root, &manifest, options)?;
     let deps = manifest_requests
         .iter()
         .map(|request| request.name.clone())
         .collect();
 
-    let discovered = discover::discover_resolved_source(
-        &rooted_ref.package_root,
+    let discovered = discover::package_items(
+        &rooted_ref.authored_root,
         Some(pending_src.name.as_ref()),
+        &prepared,
+        None,
         diag,
     )?;
     let mut items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem> = IndexMap::new();
@@ -439,6 +488,7 @@ pub(crate) fn resolve_package_bottom_up(
                 source_name: pending_src.name.clone(),
                 source_id: pending_src.source_id.clone(),
                 rooted_ref,
+                prepared: Some(prepared),
                 resolved_ref,
                 manifest,
                 deps,
@@ -525,6 +575,26 @@ pub(crate) fn resolve_package_bottom_up(
     Ok(())
 }
 
+#[cfg(test)]
+fn test_manifest_fallback(
+    provider: &dyn SourceProvider,
+    authored_root: &Path,
+    manifest: Option<Manifest>,
+    diag: &mut DiagnosticCollector,
+) -> Result<Option<Manifest>, MarsError> {
+    Ok(provider.read_manifest(authored_root, diag)?.or(manifest))
+}
+
+#[cfg(not(test))]
+fn test_manifest_fallback(
+    _provider: &dyn SourceProvider,
+    _authored_root: &Path,
+    manifest: Option<Manifest>,
+    _diag: &mut DiagnosticCollector,
+) -> Result<Option<Manifest>, MarsError> {
+    Ok(manifest)
+}
+
 fn candidate_version_label(resolved: &crate::source::ResolvedRef) -> String {
     resolved
         .version
@@ -583,58 +653,6 @@ fn engine_unsatisfiable_error(
         name: name.to_string(),
         message: format!("no compatible candidate remains:\n{candidates}"),
     })
-}
-
-pub(crate) fn stage_rooted_package(
-    source_name: &SourceName,
-    rooted: super::types::RootedSourceRef,
-    effective_config: &EffectiveConfig,
-    staging_root: Option<&Path>,
-    diag: &mut DiagnosticCollector,
-) -> Result<staging::StagedRootedSource, MarsError> {
-    let Some(staging_root) = staging_root else {
-        return Ok(staging::StagedRootedSource {
-            rooted,
-            hook_surface: staging::HookSurfaceState::Readable,
-        });
-    };
-    let dep = effective_config.dependencies.get(source_name);
-    let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
-    let empty_renames = crate::types::RenameMap::new();
-    let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
-    staging::stage_rooted_source(
-        source_name,
-        rooted,
-        staging::RootedStageOptions { dialect },
-        &effective_config.skills,
-        renames,
-        staging_root,
-        diag,
-    )
-}
-
-pub(crate) fn stage_rooted_package_for_publish_inputs(
-    source_name: &SourceName,
-    rooted: super::types::RootedSourceRef,
-    effective_config: &EffectiveConfig,
-    staging_root: &Path,
-    inputs: &[staging::PublishInput],
-    diag: &mut DiagnosticCollector,
-) -> Result<staging::StagedRootedSource, MarsError> {
-    let dep = effective_config.dependencies.get(source_name);
-    let dialect = Dialect::resolve(dep.and_then(|entry| entry.dialect), &rooted.package_root);
-    let empty_renames = crate::types::RenameMap::new();
-    let renames = dep.map(|entry| &entry.rename).unwrap_or(&empty_renames);
-    staging::stage_rooted_source_for_publish_inputs(
-        source_name,
-        rooted,
-        staging::RootedStageOptions { dialect },
-        &effective_config.skills,
-        renames,
-        staging_root,
-        inputs,
-        diag,
-    )
 }
 
 fn package_has_unfiltered_materialization_request(
@@ -721,6 +739,12 @@ pub(crate) fn collect_manifest_requests(
         let dep_name_typed = SourceName::from(dep_name.clone());
         let dep_subpath = dep_spec.subpath.clone();
         let dep_filter = dep_spec.filter.to_mode();
+        validate_plugin_selector(
+            dep_name,
+            dep_spec.plugin.as_deref(),
+            dep_subpath.as_ref(),
+            None,
+        )?;
 
         let (declared_spec, declared_constraint) = match (&dep_spec.url, &dep_spec.path) {
             (Some(url), None) => (
@@ -753,16 +777,24 @@ pub(crate) fn collect_manifest_requests(
                 .into());
             }
         };
-        let declared_source_id =
-            source_id_for_pending_spec(package_root, &declared_spec, dep_subpath.clone());
+        let declared_source_id = source_id_for_spec(
+            package_root,
+            &declared_spec,
+            dep_subpath.clone(),
+            dep_spec.plugin.as_deref(),
+        );
         let (dep_spec_resolved, dep_constraint) =
             if let Some(path) = options.source_overrides.get(&dep_name_typed) {
                 (SourceSpec::Path(path.clone()), VersionConstraint::Latest)
             } else {
                 (declared_spec, declared_constraint)
             };
-        let effective_source_id =
-            source_id_for_pending_spec(package_root, &dep_spec_resolved, dep_subpath.clone());
+        let effective_source_id = source_id_for_spec(
+            package_root,
+            &dep_spec_resolved,
+            dep_subpath.clone(),
+            dep_spec.plugin.as_deref(),
+        );
         requests.push(PendingSource {
             name: dep_name_typed,
             declared_source_id,

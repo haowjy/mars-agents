@@ -1,0 +1,51 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "agent-skills",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "definitions": [
+    {
+      "kind": "skill",
+      "slug": "flat",
+      "source_path": "SKILL.md",
+      "output_path": "skills/flat/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "flat"
+          ],
+          [
+            "description",
+            "Flat"
+          ]
+        ],
+        "fields": {
+          "name": "flat",
+          "description": "Flat",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [
+    {
+      "source_path": "notes.md",
+      "output_path": "skills/flat/notes.md"
+    }
+  ],
+  "diagnostics": {}
+}

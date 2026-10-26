@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::error::MarsError;
-use crate::lock::ItemKind;
+use mars_schema::item::ItemKind;
 
 use super::output;
 

@@ -9,6 +9,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  schema-wasm-fixtures:
+    name: Schema WASM fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-bindgen
+        run: cargo install wasm-bindgen-cli --locked --version 0.2.122
+      - name: Build package
+        run: scripts/build-schema-wasm.sh
+      - name: Install fixture parser
+        run: npm install --ignore-scripts --no-audit --no-fund
+        working-directory: npm/@meridian-flow/mars-schema
+      - name: Run fixtures
+        run: node crates/mars-schema-wasm/run-fixtures.mjs
+
   pr-release-label:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

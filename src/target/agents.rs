@@ -1,3 +1,4 @@
+use crate::types::DestPath;
 /// `.agents` target adapter — deprecated full-fidelity legacy output.
 ///
 /// This is the primary target that Meridian reads at runtime. It emits:
@@ -7,8 +8,7 @@
 /// See `design/spec/agents-target-adapter.md` for the V0 contract. The key
 /// point: NO field stripping — all agent frontmatter fields needed by Meridian
 /// are preserved.
-use crate::lock::ItemKind;
-use crate::types::DestPath;
+use mars_schema::item::ItemKind;
 
 use super::TargetAdapter;
 

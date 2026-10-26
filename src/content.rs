@@ -10,7 +10,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::lock::{ItemKind, LockedItem};
+use crate::lock::LockedItem;
+use mars_schema::item::ItemKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContentScope {

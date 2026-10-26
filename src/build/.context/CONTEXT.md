@@ -254,7 +254,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, 
            ├─ models::ensure_fresh()                   (catalog for native slug + probes)
            ├─ model::resolve_model()                   (alias → model_id + provider, or unset)
            ├─ harness::resolve_harness()               (route selection, provider/candidate eval)
-           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, network, autocompact)
+           ├─ execution::resolve_execution_policy()    (effort, approval, sandbox, network, alias compaction)
            └─ runnable::resolve_routing()              (populate Routing with aggregate report)
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)

@@ -1,14 +1,13 @@
 //! Selective native agent emission when `settings.meridian.agent_copy` is configured.
 
-use crate::compiler::agents::HarnessKind;
 use crate::config::AgentCopyConfig;
 use crate::diagnostic::DiagnosticCollector;
-use crate::harness::registry;
+use mars_schema::HarnessId;
 
 /// Validated harness allowlist for selective native emission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCopySpec {
-    pub harnesses: Vec<HarnessKind>,
+    pub harnesses: Vec<HarnessId>,
     pub include_fanout: bool,
 }
 
@@ -44,18 +43,18 @@ pub fn build_agent_copy_spec(
         if trimmed.is_empty() {
             continue;
         }
-        let Some(kind) = HarnessKind::from_str(trimmed) else {
+        let Some(kind) = mars_schema::harness::parse(trimmed) else {
             diag.warn(
                 "agent-copy-invalid-harness",
                 format!(
                     "settings.meridian.agent_copy.harnesses: unknown harness '{trimmed}'; \
                      valid harnesses: {}",
-                    registry::names().join(", ")
+                    mars_schema::harness::names()
                 ),
             );
             continue;
         };
-        let target = kind.target_dir();
+        let target = crate::harness::registry::descriptor(kind).default_target;
         if !managed_targets.iter().any(|t| t == target) {
             diag.warn(
                 "agent-copy-harness-not-in-targets",

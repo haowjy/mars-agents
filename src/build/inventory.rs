@@ -1,11 +1,15 @@
+use mars_schema::HarnessId;
+#[cfg(test)]
+use mars_schema::item::ItemKind;
 use std::path::{Path, PathBuf};
 
-use crate::compiler::agents::{AgentMode, HarnessKind, ModelPolicyMatchType, parse_agent_content};
 use crate::compiler::native_agent_manifest::{
     agent_is_native_for_harness, read_native_agent_manifest,
 };
 use crate::content::ContentRoots;
 use crate::error::{ConfigError, MarsError};
+use mars_schema::agent::AgentMode;
+use mars_schema::model_policy::ModelPolicyMatchType;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedAgentInventory {
@@ -13,6 +17,7 @@ struct ParsedAgentInventory {
     description: String,
     model: Option<String>,
     model_backups: Vec<String>,
+    has_model_guide: bool,
     mode: AgentMode,
 }
 
@@ -181,30 +186,28 @@ fn parse_inventory_agent(
         )
     })?;
 
-    let mut parse_diags = Vec::new();
-    let (profile, _frontmatter) =
-        parse_agent_content(&content, &mut parse_diags).map_err(|err| {
+    let valid = mars_schema::agent::read(&content)
+        .into_valid()
+        .map_err(|error| {
             format!(
-                "failed to parse agent inventory file {}: {err}",
-                path.display()
-            )
-        })?;
-
-    let mut warnings = Vec::new();
-    for diag in parse_diags {
-        if diag.is_error() {
-            return Err(format!(
                 "agent inventory file {} has invalid frontmatter: {}",
                 path.display(),
+                error.message()
+            )
+        })?;
+    let profile = valid.fields;
+
+    let warnings = valid
+        .warnings
+        .iter()
+        .map(|diag| {
+            format!(
+                "agent inventory parse warning in {}: {}",
+                path.display(),
                 diag.message()
-            ));
-        }
-        warnings.push(format!(
-            "agent inventory parse warning in {}: {}",
-            path.display(),
-            diag.message()
-        ));
-    }
+            )
+        })
+        .collect::<Vec<_>>();
     if !profile.model_invocable {
         return Ok((None, warnings));
     }
@@ -225,6 +228,10 @@ fn parse_inventory_agent(
             description,
             model: profile.model,
             model_backups,
+            has_model_guide: profile
+                .model_policies
+                .iter()
+                .any(|entry| entry.when.is_some()),
             mode,
         }),
         warnings,
@@ -232,7 +239,7 @@ fn parse_inventory_agent(
 }
 
 fn fallback_model_policies_for_inventory(
-    profile: &crate::compiler::agents::AgentProfile,
+    profile: &mars_schema::agent::AgentProfile,
 ) -> Vec<String> {
     super::policy::fallback_model_policy_entries(&profile.model_policies)
         .map(|(kind, token)| match kind {
@@ -262,6 +269,11 @@ fn render_meridian_agent_line(agent: &ParsedAgentInventory) -> String {
         line.push_str(" | Declared backups: ");
         line.push_str(&agent.model_backups.join(", "));
     }
+    if agent.has_model_guide {
+        line.push_str(" | Model guide: `mars models prompting @");
+        line.push_str(&agent.name);
+        line.push('`');
+    }
 
     line
 }
@@ -269,15 +281,32 @@ fn render_meridian_agent_line(agent: &ParsedAgentInventory) -> String {
 fn render_native_agent_line(agent: &ParsedAgentInventory) -> String {
     let description = agent.description.trim();
     if description.is_empty() {
-        format!("- {}", agent.name)
+        format!(
+            "- {}{}",
+            agent.name,
+            if agent.has_model_guide {
+                " (model guide available)"
+            } else {
+                ""
+            }
+        )
     } else {
-        format!("- {}: {}", agent.name, description)
+        format!(
+            "- {}: {}{}",
+            agent.name,
+            description,
+            if agent.has_model_guide {
+                " (model guide available)"
+            } else {
+                ""
+            }
+        )
     }
 }
 
 fn render_native_section_heading(harness: &str) -> Vec<String> {
-    match HarnessKind::from_str(harness) {
-        Some(HarnessKind::Claude) => vec![
+    match mars_schema::harness::parse(harness) {
+        Some(HarnessId::Claude) => vec![
             "".to_string(),
             "## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)".to_string(),
         ],
@@ -297,9 +326,9 @@ fn render_native_section_heading(harness: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::HarnessKind;
     use crate::compiler::native_agent_manifest::write_native_agent_manifest_from_lock;
-    use crate::lock::{ItemKind, LockFile, LockedItemV2, OutputRecord};
+    use crate::lock::{LockFile, LockedItemV2, OutputRecord};
+    use mars_schema::HarnessId;
     use std::fs;
     use tempfile::TempDir;
 
@@ -328,7 +357,7 @@ mod tests {
         agent_key: &str,
         canonical_dest: &str,
         native_dest: &str,
-        harness: HarnessKind,
+        harness: HarnessId,
     ) -> LockFile {
         let mut lock = LockFile::empty();
         lock.items.insert(
@@ -345,7 +374,9 @@ mod tests {
                         "sha256:mars".into(),
                     ),
                     OutputRecord::installed(
-                        harness.target_dir().to_string(),
+                        crate::harness::registry::descriptor(harness)
+                            .default_target
+                            .to_string(),
                         native_dest.into(),
                         "sha256:native".into(),
                     ),
@@ -355,7 +386,7 @@ mod tests {
         lock
     }
 
-    fn lock_with_native_agent(agent_name: &str, harness: HarnessKind) -> LockFile {
+    fn lock_with_native_agent(agent_name: &str, harness: HarnessId) -> LockFile {
         let canonical = format!("agents/{agent_name}.md");
         lock_with_native_agent_paths(
             &format!("agent/{agent_name}"),
@@ -494,7 +525,7 @@ Implement changes.
 
         write_native_agent_manifest_from_lock(
             project_root,
-            &lock_with_native_agent("frontend-coder", HarnessKind::Claude),
+            &lock_with_native_agent("frontend-coder", HarnessId::Claude),
         )
         .unwrap();
 
@@ -536,7 +567,7 @@ Implement changes.
                 "agent/my-file",
                 "agents/my-file.md",
                 "agents/logical-name.md",
-                HarnessKind::Claude,
+                HarnessId::Claude,
             ),
         )
         .unwrap();
@@ -566,7 +597,7 @@ Implement changes.
 
         write_native_agent_manifest_from_lock(
             project_root,
-            &lock_with_native_agent("frontend-coder", HarnessKind::Claude),
+            &lock_with_native_agent("frontend-coder", HarnessId::Claude),
         )
         .unwrap();
 
@@ -595,7 +626,7 @@ Implement changes.
 
         write_native_agent_manifest_from_lock(
             project_root,
-            &lock_with_native_agent("reviewer", HarnessKind::Claude),
+            &lock_with_native_agent("reviewer", HarnessId::Claude),
         )
         .unwrap();
 

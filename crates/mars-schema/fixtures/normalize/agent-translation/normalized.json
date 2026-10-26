@@ -1,0 +1,486 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "selected_items": [
+          "agents/denies-only.md",
+          "agents/everything.md",
+          "agents/list.md",
+          "agents/spaced.md",
+          "agents/untouched.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              "agents/denies-only.md",
+              "agents/everything.md",
+              "agents/spaced.md"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "package"
+              ]
+            ],
+            "fields": {
+              "name": "package",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "denies-only",
+            "source_path": "agents/denies-only.md",
+            "output_path": "agents/denies-only.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "denies-only"
+                ],
+                [
+                  "description",
+                  "Agent"
+                ],
+                [
+                  "tools",
+                  {
+                    "Bash": "deny"
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "denies-only",
+                "description": "Agent",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "bash",
+                    "pattern": null,
+                    "action": "deny"
+                  }
+                ],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "agent",
+            "slug": "everything",
+            "source_path": "agents/everything.md",
+            "output_path": "agents/everything.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "everything"
+                ],
+                [
+                  "description",
+                  "Agent"
+                ],
+                [
+                  "tools",
+                  {
+                    "*": "deny",
+                    "Read": "allow",
+                    "Grep": "allow",
+                    "Bash(git status *)": "allow",
+                    "agent": "allow",
+                    "mcp(github/get_issue)": "allow",
+                    "mcp(github)": "allow",
+                    "mcp(docs)": "allow",
+                    "Write": "deny",
+                    "Bash(rm *)": "deny",
+                    "agent(untrusted)": "deny"
+                  }
+                ],
+                [
+                  "effort",
+                  "high"
+                ],
+                [
+                  "x-custom",
+                  1
+                ],
+                [
+                  "harness-overrides",
+                  {
+                    "claude": {
+                      "color": "purple",
+                      "initialPrompt": "/go",
+                      "maxTurns": 4
+                    }
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "everything",
+                "description": "Agent",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": "high",
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "*",
+                    "pattern": null,
+                    "action": "deny"
+                  },
+                  {
+                    "capability": "read",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "grep",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "bash",
+                    "pattern": "git status *",
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "agent",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "mcp",
+                    "pattern": "github/get_issue",
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "mcp",
+                    "pattern": "github/*",
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "mcp",
+                    "pattern": "docs/*",
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "write",
+                    "pattern": null,
+                    "action": "deny"
+                  },
+                  {
+                    "capability": "bash",
+                    "pattern": "rm *",
+                    "action": "deny"
+                  },
+                  {
+                    "capability": "agent",
+                    "pattern": "untrusted",
+                    "action": "deny"
+                  }
+                ],
+                "harness-overrides": {
+                  "claude": {
+                    "color": "purple",
+                    "initialPrompt": "/go",
+                    "maxTurns": 4
+                  }
+                },
+                "model-policies": []
+              },
+              "body": "Body\n",
+              "diagnostics": [
+                {
+                  "code": "field.unknown",
+                  "severity": "warning",
+                  "path": [
+                    "x-custom"
+                  ],
+                  "message": "unknown field `x-custom` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+                }
+              ]
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "agent",
+            "slug": "list",
+            "source_path": "agents/list.md",
+            "output_path": "agents/list.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "list"
+                ],
+                [
+                  "description",
+                  "Agent"
+                ],
+                [
+                  "tools",
+                  {
+                    "*": "deny",
+                    "Read": "allow",
+                    "Edit": "allow"
+                  }
+                ],
+                [
+                  "model",
+                  "sonnet"
+                ]
+              ],
+              "fields": {
+                "name": "list",
+                "description": "Agent",
+                "harness": null,
+                "model": "sonnet",
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "*",
+                    "pattern": null,
+                    "action": "deny"
+                  },
+                  {
+                    "capability": "read",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "edit",
+                    "pattern": null,
+                    "action": "allow"
+                  }
+                ],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "agent",
+            "slug": "spaced",
+            "source_path": "agents/spaced.md",
+            "output_path": "agents/spaced.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "spaced"
+                ],
+                [
+                  "description",
+                  "Agent"
+                ],
+                [
+                  "tools",
+                  {
+                    "Read": "allow",
+                    "Grep": "allow",
+                    "WebSearch": "deny"
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "spaced",
+                "description": "Agent",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "read",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "grep",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "web_search",
+                    "pattern": null,
+                    "action": "deny"
+                  }
+                ],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "agent",
+            "slug": "untouched",
+            "source_path": "agents/untouched.md",
+            "output_path": "agents/untouched.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "untouched"
+                ],
+                [
+                  "description",
+                  "An agent."
+                ],
+                [
+                  "model",
+                  "opus"
+                ]
+              ],
+              "fields": {
+                "name": "untouched",
+                "description": "An agent.",
+                "harness": null,
+                "model": "opus",
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "You are an agent.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {
+          "agents/everything.md": [
+            {
+              "code": "agent.mcp-not-converted",
+              "severity": "warning",
+              "path": [],
+              "message": "inline `mcpServers` definitions are not converted; only the server names carry over"
+            }
+          ]
+        },
+        "changes": {
+          "agents/everything.md": [
+            {
+              "code": "agent.claude-keys-moved",
+              "severity": "info",
+              "path": [],
+              "message": "moved Claude-only keys to harness-overrides.claude: `color`, `initialPrompt`, `maxTurns`"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

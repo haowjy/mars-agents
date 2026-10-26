@@ -1,0 +1,34 @@
+{
+  "source": {
+    "name": "sources",
+    "url": "https://github.com/acme/sources",
+    "resolved_commit": "1111111111111111111111111111111111111111"
+  },
+  "remote": {
+    "gh": {
+      "dir": "remote/gh",
+      "source": {
+        "name": "gh-plugin",
+        "url": "https://github.com/acme/gh-plugin",
+        "requested_ref": "v1",
+        "resolved_commit": "2222222222222222222222222222222222222222"
+      }
+    },
+    "subdir": {
+      "dir": "remote/subdir",
+      "source": {
+        "name": "mono",
+        "url": "https://github.com/acme/mono",
+        "resolved_commit": "3333333333333333333333333333333333333333",
+        "subpath": "plugins/sub"
+      }
+    },
+    "market": {
+      "dir": "remote/market",
+      "source": {
+        "name": "market",
+        "url": "https://github.com/acme/market"
+      }
+    }
+  }
+}

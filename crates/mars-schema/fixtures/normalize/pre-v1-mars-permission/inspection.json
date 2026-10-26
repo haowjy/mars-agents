@@ -1,0 +1,21 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "claude",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "reader",
+      "source_path": "agents/reader.md",
+      "output_path": "agents/reader.md"
+    }
+  ],
+  "diagnostics": {}
+}

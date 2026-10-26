@@ -129,8 +129,9 @@ pub(super) fn load_models_cache(project_root: &Path) -> Result<ModelsCache, Mars
 mod tests {
     use super::*;
 
-    use crate::compiler::agents::{AgentProfile, HarnessOverrides};
-    use crate::frontmatter::SkillsSpec;
+    use mars_schema::agent::AgentProfile;
+    use mars_schema::frontmatter::SkillsSpec;
+    use mars_schema::harness_overrides::HarnessOverrides;
 
     fn empty_profile() -> AgentProfile {
         AgentProfile {
@@ -149,14 +150,11 @@ mod tests {
             network_allow: Default::default(),
             network_deny: Default::default(),
             effort: None,
-            autocompact: None,
-            autocompact_pct: None,
             skills: SkillsSpec::default(),
             subagents: Vec::new(),
             tools: Default::default(),
             harness_overrides: HarnessOverrides::default(),
             model_policies: Vec::new(),
-            fanout: Vec::new(),
         }
     }
 

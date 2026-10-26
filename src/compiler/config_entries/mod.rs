@@ -29,7 +29,7 @@ pub(crate) fn file_hook_output_preserve_paths(
     for item in lock
         .items
         .values()
-        .filter(|item| item.kind == crate::lock::ItemKind::Hook)
+        .filter(|item| item.kind == mars_schema::item::ItemKind::Hook)
     {
         for output in item
             .outputs
@@ -831,7 +831,7 @@ fn hook_directory_is_installed(
     source_hash: &crate::types::ContentHash,
     installed: &std::path::Path,
 ) -> bool {
-    crate::hash::compute_hash(installed, crate::lock::ItemKind::Hook)
+    crate::hash::compute_hash(installed, mars_schema::item::ItemKind::Hook)
         .ok()
         .is_some_and(|installed| installed == source_hash.as_str())
 }

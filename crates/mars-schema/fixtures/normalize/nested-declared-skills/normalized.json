@@ -1,0 +1,95 @@
+{
+  "kind": "plugin",
+  "packages": [
+    {
+      "id": "nest",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "selected_items": [
+          "skills/parent/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/plugin.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "nest"
+              ]
+            ],
+            "fields": {
+              "name": "nest",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "parent",
+            "source_path": "skills/parent/SKILL.md",
+            "output_path": "skills/parent/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "parent"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "parent",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/parent/guide.md",
+            "output_path": "skills/parent/guide.md"
+          }
+        ],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

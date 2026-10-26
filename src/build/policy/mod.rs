@@ -1,18 +1,18 @@
+use mars_schema::model_policy::{ModelPolicyMatchType, ModelPolicyRule};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use indexmap::IndexMap;
 
 use crate::build::bundle::ExecutionPolicy;
-use crate::compiler::agents::AgentProfile;
-use crate::config::{
-    AgentOverlay, EffectiveProjectConfig, ModelPolicyMatchType, ModelPolicyRule, NetworkHost,
-    NetworkPolicy,
-};
+use crate::config::{AgentOverlay, EffectiveProjectConfig};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
 use crate::routing;
+use mars_schema::agent::AgentProfile;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
+use mars_schema::permission_set::PermissionSet;
 
 mod execution;
 mod harness;
@@ -39,7 +39,7 @@ impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
 
     fn listing_evidence(
         &mut self,
-        harness: crate::harness::registry::HarnessId,
+        harness: mars_schema::HarnessId,
     ) -> crate::harness::host::ListingEvidence {
         self.session.listing_evidence(harness)
     }
@@ -53,7 +53,7 @@ pub struct PolicyInput<'a> {
     pub model_override: Option<&'a str>,
     pub literal_model: bool,
     pub harness_override: Option<&'a str>,
-    pub excluded_harnesses: &'a [crate::harness::registry::HarnessId],
+    pub excluded_harnesses: &'a [mars_schema::HarnessId],
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
@@ -469,9 +469,8 @@ pub fn resolve_policy(
     {
         provenance.insert("harness_order_position".to_string(), position.to_string());
     }
-    let native_config =
-        crate::compiler::agents::HarnessKind::from_str(harness_resolution.harness.value.as_str())
-            .and_then(|harness| input.profile.effective_native_config(&harness).cloned());
+    let native_config = mars_schema::harness::parse(harness_resolution.harness.value.as_str())
+        .and_then(|harness| input.profile.effective_native_config(&harness));
     let execution_resolution = execution::resolve_execution_policy(
         &input,
         resolved_model.alias,
@@ -480,7 +479,7 @@ pub fn resolve_policy(
         &effective_config.settings,
         native_config,
     );
-    warnings.extend(execution_resolution.warnings.iter().cloned());
+    warnings.extend(execution_resolution.network.warnings.iter().cloned());
 
     provenance.insert(
         "effort_source".to_string(),
@@ -496,7 +495,7 @@ pub fn resolve_policy(
     );
     provenance.insert(
         "network_source".to_string(),
-        execution_resolution.network.source.label().to_string(),
+        execution_resolution.network.mode.source.label().to_string(),
     );
     provenance.insert(
         "autocompact_source".to_string(),
@@ -522,9 +521,7 @@ pub fn resolve_policy(
         .or(execution_resolution.effort.matched_rule)
         .or(execution_resolution.approval.matched_rule)
         .or(execution_resolution.sandbox.matched_rule)
-        .or(execution_resolution.network.matched_rule)
-        .or(execution_resolution.autocompact.matched_rule)
-        .or(execution_resolution.autocompact_pct.matched_rule)
+        .or(execution_resolution.network.mode.matched_rule)
         .or_else(|| {
             matched_policy
                 .as_ref()
@@ -535,8 +532,8 @@ pub fn resolve_policy(
     }
 
     let selected_harness = harness_resolution.harness.value.clone();
-    let needs_cursor_probe = crate::harness::registry::parse(&selected_harness)
-        == Some(crate::harness::registry::HarnessId::Cursor);
+    let needs_cursor_probe =
+        mars_schema::harness::parse(&selected_harness) == Some(mars_schema::HarnessId::Cursor);
     let cursor_probe_result = needs_cursor_probe
         .then(|| capability_session.cursor_probe_result())
         .flatten();
@@ -561,7 +558,8 @@ pub fn resolve_policy(
         route_report: report,
     });
 
-    let mut effort = execution_resolution.effort.value;
+    warnings.extend(routing_resolution.warnings);
+    let mut effort = routing_resolution.effort;
     if routing_resolution.effort_consumed {
         effort = None;
         provenance.insert(
@@ -622,7 +620,7 @@ pub fn resolve_policy(
             effort,
             approval: execution_resolution.approval.value,
             sandbox: execution_resolution.sandbox.value,
-            network: execution_resolution.resolved_network,
+            network: execution_resolution.network.policy,
             autocompact: execution_resolution.autocompact.value,
             autocompact_pct: execution_resolution.autocompact_pct.value,
             timeout: None,
@@ -633,48 +631,74 @@ pub fn resolve_policy(
     })
 }
 
+/// The model an artifact is lowered for: the token the agent selected, what it resolves to,
+/// and the alias behind it, if any.
+pub(crate) struct ModelRef<'a> {
+    pub token: &'a str,
+    pub canonical_id: &'a str,
+    pub alias: Option<&'a ModelAlias>,
+}
+
+/// The profile as it launches on one model: effort, approval, sandbox and network resolved
+/// through the launch bundle's precedence functions, with every layer known at sync time
+/// (overlay scalars, the first matching model policy across overlay, profile and settings, the
+/// profile's top-level fields, the alias default effort); only the CLI layer is absent. `model`
+/// is `None` when the artifact emits no model: no policy or alias applies then.
+///
+/// Network comes from the Agent's own layers only (overlay, model-policy override, profile).
+/// The project's `[settings]` network is not the Agent's: a package build never receives it, and
+/// sync reports it once per target instead of once per Agent.
+///
+/// `profile` is the overlay-resolved native profile, whose `model_policies` already start
+/// with the overlay's own, so they are matched here as one list ahead of the settings policies.
+pub(crate) fn profile_for_model(
+    profile: &AgentProfile,
+    overlay: Option<&AgentOverlay>,
+    settings_policies: &[ModelPolicyRule],
+    model: Option<ModelRef<'_>>,
+) -> AgentProfile {
+    use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
+    let matched = model.as_ref().and_then(|model| {
+        match_model_policy(
+            effective_policies(None, &profile.model_policies, settings_policies),
+            model.canonical_id,
+            model.alias.map(|_| model.token),
+        )
+    });
+    let alias = model.as_ref().and_then(|model| model.alias);
+    let mut resolved = profile.clone();
+    resolved.effort = execution::resolve_effort(None, profile, alias, overlay, matched.as_ref())
+        .value
+        .as_deref()
+        .and_then(EffortLevel::parse);
+    resolved.approval = execution::resolve_approval(None, profile, overlay, matched.as_ref())
+        .value
+        .as_deref()
+        .and_then(ApprovalMode::parse);
+    resolved.sandbox = execution::resolve_sandbox(None, profile, overlay, matched.as_ref())
+        .value
+        .as_deref()
+        .and_then(SandboxMode::parse);
+    let network = execution::resolve_network(
+        execution::CliNetwork {
+            mode: None,
+            allow: &[],
+            deny: &[],
+        },
+        profile,
+        overlay,
+        matched.as_ref(),
+        None,
+    )
+    .policy;
+    resolved.network = network.mode;
+    resolved.network_allow = PermissionSet::Add(network.allow);
+    resolved.network_deny = PermissionSet::Add(network.deny);
+    resolved
+}
+
 pub(super) fn policy_override_string(rule: &ModelPolicyRule, key: &str) -> Option<String> {
-    let value = rule
-        .overrides
-        .get(serde_yaml::Value::String(key.to_string()))?
-        .as_str()?;
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-pub(super) fn policy_override_network(rule: &ModelPolicyRule, key: &str) -> Option<NetworkPolicy> {
-    let value = rule
-        .overrides
-        .get(serde_yaml::Value::String(key.to_string()))?
-        .as_str()?;
-    value.parse().ok()
-}
-
-pub(super) fn policy_override_u32(rule: &ModelPolicyRule, key: &str) -> Option<u32> {
-    let value = rule
-        .overrides
-        .get(serde_yaml::Value::String(key.to_string()))?;
-    match value {
-        serde_yaml::Value::Number(number) => {
-            let parsed = number.as_u64()?;
-            u32::try_from(parsed).ok()
-        }
-        _ => None,
-    }
-}
-
-pub(super) fn policy_override_u8(rule: &ModelPolicyRule, key: &str) -> Option<u8> {
-    let value = rule
-        .overrides
-        .get(serde_yaml::Value::String(key.to_string()))?;
-    match value {
-        serde_yaml::Value::Number(number) => {
-            let parsed = number.as_u64()?;
-            let percent = u8::try_from(parsed).ok()?;
-            (1..=100).contains(&percent).then_some(percent)
-        }
-        _ => None,
-    }
+    rule.overrides.get(key).map(str::to_string)
 }
 
 pub(super) fn matched_policy_string_override(
@@ -683,45 +707,6 @@ pub(super) fn matched_policy_string_override(
 ) -> Option<ResolvedField<String>> {
     let policy = matched_policy?;
     let value = policy_override_string(&policy.rule, key)?;
-    Some(ResolvedField {
-        value,
-        source: policy.layer.field_source(),
-        matched_rule: Some(policy.matched_rule_ref()),
-    })
-}
-
-pub(super) fn matched_policy_network_override(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-) -> Option<ResolvedField<NetworkPolicy>> {
-    let policy = matched_policy?;
-    let value = policy_override_network(&policy.rule, key)?;
-    Some(ResolvedField {
-        value,
-        source: policy.layer.field_source(),
-        matched_rule: Some(policy.matched_rule_ref()),
-    })
-}
-
-pub(super) fn matched_policy_u32_override(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-) -> Option<ResolvedField<u32>> {
-    let policy = matched_policy?;
-    let value = policy_override_u32(&policy.rule, key)?;
-    Some(ResolvedField {
-        value,
-        source: policy.layer.field_source(),
-        matched_rule: Some(policy.matched_rule_ref()),
-    })
-}
-
-pub(super) fn matched_policy_u8_override(
-    matched_policy: Option<&MatchedModelPolicy>,
-    key: &str,
-) -> Option<ResolvedField<u8>> {
-    let policy = matched_policy?;
-    let value = policy_override_u8(&policy.rule, key)?;
     Some(ResolvedField {
         value,
         source: policy.layer.field_source(),

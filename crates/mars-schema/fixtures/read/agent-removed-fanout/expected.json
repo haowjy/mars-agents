@@ -1,0 +1,42 @@
+{
+  "frontmatter": [
+    [
+      "fanout",
+      2
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "fanout"
+      ],
+      "message": "`fanout` was removed; use consumer `[settings.meridian.fanout]`"
+    }
+  ]
+}

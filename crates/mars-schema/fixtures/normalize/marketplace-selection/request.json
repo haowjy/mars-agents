@@ -1,0 +1,13 @@
+{
+  "selection": {
+    "plugins": [
+      "one",
+      "far"
+    ],
+    "items": {
+      "one": [
+        "skills/a/SKILL.md"
+      ]
+    }
+  }
+}

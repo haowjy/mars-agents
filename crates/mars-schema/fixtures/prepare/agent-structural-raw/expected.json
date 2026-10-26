@@ -1,0 +1,79 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "claude",
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "anchored",
+      "source_path": "agents/anchored.md",
+      "output_path": "agents/anchored.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "anchored"
+          ],
+          [
+            "description",
+            "Hello"
+          ],
+          [
+            "future",
+            "Hello"
+          ]
+        ],
+        "fields": {
+          "name": "anchored",
+          "description": "Hello",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "# Body\n",
+        "diagnostics": [
+          {
+            "code": "yaml.anchor",
+            "severity": "error",
+            "path": [],
+            "message": "YAML anchors and aliases are not supported"
+          },
+          {
+            "code": "field.unknown",
+            "severity": "warning",
+            "path": [
+              "future"
+            ],
+            "message": "unknown field `future` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+          }
+        ]
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {}
+}

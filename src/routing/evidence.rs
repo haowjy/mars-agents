@@ -1,5 +1,5 @@
 use crate::config::targets::HarnessScope;
-use crate::harness::registry::HarnessId;
+use mars_schema::HarnessId;
 use std::collections::HashSet;
 
 use crate::config::routing_settings::ResolvedRoutingSettings;

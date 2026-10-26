@@ -78,8 +78,6 @@ sandbox: read-only
 network: deny
 network-allow: [inert.example]
 network-deny: [also-inert.example]
-autocompact: 1200
-autocompact_pct: 40
 harness-overrides:
   codex:
     effort: high
@@ -134,11 +132,11 @@ autocompact_pct = 55"#;
     );
     assert_eq!(
         bundle["execution_policy"]["autocompact"].as_u64(),
-        Some(1200)
+        Some(9000)
     );
     assert_eq!(
         bundle["execution_policy"]["autocompact_pct"].as_u64(),
-        Some(40)
+        Some(55)
     );
     assert_eq!(
         bundle["provenance"]["effort_source"].as_str(),
@@ -155,11 +153,11 @@ autocompact_pct = 55"#;
     assert_eq!(bundle["provenance"]["network_source"], "profile");
     assert_eq!(
         bundle["provenance"]["autocompact_source"].as_str(),
-        Some("profile")
+        Some("alias")
     );
     assert_eq!(
         bundle["provenance"]["autocompact_pct_source"].as_str(),
-        Some("profile")
+        Some("alias")
     );
     assert_eq!(
         bundle["provenance"]["native_config_source"].as_str(),

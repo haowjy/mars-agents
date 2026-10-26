@@ -4,3 +4,4 @@
   (`HarnessDropsMcp`, so every MCP rule on Pi is `unknown`), but Pi 1.2.0 ships MCP
   (`pi mcp`, `--no-mcp`, `mcp__` tool filtering). Re-check the token shape against the
   installed Pi.
+- **OpenCode `ask` rules and scoped denies** (`src/compiler/agents/lower_policy.rs`, `collect_denied_as_permission`): only unscoped `deny` rules are lowered to OpenCode `permission` entries. `ask` rules (`permission: {<tool>: ask}`) and scoped denies (`bash(git *)` as a nested `permission.bash` map) are reported as dropped.

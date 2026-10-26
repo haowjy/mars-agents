@@ -11,11 +11,11 @@ use std::collections::{HashMap, HashSet};
 use indexmap::IndexMap;
 
 use crate::error::MarsError;
-use crate::frontmatter;
-use crate::lock::ItemKind;
 use crate::resolve::ResolvedGraph;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::types::{DestPath, ItemName, SourceName};
+use mars_schema::frontmatter;
+use mars_schema::item::ItemKind;
 
 type ContentRewriteFn =
     fn(&str, &IndexMap<String, String>) -> Result<Option<String>, frontmatter::FrontmatterError>;
@@ -179,7 +179,7 @@ pub fn apply_renames(
             Err(error) => {
                 warnings.push(format!(
                     "warning: could not rewrite skill name in {}: {error}",
-                    skill_path.display()
+                    package_location(&item.source_name, &skill_path)
                 ));
                 continue;
             }
@@ -191,7 +191,7 @@ pub fn apply_renames(
             }
             Err(error) => warnings.push(format!(
                 "warning: could not rewrite skill name in {}: {error}",
-                skill_path.display()
+                package_location(&item.source_name, &skill_path)
             )),
         }
     }
@@ -247,7 +247,7 @@ pub fn apply_renames(
                 }
                 Err(error) => warnings.push(format!(
                     "warning: could not rewrite agent name in {}: {error}",
-                    source_path.display()
+                    package_location(&source_name, &source_path)
                 )),
             }
         }
@@ -358,6 +358,27 @@ fn renames_for_agent(
     renames_for_agent
 }
 
+/// `agents/<file>` or `skills/<name>/SKILL.md` within its package: a path inside the cache or
+/// an archive is no use to the person reading the warning.
+fn package_relative(path: &std::path::Path) -> String {
+    let parts: Vec<_> = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    match parts
+        .iter()
+        .rposition(|part| part == "agents" || part == "skills")
+    {
+        Some(at) => parts[at..].join("/"),
+        None => parts.last().cloned().unwrap_or_default(),
+    }
+}
+
+/// `<package>: agents/<file>`, naming the dependency instead of its cache location.
+fn package_location(source_name: &SourceName, path: &std::path::Path) -> String {
+    format!("{source_name}: {}", package_relative(path))
+}
+
 fn rewrite_content_for_agent(
     content: &mut String,
     renames: &IndexMap<String, String>,
@@ -380,7 +401,7 @@ fn rewrite_content_for_agent(
         Err(e) => {
             warnings.push(format!(
                 "warning: could not rewrite {label} refs in {}: {e}",
-                source_path.display()
+                package_relative(source_path)
             ));
         }
     }
@@ -401,11 +422,12 @@ fn source_has_unrenamed_item(
 mod tests {
     use super::*;
     use crate::hash;
-    use crate::lock::{ItemId, ItemKind};
+    use crate::lock::ItemId;
     use crate::resolve::ResolvedGraph;
     use crate::sync::target::{CollisionRename, ExplicitRename, TargetItem, TargetState};
     use crate::types::SourceId;
     use indexmap::IndexMap;
+    use mars_schema::item::ItemKind;
     use std::fs;
     use tempfile::TempDir;
 
@@ -449,11 +471,15 @@ mod tests {
                 source_id: SourceId::Path {
                     canonical: root.to_path_buf(),
                     subpath: None,
+                    plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: root.to_path_buf(),
+                    authored_root: root.to_path_buf(),
                     package_root: root.to_path_buf(),
+                    plugin: None,
                 },
+                prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: source_name.into(),
                     version: None,
@@ -555,7 +581,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .unwrap();
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["plan__org_base", "planner"]);
     }
 
@@ -692,11 +718,15 @@ mod tests {
                 source_id: SourceId::Path {
                     canonical: dir.path().to_path_buf(),
                     subpath: None,
+                    plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: dir.path().to_path_buf(),
+                    authored_root: dir.path().to_path_buf(),
                     package_root: dir.path().to_path_buf(),
+                    plugin: None,
                 },
+                prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: "source-a".into(),
                     version: None,
@@ -722,7 +752,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__org_b"]);
     }
 
@@ -805,7 +835,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         let subagents = match fm.get("subagents").unwrap() {
             serde_yaml::Value::Sequence(seq) => seq
                 .iter()
@@ -891,7 +921,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-a"]);
     }
 
@@ -982,7 +1012,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["shared__source-a"]);
     }
 
@@ -1067,7 +1097,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("local agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-a"]);
     }
 
@@ -1152,7 +1182,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("local agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-b"]);
     }
 
@@ -1231,7 +1261,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("dependency agent should have been rewritten");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-c"]);
     }
 
@@ -1283,7 +1313,7 @@ mod tests {
             .rewritten_content
             .as_ref()
             .expect("agent should have been rewritten after same-source item was pruned");
-        let fm = crate::frontmatter::parse(rewritten).unwrap();
+        let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
         assert_eq!(fm.skills(), vec!["planning__source-b"]);
     }
 

@@ -11,10 +11,11 @@ use std::path::{Path, PathBuf};
 use semver::Version;
 use serde::Serialize;
 
-use crate::dialect::Dialect;
-use crate::discover;
 use crate::error::MarsError;
-use crate::frontmatter;
+use crate::validate::{deferred_provider, undeclared_provider_hint};
+
+use mars_schema::prepare::Classification;
+use mars_schema::read::Reading;
 
 use super::output;
 
@@ -37,33 +38,74 @@ pub(crate) struct CheckReport {
     warnings: Vec<String>,
 }
 
-/// Run `mars check`.
-pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
-    let base = match &args.path {
-        Some(p) => {
-            if p.is_absolute() {
-                p.clone()
-            } else {
-                std::env::current_dir()?.join(p)
-            }
+/// Run `mars check`. `--root` names the directory like `PATH` does, and naming both is an error.
+pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
+    let authored_base = match (args.path.as_deref(), root) {
+        (Some(_), Some(_)) => {
+            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                message: "`mars check` takes a PATH or --root, not both".to_string(),
+            }));
         }
-        None => std::env::current_dir()?,
+        (Some(path), None) | (None, Some(path)) if path.is_absolute() => path.to_path_buf(),
+        (Some(path), None) | (None, Some(path)) => std::env::current_dir()?.join(path),
+        (None, None) => std::env::current_dir()?,
     };
 
-    if !base.is_dir() {
+    if !authored_base.is_dir() {
         return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{} is not a directory", base.display()),
+            message: format!("{} is not a directory", authored_base.display()),
         }));
     }
 
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
-    let lens = crate::resolve::PublishLens::load(&base, &mut publish_diag)?;
-    let mut report = check_dir_with_lens(&base, Ok(&lens), &mut publish_diag)?;
+    let (lens, prepared) = crate::resolve::PublishLens::load(&authored_base, &mut publish_diag)?;
+    let mut report = check_prepared(&prepared, &authored_base, &lens, &mut publish_diag)?;
+    let known_aliases = crate::models::merged_runtime_aliases(
+        &Default::default(),
+        lens.manifest.as_ref().map(|config| &config.models),
+    );
+    for definition in &prepared.definitions {
+        let Reading::Agent(reading) = &definition.reading else {
+            continue;
+        };
+        let Some(profile) = reading.fields.as_ref() else {
+            continue;
+        };
+        for policy in &profile.model_policies {
+            if policy.match_type == mars_schema::model_policy::ModelPolicyMatchType::Alias
+                && !known_aliases.contains_key(&policy.match_value)
+            {
+                report.warnings.push(format!(
+                    "{}: agent `{}` has a model policy for alias `{}`, which is not a catalog alias here",
+                    definition.source_path, definition.slug, policy.match_value
+                ));
+            }
+        }
+    }
     report
         .warnings
-        .extend(plugin_warnings(&base, &lens, &mut publish_diag)?);
+        .extend(requires_mars_warning(&prepared, &lens));
+    report
+        .warnings
+        .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);
     let mut diagnostics = publish_diag.drain();
-    diagnostics.extend(lossiness_diagnostics_for_check(&lens, args.verbose)?);
+    diagnostics.extend(lossiness_diagnostics_for_check(
+        &lens,
+        &prepared,
+        &authored_base,
+        args.verbose,
+    )?);
+    let mut surfaced = Vec::new();
+    for diagnostic in diagnostics {
+        if diagnostic.level == crate::diagnostic::DiagnosticLevel::Error {
+            report
+                .errors
+                .push(format!("[{}] {}", diagnostic.code, diagnostic.message));
+        } else {
+            surfaced.push(diagnostic);
+        }
+    }
+    let diagnostics = surfaced;
     let clean = report.errors.is_empty();
 
     if json {
@@ -77,9 +119,11 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
         output::print_json(&json_report);
     } else {
         println!("  {} agents, {} skills", report.agents, report.skills);
-        println!(
-            "  source package validates for .mars/ canonical store and native harness targets"
-        );
+        if clean {
+            println!(
+                "  source package validates for .mars/ canonical store and native harness targets"
+            );
+        }
         println!();
 
         let has_non_info_diagnostics = diagnostics
@@ -106,7 +150,41 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     if clean { Ok(0) } else { Ok(1) }
 }
 
+/// The first Mars that reads schema 1: older ones read a `schema = 1` package as pre-v1.
+const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
+/// The first Mars whose `mars version` keeps `[plugin]`.
 const PLUGIN_MARS_FLOOR: &str = "0.19.0";
+
+/// The `requires-mars` floor this package needs and does not set: the highest of the floors
+/// its declarations call for.
+fn requires_mars_warning(
+    prepared: &mars_schema::prepare::Prepared,
+    lens: &crate::resolve::PublishLens,
+) -> Option<String> {
+    let config = lens.manifest.as_ref()?;
+    let package = config.package.as_ref()?;
+    crate::resolve::validate_package_requirement_syntax(package).ok()?;
+    let (floor, reason) = if prepared.classification == Classification::Schema1 {
+        (
+            SCHEMA_1_MARS_FLOOR,
+            "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
+        )
+    } else if config.plugin.is_some() {
+        (
+            PLUGIN_MARS_FLOOR,
+            "older Mars versions may drop [plugin] during `mars version`",
+        )
+    } else {
+        return None;
+    };
+    let has_floor = crate::resolve::requirement_has_floor(
+        package.requires_mars.as_deref(),
+        &Version::parse(floor).expect("Mars floor is valid semver"),
+    );
+    (!has_floor).then(|| {
+        format!("[package] `requires-mars` should be `\">={floor}\"` or a higher floor; {reason}")
+    })
+}
 
 fn plugin_warnings(
     base: &Path,
@@ -127,19 +205,6 @@ fn plugin_warnings(
             None
         }
     };
-    let Some(package) = config.package.as_ref() else {
-        return Ok(warnings);
-    };
-    if crate::resolve::validate_package_requirement_syntax(package).is_ok()
-        && !crate::resolve::requirement_has_floor(
-            package.requires_mars.as_deref(),
-            &Version::parse(PLUGIN_MARS_FLOOR).expect("plugin Mars floor is valid semver"),
-        )
-    {
-        warnings.push(format!(
-            "plugin packages should set [package] `requires-mars = \">={PLUGIN_MARS_FLOOR}\"` or a higher floor, then rebuild the plugin; older Mars versions may drop [plugin] during `mars version`"
-        ));
-    }
 
     let Some(metadata) = metadata else {
         return Ok(warnings);
@@ -156,6 +221,7 @@ fn plugin_warnings(
         }
     }
     warnings.extend(state.inputs.iter().filter_map(|state| state.message()));
+    warnings.extend(state.builder.iter().filter_map(|state| state.message()));
     warnings.extend(state.version.iter().filter_map(|state| state.message()));
     warnings.extend(state.root_files.iter().filter_map(|state| state.message()));
 
@@ -164,6 +230,8 @@ fn plugin_warnings(
 
 fn lossiness_diagnostics_for_check(
     lens: &crate::resolve::PublishLens,
+    prepared: &mars_schema::prepare::Prepared,
+    authored_root: &Path,
     verbose: bool,
 ) -> Result<Vec<crate::diagnostic::Diagnostic>, MarsError> {
     use crate::diagnostic::LossinessMode;
@@ -173,327 +241,211 @@ fn lossiness_diagnostics_for_check(
     } else {
         LossinessMode::Surface
     };
-    crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(lens, mode)
+    crate::compiler::lossiness_preview::collect_prepared_source_lossiness_diagnostics(
+        lens,
+        prepared,
+        authored_root,
+        mode,
+    )
 }
 
-pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
-    let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let lens = crate::resolve::PublishLens::load(base, &mut diag);
-    check_dir_with_lens(base, lens.as_ref(), &mut diag)
-}
-
-fn check_dir_with_lens(
-    base: &Path,
-    lens: Result<&crate::resolve::PublishLens, &MarsError>,
+fn check_prepared(
+    prepared: &mars_schema::prepare::Prepared,
+    authored_root: &Path,
+    lens: &crate::resolve::PublishLens,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<CheckReport, MarsError> {
-    let skills_dir = base.join("skills");
-
-    let mut errors: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-
-    if let Ok(lens) = lens
-        && let Some(config) = lens.manifest.as_ref()
-        && let Some(package) = config.package.as_ref()
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    if let Some(package) = lens
+        .manifest
+        .as_ref()
+        .and_then(|config| config.package.as_ref())
         && let Err(error) = crate::resolve::validate_package_requirement_syntax(package)
     {
         errors.push(error.to_string());
     }
 
-    let discovered = discover::discover_resolved_source(base, None, diag)?;
-    let dialect = Dialect::resolve_local(None, base);
-
-    // ── Validate discovered agents/skills ────────────────────────────
-    let mut agent_names: HashMap<String, PathBuf> = HashMap::new();
-    let mut agent_skill_refs: Vec<(String, Vec<String>)> = Vec::new();
-    let mut skill_names: HashMap<String, PathBuf> = HashMap::new();
-
-    for item in discovered {
-        let path = base.join(&item.source_path);
-        match item.id.kind {
-            crate::lock::ItemKind::Agent => {
-                if super::is_symlink(&path) {
-                    let name = path
-                        .file_stem()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_default();
-                    warnings.push(format!(
-                        "skipping symlinked agent `{name}` — source packages should not contain symlinks"
-                    ));
-                    continue;
-                }
-
+    let mut agent_names = HashMap::<String, PathBuf>::new();
+    let mut skill_names = HashMap::<String, PathBuf>::new();
+    let mut agent_skill_refs = Vec::<(String, Vec<String>)>::new();
+    for definition in &prepared.definitions {
+        let path = authored_root.join(&definition.source_path);
+        let linked_item = match definition.kind {
+            mars_schema::item::DefinitionKind::Agent => path
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink()),
+            mars_schema::item::DefinitionKind::Skill => path.parent().is_some_and(|root| {
+                root.symlink_metadata()
+                    .is_ok_and(|m| m.file_type().is_symlink())
+            }),
+        };
+        if linked_item {
+            warnings.push(format!(
+                "skipping symlinked {} `{}` — source packages should not contain symlinks",
+                definition.kind, definition.slug
+            ));
+            continue;
+        }
+        match &definition.reading {
+            Reading::Agent(reading) => {
                 let filename = path
                     .file_stem()
-                    .and_then(|n| n.to_str())
+                    .and_then(|name| name.to_str())
                     .unwrap_or_default()
-                    .to_string();
-
-                match std::fs::read_to_string(&path) {
-                    Ok(content) => match frontmatter::parse(&content) {
-                        Ok(fm) => {
-                            let name = fm
-                                .name()
-                                .map(str::to_string)
-                                .unwrap_or_else(|| filename.clone());
-
-                            let mut agent_diags = Vec::new();
-                            let _profile =
-                                crate::compiler::agents::parse_agent_profile(&fm, &mut agent_diags);
-                            for diagnostic in agent_diags {
-                                let message = format!("agent `{name}`: {}", diagnostic.message());
-                                if diagnostic.is_error() {
-                                    errors.push(message);
-                                } else {
-                                    warnings.push(message);
-                                }
-                            }
-
-                            if fm.name().is_none() {
-                                warnings.push(format!(
-                                    "agent `{filename}` has no `name` in frontmatter"
-                                ));
-                            }
-
-                            if fm.get("description").and_then(|v| v.as_str()).is_none() {
-                                warnings.push(format!("agent `{name}` has no `description`"));
-                            }
-
-                            if fm.name().is_some() && name != filename {
-                                warnings.push(format!(
-                                    "agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"
-                                ));
-                            }
-
-                            if let Some(existing) = agent_names.get(&name) {
-                                errors.push(format!(
-                                    "duplicate agent name `{name}` in {} and {}",
-                                    existing.display(),
-                                    path.display()
-                                ));
-                            } else {
-                                agent_names.insert(name.clone(), path.clone());
-                            }
-
-                            let skills = fm.skills();
-                            if !skills.is_empty() {
-                                agent_skill_refs.push((name, skills));
-                            }
-                        }
-                        Err(e) => {
-                            errors.push(format!("agent `{filename}` has invalid frontmatter: {e}"));
-                        }
-                    },
-                    Err(e) => {
-                        errors.push(format!("cannot read {}: {e}", path.display()));
+                    .to_owned();
+                if let Some(profile) = &reading.fields {
+                    let name = profile.name.clone().unwrap_or_else(|| filename.clone());
+                    if profile.name.is_none() {
+                        warnings.push(format!("agent `{filename}` has no `name` in frontmatter"));
                     }
-                }
-            }
-            crate::lock::ItemKind::Skill => {
-                let (dirname, skill_md, duplicate_path) = if item.source_path
-                    == std::path::Path::new(".")
-                {
-                    let dirname = item.id.name.to_string();
-                    (dirname, base.join("SKILL.md"), base.join("SKILL.md"))
-                } else {
-                    if super::is_symlink(&path) {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or_default();
+                    if profile.description.is_none() {
+                        warnings.push(format!("agent `{name}` has no `description`"));
+                    }
+                    if profile.name.is_some() && name != filename {
                         warnings.push(format!(
-                            "skipping symlinked skill `{name}` — source packages should not contain symlinks"
+                            "agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"
                         ));
-                        continue;
                     }
-                    let dirname = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    (dirname, path.join("SKILL.md"), path.clone())
-                };
-
-                match std::fs::read_to_string(&skill_md) {
-                    Ok(content) => {
-                        let mut skill_diags = Vec::new();
-                        match crate::compiler::skills::parse_skill_content(
-                            &content,
-                            &mut skill_diags,
-                        ) {
-                            Ok((profile, fm)) => {
-                                if dialect == Dialect::MarsNative {
-                                    crate::compiler::skills::push_authored_skill_schema_diags(
-                                        &fm,
-                                        &mut skill_diags,
-                                    );
-                                }
-
-                                let name = profile
-                                    .name
-                                    .clone()
-                                    .or_else(|| fm.name().map(str::to_string))
-                                    .unwrap_or_else(|| dirname.clone());
-
-                                let schema_missing_name = skill_diags.iter().any(|diagnostic| {
-                                    matches!(
-                                        diagnostic,
-                                        crate::compiler::skills::SkillDiagnostic::InvalidFieldValue { field, value, .. }
-                                            if field == "name" && value == "missing"
-                                    )
-                                });
-                                let schema_missing_description =
-                                    skill_diags.iter().any(|diagnostic| {
-                                        matches!(
-                                            diagnostic,
-                                            crate::compiler::skills::SkillDiagnostic::InvalidFieldValue { field, value, .. }
-                                                if field == "description" && value == "missing"
-                                        )
-                                    });
-
-                                for diagnostic in skill_diags {
-                                    let message =
-                                        format!("skill `{name}`: {}", diagnostic.message());
-                                    if diagnostic.is_error() {
-                                        errors.push(message);
-                                    } else {
-                                        warnings.push(message);
-                                    }
-                                }
-
-                                if fm.name().is_none() && !schema_missing_name {
-                                    warnings.push(format!(
-                                        "skill `{dirname}` has no `name` in frontmatter"
-                                    ));
-                                }
-
-                                if fm.get("description").and_then(|v| v.as_str()).is_none()
-                                    && !schema_missing_description
-                                    && dialect != Dialect::MarsNative
-                                    && !(dialect == Dialect::Cursor
-                                        && crate::staging::cursor_manual_rule_shape(&fm))
-                                {
-                                    warnings.push(format!("skill `{name}` has no `description`"));
-                                }
-
-                                if fm.name().is_some() && name != dirname {
-                                    warnings.push(format!(
-                                        "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
-                                    ));
-                                }
-
-                                if let Some(existing) = skill_names.get(&name) {
-                                    errors.push(format!(
-                                        "duplicate skill name `{name}` in {} and {}",
-                                        existing.display(),
-                                        duplicate_path.display()
-                                    ));
-                                } else {
-                                    skill_names.insert(name, duplicate_path);
-                                }
-                            }
-                            Err(e) => {
-                                errors.push(format!(
-                                    "skill `{dirname}` has invalid frontmatter: {e}"
-                                ));
-                            }
-                        }
+                    if let Some(existing) = agent_names.insert(name.clone(), path.clone()) {
+                        errors.push(format!(
+                            "duplicate agent name `{name}` in {} and {}",
+                            existing.display(),
+                            path.display()
+                        ));
                     }
-                    Err(e) => {
-                        errors.push(format!("cannot read {}: {e}", skill_md.display()));
+                    let skills = profile.skills.all();
+                    if !skills.is_empty() {
+                        agent_skill_refs.push((name, skills));
                     }
                 }
             }
-            // New kinds not yet subject to source-package checks.
-            crate::lock::ItemKind::Hook
-            | crate::lock::ItemKind::McpServer
-            | crate::lock::ItemKind::BootstrapDoc => {}
-        }
-    }
-
-    // Structural validation for nested skill layout:
-    // if skills/* directories exist, each must contain SKILL.md.
-    if skills_dir.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(&skills_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_dir())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let path = entry.path();
-            let dirname = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            if !path.join("SKILL.md").exists() {
-                errors.push(format!("skill `{dirname}` is missing SKILL.md"));
+            Reading::Skill(reading) => {
+                let dirname = if definition.source_path == "SKILL.md" {
+                    definition.slug.clone()
+                } else {
+                    path.parent()
+                        .and_then(Path::file_name)
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(&definition.slug)
+                        .to_owned()
+                };
+                if let Some(profile) = &reading.fields {
+                    let name = profile.name.clone().unwrap_or_else(|| dirname.clone());
+                    if profile.name.is_some() && name != dirname {
+                        warnings.push(format!(
+                            "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
+                        ));
+                    }
+                    if let Some(existing) = skill_names.insert(name.clone(), path.clone()) {
+                        errors.push(format!(
+                            "duplicate skill name `{name}` in {} and {}",
+                            existing.display(),
+                            path.display()
+                        ));
+                    }
+                }
             }
+            // A prepared definition is an Agent or a skill, as its `kind` says.
+            Reading::Manifest(_) => {}
         }
     }
 
-    let agent_count = agent_names.len();
-    let skill_count = skill_names.len();
-
-    // ── Empty package check ──────────────────────────────────────────
-    if agent_count == 0 && skill_count == 0 {
+    // A package preparation could not read has already said why.
+    let readable = !matches!(
+        prepared.classification,
+        Classification::Invalid | Classification::SchemaNewer { .. }
+    );
+    if readable && agent_names.is_empty() && skill_names.is_empty() {
         errors.push("no agents or skills found — is this a mars source package?".to_string());
     }
-
-    // ── Skill dependency check ───────────────────────────────────────
-    let available: HashSet<&str> = skill_names.keys().map(|s| s.as_str()).collect();
-
-    match lens {
-        Ok(lens) if has_package_dependencies(lens) => {
-            // Graph-backed validation: resolve deps fresh from constraints, check
-            // skill refs against local skills + all resolved dependency packages.
-            match resolve_available_skills(lens, diag) {
-                Ok(graph_skills) => {
-                    for (agent_name, skills) in &agent_skill_refs {
-                        for skill in skills {
-                            if !available.contains(skill.as_str())
-                                && !graph_skills.contains_key(skill)
-                            {
-                                errors.push(format!(
-                                    "agent `{agent_name}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
-                                    format_searched_packages(&graph_skills)
-                                ));
+    let available = skill_names
+        .keys()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    // Check is the publish gate: it judges a ref by the package alone and ignores
+    // `.mars/provided.lock`, so a package passes or fails the same on every machine.
+    let declared = lens
+        .manifest
+        .as_ref()
+        .and_then(|config| config.package.as_ref())
+        .map(|package| package.uses_providers.as_slice());
+    let undeclared_provider_error = |agent: &str, skill: &str, provider: &str| {
+        format!(
+            "agent `{agent}` references skill `{skill}`, which is not in this package or its dependencies; {}",
+            undeclared_provider_hint(provider)
+        )
+    };
+    if has_package_dependencies(lens) {
+        match resolve_available_skills(lens, diag) {
+            Ok(graph_skills) => {
+                for (agent, refs) in &agent_skill_refs {
+                    for skill in refs {
+                        if available.contains(skill.as_str()) || graph_skills.contains_key(skill) {
+                            continue;
+                        }
+                        // A declared provider is valid wherever it supplies the skill.
+                        if deferred_provider(skill, declared).is_some() {
+                            continue;
+                        }
+                        match mars_schema::provider::provider_of(skill) {
+                            Some(provider) if declared.is_some() => {
+                                errors.push(undeclared_provider_error(agent, skill, provider));
                             }
+                            _ => errors.push(format!(
+                                "agent `{agent}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
+                                format_searched_packages(&graph_skills)
+                            )),
                         }
                     }
                 }
-                Err(resolve_err) => {
-                    errors.push(format!(
-                        "dependency graph resolution failed: {resolve_err}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
-                    ));
-                }
             }
+            Err(error) => errors.push(format!(
+                "dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
+            )),
         }
-        Ok(_) => {
-            // No [dependencies] — local-only validation, emit warnings for external refs.
-            for (agent_name, skills) in &agent_skill_refs {
-                for skill in skills {
-                    if !available.contains(skill.as_str()) {
-                        warnings.push(format!(
-                            "external dependency: `{skill}` (referenced by: {agent_name})"
-                        ));
+    } else {
+        for (agent, refs) in &agent_skill_refs {
+            for skill in refs {
+                if available.contains(skill.as_str()) {
+                    continue;
+                }
+                // A declared provider is valid wherever it supplies the skill.
+                if deferred_provider(skill, declared).is_some() {
+                    continue;
+                }
+                match mars_schema::provider::provider_of(skill) {
+                    Some(provider) if declared.is_some() => {
+                        errors.push(undeclared_provider_error(agent, skill, provider));
                     }
+                    _ => warnings.push(format!(
+                        "external dependency: `{skill}` (referenced by: {agent})"
+                    )),
                 }
             }
-        }
-        Err(config_err) => {
-            errors.push(format!(
-                "failed to load mars.toml for dependency checks: {config_err}\n  hint: fix mars.toml syntax (Windows paths in TOML must use `/` or escaped `\\\\`)"
-            ));
         }
     }
-
-    // ── Output ───────────────────────────────────────────────────────
     Ok(CheckReport {
-        agents: agent_count,
-        skills: skill_count,
+        agents: agent_names.len(),
+        skills: skill_names.len(),
         errors,
         warnings,
     })
+}
+
+pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    let (lens, prepared) = crate::resolve::PublishLens::load(base, &mut diag)?;
+    let mut report = check_prepared(&prepared, base, &lens, &mut diag)?;
+    for diagnostic in diag.drain() {
+        let rendered = format!("[{}] {}", diagnostic.code, diagnostic.message);
+        if diagnostic.level == crate::diagnostic::DiagnosticLevel::Error {
+            report.errors.push(rendered);
+        } else if diagnostic.level == crate::diagnostic::DiagnosticLevel::Warning {
+            report.warnings.push(rendered);
+        }
+    }
+    Ok(report)
 }
 
 /// Check if mars.toml has `[package]` and at least one `[dependencies]` entry.
@@ -519,16 +471,19 @@ fn resolve_available_skills(
     lens: &crate::resolve::PublishLens,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<HashMap<String, (String, String)>, MarsError> {
-    let graph = crate::resolve::resolve_publish_graph(lens, diag)?;
+    let options = crate::resolve::ResolveOptions::default();
+    let graph =
+        crate::resolve::resolve_publish_graph_from_config(lens, &lens.effective, &options, diag)?;
 
     let mut skills: HashMap<String, (String, String)> = HashMap::new();
     for (source_name, node) in &graph.nodes {
-        let discovered =
-            crate::discover::discover_resolved_source(&node.rooted_ref.package_root, None, diag)?;
         let package_filters = graph.filters.get(source_name);
-        for item in &discovered {
-            if item.id.kind == crate::lock::ItemKind::Skill
-                && item_passes_filters(item, package_filters)
+        let Some(prepared) = &node.prepared else {
+            continue;
+        };
+        for definition in &prepared.definitions {
+            if definition.kind == mars_schema::item::DefinitionKind::Skill
+                && prepared_skill_passes_filters(definition, package_filters)
             {
                 let version_str = node
                     .resolved_ref
@@ -537,7 +492,7 @@ fn resolve_available_skills(
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 skills.insert(
-                    item.id.name.to_string(),
+                    definition.slug.clone(),
                     (source_name.to_string(), version_str),
                 );
             }
@@ -545,6 +500,23 @@ fn resolve_available_skills(
     }
 
     Ok(skills)
+}
+
+fn prepared_skill_passes_filters(
+    definition: &mars_schema::prepare::PreparedDefinition,
+    filters: Option<&Vec<crate::config::FilterMode>>,
+) -> bool {
+    let item = crate::discover::DiscoveredItem {
+        id: crate::lock::ItemId {
+            kind: mars_schema::item::ItemKind::Skill,
+            name: definition.slug.clone().into(),
+        },
+        source_path: PathBuf::from(&definition.source_path)
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf(),
+    };
+    item_passes_filters(&item, filters)
 }
 
 /// Returns true if a skill item would be installed given the accumulated filter constraints.
@@ -624,7 +596,7 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
         std::fs::write(
             path.join("mars.toml"),
-            format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\n\n[dependencies]\n"),
+            format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\nschema = 1\n\n[dependencies]\n"),
         )
         .unwrap();
         for skill_name in skills {
@@ -662,7 +634,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 
@@ -692,7 +664,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 
@@ -709,7 +681,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 
@@ -741,6 +713,12 @@ mod tests {
     #[test]
     fn check_errors_for_malformed_agent_model_policy() {
         let dir = TempDir::new().unwrap();
+        // Only an authored schema v1 package is refused for its fields.
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\nschema = 1\n",
+        )
+        .unwrap();
         write_agent_content(
             dir.path(),
             "browser-tester",
@@ -751,70 +729,8 @@ mod tests {
 
         let joined = report.errors.join("\n");
         assert!(
-            joined.contains("model-policies[1].match"),
+            joined.contains("model-policies[0].match"),
             "expected model-policies match error: {joined}"
-        );
-    }
-
-    #[test]
-    fn check_accepts_snake_case_skill_tool_alias() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("skills").join("planning");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---
-name: planning
-description: plan
-tools:
-  ask_user: allow
----
-# Skill",
-        )
-        .unwrap();
-
-        let report = super::check_dir(dir.path()).unwrap();
-
-        assert!(
-            report.errors.is_empty(),
-            "unexpected errors: {:?}",
-            report.errors
-        );
-        assert!(
-            report.warnings.is_empty(),
-            "unexpected warnings: {:?}",
-            report.warnings
-        );
-    }
-
-    #[test]
-    fn check_passes_through_unseparated_skill_tool_name() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("skills").join("planning");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---
-name: planning
-description: plan
-tools:
-  askuser: allow
----
-# Skill",
-        )
-        .unwrap();
-
-        let report = super::check_dir(dir.path()).unwrap();
-
-        assert!(
-            report.errors.is_empty(),
-            "unexpected errors: {:?}",
-            report.errors
-        );
-        assert!(
-            report.warnings.is_empty(),
-            "unexpected warnings: {:?}",
-            report.warnings
         );
     }
 
@@ -1087,20 +1003,10 @@ tools:
         )
         .unwrap();
 
-        let report = super::check_dir(dir.path()).unwrap();
-        let joined = report.errors.join("\n");
+        let error = super::check_dir(dir.path()).unwrap_err().to_string();
         assert!(
-            joined.contains("failed to load mars.toml for dependency checks"),
-            "expected config parse/load error to surface: {joined}"
-        );
-        let has_local_warning = report
-            .warnings
-            .iter()
-            .any(|w| w.contains("external dependency: `missing-skill`"));
-        assert!(
-            !has_local_warning,
-            "must not silently fall back to local-only warnings on invalid config: {:?}",
-            report.warnings
+            error.contains("TOML parse error"),
+            "an invalid mars.toml must fail the check, not fall back to local-only warnings: {error}"
         );
     }
 }

@@ -23,6 +23,8 @@ same path under `.mars/`. Dependency model-alias winners are also persisted in
 committed lock state (`dependency_model_aliases`). See
 [internals/lock-file.md](internals/lock-file.md) for format details.
 
+**Schema v1** is the file format of agent definitions, skills and the `[package]` table. Mars reads every package against it before it writes anything, the `mars-schema` crate and the `@meridian-flow/mars-schema` npm package read it the same way, and `mars migrate` upgrades a package written before it. See [config/schema-v1.md](config/schema-v1.md).
+
 **Filters** control which items from a source get installed: include specific agents/skills, exclude items, or restrict to agents-only or skills-only. See [config/mars-toml.md](config/mars-toml.md).
 
 ## Dependency Names vs Source Specifiers
@@ -85,14 +87,16 @@ Mars accepts several source forms:
 
 | Document | Contents |
 |---|---|
+| [config/migrating-to-schema-v1.md](config/migrating-to-schema-v1.md) | What `mars migrate` changes in a package, with a real diff, and how unmigrated dependencies behave |
 | [plugin-authoring.md](plugin-authoring.md) | Configure, build, check, release, and install multi-harness plugins |
 
 ### Config
 
 | Document | Contents |
 |---|---|
-| [config/mars-toml.md](config/mars-toml.md) | `mars.toml` reference: all fields, filter modes, model alias merge precedence, settings |
-| [config/agent-profiles.md](config/agent-profiles.md) | Agent profile format: every field, allowed values, harness-overrides, model-policies, fanout, examples |
+| [config/schema-v1.md](config/schema-v1.md) | The schema v1 contract: agent, skill and manifest keys, removed keys, effort, model-policy precedence, tool capabilities, fixtures |
+| [config/mars-toml.md](config/mars-toml.md) | `mars.toml` reference: dependencies (marketplace plugins, dialect), settings, overlays, model aliases |
+| [config/agent-profiles.md](config/agent-profiles.md) | Agent profile format: every field, allowed values, tools, harness-overrides, model-policies, examples |
 | [config/agent-compilation.md](config/agent-compilation.md) | How agents compile to native harness formats: field mapping, lossiness, emission control |
 | [config/skill-compilation.md](config/skill-compilation.md) | Skill frontmatter schema, per-harness lowering, skill variants layout and projection |
 | [config/bootstrap-docs.md](config/bootstrap-docs.md) | Bootstrap doc two-tier layout, BOOTSTRAP.md authoring, and `meridian bootstrap` |
@@ -108,7 +112,7 @@ Mars accepts several source forms:
 
 | Document | Contents |
 |---|---|
-| [internals/sync-pipeline.md](internals/sync-pipeline.md) | How sync works: resolve → target → diff → apply → sync targets → finalize |
+| [internals/sync-pipeline.md](internals/sync-pipeline.md) | How sync works: resolve and prepare → gate → target → diff → apply → sync targets → finalize |
 | [internals/lock-file.md](internals/lock-file.md) | Lock file format and semantics |
 | [internals/conflicts.md](internals/conflicts.md) | Collision handling: naming, unmanaged files, merge, resolution |
 

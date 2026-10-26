@@ -16,12 +16,13 @@ pub fn read(
     ctx: &MarsContext,
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
+    enforce_preparation_gate: bool,
 ) -> Result<ReaderIr, MarsError> {
     // Phase 1: acquire sync lock, load and mutate config.
     let loaded = load_config(ctx, request, diag)?;
 
     // Phase 2: resolve dependency graph + model aliases.
-    let resolved = resolve_graph(ctx, loaded, request, diag)?;
+    let mut resolved = resolve_graph(ctx, loaded, request, diag)?;
 
     // Local package discovery — produces source paths only (no DestPath).
     // Dest-path assignment is the compiler's responsibility.
@@ -32,6 +33,16 @@ pub fn read(
         .as_ref()
         .map(|p| p.name.as_str());
     let local_items = local_source::discover_local_items(&ctx.project_root, package_name, diag)?;
+
+    if enforce_preparation_gate {
+        diag.fail_on_errors()?;
+    }
+    crate::staging::materialize_prepared_graph(
+        &mut resolved.graph,
+        &resolved.loaded.effective,
+        resolved.preparation.path(),
+        diag,
+    )?;
 
     Ok(ReaderIr {
         resolved,

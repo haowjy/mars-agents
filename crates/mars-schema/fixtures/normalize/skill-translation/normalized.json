@@ -1,0 +1,372 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "selected_items": [
+          "skills/badname/SKILL.md",
+          "skills/broken/SKILL.md",
+          "skills/colon/SKILL.md",
+          "skills/everything/SKILL.md",
+          "skills/mismatch/SKILL.md",
+          "skills/plain/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              "skills/everything/SKILL.md"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "package"
+              ]
+            ],
+            "fields": {
+              "name": "package",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "badname",
+            "source_path": "skills/badname/SKILL.md",
+            "output_path": "skills/badname/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "Bad Name"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "Bad Name",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "broken",
+            "source_path": "skills/broken/SKILL.md",
+            "output_path": "skills/broken/SKILL.md",
+            "reading": {
+              "frontmatter": [],
+              "fields": null,
+              "body": null,
+              "diagnostics": [
+                {
+                  "code": "yaml.invalid",
+                  "severity": "error",
+                  "path": [],
+                  "message": "malformed YAML frontmatter: did not find expected ',' or ']' at line 3 column 1, while parsing a flow sequence at line 2 column 14"
+                }
+              ]
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "colon",
+            "source_path": "skills/colon/SKILL.md",
+            "output_path": "skills/colon/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "colon"
+                ],
+                [
+                  "description",
+                  "Use when: the user asks about colons"
+                ]
+              ],
+              "fields": {
+                "name": "colon",
+                "description": "Use when: the user asks about colons",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Colon\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "everything",
+            "source_path": "skills/everything/SKILL.md",
+            "output_path": "skills/everything/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "everything"
+                ],
+                [
+                  "description",
+                  "Does it all. When asked about everything."
+                ],
+                [
+                  "user-invocable",
+                  false
+                ],
+                [
+                  "license",
+                  "MIT"
+                ],
+                [
+                  "compatibility",
+                  "any"
+                ],
+                [
+                  "metadata",
+                  {
+                    "team": "core",
+                    "type": "reference",
+                    "version": "1.4"
+                  }
+                ],
+                [
+                  "x-custom",
+                  "kept"
+                ],
+                [
+                  "model-invocable",
+                  false
+                ],
+                [
+                  "harness-overrides",
+                  {
+                    "claude": {
+                      "argument-hint": "[file]",
+                      "model": "sonnet",
+                      "hooks": {
+                        "PreToolUse": []
+                      }
+                    }
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "everything",
+                "description": "Does it all. When asked about everything.",
+                "model-invocable": false,
+                "user-invocable": false,
+                "license": "MIT",
+                "compatibility": "any",
+                "metadata": {
+                  "team": "core",
+                  "type": "reference",
+                  "version": "1.4"
+                }
+              },
+              "body": "Use ${CLAUDE_SKILL_DIR}/scripts/go.sh.\n",
+              "diagnostics": [
+                {
+                  "code": "field.unknown",
+                  "severity": "warning",
+                  "path": [
+                    "x-custom"
+                  ],
+                  "message": "unknown field `x-custom` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+                }
+              ]
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "mismatch",
+            "source_path": "skills/mismatch/SKILL.md",
+            "output_path": "skills/mismatch/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "other-name"
+                ],
+                [
+                  "description",
+                  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                ]
+              ],
+              "fields": {
+                "name": "other-name",
+                "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "plain",
+            "source_path": "skills/plain/SKILL.md",
+            "output_path": "skills/plain/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "plain"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "plain",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/everything/scripts/go.sh",
+            "output_path": "skills/everything/scripts/go.sh"
+          }
+        ],
+        "diagnostics": {
+          "skills/badname/SKILL.md": [
+            {
+              "code": "skill.name-invalid",
+              "severity": "warning",
+              "path": [
+                "name"
+              ],
+              "message": "name `Bad Name` has characters outside `a-z`, `0-9` and `-`"
+            }
+          ],
+          "skills/everything/SKILL.md": [
+            {
+              "code": "skill.plugin-variable",
+              "severity": "warning",
+              "path": [],
+              "message": "refers to `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_SKILL_DIR}`, which are left as written and do not resolve outside Claude Code"
+            },
+            {
+              "code": "skill.needs-scripts",
+              "severity": "warning",
+              "path": [],
+              "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
+            }
+          ],
+          "skills/mismatch/SKILL.md": [
+            {
+              "code": "skill.name-mismatch",
+              "severity": "warning",
+              "path": [
+                "name"
+              ],
+              "message": "name `other-name` differs from the skill folder `mismatch`; the folder names it"
+            },
+            {
+              "code": "skill.description-too-long",
+              "severity": "warning",
+              "path": [
+                "description"
+              ],
+              "message": "description is over 1024 characters"
+            }
+          ]
+        },
+        "changes": {
+          "skills/colon/SKILL.md": [
+            {
+              "code": "skill.description-repaired",
+              "severity": "warning",
+              "path": [
+                "description"
+              ],
+              "message": "the unquoted `description` held a colon, which YAML cannot read; it was quoted"
+            }
+          ],
+          "skills/everything/SKILL.md": [
+            {
+              "code": "skill.tools-dropped",
+              "severity": "warning",
+              "path": [],
+              "message": "removed allowed-tools, disallowed-tools: schema v1 has no skill tool rules, and Claude's `allowed-tools` grants without restricting"
+            },
+            {
+              "code": "skill.claude-keys-moved",
+              "severity": "info",
+              "path": [],
+              "message": "moved Claude-only keys to harness-overrides.claude: `argument-hint`, `model`, `hooks`"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

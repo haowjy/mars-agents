@@ -8,6 +8,8 @@
 //! - `--strict`: escalate warnings to errors (missing env vars, etc.).
 //! - `--json`: emit diagnostics as structured JSON for tooling.
 
+use std::borrow::Cow;
+
 use serde::Serialize;
 
 use crate::cli::MarsContext;
@@ -42,7 +44,7 @@ pub struct ValidateReport {
 #[derive(Debug, Serialize)]
 pub struct ValidateDiagnostic {
     pub level: &'static str,
-    pub code: &'static str,
+    pub code: Cow<'static, str>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
@@ -55,7 +57,7 @@ impl ValidateDiagnostic {
         let level = effective_level(d.level, strict);
         ValidateDiagnostic {
             level: level_str(level),
-            code: d.code,
+            code: d.code.clone(),
             message: d.message.clone(),
             context: d.context.clone(),
             category: d.category.map(category_str),
@@ -87,7 +89,7 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
 
     // Run the pipeline in dry-run mode (no writes).
     // ValidationWarnings are included in report.diagnostics by finalize().
-    let report = crate::sync::execute(ctx, &request)?;
+    let report = crate::sync::execute_validation(ctx, &request)?;
 
     // Run compatibility preflight against the binary version and project setting.
     let binary_version = env!("CARGO_PKG_VERSION");
@@ -181,32 +183,12 @@ fn category_str(cat: DiagnosticCategory) -> &'static str {
 
 #[cfg(test)]
 fn validation_warning_to_diagnostic(vw: &crate::validate::ValidationWarning) -> Diagnostic {
-    use crate::validate::ValidationWarning;
-    match vw {
-        ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } => {
-            let message = if let Some(s) = suggestion {
-                format!(
-                    "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
-                    agent.name
-                )
-            } else {
-                format!(
-                    "agent `{}` references missing skill `{skill_name}`",
-                    agent.name
-                )
-            };
-            Diagnostic {
-                level: DiagnosticLevel::Warning,
-                code: "missing-skill",
-                message,
-                context: None,
-                category: Some(DiagnosticCategory::Validation),
-            }
-        }
+    Diagnostic {
+        level: DiagnosticLevel::Warning,
+        code: vw.code().into(),
+        message: vw.message(),
+        context: None,
+        category: Some(DiagnosticCategory::Validation),
     }
 }
 
@@ -218,7 +200,7 @@ mod tests {
     fn make_diag(level: DiagnosticLevel) -> Diagnostic {
         Diagnostic {
             level,
-            code: "test",
+            code: "test".into(),
             message: "test message".to_string(),
             context: None,
             category: None,
@@ -253,7 +235,7 @@ mod tests {
     fn validate_diag_from_diagnostic_maps_category() {
         let diag = Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: "compat-version",
+            code: "compat-version".into(),
             message: "test".to_string(),
             context: None,
             category: Some(DiagnosticCategory::Compatibility),
@@ -267,7 +249,7 @@ mod tests {
     fn validate_diag_strict_escalation_in_json() {
         let diag = Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: "missing-skill",
+            code: "missing-skill".into(),
             message: "test".to_string(),
             context: None,
             category: Some(DiagnosticCategory::Validation),
@@ -281,8 +263,9 @@ mod tests {
 
     #[test]
     fn validation_warning_missing_skill_no_suggestion() {
-        use crate::lock::{ItemId, ItemKind};
+        use crate::lock::ItemId;
         use crate::types::ItemName;
+        use mars_schema::item::ItemKind;
         let vw = crate::validate::ValidationWarning::MissingSkill {
             agent: ItemId {
                 kind: ItemKind::Agent,
@@ -300,8 +283,9 @@ mod tests {
 
     #[test]
     fn validation_warning_missing_skill_with_suggestion() {
-        use crate::lock::{ItemId, ItemKind};
+        use crate::lock::ItemId;
         use crate::types::ItemName;
+        use mars_schema::item::ItemKind;
         let vw = crate::validate::ValidationWarning::MissingSkill {
             agent: ItemId {
                 kind: ItemKind::Agent,

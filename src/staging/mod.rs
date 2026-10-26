@@ -1,35 +1,28 @@
-//! Canonical source staging — lift foreign frontmatter before discovery/validation.
+//! Filesystem projection of crate-owned prepared packages.
 //!
-//! `stage_canonical_source` copies a fetched package tree into a derived,
-//! dependency-scoped directory and routes markdown frontmatter through
-//! `lift_frontmatter`. Downstream pipeline stages read only the staged tree.
+//! Schema classification, discovery, normalization, and reading happen in
+//! `mars-schema`; this module only copies prepared bytes and binary-owned payload.
 
-mod lift;
 mod overlay;
 mod publish;
 
-pub(crate) use lift::cursor_manual_rule_shape;
-pub(crate) use publish::{
-    PublishInput, discover_inputs as discover_publish_inputs,
-    inputs_for_items as publish_inputs_for_items,
-};
+pub(crate) use publish::inputs_for_items as publish_inputs_for_items;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use indexmap::IndexMap;
 
 use crate::config::SkillOverlay;
 use crate::diagnostic::DiagnosticCollector;
-use crate::dialect::Dialect;
 use crate::error::MarsError;
-use crate::frontmatter::Frontmatter;
-use crate::lock::ItemKind;
 use crate::platform::cache::safe_component;
 use crate::resolve::RootedSourceRef;
 use crate::types::{RenameMap, SourceName};
+use mars_schema::frontmatter::Frontmatter;
+use mars_schema::item::ItemKind;
 
-pub(crate) use lift::lift_frontmatter_with_change;
 pub(crate) use overlay::{apply_skill_overlay, skill_overlay_lookup_name};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,81 +33,276 @@ pub(crate) enum HookSurfaceState {
     },
 }
 
-pub(crate) struct StagedRootedSource {
-    pub rooted: RootedSourceRef,
-    pub hook_surface: HookSurfaceState,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RootedStageOptions {
-    pub dialect: Dialect,
-}
-
-/// Stage a package tree and repoint `package_root` at the staged output.
-pub(crate) fn stage_rooted_source(
-    source_name: &SourceName,
-    rooted: RootedSourceRef,
-    options: RootedStageOptions,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    renames: &RenameMap,
-    staging_root: &Path,
-    diag: &mut DiagnosticCollector,
-) -> Result<StagedRootedSource, MarsError> {
-    let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
-    stage_canonical_source(
-        &rooted.package_root,
-        &staged_package_root,
-        options.dialect,
-        skill_overrides,
-        renames,
-        Some(source_name.as_ref()),
-        diag,
-    )?;
-    staged_rooted_source(rooted, staged_package_root, diag)
-}
-
-/// Stage a package tree from publish inputs and repoint `package_root` at it.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn stage_rooted_source_for_publish_inputs(
+pub(crate) fn materialize_prepared_rooted(
     source_name: &SourceName,
     rooted: RootedSourceRef,
-    options: RootedStageOptions,
+    prepared: Arc<mars_schema::prepare::Prepared>,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     staging_root: &Path,
-    inputs: &[PublishInput],
     diag: &mut DiagnosticCollector,
-) -> Result<StagedRootedSource, MarsError> {
-    let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
-    stage_canonical_source_for_publish_inputs(
-        &rooted.package_root,
-        &staged_package_root,
-        options.dialect,
+) -> Result<(RootedSourceRef, HookSurfaceState), MarsError> {
+    let destination = staging_dir_for(staging_root, source_name);
+    materialize_prepared_tree(
+        &rooted.authored_root,
+        &destination,
+        &prepared,
         skill_overrides,
         renames,
         Some(source_name.as_ref()),
-        inputs,
         diag,
     )?;
-    staged_rooted_source(rooted, staged_package_root, diag)
-}
-
-fn staged_rooted_source(
-    rooted: RootedSourceRef,
-    staged_package_root: PathBuf,
-    diag: &mut DiagnosticCollector,
-) -> Result<StagedRootedSource, MarsError> {
-    let hook_surface = detect_unreadable_hook_surface(&staged_package_root, diag)?;
-    Ok(StagedRootedSource {
-        rooted: RootedSourceRef {
+    let hook_surface = detect_unreadable_hook_surface(&destination, diag)?;
+    Ok((
+        RootedSourceRef {
             checkout_root: rooted.checkout_root,
-            package_root: staged_package_root,
+            authored_root: rooted.authored_root,
+            package_root: destination,
+            plugin: rooted.plugin,
         },
         hook_surface,
-    })
+    ))
 }
 
-fn detect_unreadable_hook_surface(
+/// Materialize a completely prepared graph after its diagnostic gate.
+pub(crate) fn materialize_prepared_graph(
+    graph: &mut crate::resolve::ResolvedGraph,
+    effective: &crate::config::EffectiveConfig,
+    staging_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let empty_renames = RenameMap::new();
+    for (source_name, node) in &mut graph.nodes {
+        let prepared = node
+            .prepared
+            .as_ref()
+            .expect("production graph nodes retain prepared packages");
+        let renames = effective
+            .dependencies
+            .get(source_name)
+            .map(|dependency| &dependency.rename)
+            .unwrap_or(&empty_renames);
+        let (rooted, _) = materialize_prepared_rooted(
+            source_name,
+            node.rooted_ref.clone(),
+            Arc::clone(prepared),
+            &effective.skills,
+            renames,
+            staging_root,
+            diag,
+        )?;
+        node.rooted_ref = rooted;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_prepared_tree(
+    authored_root: &Path,
+    destination: &Path,
+    prepared: &mars_schema::prepare::Prepared,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    renames: &RenameMap,
+    fallback_skill_name: Option<&str>,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    if destination.symlink_metadata().is_ok() {
+        crate::platform::fs::safe_remove(destination)?;
+    }
+    fs::create_dir_all(destination)?;
+    if let Some(manifest) = &prepared.manifest {
+        fs::write(
+            destination.join(&manifest.output_path),
+            &manifest.normalized_bytes,
+        )?;
+    }
+    for definition in &prepared.definitions {
+        let mut bytes = definition.normalized_bytes.clone();
+        if definition.kind == mars_schema::item::DefinitionKind::Skill {
+            let logical = authored_root.join(&definition.source_path);
+            let installed_name =
+                skill_overlay_lookup_name(&logical, authored_root, renames, fallback_skill_name);
+            if let Some(overlay) = installed_name
+                .as_deref()
+                .and_then(|name| skill_overrides.get(name))
+                && let Ok(text) = std::str::from_utf8(&bytes)
+                && let Ok(frontmatter) = Frontmatter::parse(text)
+            {
+                let (frontmatter, changed) = apply_skill_overlay(&frontmatter, overlay);
+                if changed {
+                    bytes = frontmatter.render().into_bytes();
+                }
+            }
+        }
+        let output = destination.join(&definition.output_path);
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(output, bytes)?;
+    }
+    for payload in &prepared.payload {
+        let source = crate::fs::strict_authored_file(
+            authored_root,
+            &authored_root.join(&payload.source_path),
+        )?;
+        let output = destination.join(&payload.output_path);
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, output)?;
+    }
+    // Hooks, bootstrap documents, MCP definitions and foreign source manifests
+    // remain binary-owned package surfaces.
+    for relative in ["hooks", "mcp"] {
+        copy_authored_subtree(authored_root, Path::new(relative), destination, diag)?;
+    }
+    for item in crate::discover::discover_bootstrap_surfaces(authored_root, diag)? {
+        copy_authored_subtree(authored_root, &item.source_path, destination, diag)?;
+    }
+    for relative in crate::discover::SOURCE_MANIFEST_PATHS {
+        let source = authored_root.join(relative);
+        if source.is_file() {
+            let source = crate::fs::strict_authored_file(authored_root, &source)?;
+            let output = destination.join(relative);
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(source, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_authored_subtree(
+    authored_root: &Path,
+    relative: &Path,
+    destination: &Path,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let root = authored_root.join(relative);
+    if !root.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(destination.join(relative))?;
+    for entry in crate::fs::authored_tree_entries(
+        &root,
+        &[],
+        crate::fs::AuthoredSymlinkPolicy::Follow,
+        diag,
+    )? {
+        let output = destination.join(relative).join(&entry.relative);
+        match entry.kind {
+            crate::fs::AuthoredEntryKind::Directory => fs::create_dir_all(output)?,
+            crate::fs::AuthoredEntryKind::File => {
+                if let Some(parent) = output.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(entry.source, output)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn materialize_local_prepared(
+    item: &crate::local_source::LocalDiscoveredItem,
+    skill_overrides: &IndexMap<String, SkillOverlay>,
+    staging_root: &Path,
+    item_key: &str,
+    excluded_paths: &[PathBuf],
+) -> Result<PathBuf, MarsError> {
+    let destination = staging_root.join("_local").join(safe_component(item_key));
+    if destination.symlink_metadata().is_ok() {
+        crate::platform::fs::safe_remove(&destination)?;
+    }
+    fs::create_dir_all(&destination)?;
+
+    let crate::local_source::LocalItemContent::Prepared {
+        definition,
+        payload,
+    } = &item.content
+    else {
+        for entry in crate::fs::authored_tree_entries(
+            &item.disk_path(),
+            &[],
+            crate::fs::AuthoredSymlinkPolicy::Follow,
+            &mut DiagnosticCollector::new(),
+        )? {
+            let output = destination.join(entry.relative);
+            match entry.kind {
+                crate::fs::AuthoredEntryKind::Directory => fs::create_dir_all(output)?,
+                crate::fs::AuthoredEntryKind::File => {
+                    if let Some(parent) = output.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::copy(entry.source, output)?;
+                }
+            }
+        }
+        return Ok(destination);
+    };
+
+    let mut definition_bytes = definition.normalized_bytes.clone();
+    if item.discovered.id.kind == ItemKind::Skill
+        && let Some(overlay) = skill_overrides.get(item.discovered.id.name.as_str())
+        && let Ok(text) = std::str::from_utf8(&definition_bytes)
+        && let Ok(frontmatter) = Frontmatter::parse(text)
+    {
+        let (frontmatter, changed) = apply_skill_overlay(&frontmatter, overlay);
+        if changed {
+            definition_bytes = frontmatter.render().into_bytes();
+        }
+    }
+    let result = match item.discovered.id.kind {
+        ItemKind::Agent => {
+            let name = Path::new(&definition.output_path)
+                .file_name()
+                .expect("agent output has a filename");
+            let path = destination.join(name);
+            fs::write(&path, definition_bytes)?;
+            path
+        }
+        ItemKind::Skill => {
+            fs::write(destination.join("SKILL.md"), definition_bytes)?;
+            for payload in payload {
+                let relative = PathBuf::from(&payload.source_path);
+                let relative = if item.discovered.source_path == Path::new(".") {
+                    relative
+                } else {
+                    relative
+                        .strip_prefix(&item.discovered.source_path)
+                        .expect("skill payload belongs to selected skill")
+                        .to_path_buf()
+                };
+                if excluded_paths
+                    .iter()
+                    .any(|excluded| relative.starts_with(excluded))
+                {
+                    continue;
+                }
+                let source = crate::fs::strict_authored_file(
+                    &item.root,
+                    &item.root.join(&payload.source_path),
+                )?;
+                let output = destination.join(relative);
+                if let Some(parent) = output.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(source, output)?;
+            }
+            destination
+        }
+        _ => unreachable!("prepared local definitions are agents or skills"),
+    };
+    Ok(result)
+}
+
+fn staging_dir_for(staging_root: &Path, source_name: &SourceName) -> PathBuf {
+    staging_root.join(safe_component(source_name.as_ref()))
+}
+
+pub(crate) fn detect_unreadable_hook_surface(
     package_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<HookSurfaceState, MarsError> {
@@ -126,776 +314,15 @@ fn detect_unreadable_hook_surface(
         let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
             continue;
         };
-        if !crate::compiler::hooks::uses_removed_schema(&value) {
-            continue;
-        }
-        if let Some(hook_name) = hook_dir.file_name().and_then(|name| name.to_str()) {
+        if crate::compiler::hooks::uses_removed_schema(&value)
+            && let Some(hook_name) = hook_dir.file_name().and_then(|name| name.to_str())
+        {
             hook_names.insert(hook_name.to_owned());
         }
     }
     if hook_names.is_empty() {
-        return Ok(HookSurfaceState::Readable);
-    }
-    Ok(HookSurfaceState::Unreadable { hook_names })
-}
-
-/// Copy `source_root` into `dest_root`, rewriting frontmatter through lift.
-pub(crate) fn stage_canonical_source(
-    source_root: &Path,
-    dest_root: &Path,
-    dialect: Dialect,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    renames: &RenameMap,
-    fallback_skill_name: Option<&str>,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    reset_staging_dir(dest_root)?;
-    copy_and_lift_tree(
-        source_root,
-        dest_root,
-        dialect,
-        skill_overrides,
-        renames,
-        fallback_skill_name,
-        &[],
-        diag,
-    )
-}
-
-/// Copy only the given publish inputs from `source_root` into `dest_root`,
-/// rewriting frontmatter through lift.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn stage_canonical_source_for_publish_inputs(
-    source_root: &Path,
-    dest_root: &Path,
-    dialect: Dialect,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    renames: &RenameMap,
-    fallback_skill_name: Option<&str>,
-    inputs: &[PublishInput],
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    reset_staging_dir(dest_root)?;
-    publish::copy_and_lift_inputs(
-        source_root,
-        dest_root,
-        dialect,
-        skill_overrides,
-        renames,
-        fallback_skill_name,
-        inputs,
-        diag,
-    )
-}
-
-fn reset_staging_dir(dest_root: &Path) -> Result<(), MarsError> {
-    if dest_root.exists() {
-        fs::remove_dir_all(dest_root)?;
-    }
-    fs::create_dir_all(dest_root)?;
-    Ok(())
-}
-
-/// Stage a single local item path (agent file or skill directory).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn stage_local_item(
-    source_path: &Path,
-    kind: ItemKind,
-    dialect: Dialect,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    staging_root: &Path,
-    item_key: &str,
-    skill_overlay_key: Option<&str>,
-    excluded_paths: &[PathBuf],
-    diag: &mut DiagnosticCollector,
-) -> Result<PathBuf, MarsError> {
-    let dest = staging_root
-        .join("_local")
-        .join(safe_component(item_key))
-        .join(dialect.as_str());
-    if dest.exists() {
-        fs::remove_dir_all(&dest)?;
-    }
-    fs::create_dir_all(dest.parent().unwrap_or(&dest))?;
-
-    match kind {
-        ItemKind::Agent | ItemKind::McpServer => {
-            fs::create_dir_all(&dest)?;
-            let dest_file =
-                dest.join(source_path.file_name().ok_or_else(|| MarsError::Source {
-                    source_name: "_local".to_string(),
-                    message: format!(
-                        "local agent path has no file name: {}",
-                        source_path.display()
-                    ),
-                })?);
-            process_markdown_file(
-                source_path,
-                source_path,
-                &dest_file,
-                kind,
-                &mut StageOverlayContext {
-                    dialect,
-                    skill_overrides,
-                    renames: &RenameMap::new(),
-                    package_root: source_path.parent().unwrap_or(source_path),
-                    fallback_skill_name: None,
-                    skill_overlay_key,
-                    diag,
-                },
-            )?;
-            Ok(dest_file)
-        }
-        ItemKind::Skill | ItemKind::Hook | ItemKind::BootstrapDoc => {
-            fs::create_dir_all(&dest)?;
-            copy_and_lift_tree(
-                source_path,
-                &dest,
-                dialect,
-                skill_overrides,
-                &RenameMap::new(),
-                skill_overlay_key,
-                excluded_paths,
-                diag,
-            )?;
-            Ok(dest)
-        }
-    }
-}
-
-fn staging_dir_for(staging_root: &Path, source_name: &SourceName, dialect: Dialect) -> PathBuf {
-    staging_root
-        .join(safe_component(source_name.as_ref()))
-        .join(dialect.as_str())
-}
-
-struct StageOverlayContext<'a> {
-    dialect: Dialect,
-    skill_overrides: &'a IndexMap<String, SkillOverlay>,
-    renames: &'a RenameMap,
-    package_root: &'a Path,
-    fallback_skill_name: Option<&'a str>,
-    skill_overlay_key: Option<&'a str>,
-    diag: &'a mut DiagnosticCollector,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn copy_and_lift_tree(
-    source_root: &Path,
-    dest_root: &Path,
-    dialect: Dialect,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    renames: &RenameMap,
-    fallback_skill_name: Option<&str>,
-    excluded_paths: &[PathBuf],
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    let entries = crate::fs::authored_tree_entries(
-        source_root,
-        excluded_paths,
-        crate::fs::AuthoredSymlinkPolicy::Follow,
-        diag,
-    )?;
-    for entry in entries {
-        let dest_path = dest_root.join(&entry.relative);
-        if entry.kind == crate::fs::AuthoredEntryKind::Directory {
-            fs::create_dir_all(&dest_path)?;
-        } else if should_lift_markdown(&entry.relative) {
-            let src_path = entry.source;
-            let kind = item_kind_for_markdown(&entry.relative);
-            process_markdown_file(
-                &src_path,
-                &source_root.join(&entry.relative),
-                &dest_path,
-                kind,
-                &mut StageOverlayContext {
-                    dialect,
-                    skill_overrides,
-                    renames,
-                    package_root: source_root,
-                    fallback_skill_name,
-                    skill_overlay_key: None,
-                    diag,
-                },
-            )?;
-        } else {
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::copy(&entry.source, &dest_path)?;
-        }
-    }
-    Ok(())
-}
-
-fn should_lift_markdown(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some("SKILL.md") | Some("BOOTSTRAP.md")
-    ) || path
-        .extension()
-        .is_some_and(|ext| ext == "md" || ext == "mdc")
-}
-
-fn item_kind_for_markdown(path: &Path) -> ItemKind {
-    match path.file_name().and_then(|name| name.to_str()) {
-        Some("SKILL.md") => ItemKind::Skill,
-        Some("BOOTSTRAP.md") => ItemKind::BootstrapDoc,
-        _ if path.extension().is_some_and(|ext| ext == "mdc") => ItemKind::Skill,
-        _ => ItemKind::Agent,
-    }
-}
-
-fn process_markdown_file(
-    src: &Path,
-    logical_src: &Path,
-    dest: &Path,
-    kind: ItemKind,
-    ctx: &mut StageOverlayContext<'_>,
-) -> Result<(), MarsError> {
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let skill_overlay = (kind == ItemKind::Skill)
-        .then(|| {
-            ctx.skill_overlay_key.map(str::to_owned).or_else(|| {
-                skill_overlay_lookup_name(
-                    logical_src,
-                    ctx.package_root,
-                    ctx.renames,
-                    ctx.fallback_skill_name,
-                )
-            })
-        })
-        .flatten()
-        .and_then(|name| {
-            ctx.skill_overrides
-                .get(&name)
-                .map(|overlay| (name, overlay))
-        });
-
-    let original = fs::read_to_string(src)?;
-    if let Ok(parsed) = Frontmatter::parse(&original) {
-        if ctx.dialect == Dialect::MarsNative && kind == ItemKind::Skill {
-            let mut skill_diags = Vec::new();
-            crate::compiler::skills::push_authored_skill_schema_diags(&parsed, &mut skill_diags);
-            crate::compiler::skills::push_non_canonical_tool_field_diags(&parsed, &mut skill_diags);
-            if !skill_diags.is_empty() {
-                let skill_name = parsed
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned)
-                    .or_else(|| {
-                        skill_overlay_lookup_name(
-                            logical_src,
-                            ctx.package_root,
-                            ctx.renames,
-                            ctx.fallback_skill_name,
-                        )
-                    })
-                    .or_else(|| {
-                        logical_src
-                            .parent()
-                            .and_then(|p| p.file_name())
-                            .and_then(|n| n.to_str())
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_else(|| "unknown".to_string());
-                crate::compiler::skills::emit_skill_schema_diags(
-                    ctx.diag,
-                    &skill_name,
-                    &skill_diags,
-                );
-            }
-        }
-
-        let (mut fm, mut changed) = lift_frontmatter_with_change(ctx.dialect, kind, &parsed);
-
-        if let Some((_skill_name, overlay)) = skill_overlay
-            && !overlay.is_empty()
-        {
-            let (overlaid, overlay_changed) = apply_skill_overlay(&fm, overlay);
-            fm = overlaid;
-            changed |= overlay_changed;
-        }
-
-        if changed {
-            fs::write(dest, fm.render())?;
-        } else {
-            fs::copy(src, dest)?;
-        }
+        Ok(HookSurfaceState::Readable)
     } else {
-        fs::copy(src, dest)?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::{AgentOverlayTools, SkillOverlay};
-    use crate::diagnostic::DiagnosticCollector;
-    use crate::hash;
-    use crate::types::{ItemName, RenameMap};
-    use tempfile::TempDir;
-
-    fn stage_source(
-        source_root: &Path,
-        dest_root: &Path,
-        dialect: Dialect,
-        skill_overrides: &IndexMap<String, SkillOverlay>,
-        renames: &RenameMap,
-        fallback_skill_name: Option<&str>,
-    ) -> DiagnosticCollector {
-        let mut diag = DiagnosticCollector::new();
-        stage_canonical_source(
-            source_root,
-            dest_root,
-            dialect,
-            skill_overrides,
-            renames,
-            fallback_skill_name,
-            &mut diag,
-        )
-        .unwrap();
-        diag
-    }
-
-    #[test]
-    fn stage_skill_overlay_changes_frontmatter_and_preserves_unaffected_bytes() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/demo");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: base\nuser-invocable: true\n---\n# Body\n",
-        )
-        .unwrap();
-        let other = source.path().join("skills/other");
-        fs::create_dir_all(&other).unwrap();
-        fs::write(
-            other.join("SKILL.md"),
-            "---\nname: other\ndescription: untouched\n---\n# Other\n",
-        )
-        .unwrap();
-
-        let mut overrides = IndexMap::new();
-        overrides.insert(
-            "demo".to_string(),
-            SkillOverlay {
-                description: Some("Overridden".to_string()),
-                user_invocable: Some(false),
-                tools: AgentOverlayTools {
-                    disallowed: Some(vec!["Agent".to_string().try_into().unwrap()].into()),
-                    ..AgentOverlayTools::default()
-                },
-                ..SkillOverlay::default()
-            },
-        );
-
-        let dest = TempDir::new().unwrap();
-        stage_source(
-            source.path(),
-            dest.path(),
-            Dialect::Claude,
-            &overrides,
-            &RenameMap::new(),
-            None,
-        );
-
-        let demo_staged = fs::read_to_string(dest.path().join("skills/demo/SKILL.md")).unwrap();
-        assert!(demo_staged.contains("description: Overridden"));
-        assert!(demo_staged.contains("user-invocable: false"));
-        assert!(demo_staged.contains("disallowed-tools:"));
-
-        let other_staged = fs::read_to_string(dest.path().join("skills/other/SKILL.md")).unwrap();
-        assert_eq!(
-            other_staged,
-            fs::read_to_string(other.join("SKILL.md")).unwrap()
-        );
-    }
-
-    #[test]
-    fn empty_skill_overlay_leaves_bytes_identical() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/demo");
-        fs::create_dir_all(&skill).unwrap();
-        let original = "---\nname: demo\ndescription: base\n---\n# Body\n";
-        fs::write(skill.join("SKILL.md"), original).unwrap();
-
-        let mut overrides = IndexMap::new();
-        overrides.insert("demo".to_string(), SkillOverlay::default());
-
-        let dest = TempDir::new().unwrap();
-        stage_source(
-            source.path(),
-            dest.path(),
-            Dialect::Claude,
-            &overrides,
-            &RenameMap::new(),
-            None,
-        );
-
-        assert_eq!(
-            fs::read_to_string(dest.path().join("skills/demo/SKILL.md")).unwrap(),
-            original
-        );
-    }
-
-    #[test]
-    fn stage_skill_directory_is_faithful_copy_with_identity_lift() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/demo");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(skill.join("SKILL.md"), "---\nname: demo\n---\n# Body\n").unwrap();
-        fs::write(skill.join("helper.sh"), "#!/bin/sh\n").unwrap();
-
-        let dest = TempDir::new().unwrap();
-        stage_source(
-            source.path(),
-            dest.path(),
-            Dialect::Claude,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let staged_skill = dest.path().join("skills/demo");
-        assert!(staged_skill.join("helper.sh").exists());
-        assert_eq!(
-            fs::read_to_string(staged_skill.join("SKILL.md")).unwrap(),
-            "---\nname: demo\n---\n# Body\n"
-        );
-        assert_eq!(
-            hash::compute_hash(&staged_skill, ItemKind::Skill).unwrap(),
-            hash::compute_hash(&skill, ItemKind::Skill).unwrap()
-        );
-    }
-
-    #[test]
-    fn claude_foreign_skill_lift_invalidates_staged_hash() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/demo");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let native = TempDir::new().unwrap();
-        stage_source(
-            source.path(),
-            native.path(),
-            Dialect::MarsNative,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let claude = TempDir::new().unwrap();
-        stage_source(
-            source.path(),
-            claude.path(),
-            Dialect::Claude,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let native_staged = fs::read_to_string(native.path().join("skills/demo/SKILL.md")).unwrap();
-        let claude_staged = fs::read_to_string(claude.path().join("skills/demo/SKILL.md")).unwrap();
-        assert!(native_staged.contains("disable-model-invocation"));
-        assert!(!claude_staged.contains("disable-model-invocation"));
-        assert!(claude_staged.contains("model-invocable: false"));
-
-        let native_hash =
-            hash::compute_hash(&native.path().join("skills/demo"), ItemKind::Skill).unwrap();
-        let claude_hash =
-            hash::compute_hash(&claude.path().join("skills/demo"), ItemKind::Skill).unwrap();
-        assert_ne!(native_hash, claude_hash);
-    }
-
-    #[test]
-    fn stage_skill_overlay_keys_by_installed_name_after_rename() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/planning");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: planning\ndescription: base\n---\n# Planning\n",
-        )
-        .unwrap();
-
-        let mut renames = RenameMap::new();
-        renames.insert(
-            ItemName::from("planning"),
-            ItemName::from("research-planning"),
-        );
-
-        let mut overrides = IndexMap::new();
-        overrides.insert(
-            "research-planning".to_string(),
-            SkillOverlay {
-                description: Some("Renamed overlay".to_string()),
-                ..SkillOverlay::default()
-            },
-        );
-
-        let dest = TempDir::new().unwrap();
-        stage_source(
-            source.path(),
-            dest.path(),
-            Dialect::Claude,
-            &overrides,
-            &renames,
-            None,
-        );
-
-        let staged = fs::read_to_string(dest.path().join("skills/planning/SKILL.md")).unwrap();
-        assert!(staged.contains("description: Renamed overlay"));
-    }
-
-    #[test]
-    fn stage_flat_skill_overlay_uses_fallback_name() {
-        let source = TempDir::new().unwrap();
-        fs::write(
-            source.path().join("SKILL.md"),
-            "---\nname: base\ndescription: base\n---\n# Flat\n",
-        )
-        .unwrap();
-
-        let mut overrides = IndexMap::new();
-        overrides.insert(
-            "my-flat-skill".to_string(),
-            SkillOverlay {
-                description: Some("Flat overlay".to_string()),
-                ..SkillOverlay::default()
-            },
-        );
-
-        let dest = TempDir::new().unwrap();
-        stage_source(
-            source.path(),
-            dest.path(),
-            Dialect::Claude,
-            &overrides,
-            &RenameMap::new(),
-            Some("my-flat-skill"),
-        );
-
-        let staged = fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
-        assert!(staged.contains("description: Flat overlay"));
-    }
-
-    #[test]
-    fn mars_native_staging_strips_non_canonical_tool_aliases() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/bad-allowed");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: bad-allowed\ndescription: d\nallowed-tools: [Bash]\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let dest = TempDir::new().unwrap();
-        let mut diag = stage_source(
-            source.path(),
-            dest.path(),
-            Dialect::MarsNative,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let staged = fs::read_to_string(dest.path().join("skills/bad-allowed/SKILL.md")).unwrap();
-        assert!(
-            !staged.contains("allowed-tools"),
-            "canonical staging must strip non-canonical tool aliases: {staged}"
-        );
-
-        assert!(
-            diag.drain()
-                .iter()
-                .any(|d| d.message.contains("allowed-tools") && d.message.contains("tools:")),
-            "staging must emit non-canonical diagnostic from raw frontmatter"
-        );
-    }
-
-    #[test]
-    fn mars_native_staging_strips_disallowed_tools_alias_and_warns() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/bad-denied");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: bad-denied\ndescription: d\ndisallowed_tools: [Agent]\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let dest = TempDir::new().unwrap();
-        let mut diag = stage_source(
-            source.path(),
-            dest.path(),
-            Dialect::MarsNative,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let staged = fs::read_to_string(dest.path().join("skills/bad-denied/SKILL.md")).unwrap();
-        assert!(
-            !staged.contains("disallowed_tools"),
-            "canonical staging must strip disallowed_tools alias: {staged}"
-        );
-
-        assert!(
-            diag.drain().iter().any(|d| {
-                d.message.contains("disallowed_tools") && d.message.contains("disallowed-tools:")
-            }),
-            "staging must warn about non-canonical disallowed_tools"
-        );
-    }
-
-    #[test]
-    fn mars_native_canonical_tools_stages_without_non_canonical_diagnostic() {
-        let source = TempDir::new().unwrap();
-        let skill = source.path().join("skills/good-tools");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: good-tools\ndescription: d\ntools: [Bash]\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let dest = TempDir::new().unwrap();
-        let mut diag = stage_source(
-            source.path(),
-            dest.path(),
-            Dialect::MarsNative,
-            &IndexMap::new(),
-            &RenameMap::new(),
-            None,
-        );
-
-        let staged = fs::read_to_string(dest.path().join("skills/good-tools/SKILL.md")).unwrap();
-        assert!(staged.contains("tools:"));
-        assert!(
-            !diag
-                .drain()
-                .iter()
-                .any(|d| d.code == "skill-schema-warning"),
-            "canonical tools must not emit non-canonical warning"
-        );
-    }
-
-    #[test]
-    fn local_mars_native_staging_emits_non_canonical_tool_diagnostic() {
-        let root = TempDir::new().unwrap();
-        let mars_src = root.path().join(".mars-src");
-        let skill = mars_src.join("skills/bad-allowed");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: bad-allowed\ndescription: d\nallowed-tools: [Bash]\n---\n# Body\n",
-        )
-        .unwrap();
-
-        let mut diag = DiagnosticCollector::new();
-        let staged = stage_local_item(
-            &skill,
-            ItemKind::Skill,
-            Dialect::MarsNative,
-            &IndexMap::new(),
-            &root.path().join("staging"),
-            "skill:bad-allowed",
-            Some("bad-allowed"),
-            &[],
-            &mut diag,
-        )
-        .unwrap();
-
-        let content = fs::read_to_string(staged.join("SKILL.md")).unwrap();
-        assert!(
-            !content.contains("allowed-tools"),
-            "staged local skill: {content}"
-        );
-        assert!(
-            diag.drain()
-                .iter()
-                .any(|d| d.message.contains("allowed-tools") && d.message.contains("tools:")),
-            "local staging must emit non-canonical diagnostic from raw frontmatter"
-        );
-    }
-
-    #[test]
-    fn local_bare_skill_keeps_foreign_key_for_mars_native_validation() {
-        let root = TempDir::new().unwrap();
-        let mars_src = root.path().join(".mars-src");
-        let skill = mars_src.join("skills/demo");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n# Body\n",
-        )
-        .unwrap();
-
-        assert_eq!(Dialect::resolve_local(None, &mars_src), Dialect::MarsNative);
-
-        let mut diag = DiagnosticCollector::new();
-        let staged = stage_local_item(
-            &skill,
-            ItemKind::Skill,
-            Dialect::MarsNative,
-            &IndexMap::new(),
-            &root.path().join("staging"),
-            "skill:demo",
-            Some("demo"),
-            &[],
-            &mut diag,
-        )
-        .unwrap();
-
-        let content = fs::read_to_string(staged.join("SKILL.md")).unwrap();
-        assert!(content.contains("disable-model-invocation"));
-
-        let mut diags = Vec::new();
-        crate::compiler::skills::parse_skill_content(&content, &mut diags).unwrap();
-        assert!(diags.iter().any(|d| d.is_error()));
-    }
-
-    #[test]
-    fn local_claude_container_infers_claude_and_lifts_foreign_keys() {
-        let root = TempDir::new().unwrap();
-        let mars_src = root.path().join(".mars-src");
-        let skill = mars_src.join(".claude/skills/demo");
-        fs::create_dir_all(&skill).unwrap();
-        fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n# Body\n",
-        )
-        .unwrap();
-
-        assert_eq!(Dialect::resolve_local(None, &mars_src), Dialect::Claude);
-
-        let mut diag = DiagnosticCollector::new();
-        let staged = stage_local_item(
-            &skill,
-            ItemKind::Skill,
-            Dialect::Claude,
-            &IndexMap::new(),
-            &root.path().join("staging"),
-            "skill:demo",
-            Some("demo"),
-            &[],
-            &mut diag,
-        )
-        .unwrap();
-
-        let content = fs::read_to_string(staged.join("SKILL.md")).unwrap();
-        assert!(!content.contains("disable-model-invocation"));
-        assert!(content.contains("model-invocable: false"));
+        Ok(HookSurfaceState::Unreadable { hook_names })
     }
 }

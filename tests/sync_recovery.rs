@@ -22,7 +22,7 @@ fn retry_recovers_canonical_writes_after_a_later_apply_error() {
     for established in [false, true] {
         let dir = TempDir::new().unwrap();
         dir.child("mars.toml").write_str(
-            "[package]\nname='demo'\nversion='1.0.0'\n[settings]\ntargets=['.codex']\nagent_emission='never'\n",
+            "[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=['.codex']\nagent_emission='never'\n",
         ).unwrap();
         if established {
             dir.child("agents/existing.md")
@@ -87,7 +87,7 @@ fn retry_recovers_canonical_writes_after_a_later_apply_error() {
 fn interrupted_package() -> TempDir {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml").write_str(
-        "[package]\nname='demo'\nversion='1.0.0'\n[settings]\ntargets=[]\nagent_emission='never'\n",
+        "[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n",
     ).unwrap();
     dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
     dir.child("skills/craft/SKILL.md")
@@ -235,7 +235,7 @@ fn resolution_failure_does_not_publish_recovered_ownership() {
     let intent = fs::read(dir.path().join(INTENT)).unwrap();
     dir.child("mars.toml")
         .write_str(
-            "[package]\nname='demo'\nversion='1.0.0'\n[dependencies.bad]\npath='./missing'\n",
+            "[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[dependencies.bad]\npath='./missing'\n",
         )
         .unwrap();
     sync(dir.path()).assert().failure();
@@ -276,7 +276,7 @@ fn pending_output_and_parent_symlinks_never_authorize_referent_mutation() {
 fn failed_repair_keeps_corrupt_lock_evidence_across_recovery_attempts() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml").write_str(
-        "[package]\nname='demo'\nversion='1.0.0'\n[settings]\ntargets=[]\nagent_emission='never'\n",
+        "[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n",
     ).unwrap();
     dir.child("mars.lock")
         .write_str("preserve this corrupt lock\n")
@@ -332,7 +332,7 @@ fn frozen_sync_does_not_publish_pending_ownership_even_when_bytes_are_complete()
 #[test]
 fn malformed_intent_identity_cannot_replace_another_items_ownership() {
     let dir = TempDir::new().unwrap();
-    dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
+    dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
     dir.child("agents/existing.md")
         .write_str("# Existing\n")
         .unwrap();
@@ -369,7 +369,7 @@ fn dependency_rename_to_custom_canonical_path_survives_interrupted_apply() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml").write_str("[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={muse='custom/muse.md'}\n").unwrap();
     dir.child("source/mars.toml")
-        .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+        .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
         .unwrap();
     dir.child("source/agents/muse.md")
         .write_str("# Muse\n")
@@ -401,7 +401,7 @@ fn interrupted_destination_move_preserves_old_claim_until_removal() {
     };
     dir.child("mars.toml").write_str(&config("old")).unwrap();
     dir.child("source/mars.toml")
-        .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+        .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
         .unwrap();
     dir.child("source/agents/muse.md")
         .write_str("# Muse\n")
@@ -433,7 +433,7 @@ fn interrupted_destination_move_preserves_old_claim_until_removal() {
 #[test]
 fn recovered_install_replaces_pending_deletion_for_the_same_path() {
     let dir = TempDir::new().unwrap();
-    dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
+    dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
     dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
     sync(dir.path()).assert().success();
     let mut previous = lock::load(dir.path()).unwrap();
@@ -465,7 +465,7 @@ fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
             )
         };
         dir.child("source/mars.toml")
-            .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+            .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
             .unwrap();
         dir.child("source/agents/muse.md")
             .write_str("# Original\n")
@@ -524,7 +524,7 @@ fn recovery_journal_path_is_reserved_before_any_canonical_writes() {
         let dir = TempDir::new().unwrap();
         dir.child("mars.toml").write_str(&format!("[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={{reserved='{destination}'}}\n")).unwrap();
         dir.child("source/mars.toml")
-            .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+            .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
             .unwrap();
         // Also ensure a preceding valid item cannot be partially installed.
         dir.child("source/agents/a-first.md")
@@ -604,7 +604,7 @@ fn interrupted_move_keeps_native_agent_on_the_first_successful_retry() {
         };
         let agent = |body: &str| format!("---\nname: muse\ndescription: Muse\n---\n{body}\n");
         dir.child("source/mars.toml")
-            .write_str("[package]\nname='dep'\nversion='1.0.0'\n")
+            .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
             .unwrap();
         dir.child("source/agents/muse.md")
             .write_str(&agent("# Original"))

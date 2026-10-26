@@ -2,9 +2,12 @@
 
 use super::*;
 use crate::config::*;
-use crate::lock::{ItemKind, LockFile};
+use crate::lock::{ItemId, LockFile};
 use crate::resolve::{ResolvedGraph, ResolvedNode};
+use crate::sync::target::TargetItem;
+use crate::types::{ContentHash, DestPath};
 use indexmap::IndexMap;
+use mars_schema::item::ItemKind;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -79,11 +82,15 @@ fn make_graph_config(
                 source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: tree_path.clone(),
+                    authored_root: tree_path.clone(),
                     package_root: tree_path.clone(),
+                    plugin: None,
                 },
+                prepared: crate::package_prepare::prepare_tree_for_test(name, &tree_path),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: name.into(),
                     version: None,
@@ -103,10 +110,12 @@ fn make_graph_config(
                 declared_source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 spec: SourceSpec::Path(tree_path),
                 subpath: None,
@@ -140,7 +149,9 @@ fn path_dependency_entry(path: &std::path::Path) -> DependencyEntry {
         subpath: None,
         version: None,
         dialect: None,
+        plugin: None,
         filter: FilterConfig::default(),
+        unknown: Default::default(),
     }
 }
 
@@ -151,7 +162,9 @@ fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> Depen
         subpath: None,
         version: Some(version.to_string()),
         dialect: None,
+        plugin: None,
         filter,
+        unknown: Default::default(),
     }
 }
 
@@ -199,12 +212,16 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock: Some(sync_lock),
-            dry_run_staging: None,
         },
         graph,
         upgrades_available: 0,
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -223,7 +240,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         .rewritten_content
         .as_ref()
         .expect("agent ref should rewrite after unmanaged source skill is pruned");
-    let fm = crate::frontmatter::parse(rewritten).unwrap();
+    let fm = mars_schema::frontmatter::parse(rewritten).unwrap();
     assert_eq!(fm.skills(), vec!["planning__source-b"]);
 }
 
@@ -257,12 +274,16 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock: Some(sync_lock),
-            dry_run_staging: None,
         },
         graph,
         upgrades_available: 0,
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -334,12 +355,16 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock: Some(sync_lock),
-            dry_run_staging: None,
         },
         graph,
         upgrades_available: 0,
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -392,12 +417,16 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock: Some(sync_lock),
-            dry_run_staging: None,
         },
         graph,
         upgrades_available: 0,
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -452,12 +481,16 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
             dependency_changes: Vec::new(),
             sync_lock: Some(sync_lock),
-            dry_run_staging: None,
         },
         graph,
         upgrades_available: 0,
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
     };
     let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
     let request = SyncRequest {
@@ -498,8 +531,11 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                 ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from(format!("/tmp/{name}")),
+                    authored_root: PathBuf::from(format!("/tmp/{name}")),
                     package_root: PathBuf::from(format!("/tmp/{name}")),
+                    plugin: None,
                 },
+                prepared: None,
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: (*name).into(),
                     version: Some(version),
@@ -592,6 +628,8 @@ fn planned_bump_entries_bump_all_outdated_pins() {
             version: None,
             dialect: None,
             filter: FilterConfig::default(),
+            plugin: None,
+            unknown: Default::default(),
         },
     );
 
@@ -729,7 +767,7 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::UpsertDependency {
             name: "base".into(),
-            entry: path_dependency_entry(source.path()),
+            entry: Box::new(path_dependency_entry(source.path())),
         }),
         options: SyncOptions {
             dry_run: true,
@@ -868,16 +906,18 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 declared_source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
                     subpath: None,
+                    plugin: None,
                 },
                 spec: SourceSpec::Path(tree_path.clone()),
                 subpath: None,
                 filter: FilterMode::All,
                 rename: crate::types::RenameMap::new(),
-                dialect: Some(crate::dialect::Dialect::Claude),
+                dialect: Some(mars_schema::dialect::Dialect::Claude),
             },
         )]),
         settings: Settings::default(),
@@ -886,22 +926,29 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
 
     let stage = |cfg: &EffectiveConfig| {
         let mut diag = DiagnosticCollector::new();
-        crate::staging::stage_rooted_source(
+        let prepared = crate::package_prepare::prepare_rooted(
             &"base".into(),
             crate::resolve::RootedSourceRef {
                 checkout_root: tree_path.clone(),
+                authored_root: tree_path.clone(),
                 package_root: tree_path.clone(),
+                plugin: None,
             },
-            crate::staging::RootedStageOptions {
-                dialect: cfg.dependencies["base"].dialect.unwrap(),
-            },
+            cfg,
+            &mut diag,
+        )
+        .unwrap();
+        crate::staging::materialize_prepared_rooted(
+            &"base".into(),
+            prepared.rooted,
+            prepared.prepared,
             &cfg.skills,
-            &cfg.dependencies["base"].rename,
+            &crate::types::RenameMap::new(),
             &staging_root,
             &mut diag,
         )
         .unwrap()
-        .rooted
+        .0
     };
 
     let mut graph = {
@@ -966,7 +1013,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
     );
 
     config.dependencies.get_mut("base").unwrap().dialect =
-        Some(crate::dialect::Dialect::MarsNative);
+        Some(mars_schema::dialect::Dialect::MarsNative);
     config.skills.clear();
     graph.nodes.get_mut("base").unwrap().rooted_ref = stage(&config);
     let (dialect_diff, _, dialect_lock) = apply_sync(&graph, &config, &overlay_lock);
@@ -1007,7 +1054,7 @@ fn validate_skill_refs_ignores_stale_installed_agent_content() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
 
-    let warnings = validate::validate_skill_refs(&target);
+    let warnings = validate::validate_skill_refs(&target, &graph, None, None);
 
     assert!(
         warnings.is_empty(),
@@ -1028,20 +1075,20 @@ fn validate_skill_refs_warns_for_missing_target_source_ref() {
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();
 
-    let warnings = validate::validate_skill_refs(&target);
+    let warnings = validate::validate_skill_refs(&target, &graph, None, None);
 
     assert_eq!(warnings.len(), 1);
-    match &warnings[0] {
-        ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } => {
-            assert_eq!(agent.name, "coder");
-            assert_eq!(skill_name, "missing-skill");
-            assert_eq!(suggestion, &None);
-        }
-    }
+    let ValidationWarning::MissingSkill {
+        agent,
+        skill_name,
+        suggestion,
+    } = &warnings[0]
+    else {
+        panic!("expected a missing-skill warning, got {:?}", warnings[0]);
+    };
+    assert_eq!(agent.name, "coder");
+    assert_eq!(skill_name, "missing-skill");
+    assert_eq!(suggestion, &None);
 }
 
 #[test]
@@ -1093,7 +1140,8 @@ fn validate_skill_refs_uses_rewritten_content() {
     );
     let target = TargetState::from_items(items);
 
-    let warnings = validate::validate_skill_refs(&target);
+    let (graph, _) = make_graph_config(&fixture, Vec::new());
+    let warnings = validate::validate_skill_refs(&target, &graph, None, None);
 
     assert!(
         warnings.is_empty(),
@@ -1270,7 +1318,8 @@ fn orphan_removed_when_source_drops_item() {
     // Remove reviewer from source
     fs::remove_file(fixture.tree_path(src_idx).join("agents/reviewer.md")).unwrap();
 
-    // Re-sync
+    // Re-sync: the graph is rebuilt because preparation reads the tree once per resolve
+    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
     let (target2, _, _) =
         target::build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
             .unwrap();

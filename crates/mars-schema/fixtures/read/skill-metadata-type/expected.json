@@ -1,0 +1,41 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "demo"
+    ],
+    [
+      "description",
+      "demo"
+    ],
+    [
+      "metadata",
+      {
+        "type": 12
+      }
+    ]
+  ],
+  "fields": {
+    "name": "demo",
+    "description": "demo",
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": {
+      "type": 12
+    }
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.type",
+      "severity": "error",
+      "path": [
+        "metadata",
+        "type"
+      ],
+      "message": "`metadata.type` must be a string"
+    }
+  ]
+}

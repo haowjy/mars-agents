@@ -26,7 +26,8 @@ Four bypass conditions:
 
 | Category | Commands | Notes |
 |---|---|---|
-| Package mgmt | `add`, `remove`, `upgrade`, `outdated`, `why` | Mutate mars.toml + lock |
+| Package mgmt | `add`, `remove`, `upgrade`, `outdated`, `why` | Mutate mars.toml + lock; `upgrade` updates dependency versions |
+| Definition format | `migrate` | Atomically upgrades package definitions or a consumer's authored `.mars-src`; `--check` exits nonzero when edits are pending |
 | Sync | `sync`, `repair` | Make reality match config |
 | Build | `validate`, `export`, `build` | Dry-run or produce artifacts |
 | Config | `link`, `unlink`, `override`, `resolve` | Target/dev settings; `link --force` adopts unmanaged collisions and persists lock |
@@ -62,8 +63,8 @@ at emission time when mode is `Hidden`.
 | `mars check` | Direct preview | `Surface` | Yes |
 | `mars init` | Direct preview | `Surface` | Yes |
 
-`mars check` and `mars init` call `lossiness_preview::collect_source_lossiness_diagnostics`
-with `LossinessMode::Surface` (bypassing the sync pipeline).
+`mars check` and `mars init` prepare the tree once (`PublishLens::load`) and call
+`lossiness_preview::collect_prepared_source_lossiness_diagnostics` with `LossinessMode::Surface` (bypassing the sync pipeline).
 
 ## Catalog / probe refresh flags
 

@@ -1,0 +1,73 @@
+{
+  "kind": "marketplace",
+  "also_found": [
+    {
+      "dialect": "cursor",
+      "paths": [
+        ".cursor-plugin"
+      ],
+      "weak": false
+    },
+    {
+      "dialect": "codex",
+      "paths": [
+        ".codex-plugin"
+      ],
+      "weak": false
+    },
+    {
+      "dialect": "opencode",
+      "paths": [
+        ".opencode/skills"
+      ],
+      "weak": false
+    }
+  ],
+  "plugins": [
+    {
+      "entry": {
+        "name": "superpowers",
+        "description": "Core skills",
+        "version": "5.0.0",
+        "source": {
+          "kind": "local",
+          "path": ""
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": true,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "brainstorming",
+          "source_path": "skills/brainstorming/SKILL.md",
+          "skill_root": "skills/brainstorming",
+          "output_path": "skills/brainstorming/SKILL.md",
+          "payload": [
+            "skills/brainstorming/scripts/server.cjs"
+          ]
+        },
+        {
+          "kind": "skill",
+          "slug": "test-driven-development",
+          "source_path": "skills/test-driven-development/SKILL.md",
+          "skill_root": "skills/test-driven-development",
+          "output_path": "skills/test-driven-development/SKILL.md",
+          "payload": [
+            "skills/test-driven-development/references/tips.md"
+          ]
+        },
+        {
+          "kind": "skill",
+          "slug": "using-git-worktrees",
+          "source_path": "skills/using-git-worktrees/SKILL.md",
+          "skill_root": "skills/using-git-worktrees",
+          "output_path": "skills/using-git-worktrees/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    }
+  ],
+  "items": [],
+  "diagnostics": {}
+}

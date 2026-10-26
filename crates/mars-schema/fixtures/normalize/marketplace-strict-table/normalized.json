@@ -1,0 +1,464 @@
+{
+  "kind": "marketplace",
+  "packages": [
+    {
+      "id": "appended",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "marketplace": {
+          "plugin": "appended",
+          "plugin_source": {
+            "kind": "local",
+            "path": "appended"
+          }
+        },
+        "selected_items": [
+          "skills/default/SKILL.md",
+          "extra/more/SKILL.md",
+          "extra/own/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/plugin.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "appended"
+              ]
+            ],
+            "fields": {
+              "name": "appended",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "default",
+            "source_path": "skills/default/SKILL.md",
+            "output_path": "skills/default/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "default"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "default",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "more",
+            "source_path": "extra/more/SKILL.md",
+            "output_path": "skills/more/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "more"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "more",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "own",
+            "source_path": "extra/own/SKILL.md",
+            "output_path": "skills/own/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "own"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "own",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    },
+    {
+      "id": "manifest-only",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "marketplace": {
+          "plugin": "manifest-only",
+          "plugin_source": {
+            "kind": "local",
+            "path": "manifest-only"
+          }
+        },
+        "selected_items": [
+          "skills/solo/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/plugin.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "manifest-only"
+              ]
+            ],
+            "fields": {
+              "name": "manifest-only",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "solo",
+            "source_path": "skills/solo/SKILL.md",
+            "output_path": "skills/solo/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "solo"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "solo",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    },
+    {
+      "id": "conflicting",
+      "provenance": {
+        "translator": "{version}",
+        "source": {},
+        "marketplace": {
+          "plugin": "conflicting",
+          "plugin_source": {
+            "kind": "local",
+            "path": "conflicting"
+          }
+        },
+        "selected_items": []
+      },
+      "prepared": {
+        "classification": {
+          "kind": "invalid"
+        },
+        "definitions": [],
+        "payload": [],
+        "diagnostics": {
+          ".claude-plugin/plugin.json": [
+            {
+              "code": "plugin.conflicting-manifests",
+              "severity": "error",
+              "path": [],
+              "message": "conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "entry-is-manifest",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "marketplace": {
+          "plugin": "entry-is-manifest",
+          "plugin_source": {
+            "kind": "local",
+            "path": "entry-only"
+          }
+        },
+        "selected_items": [
+          "agents/one.md",
+          "skills/default/SKILL.md",
+          "listed/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "entry-is-manifest"
+              ]
+            ],
+            "fields": {
+              "name": "entry-is-manifest",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "one",
+            "source_path": "agents/one.md",
+            "output_path": "agents/one.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "one"
+                ],
+                [
+                  "description",
+                  "An agent."
+                ]
+              ],
+              "fields": {
+                "name": "one",
+                "description": "An agent.",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "You are an agent.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "default",
+            "source_path": "skills/default/SKILL.md",
+            "output_path": "skills/default/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "default"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "default",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "listed",
+            "source_path": "listed/SKILL.md",
+            "output_path": "skills/listed/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "listed"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "listed",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {
+    ".claude-plugin/marketplace.json": [
+      {
+        "code": "marketplace.plugin-missing",
+        "severity": "error",
+        "path": [],
+        "message": "plugin `missing`: `nowhere` does not exist in the marketplace"
+      }
+    ]
+  }
+}

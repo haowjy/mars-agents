@@ -7,13 +7,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::config::Manifest;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::resolve::{ManifestReader, SourceFetcher, VersionLister};
+use crate::resolve::{SourceFetcher, VersionLister};
 use crate::source::{self, AvailableVersion, GlobalCache, ResolvedRef};
 use crate::types::CommitHash;
 use crate::types::SourceUrl;
+#[cfg(test)]
+use crate::{config::Manifest, resolve::ManifestReader};
 
 /// Real source provider that delegates to the source module.
 ///
@@ -114,6 +115,7 @@ impl SourceFetcher for RealSourceProvider<'_> {
     }
 }
 
+#[cfg(test)]
 impl ManifestReader for RealSourceProvider<'_> {
     fn read_manifest(
         &self,

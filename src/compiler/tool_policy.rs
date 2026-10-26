@@ -7,111 +7,14 @@
 //! [`EffectiveToolPolicy::project`] spells for a harness. Native agent lowering, skill lowering
 //! and the launch bundle all read that projection; nothing else turns a rule into native
 //! permission names or unscoped harness tool names.
-//!
-//! [`NON_CANONICAL_TOOL_FIELD_ALIASES`] is the single source for foreign spellings that
-//! must not appear in canonical/MarsNative profiles. Staging strips alias keys; the skill
-//! parser warns with the canonical replacement label.
 
-use serde::ser::{Serialize, SerializeMap, Serializer};
-use serde_yaml::Value;
-
-use crate::compiler::agents::HarnessKind;
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
-use crate::compiler::tool_names::{
-    Capability, OverlayToolName, ParsedToolName, is_mcp_wire_token, parse_mars_tool_name,
-    render_scoped,
-};
-use crate::compiler::tool_natives::{self, Native};
 use crate::config::AgentOverlayTools;
-use crate::frontmatter::Frontmatter;
-use crate::permission_set::{PermissionSet, merge_permission_set};
-
-/// What a rule does when its capability (and pattern) match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ToolAction {
-    Allow,
-    Deny,
-    Ask,
-}
-
-impl ToolAction {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Deny => "deny",
-            Self::Ask => "ask",
-        }
-    }
-
-    fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "allow" => Some(Self::Allow),
-            "deny" => Some(Self::Deny),
-            "ask" => Some(Self::Ask),
-            _ => None,
-        }
-    }
-}
-
-/// One tool-policy statement: `action` for `capability`, optionally narrowed by `pattern`.
-///
-/// Rules are kept in profile order, which carries no precedence: a broad rule against a scoped
-/// one is the consuming harness's call, and [`EffectiveToolPolicy::project`] settles only
-/// capabilities one harness tool cannot tell apart.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolRule {
-    pub(crate) capability: Capability,
-    /// Scope inside `capability(...)`. `None` for `*` and `mcp`, whose scope is the capability.
-    pub pattern: Option<String>,
-    pub action: ToolAction,
-}
-
-impl ToolRule {
-    fn from_parsed(parsed: ParsedToolName, action: ToolAction) -> Self {
-        Self {
-            capability: parsed.capability,
-            pattern: parsed.pattern,
-            action,
-        }
-    }
-
-    pub fn is_wildcard(&self) -> bool {
-        matches!(self.capability, Capability::Any)
-    }
-
-    pub fn is_mcp(&self) -> bool {
-        matches!(self.capability, Capability::Mcp(_))
-    }
-
-    /// Canonical `capability(pattern)` spelling, for diagnostics and frontmatter.
-    pub fn render(&self) -> String {
-        match &self.capability {
-            Capability::Mcp(mcp_ref) => mcp_ref.to_canonical(),
-            capability => render_scoped(capability.name(), self.pattern.as_deref()),
-        }
-    }
-
-    /// The pattern as the bundle and `show --json` print it: an `mcp` rule's `server/tool`.
-    fn wire_pattern(&self) -> Option<String> {
-        match &self.capability {
-            Capability::Mcp(mcp_ref) => Some(mcp_ref.to_pattern()),
-            _ => self.pattern.clone(),
-        }
-    }
-}
-
-/// The rule's wire shape, shared by the launch bundle's `tools.rules` and `agents show --json`:
-/// `{capability, pattern, action}`. `capability` is `*` for "every other tool" and
-/// `mcp` for an MCP ref, whose `pattern` is its `server/tool`.
-impl Serialize for ToolRule {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("capability", self.capability.name())?;
-        map.serialize_entry("pattern", &self.wire_pattern())?;
-        map.serialize_entry("action", self.action.as_str())?;
-        map.end()
-    }
-}
+use mars_schema::HarnessId;
+use mars_schema::permission_set::{PermissionSet, merge_permission_set};
+use mars_schema::tool_names::{Capability, OverlayToolName, is_mcp_wire_token, render_scoped};
+use mars_schema::tool_natives::{self, Native};
+use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
 
 /// Whether Mars can name a rule's tools on a harness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,7 +151,7 @@ impl ProjectedRule {
 
 /// Project `rule` onto `harness`. The one place a capability becomes native permission names
 /// and unscoped harness tool names.
-fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
+fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
     match &rule.capability {
         Capability::Any => ProjectedRule {
             bindings: Vec::new(),
@@ -279,7 +182,7 @@ fn project_rule(rule: &ToolRule, harness: HarnessKind) -> ProjectedRule {
 /// projection path.
 pub(crate) fn project_platform_capability(
     capability: &'static str,
-    harness: HarnessKind,
+    harness: HarnessId,
 ) -> ProjectedRule {
     project_builtin_capability(capability, None, harness)
 }
@@ -287,7 +190,7 @@ pub(crate) fn project_platform_capability(
 fn project_builtin_capability(
     capability: &str,
     pattern: Option<&str>,
-    harness: HarnessKind,
+    harness: HarnessId,
 ) -> ProjectedRule {
     match tool_natives::lookup(capability, harness) {
         Some(Native::Tools(names)) => ProjectedRule::known(
@@ -328,20 +231,14 @@ fn project_builtin_capability(
     }
 }
 
-/// The tool rules of an agent or skill.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct EffectiveToolPolicy {
-    pub rules: Vec<ToolRule>,
+pub(crate) trait ToolPolicyRuntime {
+    fn project(&self, harness: HarnessId) -> PolicyProjection<'_>;
+    fn has_rule(&self, action: ToolAction, kind: RuleKind) -> bool;
+    fn apply_overlay(&mut self, overlay: &AgentOverlayTools);
 }
 
-impl EffectiveToolPolicy {
-    pub fn with_action(&self, action: ToolAction) -> impl Iterator<Item = &ToolRule> {
-        self.rules.iter().filter(move |rule| rule.action == action)
-    }
-
-    /// Every rule spelled for `harness`. The one projection both lowerers and the launch
-    /// bundle use.
-    pub(crate) fn project(&self, harness: HarnessKind) -> PolicyProjection<'_> {
+impl ToolPolicyRuntime for EffectiveToolPolicy {
+    fn project(&self, harness: HarnessId) -> PolicyProjection<'_> {
         let mut rules: Vec<(&ToolRule, ProjectedRule)> = self
             .rules
             .iter()
@@ -350,122 +247,46 @@ impl EffectiveToolPolicy {
         resolve_by_specificity(&mut rules, harness);
         PolicyProjection { rules }
     }
-
-    /// Compact `action:capability(pattern)` spellings, one per rule.
-    pub fn describe(&self) -> Vec<String> {
-        self.rules
-            .iter()
-            .map(|rule| format!("{}:{}", rule.action.as_str(), rule.render()))
-            .collect()
-    }
-
-    /// The `action` rules as `capability(pattern)` spellings, without the `*` allowlist marker.
-    /// Feeds the deprecated `tools` and `disallowed-tools` keys of `show --json`.
-    pub fn rendered(&self, action: ToolAction) -> Vec<String> {
-        self.with_action(action)
-            .filter(|rule| !rule.is_wildcard())
-            .map(ToolRule::render)
-            .collect()
-    }
-
-    /// Whether there is a `kind` rule with `action`.
-    pub(crate) fn has_rule(&self, action: ToolAction, kind: RuleKind) -> bool {
+    fn has_rule(&self, action: ToolAction, kind: RuleKind) -> bool {
         self.with_action(action).any(|rule| kind.covers(rule))
     }
-
-    /// Whether a `*: deny` limits the agent to the tools its allow rules name.
-    pub fn is_allowlist(&self) -> bool {
-        self.rules
-            .iter()
-            .any(|rule| rule.is_wildcard() && rule.action == ToolAction::Deny)
-    }
-
-    /// Add `rule` unless the policy already has one for the same capability, pattern and action.
-    fn push_unique(&mut self, rule: ToolRule) {
-        let seen = self.rules.iter().any(|existing| {
-            existing.capability == rule.capability
-                && existing.pattern == rule.pattern
-                && existing.action == rule.action
-        });
-        if !seen {
-            self.rules.push(rule);
-        }
-    }
-
-    /// Apply a `mars.toml` `[agents.<name>.tools]` or `[skills.<name>.tools]` overlay. The one
-    /// place overlay tool lists meet a policy, for agents and skills alike.
-    ///
-    /// Plain overlay lists add and keep wildcard rules. `{ replace = [...] }` clears that
-    /// action's lower-layer rules, including its wildcard; the `*: deny` allowlist marker is the
-    /// sole exception. Ask rules are not members of either set.
-    pub(crate) fn apply_overlay(&mut self, overlay: &AgentOverlayTools) {
+    fn apply_overlay(&mut self, overlay: &AgentOverlayTools) {
         if let Some(layer) = &overlay.allowed {
-            self.apply_permission_set(layer, ToolAction::Allow);
+            apply_permission_set(self, layer, ToolAction::Allow);
         }
         if let Some(layer) = &overlay.disallowed {
-            self.apply_permission_set(layer, ToolAction::Deny);
+            apply_permission_set(self, layer, ToolAction::Deny);
         }
     }
+}
 
-    fn apply_permission_set(&mut self, layer: &PermissionSet<OverlayToolName>, action: ToolAction) {
-        if layer.is_noop() {
-            return;
-        }
-        let mut merged = self
-            .rules
-            .iter()
-            .filter(|rule| rule.action == action && !rule.is_wildcard())
-            .cloned()
-            .collect::<Vec<_>>();
-        let layer = match layer {
-            PermissionSet::Add(entries) => PermissionSet::Add(overlay_rules(entries, action)),
-            PermissionSet::Replace { replace } => PermissionSet::Replace {
-                replace: overlay_rules(replace, action),
-            },
-        };
-        merge_permission_set(&mut merged, &layer);
-        let keep_wildcard = !layer.replaces() || action == ToolAction::Deny;
-        self.rules
-            .retain(|rule| rule.action != action || (keep_wildcard && rule.is_wildcard()));
-        for rule in merged {
-            self.push_unique(rule);
-        }
+fn apply_permission_set(
+    policy: &mut EffectiveToolPolicy,
+    layer: &PermissionSet<OverlayToolName>,
+    action: ToolAction,
+) {
+    if layer.is_noop() {
+        return;
     }
-
-    /// Write the policy back as a skill's `tools:` / `disallowed-tools:`, replacing what is
-    /// there. Grants are a list; a map only where an `ask` needs one. Denies go to
-    /// `disallowed-tools:`, where a skill reads them whichever form `tools:` had.
-    pub(crate) fn write_skill_frontmatter(&self, fm: &mut Frontmatter) {
-        let spell = |rule: &ToolRule| Value::String(rule.render());
-        let granted: Vec<&ToolRule> = self
-            .rules
-            .iter()
-            .filter(|rule| rule.action != ToolAction::Deny)
-            .collect();
-        let tools = if self.with_action(ToolAction::Ask).next().is_some() {
-            Value::Mapping(
-                granted
-                    .iter()
-                    .map(|rule| (spell(rule), Value::String(rule.action.as_str().into())))
-                    .collect(),
-            )
-        } else {
-            Value::Sequence(granted.iter().map(|rule| spell(rule)).collect())
-        };
-        let denied: Vec<Value> = self.with_action(ToolAction::Deny).map(spell).collect();
-
-        fm.remove("disallowed_tools");
-        let (no_grants, no_denies) = (granted.is_empty(), denied.is_empty());
-        for (key, value, empty) in [
-            ("tools", tools, no_grants),
-            ("disallowed-tools", Value::Sequence(denied), no_denies),
-        ] {
-            if empty {
-                fm.remove(key);
-            } else {
-                fm.insert(key, value);
-            }
-        }
+    let mut merged = policy
+        .rules
+        .iter()
+        .filter(|rule| rule.action == action && !rule.is_wildcard())
+        .cloned()
+        .collect::<Vec<_>>();
+    let layer = match layer {
+        PermissionSet::Add(entries) => PermissionSet::Add(overlay_rules(entries, action)),
+        PermissionSet::Replace { replace } => PermissionSet::Replace {
+            replace: overlay_rules(replace, action),
+        },
+    };
+    merge_permission_set(&mut merged, &layer);
+    let keep_wildcard = !layer.replaces() || action == ToolAction::Deny;
+    policy
+        .rules
+        .retain(|rule| rule.action != action || (keep_wildcard && rule.is_wildcard()));
+    for rule in merged {
+        policy.push_unique(rule);
     }
 }
 
@@ -571,7 +392,7 @@ impl<'a> PolicyProjection<'a> {
 /// documented deny → ask → allow order selects the stricter action. Scoped rules compare by
 /// their rendered `name(pattern)`, so a scope never narrows an unscoped rule and the harness's
 /// own path-pattern precedence applies.
-fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: HarnessKind) {
+fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: HarnessId) {
     let takes_part = |rule: &ToolRule| !rule.is_wildcard() && !rule.is_mcp();
     let narrower: Vec<Option<(ToolAction, Vec<String>)>> = rules
         .iter()
@@ -600,7 +421,7 @@ fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: Har
     // `write(p)` and `edit(p)` both become `Edit(p)`, while `glob(p)` and `grep(p)` both become
     // `Read(p)`. Claude evaluates matching actions as deny, then ask, then allow. Resolve that
     // documented order here so every downstream representation carries the same winner.
-    if harness == HarnessKind::Claude {
+    if harness == HarnessId::Claude {
         let scoped: Vec<(ToolAction, bool, Vec<String>)> = rules
             .iter()
             .map(|(rule, projected)| (rule.action, rule.pattern.is_some(), projected.native()))
@@ -641,282 +462,23 @@ fn overlay_rules(names: &[OverlayToolName], action: ToolAction) -> Vec<ToolRule>
         .collect()
 }
 
-/// Append whole-server `mcp(server)` entries to the frontmatter `tools:` list or map.
-pub(crate) fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: &[String]) -> bool {
-    let entries: Vec<String> = servers
-        .iter()
-        .map(|server| server.trim())
-        .filter(|server| !server.is_empty())
-        .map(|server| format!("mcp({server})"))
-        .collect();
-    if entries.is_empty() {
-        return false;
-    }
-
-    let Some(existing) = fm.get("tools").cloned() else {
-        // Map form: an absent `tools:` inherits every tool, and a list here would read as an
-        // allowlist of only these MCP servers.
-        let grants = entries
-            .into_iter()
-            .map(|entry| (Value::String(entry), Value::String("allow".into())))
-            .collect::<serde_yaml::Mapping>();
-        fm.insert("tools", Value::Mapping(grants));
-        return true;
-    };
-
-    match existing {
-        Value::Mapping(mut mapping) => {
-            let mut changed = false;
-            for entry in entries {
-                let key = Value::String(entry);
-                if !mapping.contains_key(&key) {
-                    mapping.insert(key, Value::String("allow".into()));
-                    changed = true;
-                }
-            }
-            if changed {
-                fm.insert("tools", Value::Mapping(mapping));
-            }
-            changed
-        }
-        other => {
-            let mut tools = tool_entries(&other);
-            let mut changed = false;
-            for entry in entries {
-                if !tools.iter().any(|existing| existing == &entry) {
-                    tools.push(entry);
-                    changed = true;
-                }
-            }
-            if changed {
-                fm.insert(
-                    "tools",
-                    Value::Sequence(tools.into_iter().map(Value::String).collect()),
-                );
-            }
-            changed
-        }
-    }
-}
-
-/// The tool names in a `tools:` / `disallowed-tools:` value. A scalar is Claude's own
-/// agent-file spelling, `tools: Read, Grep`: a comma-separated list. Commas inside a scope
-/// (`bash(rg a,b)`) belong to the entry.
-pub(crate) fn tool_entries(val: &Value) -> Vec<String> {
-    let Value::String(raw) = val else {
-        return yaml_str_list(val);
-    };
-    let mut entries = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0;
-    for (index, ch) in raw.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                entries.push(&raw[start..index]);
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    entries.push(&raw[start..]);
-    entries
-        .into_iter()
-        .map(str::trim)
-        .filter(|entry| !entry.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-pub(crate) fn yaml_str_list(val: &Value) -> Vec<String> {
-    match val {
-        Value::Sequence(seq) => seq
-            .iter()
-            .filter_map(|v| v.as_str())
-            .map(str::to_owned)
-            .collect(),
-        Value::String(s) => vec![s.clone()],
-        _ => vec![],
-    }
-}
-
-type OnInvalid<'a> = &'a mut dyn FnMut(&str, &str, &'static str);
-
-/// Whether a profile's `tools:` is the deprecated list form (`tools: [read, grep]`), which
-/// grants the listed tools and restricts nothing. Callers raise the deprecation warning.
-pub(crate) fn is_list_form(tools: Option<&Value>) -> bool {
-    matches!(tools, Some(Value::Sequence(items)) if !items.is_empty())
-}
-
-/// Read a profile's `tools:` and `disallowed-tools:` into one policy.
-///
-/// A list-form `tools:` only grants (see [`is_list_form`]); an allowlist is spelled with
-/// `'*': deny`. An empty list names no tools, so it stays "no policy" rather than "deny
-/// everything". `on_invalid` gets `(field, value, allowed)` for each entry Mars rejects.
-pub(crate) fn parse_tool_policy(
-    tools: Option<&Value>,
-    disallowed: Option<&Value>,
-    on_invalid: OnInvalid<'_>,
-) -> EffectiveToolPolicy {
-    let mut policy = EffectiveToolPolicy::default();
-    if let Some(value) = tools {
-        for rule in parse_tools_field("tools", value, on_invalid) {
-            policy.push_unique(rule);
-        }
-    }
-    if let Some(value) = disallowed {
-        if permission_replace_entries(value).is_some() {
-            on_invalid(
-                "disallowed-tools",
-                &serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}")),
-                "plain list; package profiles cannot replace a deny set",
-            );
-            return policy;
-        }
-        for rule in parse_entries("disallowed-tools", value, ToolAction::Deny, on_invalid) {
-            policy.push_unique(rule);
-        }
-    }
-    policy
-}
-
-fn parse_tool_rule(
-    field: &str,
-    raw: &str,
-    action: ToolAction,
-    on_invalid: OnInvalid<'_>,
-) -> Option<ToolRule> {
-    match parse_mars_tool_name(raw) {
-        Ok(parsed) => Some(ToolRule::from_parsed(parsed, action)),
-        Err(err) => {
-            on_invalid(field, raw, err.allowed());
-            None
-        }
-    }
-}
-
-/// Parse a list of tool names into `action` rules.
-fn parse_entries(
-    field: &str,
-    val: &Value,
-    action: ToolAction,
-    on_invalid: OnInvalid<'_>,
-) -> Vec<ToolRule> {
-    tool_entries(val)
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, tool)| {
-            parse_tool_rule(&format!("{field}[{idx}]"), tool, action, on_invalid)
-        })
-        .collect()
-}
-
-/// Parse `tools:`: a list of tools to allow, or a map of tool to `allow` / `deny` / `ask`.
-fn parse_tools_field(field: &str, val: &Value, on_invalid: OnInvalid<'_>) -> Vec<ToolRule> {
-    if permission_replace_entries(val).is_some() {
-        on_invalid(
-            field,
-            &serde_json::to_string(val).unwrap_or_else(|_| format!("{val:?}")),
-            "plain list or mapping of tool to allow|deny|ask; package profiles cannot replace a permission set",
-        );
-        return Vec::new();
-    }
-    match val {
-        Value::Mapping(mapping) => {
-            let mut rules = Vec::new();
-            for (key, value) in mapping {
-                let Some(tool_name) = key.as_str() else {
-                    on_invalid(field, &format!("{key:?}"), "string tool keys");
-                    continue;
-                };
-
-                let entry_field = format!("{field}.{tool_name}");
-                let Some(policy) = value.as_str() else {
-                    on_invalid(&entry_field, &format!("{value:?}"), ACTIONS_ALLOWED);
-                    continue;
-                };
-                let Some(action) = ToolAction::parse(policy) else {
-                    on_invalid(&entry_field, policy, ACTIONS_ALLOWED);
-                    continue;
-                };
-                if let Some(rule) = parse_tool_rule(&entry_field, tool_name, action, on_invalid) {
-                    rules.push(rule);
-                }
-            }
-            rules
-        }
-        // `tools: allow` / `tools: deny` was a Meridian-side shorthand that never worked
-        // here: it read as a tool named `allow`. Say so instead of guessing.
-        Value::String(raw)
-            if raw.trim().eq_ignore_ascii_case("allow")
-                || raw.trim().eq_ignore_ascii_case("deny") =>
-        {
-            on_invalid(
-                field,
-                raw,
-                "list of tool names or mapping of tool to allow|deny|ask",
-            );
-            Vec::new()
-        }
-        _ => parse_entries(field, val, ToolAction::Allow, on_invalid),
-    }
-}
-
-fn permission_replace_entries(value: &Value) -> Option<&Value> {
-    let mapping = value.as_mapping()?;
-    (mapping.len() == 1)
-        .then(|| mapping.get(Value::String("replace".to_string())))
-        .flatten()
-}
-
-const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
-
-/// Retired top-level MCP grant field spellings (use inline `mcp(...)` in `tools:` instead).
-pub const REMOVED_MCP_TOOLS_FIELDS: &[&str] = &["mcp-tools", "mcp_tools"];
-
-/// Replacement guidance for [`REMOVED_MCP_TOOLS_FIELDS`] diagnostics.
-pub fn removed_mcp_tools_replacement() -> &'static str {
-    "use `mcp(server)` or `mcp(server/tool)` entries in `tools:` / `disallowed-tools:` instead"
-}
-
-/// Strip retired `mcp-tools` keys from canonical frontmatter during staging lift.
-pub(crate) fn strip_removed_mcp_tools_fields(fm: &mut Frontmatter) -> bool {
-    let mut changed = false;
-    for key in REMOVED_MCP_TOOLS_FIELDS {
-        if fm.remove(key).is_some() {
-            changed = true;
-        }
-    }
-    changed
-}
-
-/// Foreign tool-field keys in canonical/MarsNative profiles → canonical replacement label.
-pub const NON_CANONICAL_TOOL_FIELD_ALIASES: &[(&str, &str)] = &[
-    ("allowed-tools", "tools:"),
-    ("allowed_tools", "tools:"),
-    ("disallowed_tools", "disallowed-tools:"),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::agents::{AgentDiagnostic, HarnessKind, parse_agent_content};
-    use crate::compiler::skills::{SkillDiagnostic, parse_skill_content};
-    use crate::frontmatter::Frontmatter;
+    use mars_schema::HarnessId;
+    use mars_schema::frontmatter::Frontmatter;
+    use mars_schema::tool_names::parse_mars_tool_name;
+    use mars_schema::tool_policy::{append_mcp_server_entries_to_tools, yaml_str_list};
+    use serde_yaml::Value;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
-        let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
-        assert!(diags.is_empty(), "agent diags: {diags:?}");
-        profile.tools
-    }
-
-    fn skill_policy(yaml: &str) -> EffectiveToolPolicy {
-        let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content(yaml, &mut diags).unwrap();
-        assert!(diags.is_empty(), "skill diags: {diags:?}");
-        profile.tools
+        let reading = mars_schema::agent::read(yaml);
+        assert!(
+            reading.diagnostics.is_empty(),
+            "agent diags: {:?}",
+            reading.diagnostics
+        );
+        reading.fields.unwrap().tools
     }
 
     /// Native names and status of a raw tool entry on a harness, via parse then table.
@@ -940,13 +502,6 @@ mod tests {
     fn tools_mcp_entry_grants_whole_server() {
         let policy =
             agent_policy("---\nname: a\ndescription: d\ntools:\n  mcp(context7): allow\n---\n");
-        assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
-    }
-
-    #[test]
-    fn skill_tools_mcp_entry_grants_whole_server() {
-        let policy =
-            skill_policy("---\nname: a\ndescription: d\ntools:\n  mcp(context7): allow\n---\nbody");
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
     }
 
@@ -1002,21 +557,6 @@ mod tests {
     }
 
     #[test]
-    fn disallowed_mcp_ref_round_trips_through_policy() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ndisallowed-tools: [mcp(github/delete_repo)]\n---\n",
-        );
-        assert_eq!(
-            policy.describe(),
-            vec!["deny:mcp(github/delete_repo)".to_string()]
-        );
-        let Capability::Mcp(mcp_ref) = &policy.rules[0].capability else {
-            panic!("expected an MCP rule");
-        };
-        assert_eq!(mcp_ref.to_canonical(), "mcp(github/delete_repo)");
-    }
-
-    #[test]
     fn plugin_colon_server_names_preserve_verbatim_in_mcp_refs() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  mcp(plugin:context7:context7): allow\n---\n",
@@ -1024,25 +564,19 @@ mod tests {
         let mcp = policy.with_action(ToolAction::Allow).next().unwrap();
         assert_eq!(
             mcp.capability,
-            Capability::Mcp(
-                crate::compiler::mcp_ref::parse_mcp_ref("plugin:context7:context7").unwrap()
-            )
+            Capability::Mcp(mars_schema::mcp::parse_mcp_ref("plugin:context7:context7").unwrap())
         );
     }
 
     #[test]
-    fn list_form_only_grants_and_is_flagged_deprecated() {
+    fn v1_list_form_is_rejected_without_rules() {
         let yaml = "---\nname: a\ndescription: d\ntools: [read, grep]\n---\n";
-        let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
-        assert_eq!(profile.tools.describe(), vec!["allow:read", "allow:grep"]);
+        let reading = mars_schema::agent::read(yaml);
+        let profile = reading.fields.unwrap();
+        assert!(profile.tools.rules.is_empty());
         assert!(!profile.tools.is_allowlist());
-        assert_eq!(diags, [AgentDiagnostic::DeprecatedListFormTools]);
-        assert!(is_list_form(Some(&Value::Sequence(vec![Value::String(
-            "read".into()
-        )]))));
-        assert!(!is_list_form(Some(&Value::Sequence(vec![]))));
-        assert!(!is_list_form(None));
+        assert_eq!(reading.diagnostics.len(), 1);
+        assert_eq!(reading.diagnostics[0].code, "tools.list-form");
     }
 
     #[test]
@@ -1064,76 +598,18 @@ mod tests {
     }
 
     #[test]
-    fn empty_list_names_no_tools_and_is_no_policy() {
-        let policy = agent_policy("---\nname: a\ndescription: d\ntools: []\n---\n");
-        assert!(policy.rules.is_empty());
-        assert!(!policy.is_allowlist());
-    }
-
-    #[test]
-    fn ask_is_an_action() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  'bash(git push *)': ask\n  edit: Ask\n---\n",
-        );
-        assert_eq!(policy.describe(), vec!["ask:bash(git push *)", "ask:edit"]);
-    }
-
-    #[test]
-    fn legacy_colon_star_patterns_normalize_to_space_star() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  'bash(git revert:*)': deny\n  'bash(git reset --hard:*)': deny\ndisallowed-tools: ['Bash(git clean:*)']\n---\n",
-        );
-        assert_eq!(
-            policy.describe(),
-            vec![
-                "deny:bash(git revert *)",
-                "deny:bash(git reset --hard *)",
-                "deny:bash(git clean *)",
-            ]
-        );
-    }
-
-    #[test]
-    fn colon_star_normalizes_only_for_bash() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ndisallowed-tools: ['read(./secrets:*)', 'web_fetch(domain:*)', 'bash(rm:*)']\n---\n",
-        );
-        assert_eq!(
-            policy.describe(),
-            vec![
-                "deny:read(./secrets:*)",
-                "deny:web_fetch(domain:*)",
-                "deny:bash(rm *)"
-            ]
-        );
-    }
-
-    #[test]
-    fn scalar_tools_split_on_commas_into_grants() {
-        let policy =
-            agent_policy("---\nname: a\ndescription: d\ntools: Read, Grep, bash(rg a,b)\n---\n");
-        assert_eq!(
-            policy.describe(),
-            vec!["allow:read", "allow:grep", "allow:bash(rg a,b)"]
-        );
-        let policy =
-            agent_policy("---\nname: a\ndescription: d\ndisallowed-tools: Edit, Write\n---\n");
-        assert_eq!(policy.describe(), vec!["deny:edit", "deny:write"]);
-    }
-
-    #[test]
     fn narrower_capability_wins_over_broader_for_the_natives_they_share() {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n  notebook: deny\n---\n",
         );
-        let claude = policy.project(HarnessKind::Claude);
+        let claude = policy.project(HarnessId::Claude);
         assert_eq!(claude.rules()[0].1.native(), ["Edit", "NotebookEdit"]);
         assert_eq!(claude.rules()[0].1.native_tools(), ["Edit", "NotebookEdit"]);
         assert_eq!(claude.rules()[1].1.native(), ["Write"]);
         assert_eq!(claude.rules()[1].1.native_tools(), ["Write"]);
-        assert!(policy.project(HarnessKind::Claude).overlaps().is_empty());
+        assert!(policy.project(HarnessId::Claude).overlaps().is_empty());
         // Pi names `edit` and `write` as separate tools too.
-        assert!(policy.project(HarnessKind::Pi).overlaps().is_empty());
+        assert!(policy.project(HarnessId::Pi).overlaps().is_empty());
     }
 
     #[test]
@@ -1142,10 +618,7 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n---\n",
         );
-        assert_eq!(
-            policy.project(HarnessKind::Codex).overlaps(),
-            ["apply_patch"]
-        );
+        assert_eq!(policy.project(HarnessId::Codex).overlaps(), ["apply_patch"]);
     }
 
     #[test]
@@ -1153,23 +626,10 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  bash: allow\n  'bash(git push *)': deny\n---\n",
         );
-        let projection = policy.project(HarnessKind::Claude);
+        let projection = policy.project(HarnessId::Claude);
         assert_eq!(projection.rules()[0].1.native(), ["Bash"]);
         assert_eq!(projection.rules()[1].1.native(), ["Bash(git push *)"]);
         assert!(projection.overlaps().is_empty());
-    }
-
-    #[test]
-    fn skill_list_form_grants_and_never_restricts() {
-        let mut diags = Vec::new();
-        let (profile, _) = parse_skill_content(
-            "---\nname: a\ndescription: d\ntools: [read]\n---\nbody",
-            &mut diags,
-        )
-        .unwrap();
-        assert_eq!(profile.tools.describe(), vec!["allow:read"]);
-        assert!(!profile.tools.is_allowlist());
-        assert_eq!(diags, [SkillDiagnostic::DeprecatedListFormTools]);
     }
 
     #[test]
@@ -1181,8 +641,7 @@ mod tests {
             &mut fm,
             &["context7".to_string()]
         ));
-        let mut diags = Vec::new();
-        let policy = crate::compiler::agents::parse_agent_profile(&fm, &mut diags).tools;
+        let policy = mars_schema::agent::read(&fm.render()).fields.unwrap().tools;
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)"]);
         assert!(!policy.is_allowlist());
     }
@@ -1236,7 +695,7 @@ mod tests {
             let parsed = parse_mars_tool_name(rule).unwrap();
             let projected = project_rule(
                 &ToolRule::from_parsed(parsed, ToolAction::Deny),
-                HarnessKind::Claude,
+                HarnessId::Claude,
             );
             assert_eq!(projected.native_tools(), native_tools, "{rule}");
         }
@@ -1246,7 +705,7 @@ mod tests {
                 parse_mars_tool_name("write(src/**)").unwrap(),
                 ToolAction::Allow,
             ),
-            HarnessKind::Claude,
+            HarnessId::Claude,
         );
         assert!(
             write
@@ -1262,7 +721,7 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  'write(src/**)': allow\n  'edit(src/**)': ask\n  'notebook(src/**)': deny\n---\n",
         );
-        let projection = policy.project(HarnessKind::Claude);
+        let projection = policy.project(HarnessId::Claude);
         assert!(projection.rules()[0].1.native().is_empty(), "allow loses");
         assert!(
             projection.rules()[0].1.native_tools().is_empty(),
@@ -1356,70 +815,11 @@ mod tests {
     }
 
     #[test]
-    fn natives_put_builtin_tools_before_mcp_refs_and_name_each_once() {
-        let policy = agent_policy(
-            "---
-name: a
-description: d
-disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
----
-",
-        );
-        let claude = policy.project(HarnessKind::Claude);
-        assert_eq!(
-            claude.natives(ToolAction::Deny, RuleKind::All),
-            ["Bash", "Read", "mcp__github__delete_repo"]
-        );
-        assert_eq!(
-            claude.natives(ToolAction::Deny, RuleKind::Mcp),
-            ["mcp__github__delete_repo"]
-        );
-        // Codex cannot scope one MCP tool: the rule is a gap with the reason, not a name.
-        let codex = policy.project(HarnessKind::Codex);
-        assert_eq!(
-            codex.natives(ToolAction::Deny, RuleKind::Mcp),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            codex.gaps(ToolAction::Deny, RuleKind::Mcp),
-            ["Codex per-tool MCP gating lives in server config, not the tool list"]
-        );
-    }
-
-    #[test]
-    fn malformed_mcp_in_disallowed_tools_is_validation_error() {
-        let mut diags = Vec::new();
-        let value = Value::Sequence(vec![Value::String("mcp()".into())]);
-        let mut push = |field: &str, value: &str, _: &'static str| {
-            diags.push((field.to_string(), value.to_string()));
-        };
-        let policy = parse_tool_policy(None, Some(&value), &mut push);
-        assert!(policy.rules.is_empty());
-        assert_eq!(
-            diags,
-            [("disallowed-tools[0]".to_string(), "mcp()".to_string())]
-        );
-    }
-
-    #[test]
-    fn a_bare_mcp_tool_is_invalid_not_an_unknown_tool() {
-        for raw in ["mcp", "MCP"] {
-            let mut diags = Vec::new();
-            let value = Value::Sequence(vec![Value::String(raw.into())]);
-            let mut push = |field: &str, value: &str, _: &'static str| {
-                diags.push((field.to_string(), value.to_string()));
-            };
-            let policy = parse_tool_policy(Some(&value), None, &mut push);
-            assert!(policy.rules.is_empty(), "{raw}");
-            assert_eq!(diags.len(), 1, "{raw}");
-        }
-    }
-
-    #[test]
     fn the_overlay_adds_or_replaces_agent_and_skill_permission_sets_alike() {
         let overlay = AgentOverlayTools {
             allowed: Some(vec!["bash".to_string().try_into().unwrap()].into()),
             disallowed: Some(vec!["agent".to_string().try_into().unwrap()].into()),
+            ..Default::default()
         };
         let yaml = "tools:
   'bash(git push *)': deny
@@ -1441,11 +841,6 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
             ]
         );
 
-        // A skill gets the same additive edit.
-        let mut skill = skill_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\nbody"));
-        skill.apply_overlay(&overlay);
-        assert_eq!(skill, agent);
-
         // Explicit replacement gives the previous overlay behavior.
         let replacing = AgentOverlayTools {
             allowed: Some(PermissionSet::Replace {
@@ -1454,6 +849,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
             disallowed: Some(PermissionSet::Replace {
                 replace: vec!["agent".to_string().try_into().unwrap()],
             }),
+            ..Default::default()
         };
         let mut replaced = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
         replaced.apply_overlay(&replacing);
@@ -1466,6 +862,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
         let empty_lists = AgentOverlayTools {
             allowed: Some(Vec::new().into()),
             disallowed: Some(Vec::new().into()),
+            ..Default::default()
         };
         let mut unchanged = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
         unchanged.apply_overlay(&empty_lists);
@@ -1484,6 +881,7 @@ disallowed-tools: [mcp(github/delete_repo), bash, shell, read]
         let additive = AgentOverlayTools {
             allowed: Some(vec!["read".to_string().try_into().unwrap()].into()),
             disallowed: None,
+            ..Default::default()
         };
         let mut widened = agent_policy(wildcard_profile);
         widened.apply_overlay(&additive);

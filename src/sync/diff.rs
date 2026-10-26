@@ -1,3 +1,5 @@
+#[cfg(test)]
+use mars_schema::item::ItemKind;
 use std::path::Path;
 
 use crate::error::MarsError;
@@ -68,9 +70,8 @@ pub fn compute(
             };
 
             let disk_path = target_item.dest_path.resolve(root);
-            let hash_path = hash_path_for_kind(&disk_path, target_item.id.kind);
-            let local_changed = if hash_path.exists() {
-                let disk_hash = hash::compute_hash(&hash_path, target_item.id.kind)?;
+            let local_changed = if disk_path.exists() {
+                let disk_hash = hash::compute_hash(&disk_path, target_item.id.kind)?;
                 let disk_hash = ContentHash::from(disk_hash);
                 if disk_hash != *expected_disk_checksum {
                     Some(disk_hash)
@@ -86,14 +87,14 @@ pub fn compute(
             match (source_changed, &local_changed) {
                 (false, None) => {
                     // Neither changed → skip
-                    if hash_path.exists() && target_item.source_name != locked_item.source {
+                    if disk_path.exists() && target_item.source_name != locked_item.source {
                         // Identical bytes can still transfer ownership. A write outcome
                         // records the selected source and carries native claims forward.
                         // Locally modified outputs still take LocalModified below.
                         items.push(DiffEntry::Update {
                             target: target_item.clone(),
                         });
-                    } else if hash_path.exists() {
+                    } else if disk_path.exists() {
                         items.push(DiffEntry::Unchanged {
                             target: target_item.clone(),
                             locked: locked_item.clone(),
@@ -144,21 +145,11 @@ pub fn compute(
     Ok(SyncDiff { items })
 }
 
-fn hash_path_for_kind(path: &Path, kind: crate::lock::ItemKind) -> std::path::PathBuf {
-    if kind == crate::lock::ItemKind::BootstrapDoc {
-        path.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::hash;
-    use crate::lock::{ItemId, ItemKind, LockedItemV2, OutputRecord};
+    use crate::lock::{ItemId, LockedItemV2, OutputRecord};
     use crate::types::{ItemName, SourceName};
     use indexmap::IndexMap;
     use std::fs;

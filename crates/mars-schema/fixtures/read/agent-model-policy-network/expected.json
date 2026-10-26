@@ -1,0 +1,53 @@
+{
+  "frontmatter": [
+    [
+      "model-policies",
+      [
+        {
+          "match": {
+            "alias": "opus"
+          },
+          "override": {
+            "network": "deny",
+            "effort": "low"
+          }
+        }
+      ]
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": [
+      {
+        "match": {
+          "alias": "opus"
+        },
+        "override": {
+          "effort": "low",
+          "network": "deny"
+        }
+      }
+    ]
+  },
+  "body": "body",
+  "diagnostics": []
+}

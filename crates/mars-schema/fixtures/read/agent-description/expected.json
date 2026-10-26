@@ -1,0 +1,33 @@
+{
+  "frontmatter": [
+    [
+      "description",
+      "writes"
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": "writes",
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body",
+  "diagnostics": []
+}

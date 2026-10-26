@@ -157,7 +157,6 @@ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills, provenan
 
 **REAL warnings** (user can act on them):
 - Linked harness constraints blocked auto-routing
-- An `allowlist` mode with no allowed hosts failed closed to `deny`
 
 **NOT warnings** (go to routing/provenance fields, or to a `tools.rules[].note`):
 - Permission gaps: a tool name Mars does not recognize, a harness with no switch for a tool,

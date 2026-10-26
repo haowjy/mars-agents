@@ -1,6 +1,29 @@
 # Lock File
 
-`mars.lock` is the ownership registry for all managed items. It records what Mars installed, where it came from, and what the content looked like. This file is committed to version control.
+`mars.lock` is the ownership registry for the items packages install. It records what Mars installed, where it came from, and what the content looked like. This file is committed to version control.
+
+## Canonical Ownership
+
+A destination under `.mars/` is **Mars-owned** when either record says so:
+
+- **`mars.lock` claims it:** the lock has an `installed` output row with `target_root = ".mars"`
+  and that `dest_path`.
+- **`.mars/provided.lock` lists it:** a host program installed the skill directory with that name
+  with [`mars provide`](../cli/commands.md#mars-provide).
+
+This is the one rule every canonical "may Mars overwrite or delete this?" decision applies —
+dependency collisions, project-local (`_self`) items, and `mars provide`'s own view of the disk.
+`src/sync/ownership.rs` implements it (`sync::ownership::Ownership`); sync's side is described in
+`src/sync/AGENTS.md`. Ownership is about who may act, not about what the bytes are: a directory a
+package replaced and a crash left before the lock write is still Mars-owned. The two records differ
+in reach, not in weight: `mars.lock` is committed, so it claims a destination on every machine,
+while `.mars/provided.lock` is machine-local and lists only the skills this machine's host
+installed. `mars provide` reads the same rule: a source skill the lock claims is left to the package
+and reported `shadowed`.
+
+Narrower predicates exist and do not replace it: sync recovery asks whether a journaled write was
+already published to `mars.lock` and reads `mars.lock` alone; linked targets have their own
+per-target records (below).
 
 ## Format
 
@@ -16,6 +39,16 @@ commit = "abc123def456"
 
 [dependencies.local]
 path = "/home/dev/my-agents"
+
+[dependencies."skills/pdf-tools"]
+url = "github.com/anthropics/skills"
+commit = "abc123def456"
+plugin = "pdf-tools"
+
+[dependencies."skills/pdf-tools".content]
+url = "github.com/acme/pdf-tools"
+subpath = "plugin"
+commit = "789fed012345"
 
 [dependency_model_aliases.fast]
 harness = "codex"
@@ -72,6 +105,10 @@ Resolved provenance for each source. Built from the resolved dependency graph, n
 | `path` | string | Path source | Canonical local path |
 | `version` | string | Tagged git source | Resolved version tag (e.g., `v1.2.0`) |
 | `commit` | string | Git source | Resolved commit hash |
+| `plugin` | string | Marketplace plugin | The plugin installed from the marketplace at this source; `url`, `version` and `commit` are then the marketplace's own |
+| `content` | table | Marketplace plugin | Where the plugin's files came from (below) |
+
+`[dependencies.<name>.content]` has `url`, `subpath` and `commit`, each present when it applies. A plugin in the marketplace's own repository repeats the marketplace's `url` and `commit` and has its path as `subpath` (none for a plugin at the root); with a marketplace at a local `path`, such a plugin has only its `subpath`. A plugin in another repository records that repository, the `git-subdir` path, and the commit fetched. `plugin` and `content` are absent from every other dependency, so locks without marketplace plugins are unchanged and still `version = 3`.
 
 ### `[items."<kind/name>"]`
 
@@ -82,7 +119,7 @@ Each item key is the logical item identity (e.g., `agent/coder`, `skill/review`)
 | `source` | string | Dependency name that provided this item |
 | `kind` | string | `"agent"` or `"skill"` |
 | `version` | string? | Version from the source's resolved graph node |
-| `source_checksum` | string | SHA-256 of the original source content |
+| `source_checksum` | string | SHA-256 of the item as the package provides it after preparation (see below) |
 | `outputs` | array | Per-target materialized outputs |
 
 ### `[[items."<kind/name>".outputs]]`
@@ -104,7 +141,7 @@ not claim that the current bytes were installed by Mars.
 
 Each item tracks two checksums:
 
-- **`source_checksum`**: Hash of the content as it exists in the source tree, before any transformations. Used to detect when the source has changed (new version, upstream edit).
+- **`source_checksum`**: Hash of the content as the package provides it once Mars has prepared it as [schema v1](../config/schema-v1.md): a package with no `schema` is hashed after its in-memory upgrade, and a foreign layout after translation, so the bytes are not always the authored file's. It is taken before renames rewrite references. Used to detect when the source has changed (new version, upstream edit).
 
 - **`installed_checksum`**: Hash of what Mars actually wrote to one output. May differ from `source_checksum` when frontmatter rewriting or native-target lowering occurred. Used to detect whether that exact output changed locally.
 

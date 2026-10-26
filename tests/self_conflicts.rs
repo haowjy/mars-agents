@@ -46,19 +46,19 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                 "agent",
                 "agents/muse.md",
                 ".mars/agents/muse.md",
-                lock::ItemKind::Agent,
+                mars_schema::item::ItemKind::Agent,
             ),
             (
                 "skill",
                 "skills/craft/SKILL.md",
                 ".mars/skills/craft",
-                lock::ItemKind::Skill,
+                mars_schema::item::ItemKind::Skill,
             ),
         ] {
             for same_bytes in [true, false] {
                 let dir = TempDir::new().unwrap();
                 let config = if layer == "package" {
-                    "[package]\nname = 'demo'\nversion = '1.0.0'\n"
+                    "[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n"
                 } else {
                     "[dependencies]\n"
                 };
@@ -72,7 +72,7 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                 let desired = if same_bytes { original } else { "# Desired\n" };
                 source.write_str(desired).unwrap();
                 let destination = dir.child(dest_rel);
-                if item_kind == lock::ItemKind::Agent {
+                if item_kind == mars_schema::item::ItemKind::Agent {
                     destination.write_str(original).unwrap();
                 } else {
                     destination.child("SKILL.md").write_str(original).unwrap();
@@ -82,7 +82,7 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                     .unwrap();
 
                 let source_before = fs::read(source.path()).unwrap();
-                let canonical_file = if item_kind == lock::ItemKind::Agent {
+                let canonical_file = if item_kind == mars_schema::item::ItemKind::Agent {
                     destination.path().to_path_buf()
                 } else {
                     destination.child("SKILL.md").path().to_path_buf()
@@ -407,7 +407,7 @@ fn self_layer_transitions_preserve_unique_ownership_and_native_outputs() {
         let dependency = create_source(&dir, "dep", &[], &[("craft", "# Dependency")]);
         let project = dir.child("project");
         let config = format!(
-            "[package]\nname = 'demo'\nversion = '1.0.0'\n[settings]\ntargets = ['.codex']\nagent_emission = 'never'\n[dependencies.dep]\npath = '{}'\n",
+            "[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n[settings]\ntargets = ['.codex']\nagent_emission = 'never'\n[dependencies.dep]\npath = '{}'\n",
             portable_path(&dependency)
         );
         project.child("mars.toml").write_str(&config).unwrap();
@@ -461,7 +461,7 @@ fn canonical_collision_aborts_before_other_outputs_or_lock_change() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml")
         .write_str(
-            "[package]\nname = 'demo'\nversion = '1.0.0'\n[settings]\nagent_emission = 'never'\n",
+            "[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n[settings]\nagent_emission = 'never'\n",
         )
         .unwrap();
     dir.child("agents/owned.md")
@@ -505,7 +505,7 @@ fn unowned_self_links_are_refused_without_touching_referents_even_with_force() {
             let project = dir.child("project");
             project
                 .child("mars.toml")
-                .write_str("[package]\nname = 'demo'\nversion = '1.0.0'\n")
+                .write_str("[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n")
                 .unwrap();
             let (source, dest) = if kind == "agent" {
                 ("agents/muse.md", ".mars/agents/muse.md")
@@ -554,7 +554,7 @@ fn self_updates_keep_existing_managed_modification_policy() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml")
         .write_str(
-            "[package]\nname = 'demo'\nversion = '1.0.0'\n[settings]\nagent_emission = 'never'\n",
+            "[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n[settings]\nagent_emission = 'never'\n",
         )
         .unwrap();
     dir.child("agents/muse.md").write_str("# Original").unwrap();
@@ -601,7 +601,7 @@ fn self_native_force_replaces_only_selected_link_and_preserves_referent() {
     use std::os::unix::fs::symlink;
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
-    project.child("mars.toml").write_str("[package]\nname = 'demo'\nversion = '1.0.0'\n[settings]\ntargets = ['.codex']\nagent_emission = 'never'\n").unwrap();
+    project.child("mars.toml").write_str("[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n[settings]\ntargets = ['.codex']\nagent_emission = 'never'\n").unwrap();
     project
         .child("skills/craft/SKILL.md")
         .write_str("# Selected")

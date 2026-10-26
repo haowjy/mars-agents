@@ -1,0 +1,9 @@
+{
+  "source": {
+    "name": "mono",
+    "subpath": "tools/pkg"
+  },
+  "hint": {
+    "subpath": "tools/pkg"
+  }
+}

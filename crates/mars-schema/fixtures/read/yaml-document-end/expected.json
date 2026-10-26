@@ -1,0 +1,40 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "x"
+    ]
+  ],
+  "fields": {
+    "name": "x",
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "yaml.document-end",
+      "severity": "error",
+      "path": [],
+      "message": "YAML document-end markers are not supported"
+    }
+  ]
+}

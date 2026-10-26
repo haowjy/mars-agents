@@ -1,0 +1,140 @@
+{
+  "frontmatter": [
+    [
+      "network",
+      "default"
+    ],
+    [
+      "network-allow",
+      [
+        "https://example.com",
+        "example.com:443",
+        "*",
+        "127.1",
+        "*.com",
+        "münchen.example",
+        "ok.example"
+      ]
+    ],
+    [
+      "network-deny",
+      {
+        "replace": [
+          "blocked.example"
+        ]
+      }
+    ],
+    [
+      "network_allow",
+      [
+        "typo.example"
+      ]
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [
+      "ok.example"
+    ],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "network"
+      ],
+      "message": "agent field `network` has invalid value `default`; allowed: allow, deny, allowlist"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "network-allow",
+        0
+      ],
+      "message": "agent field `network-allow[0]` has invalid value `https://example.com`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "network-allow",
+        1
+      ],
+      "message": "agent field `network-allow[1]` has invalid value `example.com:443`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "network-allow",
+        2
+      ],
+      "message": "agent field `network-allow[2]` has invalid value `*`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "network-allow",
+        3
+      ],
+      "message": "agent field `network-allow[3]` has invalid value `127.1`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "network-allow",
+        4
+      ],
+      "message": "agent field `network-allow[4]` has invalid value `*.com`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "network-allow",
+        5
+      ],
+      "message": "agent field `network-allow[5]` has invalid value `münchen.example`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "network-deny"
+      ],
+      "message": "agent field `network-deny` has invalid value `{\"replace\":[\"blocked.example\"]}`; allowed: plain list; package profiles cannot replace a deny set"
+    },
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "network_allow"
+      ],
+      "message": "`network_allow` was removed; use `network-allow`"
+    }
+  ]
+}

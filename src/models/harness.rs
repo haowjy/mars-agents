@@ -4,11 +4,9 @@ use crate::harness::host::{ExecutableResolver, ExecutableState, PathExecutableRe
 use crate::harness::registry;
 use std::collections::HashSet;
 
-pub const VALID_HARNESSES: &[&str] = &["claude", "codex", "pi", "cursor", "opencode"];
-
 pub fn detect_installed_harnesses() -> HashSet<String> {
     let resolver = PathExecutableResolver;
-    registry::all()
+    mars_schema::harness::ALL
         .iter()
         .copied()
         .filter(|id| {
@@ -21,7 +19,7 @@ pub fn detect_installed_harnesses() -> HashSet<String> {
         .collect()
 }
 pub fn normalize_harness_name(name: &str) -> Option<String> {
-    registry::normalize_name(name)
+    mars_schema::harness::normalize_name(name)
 }
 
 pub fn harness_candidates_for_provider(provider: &str) -> Vec<String> {
@@ -43,7 +41,7 @@ pub fn parse_settings_harness_order(order: &[String]) -> ParsedHarnessOrder {
         let Some(normalized) = normalize_harness_name(candidate) else {
             warnings.push(format!(
                 "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
-                VALID_HARNESSES.join(", ")
+                mars_schema::harness::names()
             ));
             continue;
         };

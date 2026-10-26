@@ -310,6 +310,12 @@ const OPENCODE_ONLY_AGENT_KEYS: &[&str] = &[
     "prompt",
 ];
 
+/// Whether an Agent is written the way only OpenCode writes one: a `permission` map, or a `tools`
+/// map of booleans. Prediction reads this; `lift_opencode_agent` translates the same two spellings.
+pub(crate) fn is_opencode_agent(fm: &Frontmatter) -> bool {
+    matches!(fm.get("permission"), Some(Value::Mapping(_))) || tool_flags(fm).is_some()
+}
+
 fn lift_opencode_agent(fm: &mut Frontmatter, changes: &mut Vec<SchemaDiagnostic>) -> bool {
     let mut changed = false;
 
@@ -341,15 +347,20 @@ fn lift_opencode_agent(fm: &mut Frontmatter, changes: &mut Vec<SchemaDiagnostic>
     changed
 }
 
+/// The `tools` map when it holds a boolean: OpenCode's form, which no other dialect writes.
+fn tool_flags(fm: &Frontmatter) -> Option<&serde_yaml::Mapping> {
+    match fm.get("tools") {
+        Some(Value::Mapping(tools)) if tools.values().any(Value::is_bool) => Some(tools),
+        _ => None,
+    }
+}
+
 /// A foreign `tools` map of tool name to boolean (OpenCode's form) becomes schema v1's map of tool
 /// name to `allow` or `deny`.
 fn lift_tool_flags(fm: &mut Frontmatter) -> bool {
-    let Some(Value::Mapping(tools)) = fm.get("tools") else {
+    let Some(tools) = tool_flags(fm) else {
         return false;
     };
-    if !tools.values().any(Value::is_bool) {
-        return false;
-    }
     let policy = tools
         .iter()
         .map(|(name, flag)| {

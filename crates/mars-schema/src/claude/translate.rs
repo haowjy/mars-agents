@@ -29,6 +29,19 @@ const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "shell",
 ];
 
+/// Spellings only Claude writes, which a manifest-free tree can be predicted Claude from.
+/// Deliberately narrower than the vocabulary above and the rewrites below: `model`, `effort`,
+/// `tools` and `hooks` also appear in Mars's own files, and the rewritten spellings are read
+/// in code, not in a table, so this list is not derived from either.
+pub(crate) const EVIDENCE_KEYS: &[&str] = &[
+    "allowed-tools",
+    "disable-model-invocation",
+    "disallowedTools",
+    "disallowed-tools",
+    "argument-hint",
+    "mcpServers",
+];
+
 const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "color",
     "initialPrompt",

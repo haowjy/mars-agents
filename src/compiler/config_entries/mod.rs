@@ -648,10 +648,13 @@ fn apply_replacement_writes(
                     "config-entry-write",
                     format!("failed to write config entries to `{authorized_target}`: {error}"),
                 );
-                // Entries the old lock owned may still be on disk; keep their
-                // records so a later sync can remove them. Hook removal clears
-                // the whole pair before the write, so no hook record applies.
+                // An unchanged entry the old lock owned is still on disk; keep
+                // its record so a later sync can remove it. A changed record's
+                // entry was already removed before this write, so it drops.
+                // Hook removal clears the whole pair before the write, so no
+                // hook record applies.
                 if surface == Surface::Mcp {
+                    let desired = desired_records.get(&authorized_target);
                     written_records
                         .entry(authorized_target.clone())
                         .or_default()
@@ -661,7 +664,10 @@ fn apply_replacement_writes(
                                 .get(&authorized_target)
                                 .into_iter()
                                 .flatten()
-                                .filter(|(key, _)| written_keys.contains(*key))
+                                .filter(|(key, record)| {
+                                    written_keys.contains(*key)
+                                        && desired.and_then(|d| d.get(*key)) == Some(*record)
+                                })
                                 .map(|(key, record)| (key.clone(), record.clone())),
                         );
                 }

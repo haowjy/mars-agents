@@ -14,17 +14,22 @@
 //! checksum and must be treated as a copy/install collision. `--force` may
 //! explicitly adopt that path and restore its state to installed.
 //!
-//! Merge-mode config entries use entry ownership rather than path ownership. A
-//! config entry may be removed only when the lock holds a
-//! [`ConfigEntryRecord`](crate::lock::ConfigEntryRecord) and its recorded
-//! `emitted_json` still matches the entry on disk. Content resemblance without
-//! a lock record never establishes ownership. The temporary issue #130 old-lock
-//! bridge is narrower: a record without `emitted_json` authorizes only the
-//! legacy command-path cleanup associated with that recorded key.
+//! Config entries use entry ownership rather than path ownership: an entry may
+//! be removed only when the lock holds a
+//! [`ConfigEntryRecord`](crate::lock::ConfigEntryRecord) for its key. Content
+//! resemblance without a lock record never establishes ownership.
 //!
-//! MCP records that change between syncs are removed before the rewrite, using
-//! the old record to find the entry. OpenCode relies on this to move servers
-//! from `mcpServers` (no `emitted_json`) to `mcp` (the exact entry written).
+//! Merge-mode hooks are also matched by content: a hook entry is removed only
+//! when its recorded `emitted_json` still matches the entry on disk. The
+//! temporary issue #130 old-lock bridge is narrower: a hook record without
+//! `emitted_json` authorizes only the legacy command-path cleanup associated
+//! with that recorded key.
+//!
+//! MCP servers are owned by name. On an MCP record, `emitted_json` only lets a
+//! target tell where and how it wrote the entry: OpenCode reads `None` as the
+//! legacy `mcpServers` section and `Some` as `mcp`. MCP records that change
+//! between syncs are removed before the rewrite, using the old record to find
+//! the entry; this is how OpenCode moves servers from `mcpServers` to `mcp`.
 //!
 //! [`retention`] enforces the other half of the contract: each removal is a
 //! single-use operation that reports the records it could not confirm removing.

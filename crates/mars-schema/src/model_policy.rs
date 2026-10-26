@@ -211,9 +211,13 @@ pub fn parse_model_policy_rule_value(
     let when = match rule.get(serde_yaml::Value::String("when".to_string())) {
         None | Some(serde_yaml::Value::Null) => None,
         Some(serde_yaml::Value::String(value)) if value.lines().count() <= 1 => Some(value.clone()),
-        Some(value) => return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
-            key: "when".to_string(), found: format!("{value:?}"), allowed: "one-line string",
-        }),
+        Some(value) => {
+            return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
+                key: "when".to_string(),
+                found: format!("{value:?}"),
+                allowed: "one-line string",
+            });
+        }
     };
 
     Ok(ModelPolicyRule {

@@ -16,23 +16,29 @@ fn emit(value: &Value, indent: usize) -> String {
         Value::Number(v) => v.to_string(),
         Value::String(v) if v.contains('\n') => {
             let mut out = String::from("|-\n");
-            for line in v.lines() { out.push_str(&format!("{}{}\n", " ".repeat(indent + 2), line)); }
+            for line in v.lines() {
+                out.push_str(&format!("{}{}\n", " ".repeat(indent + 2), line));
+            }
             out
         }
         Value::String(v) => serde_json::to_string(v).expect("JSON strings are serializable"),
         Value::Array(values) if values.is_empty() => "[]".into(),
         Value::Object(values) if values.is_empty() => "{}".into(),
-        Value::Array(values) => values.iter().map(|v| {
-            format!("\n{}- {}", " ".repeat(indent), emit(v, indent + 2))
-        }).collect(),
-        Value::Object(values) => values.iter().map(|(key, value)| {
-            let rendered = emit(value, indent + 2);
-            if rendered.starts_with('\n') {
-                format!("\n{}{}:", " ".repeat(indent), key) + &rendered
-            } else {
-                format!("\n{}{}: {}", " ".repeat(indent), key, rendered)
-            }
-        }).collect(),
+        Value::Array(values) => values
+            .iter()
+            .map(|v| format!("\n{}- {}", " ".repeat(indent), emit(v, indent + 2)))
+            .collect(),
+        Value::Object(values) => values
+            .iter()
+            .map(|(key, value)| {
+                let rendered = emit(value, indent + 2);
+                if rendered.starts_with('\n') {
+                    format!("\n{}{}:", " ".repeat(indent), key) + &rendered
+                } else {
+                    format!("\n{}{}: {}", " ".repeat(indent), key, rendered)
+                }
+            })
+            .collect(),
     }
 }
 

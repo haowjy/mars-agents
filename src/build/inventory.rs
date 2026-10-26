@@ -232,7 +232,10 @@ fn parse_inventory_agent(
             description,
             model: profile.model,
             model_backups,
-            has_model_guide: profile.model_policies.iter().any(|entry| entry.when.is_some()),
+            has_model_guide: profile
+                .model_policies
+                .iter()
+                .any(|entry| entry.when.is_some()),
             mode,
         }),
         warnings,
@@ -282,9 +285,26 @@ fn render_meridian_agent_line(agent: &ParsedAgentInventory) -> String {
 fn render_native_agent_line(agent: &ParsedAgentInventory) -> String {
     let description = agent.description.trim();
     if description.is_empty() {
-        format!("- {}{}", agent.name, if agent.has_model_guide { " (model guide available)" } else { "" })
+        format!(
+            "- {}{}",
+            agent.name,
+            if agent.has_model_guide {
+                " (model guide available)"
+            } else {
+                ""
+            }
+        )
     } else {
-        format!("- {}: {}{}", agent.name, description, if agent.has_model_guide { " (model guide available)" } else { "" })
+        format!(
+            "- {}: {}{}",
+            agent.name,
+            description,
+            if agent.has_model_guide {
+                " (model guide available)"
+            } else {
+                ""
+            }
+        )
     }
 }
 

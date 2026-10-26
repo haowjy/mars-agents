@@ -20,8 +20,14 @@ pub fn version() -> String {
 #[wasm_bindgen]
 pub fn read(input: JsValue) -> Result<JsValue, JsValue> {
     let input: serde_json::Value = from_js(input)?;
-    let kind = input.get("kind").and_then(|v| v.as_str()).unwrap_or("agent");
-    let text = input.get("text").and_then(|v| v.as_str()).ok_or_else(|| JsValue::from_str("read requires text"))?;
+    let kind = input
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("agent");
+    let text = input
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| JsValue::from_str("read requires text"))?;
     match kind {
         "agent" => to_js(mars_schema::agent::read(text)),
         "skill" => to_js(mars_schema::skill::read(text)),
@@ -31,13 +37,16 @@ pub fn read(input: JsValue) -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen(js_name = emitValue)]
 pub fn emit_value(value: JsValue, indent: u32) -> Result<String, JsValue> {
-    Ok(mars_schema::edit::emit_value(&from_js(value)?, indent as usize))
+    Ok(mars_schema::edit::emit_value(
+        &from_js(value)?,
+        indent as usize,
+    ))
 }
 
 #[wasm_bindgen(js_name = rewriteBlock)]
 pub fn rewrite_block(value: JsValue) -> Result<String, JsValue> {
-    let values: Vec<(String, serde_json::Value)> = serde_wasm_bindgen::from_value(value)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let values: Vec<(String, serde_json::Value)> =
+        serde_wasm_bindgen::from_value(value).map_err(|e| JsValue::from_str(&e.to_string()))?;
     Ok(mars_schema::edit::rewrite_block(&values))
 }
 
@@ -50,15 +59,21 @@ pub fn vocabulary() -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn prepare(input: JsValue) -> Result<JsValue, JsValue> {
     #[derive(serde::Deserialize)]
-    struct Input { files: std::collections::BTreeMap<String, Vec<u8>>, context: Option<String> }
-    let input: Input = serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let tree = mars_schema::tree::FileTree::from_files(input.files).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    struct Input {
+        files: std::collections::BTreeMap<String, Vec<u8>>,
+        context: Option<String>,
+    }
+    let input: Input =
+        serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let tree = mars_schema::tree::FileTree::from_files(input.files)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
     let context = match input.context.as_deref().unwrap_or("package") {
         "authored-local" => mars_schema::prepare::PrepareContext::AuthoredLocal,
         _ => mars_schema::prepare::PrepareContext::Package,
     };
     let prepared = mars_schema::prepare::prepare(&tree, context, None);
-    let mut value = serde_json::to_value(&prepared).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let mut value =
+        serde_json::to_value(&prepared).map_err(|e| JsValue::from_str(&e.to_string()))?;
     if let Some(manifest) = value.get_mut("manifest")
         && let Some(source) = prepared.manifest.as_ref()
     {

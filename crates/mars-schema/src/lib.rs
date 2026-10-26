@@ -29,8 +29,8 @@ pub mod tool_policy;
 pub mod model_policy;
 
 pub mod diagnostic;
+pub mod edit;
 pub mod package;
 pub mod plugin_metadata;
 pub mod prepare;
 pub mod upgrade;
-pub mod edit;

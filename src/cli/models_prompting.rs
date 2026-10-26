@@ -272,14 +272,16 @@ fn prompt_target_for_agent(
         .profile
         .model_policies
         .iter()
-        .filter_map(|entry| entry.when.as_ref().map(|when| {
-            let kind = match entry.match_type {
-                mars_schema::model_policy::ModelPolicyMatchType::Alias => "alias",
-                mars_schema::model_policy::ModelPolicyMatchType::Model => "model",
-                mars_schema::model_policy::ModelPolicyMatchType::ModelGlob => "model-glob",
-            };
-            format!("- {kind} `{}`: {when}", entry.match_value)
-        }))
+        .filter_map(|entry| {
+            entry.when.as_ref().map(|when| {
+                let kind = match entry.match_type {
+                    mars_schema::model_policy::ModelPolicyMatchType::Alias => "alias",
+                    mars_schema::model_policy::ModelPolicyMatchType::Model => "model",
+                    mars_schema::model_policy::ModelPolicyMatchType::ModelGlob => "model-glob",
+                };
+                format!("- {kind} `{}`: {when}", entry.match_value)
+            })
+        })
         .collect::<Vec<_>>();
     if !guide.is_empty() {
         let guide = format!("Model guide for {}:\n{}", agent.name, guide.join("\n"));

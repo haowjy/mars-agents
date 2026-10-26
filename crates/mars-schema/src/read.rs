@@ -15,31 +15,42 @@ pub enum FileRead {
 }
 
 /// Read every schema-owned file in a package tree in one deterministic pass.
-pub fn read_files(source: &impl crate::tree::TreeSource) -> std::collections::BTreeMap<String, FileRead> {
+pub fn read_files(
+    source: &impl crate::tree::TreeSource,
+) -> std::collections::BTreeMap<String, FileRead> {
     let mut paths = Vec::new();
     fn walk(source: &impl crate::tree::TreeSource, dir: &str, paths: &mut Vec<String>) {
         for child in source.children(dir) {
             if source.is_file(&child) {
-                if child == "mars.toml" || child.starts_with("agents/") || child.ends_with("/SKILL.md") || child == "SKILL.md" {
+                if child == "mars.toml"
+                    || child.starts_with("agents/")
+                    || child.ends_with("/SKILL.md")
+                    || child == "SKILL.md"
+                {
                     paths.push(child);
                 }
-            } else if source.is_dir(&child) { walk(source, &child, paths); }
+            } else if source.is_dir(&child) {
+                walk(source, &child, paths);
+            }
         }
     }
     walk(source, "", &mut paths);
     paths.sort();
-    paths.into_iter().filter_map(|path| {
-        let bytes = source.read(&path)?;
-        let text = String::from_utf8(bytes).ok()?;
-        let result = if path == "mars.toml" {
-            FileRead::Manifest(crate::manifest::read(&text))
-        } else if path.starts_with("agents/") {
-            FileRead::Agent(crate::agent::read(&text))
-        } else {
-            FileRead::Skill(crate::skill::read(&text))
-        };
-        Some((path, result))
-    }).collect()
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let bytes = source.read(&path)?;
+            let text = String::from_utf8(bytes).ok()?;
+            let result = if path == "mars.toml" {
+                FileRead::Manifest(crate::manifest::read(&text))
+            } else if path.starts_with("agents/") {
+                FileRead::Agent(crate::agent::read(&text))
+            } else {
+                FileRead::Skill(crate::skill::read(&text))
+            };
+            Some((path, result))
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -56,19 +67,32 @@ pub(crate) fn frontmatter_json(
     mapping: &serde_yaml::Mapping,
     diagnostics: &mut Vec<SchemaDiagnostic>,
 ) -> Vec<(String, serde_json::Value)> {
-    mapping.iter().filter_map(|(key, value)| {
-        let Some(key) = key.as_str() else {
-            diagnostics.push(SchemaDiagnostic::new("yaml.non-string-key", crate::diagnostic::Severity::Error, Vec::new(), "frontmatter keys must be strings"));
-            return None;
-        };
-        match json_value(value) {
-            Ok(value) => Some((key.to_owned(), value)),
-            Err(message) => {
-                diagnostics.push(SchemaDiagnostic::new("yaml.non-json-value", crate::diagnostic::Severity::Error, vec![crate::diagnostic::PathSegment::Key(key.to_owned())], message));
-                None
+    mapping
+        .iter()
+        .filter_map(|(key, value)| {
+            let Some(key) = key.as_str() else {
+                diagnostics.push(SchemaDiagnostic::new(
+                    "yaml.non-string-key",
+                    crate::diagnostic::Severity::Error,
+                    Vec::new(),
+                    "frontmatter keys must be strings",
+                ));
+                return None;
+            };
+            match json_value(value) {
+                Ok(value) => Some((key.to_owned(), value)),
+                Err(message) => {
+                    diagnostics.push(SchemaDiagnostic::new(
+                        "yaml.non-json-value",
+                        crate::diagnostic::Severity::Error,
+                        vec![crate::diagnostic::PathSegment::Key(key.to_owned())],
+                        message,
+                    ));
+                    None
+                }
             }
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn json_value(value: &Value) -> Result<serde_json::Value, String> {
@@ -77,11 +101,17 @@ fn json_value(value: &Value) -> Result<serde_json::Value, String> {
         Value::Bool(v) => Ok((*v).into()),
         Value::Number(v) => serde_json::to_value(v).map_err(|e| e.to_string()),
         Value::String(v) => Ok(v.clone().into()),
-        Value::Sequence(values) => values.iter().map(json_value).collect::<Result<Vec<_>, _>>().map(serde_json::Value::Array),
+        Value::Sequence(values) => values
+            .iter()
+            .map(json_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(serde_json::Value::Array),
         Value::Mapping(values) => {
             let mut out = serde_json::Map::new();
             for (key, value) in values {
-                let Some(key) = key.as_str() else { return Err("YAML mapping contains a non-string key".into()) };
+                let Some(key) = key.as_str() else {
+                    return Err("YAML mapping contains a non-string key".into());
+                };
                 out.insert(key.to_owned(), json_value(value)?);
             }
             Ok(serde_json::Value::Object(out))

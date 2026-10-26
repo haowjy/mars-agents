@@ -421,6 +421,13 @@ fn strip_model_policy_overrides(fm: &mut Frontmatter, diagnostics: &mut Vec<Sche
         else {
             continue;
         };
+        // The legacy effort spellings mean the same here as at the top level.
+        for (old, new) in [("adaptive", "medium"), ("disabled", "none")] {
+            let key = Value::String("effort".to_string());
+            if overrides.get(&key).and_then(Value::as_str) == Some(old) {
+                overrides.insert(key, Value::String(new.to_string()));
+            }
+        }
         for key in ["network", "autocompact", "autocompact_pct", "harness"] {
             if overrides.remove(Value::String(key.to_string())).is_some() {
                 diagnostics.push(SchemaDiagnostic::new(

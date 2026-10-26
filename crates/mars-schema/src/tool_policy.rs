@@ -332,4 +332,3 @@ fn permission_replace_entries(value: &Value) -> Option<&Value> {
 }
 
 const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
-

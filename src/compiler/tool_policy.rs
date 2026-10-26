@@ -818,6 +818,7 @@ mod tests {
         let overlay = AgentOverlayTools {
             allowed: Some(vec!["bash".to_string().try_into().unwrap()].into()),
             disallowed: Some(vec!["agent".to_string().try_into().unwrap()].into()),
+            ..Default::default()
         };
         let yaml = "tools:
   'bash(git push *)': deny
@@ -847,6 +848,7 @@ mod tests {
             disallowed: Some(PermissionSet::Replace {
                 replace: vec!["agent".to_string().try_into().unwrap()],
             }),
+            ..Default::default()
         };
         let mut replaced = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
         replaced.apply_overlay(&replacing);
@@ -859,6 +861,7 @@ mod tests {
         let empty_lists = AgentOverlayTools {
             allowed: Some(Vec::new().into()),
             disallowed: Some(Vec::new().into()),
+            ..Default::default()
         };
         let mut unchanged = agent_policy(&format!("---\nname: a\ndescription: d\n{yaml}---\n"));
         unchanged.apply_overlay(&empty_lists);
@@ -877,6 +880,7 @@ mod tests {
         let additive = AgentOverlayTools {
             allowed: Some(vec!["read".to_string().try_into().unwrap()].into()),
             disallowed: None,
+            ..Default::default()
         };
         let mut widened = agent_policy(wildcard_profile);
         widened.apply_overlay(&additive);

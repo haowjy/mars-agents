@@ -22,6 +22,15 @@ struct MigrateReport {
     changed: bool,
     files: Vec<String>,
     fully_rewritten_files: Vec<String>,
+    /// What the migration removed or could not carry over, by file.
+    dropped: Vec<DroppedKey>,
+}
+
+#[derive(Serialize)]
+struct DroppedKey {
+    file: String,
+    code: String,
+    message: String,
 }
 
 struct PendingWrite {
@@ -50,7 +59,7 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 root.display()
             ));
         }
-        return report(args.check, Vec::new(), json);
+        return report(args.check, Vec::new(), Vec::new(), json);
     }
 
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
@@ -58,13 +67,41 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         crate::package_prepare::prepare_authored(&authored_root, context, None, &mut diagnostics)?;
     diagnostics.fail_on_errors()?;
     let pending = pending_writes(root, &authored_root, &prepared);
+    let dropped = dropped_keys(root, &authored_root, &prepared);
 
     if !args.check {
         for file in &pending {
             crate::platform::fs::atomic_write_file(&file.path, &file.bytes)?;
         }
     }
-    report(args.check, pending, json)
+    report(args.check, pending, dropped, json)
+}
+
+/// Package-level diagnostics are what upgrading removed (legacy keys, skill tool rules);
+/// each is listed with its file, none truncated.
+fn dropped_keys(project_root: &Path, authored_root: &Path, prepared: &Prepared) -> Vec<DroppedKey> {
+    let mut dropped = Vec::new();
+    for (source_path, diagnostics) in &prepared.diagnostics {
+        let file = relative_path(project_root, &authored_root.join(source_path));
+        for diagnostic in diagnostics {
+            dropped.push(DroppedKey {
+                file: file.clone(),
+                code: diagnostic.code.clone(),
+                message: diagnostic.message.clone(),
+            });
+        }
+    }
+    dropped.sort_by(|left, right| (&left.code, &left.file).cmp(&(&right.code, &right.file)));
+    dropped
+}
+
+fn relative_path(project_root: &Path, path: &Path) -> String {
+    path.strip_prefix(project_root)
+        .expect("authored migration path is inside the project")
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn pending_writes(
@@ -111,13 +148,7 @@ fn push_change(
         return;
     }
     let path = authored_root.join(source_path);
-    let relative = path
-        .strip_prefix(project_root)
-        .expect("authored migration path is inside the project")
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
+    let relative = relative_path(project_root, &path);
     pending.push(PendingWrite {
         path,
         relative,
@@ -126,7 +157,12 @@ fn push_change(
     });
 }
 
-fn report(check: bool, pending: Vec<PendingWrite>, json: bool) -> Result<i32, MarsError> {
+fn report(
+    check: bool,
+    pending: Vec<PendingWrite>,
+    dropped: Vec<DroppedKey>,
+    json: bool,
+) -> Result<i32, MarsError> {
     let files = pending
         .iter()
         .map(|file| file.relative.clone())
@@ -142,8 +178,11 @@ fn report(check: bool, pending: Vec<PendingWrite>, json: bool) -> Result<i32, Ma
             changed: !files.is_empty(),
             files,
             fully_rewritten_files,
+            dropped,
         });
-    } else if files.is_empty() {
+        return Ok(i32::from(check && !pending.is_empty()));
+    }
+    if files.is_empty() {
         output::print_info("definition format is already schema v1");
     } else {
         for file in &pending {
@@ -155,6 +194,14 @@ fn report(check: bool, pending: Vec<PendingWrite>, json: bool) -> Result<i32, Ma
             };
             output::print_info(&format!("{verb} {}", file.relative));
         }
+    }
+    let mut code = "";
+    for key in &dropped {
+        if key.code != code {
+            code = &key.code;
+            output::print_warn(&format!("{code}:"));
+        }
+        println!("    {}: {}", key.file, key.message);
     }
     Ok(i32::from(check && !pending.is_empty()))
 }

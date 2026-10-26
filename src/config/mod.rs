@@ -227,12 +227,15 @@ pub struct FilterConfig {
 ///
 /// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
 /// fails `mars.toml` instead of reaching the policy.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentOverlayTools {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<PermissionSet<OverlayToolName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disallowed: Option<PermissionSet<OverlayToolName>>,
+    /// Keys Mars does not read here (a retired `mcp`); kept so a stale one can be reported.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 impl AgentOverlayTools {
@@ -297,6 +300,9 @@ pub struct SkillOverlay {
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
+    /// Keys Mars does not read here (a retired `tools` table), kept to report them.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 impl SkillOverlay {
@@ -702,13 +708,12 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
             ConfigError::Io(e)
         }
     })?;
-    let mut config: Config = parse_without_removed_visibility(&content, &path)?;
-    migrate_legacy_source_urls(&mut config);
-    Ok(config)
+    parse_config(&content, &path)
 }
 
 pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
     let mut config: Config = parse_without_removed_visibility(content, path)?;
+    validate_agent_overlays(path, &config.agents)?;
     migrate_legacy_source_urls(&mut config);
     Ok(config)
 }
@@ -805,6 +810,7 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let local: LocalConfig = parse_without_removed_visibility(&content, &path)?;
+            validate_agent_overlays(&path, &local.agents)?;
             Ok(local)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
@@ -902,8 +908,120 @@ struct ProjectConfigWarning {
     message: String,
 }
 
-fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectConfigWarning> {
+/// Overlay keys Mars once read and now ignores.
+const STALE_AGENT_OVERLAY_KEYS: &[&str] = &[
+    "network",
+    "network-allow",
+    "network-deny",
+    "autocompact",
+    "autocompact_pct",
+];
+
+fn stale_overlay_warnings(
+    file: &str,
+    agents: &IndexMap<String, AgentOverlay>,
+) -> Vec<ProjectConfigWarning> {
     let mut warnings = Vec::new();
+    let mut stale = |surface: String| {
+        warnings.push(ProjectConfigWarning {
+            code: "stale-config-key",
+            message: format!("{file} {surface} is no longer read and is ignored; delete it"),
+        });
+    };
+    for (name, overlay) in agents {
+        for key in STALE_AGENT_OVERLAY_KEYS {
+            if overlay.unknown.contains_key(*key) {
+                stale(format!("[agents.{name}] `{key}`"));
+            }
+        }
+        if overlay.tools.unknown.contains_key("mcp") {
+            stale(format!(
+                "[agents.{name}.tools] `mcp` (put MCP grants in `allowed` as \"mcp(server)\")"
+            ));
+        }
+    }
+    warnings
+}
+
+/// `effort`, `approval` and `sandbox` in an overlay take the same values as in an Agent file.
+fn validate_agent_overlays(
+    file: &Path,
+    agents: &IndexMap<String, AgentOverlay>,
+) -> Result<(), MarsError> {
+    use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
+    for (name, overlay) in agents {
+        let values = [
+            (
+                "effort",
+                overlay.effort.as_deref(),
+                overlay
+                    .effort
+                    .as_deref()
+                    .and_then(EffortLevel::parse)
+                    .is_some(),
+                "low, medium, high, xhigh, none",
+            ),
+            (
+                "approval",
+                overlay.approval.as_deref(),
+                overlay
+                    .approval
+                    .as_deref()
+                    .and_then(ApprovalMode::parse)
+                    .is_some(),
+                "default, auto, confirm, never",
+            ),
+            (
+                "sandbox",
+                overlay.sandbox.as_deref(),
+                overlay
+                    .sandbox
+                    .as_deref()
+                    .and_then(SandboxMode::parse)
+                    .is_some(),
+                "default, read-only, workspace-write, danger-full-access",
+            ),
+        ];
+        for (key, value, valid, allowed) in values {
+            if let Some(value) = value
+                && !valid
+            {
+                return Err(ConfigError::Invalid {
+                    message: format!(
+                        "{}: [agents.{name}] `{key}` has invalid value `{value}`; allowed: {allowed}",
+                        file.display()
+                    ),
+                }
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectConfigWarning> {
+    let mut warnings = stale_overlay_warnings("mars.toml", &config.agents);
+    warnings.extend(stale_overlay_warnings("mars.local.toml", &local.agents));
+    for (name, overlay) in config.skills.iter() {
+        if overlay.unknown.contains_key("tools") {
+            warnings.push(ProjectConfigWarning {
+                code: "stale-config-key",
+                message: format!(
+                    "mars.toml [skills.{name}.tools] is no longer read and is ignored; delete it"
+                ),
+            });
+        }
+    }
+    for key in ["default_network", "network-allow", "network-deny"] {
+        if config.settings.unknown.contains_key(key) {
+            warnings.push(ProjectConfigWarning {
+                code: "stale-config-key",
+                message: format!(
+                    "mars.toml [settings] `{key}` is no longer read and is ignored; delete it"
+                ),
+            });
+        }
+    }
     for (name, overlay) in &config.agents {
         warnings.extend(tool_overlay_warnings(
             "mars.toml",
@@ -2146,6 +2264,7 @@ override = { effort = "high" }
                 tools: AgentOverlayTools {
                     allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
                     disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
+                    ..Default::default()
                 },
                 model_policies: Some(vec![ModelPolicyRule {
                     match_type: ModelPolicyMatchType::Alias,
@@ -2179,6 +2298,7 @@ override = { effort = "high" }
                     disallowed: Some(PermissionSet::Replace {
                         replace: vec!["Agent".to_string().try_into().unwrap()],
                     }),
+                    ..Default::default()
                 },
                 unknown: BTreeMap::from([("local_future".to_string(), toml::Value::Boolean(true))]),
                 ..AgentOverlay::default()
@@ -2461,7 +2581,7 @@ allowed = { replace = ["Bash"] }
         let warnings = effective
             .warnings
             .iter()
-            .filter(|warning| warning.contains(".tools]"))
+            .filter(|warning| warning.contains(".tools]."))
             .collect::<Vec<_>>();
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(

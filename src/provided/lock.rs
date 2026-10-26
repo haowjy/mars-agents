@@ -24,13 +24,13 @@ const PROVIDED_LOCK_VERSION: u32 = 1;
 pub(crate) const PENDING_DIGEST: &str = "pending";
 
 /// Every provider's record. Providers other than the one a run touches are kept verbatim.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ProvidedLock {
     providers: BTreeMap<String, ProviderRecord>,
 }
 
 /// What one provider installed in this project.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct ProviderRecord {
     /// The host's version, opaque: host versions need not be semver (Meridian RCs are PEP 440).
     /// Recorded only for display and change detection.

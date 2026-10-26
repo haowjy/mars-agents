@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::error::MarsError;
 
 /// One provider's bundle, as the host names it on the command line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct ProvideSpec {
     /// The provider's own namespace, separate from dependency keys.
     pub provider: String,

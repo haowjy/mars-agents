@@ -1,7 +1,7 @@
 //! Versioned package metadata and manifest classification.
 
-use serde::{Deserialize, Serialize};
 use semver::{Version, VersionReq};
+use serde::{Deserialize, Serialize};
 
 /// The first Mars release that reads schema 1. An older one reads a `schema = 1` package as
 /// pre-v1, so a schema v1 package's `requires-mars` may not admit one.

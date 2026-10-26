@@ -41,7 +41,7 @@ sync/build → resolve ← source
 - `skill_source_name` — single flat-root skill naming rule shared by discovery and staging overlay lookup
 - `source/` fetches git/path sources, manages global cache
 - `config/` parses mars.toml + mars.local.toml, merges to EffectiveConfig
-- `mars-schema` owns pure package-file vocabulary, parsing and validation; callers import it directly
+- `mars-schema` owns pure package-file vocabulary, parsing and validation; callers import it directly. Every reader of an installed `.mars/` definition uses `mars_schema::read::installed_agent`/`installed_skill`, which upgrade a tree an older Mars wrote; authored package content goes through `prepare` and the strict readers
 - `compiler/` compiles schema values into target state and handles dual-surface emission
 - `target/` per-target compilation adapters (`.claude`, `.codex`, etc.)
 - `target_sync/` copies from `.mars/` to configured target directories

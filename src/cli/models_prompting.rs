@@ -183,7 +183,7 @@ fn load_prompt_agents(ctx: &MarsContext) -> Result<Vec<PromptAgent>, MarsError> 
             }
         };
 
-        let profile = match mars_schema::agent::read(&content).into_valid() {
+        let profile = match mars_schema::read::installed_agent(&content).into_valid() {
             Ok(valid) => valid.fields,
             Err(error) => {
                 eprintln!(

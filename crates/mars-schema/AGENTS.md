@@ -15,7 +15,7 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 
 | Module | Owns |
 |---|---|
-| `read` | `read(path, text)` and `read_definition(kind, text)`: the one way a definition is read; `Reading`, `DefinitionRead`, `Valid` |
+| `read` | `read(path, text)` and `read_definition(kind, text)`: the one way an authored definition is read; `installed_agent`/`installed_skill`, the upgrade-then-read every reader of an installed `.mars/` tree uses when the strict reading reports a pre-v1 spelling; `Reading`, `DefinitionRead`, `Valid` |
 | `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; the removed-field and removed-value tables (`RemovedField`, `RemovedValue`, in `diagnostic`); `agent::LoweredField` and `skill::LOWERED_KEYS`, the Agent and skill keys Mars lowers itself, which set-aside and native lowering both read |
 | `harness_overrides` | `harness-overrides` parsing and `HarnessOverrides`, shared by the Agent and skill readers |
 | `prepare` | `prepare`: classify one root, select, upgrade or translate, read; `Prepared`, `PrepareContext`, `Classification` |

@@ -186,7 +186,7 @@ fn parse_inventory_agent(
         )
     })?;
 
-    let valid = mars_schema::agent::read(&content)
+    let valid = mars_schema::read::installed_agent(&content)
         .into_valid()
         .map_err(|error| {
             format!(

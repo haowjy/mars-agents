@@ -123,11 +123,11 @@ fn read_name_description(path: &Path, fallback_name: &str, kind: ItemKind) -> (S
         Err(_) => return (fallback_name.to_string(), String::new()),
     };
     let fields = if kind == ItemKind::Skill {
-        mars_schema::skill::read(&content)
+        mars_schema::read::installed_skill(&content)
             .fields
             .map(|profile| (profile.name, profile.description))
     } else {
-        mars_schema::agent::read(&content)
+        mars_schema::read::installed_agent(&content)
             .fields
             .map(|profile| (profile.name, profile.description))
     };

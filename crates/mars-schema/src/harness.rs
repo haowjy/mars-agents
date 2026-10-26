@@ -41,21 +41,23 @@ pub const ALL: &[HarnessId] = &[
     HarnessId::Cursor,
 ];
 
-pub const NAMES: &[&str] = &["claude", "codex", "pi", "cursor", "opencode"];
+/// The harness names in `ALL`'s order, as error messages list them.
+pub fn names() -> String {
+    ALL.iter()
+        .map(|harness| harness.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Consumer namespaces under `harness-overrides` that are not harnesses: the consumer
 /// owns the block's contents, and Mars only keeps it. Meridian Flow's is `flow`.
-pub const RESERVED_CONSUMER_NAMESPACES: &[&str] = &["flow"];
+pub(crate) const RESERVED_CONSUMER_NAMESPACES: &[&str] = &["flow"];
 
 pub fn parse(name: &str) -> Option<HarnessId> {
     let normalized = name.trim().to_ascii_lowercase();
     ALL.iter()
         .copied()
         .find(|harness| harness.as_str() == normalized)
-}
-
-pub fn is_known(name: &str) -> bool {
-    parse(name).is_some()
 }
 
 pub fn normalize_name(name: &str) -> Option<String> {

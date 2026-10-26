@@ -111,11 +111,11 @@ pub(crate) fn unrecognized_field(removed: &[RemovedField], key: &str) -> SchemaD
     }
 }
 
-pub fn key_path(field: impl Into<String>) -> Vec<PathSegment> {
+pub(crate) fn key_path(field: impl Into<String>) -> Vec<PathSegment> {
     vec![PathSegment::Key(field.into())]
 }
 
-pub fn child_path(parent: impl Into<String>, child: impl Into<String>) -> Vec<PathSegment> {
+pub(crate) fn child_path(parent: impl Into<String>, child: impl Into<String>) -> Vec<PathSegment> {
     vec![
         PathSegment::Key(parent.into()),
         PathSegment::Key(child.into()),
@@ -141,7 +141,7 @@ pub fn display_path(path: &[PathSegment]) -> String {
     display
 }
 
-pub fn frontmatter_error(error: &crate::frontmatter::FrontmatterError) -> SchemaDiagnostic {
+pub(crate) fn frontmatter_error(error: &crate::frontmatter::FrontmatterError) -> SchemaDiagnostic {
     let code = match error {
         crate::frontmatter::FrontmatterError::Unclosed => "frontmatter.unclosed",
         crate::frontmatter::FrontmatterError::Anchor => "yaml.anchor",

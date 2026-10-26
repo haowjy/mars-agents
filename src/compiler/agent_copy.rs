@@ -49,7 +49,7 @@ pub fn build_agent_copy_spec(
                 format!(
                     "settings.meridian.agent_copy.harnesses: unknown harness '{trimmed}'; \
                      valid harnesses: {}",
-                    mars_schema::harness::NAMES.join(", ")
+                    mars_schema::harness::names()
                 ),
             );
             continue;

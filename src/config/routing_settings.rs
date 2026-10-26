@@ -112,7 +112,7 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
                 diagnostics.push(RoutingConfigDiagnostic {
                     message: format!(
                         "settings.harness_order contains unrecognized harness `{candidate}`; skipping (valid: {})",
-                        mars_schema::harness::NAMES.join(", ")
+                        mars_schema::harness::names()
                     ),
                 });
                 continue;
@@ -151,7 +151,7 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
                 diagnostics.push(RoutingConfigDiagnostic {
                     message: format!(
                         "settings.default_harness `{value}` is invalid; expected one of: {}",
-                        mars_schema::harness::NAMES.join(", ")
+                        mars_schema::harness::names()
                     ),
                 });
                 None

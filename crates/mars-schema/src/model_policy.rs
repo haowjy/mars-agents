@@ -138,7 +138,7 @@ impl ModelPolicyRuleParseError {
     }
 }
 
-pub fn parse_model_policy_rule_value(
+pub(crate) fn parse_model_policy_rule_value(
     value: &serde_yaml::Value,
 ) -> Result<ModelPolicyRule, ModelPolicyRuleParseError> {
     let rule = value

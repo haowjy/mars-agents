@@ -149,10 +149,6 @@ impl<T> DefinitionRead<T> {
             _ => unreachable!("a reading with no error has its fields and body"),
         }
     }
-
-    pub fn has_errors(&self) -> bool {
-        self.diagnostics.iter().any(SchemaDiagnostic::is_error)
-    }
 }
 
 pub(crate) fn frontmatter_json(

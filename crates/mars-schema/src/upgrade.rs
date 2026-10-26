@@ -20,7 +20,7 @@ pub struct UpgradeResult {
 }
 
 impl UpgradeResult {
-    pub fn changed_from(&self, input: &str) -> bool {
+    pub(crate) fn changed_from(&self, input: &str) -> bool {
         self.text != input
     }
 }

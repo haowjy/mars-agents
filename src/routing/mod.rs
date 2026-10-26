@@ -528,7 +528,7 @@ pub fn normalize_config_default_harness(
             None => {
                 warnings.push(format!(
                     "settings.default_harness `{value}` is invalid; expected one of: {}",
-                    models::harness::VALID_HARNESSES.join(", ")
+                    mars_schema::harness::names()
                 ));
                 None
             }

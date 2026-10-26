@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path};
 
-pub const PLUGIN_MANIFEST: &str = ".claude-plugin/plugin.json";
-pub const MARKETPLACE_MANIFEST: &str = ".claude-plugin/marketplace.json";
+pub(crate) const PLUGIN_MANIFEST: &str = ".claude-plugin/plugin.json";
+pub(crate) const MARKETPLACE_MANIFEST: &str = ".claude-plugin/marketplace.json";
 
 /// The component lists a manifest or marketplace entry can carry. `None` means the key is
 /// absent, which is different from an empty list (an empty Agents list replaces the default).
@@ -365,7 +365,7 @@ pub enum SkillSources {
 
 impl PluginSpec {
     /// The spec of a tree with no manifest, where every `SKILL.md` directory is a skill.
-    pub fn is_bare_tree(&self) -> bool {
+    pub(crate) fn is_bare_tree(&self) -> bool {
         self.skills == SkillSources::Walk
     }
 
@@ -385,7 +385,7 @@ impl PluginSpec {
 
 /// The marketplace entry and `strict` rules; `entry_at_root` is whether the entry's source is
 /// the marketplace root itself.
-pub fn resolve_spec(
+pub(crate) fn resolve_spec(
     manifest: Option<&PluginManifest>,
     entry: Option<&MarketplaceEntry>,
     entry_at_root: bool,

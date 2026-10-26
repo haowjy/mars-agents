@@ -248,12 +248,16 @@ export interface Prepared {
 }
 
 /**
- * The single-root core that `normalize` builds on: classify one package root, select, upgrade
- * or translate, and read. Throws for an unrecognized `context` or `declaredDialect`.
+ * Reads one root held in memory: classify it, select its definitions, upgrade a pre-v1 package
+ * or translate a foreign one, and read each result. This is the supported way to read a single
+ * package, a consumer's `.mars-src` (`"authored-local"`) or a project directory (`"project"`,
+ * where a `mars.toml` with no `[package]` is consumer configuration) without choosing items;
+ * `normalize` is `prepare` plus a selection, a generated `mars.toml` and provenance. Throws for
+ * an unrecognized `context` or `declaredDialect`.
  */
 export function prepare(input: {
   files: Map<string, Uint8Array>;
-  context?: "package" | "authored-local";
+  context?: "package" | "authored-local" | "project";
   declaredDialect?: Dialect;
 }): Prepared;
 

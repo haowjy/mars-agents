@@ -37,7 +37,7 @@ fn parse_harness(value: &str) -> Result<HarnessId, String> {
     mars_schema::harness::parse(value).ok_or_else(|| {
         format!(
             "unknown harness `{value}`; expected one of: {}",
-            mars_schema::harness::NAMES.join(", ")
+            mars_schema::harness::names()
         )
     })
 }

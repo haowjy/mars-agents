@@ -29,7 +29,7 @@ await init();
 | `emitValue(value, indent)` | YAML for one value, to splice after a key. |
 | `rewriteBlock(frontmatter)` | The whole frontmatter block between the `---` fences for ordered `[key, value]` pairs. |
 | `vocabulary()` | The tool capabilities, their aliases, and the native tools of each host. |
-| `prepare({files, context?, declaredDialect?})` | Classifies and reads one package root held in memory. |
+| `prepare({files, context?, declaredDialect?})` | Reads one root held in memory: classifies it, upgrades or translates it, and returns each definition's normalized bytes, typed reading and change record. |
 | `inspect({tree, hint?})` | Reports what a repository is: a marketplace's plugins, a plugin's or skill tree's items, the dialect and the evidence for it. |
 | `normalize({tree, source?, hint?, selection?})` | Turns a selection into schema v1 packages with a generated `mars.toml` and provenance. |
 | `version()` | The version of the schema crate this build was made from. |
@@ -90,7 +90,7 @@ natives.flow.work;                 // { kind: "tools", tools: ["work"] }
 
 ### `prepare`, `inspect`, `normalize`
 
-`prepare` is the single-root core. It classifies the root (`schema-1`, `mars-legacy`, `schema-newer`, a foreign dialect, `marketplace`, `invalid` or `empty`), selects definitions, upgrades a pre-v1 package or translates a foreign one, and reads each result. For each definition it returns the source and output paths, the normalized bytes, the typed reading, and a change record (`none`, `edited` with the changed key paths, or `fully-rewritten`); payload files come back as source-to-output paths without bytes, and diagnostics are keyed by source path. `context` is `"package"` (the default) or `"authored-local"` (a consumer project's `.mars-src`).
+`prepare` is the single-root core. It classifies the root (`schema-1`, `mars-legacy`, `schema-newer`, a foreign dialect, `marketplace`, `invalid` or `empty`), selects definitions, upgrades a pre-v1 package or translates a foreign one, and reads each result. For each definition it returns the source and output paths, the normalized bytes, the typed reading, and a change record (`none`, `edited` with the changed key paths, or `fully-rewritten`); payload files come back as source-to-output paths without bytes, and diagnostics are keyed by source path. `context` is `"package"` (the default), `"authored-local"` (a consumer project's `.mars-src`) or `"project"` (a project directory: a `mars.toml` with no `[package]` is consumer configuration, and the tree is read as authored content). `prepare` is supported on its own, for reading one root without choosing items; `normalize` is `prepare` plus a selection, a generated `mars.toml` and provenance.
 
 `inspect` reports what is in a repository before anything is chosen, and `normalize` builds the packages for a selection. A remote marketplace plugin is fetched by the caller: `inspect` the marketplace, fetch the entry's repository, then `inspect` or `normalize` the fetched tree with `hint.plugin` set to the entry. The Claude rules (a plugin's `skills` list adds to the default folder, its `agents` list replaces it, commands are reported and not imported) are applied here; see [Dialect](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#dialect).
 

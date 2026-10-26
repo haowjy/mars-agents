@@ -92,9 +92,9 @@ fn file_tree(files: BTreeMap<String, ByteBuf>) -> Result<mars_schema::tree::File
     )?)
 }
 
-/// Prepare one rooted package from `{files: Map<path, Uint8Array>, context?, declaredDialect?}`:
-/// the single-root core `normalize` builds on. An unrecognized `context` or `declaredDialect`
-/// throws.
+/// Prepare one root from `{files: Map<path, Uint8Array>, context?, declaredDialect?}`. A supported
+/// export in its own right: `normalize` is this plus a selection, a generated manifest and
+/// provenance. An unrecognized `context` or `declaredDialect` throws.
 #[wasm_bindgen]
 pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
     #[derive(serde::Deserialize)]

@@ -16,7 +16,7 @@
 //! - `mcp(*/*)` — all MCP tools
 
 /// Human-readable grammar for valid `mcp(...)` tool-list entries (used in validation errors).
-pub const MCP_TOOL_NAME_GRAMMAR: &str = "valid mcp(server), mcp(server/tool), mcp(server/*), mcp(*/tool), or mcp(*/*) reference (* is the only wildcard; segments non-empty)";
+pub(crate) const MCP_TOOL_NAME_GRAMMAR: &str = "valid mcp(server), mcp(server/tool), mcp(server/*), mcp(*/tool), or mcp(*/*) reference (* is the only wildcard; segments non-empty)";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum McpSegment {
@@ -70,7 +70,7 @@ impl McpRef {
     }
 
     /// The `server/tool` payload inside `mcp(...)`, as carried by an MCP tool rule.
-    pub fn to_pattern(&self) -> String {
+    pub(crate) fn to_pattern(&self) -> String {
         format!(
             "{}/{}",
             segment_display(&self.server),

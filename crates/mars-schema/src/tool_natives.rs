@@ -14,6 +14,10 @@
 //! Every name below must appear in the harness's real tool list, which the tests pin with the
 //! source each list came from. When a harness ships a tool, add it to that list first.
 
+use std::collections::BTreeMap;
+
+use serde::Serialize;
+
 use crate::HarnessId;
 
 /// What a harness calls a capability.
@@ -63,54 +67,68 @@ pub fn lookup(capability: &str, harness: HarnessId) -> Option<Native> {
         .map(|(_, native)| *native)
 }
 
-/// Serializable vocabulary for consumers that must not duplicate native tables.
-pub fn vocabulary() -> serde_json::Value {
-    let mut root = crate::tool_names::vocabulary();
-    let mut hosts = crate::harness::ALL
-        .iter()
-        .map(|host| {
-            let natives = table(*host)
-                .iter()
-                .map(|(name, native)| {
-                    let value = match native {
-                        Native::Tools(names)
-                        | Native::ScopedTools {
-                            unscoped: names, ..
-                        } => serde_json::json!({"kind":"tools", "tools":names}),
-                        Native::Absent => serde_json::json!({"kind":"absent"}),
-                        Native::NoSwitch(note) => {
-                            serde_json::json!({"kind":"no-switch", "note":note})
-                        }
-                    };
-                    (name.to_string(), value)
-                })
-                .collect::<serde_json::Map<_, _>>();
-            (
-                host.as_str().to_string(),
-                serde_json::Value::Object(natives),
-            )
-        })
-        .collect::<serde_json::Map<_, _>>();
-    let flow = serde_json::json!({
-        "read": {"kind":"tools", "tools":["read"]},
-        "write": {"kind":"tools", "tools":["write"]},
-        "edit": {"kind":"tools", "tools":["write"]},
-        "glob": {"kind":"tools", "tools":["glob"]},
-        "grep": {"kind":"tools", "tools":["grep"]},
-        "ls": {"kind":"tools", "tools":["ls"]},
-        "skill": {"kind":"tools", "tools":["skill"]},
-        "agent": {"kind":"tools", "tools":["spawn", "thread_create", "thread_send", "thread_wait"]},
-        "ask_user": {"kind":"tools", "tools":["ask"]},
-        "bash": {"kind":"tools", "tools":["bash"]},
-        "work": {"kind":"absent"}
-    });
-    hosts.insert("flow".into(), flow);
-    root["natives"] = serde_json::Value::Object(hosts);
-    if let Some(capabilities) = root["capabilities"].as_array_mut() {
-        capabilities.push(serde_json::json!({"name":"ls", "aliases": []}));
-        capabilities.push(serde_json::json!({"name":"work", "aliases": []}));
+/// What a consumer reads of the tool vocabulary: every capability and, per host, what the
+/// host calls it. Derived only from the tables in this file.
+#[derive(Debug, Clone, Serialize)]
+pub struct Vocabulary {
+    pub capabilities: Vec<crate::tool_names::CapabilityEntry>,
+    pub natives: BTreeMap<&'static str, BTreeMap<&'static str, NativeEntry>>,
+}
+
+/// One row of a host's table, in the published shape.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum NativeEntry {
+    Tools {
+        tools: &'static [&'static str],
+    },
+    ScopedTools {
+        unscoped: &'static [&'static str],
+        scoped: &'static [&'static str],
+        note: &'static str,
+    },
+    Absent,
+    NoSwitch {
+        note: &'static str,
+    },
+}
+
+impl From<Native> for NativeEntry {
+    fn from(native: Native) -> Self {
+        match native {
+            Tools(tools) => Self::Tools { tools },
+            ScopedTools {
+                unscoped,
+                scoped,
+                note,
+            } => Self::ScopedTools {
+                unscoped,
+                scoped,
+                note,
+            },
+            Absent => Self::Absent,
+            NoSwitch(note) => Self::NoSwitch { note },
+        }
     }
-    root
+}
+
+/// The published vocabulary: the capability list plus one native table per harness and Flow.
+pub fn vocabulary() -> Vocabulary {
+    let rows = |table: Table| {
+        table
+            .iter()
+            .map(|(name, native)| (*name, NativeEntry::from(*native)))
+            .collect()
+    };
+    let mut natives: BTreeMap<_, _> = crate::harness::ALL
+        .iter()
+        .map(|host| (host.as_str(), rows(table(*host))))
+        .collect();
+    natives.insert("flow", rows(FLOW));
+    Vocabulary {
+        capabilities: crate::tool_names::capabilities(),
+        natives,
+    }
 }
 
 fn table(harness: HarnessId) -> Table {
@@ -139,6 +157,9 @@ fn table(harness: HarnessId) -> Table {
 const CLAUDE: Table = &[
     ("bash", Tools(&["Bash"])),
     ("read", Tools(&["Read"])),
+    // Claude lists through Bash; there is no listing tool.
+    ("ls", Absent),
+    ("work", Absent),
     (
         "write",
         ScopedTools {
@@ -236,6 +257,8 @@ const CLAUDE: Table = &[
 /// plan.").
 const CODEX: Table = &[
     ("bash", Tools(&["exec_command"])),
+    ("ls", Absent),
+    ("work", Absent),
     (
         "read",
         NoSwitch("codex reads files through its shell; no switch"),
@@ -302,6 +325,8 @@ const CODEX: Table = &[
 /// them is inert. OpenCode has no notebook, cron, monitor or tool-search tool.
 const OPENCODE: Table = &[
     ("bash", Tools(&["bash"])),
+    ("ls", Tools(&["list"])),
+    ("work", Absent),
     ("read", Tools(&["read"])),
     ("write", Tools(&["edit"])),
     ("edit", Tools(&["edit"])),
@@ -343,6 +368,8 @@ const OPENCODE: Table = &[
 /// (`NoSwitch`).
 const PI: Table = &[
     ("bash", Tools(&["bash"])),
+    ("ls", Tools(&["ls"])),
+    ("work", Absent),
     ("read", Tools(&["read"])),
     ("write", Tools(&["write"])),
     ("edit", Tools(&["edit", "write"])),
@@ -379,6 +406,8 @@ const PI: Table = &[
 /// convention guessed beyond these rows is now `unknown`.
 const CURSOR: Table = &[
     ("bash", Tools(&["Shell"])),
+    ("ls", Absent),
+    ("work", Absent),
     ("read", Tools(&["Read"])),
     ("write", Tools(&["Write"])),
     ("edit", Tools(&["StrReplace"])),
@@ -393,6 +422,32 @@ const CURSOR: Table = &[
     ("ask_user", Tools(&["AskQuestion"])),
     ("task", Tools(&["TodoWrite"])),
     ("plan_mode", Tools(&["SwitchMode"])),
+];
+
+/// Meridian Flow's own tools (mars-agents#207). Flow is a consumer, not a `HarnessId`, so
+/// its table is published in the vocabulary but never used to lower a native file. `search`
+/// is Flow's name for `grep`; `ask_user` maps to `ask`, which is not a capability alias because
+/// `ask` is a tool-policy action word.
+const FLOW: Table = &[
+    ("read", Tools(&["read"])),
+    ("write", Tools(&["write"])),
+    ("edit", Tools(&["write"])),
+    ("grep", Tools(&["grep"])),
+    ("glob", Tools(&["glob"])),
+    ("ls", Tools(&["ls"])),
+    ("skill", Tools(&["skill"])),
+    ("ask_user", Tools(&["ask"])),
+    (
+        "agent",
+        Tools(&[
+            "spawn",
+            "thread_message",
+            "thread_report",
+            "thread_ls",
+            "thread_history",
+        ]),
+    ),
+    ("work", Tools(&["work"])),
 ];
 
 #[cfg(test)]

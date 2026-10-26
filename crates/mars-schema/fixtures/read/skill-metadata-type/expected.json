@@ -14,17 +14,13 @@
   "fields": {
     "compatibility": null,
     "description": "demo",
-    "had_model_invocable_field": false,
-    "has_frontmatter": true,
     "license": null,
     "metadata": {
       "type": 12
     },
-    "model_invocable": true,
+    "model-invocable": true,
     "name": "demo",
-    "passthrough_fields": [],
-    "skill_type": null,
-    "user_invocable": true
+    "user-invocable": true
   },
   "frontmatter": [
     [
@@ -41,6 +37,5 @@
         "type": 12
       }
     ]
-  ],
-  "unknown": []
+  ]
 }

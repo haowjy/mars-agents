@@ -1,15 +1,15 @@
 {
   "classification": {
-    "kind": "foreign",
     "dialect": "codex",
     "evidence": {
-      "source": "predicted",
       "paths": [
         ".codex/skills"
-      ]
-    }
+      ],
+      "source": "predicted"
+    },
+    "kind": "foreign"
   },
   "definitions": [],
-  "payload": [],
-  "diagnostics": {}
+  "diagnostics": {},
+  "payload": []
 }

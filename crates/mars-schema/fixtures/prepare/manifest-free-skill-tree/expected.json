@@ -1,69 +1,51 @@
 {
   "classification": {
-    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "source": "predicted",
-      "paths": []
-    }
+      "paths": [],
+      "source": "predicted"
+    },
+    "kind": "foreign"
   },
   "definitions": [
     {
-      "kind": "skill",
-      "slug": "demo",
-      "source_path": "skills/demo/SKILL.md",
-      "output_path": "skills/demo/SKILL.md",
-      "reading": {
-        "kind": "skill",
-        "result": {
-          "frontmatter": [
-            [
-              "name",
-              "demo"
-            ],
-            [
-              "description",
-              "Demo"
-            ]
-          ],
-          "fields": {
-            "name": "demo",
-            "description": "Demo",
-            "skill_type": null,
-            "model_invocable": true,
-            "user_invocable": true,
-            "license": null,
-            "compatibility": null,
-            "metadata": null,
-            "had_model_invocable_field": false,
-            "has_frontmatter": true,
-            "passthrough_fields": []
-          },
-          "body": "# Body\n",
-          "unknown": [],
-          "diagnostics": []
-        }
-      },
-      "raw_frontmatter": [
-        [
-          "name",
-          "demo"
-        ],
-        [
-          "description",
-          "Demo"
-        ]
-      ],
       "change": {
         "kind": "none"
-      }
+      },
+      "kind": "skill",
+      "output_path": "skills/demo/SKILL.md",
+      "reading": {
+        "body": "# Body\n",
+        "diagnostics": [],
+        "fields": {
+          "compatibility": null,
+          "description": "Demo",
+          "license": null,
+          "metadata": null,
+          "model-invocable": true,
+          "name": "demo",
+          "user-invocable": true
+        },
+        "frontmatter": [
+          [
+            "name",
+            "demo"
+          ],
+          [
+            "description",
+            "Demo"
+          ]
+        ]
+      },
+      "slug": "demo",
+      "source_path": "skills/demo/SKILL.md"
     }
   ],
+  "diagnostics": {},
   "payload": [
     {
-      "source_path": "skills/demo/script.py",
-      "output_path": "skills/demo/script.py"
+      "output_path": "skills/demo/script.py",
+      "source_path": "skills/demo/script.py"
     }
-  ],
-  "diagnostics": {}
+  ]
 }

@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_yaml::Value;
 
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::dialect::Dialect;
@@ -63,7 +62,8 @@ pub enum ChangeRecord {
 pub struct PreparedManifest {
     pub source_path: String,
     pub output_path: String,
-    #[serde(skip)]
+    /// The normalized file; crosses to JavaScript as a `Uint8Array`.
+    #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
     pub reading: DefinitionRead<crate::package::PackageMetadata>,
     pub change: ChangeRecord,
@@ -75,15 +75,16 @@ pub struct PreparedDefinition {
     pub slug: String,
     pub source_path: String,
     pub output_path: String,
-    #[serde(skip)]
+    /// The normalized file; crosses to JavaScript as a `Uint8Array`.
+    #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
     pub reading: PreparedDefinitionRead,
-    pub raw_frontmatter: Vec<(String, Value)>,
     pub change: ChangeRecord,
 }
 
+/// Serializes as the bare [`DefinitionRead`]; `PreparedDefinition::kind` names the variant.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", content = "result", rename_all = "lowercase")]
+#[serde(untagged)]
 pub enum PreparedDefinitionRead {
     Agent(DefinitionRead<crate::agent::AgentProfile>),
     Skill(DefinitionRead<crate::skill::SkillProfile>),
@@ -102,7 +103,31 @@ pub struct Prepared {
     pub manifest: Option<PreparedManifest>,
     pub definitions: Vec<PreparedDefinition>,
     pub payload: Vec<PayloadEntry>,
+    /// Package-level diagnostics by source path: discovery and upgrade. A definition's
+    /// own reading diagnostics live on its `reading` only; see [`Prepared::all_diagnostics`].
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
+}
+
+impl Prepared {
+    /// Every diagnostic by source path: package-level first, then the file's reading.
+    pub fn all_diagnostics(&self) -> BTreeMap<&str, Vec<&SchemaDiagnostic>> {
+        let mut all: BTreeMap<&str, Vec<&SchemaDiagnostic>> = BTreeMap::new();
+        for (path, diagnostics) in &self.diagnostics {
+            all.entry(path).or_default().extend(diagnostics);
+        }
+        if let Some(manifest) = &self.manifest {
+            all.entry(&manifest.source_path)
+                .or_default()
+                .extend(&manifest.reading.diagnostics);
+        }
+        for definition in &self.definitions {
+            all.entry(&definition.source_path)
+                .or_default()
+                .extend(definition.reading.diagnostics());
+        }
+        all.retain(|_, diagnostics| !diagnostics.is_empty());
+        all
+    }
 }
 
 /// Prepare one rooted package without reading payload bytes.
@@ -297,15 +322,10 @@ fn prepare_manifest(
             frontmatter: Vec::new(),
             fields: None,
             body: None,
-            unknown: Vec::new(),
             diagnostics: invalid_utf8.into_iter().collect(),
         },
         crate::manifest::read,
     );
-    diagnostics
-        .entry("mars.toml".to_string())
-        .or_default()
-        .extend(reading.diagnostics.iter().cloned());
     PreparedManifest {
         source_path: "mars.toml".to_string(),
         output_path: "mars.toml".to_string(),
@@ -328,7 +348,6 @@ fn prepare_definition(
             Vec::new(),
             "selected definition could not be read",
         );
-        push(diagnostics, &selected.source_path, diagnostic.clone());
         let reading = match selected.kind {
             DefinitionKind::Agent => PreparedDefinitionRead::Agent(empty_reading(Some(diagnostic))),
             DefinitionKind::Skill => PreparedDefinitionRead::Skill(empty_reading(Some(diagnostic))),
@@ -340,7 +359,6 @@ fn prepare_definition(
             output_path: selected.source_path.clone(),
             normalized_bytes: Vec::new(),
             reading,
-            raw_frontmatter: Vec::new(),
             change: ChangeRecord::None,
         };
     };
@@ -415,20 +433,6 @@ fn prepare_definition(
         (DefinitionKind::Agent, None) => PreparedDefinitionRead::Agent(empty_reading(invalid_utf8)),
         (DefinitionKind::Skill, None) => PreparedDefinitionRead::Skill(empty_reading(invalid_utf8)),
     };
-    diagnostics
-        .entry(selected.source_path.clone())
-        .or_default()
-        .extend(reading.diagnostics().iter().cloned());
-    let raw_frontmatter = text
-        .and_then(|text| raw_frontmatter(selected.kind, text))
-        .map(|frontmatter| {
-            frontmatter
-                .keys()
-                .into_iter()
-                .filter_map(|key| frontmatter.get(&key).cloned().map(|value| (key, value)))
-                .collect()
-        })
-        .unwrap_or_default();
 
     PreparedDefinition {
         kind: selected.kind,
@@ -437,17 +441,7 @@ fn prepare_definition(
         output_path: selected.source_path.clone(),
         normalized_bytes,
         reading,
-        raw_frontmatter,
         change,
-    }
-}
-
-fn raw_frontmatter(kind: DefinitionKind, text: &str) -> Option<Frontmatter> {
-    match kind {
-        DefinitionKind::Agent => Frontmatter::parse_preserving_structure(text)
-            .ok()
-            .map(|(frontmatter, _)| frontmatter),
-        DefinitionKind::Skill => Frontmatter::parse(text).ok(),
     }
 }
 
@@ -465,7 +459,6 @@ fn empty_reading<T>(diagnostic: Option<SchemaDiagnostic>) -> DefinitionRead<T> {
         frontmatter: Vec::new(),
         fields: None,
         body: None,
-        unknown: Vec::new(),
         diagnostics: diagnostic.into_iter().collect(),
     }
 }

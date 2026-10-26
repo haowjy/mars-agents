@@ -94,6 +94,7 @@ impl Serialize for ToolRule {
 
 /// The tool rules of an agent or skill.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(transparent)]
 pub struct EffectiveToolPolicy {
     pub rules: Vec<ToolRule>,
 }

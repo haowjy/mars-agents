@@ -3,47 +3,47 @@
     "kind": "schema-newer",
     "schema": 2
   },
+  "definitions": [],
+  "diagnostics": {},
   "manifest": {
-    "source_path": "mars.toml",
+    "change": {
+      "kind": "none"
+    },
     "output_path": "mars.toml",
     "reading": {
-      "frontmatter": [],
-      "fields": {
-        "name": "demo",
-        "version": "1.0.0",
-        "schema": 2
-      },
       "body": null,
-      "unknown": [],
       "diagnostics": [
         {
           "code": "field.type",
-          "severity": "error",
+          "message": "`package.schema` must be the integer 1",
           "path": [
             "package",
             "schema"
           ],
-          "message": "`package.schema` must be the integer 1"
+          "severity": "error"
         }
+      ],
+      "fields": {
+        "name": "demo",
+        "schema": 2,
+        "version": "1.0.0"
+      },
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "schema",
+          2
+        ],
+        [
+          "version",
+          "1.0.0"
+        ]
       ]
     },
-    "change": {
-      "kind": "none"
-    }
+    "source_path": "mars.toml"
   },
-  "definitions": [],
-  "payload": [],
-  "diagnostics": {
-    "mars.toml": [
-      {
-        "code": "field.type",
-        "severity": "error",
-        "path": [
-          "package",
-          "schema"
-        ],
-        "message": "`package.schema` must be the integer 1"
-      }
-    ]
-  }
+  "payload": []
 }

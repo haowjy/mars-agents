@@ -34,6 +34,7 @@ const REMOVED_AGENT_FIELDS: &[(&str, &str)] = &[
 
 /// Agent execution mode — how the agent is launched.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum AgentMode {
     Primary,
     Subagent,
@@ -56,6 +57,7 @@ impl std::fmt::Display for AgentMode {
 
 /// Approval policy field.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ApprovalMode {
     Default,
     Auto,
@@ -86,6 +88,7 @@ impl ApprovalMode {
 
 /// Sandbox mode field.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SandboxMode {
     Default,
     ReadOnly,
@@ -116,11 +119,13 @@ impl SandboxMode {
 
 /// Effort level field.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum EffortLevel {
     None,
     Low,
     Medium,
     High,
+    #[serde(rename = "xhigh")]
     XHigh,
 }
 
@@ -164,6 +169,7 @@ impl EffortLevel {
 /// Mars validates only shape/serializability. Nested keys are owned by the
 /// target harness and are not interpreted as Mars semantic fields.
 #[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(transparent)]
 pub struct HarnessOverrides {
     pub entries: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
 }
@@ -194,6 +200,7 @@ impl HarnessOverrides {
 /// - Dual-surface routing (harness → output target)
 /// - Per-target lowering (field lowering per agent-compilation-mapping.md)
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct AgentProfile {
     // --- Identity fields ---
     pub name: Option<String>,
@@ -211,8 +218,10 @@ pub struct AgentProfile {
     /// Whether the user can invoke this agent directly (slash command, picker, etc.).
     pub user_invocable: bool,
     /// `true` when source frontmatter explicitly set `model-invocable`.
+    #[serde(skip)]
     pub had_model_invocable_field: bool,
     /// `true` when source frontmatter explicitly set `user-invocable`.
+    #[serde(skip)]
     pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
@@ -693,7 +702,7 @@ fn read_skills(value: &Value, diags: &mut Vec<crate::diagnostic::SchemaDiagnosti
 fn parse_agent_profile_inner(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> (AgentProfile, Vec<(String, Value)>) {
+) -> AgentProfile {
     use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 
     let mut profile = AgentProfile {
@@ -715,7 +724,6 @@ fn parse_agent_profile_inner(
         harness_overrides: HarnessOverrides::default(),
         model_policies: Vec::new(),
     };
-    let mut unknown = Vec::new();
 
     for key in fm.keys() {
         let value = fm.get(&key).expect("frontmatter key came from mapping");
@@ -829,7 +837,6 @@ fn parse_agent_profile_inner(
             }
             "model-policies" => profile.model_policies = parse_model_policies(value, diags),
             _ => {
-                unknown.push((key.clone(), value.clone()));
                 if let Some((_, replacement)) = REMOVED_AGENT_FIELDS
                     .iter()
                     .find(|(removed, _)| *removed == key)
@@ -852,14 +859,14 @@ fn parse_agent_profile_inner(
         }
     }
 
-    (profile, unknown)
+    profile
 }
 
 pub fn parse_agent_profile(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> AgentProfile {
-    parse_agent_profile_inner(fm, diags).0
+    parse_agent_profile_inner(fm, diags)
 }
 
 pub fn parse_agent_content(
@@ -881,12 +888,11 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<AgentProfile> {
                     .iter()
                     .map(crate::diagnostic::frontmatter_error),
             );
-            let (fields, unknown) = parse_agent_profile_inner(&frontmatter, &mut diagnostics);
+            let fields = parse_agent_profile_inner(&frontmatter, &mut diagnostics);
             crate::read::DefinitionRead {
                 frontmatter: crate::read::frontmatter_json(frontmatter.mapping(), &mut diagnostics),
                 fields: Some(fields),
                 body: Some(frontmatter.body().to_string()),
-                unknown,
                 diagnostics,
             }
         }
@@ -894,7 +900,6 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<AgentProfile> {
             frontmatter: Vec::new(),
             fields: None,
             body: None,
-            unknown: Vec::new(),
             diagnostics: vec![crate::diagnostic::frontmatter_error(&error)],
         },
     }

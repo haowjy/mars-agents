@@ -1,122 +1,76 @@
 {
   "classification": {
-    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "source": "predicted",
-      "paths": []
-    }
+      "paths": [],
+      "source": "predicted"
+    },
+    "kind": "foreign"
   },
   "definitions": [
     {
-      "kind": "agent",
-      "slug": "anchored",
-      "source_path": "agents/anchored.md",
-      "output_path": "agents/anchored.md",
-      "reading": {
-        "kind": "agent",
-        "result": {
-          "frontmatter": [
-            [
-              "name",
-              "anchored"
-            ],
-            [
-              "description",
-              "Hello"
-            ],
-            [
-              "future",
-              "Hello"
-            ]
-          ],
-          "fields": {
-            "name": "anchored",
-            "description": "Hello",
-            "harness": null,
-            "model": null,
-            "mode": null,
-            "model_invocable": true,
-            "user_invocable": true,
-            "had_model_invocable_field": false,
-            "had_user_invocable_field": false,
-            "approval": null,
-            "sandbox": null,
-            "effort": null,
-            "skills": {
-              "load": [],
-              "available": []
-            },
-            "subagents": [],
-            "tools": {
-              "rules": []
-            },
-            "harness_overrides": {
-              "entries": {}
-            },
-            "model_policies": []
-          },
-          "body": "# Body\n",
-          "unknown": [
-            [
-              "future",
-              "Hello"
-            ]
-          ],
-          "diagnostics": [
-            {
-              "code": "yaml.anchor",
-              "severity": "error",
-              "path": [],
-              "message": "YAML anchors and aliases are not supported"
-            },
-            {
-              "code": "field.unknown",
-              "severity": "warning",
-              "path": [
-                "future"
-              ],
-              "message": "unknown field `future` is preserved"
-            }
-          ]
-        }
-      },
-      "raw_frontmatter": [
-        [
-          "name",
-          "anchored"
-        ],
-        [
-          "description",
-          "Hello"
-        ],
-        [
-          "future",
-          "Hello"
-        ]
-      ],
       "change": {
         "kind": "none"
-      }
+      },
+      "kind": "agent",
+      "output_path": "agents/anchored.md",
+      "reading": {
+        "body": "# Body\n",
+        "diagnostics": [
+          {
+            "code": "yaml.anchor",
+            "message": "YAML anchors and aliases are not supported",
+            "path": [],
+            "severity": "error"
+          },
+          {
+            "code": "field.unknown",
+            "message": "unknown field `future` is preserved",
+            "path": [
+              "future"
+            ],
+            "severity": "warning"
+          }
+        ],
+        "fields": {
+          "approval": null,
+          "description": "Hello",
+          "effort": null,
+          "harness": null,
+          "harness-overrides": {},
+          "mode": null,
+          "model": null,
+          "model-invocable": true,
+          "model-policies": [],
+          "name": "anchored",
+          "sandbox": null,
+          "skills": {
+            "available": [],
+            "load": []
+          },
+          "subagents": [],
+          "tools": [],
+          "user-invocable": true
+        },
+        "frontmatter": [
+          [
+            "name",
+            "anchored"
+          ],
+          [
+            "description",
+            "Hello"
+          ],
+          [
+            "future",
+            "Hello"
+          ]
+        ]
+      },
+      "slug": "anchored",
+      "source_path": "agents/anchored.md"
     }
   ],
-  "payload": [],
-  "diagnostics": {
-    "agents/anchored.md": [
-      {
-        "code": "yaml.anchor",
-        "severity": "error",
-        "path": [],
-        "message": "YAML anchors and aliases are not supported"
-      },
-      {
-        "code": "field.unknown",
-        "severity": "warning",
-        "path": [
-          "future"
-        ],
-        "message": "unknown field `future` is preserved"
-      }
-    ]
-  }
+  "diagnostics": {},
+  "payload": []
 }

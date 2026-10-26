@@ -14,16 +14,12 @@
     "approval": null,
     "description": null,
     "effort": null,
-    "had_model_invocable_field": false,
-    "had_user_invocable_field": false,
     "harness": null,
-    "harness_overrides": {
-      "entries": {}
-    },
+    "harness-overrides": {},
     "mode": null,
     "model": null,
-    "model_invocable": true,
-    "model_policies": [],
+    "model-invocable": true,
+    "model-policies": [],
     "name": null,
     "sandbox": null,
     "skills": {
@@ -31,20 +27,10 @@
       "load": []
     },
     "subagents": [],
-    "tools": {
-      "rules": []
-    },
-    "user_invocable": true
+    "tools": [],
+    "user-invocable": true
   },
   "frontmatter": [
-    [
-      "mcp-tools",
-      [
-        "x"
-      ]
-    ]
-  ],
-  "unknown": [
     [
       "mcp-tools",
       [

@@ -10,6 +10,7 @@ homepage = "https://github.com/haowjy/mars-agents"
 [dependencies]
 indexmap = { version = "2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11.19"
 serde_json = "1.0.149"
 serde_yaml = "0.9"
 thiserror = "2"

@@ -1,36 +1,50 @@
 //! Published schema-v1 reader contract fixtures.
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use mars_schema::diagnostic::PathSegment;
 
+mod common;
+
+/// The package-relative path a read fixture's source file stands for.
+fn fixture_path(dir: &Path) -> (&'static str, PathBuf) {
+    if dir.join("agent.md").exists() {
+        ("agents/agent.md", dir.join("agent.md"))
+    } else if dir.join("skill.md").exists() {
+        ("skills/skill/SKILL.md", dir.join("skill.md"))
+    } else {
+        ("mars.toml", dir.join("mars.toml"))
+    }
+}
+
 #[test]
 fn read_fixtures_match() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/read");
-    for entry in fs::read_dir(root).unwrap() {
-        let dir = entry.unwrap().path();
-        if !dir.is_dir() {
-            continue;
-        }
-        let actual = if dir.join("agent.md").exists() {
-            serde_json::to_value(mars_schema::agent::read(
-                &fs::read_to_string(dir.join("agent.md")).unwrap(),
-            ))
-            .unwrap()
-        } else if dir.join("skill.md").exists() {
-            serde_json::to_value(mars_schema::skill::read(
-                &fs::read_to_string(dir.join("skill.md")).unwrap(),
-            ))
-            .unwrap()
-        } else {
-            serde_json::to_value(mars_schema::manifest::read(
-                &fs::read_to_string(dir.join("mars.toml")).unwrap(),
-            ))
-            .unwrap()
-        };
-        let expected: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
-        assert_eq!(actual, expected, "fixture {}", dir.display());
+    for dir in common::cases("read") {
+        let (path, file) = fixture_path(&dir);
+        let reading = mars_schema::read::read(path, &fs::read_to_string(file).unwrap()).unwrap();
+        common::assert_file(
+            &dir.join("expected.json"),
+            &common::pretty(&serde_json::to_value(reading).unwrap()),
+        );
+    }
+}
+
+#[test]
+fn read_refuses_paths_that_are_not_schema_files() {
+    for path in [
+        "README.md",
+        "agents/dir/a.md",
+        "agents/.md",
+        "skills/a.md",
+        "skills/a/b/SKILL.md",
+        "skills//SKILL.md",
+        "mars.lock",
+        "",
+    ] {
+        assert!(mars_schema::read::read(path, "").is_err(), "{path}");
     }
 }
 

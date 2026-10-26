@@ -1,0 +1,8 @@
+
+        b: true
+        e: ""
+        f: 1.5
+        i: 1
+        "n": null
+        s: str
+        t: "true"

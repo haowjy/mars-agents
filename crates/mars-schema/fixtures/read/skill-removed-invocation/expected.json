@@ -29,23 +29,13 @@
   "fields": {
     "compatibility": null,
     "description": null,
-    "had_model_invocable_field": false,
-    "has_frontmatter": true,
     "license": null,
     "metadata": null,
-    "model_invocable": true,
+    "model-invocable": true,
     "name": null,
-    "passthrough_fields": [],
-    "skill_type": null,
-    "user_invocable": true
+    "user-invocable": true
   },
   "frontmatter": [
-    [
-      "invocation",
-      true
-    ]
-  ],
-  "unknown": [
     [
       "invocation",
       true

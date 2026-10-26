@@ -16,11 +16,22 @@
     "schema": 1,
     "version": "0.1.0"
   },
-  "frontmatter": [],
-  "unknown": [
+  "frontmatter": [
     [
       "future",
       true
+    ],
+    [
+      "name",
+      "pkg"
+    ],
+    [
+      "schema",
+      1
+    ],
+    [
+      "version",
+      "0.1.0"
     ]
   ]
 }

@@ -17,6 +17,18 @@
     "schema": 1,
     "version": ""
   },
-  "frontmatter": [],
-  "unknown": []
+  "frontmatter": [
+    [
+      "description",
+      "kept"
+    ],
+    [
+      "name",
+      "demo"
+    ],
+    [
+      "schema",
+      1
+    ]
+  ]
 }

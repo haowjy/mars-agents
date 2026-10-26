@@ -1,73 +1,55 @@
 {
   "classification": {
-    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "source": "predicted",
-      "paths": []
-    }
+      "paths": [],
+      "source": "predicted"
+    },
+    "kind": "foreign"
   },
   "definitions": [
     {
-      "kind": "skill",
-      "slug": "kept",
-      "source_path": "skills/kept/SKILL.md",
-      "output_path": "skills/kept/SKILL.md",
-      "reading": {
-        "kind": "skill",
-        "result": {
-          "frontmatter": [
-            [
-              "name",
-              "kept"
-            ],
-            [
-              "description",
-              "Kept"
-            ]
-          ],
-          "fields": {
-            "name": "kept",
-            "description": "Kept",
-            "skill_type": null,
-            "model_invocable": true,
-            "user_invocable": true,
-            "license": null,
-            "compatibility": null,
-            "metadata": null,
-            "had_model_invocable_field": false,
-            "has_frontmatter": true,
-            "passthrough_fields": []
-          },
-          "body": "# Body\n",
-          "unknown": [],
-          "diagnostics": []
-        }
-      },
-      "raw_frontmatter": [
-        [
-          "name",
-          "kept"
-        ],
-        [
-          "description",
-          "Kept"
-        ]
-      ],
       "change": {
         "kind": "none"
-      }
+      },
+      "kind": "skill",
+      "output_path": "skills/kept/SKILL.md",
+      "reading": {
+        "body": "# Body\n",
+        "diagnostics": [],
+        "fields": {
+          "compatibility": null,
+          "description": "Kept",
+          "license": null,
+          "metadata": null,
+          "model-invocable": true,
+          "name": "kept",
+          "user-invocable": true
+        },
+        "frontmatter": [
+          [
+            "name",
+            "kept"
+          ],
+          [
+            "description",
+            "Kept"
+          ]
+        ]
+      },
+      "slug": "kept",
+      "source_path": "skills/kept/SKILL.md"
     }
   ],
-  "payload": [],
   "diagnostics": {
     "vendor/out/.mars-plugin.json": [
       {
         "code": "generated-plugin-tree-skipped",
-        "severity": "info",
+        "message": "skipping generated plugin tree at `vendor/out` while reading authored package input",
         "path": [],
-        "message": "skipping generated plugin tree at `vendor/out` while reading authored package input"
+        "severity": "info"
       }
     ]
-  }
+  },
+  "payload": []
 }

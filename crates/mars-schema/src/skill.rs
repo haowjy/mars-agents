@@ -7,20 +7,40 @@ use serde_yaml::Value;
 const RESERVED_IMPORT_MARKER: &str = "mars.imported-without-description";
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct SkillProfile {
     pub name: Option<String>,
     pub description: Option<String>,
+    /// `metadata.type`, kept apart for callers; the reading carries it under `metadata`.
+    #[serde(skip)]
     pub skill_type: Option<String>,
     pub model_invocable: bool,
     pub user_invocable: bool,
     pub license: Option<String>,
     pub compatibility: Option<String>,
+    #[serde(serialize_with = "serialize_metadata")]
     pub metadata: Option<Value>,
     /// true when the source frontmatter explicitly set `model-invocable`
+    #[serde(skip)]
     pub had_model_invocable_field: bool,
+    #[serde(skip)]
     pub has_frontmatter: bool,
     /// Frontmatter fields not recognized by mars — passed through to all targets.
+    #[serde(skip)]
     pub passthrough_fields: Vec<(String, Value)>,
+}
+
+/// Non-JSON YAML (tags, non-string keys) is left out, as in the reading's `frontmatter`,
+/// where it carries a `yaml.non-json-value` diagnostic.
+fn serialize_metadata<S: serde::Serializer>(
+    value: &Option<Value>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::Serialize;
+    value
+        .as_ref()
+        .and_then(|value| crate::read::json_value(value).ok())
+        .serialize(serializer)
 }
 
 const REMOVED_SKILL_FIELDS: &[(&str, &str)] = &[
@@ -42,7 +62,7 @@ fn parse_skill_profile_inner(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
     reject_import_marker: bool,
-) -> (SkillProfile, Vec<(String, Value)>) {
+) -> SkillProfile {
     use crate::diagnostic::{SchemaDiagnostic, Severity, child_path, key_path};
 
     let mut profile = SkillProfile {
@@ -58,7 +78,6 @@ fn parse_skill_profile_inner(
         has_frontmatter: fm.has_frontmatter(),
         passthrough_fields: Vec::new(),
     };
-    let mut unknown = Vec::new();
     let mut classification_diagnostics = Vec::new();
     let mut field_diagnostics = Vec::new();
 
@@ -139,7 +158,6 @@ fn parse_skill_profile_inner(
                 }
             }
             RESERVED_IMPORT_MARKER => {
-                unknown.push((key.clone(), value.clone()));
                 if reject_import_marker {
                     classification_diagnostics.push(SchemaDiagnostic::new(
                         "field.removed",
@@ -150,7 +168,6 @@ fn parse_skill_profile_inner(
                 }
             }
             _ => {
-                unknown.push((key.clone(), value.clone()));
                 if let Some((_, replacement)) = REMOVED_SKILL_FIELDS
                     .iter()
                     .find(|(removed, _)| *removed == key)
@@ -203,14 +220,14 @@ fn parse_skill_profile_inner(
     }
     diags.append(&mut field_diagnostics);
 
-    (profile, unknown)
+    profile
 }
 
 pub fn parse_skill_profile(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> SkillProfile {
-    parse_skill_profile_inner(fm, diags, false).0
+    parse_skill_profile_inner(fm, diags, false)
 }
 
 pub fn parse_skill_content(
@@ -229,12 +246,11 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<SkillProfile> {
     let mut diagnostics = Vec::new();
     match Frontmatter::parse(content) {
         Ok(frontmatter) => {
-            let (fields, unknown) = parse_skill_profile_inner(&frontmatter, &mut diagnostics, true);
+            let fields = parse_skill_profile_inner(&frontmatter, &mut diagnostics, true);
             crate::read::DefinitionRead {
                 frontmatter: crate::read::frontmatter_json(frontmatter.mapping(), &mut diagnostics),
                 fields: Some(fields),
                 body: Some(frontmatter.body().to_string()),
-                unknown,
                 diagnostics,
             }
         }
@@ -242,7 +258,6 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<SkillProfile> {
             frontmatter: Vec::new(),
             fields: None,
             body: None,
-            unknown: Vec::new(),
             diagnostics: vec![crate::diagnostic::frontmatter_error(&error)],
         },
     }

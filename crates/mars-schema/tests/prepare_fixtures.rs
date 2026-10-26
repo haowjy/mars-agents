@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use mars_schema::{
     dialect::Dialect,
     prepare::{ChangeRecord, PrepareContext, Prepared, prepare},
-    tree::FileTree,
+    tree::TreeSource,
 };
 use serde::Deserialize;
 
@@ -14,59 +14,47 @@ struct Request {
     declared_dialect: Option<Dialect>,
 }
 
+mod common;
+
 #[test]
 fn prepare_fixtures_match() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/prepare");
-    let mut cases = child_directories(&root);
-    cases.sort();
-
-    for case in cases {
+    for case in common::cases("prepare") {
         let request: Request =
             serde_json::from_slice(&fs::read(case.join("request.json")).unwrap()).unwrap();
-        let tree = load_tree(&case.join("input"));
+        let tree = common::load_tree(&case.join("input"));
         let prepared = prepare(&tree, request.context, request.declared_dialect);
-        let actual = serde_json::to_string_pretty(&prepared).unwrap() + "\n";
-
-        let expected = fs::read_to_string(case.join("expected.json")).unwrap();
-        assert_eq!(actual, expected, "fixture {}", case.display());
+        // The bytes are checked against `expected/` below, not inlined in `expected.json`.
+        let mut value = serde_json::to_value(&prepared).unwrap();
+        strip_bytes(&mut value);
+        common::assert_file(&case.join("expected.json"), &common::pretty(&value));
         assert_changed_bytes(&case, &prepared);
-    }
-}
-
-fn load_tree(root: &Path) -> FileTree {
-    let mut files = Vec::new();
-    collect_files(root, root, &mut files);
-    FileTree::from_files(files).unwrap()
-}
-
-fn collect_files(root: &Path, dir: &Path, files: &mut Vec<(String, Vec<u8>)>) {
-    let mut entries = fs::read_dir(dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect::<Vec<_>>();
-    entries.sort();
-    for path in entries {
-        if path.is_dir() {
-            collect_files(root, &path, files);
-        } else {
-            let relative = path
-                .strip_prefix(root)
-                .unwrap()
-                .iter()
-                .map(|component| component.to_str().unwrap())
-                .collect::<Vec<_>>()
-                .join("/");
-            files.push((relative, fs::read(path).unwrap()));
+        for definition in prepared
+            .definitions
+            .iter()
+            .filter(|definition| definition.change == ChangeRecord::None)
+        {
+            if let Some(original) = tree.read(&definition.source_path) {
+                assert_eq!(
+                    original,
+                    definition.normalized_bytes,
+                    "fixture {} unchanged {}",
+                    case.display(),
+                    definition.source_path
+                );
+            }
         }
     }
 }
 
-fn child_directories(root: &Path) -> Vec<std::path::PathBuf> {
-    fs::read_dir(root)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.is_dir())
-        .collect()
+fn strip_bytes(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove("normalized_bytes");
+            map.values_mut().for_each(strip_bytes);
+        }
+        serde_json::Value::Array(values) => values.iter_mut().for_each(strip_bytes),
+        _ => {}
+    }
 }
 
 fn changed_files(prepared: &Prepared) -> Vec<(&str, &[u8])> {
@@ -98,7 +86,7 @@ fn assert_changed_bytes(case: &Path, prepared: &Prepared) {
     let changed = changed_files(prepared);
     let expected_count = if expected_root.exists() {
         let mut files = Vec::new();
-        collect_files(&expected_root, &expected_root, &mut files);
+        common::collect_files(&expected_root, &expected_root, &mut files);
         files.len()
     } else {
         0

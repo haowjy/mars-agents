@@ -2,89 +2,81 @@
   "classification": {
     "kind": "schema-1"
   },
-  "manifest": {
-    "source_path": "mars.toml",
-    "output_path": "mars.toml",
-    "reading": {
-      "frontmatter": [],
-      "fields": {
-        "name": "demo",
-        "version": "1.0.0",
-        "schema": 1
-      },
-      "body": null,
-      "unknown": [],
-      "diagnostics": []
-    },
-    "change": {
-      "kind": "none"
-    }
-  },
   "definitions": [
     {
-      "kind": "agent",
-      "slug": "bom",
-      "source_path": "agents/bom.md",
-      "output_path": "agents/bom.md",
-      "reading": {
-        "kind": "agent",
-        "result": {
-          "frontmatter": [
-            [
-              "name",
-              "bom"
-            ],
-            [
-              "description",
-              "BOM"
-            ]
-          ],
-          "fields": {
-            "name": "bom",
-            "description": "BOM",
-            "harness": null,
-            "model": null,
-            "mode": null,
-            "model_invocable": true,
-            "user_invocable": true,
-            "had_model_invocable_field": false,
-            "had_user_invocable_field": false,
-            "approval": null,
-            "sandbox": null,
-            "effort": null,
-            "skills": {
-              "load": [],
-              "available": []
-            },
-            "subagents": [],
-            "tools": {
-              "rules": []
-            },
-            "harness_overrides": {
-              "entries": {}
-            },
-            "model_policies": []
-          },
-          "body": "# Body\n",
-          "unknown": [],
-          "diagnostics": []
-        }
-      },
-      "raw_frontmatter": [
-        [
-          "name",
-          "bom"
-        ],
-        [
-          "description",
-          "BOM"
-        ]
-      ],
       "change": {
         "kind": "none"
-      }
+      },
+      "kind": "agent",
+      "output_path": "agents/bom.md",
+      "reading": {
+        "body": "# Body\n",
+        "diagnostics": [],
+        "fields": {
+          "approval": null,
+          "description": "BOM",
+          "effort": null,
+          "harness": null,
+          "harness-overrides": {},
+          "mode": null,
+          "model": null,
+          "model-invocable": true,
+          "model-policies": [],
+          "name": "bom",
+          "sandbox": null,
+          "skills": {
+            "available": [],
+            "load": []
+          },
+          "subagents": [],
+          "tools": [],
+          "user-invocable": true
+        },
+        "frontmatter": [
+          [
+            "name",
+            "bom"
+          ],
+          [
+            "description",
+            "BOM"
+          ]
+        ]
+      },
+      "slug": "bom",
+      "source_path": "agents/bom.md"
     }
   ],
-  "payload": [],
-  "diagnostics": {}
+  "diagnostics": {},
+  "manifest": {
+    "change": {
+      "kind": "none"
+    },
+    "output_path": "mars.toml",
+    "reading": {
+      "body": null,
+      "diagnostics": [],
+      "fields": {
+        "name": "demo",
+        "schema": 1,
+        "version": "1.0.0"
+      },
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "schema",
+          1
+        ],
+        [
+          "version",
+          "1.0.0"
+        ]
+      ]
+    },
+    "source_path": "mars.toml"
+  },
+  "payload": []
 }

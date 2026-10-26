@@ -5,16 +5,12 @@
     "approval": null,
     "description": null,
     "effort": null,
-    "had_model_invocable_field": false,
-    "had_user_invocable_field": false,
     "harness": null,
-    "harness_overrides": {
-      "entries": {}
-    },
+    "harness-overrides": {},
     "mode": null,
     "model": null,
-    "model_invocable": true,
-    "model_policies": [],
+    "model-invocable": true,
+    "model-policies": [],
     "name": null,
     "sandbox": null,
     "skills": {
@@ -22,16 +18,14 @@
       "load": []
     },
     "subagents": [],
-    "tools": {
-      "rules": [
-        {
-          "action": "allow",
-          "capability": "read",
-          "pattern": null
-        }
-      ]
-    },
-    "user_invocable": true
+    "tools": [
+      {
+        "action": "allow",
+        "capability": "read",
+        "pattern": null
+      }
+    ],
+    "user-invocable": true
   },
   "frontmatter": [
     [
@@ -40,6 +34,5 @@
         "read": "allow"
       }
     ]
-  ],
-  "unknown": []
+  ]
 }

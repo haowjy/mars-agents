@@ -4,56 +4,38 @@
   },
   "definitions": [
     {
-      "kind": "skill",
-      "slug": "current",
-      "source_path": "skills/current/SKILL.md",
-      "output_path": "skills/current/SKILL.md",
-      "reading": {
-        "kind": "skill",
-        "result": {
-          "frontmatter": [
-            [
-              "name",
-              "current"
-            ],
-            [
-              "description",
-              "Current"
-            ]
-          ],
-          "fields": {
-            "name": "current",
-            "description": "Current",
-            "skill_type": null,
-            "model_invocable": true,
-            "user_invocable": true,
-            "license": null,
-            "compatibility": null,
-            "metadata": null,
-            "had_model_invocable_field": false,
-            "has_frontmatter": true,
-            "passthrough_fields": []
-          },
-          "body": "# Body\n",
-          "unknown": [],
-          "diagnostics": []
-        }
-      },
-      "raw_frontmatter": [
-        [
-          "name",
-          "current"
-        ],
-        [
-          "description",
-          "Current"
-        ]
-      ],
       "change": {
         "kind": "none"
-      }
+      },
+      "kind": "skill",
+      "output_path": "skills/current/SKILL.md",
+      "reading": {
+        "body": "# Body\n",
+        "diagnostics": [],
+        "fields": {
+          "compatibility": null,
+          "description": "Current",
+          "license": null,
+          "metadata": null,
+          "model-invocable": true,
+          "name": "current",
+          "user-invocable": true
+        },
+        "frontmatter": [
+          [
+            "name",
+            "current"
+          ],
+          [
+            "description",
+            "Current"
+          ]
+        ]
+      },
+      "slug": "current",
+      "source_path": "skills/current/SKILL.md"
     }
   ],
-  "payload": [],
-  "diagnostics": {}
+  "diagnostics": {},
+  "payload": []
 }

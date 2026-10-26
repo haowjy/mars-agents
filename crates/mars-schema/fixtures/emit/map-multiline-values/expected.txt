@@ -1,0 +1,5 @@
+
+      list:
+        - "a\nb"
+        - "  c"
+      text: "x\ny\n"

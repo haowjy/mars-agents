@@ -1,109 +1,81 @@
 {
   "classification": {
-    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "source": "declared",
-      "paths": []
-    }
+      "paths": [],
+      "source": "declared"
+    },
+    "kind": "foreign"
   },
   "definitions": [
     {
-      "kind": "agent",
-      "slug": "native",
-      "source_path": "agents/native.md",
-      "output_path": "agents/native.md",
-      "reading": {
-        "kind": "agent",
-        "result": {
-          "frontmatter": [
-            [
-              "name",
-              "native"
-            ],
-            [
-              "description",
-              "Native"
-            ],
-            [
-              "tools",
-              {
-                "*": "deny",
-                "Read": "allow",
-                "agent": "allow"
-              }
-            ]
-          ],
-          "fields": {
-            "name": "native",
-            "description": "Native",
-            "harness": null,
-            "model": null,
-            "mode": null,
-            "model_invocable": true,
-            "user_invocable": true,
-            "had_model_invocable_field": false,
-            "had_user_invocable_field": false,
-            "approval": null,
-            "sandbox": null,
-            "effort": null,
-            "skills": {
-              "load": [],
-              "available": []
-            },
-            "subagents": [],
-            "tools": {
-              "rules": [
-                {
-                  "capability": "*",
-                  "pattern": null,
-                  "action": "deny"
-                },
-                {
-                  "capability": "read",
-                  "pattern": null,
-                  "action": "allow"
-                },
-                {
-                  "capability": "agent",
-                  "pattern": null,
-                  "action": "allow"
-                }
-              ]
-            },
-            "harness_overrides": {
-              "entries": {}
-            },
-            "model_policies": []
-          },
-          "body": "# Body\n",
-          "unknown": [],
-          "diagnostics": []
-        }
-      },
-      "raw_frontmatter": [
-        [
-          "name",
-          "native"
-        ],
-        [
-          "description",
-          "Native"
-        ],
-        [
-          "tools",
-          {
-            "*": "deny",
-            "Read": "allow",
-            "agent": "allow"
-          }
-        ]
-      ],
       "change": {
         "kind": "fully-rewritten"
-      }
+      },
+      "kind": "agent",
+      "output_path": "agents/native.md",
+      "reading": {
+        "body": "# Body\n",
+        "diagnostics": [],
+        "fields": {
+          "approval": null,
+          "description": "Native",
+          "effort": null,
+          "harness": null,
+          "harness-overrides": {},
+          "mode": null,
+          "model": null,
+          "model-invocable": true,
+          "model-policies": [],
+          "name": "native",
+          "sandbox": null,
+          "skills": {
+            "available": [],
+            "load": []
+          },
+          "subagents": [],
+          "tools": [
+            {
+              "action": "deny",
+              "capability": "*",
+              "pattern": null
+            },
+            {
+              "action": "allow",
+              "capability": "read",
+              "pattern": null
+            },
+            {
+              "action": "allow",
+              "capability": "agent",
+              "pattern": null
+            }
+          ],
+          "user-invocable": true
+        },
+        "frontmatter": [
+          [
+            "name",
+            "native"
+          ],
+          [
+            "description",
+            "Native"
+          ],
+          [
+            "tools",
+            {
+              "*": "deny",
+              "Read": "allow",
+              "agent": "allow"
+            }
+          ]
+        ]
+      },
+      "slug": "native",
+      "source_path": "agents/native.md"
     }
   ],
-  "payload": [],
-  "diagnostics": {}
+  "diagnostics": {},
+  "payload": []
 }

@@ -348,7 +348,7 @@ pub(crate) fn report_diagnostics(
     diag: &mut DiagnosticCollector,
 ) {
     let mut warn_legacy = false;
-    for (relative, diagnostics) in &prepared.diagnostics {
+    for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = format!("source `{}`", authored_root.join(relative).display());
         for diagnostic in diagnostics {
             if diagnostic.code == "legacy-package" {

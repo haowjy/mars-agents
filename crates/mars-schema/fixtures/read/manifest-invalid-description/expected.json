@@ -11,6 +11,22 @@
     }
   ],
   "fields": null,
-  "frontmatter": [],
-  "unknown": []
+  "frontmatter": [
+    [
+      "description",
+      4
+    ],
+    [
+      "name",
+      "demo"
+    ],
+    [
+      "schema",
+      1
+    ],
+    [
+      "version",
+      "1.0.0"
+    ]
+  ]
 }

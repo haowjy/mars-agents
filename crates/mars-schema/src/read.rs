@@ -1,56 +1,45 @@
-//! Stable reader result shared by native and WASM callers.
+//! The serialized v1 reading shared by native and WASM callers.
 
 use serde::Serialize;
 use serde_yaml::Value;
 
 use crate::diagnostic::SchemaDiagnostic;
 
-/// One file returned by [`read_files`].
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(tag = "kind", content = "reading", rename_all = "lowercase")]
-pub enum FileRead {
+/// The serialized v1 reading of one schema-owned file.
+///
+/// Serializes as the bare [`DefinitionRead`]; the caller knows the kind from the path.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum Reading {
     Manifest(DefinitionRead<crate::package::PackageMetadata>),
     Agent(DefinitionRead<crate::agent::AgentProfile>),
     Skill(DefinitionRead<crate::skill::SkillProfile>),
 }
 
-/// Read every schema-owned file in a package tree in one deterministic pass.
-pub fn read_files(
-    source: &impl crate::tree::TreeSource,
-) -> std::collections::BTreeMap<String, FileRead> {
-    let mut paths = Vec::new();
-    fn walk(source: &impl crate::tree::TreeSource, dir: &str, paths: &mut Vec<String>) {
-        for child in source.children(dir) {
-            if source.is_file(&child) {
-                if child == "mars.toml"
-                    || child.starts_with("agents/")
-                    || child.ends_with("/SKILL.md")
-                    || child == "SKILL.md"
-                {
-                    paths.push(child);
-                }
-            } else if source.is_dir(&child) {
-                walk(source, &child, paths);
-            }
+/// `read` was given a path that is not a schema-owned file.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "`{0}` is not a schema file: expected `mars.toml`, `agents/<slug>.md` or `skills/<slug>/SKILL.md`"
+)]
+pub struct UnrecognizedPath(pub String);
+
+/// Read one schema-owned file, choosing the reader from its package-relative path.
+pub fn read(path: &str, text: &str) -> Result<Reading, UnrecognizedPath> {
+    let parts: Vec<&str> = path.split('/').collect();
+    match parts.as_slice() {
+        ["mars.toml"] => Ok(Reading::Manifest(crate::manifest::read(text))),
+        ["agents", file]
+            if file
+                .strip_suffix(".md")
+                .is_some_and(|slug| !slug.is_empty()) =>
+        {
+            Ok(Reading::Agent(crate::agent::read(text)))
         }
+        ["skills", slug, "SKILL.md"] if !slug.is_empty() => {
+            Ok(Reading::Skill(crate::skill::read(text)))
+        }
+        _ => Err(UnrecognizedPath(path.to_owned())),
     }
-    walk(source, "", &mut paths);
-    paths.sort();
-    paths
-        .into_iter()
-        .filter_map(|path| {
-            let bytes = source.read(&path)?;
-            let text = String::from_utf8(bytes).ok()?;
-            let result = if path == "mars.toml" {
-                FileRead::Manifest(crate::manifest::read(&text))
-            } else if path.starts_with("agents/") {
-                FileRead::Agent(crate::agent::read(&text))
-            } else {
-                FileRead::Skill(crate::skill::read(&text))
-            };
-            Some((path, result))
-        })
-        .collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,7 +48,6 @@ pub struct DefinitionRead<T> {
     pub frontmatter: Vec<(String, serde_json::Value)>,
     pub fields: Option<T>,
     pub body: Option<String>,
-    pub unknown: Vec<(String, Value)>,
     pub diagnostics: Vec<SchemaDiagnostic>,
 }
 
@@ -95,7 +83,7 @@ pub(crate) fn frontmatter_json(
         .collect()
 }
 
-fn json_value(value: &Value) -> Result<serde_json::Value, String> {
+pub(crate) fn json_value(value: &Value) -> Result<serde_json::Value, String> {
     match value {
         Value::Null => Ok(serde_json::Value::Null),
         Value::Bool(v) => Ok((*v).into()),

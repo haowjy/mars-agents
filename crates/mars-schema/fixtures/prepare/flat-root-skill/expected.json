@@ -1,69 +1,51 @@
 {
   "classification": {
-    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "source": "predicted",
-      "paths": []
-    }
+      "paths": [],
+      "source": "predicted"
+    },
+    "kind": "foreign"
   },
   "definitions": [
     {
-      "kind": "skill",
-      "slug": "flat",
-      "source_path": "SKILL.md",
-      "output_path": "SKILL.md",
-      "reading": {
-        "kind": "skill",
-        "result": {
-          "frontmatter": [
-            [
-              "name",
-              "flat"
-            ],
-            [
-              "description",
-              "Flat"
-            ]
-          ],
-          "fields": {
-            "name": "flat",
-            "description": "Flat",
-            "skill_type": null,
-            "model_invocable": true,
-            "user_invocable": true,
-            "license": null,
-            "compatibility": null,
-            "metadata": null,
-            "had_model_invocable_field": false,
-            "has_frontmatter": true,
-            "passthrough_fields": []
-          },
-          "body": "# Body\n",
-          "unknown": [],
-          "diagnostics": []
-        }
-      },
-      "raw_frontmatter": [
-        [
-          "name",
-          "flat"
-        ],
-        [
-          "description",
-          "Flat"
-        ]
-      ],
       "change": {
         "kind": "none"
-      }
+      },
+      "kind": "skill",
+      "output_path": "SKILL.md",
+      "reading": {
+        "body": "# Body\n",
+        "diagnostics": [],
+        "fields": {
+          "compatibility": null,
+          "description": "Flat",
+          "license": null,
+          "metadata": null,
+          "model-invocable": true,
+          "name": "flat",
+          "user-invocable": true
+        },
+        "frontmatter": [
+          [
+            "name",
+            "flat"
+          ],
+          [
+            "description",
+            "Flat"
+          ]
+        ]
+      },
+      "slug": "flat",
+      "source_path": "SKILL.md"
     }
   ],
+  "diagnostics": {},
   "payload": [
     {
-      "source_path": "notes.md",
-      "output_path": "notes.md"
+      "output_path": "notes.md",
+      "source_path": "notes.md"
     }
-  ],
-  "diagnostics": {}
+  ]
 }

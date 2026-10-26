@@ -169,18 +169,18 @@
       "name": "tool_search"
     },
     {
-      "aliases": [
-        "view_image"
-      ],
-      "name": "image"
-    },
-    {
       "aliases": [],
       "name": "ls"
     },
     {
       "aliases": [],
       "name": "work"
+    },
+    {
+      "aliases": [
+        "view_image"
+      ],
+      "name": "image"
     }
   ],
   "natives": {
@@ -214,28 +214,43 @@
         ]
       },
       "edit": {
-        "kind": "tools",
-        "tools": [
+        "kind": "scoped-tools",
+        "note": "Claude uses Edit(path) to scope every built-in file-editing tool",
+        "scoped": [
+          "Edit"
+        ],
+        "unscoped": [
           "Edit",
           "Write",
           "NotebookEdit"
         ]
       },
       "glob": {
-        "kind": "tools",
-        "tools": [
+        "kind": "scoped-tools",
+        "note": "Claude scopes Glob paths through Read(path), which also covers other built-in file readers at that path",
+        "scoped": [
+          "Read"
+        ],
+        "unscoped": [
           "Glob"
         ]
       },
       "grep": {
-        "kind": "tools",
-        "tools": [
+        "kind": "scoped-tools",
+        "note": "Claude scopes Grep paths through Read(path), which also covers other built-in file readers at that path",
+        "scoped": [
+          "Read"
+        ],
+        "unscoped": [
           "Grep"
         ]
       },
       "image": {
         "kind": "no-switch",
         "note": "claude views images through Read; no switch"
+      },
+      "ls": {
+        "kind": "absent"
       },
       "lsp": {
         "kind": "tools",
@@ -250,8 +265,12 @@
         ]
       },
       "notebook": {
-        "kind": "tools",
-        "tools": [
+        "kind": "scoped-tools",
+        "note": "Claude scopes NotebookEdit through Edit(path), which also covers other built-in file edits at that path",
+        "scoped": [
+          "Edit"
+        ],
+        "unscoped": [
           "NotebookEdit"
         ]
       },
@@ -335,6 +354,9 @@
           "WebSearch"
         ]
       },
+      "work": {
+        "kind": "absent"
+      },
       "workflow": {
         "kind": "tools",
         "tools": [
@@ -349,8 +371,12 @@
         ]
       },
       "write": {
-        "kind": "tools",
-        "tools": [
+        "kind": "scoped-tools",
+        "note": "Claude scopes Write through Edit(path): an allow adds no practical write power because Write can replace the whole file, while a deny also refuses other built-in file edits at that path",
+        "scoped": [
+          "Edit"
+        ],
+        "unscoped": [
           "Write"
         ]
       }
@@ -404,6 +430,9 @@
         "tools": [
           "view_image"
         ]
+      },
+      "ls": {
+        "kind": "absent"
       },
       "lsp": {
         "kind": "absent"
@@ -465,6 +494,9 @@
           "web_search"
         ]
       },
+      "work": {
+        "kind": "absent"
+      },
       "workflow": {
         "kind": "absent"
       },
@@ -515,6 +547,9 @@
           "Grep"
         ]
       },
+      "ls": {
+        "kind": "absent"
+      },
       "notebook": {
         "kind": "tools",
         "tools": [
@@ -564,6 +599,9 @@
           "WebSearch"
         ]
       },
+      "work": {
+        "kind": "absent"
+      },
       "write": {
         "kind": "tools",
         "tools": [
@@ -576,21 +614,16 @@
         "kind": "tools",
         "tools": [
           "spawn",
-          "thread_create",
-          "thread_send",
-          "thread_wait"
+          "thread_message",
+          "thread_report",
+          "thread_ls",
+          "thread_history"
         ]
       },
       "ask_user": {
         "kind": "tools",
         "tools": [
           "ask"
-        ]
-      },
-      "bash": {
-        "kind": "tools",
-        "tools": [
-          "bash"
         ]
       },
       "edit": {
@@ -630,7 +663,10 @@
         ]
       },
       "work": {
-        "kind": "absent"
+        "kind": "tools",
+        "tools": [
+          "work"
+        ]
       },
       "write": {
         "kind": "tools",
@@ -682,6 +718,12 @@
       "image": {
         "kind": "no-switch",
         "note": "opencode views images through read; no switch"
+      },
+      "ls": {
+        "kind": "tools",
+        "tools": [
+          "list"
+        ]
       },
       "lsp": {
         "kind": "tools",
@@ -754,6 +796,9 @@
           "websearch"
         ]
       },
+      "work": {
+        "kind": "absent"
+      },
       "workflow": {
         "kind": "absent"
       },
@@ -806,6 +851,12 @@
         "kind": "no-switch",
         "note": "pi views images through read; no switch"
       },
+      "ls": {
+        "kind": "tools",
+        "tools": [
+          "ls"
+        ]
+      },
       "lsp": {
         "kind": "absent"
       },
@@ -853,6 +904,9 @@
         "kind": "absent"
       },
       "web_search": {
+        "kind": "absent"
+      },
+      "work": {
         "kind": "absent"
       },
       "workflow": {

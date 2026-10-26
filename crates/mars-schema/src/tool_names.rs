@@ -248,6 +248,16 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
     },
     // Viewing an image file. Only Codex has a tool for it (`view_image`); elsewhere the read
     // tool opens images.
+    // Listing one folder. OpenCode `list` and Pi `ls` are native; `glob` stays "find by name".
+    CanonicalTool {
+        name: "ls",
+        aliases: &[],
+    },
+    // Meridian Flow's work tool; no harness has an equivalent.
+    CanonicalTool {
+        name: "work",
+        aliases: &[],
+    },
     CanonicalTool {
         name: "image",
         aliases: &["view_image"],
@@ -338,11 +348,22 @@ pub fn canonical_capabilities() -> impl Iterator<Item = &'static str> {
     CANONICAL_TOOLS.iter().map(|tool| tool.name)
 }
 
+/// One capability and its accepted legacy spellings, as published in the vocabulary.
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilityEntry {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+}
+
 /// The authored capability vocabulary, including accepted legacy spellings.
-pub fn vocabulary() -> serde_json::Value {
-    serde_json::json!({"capabilities": CANONICAL_TOOLS.iter().map(|tool| serde_json::json!({
-        "name": tool.name, "aliases": tool.aliases
-    })).collect::<Vec<_>>()})
+pub fn capabilities() -> Vec<CapabilityEntry> {
+    CANONICAL_TOOLS
+        .iter()
+        .map(|tool| CapabilityEntry {
+            name: tool.name,
+            aliases: tool.aliases,
+        })
+        .collect()
 }
 
 /// Split `head(payload)` into `head` and `(payload)`; a name without parentheses has no payload.

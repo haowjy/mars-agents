@@ -1,4 +1,6 @@
 //! Package-manifest reading owned by the schema boundary.
+//!
+//! The reading's `frontmatter` holds the `[package]` table's pairs, unknown keys included.
 
 use crate::package::PackageMetadata;
 
@@ -12,7 +14,6 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
                 frontmatter: Vec::new(),
                 fields: None,
                 body: None,
-                unknown: Vec::new(),
                 diagnostics: vec![SchemaDiagnostic::new(
                     "toml.invalid",
                     Severity::Error,
@@ -27,7 +28,6 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
             frontmatter: Vec::new(),
             fields: None,
             body: None,
-            unknown: Vec::new(),
             diagnostics: vec![SchemaDiagnostic::new(
                 "manifest.package-required",
                 Severity::Error,
@@ -49,8 +49,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         "uses-providers",
     ];
     let mut diagnostics = Vec::new();
-    let mut unknown = Vec::new();
-    for (key, value) in package {
+    for key in package.keys() {
         if key == "visibility" {
             diagnostics.push(SchemaDiagnostic::new(
                 "field.removed",
@@ -64,10 +63,6 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
                 Severity::Warning,
                 child_path("package", key),
                 format!("unknown package field `{key}` is preserved"),
-            ));
-            unknown.push((
-                key.clone(),
-                serde_yaml::to_value(value).expect("TOML values serialize"),
             ));
         }
     }
@@ -118,10 +113,29 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         }
     };
     crate::read::DefinitionRead {
-        frontmatter: Vec::new(),
+        frontmatter: package
+            .iter()
+            .map(|(key, value)| (key.clone(), toml_json(value)))
+            .collect(),
         fields,
         body: None,
-        unknown,
         diagnostics,
+    }
+}
+
+fn toml_json(value: &toml::Value) -> serde_json::Value {
+    match value {
+        toml::Value::String(v) => v.clone().into(),
+        toml::Value::Integer(v) => (*v).into(),
+        toml::Value::Float(v) => serde_json::Number::from_f64(*v)
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+        toml::Value::Boolean(v) => (*v).into(),
+        toml::Value::Datetime(v) => v.to_string().into(),
+        toml::Value::Array(values) => values.iter().map(toml_json).collect(),
+        toml::Value::Table(table) => table
+            .iter()
+            .map(|(key, value)| (key.clone(), toml_json(value)))
+            .collect::<serde_json::Map<_, _>>()
+            .into(),
     }
 }

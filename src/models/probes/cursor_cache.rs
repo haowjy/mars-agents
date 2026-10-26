@@ -131,64 +131,14 @@ fn write_cache_at(path: &Path, entry: &ProbeCacheEntry) -> Result<(), MarsError>
     crate::fs::atomic_write(path, json.as_bytes())
 }
 
-struct FileLock {
-    _file: std::fs::File,
+fn try_lock() -> Option<crate::fs::FileLock> {
+    crate::fs::FileLock::try_acquire(&lock_path().ok()?)
+        .ok()
+        .flatten()
 }
 
-fn try_lock() -> Option<FileLock> {
-    lock_at(&lock_path().ok()?, true)
-}
-
-fn blocking_lock() -> Option<FileLock> {
-    lock_at(&lock_path().ok()?, false)
-}
-
-fn lock_at(path: &Path, nonblocking: bool) -> Option<FileLock> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok()?;
-    }
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
-        .ok()?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        let flags = if nonblocking {
-            libc::LOCK_EX | libc::LOCK_NB
-        } else {
-            libc::LOCK_EX
-        };
-        let ret = unsafe { libc::flock(file.as_raw_fd(), flags) };
-        if ret != 0 {
-            return None;
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Foundation::HANDLE;
-        use windows_sys::Win32::Storage::FileSystem::{
-            LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
-        };
-        let handle = file.as_raw_handle() as HANDLE;
-        let mut overlapped = unsafe { std::mem::zeroed() };
-        let flags = if nonblocking {
-            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY
-        } else {
-            LOCKFILE_EXCLUSIVE_LOCK
-        };
-        let ret = unsafe { LockFileEx(handle, flags, 0, 1, 0, &mut overlapped) };
-        if ret == 0 {
-            return None;
-        }
-    }
-
-    Some(FileLock { _file: file })
+fn blocking_lock() -> Option<crate::fs::FileLock> {
+    crate::fs::FileLock::acquire(&lock_path().ok()?).ok()
 }
 
 pub fn probe_cached(

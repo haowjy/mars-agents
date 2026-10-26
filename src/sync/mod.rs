@@ -12,7 +12,7 @@ pub(crate) mod validate;
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
@@ -139,9 +139,23 @@ pub(crate) struct LoadedConfig {
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     pub dependency_changes: Vec<DependencyUpsertChange>,
-    /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock.
+    /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock. A dry run holds no lock: it must not create `.mars/`, and it mutates nothing the lock guards.
     #[allow(dead_code)]
-    pub sync_lock: FileLock,
+    pub sync_lock: Option<FileLock>,
+    /// Owns the dry-run staging directory. A preview used to stage under
+    /// `.mars/staging`, which left a new path in a package that does not
+    /// gitignore `.mars/`.
+    dry_run_staging: Option<tempfile::TempDir>,
+}
+
+impl LoadedConfig {
+    /// Directory that package trees are staged into for this run.
+    pub(crate) fn staging_root(&self, project_root: &Path) -> PathBuf {
+        match &self.dry_run_staging {
+            Some(dir) => dir.path().join("staging"),
+            None => project_root.join(".mars/staging"),
+        }
+    }
 }
 
 /// Phase 2: Resolved dependency graph.
@@ -326,11 +340,15 @@ pub(crate) fn load_config(
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
 
-    std::fs::create_dir_all(mars_dir.join("cache"))?;
-
-    // Acquire sync lock before any config reads/mutations.
-    let lock_path = mars_dir.join("sync.lock");
-    let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
+    // A dry run is a preview: it must leave the project's files as it found
+    // them, so it stages into a temporary directory and takes no flock (which
+    // would create `.mars/sync.lock`). It mutates no state a lock guards.
+    let (sync_lock, dry_run_staging) = if request.options.dry_run {
+        (None, Some(tempfile::TempDir::new()?))
+    } else {
+        let sync_lock = crate::fs::FileLock::acquire(&mars_dir.join("sync.lock"))?;
+        (Some(sync_lock), None)
+    };
 
     // Load config under lock (auto-init when mutating and missing).
     let mut config = match crate::config::load(project_root) {
@@ -413,7 +431,8 @@ pub(crate) fn load_config(
         effective,
         old_lock,
         dependency_changes,
-        sync_lock: _sync_lock,
+        sync_lock,
+        dry_run_staging,
     })
 }
 
@@ -442,7 +461,7 @@ pub(crate) fn resolve_graph(
         })
         .collect();
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
-        .with_staging_root(ctx.project_root.join(".mars/staging"))
+        .with_staging_root(loaded.staging_root(&ctx.project_root))
         .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(
         &loaded.effective,
@@ -561,6 +580,7 @@ pub(crate) fn build_target(
     // Use .mars/ as the canonical content root for diff/collision checks.
     let mars_dir = ctx.project_root.join(".mars");
     let managed_root = &mars_dir;
+    let staging_root = resolved.loaded.staging_root(&ctx.project_root);
 
     let PreparedTarget {
         target: target_state,
@@ -600,7 +620,6 @@ pub(crate) fn build_target(
                 } else {
                     Vec::new()
                 };
-                let staging_root = ctx.project_root.join(".mars/staging");
                 let item_key = format!("{}:{}", item.discovered.id.kind, item.discovered.id.name);
                 let staged_path = crate::staging::stage_local_item(
                     &item.disk_path(),

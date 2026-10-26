@@ -78,6 +78,16 @@ This protects new canonical writes, not native/config emission (#149).
 Preexisting outputs selected for explicit force adoption are intentionally not journaled: a later
 apply failure leaves the lock unpublished, and the next sync must use `--force` again.
 
+### Dry Runs
+
+A dry run (`mars sync --diff`, `mars validate`/`export`, `mars version`'s
+validation pass) leaves the project's files as it found them: it stages into a
+temporary directory owned by `LoadedConfig` and takes no sync flock, so it
+creates neither `.mars/staging` nor `.mars/sync.lock`. A package repo that does
+not gitignore `.mars/` therefore gains no path a later clean-tree check or
+`git add -A` would pick up (issue #201). Any new phase that writes project state
+must honor `request.options.dry_run`.
+
 ### Key Operations
 
 | Function | Responsibility |

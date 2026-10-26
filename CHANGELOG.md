@@ -20,6 +20,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- `mars sync --diff` and `mars version`'s validation pass no longer create `.mars/` state: a dry
+  run stages in a temporary directory and takes no sync lock, so a package repo that does not
+  gitignore `.mars/` stays clean for the next release.
 - OpenCode sync now registers MCP servers under native `mcp` entries with `{env:VAR}`
   environment references and records each written entry in `mars.lock`. Legacy `mcpServers`
   entries Mars owns migrate on the next sync, and stale cleanup removes only the section the lock

@@ -370,6 +370,12 @@ pub(crate) fn load_config(
                 "reclaimed an interrupted canonical staging generation",
             );
         }
+        if crate::platform::fs::recover_interrupted_skill_installs(&mars_dir)? {
+            diag.warn(
+                "sync-recovered-skill-install",
+                "reclaimed an interrupted skill install left staged under .mars/skills",
+            );
+        }
         Some(lock)
     };
 

@@ -210,6 +210,48 @@ pub(crate) fn recover_pending_staging(mars_dir: &Path) -> Result<bool, MarsError
     Ok(true)
 }
 
+/// Remove skill directories a killed install staged under `.mars/skills/` but never renamed
+/// into place.
+///
+/// [`crate::fs::atomic_install_dir`] stages a whole skill there as a `tempfile` directory
+/// (`.tmp` plus six alphanumerics) and renames it into place; a SIGKILL between the two leaves
+/// the copy behind, invisible to `mars.lock`, `provided.lock` and every reader. The caller holds
+/// the sync lock, so no live Mars run owns the name, and a dot-prefixed entry at this level is
+/// never installed content: skill discovery skips hidden directories. Returns whether anything
+/// was reclaimed.
+pub(crate) fn recover_interrupted_skill_installs(mars_dir: &Path) -> Result<bool, MarsError> {
+    let skills_dir = mars_dir.join("skills");
+    match fs::symlink_metadata(&skills_dir) {
+        Ok(metadata) if metadata.is_dir() => {}
+        // Nothing staged to reclaim. A file or link here is someone else's obstruction, which the
+        // apply reports in place of this best-effort sweep.
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(io_context("inspect canonical skills", &skills_dir, error)),
+    }
+    let entries = fs::read_dir(&skills_dir)
+        .map_err(|error| io_context("read canonical skills", &skills_dir, error))?;
+    let mut reclaimed = false;
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() || !is_tempfile_name(&entry.file_name()) {
+            continue;
+        }
+        safe_remove(&entry.path())?;
+        reclaimed = true;
+    }
+    Ok(reclaimed)
+}
+
+/// One of `tempfile`'s generated names: `.tmp` and six ASCII alphanumerics.
+fn is_tempfile_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .and_then(|name| name.strip_prefix(".tmp"))
+        .is_some_and(|rest| {
+            rest.len() == 6 && rest.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+}
+
 /// Publish the already-materialized pending generation by rename.
 pub(crate) fn publish_staging_generation(source: &Path, mars_dir: &Path) -> Result<(), MarsError> {
     let pending = mars_dir.join(PENDING_STAGING_GENERATION);

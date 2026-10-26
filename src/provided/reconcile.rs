@@ -64,6 +64,11 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
             warnings,
         ));
     }
+    if crate::platform::fs::recover_interrupted_skill_installs(&root.join(".mars"))? {
+        warnings.push(
+            "reclaimed an interrupted skill install left staged under .mars/skills".to_string(),
+        );
+    }
     let mut assessed = assess(root, &spec)?;
     warnings.extend(assessed.warning.take());
     // This pass is about to apply, so it always plans; the unlocked pass skipped the hash only when

@@ -7,35 +7,18 @@
     "source_path": "mars.toml",
     "output_path": "mars.toml",
     "reading": {
-      "frontmatter": [
-        [
-          "name",
-          "demo"
-        ],
-        [
-          "version",
-          "1.0.0"
-        ],
-        [
-          "schema",
-          2
-        ]
-      ],
-      "fields": {
-        "name": "demo",
-        "version": "1.0.0",
-        "schema": 2
-      },
+      "frontmatter": [],
+      "fields": null,
       "body": null,
       "diagnostics": [
         {
-          "code": "field.type",
+          "code": "schema.newer",
           "severity": "error",
           "path": [
             "package",
             "schema"
           ],
-          "message": "`package.schema` must be the integer 1"
+          "message": "package declares schema 2; this Mars (v{version}) reads schema 1 — upgrade Mars"
         }
       ]
     },

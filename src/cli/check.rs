@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::error::MarsError;
 
+use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
 
 use super::output;
@@ -324,7 +325,12 @@ fn check_prepared(
         }
     }
 
-    if agent_names.is_empty() && skill_names.is_empty() {
+    // A package preparation could not read has already said why.
+    let readable = !matches!(
+        prepared.classification,
+        Classification::Invalid | Classification::SchemaNewer { .. }
+    );
+    if readable && agent_names.is_empty() && skill_names.is_empty() {
         errors.push("no agents or skills found — is this a mars source package?".to_string());
     }
     let available = skill_names

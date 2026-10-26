@@ -40,6 +40,19 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         "license",
         "uses-providers",
     ];
+    // A newer schema's other fields may mean something this Mars cannot read, so the one thing
+    // to say is to upgrade.
+    if let Some(toml::Value::Integer(schema @ 2..)) = package.get("schema") {
+        return crate::read::DefinitionRead::unread(vec![SchemaDiagnostic::new(
+            "schema.newer",
+            Severity::Error,
+            child_path("package", "schema"),
+            format!(
+                "package declares schema {schema}; this Mars (v{}) reads schema 1 — upgrade Mars",
+                crate::VERSION
+            ),
+        )]);
+    }
     let mut diagnostics = Vec::new();
     for key in package.keys() {
         if key == "visibility" {

@@ -474,8 +474,19 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn insert_claude_effort(&mut self) {
-        if let Some(effort) = self.eff.effort() {
-            self.yaml.insert(yk("effort"), yv(effort.claude_str()));
+        match self.eff.effort() {
+            // Claude Code accepts low|medium|high|xhigh|max and has no off value.
+            Some(mars_schema::agent::EffortLevel::None) => self.lossy.push(LossyField {
+                field: "effort".into(),
+                target: self.target_name().into(),
+                classification: Lossiness::Approximate {
+                    note: "Claude Code has no reasoning-off effort; omitted",
+                },
+            }),
+            Some(effort) => {
+                self.yaml.insert(yk("effort"), yv(effort.claude_str()));
+            }
+            None => {}
         }
     }
 

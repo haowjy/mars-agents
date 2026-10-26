@@ -30,6 +30,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Fixed
+- Claude agent files omit `effort` when the resolved effort is `none` (Claude Code has no off value) and report the loss; `mars-schema` readings and `rewriteBlock` keep mapping key order at every depth.
 - Native agent files (`.claude`, `.codex`, Cursor, plugin trees) take effort, sandbox and approval from the matching model policy, as the launch bundle does.
 - Model policy `when` has its own diagnostic path and rejects empty and multi-line values; `mars check` resolves policy aliases against the package's own `[models.*]` and names the agent and file.
 - Binary package consumers now prepare authored trees through `mars-schema`, retain authored

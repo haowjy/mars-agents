@@ -29,6 +29,7 @@ fn legacy_upgrade_fixtures() {
             "payload" => mars_schema::upgrade::UpgradeResult {
                 text: input.clone(),
                 diagnostics: Vec::new(),
+                findings: Vec::new(),
                 fully_rewritten: false,
                 edited_paths: Vec::new(),
             },
@@ -46,9 +47,9 @@ fn legacy_upgrade_fixtures() {
             &fs::read_to_string(case.join("expected-diagnostics.json")).unwrap(),
         )
         .unwrap();
-        let messages = result
-            .diagnostics
-            .iter()
+        let reported = result.diagnostics.iter().chain(&result.findings);
+        let messages = reported
+            .clone()
             .map(|diagnostic| diagnostic.message.as_str())
             .collect::<Vec<_>>();
         for key in &expected_keys {
@@ -61,7 +62,7 @@ fn legacy_upgrade_fixtures() {
             );
         }
         assert_eq!(
-            result.diagnostics.len(),
+            reported.count(),
             expected_keys.len(),
             "fixture {} diagnostic count",
             case.display()
@@ -74,6 +75,7 @@ fn legacy_upgrade_fixtures() {
             "payload" => mars_schema::upgrade::UpgradeResult {
                 text: result.text.clone(),
                 diagnostics: Vec::new(),
+                findings: Vec::new(),
                 fully_rewritten: false,
                 edited_paths: Vec::new(),
             },

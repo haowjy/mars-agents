@@ -1,0 +1,132 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "claude",
+    "evidence": {
+      "source": "declared",
+      "paths": []
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "g",
+      "source_path": "agents/g.md",
+      "output_path": "agents/g.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "g"
+          ],
+          [
+            "description",
+            "A Claude agent whose policy keys are partly invalid"
+          ],
+          [
+            "tools",
+            {
+              "Read": "allow",
+              "Write": "deny"
+            }
+          ],
+          [
+            "harness-overrides",
+            {
+              "claude": {
+                "permission": {
+                  "edit": "deny"
+                }
+              }
+            }
+          ]
+        ],
+        "fields": {
+          "name": "g",
+          "description": "A Claude agent whose policy keys are partly invalid",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [
+            {
+              "capability": "read",
+              "pattern": null,
+              "action": "allow"
+            },
+            {
+              "capability": "write",
+              "pattern": null,
+              "action": "deny"
+            }
+          ],
+          "harness-overrides": {
+            "claude": {
+              "permission": {
+                "edit": "deny"
+              }
+            }
+          },
+          "model-policies": []
+        },
+        "body": "Body.\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "fully-rewritten"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {
+    "agents/g.md": [
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "tools",
+          "mcp"
+        ],
+        "message": "agent `g` lost the restriction `tools.mcp: deny`: that entry was dropped and the rest of `tools` is kept. Schema v1 does not accept it (agent field `tools.mcp` has invalid value `mcp`; allowed: valid mcp(server), mcp(server/tool), mcp(server/*), mcp(*/tool), or mcp(*/*) reference (* is the only wildcard; segments non-empty))"
+      },
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "permission"
+        ],
+        "message": "agent `g` lost the restriction `permission`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (`permission` was removed; move it under `harness-overrides.flow.permission`)"
+      }
+    ]
+  },
+  "changes": {
+    "agents/g.md": [
+      {
+        "code": "field.set-aside",
+        "severity": "warning",
+        "path": [
+          "effort"
+        ],
+        "message": "`effort` is not valid in schema v1 (agent field `effort` has invalid value `ultra`; allowed: none, low, medium, high, xhigh, max); it was dropped, because Mars lowers `effort` itself and an override would not carry it"
+      },
+      {
+        "code": "field.set-aside",
+        "severity": "warning",
+        "path": [
+          "tools",
+          "Bash"
+        ],
+        "message": "`tools.Bash` is not valid in schema v1 (agent field `tools.Bash` has invalid value `sometimes`; allowed: allow, deny, or ask); that entry was dropped and the rest of `tools` is kept"
+      }
+    ]
+  }
+}

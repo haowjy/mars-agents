@@ -19,7 +19,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
-use mars_schema::agent::AgentProfile;
+use mars_schema::agent::{AgentProfile, LoweredField};
 use mars_schema::frontmatter::SkillsSpec;
 pub use mars_schema::tool_policy::EffectiveToolPolicy;
 use mars_schema::tool_policy::ToolAction;
@@ -180,16 +180,6 @@ impl NativeModel {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum AgentMarkdownField {
-    Identity,
-    Model,
-    Skills,
-    ClaudeTools,
-    ClaudeEffort,
-    Mode,
-}
-
-#[derive(Debug, Clone, Copy)]
 enum AgentLossinessStep {
     Approval,
     Sandbox,
@@ -208,7 +198,7 @@ struct AgentLoweringPolicy {
     description: DescriptionPolicy,
     mode_note: Option<&'static str>,
     skills: AgentSkillsPolicy,
-    fields: &'static [AgentMarkdownField],
+    fields: &'static [LoweredField],
     lossiness: &'static [AgentLossinessStep],
 }
 
@@ -241,11 +231,11 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     // Claude ignores `skills:` when this file is selected with `claude --agent`.
     skills: AgentSkillsPolicy::NativePreloadWithReminder,
     fields: &[
-        AgentMarkdownField::Identity,
-        AgentMarkdownField::Model,
-        AgentMarkdownField::Skills,
-        AgentMarkdownField::ClaudeTools,
-        AgentMarkdownField::ClaudeEffort,
+        LoweredField::Identity,
+        LoweredField::Model,
+        LoweredField::Skills,
+        LoweredField::Tools,
+        LoweredField::Effort,
     ],
     lossiness: &[
         AgentLossinessStep::Approval,
@@ -261,9 +251,9 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     mode_note: None,
     skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
-        AgentMarkdownField::Identity,
-        AgentMarkdownField::Model,
-        AgentMarkdownField::Mode,
+        LoweredField::Identity,
+        LoweredField::Model,
+        LoweredField::Mode,
     ],
     lossiness: &[
         AgentLossinessStep::Approval,
@@ -284,10 +274,10 @@ const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     mode_note: Some("Cursor may use the same mode concept"),
     skills: AgentSkillsPolicy::NativePreload,
     fields: &[
-        AgentMarkdownField::Identity,
-        AgentMarkdownField::Model,
-        AgentMarkdownField::Skills,
-        AgentMarkdownField::Mode,
+        LoweredField::Identity,
+        LoweredField::Model,
+        LoweredField::Skills,
+        LoweredField::Mode,
     ],
     lossiness: &[
         AgentLossinessStep::Approval,
@@ -308,9 +298,9 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     mode_note: Some("Pi may use the same mode concept"),
     skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
-        AgentMarkdownField::Identity,
-        AgentMarkdownField::Model,
-        AgentMarkdownField::Mode,
+        LoweredField::Identity,
+        LoweredField::Model,
+        LoweredField::Mode,
     ],
     lossiness: &[
         AgentLossinessStep::Approval,
@@ -323,20 +313,6 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         AgentLossinessStep::InvocationAxes,
     ],
 };
-
-impl AgentMarkdownField {
-    /// Frontmatter keys this field lowers, whether or not the profile has a value for them.
-    fn keys(self) -> &'static [&'static str] {
-        match self {
-            Self::Identity => &["name", "description"],
-            Self::Model => &["model"],
-            Self::Skills => &["skills"],
-            Self::ClaudeTools => &["tools", "disallowed-tools"],
-            Self::ClaudeEffort => &["effort"],
-            Self::Mode => &["mode"],
-        }
-    }
-}
 
 /// Entries of the profile's `harness-overrides.<harness>` block that may be written to the
 /// harness's native file: a key Mars lowers itself keeps Mars's value (`reserved`, or already
@@ -410,14 +386,14 @@ impl<'a> AgentLoweringCtx<'a> {
         }
     }
 
-    fn apply_field(&mut self, field: AgentMarkdownField) {
+    fn apply_field(&mut self, field: LoweredField) {
         match field {
-            AgentMarkdownField::Identity => self.insert_identity(),
-            AgentMarkdownField::Model => self.insert_model(),
-            AgentMarkdownField::Skills => self.insert_skills(),
-            AgentMarkdownField::ClaudeTools => self.insert_claude_tools(),
-            AgentMarkdownField::ClaudeEffort => self.insert_claude_effort(),
-            AgentMarkdownField::Mode => self.insert_mode(),
+            LoweredField::Identity => self.insert_identity(),
+            LoweredField::Model => self.insert_model(),
+            LoweredField::Skills => self.insert_skills(),
+            LoweredField::Tools => self.insert_claude_tools(),
+            LoweredField::Effort => self.insert_claude_effort(),
+            LoweredField::Mode => self.insert_mode(),
         }
     }
 

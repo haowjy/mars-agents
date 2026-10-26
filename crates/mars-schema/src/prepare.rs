@@ -439,6 +439,7 @@ fn prepare_definition(
             Classification::MarsLegacy => {
                 match crate::upgrade::upgrade_definition(selected.kind, text) {
                     Ok(result) => {
+                        findings = result.findings.clone();
                         let (upgraded, change, upgrade_notes) = upgrade_result(text, result);
                         notes = upgrade_notes;
                         (upgraded, change)

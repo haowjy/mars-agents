@@ -36,6 +36,47 @@ pub(crate) const REMOVED_AGENT_VALUES: &[RemovedValue] = &[
     RemovedValue::new("effort", "disabled", "none"),
 ];
 
+/// The Agent keys Mars lowers into a harness's native file itself, by the field that owns them.
+/// A `harness-overrides` entry never replaces one (native lowering keeps Mars's value and reports
+/// the override as dropped), so the translation's set-aside never moves one there either.
+#[derive(Debug, Clone, Copy)]
+pub enum LoweredField {
+    Identity,
+    Model,
+    Skills,
+    Tools,
+    Effort,
+    Mode,
+}
+
+impl LoweredField {
+    pub const ALL: [Self; 6] = [
+        Self::Identity,
+        Self::Model,
+        Self::Skills,
+        Self::Tools,
+        Self::Effort,
+        Self::Mode,
+    ];
+
+    /// Frontmatter keys this field lowers, whether or not the profile has a value for them.
+    pub const fn keys(self) -> &'static [&'static str] {
+        match self {
+            Self::Identity => &["name", "description"],
+            Self::Model => &["model"],
+            Self::Skills => &["skills"],
+            Self::Tools => &["tools", "disallowed-tools"],
+            Self::Effort => &["effort"],
+            Self::Mode => &["mode"],
+        }
+    }
+
+    /// Whether Mars lowers `key` itself on some harness.
+    pub fn reserves(key: &str) -> bool {
+        Self::ALL.iter().any(|field| field.keys().contains(&key))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Field enums
 // ---------------------------------------------------------------------------

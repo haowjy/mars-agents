@@ -24,8 +24,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   environment references and records each written entry in `mars.lock`. Legacy `mcpServers`
   entries Mars owns migrate on the next sync, and stale cleanup removes only the section the lock
   names, so same-named user entries survive. A non-object `mcp` value fails sync before any write.
-- A failed MCP config write keeps that target's lock records for the entries it was writing, so
-  entries already on disk stay owned and removable on a later sync.
+- A failed MCP config write keeps the lock records of unchanged entries, which are still on disk,
+  so a later sync can still remove them. It used to drop every record for that target.
 - OpenCode sync now warns when a hook fragment lacks the required default `{ id, setup }` export,
   matching plugin builds while still installing the fragment.
 - Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,

@@ -77,10 +77,6 @@ fn cache_path() -> Result<PathBuf, MarsError> {
     Ok(cache_dir()?.join("cursor-probe.json"))
 }
 
-fn lock_path() -> Result<PathBuf, MarsError> {
-    Ok(cache_dir()?.join(".cursor-probe.lock"))
-}
-
 fn ttl_secs() -> u64 {
     std::env::var("MARS_PROBE_CACHE_TTL_SECS")
         .ok()
@@ -129,21 +125,6 @@ fn write_cache_at(path: &Path, entry: &ProbeCacheEntry) -> Result<(), MarsError>
     let json = serde_json::to_string_pretty(entry)
         .map_err(|e| MarsError::Internal(format!("probe cache serialize: {e}")))?;
     crate::fs::atomic_write(path, json.as_bytes())
-}
-
-fn try_lock() -> Option<crate::fs::FileLock> {
-    match crate::fs::FileLock::try_acquire(&lock_path().ok()?) {
-        Ok(lock) => lock,
-        // Best-effort cache: a lock error skips the refresh, but say so — it is not contention.
-        Err(error) => {
-            eprintln!("debug: cursor probe cache lock failed: {error}");
-            None
-        }
-    }
-}
-
-fn blocking_lock() -> Option<crate::fs::FileLock> {
-    crate::fs::FileLock::acquire(&lock_path().ok()?).ok()
 }
 
 pub fn probe_cached(
@@ -262,7 +243,9 @@ fn trigger_background_refresh_with<S>(spawn_refresh: S)
 where
     S: Fn() -> Result<(), ()>,
 {
-    let Some(lock) = try_lock() else { return };
+    let Some(lock) = super::probe_lock(".cursor-probe.lock", "cursor") else {
+        return;
+    };
     if let Some(entry) = read_cache_tolerant()
         && is_fresh(&entry)
         && is_usable(&entry)
@@ -282,7 +265,7 @@ where
     F: Fn() -> CursorProbeResult,
 {
     use super::ObservedOutcome;
-    let lock = blocking_lock();
+    let lock = super::probe_lock_blocking(".cursor-probe.lock");
     if lock.is_none() {
         // Without the lock, do not overwrite a last-good listing or race a
         // background writer. It is still useful as support evidence.
@@ -446,7 +429,7 @@ fn write_failed_attempt(path: &Path, existing: &ProbeCacheEntry, failed_probe: &
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
-    let Some(_lock) = blocking_lock() else {
+    let Some(_lock) = super::probe_lock_blocking(".cursor-probe.lock") else {
         return Ok(0);
     };
 

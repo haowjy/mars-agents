@@ -23,146 +23,162 @@ pub struct SkillProfile {
     pub passthrough_fields: Vec<(String, Value)>,
 }
 
-/// Add authored-skill checks that are not part of foreign lifting.
-pub fn push_authored_skill_schema_diags(
+const REMOVED_SKILL_FIELDS: &[(&str, &str)] = &[
+    ("type", "use `metadata.type`"),
+    ("when_to_use", "fold it into `description`"),
+    ("tools", "remove this unused skill policy"),
+    ("disallowed-tools", "remove this unused skill policy"),
+    ("disallowed_tools", "remove this unused skill policy"),
+    ("allowed-tools", "remove this unused skill policy"),
+    ("allowed_tools", "remove this unused skill policy"),
+    ("model_invocable", "use `model-invocable`"),
+    ("user_invocable", "use `user-invocable`"),
+    ("invocation", "use `model-invocable` and `user-invocable`"),
+    ("disable-model-invocation", "use `model-invocable`"),
+    ("allow_implicit_invocation", "use `model-invocable`"),
+];
+
+fn parse_skill_profile_inner(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) {
-    if fm.get(RESERVED_IMPORT_MARKER).is_some() {
-        diags.push(crate::diagnostic::SchemaDiagnostic::new(
-            "field.removed",
-            crate::diagnostic::Severity::Error,
-            crate::diagnostic::key_path(RESERVED_IMPORT_MARKER),
-            format!("`{RESERVED_IMPORT_MARKER}` is reserved for imported skills"),
-        ));
-    }
-}
+    reject_import_marker: bool,
+) -> (SkillProfile, Vec<(String, Value)>) {
+    use crate::diagnostic::{SchemaDiagnostic, Severity, child_path, key_path};
 
-fn parse_skill_profile_inner(fm: &Frontmatter) -> SkillProfile {
-    let mut consumed_keys: Vec<String> = vec![
-        "name",
-        "description",
-        RESERVED_IMPORT_MARKER,
-        "license",
-        "type",
-        "when_to_use",
-        "tools",
-        "disallowed-tools",
-        "disallowed_tools",
-        "allowed-tools",
-        "allowed_tools",
-        "compatibility",
-        "metadata",
-        "model-invocable",
-        "user-invocable",
-        "invocation",
-        "disable-model-invocation",
-        "allow_implicit_invocation",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
-    consumed_keys.sort();
-
-    let name = fm
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .map(str::to_owned);
-    let description = fm
-        .get("description")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let license = fm.get("license").and_then(Value::as_str).map(str::to_owned);
-    let compatibility = fm
-        .get("compatibility")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let metadata = fm.get("metadata").cloned();
-    let skill_type = metadata
-        .as_ref()
-        .and_then(Value::as_mapping)
-        .and_then(|mapping| mapping.get(Value::String("type".to_string())))
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let (model_invocable, had_model_invocable_field, _) =
-        parse_invocability_axis(fm.get("model-invocable"));
-    let (user_invocable, _, _) = parse_invocability_axis(fm.get("user-invocable"));
-    let passthrough_fields = fm
-        .keys()
-        .into_iter()
-        .filter(|key| consumed_keys.binary_search(key).is_err())
-        .filter_map(|key| fm.get(&key).cloned().map(|value| (key, value)))
-        .collect();
-
-    SkillProfile {
-        name,
-        description,
-        skill_type,
-        model_invocable,
-        user_invocable,
-        license,
-        compatibility,
-        metadata,
-        had_model_invocable_field,
+    let mut profile = SkillProfile {
+        name: None,
+        description: None,
+        skill_type: None,
+        model_invocable: true,
+        user_invocable: true,
+        license: None,
+        compatibility: None,
+        metadata: None,
+        had_model_invocable_field: false,
         has_frontmatter: fm.has_frontmatter(),
-        passthrough_fields,
-    }
-}
+        passthrough_fields: Vec::new(),
+    };
+    let mut unknown = Vec::new();
+    let mut classification_diagnostics = Vec::new();
+    let mut field_diagnostics = Vec::new();
 
-pub fn parse_skill_profile(
-    fm: &Frontmatter,
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> SkillProfile {
-    strict_skill_diagnostics(fm, diags);
-    parse_skill_profile_inner(fm)
-}
-
-fn strict_skill_diagnostics(
-    fm: &Frontmatter,
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) {
-    use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
-    const KEPT: &[&str] = &[
-        "name",
-        "description",
-        "license",
-        "compatibility",
-        "metadata",
-        "model-invocable",
-        "user-invocable",
-    ];
-    const REMOVED: &[(&str, &str)] = &[
-        ("type", "use `metadata.type`"),
-        ("when_to_use", "fold it into `description`"),
-        ("tools", "remove this unused skill policy"),
-        ("disallowed-tools", "remove this unused skill policy"),
-        ("disallowed_tools", "remove this unused skill policy"),
-        ("allowed-tools", "remove this unused skill policy"),
-        ("allowed_tools", "remove this unused skill policy"),
-        ("model_invocable", "use `model-invocable`"),
-        ("user_invocable", "use `user-invocable`"),
-        ("invocation", "use `model-invocable` and `user-invocable`"),
-        ("disable-model-invocation", "use `model-invocable`"),
-        ("allow_implicit_invocation", "use `model-invocable`"),
-    ];
     for key in fm.keys() {
-        if let Some((_, replacement)) = REMOVED.iter().find(|(removed, _)| *removed == key) {
-            diags.push(SchemaDiagnostic::new(
-                "field.removed",
-                Severity::Error,
-                key_path(&key),
-                format!("`{key}` was removed; {replacement}"),
-            ));
-        } else if !KEPT.contains(&key.as_str()) && key != RESERVED_IMPORT_MARKER {
-            diags.push(SchemaDiagnostic::new(
-                "field.unknown",
-                Severity::Warning,
-                key_path(&key),
-                format!("unknown field `{key}` is preserved"),
-            ));
+        let value = fm.get(&key).expect("frontmatter key came from mapping");
+        match key.as_str() {
+            "name" | "description" | "license" | "compatibility" => {
+                let parsed = if let Some(text) = value.as_str() {
+                    Some(if key == "name" {
+                        text.trim().to_owned()
+                    } else {
+                        text.to_owned()
+                    })
+                } else {
+                    field_diagnostics.push(SchemaDiagnostic::new(
+                        "field.type",
+                        Severity::Error,
+                        key_path(&key),
+                        format!("`{key}` must be a string"),
+                    ));
+                    None
+                };
+                match key.as_str() {
+                    "name" => profile.name = parsed,
+                    "description" => profile.description = parsed,
+                    "license" => profile.license = parsed,
+                    "compatibility" => profile.compatibility = parsed,
+                    _ => unreachable!(),
+                }
+            }
+            "metadata" => {
+                profile.metadata = Some(value.clone());
+                if let Some(mapping) = value.as_mapping() {
+                    if let Some(skill_type) = mapping.get(Value::String("type".to_string())) {
+                        if let Some(skill_type) = skill_type.as_str() {
+                            profile.skill_type = Some(skill_type.to_owned());
+                        } else {
+                            field_diagnostics.push(SchemaDiagnostic::new(
+                                "field.type",
+                                Severity::Error,
+                                child_path("metadata", "type"),
+                                "`metadata.type` must be a string",
+                            ));
+                        }
+                    }
+                } else {
+                    field_diagnostics.push(SchemaDiagnostic::new(
+                        "field.type",
+                        Severity::Error,
+                        key_path("metadata"),
+                        "`metadata` must be a map",
+                    ));
+                }
+            }
+            "model-invocable" => {
+                let (value, had_field, invalid) = parse_invocability_axis(Some(value));
+                profile.model_invocable = value;
+                profile.had_model_invocable_field = had_field;
+                if invalid.is_some() {
+                    field_diagnostics.push(SchemaDiagnostic::new(
+                        "field.type",
+                        Severity::Error,
+                        key_path("model-invocable"),
+                        "`model-invocable` must be true or false",
+                    ));
+                }
+            }
+            "user-invocable" => {
+                let (value, _, invalid) = parse_invocability_axis(Some(value));
+                profile.user_invocable = value;
+                if invalid.is_some() {
+                    field_diagnostics.push(SchemaDiagnostic::new(
+                        "field.type",
+                        Severity::Error,
+                        key_path("user-invocable"),
+                        "`user-invocable` must be true or false",
+                    ));
+                }
+            }
+            RESERVED_IMPORT_MARKER => {
+                unknown.push((key.clone(), value.clone()));
+                if reject_import_marker {
+                    classification_diagnostics.push(SchemaDiagnostic::new(
+                        "field.removed",
+                        Severity::Error,
+                        key_path(RESERVED_IMPORT_MARKER),
+                        format!("`{RESERVED_IMPORT_MARKER}` is reserved for imported skills"),
+                    ));
+                }
+            }
+            _ => {
+                unknown.push((key.clone(), value.clone()));
+                if let Some((_, replacement)) = REMOVED_SKILL_FIELDS
+                    .iter()
+                    .find(|(removed, _)| *removed == key)
+                {
+                    classification_diagnostics.push(SchemaDiagnostic::new(
+                        "field.removed",
+                        Severity::Error,
+                        key_path(&key),
+                        format!("`{key}` was removed; {replacement}"),
+                    ));
+                    if matches!(key.as_str(), "model_invocable" | "user_invocable") {
+                        profile.passthrough_fields.push((key, value.clone()));
+                    }
+                } else {
+                    classification_diagnostics.push(SchemaDiagnostic::new(
+                        "field.unknown",
+                        Severity::Warning,
+                        key_path(&key),
+                        format!("unknown field `{key}` is preserved"),
+                    ));
+                    profile.passthrough_fields.push((key, value.clone()));
+                }
+            }
         }
     }
+
+    diags.append(&mut classification_diagnostics);
+
     if !fm.has_frontmatter() {
         diags.push(SchemaDiagnostic::new(
             "skill.no-frontmatter",
@@ -171,8 +187,11 @@ fn strict_skill_diagnostics(
             "body-only skill has no frontmatter",
         ));
     } else {
-        for key in ["name", "description"] {
-            if !matches!(fm.get(key), Some(Value::String(value)) if !value.trim().is_empty()) {
+        for (key, value) in [
+            ("name", profile.name.as_deref()),
+            ("description", profile.description.as_deref()),
+        ] {
+            if value.is_none_or(|value| value.trim().is_empty()) {
                 diags.push(SchemaDiagnostic::new(
                     "field.required",
                     Severity::Error,
@@ -182,53 +201,16 @@ fn strict_skill_diagnostics(
             }
         }
     }
-    for key in ["name", "description", "license", "compatibility"] {
-        if let Some(value) = fm.get(key)
-            && !value.is_string()
-        {
-            diags.push(SchemaDiagnostic::new(
-                "field.type",
-                Severity::Error,
-                key_path(key),
-                format!("`{key}` must be a string"),
-            ));
-        }
-    }
-    if let Some(value) = fm.get("metadata")
-        && !value.is_mapping()
-    {
-        diags.push(SchemaDiagnostic::new(
-            "field.type",
-            Severity::Error,
-            key_path("metadata"),
-            "`metadata` must be a map",
-        ));
-    }
-    if let Some(value) = fm
-        .get("metadata")
-        .and_then(Value::as_mapping)
-        .and_then(|metadata| metadata.get(Value::String("type".to_string())))
-        && !value.is_string()
-    {
-        diags.push(SchemaDiagnostic::new(
-            "field.type",
-            Severity::Error,
-            crate::diagnostic::child_path("metadata", "type"),
-            "`metadata.type` must be a string",
-        ));
-    }
-    for key in ["model-invocable", "user-invocable"] {
-        if let Some(value) = fm.get(key)
-            && !value.is_bool()
-        {
-            diags.push(SchemaDiagnostic::new(
-                "field.type",
-                Severity::Error,
-                key_path(key),
-                format!("`{key}` must be true or false"),
-            ));
-        }
-    }
+    diags.append(&mut field_diagnostics);
+
+    (profile, unknown)
+}
+
+pub fn parse_skill_profile(
+    fm: &Frontmatter,
+    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+) -> SkillProfile {
+    parse_skill_profile_inner(fm, diags, false).0
 }
 
 pub fn parse_skill_content(
@@ -247,23 +229,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<SkillProfile> {
     let mut diagnostics = Vec::new();
     match Frontmatter::parse(content) {
         Ok(frontmatter) => {
-            let fields = parse_skill_profile(&frontmatter, &mut diagnostics);
-            push_authored_skill_schema_diags(&frontmatter, &mut diagnostics);
-            const KNOWN: &[&str] = &[
-                "name",
-                "description",
-                "license",
-                "compatibility",
-                "metadata",
-                "model-invocable",
-                "user-invocable",
-            ];
-            let unknown = frontmatter
-                .keys()
-                .into_iter()
-                .filter(|key| !KNOWN.contains(&key.as_str()))
-                .filter_map(|key| frontmatter.get(&key).cloned().map(|value| (key, value)))
-                .collect();
+            let (fields, unknown) = parse_skill_profile_inner(&frontmatter, &mut diagnostics, true);
             crate::read::DefinitionRead {
                 fields: Some(fields),
                 body: Some(frontmatter.body().to_string()),

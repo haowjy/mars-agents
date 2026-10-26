@@ -10,24 +10,6 @@ use crate::invocability::parse_invocability_axis;
 use crate::model_policy::ModelPolicyRule;
 use crate::tool_policy::{self, EffectiveToolPolicy};
 
-const AGENT_FIELDS: &[&str] = &[
-    "name",
-    "description",
-    "mode",
-    "model",
-    "effort",
-    "skills",
-    "subagents",
-    "tools",
-    "model-invocable",
-    "user-invocable",
-    "sandbox",
-    "approval",
-    "harness-overrides",
-    "model-policies",
-    "harness",
-];
-
 const REMOVED_AGENT_FIELDS: &[(&str, &str)] = &[
     ("disallowed-tools", "use `tools: {<capability>: deny}`"),
     ("fanout", "use consumer `[settings.meridian.fanout]`"),
@@ -612,12 +594,11 @@ fn parse_invocability_field(
 }
 
 fn read_string(
-    fm: &Frontmatter,
+    value: &Value,
     field: &'static str,
     non_empty: bool,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> Option<String> {
-    let value = fm.get(field)?;
     let Some(value) = value.as_str() else {
         diags.push(crate::diagnostic::SchemaDiagnostic::new(
             "field.type",
@@ -689,14 +670,8 @@ fn read_string_list(
         .collect()
 }
 
-fn read_skills(
-    fm: &Frontmatter,
-    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> SkillsSpec {
+fn read_skills(value: &Value, diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>) -> SkillsSpec {
     use crate::diagnostic::{PathSegment, key_path};
-    let Some(value) = fm.get("skills") else {
-        return SkillsSpec::default();
-    };
     let root = key_path("skills");
     let Value::Mapping(mapping) = value else {
         return SkillsSpec {
@@ -715,196 +690,176 @@ fn read_skills(
     }
 }
 
-fn classify_fields(fm: &Frontmatter, diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>) {
-    use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
-    for key in fm.keys() {
-        if let Some((_, replacement)) = REMOVED_AGENT_FIELDS
-            .iter()
-            .find(|(removed, _)| *removed == key)
-        {
-            diags.push(SchemaDiagnostic::new(
-                "field.removed",
-                Severity::Error,
-                key_path(&key),
-                format!("`{key}` was removed; {replacement}"),
-            ));
-        } else if !AGENT_FIELDS.contains(&key.as_str()) {
-            diags.push(SchemaDiagnostic::new(
-                "field.unknown",
-                Severity::Warning,
-                key_path(&key),
-                format!("unknown field `{key}` is preserved"),
-            ));
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/// Parse an agent profile from a [`Frontmatter`].
-///
-/// Collects diagnostics without failing — the caller decides whether errors
-/// are fatal. The parsed [`AgentProfile`] is always returned even when there
-/// are validation errors; invalid fields are skipped (omitted from the profile).
 fn parse_agent_profile_inner(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> AgentProfile {
-    classify_fields(fm, diags);
-    let name = read_string(fm, "name", true, diags);
-    let description = read_string(fm, "description", false, diags);
+) -> (AgentProfile, Vec<(String, Value)>) {
+    use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 
-    // harness:
-    let harness = read_string(fm, "harness", false, diags).and_then(|s| {
-        if let Some(h) = crate::harness::parse(&s) {
-            Some(h)
-        } else {
-            push_unknown_harness(diags, &s);
-            None
-        }
-    });
-
-    // model:
-    let model = read_string(fm, "model", true, diags);
-
-    // mode:
-    let mode = read_string(fm, "mode", false, diags).and_then(|s| match s.as_str() {
-        "primary" => Some(AgentMode::Primary),
-        "subagent" => Some(AgentMode::Subagent),
-        other => {
-            push_agent_invalid(
-                diags,
-                crate::diagnostic::key_path("mode"),
-                other.to_string(),
-                "primary, subagent",
-            );
-            None
-        }
-    });
-
-    // model-invocable / user-invocable:
-    let (model_invocable, had_model_invocable_field) =
-        parse_invocability_field("model-invocable", fm.get("model-invocable"), diags);
-    let (user_invocable, had_user_invocable_field) =
-        parse_invocability_field("user-invocable", fm.get("user-invocable"), diags);
-
-    // approval:
-    let approval = read_string(fm, "approval", false, diags).and_then(|s| {
-        if s == "yolo" {
-            diags.push(crate::diagnostic::SchemaDiagnostic::new(
-                "field.removed",
-                crate::diagnostic::Severity::Error,
-                crate::diagnostic::key_path("approval"),
-                "approval value `yolo` was removed; use `never`",
-            ));
-        }
-        if let Some(a) = ApprovalMode::parse(&s) {
-            Some(a)
-        } else {
-            push_agent_invalid(
-                diags,
-                crate::diagnostic::key_path("approval"),
-                s.to_string(),
-                "default, auto, confirm, never",
-            );
-            None
-        }
-    });
-
-    // sandbox:
-    let sandbox = read_string(fm, "sandbox", false, diags).and_then(|s| {
-        if let Some(sb) = SandboxMode::parse(&s) {
-            Some(sb)
-        } else {
-            push_agent_invalid(
-                diags,
-                crate::diagnostic::key_path("sandbox"),
-                s.to_string(),
-                "default, read-only, workspace-write, danger-full-access",
-            );
-            None
-        }
-    });
-
-    // effort:
-    let effort = read_string(fm, "effort", false, diags).and_then(|s| {
-        if let Some(e) = EffortLevel::parse(&s) {
-            Some(e)
-        } else {
-            push_agent_invalid(
-                diags,
-                crate::diagnostic::key_path("effort"),
-                s,
-                "low, medium, high, xhigh, none",
-            );
-            None
-        }
-    });
-
-    // skills/subagents/tools:
-    let skills = read_skills(fm, diags);
-    let subagents = read_string_list(
-        fm.get("subagents"),
-        crate::diagnostic::key_path("subagents"),
-        diags,
-    );
-    let tools = {
-        if matches!(fm.get("tools"), Some(Value::Sequence(_))) {
-            diags.push(crate::diagnostic::SchemaDiagnostic::new(
-                "tools.list-form",
-                crate::diagnostic::Severity::Error,
-                crate::diagnostic::key_path("tools"),
-                "`tools` must be an action map; list form was removed",
-            ));
-            EffectiveToolPolicy::default()
-        } else {
-            let mut invalid = |path, value: &str, allowed: &'static str| {
-                push_agent_tool_invalid(diags, path, value, allowed);
-            };
-            tool_policy::parse_tool_policy(fm.get("tools"), &mut invalid)
-        }
+    let mut profile = AgentProfile {
+        name: None,
+        description: None,
+        harness: None,
+        model: None,
+        mode: None,
+        model_invocable: true,
+        user_invocable: true,
+        had_model_invocable_field: false,
+        had_user_invocable_field: false,
+        approval: None,
+        sandbox: None,
+        effort: None,
+        skills: SkillsSpec::default(),
+        subagents: Vec::new(),
+        tools: EffectiveToolPolicy::default(),
+        harness_overrides: HarnessOverrides::default(),
+        model_policies: Vec::new(),
     };
+    let mut unknown = Vec::new();
 
-    // harness-overrides:
-    let harness_overrides = fm
-        .get("harness-overrides")
-        .map(|v| parse_harness_overrides(v, diags))
-        .unwrap_or_default();
-
-    // model-policies:
-    let model_policies = fm
-        .get("model-policies")
-        .map(|value| parse_model_policies(value, diags))
-        .unwrap_or_default();
-
-    AgentProfile {
-        name,
-        description,
-        harness,
-        model,
-        mode,
-        model_invocable,
-        user_invocable,
-        had_model_invocable_field,
-        had_user_invocable_field,
-        approval,
-        sandbox,
-        effort,
-        skills,
-        subagents,
-        tools,
-        harness_overrides,
-        model_policies,
+    for key in fm.keys() {
+        let value = fm.get(&key).expect("frontmatter key came from mapping");
+        match key.as_str() {
+            "name" => profile.name = read_string(value, "name", true, diags),
+            "description" => {
+                profile.description = read_string(value, "description", false, diags);
+            }
+            "harness" => {
+                profile.harness = read_string(value, "harness", false, diags).and_then(|name| {
+                    crate::harness::parse(&name).or_else(|| {
+                        push_unknown_harness(diags, &name);
+                        None
+                    })
+                });
+            }
+            "model" => profile.model = read_string(value, "model", true, diags),
+            "mode" => {
+                profile.mode =
+                    read_string(value, "mode", false, diags).and_then(|mode| match mode.as_str() {
+                        "primary" => Some(AgentMode::Primary),
+                        "subagent" => Some(AgentMode::Subagent),
+                        other => {
+                            push_agent_invalid(
+                                diags,
+                                key_path("mode"),
+                                other.to_string(),
+                                "primary, subagent",
+                            );
+                            None
+                        }
+                    });
+            }
+            "model-invocable" => {
+                (profile.model_invocable, profile.had_model_invocable_field) =
+                    parse_invocability_field("model-invocable", Some(value), diags);
+            }
+            "user-invocable" => {
+                (profile.user_invocable, profile.had_user_invocable_field) =
+                    parse_invocability_field("user-invocable", Some(value), diags);
+            }
+            "approval" => {
+                profile.approval =
+                    read_string(value, "approval", false, diags).and_then(|approval| {
+                        if approval == "yolo" {
+                            diags.push(SchemaDiagnostic::new(
+                                "field.removed",
+                                Severity::Error,
+                                key_path("approval"),
+                                "approval value `yolo` was removed; use `never`",
+                            ));
+                        }
+                        ApprovalMode::parse(&approval).or_else(|| {
+                            push_agent_invalid(
+                                diags,
+                                key_path("approval"),
+                                approval,
+                                "default, auto, confirm, never",
+                            );
+                            None
+                        })
+                    });
+            }
+            "sandbox" => {
+                profile.sandbox = read_string(value, "sandbox", false, diags).and_then(|sandbox| {
+                    SandboxMode::parse(&sandbox).or_else(|| {
+                        push_agent_invalid(
+                            diags,
+                            key_path("sandbox"),
+                            sandbox,
+                            "default, read-only, workspace-write, danger-full-access",
+                        );
+                        None
+                    })
+                });
+            }
+            "effort" => {
+                profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {
+                    EffortLevel::parse(&effort).or_else(|| {
+                        push_agent_invalid(
+                            diags,
+                            key_path("effort"),
+                            effort,
+                            "low, medium, high, xhigh, none",
+                        );
+                        None
+                    })
+                });
+            }
+            "skills" => profile.skills = read_skills(value, diags),
+            "subagents" => {
+                profile.subagents = read_string_list(Some(value), key_path("subagents"), diags);
+            }
+            "tools" => {
+                if value.is_sequence() {
+                    diags.push(SchemaDiagnostic::new(
+                        "tools.list-form",
+                        Severity::Error,
+                        key_path("tools"),
+                        "`tools` must be an action map; list form was removed",
+                    ));
+                } else {
+                    let mut invalid = |path, value: &str, allowed: &'static str| {
+                        push_agent_tool_invalid(diags, path, value, allowed);
+                    };
+                    profile.tools = tool_policy::parse_tool_policy(Some(value), &mut invalid);
+                }
+            }
+            "harness-overrides" => {
+                profile.harness_overrides = parse_harness_overrides(value, diags);
+            }
+            "model-policies" => profile.model_policies = parse_model_policies(value, diags),
+            _ => {
+                unknown.push((key.clone(), value.clone()));
+                if let Some((_, replacement)) = REMOVED_AGENT_FIELDS
+                    .iter()
+                    .find(|(removed, _)| *removed == key)
+                {
+                    diags.push(SchemaDiagnostic::new(
+                        "field.removed",
+                        Severity::Error,
+                        key_path(&key),
+                        format!("`{key}` was removed; {replacement}"),
+                    ));
+                } else {
+                    diags.push(SchemaDiagnostic::new(
+                        "field.unknown",
+                        Severity::Warning,
+                        key_path(&key),
+                        format!("unknown field `{key}` is preserved"),
+                    ));
+                }
+            }
+        }
     }
+
+    (profile, unknown)
 }
 
 pub fn parse_agent_profile(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> AgentProfile {
-    parse_agent_profile_inner(fm, diags)
+    parse_agent_profile_inner(fm, diags).0
 }
 
 pub fn parse_agent_content(
@@ -926,13 +881,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<AgentProfile> {
                     .iter()
                     .map(crate::diagnostic::frontmatter_error),
             );
-            let fields = parse_agent_profile(&frontmatter, &mut diagnostics);
-            let unknown = frontmatter
-                .keys()
-                .into_iter()
-                .filter(|key| !AGENT_FIELDS.contains(&key.as_str()))
-                .filter_map(|key| frontmatter.get(&key).cloned().map(|value| (key, value)))
-                .collect();
+            let (fields, unknown) = parse_agent_profile_inner(&frontmatter, &mut diagnostics);
             crate::read::DefinitionRead {
                 fields: Some(fields),
                 body: Some(frontmatter.body().to_string()),

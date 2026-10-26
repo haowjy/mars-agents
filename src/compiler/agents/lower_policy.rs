@@ -537,7 +537,7 @@ impl<'a> AgentLoweringCtx<'a> {
                 },
             }),
             Some(effort) => {
-                self.yaml.insert(yk("effort"), yv(effort.claude_str()));
+                self.yaml.insert(yk("effort"), yv(effort.as_str()));
             }
             None => {}
         }
@@ -910,8 +910,20 @@ pub fn lower_to_codex(
     let lowered_skills = lower_agent_skills(eff.skills(), AgentSkillsPolicy::BodyGuidance, body);
     let mut lossy = Vec::new();
 
-    // Effort — exact (lowered to model_reasoning_effort)
-    let effort_str = eff.effort().map(|e| e.as_str());
+    // Effort — exact (lowered to model_reasoning_effort), except `max`: Codex's levels end at `xhigh`.
+    let effort_str = match eff.effort() {
+        Some(mars_schema::agent::EffortLevel::Max) => {
+            lossy.push(LossyField {
+                field: "effort".into(),
+                target: target.into(),
+                classification: Lossiness::Approximate {
+                    note: "Codex has no effort above xhigh; `max` is written as `xhigh`",
+                },
+            });
+            Some("xhigh")
+        }
+        other => other.map(|effort| effort.as_str()),
+    };
 
     // Sandbox — exact
     let sandbox_str = eff.sandbox().map(|s| s.as_str());

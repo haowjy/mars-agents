@@ -246,7 +246,7 @@ sandbox: workspace-write
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `none`, `low`, `medium`, `high`, `xhigh` (case-insensitive; `max` is accepted as `xhigh`) |
+| Allowed values | `none`, `low`, `medium`, `high`, `xhigh`, `max` (case-insensitive) |
 | Default | none (the model's default) |
 
 Reasoning effort. `none` means reasoning off and is different from leaving the key out. Mars lowers it to each harness's own control (`--effort` for Claude, `model_reasoning_effort` for Codex); Claude has no off value, so its native file omits `effort` and Mars warns. The per-harness table is in [Schema v1](schema-v1.md#effort).

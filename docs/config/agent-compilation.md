@@ -141,7 +141,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `tools` allowlist (`'*': deny`) | `tools:` (+ projected `mcp__…` MCP tokens) | Claude's `tools:` restricts the agent to what it lists, so only an allowlist lowers to it. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost) |
 | `tools` denials | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
 | `tools` `ask` rules, an allowlist with nothing allowed | dropped | Claude agent files have no field for them; Mars records each as dropped lossiness |
-| `effort` | `effort:` (`xhigh` → `max`) | exact. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
+| `effort` | `effort:` | exact: `xhigh` and `max` are Claude's own levels. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
 | `mode` | dropped | dropped |
@@ -276,7 +276,7 @@ TOML format. Codex reads this for native agent invocation.
 | `name` | `name` | exact |
 | `description` | `description` | exact |
 | `model` | `model` | exact |
-| `effort` | `model_reasoning_effort` | exact. `none` is written as `"none"`; some Codex models refuse it |
+| `effort` | `model_reasoning_effort` | exact. `none` is written as `"none"`; some Codex models refuse it. `max` is written as `xhigh`, Codex's highest level, with an approximate-mapping warning |
 | `sandbox` | `sandbox_mode` | exact |
 | `approval` | `approval_policy` | exact |
 | body | `developer_instructions` | exact |

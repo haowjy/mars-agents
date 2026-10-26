@@ -15,7 +15,7 @@
     "user-invocable": true,
     "approval": null,
     "sandbox": null,
-    "effort": "xhigh",
+    "effort": "max",
     "skills": {
       "load": [],
       "available": []

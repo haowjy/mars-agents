@@ -182,10 +182,11 @@ pub enum EffortLevel {
     High,
     #[serde(rename = "xhigh")]
     XHigh,
+    Max,
 }
 
 impl EffortLevel {
-    /// The values `parse` accepts (`max` is `xhigh`), as the invalid-value errors list them.
+    /// The values `parse` accepts, as the invalid-value errors list them.
     pub const ALLOWED: &'static str = "none, low, medium, high, xhigh, max";
 
     pub fn parse(s: &str) -> Option<Self> {
@@ -194,7 +195,8 @@ impl EffortLevel {
             "low" => Some(Self::Low),
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
-            "xhigh" | "max" => Some(Self::XHigh),
+            "xhigh" => Some(Self::XHigh),
+            "max" => Some(Self::Max),
             _ => None,
         }
     }
@@ -206,14 +208,7 @@ impl EffortLevel {
             Self::Medium => "medium",
             Self::High => "high",
             Self::XHigh => "xhigh",
-        }
-    }
-
-    /// Normalized value for Claude ("xhigh" → "max").
-    pub fn claude_str(&self) -> &str {
-        match self {
-            Self::XHigh => "max",
-            other => other.as_str(),
+            Self::Max => "max",
         }
     }
 }

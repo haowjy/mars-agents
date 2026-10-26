@@ -725,7 +725,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
 | `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`). |
-| `--effort <level>` | Override effort: `none`, `low`, `medium`, `high`, `xhigh`. `none` asks for no reasoning effort and is written as `"effort": "none"` in the bundle; see [Effort](../config/schema-v1.md#effort) for what each harness does with it. |
+| `--effort <level>` | Override effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. `none` asks for no reasoning effort and is written as `"effort": "none"` in the bundle; see [Effort](../config/schema-v1.md#effort) for what each harness does with it. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |
 | `--sandbox <mode>` | Override sandbox: `default`, `read-only`, `workspace-write`, `danger-full-access`. |
 | `--skill <name>` | Add extra skills by name. Repeatable; also accepts `--skill a,b`. |

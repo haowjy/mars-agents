@@ -52,7 +52,7 @@ The same classification runs for dependencies, the local package, `.mars-src/`, 
 | `user-invocable` | boolean, default `true` | Whether the user can invoke it directly. |
 | `approval` | `default`, `auto`, `confirm`, `never` | Tool-call approval policy. `default` is an explicit request for the harness default; leaving the key out means unset. |
 | `sandbox` | `default`, `read-only`, `workspace-write`, `danger-full-access` | Filesystem access. |
-| `effort` | `none`, `low`, `medium`, `high`, `xhigh` | See [Effort](#effort). `max` is accepted as `xhigh`. |
+| `effort` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | See [Effort](#effort). |
 | `skills` | list, or `{load: [...], available: [...]}` | A bare list means `load`. |
 | `subagents` | list of names | The Agents this one may spawn. |
 | `tools` | map of capability to `allow`, `deny` or `ask` | See [Tool capabilities](#tool-capabilities). |
@@ -120,7 +120,7 @@ Removed: `package.visibility`, with nothing to replace it.
 
 ## Effort
 
-`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high` or `xhigh`. `max` is accepted as `xhigh`, and values are case-insensitive.
+`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high`, `xhigh` or `max`, in rising order; values are case-insensitive. `xhigh` and `max` are two levels. Claude Code has both. Codex's highest is `xhigh`, so Mars writes `max` there as `xhigh` and warns that it approximated.
 
 **`none` means reasoning off.** It is a value of its own: an absent `effort` means "the model's default", and `none` asks for no reasoning. Mars keeps the distinction end to end. The launch bundle carries `"effort": "none"`, and each harness's native file spells it as that harness does:
 

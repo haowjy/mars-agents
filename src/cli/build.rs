@@ -49,6 +49,7 @@ enum EffortArg {
     Medium,
     High,
     Xhigh,
+    Max,
 }
 
 impl EffortArg {
@@ -59,6 +60,7 @@ impl EffortArg {
             Self::Medium => "medium",
             Self::High => "high",
             Self::Xhigh => "xhigh",
+            Self::Max => "max",
         }
     }
 }

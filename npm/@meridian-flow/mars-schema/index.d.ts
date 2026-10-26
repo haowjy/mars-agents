@@ -50,7 +50,7 @@ export interface DefinitionRead<Fields> {
   diagnostics: Diagnostic[];
 }
 
-export type Effort = "none" | "low" | "medium" | "high" | "xhigh";
+export type Effort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 export type Sandbox = "default" | "read-only" | "workspace-write" | "danger-full-access";
 export type Approval = "default" | "auto" | "confirm" | "never";
 export type Harness = "claude" | "codex" | "pi" | "opencode" | "cursor";

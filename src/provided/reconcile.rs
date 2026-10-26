@@ -4,9 +4,10 @@
 //! taking the lock first would turn every no-op into `busy` and a fallback read. It is safe
 //! unlocked because `.mars/provided.lock` and `mars.lock` are only ever written by tmp + rename.
 //!
-//! `up-to-date` means "a re-plan would do nothing", so both paths decide it from the same
+//! `up-to-date` means "a re-plan would do nothing", so both passes decide it from the same
 //! [`Plan`] over the files on disk: checking the record against itself would leave a skill that
-//! was shadowed or collided on an earlier run uninstalled once its blocker is gone.
+//! was shadowed or collided on an earlier run uninstalled once its blocker is gone. Both passes
+//! are one call to [`assess`], the second under the lock so another run's finished work is seen.
 //!
 //! Crash safety needs no journal: the record always covers every directory this run may write,
 //! each directory install is atomic, and the next run replans from the files on disk. A crash
@@ -39,11 +40,11 @@ pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport
             warnings,
         ));
     }
-    let unlocked = plan_against_installed(root, spec, &entries, &skills_dir)?;
-    if let Some((previous, plan)) = &unlocked
-        && plan.writes_nothing(&entries, previous, spec)
+    let unlocked = assess(root, spec, &entries, &skills_dir)?;
+    if let Some(plan) = &unlocked.plan
+        && plan.writes_nothing(&entries, &unlocked.previous, spec)
     {
-        return Ok(current_report(spec, previous, plan, warnings));
+        return Ok(current_report(spec, &unlocked.previous, plan, warnings));
     }
 
     // Step 3: never wait. A holder means someone else is already writing `.mars/`.
@@ -60,30 +61,25 @@ pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport
             warnings,
         ));
     }
-    let (mut record, unusable) = match ProvidedLock::load(root)? {
-        Ok(record) => (record, None),
-        Err(unusable) => unusable.for_write()?,
+    let mut assessed = assess(root, spec, &entries, &skills_dir)?;
+    warnings.extend(assessed.warning.take());
+    // This pass is about to apply, so it always plans: the unlocked pass skipped it only when the
+    // record was not this source's.
+    let plan = match assessed.plan.take() {
+        Some(plan) => plan,
+        None => plan_against_disk(root, &entries, &assessed.previous, &skills_dir)?,
     };
-    warnings.extend(unusable);
-    let package_lock = crate::lock::load(root)?;
-    let claims = LockIndex::new(&package_lock);
-    let previous = record.provider(&spec.provider).cloned().unwrap_or_default();
-
-    // Step 5: what each name's state on disk calls for.
-    let plan = plan(&entries, &previous, &claims, &skills_dir)?;
     // A plan that writes nothing leaves both the record and the disk as they are, so a lingering
     // shadow or collision does not rewrite `provided.lock` on every launch.
-    if plan.writes_nothing(&entries, &previous, spec) {
-        return Ok(current_report(spec, &previous, &plan, warnings));
+    if plan.writes_nothing(&entries, &assessed.previous, spec) {
+        return Ok(current_report(spec, &assessed.previous, &plan, warnings));
     }
 
-    // Step 6: record every directory this run may write before writing any of them.
-    let mut pre_record = previous.skills.iter().cloned().collect::<BTreeSet<_>>();
-    pre_record.extend(names(
-        &entries,
-        plan.installs.iter().chain(&plan.adopts).copied(),
-    ));
-    record.set_provider(
+    // Step 6: record every directory this run may write before writing any of them. `recorded` is
+    // the old record plus everything about to be written: replaces and keeps are already recorded.
+    let mut pre_record: BTreeSet<String> = assessed.previous.skills.iter().cloned().collect();
+    pre_record.extend(plan.recorded(&entries));
+    assessed.record.set_provider(
         &spec.provider,
         ProviderRecord {
             version: spec.version.clone(),
@@ -91,7 +87,7 @@ pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport
             skills: pre_record.into_iter().collect(),
         },
     );
-    record.save(root)?;
+    assessed.record.save(root)?;
 
     // Step 7: whole-directory installs, then removals of names no package claims.
     for index in plan.installs.iter().chain(&plan.replaces) {
@@ -104,7 +100,7 @@ pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport
 
     // Step 8.
     let skills = plan.recorded(&entries);
-    record.set_provider(
+    assessed.record.set_provider(
         &spec.provider,
         ProviderRecord {
             version: spec.version.clone(),
@@ -112,7 +108,7 @@ pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport
             skills: skills.clone(),
         },
     );
-    record.save(root)?;
+    assessed.record.save(root)?;
 
     Ok(ProvideReport {
         status: Status::Applied,
@@ -129,30 +125,45 @@ pub(crate) fn reconcile(root: &Path, spec: &ProvideSpec) -> Result<ProvideReport
     })
 }
 
-/// The record and the plan a run would apply, read without the lock.
+/// One pass over the record, `mars.lock` and the files on disk: everything a run needs to decide
+/// whether it is up to date, and to apply if it is not.
+struct Assessed {
+    record: ProvidedLock,
+    previous: ProviderRecord,
+    /// `None` when the record is not this source's (absent, or another version or digest): no
+    /// plan over the files on disk can make it current, so the unlocked pass does not pay to hash
+    /// them. The locked pass plans regardless, because it is about to apply.
+    plan: Option<Plan>,
+    /// The writer's warning for a corrupt record this pass starts from empty.
+    warning: Option<String>,
+}
+
+/// Read the record and `mars.lock` and plan what to do with each skill.
 ///
-/// `None` when the record was not written for this source (absent, or another version or digest):
-/// no plan over the files on disk can make it current, so there is nothing worth hashing.
-fn plan_against_installed(
+/// The unlocked pass discards `warning`: a run that writes nothing prints nothing (JSON keeps it
+/// on the applied run that reports it).
+fn assess(
     root: &Path,
     spec: &ProvideSpec,
     entries: &ProvidedEntries,
     skills_dir: &Path,
-) -> Result<Option<(ProviderRecord, Plan)>, MarsError> {
-    let record = match ProvidedLock::load(root)? {
-        Ok(record) => record,
-        Err(unusable) => unusable.for_write()?.0,
+) -> Result<Assessed, MarsError> {
+    let (record, warning) = match ProvidedLock::load(root)? {
+        Ok(record) => (record, None),
+        Err(unusable) => unusable.for_write()?,
     };
-    let Some(previous) = record.provider(&spec.provider).cloned() else {
-        return Ok(None);
+    let previous = record.provider(&spec.provider).cloned().unwrap_or_default();
+    let plan = if matches_source(&previous, spec, entries) {
+        Some(plan_against_disk(root, entries, &previous, skills_dir)?)
+    } else {
+        None
     };
-    if !matches_source(&previous, spec, entries) {
-        return Ok(None);
-    }
-    let package_lock = crate::lock::load(root)?;
-    let claims = LockIndex::new(&package_lock);
-    let plan = plan(entries, &previous, &claims, skills_dir)?;
-    Ok(Some((previous, plan)))
+    Ok(Assessed {
+        record,
+        previous,
+        plan,
+        warning,
+    })
 }
 
 /// The record was written for exactly this source: same version, same digest.
@@ -165,6 +176,18 @@ fn matches_source(
     entries: &ProvidedEntries,
 ) -> bool {
     previous.version == spec.version && previous.digest == entries.digest
+}
+
+/// What each skill's state on disk calls for, against `mars.lock`.
+fn plan_against_disk(
+    root: &Path,
+    entries: &ProvidedEntries,
+    previous: &ProviderRecord,
+    skills_dir: &Path,
+) -> Result<Plan, MarsError> {
+    let package_lock = crate::lock::load(root)?;
+    let claims = LockIndex::new(&package_lock);
+    plan(entries, previous, &claims, skills_dir)
 }
 
 fn current_report(

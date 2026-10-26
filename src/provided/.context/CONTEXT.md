@@ -15,11 +15,13 @@ no-op into `busy` and a fallback read. The unlocked check reads `.mars/provided.
 `FileLock::try_acquire` reports held-ness separately from failure; treating every error as
 contention would silently disable the refresh on a broken lock file.
 
-`up-to-date` means **a re-plan would do nothing**, and both paths decide it from the same
+`up-to-date` means **a re-plan would do nothing**, and both passes decide it from the same
 `reconcile::Plan` over the files on disk, which is the only definition that keeps them from
-drifting. So the fast path checks the source is what the record applied (`version`, `digest`) and
-that every source skill — not only the recorded ones — is either claimed by `mars.lock` or recorded
-and installed with a tree that hashes to its source digest. Hashing is not redundant with existence:
+drifting. Both passes are one call to `reconcile::assess` — record, ownership, disk — made before
+the lock and again under it, so the second sees work another run finished. So the fast path checks
+the source is what the record applied (`version`, `digest`) and that every source skill — not only
+the recorded ones — is either claimed by `mars.lock` or recorded and installed with a tree that
+hashes to its source digest. Hashing is not redundant with existence:
 a sync that replaced a recorded directory with a package's copy and died before publishing
 `mars.lock` leaves foreign bytes under a recorded name, which only a content check can see. And
 checking unrecorded source skills is what lets a skill left out earlier (shadowed by a package, or
@@ -27,7 +29,7 @@ collided with someone else's directory) install once its blocker is gone; the re
 consistency proves nothing about the names it omits. Hashing a host's few small skills costs
 milliseconds, against a host launch measured in hundreds.
 
-A locked run whose plan also writes nothing returns `up-to-date` without either `provided.lock`
+A locked pass whose plan also writes nothing returns `up-to-date` without either `provided.lock`
 write, so a lingering shadow or collision does not rewrite the file on every launch. Shadowed names
 and collisions are state of the disk, not of the run: both are reported on every status while they
 last, and the source's schema warnings are plain-text output only for `applied` (JSON keeps them on

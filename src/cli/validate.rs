@@ -183,32 +183,12 @@ fn category_str(cat: DiagnosticCategory) -> &'static str {
 
 #[cfg(test)]
 fn validation_warning_to_diagnostic(vw: &crate::validate::ValidationWarning) -> Diagnostic {
-    use crate::validate::ValidationWarning;
-    match vw {
-        ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } => {
-            let message = if let Some(s) = suggestion {
-                format!(
-                    "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
-                    agent.name
-                )
-            } else {
-                format!(
-                    "agent `{}` references missing skill `{skill_name}`",
-                    agent.name
-                )
-            };
-            Diagnostic {
-                level: DiagnosticLevel::Warning,
-                code: "missing-skill".into(),
-                message,
-                context: None,
-                category: Some(DiagnosticCategory::Validation),
-            }
-        }
+    Diagnostic {
+        level: DiagnosticLevel::Warning,
+        code: vw.code().into(),
+        message: vw.message(),
+        context: None,
+        category: Some(DiagnosticCategory::Validation),
     }
 }
 

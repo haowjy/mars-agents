@@ -502,6 +502,24 @@ impl FileLock {
         Ok(FileLock { _fd: file })
     }
 
+    /// Acquire the same lock without waiting.
+    ///
+    /// `Ok(None)` means another holder has it. Every other failure is an error:
+    /// a caller that reads a broken lock file as contention cannot tell the two
+    /// apart and silently skips its work forever.
+    pub fn try_acquire(lock_path: &Path) -> Result<Option<Self>, MarsError> {
+        let file = Self::open_lock_file(lock_path)?;
+        match platform::try_lock_exclusive(&file) {
+            Ok(()) => Ok(Some(FileLock { _fd: file })),
+            Err(error) if platform::is_lock_held(&error) => Ok(None),
+            Err(source) => Err(MarsError::Io {
+                operation: "lock".to_string(),
+                path: lock_path.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
     /// Acquire the lock of a lock file that already exists, without creating it.
     ///
     /// A reader that must not add the lock file to the project (a dry run) uses
@@ -558,6 +576,20 @@ mod platform {
             Ok(())
         }
     }
+
+    pub fn try_lock_exclusive(file: &fs::File) -> std::io::Result<()> {
+        // SAFETY: the file descriptor is valid while `file` is alive.
+        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if ret != 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn is_lock_held(error: &std::io::Error) -> bool {
+        error.raw_os_error() == Some(libc::EWOULDBLOCK)
+    }
 }
 
 #[cfg(windows)]
@@ -565,17 +597,31 @@ mod platform {
     use std::fs;
     use std::os::windows::io::AsRawHandle;
 
-    use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::Storage::FileSystem::{LOCKFILE_EXCLUSIVE_LOCK, LockFileEx};
+    use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
+    };
 
     pub fn lock_exclusive(file: &fs::File) -> std::io::Result<()> {
+        lock(file, LOCKFILE_EXCLUSIVE_LOCK)
+    }
+
+    pub fn try_lock_exclusive(file: &fs::File) -> std::io::Result<()> {
+        lock(file, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)
+    }
+
+    pub fn is_lock_held(error: &std::io::Error) -> bool {
+        error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32)
+    }
+
+    /// Lock the whole file at offset 0, the range every Mars lock uses.
+    fn lock(file: &fs::File, flags: u32) -> std::io::Result<()> {
         let handle = file.as_raw_handle() as HANDLE;
         // SAFETY: zero-initialized OVERLAPPED is accepted by LockFileEx for
         // whole-file locks at offset 0.
         let mut overlapped = unsafe { std::mem::zeroed() };
         // SAFETY: handle is valid while `file` is alive and `overlapped` outlives the call.
-        let ret =
-            unsafe { LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK, 0, !0, !0, &mut overlapped) };
+        let ret = unsafe { LockFileEx(handle, flags, 0, !0, !0, &mut overlapped) };
         if ret == 0 {
             Err(std::io::Error::last_os_error())
         } else {

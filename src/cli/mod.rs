@@ -27,6 +27,7 @@ mod models_prompting;
 pub mod outdated;
 pub mod output;
 pub mod override_cmd;
+pub mod provide;
 pub mod remove;
 pub mod rename;
 pub mod repair;
@@ -165,6 +166,9 @@ pub enum Command {
     /// Add a managed target directory (e.g. .claude).
     Link(link::LinkArgs),
 
+    /// Install a host program's own skills into `.mars/skills/`.
+    Provide(provide::ProvideArgs),
+
     /// Remove a managed target directory.
     Unlink(unlink::UnlinkArgs),
 
@@ -243,10 +247,11 @@ pub fn dispatch(cli: Cli) -> i32 {
 
 fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     match &cli.command {
-        // Root-free commands
+        // Root-free commands resolve their own root, because it is theirs to check.
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
         Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
+        Command::Provide(args) => provide::run(args, cli.root.as_deref(), cli.json),
         // All other commands require context
         cmd => {
             let ctx = match find_agents_root(cli.root.as_deref()) {
@@ -328,7 +333,9 @@ fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i3
         Command::Agents(args) => agents::run(args, ctx, json),
         Command::Skills(args) => skills::run(args, ctx, json),
         // Root-free commands handled in dispatch_result — unreachable here
-        Command::Init(_) | Command::Check(_) | Command::Cache(_) => unreachable!(),
+        Command::Init(_) | Command::Check(_) | Command::Cache(_) | Command::Provide(_) => {
+            unreachable!()
+        }
     }
 }
 

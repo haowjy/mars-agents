@@ -12,6 +12,7 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::error::MarsError;
+use crate::validate::{deferred_provider, undeclared_provider_hint};
 
 use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
@@ -362,16 +363,39 @@ fn check_prepared(
         .keys()
         .map(String::as_str)
         .collect::<HashSet<_>>();
+    // Check is the publish gate: it judges a ref by the package alone and ignores
+    // `.mars/provided.lock`, so a package passes or fails the same on every machine.
+    let declared = lens
+        .manifest
+        .as_ref()
+        .and_then(|config| config.package.as_ref())
+        .map(|package| package.uses_providers.as_slice());
+    let undeclared_provider_error = |agent: &str, skill: &str, provider: &str| {
+        format!(
+            "agent `{agent}` references skill `{skill}`, which is not in this package or its dependencies; {}",
+            undeclared_provider_hint(provider)
+        )
+    };
     if has_package_dependencies(lens) {
         match resolve_available_skills(lens, diag) {
             Ok(graph_skills) => {
                 for (agent, refs) in &agent_skill_refs {
                     for skill in refs {
-                        if !available.contains(skill.as_str()) && !graph_skills.contains_key(skill) {
-                            errors.push(format!(
+                        if available.contains(skill.as_str()) || graph_skills.contains_key(skill) {
+                            continue;
+                        }
+                        // A declared provider is valid wherever it supplies the skill.
+                        if deferred_provider(skill, declared).is_some() {
+                            continue;
+                        }
+                        match mars_schema::provider::provider_of(skill) {
+                            Some(provider) if declared.is_some() => {
+                                errors.push(undeclared_provider_error(agent, skill, provider));
+                            }
+                            _ => errors.push(format!(
                                 "agent `{agent}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
                                 format_searched_packages(&graph_skills)
-                            ));
+                            )),
                         }
                     }
                 }
@@ -383,10 +407,20 @@ fn check_prepared(
     } else {
         for (agent, refs) in &agent_skill_refs {
             for skill in refs {
-                if !available.contains(skill.as_str()) {
-                    warnings.push(format!(
+                if available.contains(skill.as_str()) {
+                    continue;
+                }
+                // A declared provider is valid wherever it supplies the skill.
+                if deferred_provider(skill, declared).is_some() {
+                    continue;
+                }
+                match mars_schema::provider::provider_of(skill) {
+                    Some(provider) if declared.is_some() => {
+                        errors.push(undeclared_provider_error(agent, skill, provider));
+                    }
+                    _ => warnings.push(format!(
                         "external dependency: `{skill}` (referenced by: {agent})"
-                    ));
+                    )),
                 }
             }
         }

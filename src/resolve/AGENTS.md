@@ -125,7 +125,7 @@ resolution use the same source provider and prepared-node path as sync.
 
 ## Item Resolution
 
-Resolved item traversal is DFS from seeded agent/skill requests. Source items themselves come from `src/discover/`'s convention walk; this phase parses skill frontmatter deps and resolves those references transitively. Version conflicts between packages produce errors (local items skip conflicts).
+Resolved item traversal is DFS from seeded agent/skill requests. A skill ref `x__p` that no package ships is deferred (`resolve_skill_ref` returns `None`) when the requesting package's `uses-providers` lists `p`, and is `SkillNotFound` otherwise; the resolver never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator reports what is actually provided. Source items themselves come from `src/discover/`'s convention walk; this phase parses skill frontmatter deps and resolves those references transitively. Version conflicts between packages produce errors (local items skip conflicts).
 
 ## Patterns
 

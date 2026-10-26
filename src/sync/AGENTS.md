@@ -17,7 +17,7 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 
 | Phase | Struct | Key Contents |
 |---|---|---|
-| 1 | `LoadedConfig` | Config, LocalConfig, EffectiveConfig, old_lock, sync_lock |
+| 1 | `LoadedConfig` | Config, LocalConfig, EffectiveConfig, old_lock, provided names, sync_lock |
 | 2 | `ResolvedState` | LoadedConfig + ResolvedGraph |
 | 3 | `TargetedState` | ResolvedState + TargetState (canonical items and selected hooks/MCP) + validation warnings |
 | 4 | `PlannedState` | TargetedState + SyncPlan |
@@ -98,7 +98,7 @@ new phase that writes project state must honor `request.options.dry_run`.
 |---|---|
 | `load_config()` | Acquire sync lock, load config, apply mutations, build effective config |
 | `resolve_graph()` | Resolve dependency graph, merge model config from deps |
-| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items; refuse unsafe or wrong-shaped canonical self collisions, while explicit `--force` may replace regular agent files and skill directories; prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
+| `build_target()` | Build renamed dependency destinations; stage and overlay reader-selected self items (`local_items.rs`); refuse unsafe or wrong-shaped canonical self collisions, while explicit `--force` may replace regular agent files and skill directories; prune unmanaged dependency collisions; rewrite references and validate (`src/sync/validate.rs`) |
 | `create_plan()` | Diff against lock + disk, generate sync plan |
 | `apply_plan()` | Write to `.mars/` canonical store (atomic) |
 | `sync_targets()` | Copy to managed target directories (non-fatal per-target) |
@@ -111,6 +111,29 @@ and bootstrap documents keep their binary-owned discovery and materialization.
 A package's own root `bootstrap/` documents are for its consumers and are not
 self items (only `.mars-src`'s are), as in v0.19.0.
 
+### Ownership and provided names
+
+`load_config` reads `.mars/provided.lock` under the sync lock into `LoadedConfig.provided`
+(`provided::ProvidedNames`; sync never writes it). Two things use it, and nothing else in sync does:
+
+- **Ownership** (`ownership.rs`): every decision about an existing canonical destination (a local
+  hook, a local agent or skill, a dependency item in `check_unmanaged_collisions`) asks
+  `LoadedConfig::ownership().owns(dest)`: `mars.lock` claims it, or a provider installed it. The
+  package item then replaces the provided copy instead of colliding, so a package wins its
+  destination on every machine and `mars.lock` is identical with or without a host. Recovery
+  (`recovery.rs`) asks a narrower question (was a journaled write already published?) and reads
+  `mars.lock` alone; it journals only absent destinations, so replacing a provided directory leaves
+  no journal entry. A crash between that replace and the lock write is repaired by `mars provide`
+  (foreign bytes under a recorded name are replaced) and re-taken by the next sync.
+- **Ref reporting** (`validate::validate_skill_refs`): the one reporter of skill refs against what
+  is installed, and the only place that combines a package's declaration with this machine. A ref a
+  package defers to a provider (`validate::deferred_provider`: the name is `<x>__<p>` and the
+  package lists `p`) is satisfied where `ProvidedNames::provides` says the skill is installed, and
+  warns `provided-skill-unavailable` where it is not; a provided name the package does not declare
+  warns `provided-skill-undeclared`; anything else is `missing-skill`. The resolver and `mars check`
+  ask only `deferred_provider`, because they judge a ref by its package alone and must give the same
+  verdict on every machine.
+
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
 visibility, dependency collisions, and local shadowing therefore choose config entries once for
 both installation and config lowering. It separately retains every filtered, exported graph hook, selected or
@@ -119,8 +142,10 @@ can issue the genuine not-installed warning; it carries the selected `TargetItem
 installed check does not re-hash the source. Config lowering must not rediscover items.
 
 Plugin builds and sync both use `prepare_target_state` for graph collection, optional local
-extension, rename application, and validation. MCP discovery warnings enter the diagnostic
-collector where discovery fails rather than riding `TargetState`, so every caller sees them.
+extension and rename application. Skill-ref validation is the caller's: sync passes what this
+machine installed and what its own package declares, a plugin build passes neither. MCP discovery
+warnings enter the diagnostic collector where discovery fails rather than riding `TargetState`, so
+every caller sees them.
 `RenameIndex::visible_renames` exposes the same own-package-first, then
 dependency-declaration-order view per item kind for frontmatter and body references; callers must not
 reconstruct that precedence. Renamed skill and agent frontmatter carries the installed name;

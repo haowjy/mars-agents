@@ -11,9 +11,10 @@ use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::discover;
 use crate::error::MarsError;
 use crate::hash;
-use crate::lock::{CANONICAL_TARGET_ROOT, ItemId, LockFile, LockIndex};
+use crate::lock::ItemId;
 use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
+use crate::sync::ownership::Ownership;
 use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};
 
 /// What the `.mars/` canonical store should look like after sync.
@@ -608,20 +609,19 @@ pub struct UnmanagedCollision {
 
 /// Detect target installs that would overwrite unmanaged on-disk content.
 ///
-/// If a target destination already exists but is not tracked in the lock file,
-/// treat it as user-authored content and report it as a collision so callers can
-/// skip installation while leaving existing files untouched.
-pub fn check_unmanaged_collisions(
+/// If a target destination already exists but Mars does not own it (`mars.lock` claims it or a
+/// provider installed it), treat it as user-authored content and report it as a collision so
+/// callers can skip installation while leaving existing files untouched.
+pub(crate) fn check_unmanaged_collisions(
     install_target: &Path,
-    lock: &LockFile,
+    owns: &Ownership,
     target: &TargetState,
     force: bool,
 ) -> Vec<UnmanagedCollision> {
     let mut collisions = Vec::new();
-    let lock_index = LockIndex::new(lock);
 
     for (dest_key, target_item) in &target.items {
-        if lock_index.contains_installed_output(CANONICAL_TARGET_ROOT, dest_key) {
+        if owns.owns(dest_key) {
             continue;
         }
 
@@ -673,7 +673,7 @@ fn apply_item_rename(
 
 /// Construct the default destination path for an item.
 /// Uses string formatting to guarantee forward slashes on all platforms.
-fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
+pub(crate) fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
     let path_str = match kind {
         ItemKind::Agent => format!("agents/{name}.md"),
         ItemKind::Skill => format!("skills/{name}"),
@@ -801,6 +801,7 @@ mod tests {
     use super::*;
     use crate::config::*;
     use crate::lock::LockFile;
+    use crate::provided::ProvidedNames;
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
     use crate::types::SourceId;
@@ -1520,8 +1521,12 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, "# user-authored").unwrap();
 
-        let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
+        let collisions = check_unmanaged_collisions(
+            install_root.path(),
+            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
+            &target,
+            false,
+        );
         assert_eq!(collisions.len(), 1);
         assert_eq!(collisions[0].source_name.as_ref(), "base");
         assert_eq!(collisions[0].path.as_str(), "agents/coder.md");
@@ -1550,8 +1555,12 @@ mod tests {
         fs::write(&existing, content).unwrap();
 
         // Should skip collision — disk content matches planned install (crash recovery)
-        let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
+        let collisions = check_unmanaged_collisions(
+            install_root.path(),
+            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
+            &target,
+            false,
+        );
         assert!(collisions.is_empty());
     }
 
@@ -1576,8 +1585,12 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, "# different user content").unwrap();
 
-        let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, false);
+        let collisions = check_unmanaged_collisions(
+            install_root.path(),
+            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
+            &target,
+            false,
+        );
         assert_eq!(collisions.len(), 1);
         assert_eq!(collisions[0].source_name.as_ref(), "base");
         assert_eq!(collisions[0].path.as_str(), "agents/coder.md");
@@ -1603,8 +1616,12 @@ mod tests {
         fs::create_dir_all(existing.parent().unwrap()).unwrap();
         fs::write(&existing, "# stale cache content").unwrap();
 
-        let collisions =
-            check_unmanaged_collisions(install_root.path(), &LockFile::empty(), &target, true);
+        let collisions = check_unmanaged_collisions(
+            install_root.path(),
+            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
+            &target,
+            true,
+        );
         assert!(collisions.is_empty());
     }
 }

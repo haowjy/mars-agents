@@ -55,6 +55,10 @@ sync/build → resolve ← source
 - `harness/` runtime harness descriptors and capability snapshot (host); harness ids live in `mars-schema`
 - `build/` launch bundle construction and flattened publish-graph plugin builds
 - `content` layered lookup for primary and fallback canonical agent / skill files
+- `provided/` is the host-installed skill store behind `mars provide`: it writes only `.mars/skills/`
+  and `.mars/provided.lock`, never config, lock or a target; `mars sync` reads the record through
+  `provided::ProvidedNames`, and the resolver, `mars check` and `mars doctor` judge refs without it
+  — see `provided/.context/CONTEXT.md`
 - `platform::fs` is the canonical layer for durable writes, copies, replacements, comparisons, and removals
 
 ## What Changes Together

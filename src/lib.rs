@@ -20,6 +20,7 @@ pub(crate) mod package_prepare;
 pub mod platform;
 pub(crate) mod plugin;
 pub(crate) mod plugin_metadata;
+pub(crate) mod provided;
 pub(crate) mod reader;
 pub mod resolve;
 pub mod routing;

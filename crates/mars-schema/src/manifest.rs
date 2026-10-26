@@ -2,7 +2,7 @@
 //!
 //! The reading's `frontmatter` holds the `[package]` table's pairs, unknown keys included.
 
-use crate::diagnostic::{SchemaDiagnostic, Severity, child_path};
+use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, child_path};
 use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue};
 use crate::package::PackageMetadata;
 
@@ -69,6 +69,24 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
                 child_path("package", key),
                 format!("unknown package field `{key}` is preserved"),
             ));
+        }
+    }
+    if let Some(toml::Value::Array(entries)) = package.get("uses-providers") {
+        for (index, entry) in entries.iter().enumerate() {
+            if let toml::Value::String(name) = entry
+                && !crate::provider::is_provider_name(name)
+            {
+                let mut path = child_path("package", "uses-providers");
+                path.push(PathSegment::Index(index));
+                diagnostics.push(SchemaDiagnostic::new(
+                    "field.value",
+                    Severity::Error,
+                    path,
+                    format!(
+                        "`package.uses-providers` entry `{name}` is not a provider name; a provider name matches [a-z0-9][a-z0-9-]*"
+                    ),
+                ));
+            }
         }
     }
     if !matches!(package.get("schema"), Some(toml::Value::Integer(1))) {

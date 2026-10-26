@@ -1,6 +1,29 @@
 # Lock File
 
-`mars.lock` is the ownership registry for all managed items. It records what Mars installed, where it came from, and what the content looked like. This file is committed to version control.
+`mars.lock` is the ownership registry for the items packages install. It records what Mars installed, where it came from, and what the content looked like. This file is committed to version control.
+
+## Canonical Ownership
+
+A destination under `.mars/` is **Mars-owned** when either record says so:
+
+- **`mars.lock` claims it:** the lock has an `installed` output row with `target_root = ".mars"`
+  and that `dest_path`.
+- **`.mars/provided.lock` lists it:** a host program installed the skill directory with that name
+  with [`mars provide`](../cli/commands.md#mars-provide).
+
+This is the one rule every canonical "may Mars overwrite or delete this?" decision applies —
+dependency collisions, project-local (`_self`) items, and `mars provide`'s own view of the disk.
+`src/sync/ownership.rs` implements it (`sync::ownership::Ownership`); sync's side is described in
+`src/sync/AGENTS.md`. Ownership is about who may act, not about what the bytes are: a directory a
+package replaced and a crash left before the lock write is still Mars-owned. The two records differ
+in reach, not in weight: `mars.lock` is committed, so it claims a destination on every machine,
+while `.mars/provided.lock` is machine-local and lists only the skills this machine's host
+installed. `mars provide` reads the same rule: a source skill the lock claims is left to the package
+and reported `shadowed`.
+
+Narrower predicates exist and do not replace it: sync recovery asks whether a journaled write was
+already published to `mars.lock` and reads `mars.lock` alone; linked targets have their own
+per-target records (below).
 
 ## Format
 

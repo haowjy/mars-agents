@@ -120,26 +120,32 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             .map(|a| (a.name.clone(), a.path.clone()))
             .collect();
 
-        if let Ok(warnings) = crate::validate::check_deps(&agents_for_check, &available_skills) {
-            for w in &warnings {
-                match w {
-                    crate::validate::ValidationWarning::MissingSkill {
-                        agent,
-                        skill_name,
-                        suggestion,
-                    } => {
-                        let msg = match suggestion {
-                            Some(s) => format!(
-                                "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
-                                agent.name
-                            ),
-                            None => format!(
-                                "agent `{}` references missing skill `{skill_name}` — \
-                                 add a source that provides it, or create it locally in skills/{skill_name}/",
-                                agent.name
-                            ),
-                        };
-                        errors.push(msg);
+        if let Ok(missing) = crate::validate::check_deps(&agents_for_check, &available_skills) {
+            for w in &missing {
+                if let crate::validate::ValidationWarning::MissingSkill {
+                    agent,
+                    skill_name,
+                    suggestion,
+                } = w
+                {
+                    let msg = match suggestion {
+                        Some(s) => format!(
+                            "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
+                            agent.name
+                        ),
+                        None => format!(
+                            "agent `{}` references missing skill `{skill_name}` — \
+                             add a source that provides it, or create it locally in skills/{skill_name}/",
+                            agent.name
+                        ),
+                    };
+                    // Doctor has no manifest to judge a declaration against, and no record to say
+                    // whether a host supplies the name: a provider-shaped name is indistinguishable
+                    // from a typo (`nope__meridain`), so it warns with the wording any missing
+                    // skill gets, where a plain name is an error.
+                    match mars_schema::provider::provider_of(skill_name) {
+                        Some(_) => warnings.push(msg),
+                        None => errors.push(msg),
                     }
                 }
             }

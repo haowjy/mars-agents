@@ -117,7 +117,7 @@ The reader covers the `[package]` table of `mars.toml`. The other tables (`[depe
 | `description`, `homepage`, `license` | string | |
 | `authors` | list of strings or `{name, email}` tables | |
 | `requires-mars`, `requires-meridian` | version requirement | Tool-version hints; see [mars.toml](mars-toml.md#package-optional). |
-| `uses-providers` | list of strings | The hosts the package expects to supply skills, such as `["meridian"]`. Mars reads and carries it; the consumer decides what it means. |
+| `uses-providers` | list of provider names | The hosts the package expects to supply skills at sync time, such as `["meridian"]`. Each entry matches `[a-z0-9][a-z0-9-]*` (a `field.value` error otherwise). Mars never fetches or requires a provider; the list only lets the package's agents name that provider's skills. See [mars.toml](mars-toml.md#provided-skills-and-uses-providers). |
 
 Removed: `package.visibility`, with nothing to replace it.
 

@@ -1,0 +1,57 @@
+{
+  "frontmatter": [
+    [
+      "schema",
+      1
+    ],
+    [
+      "name",
+      "pkg"
+    ],
+    [
+      "version",
+      "0.1.0"
+    ],
+    [
+      "uses-providers",
+      [
+        "meridian",
+        "Not_A-Provider",
+        "a__b"
+      ]
+    ]
+  ],
+  "fields": {
+    "name": "pkg",
+    "version": "0.1.0",
+    "schema": 1,
+    "uses-providers": [
+      "meridian",
+      "Not_A-Provider",
+      "a__b"
+    ]
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "package",
+        "uses-providers",
+        1
+      ],
+      "message": "`package.uses-providers` entry `Not_A-Provider` is not a provider name; a provider name matches [a-z0-9][a-z0-9-]*"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "package",
+        "uses-providers",
+        2
+      ],
+      "message": "`package.uses-providers` entry `a__b` is not a provider name; a provider name matches [a-z0-9][a-z0-9-]*"
+    }
+  ]
+}

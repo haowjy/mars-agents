@@ -118,7 +118,31 @@ requires-meridian = ">=0.20.0"                       # optional
 | `license` | string | no | Package license identifier used in generated plugin manifests |
 | `requires-mars` | semver requirement | no | Mars versions that can consume this package |
 | `requires-meridian` | semver requirement | no | Meridian versions that can consume this package; skipped when Mars runs standalone |
-| `uses-providers` | string[] | no | The hosts the package expects to supply skills, such as `["meridian"]`. Mars reads and carries it |
+| `uses-providers` | string[] | no | The hosts the package expects to supply skills at sync time, such as `["meridian"]`; each is a provider name (`[a-z0-9][a-z0-9-]*`). See [Provided skills and `uses-providers`](#provided-skills-and-uses-providers) |
+
+#### Provided skills and `uses-providers`
+
+A host program (Meridian) can install skills of its own with [`mars provide`](../cli/commands.md#mars-provide). They are named `<skill>__<provider>` and live in `.mars/skills/`, recorded in a machine-local `.mars/provided.lock`, outside `mars.toml`, `mars.lock` and the dependency graph. A package whose agents list such a skill under `skills:` declares the provider so the ref is valid on every machine:
+
+```toml
+[package]
+name = "my-agents"
+version = "0.1.0"
+requires-mars = ">=0.20.0"
+uses-providers = ["meridian"]
+```
+
+A dependency's agent that lists `x__meridian`:
+
+| `uses-providers` lists `meridian` | Provider has provided `x__meridian` here | Result |
+|---|---|---|
+| yes | yes | Satisfied, silently |
+| yes | no | Sync continues with a `provided-skill-unavailable` warning; `mars validate --strict` fails |
+| no | either | Resolution fails with `skill not found`, on every machine |
+
+The resolver reads only the requesting package's own list, never what the machine has provided, so a package resolves the same everywhere and a typo such as `x__meridain` stays an error. A package skill named `x__meridian` is always found first, and wins its destination from a provided copy: the next `mars sync` replaces it and the next `mars provide` drops its record. `mars.lock` is the same with or without the provider.
+
+Project-local agents (`.mars-src/`, or a package repository's own items) are checked by sync against what is provided here. A consumer project needs no `[package]` table and no declaration. In a package repository, a ref to a skill that is provided here but whose provider is not listed warns `provided-skill-undeclared`, so the author sees what consumers will hit, and `mars check` (the publish gate, which ignores `.mars/provided.lock`) fails naming `uses-providers`. A package that sets `uses-providers` also sets `requires-mars` to a Mars that understands it; an older Mars fails on the requirement instead of `skill not found`. `mars build plugin` never ships a provided skill and reports `provided-skill-unavailable` for an agent that lists a declared provider's skill.
 
 Bare engine versions such as `"0.11"` mean a minimum (`">=0.11.0"`).
 Full semver ranges are also accepted. During dependency resolution Mars skips

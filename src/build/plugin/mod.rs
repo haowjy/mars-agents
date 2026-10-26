@@ -257,7 +257,11 @@ fn stage_plugin_inner(
     )?;
     let mut prepared_target =
         crate::sync::prepare_target_state(&graph, &effective, diag, |_, _| Ok(()))?;
-    emit_missing_skill_warnings(&prepared_target.warnings, diag);
+    // A plugin build has no project-local items and carries no provided skills, so it passes no
+    // declarations and no installed record: every ref is judged by what the graph ships.
+    let warnings =
+        crate::sync::validate::validate_skill_refs(&prepared_target.target, &graph, None, None);
+    emit_missing_skill_warnings(&warnings, diag);
     materialize_rewritten_skills(&mut prepared_target.target)?;
 
     let aliases = crate::models::merged_model_aliases(
@@ -437,22 +441,41 @@ fn emit_missing_skill_warnings(
     diag: &mut DiagnosticCollector,
 ) {
     for warning in warnings {
-        let crate::validate::ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } = warning;
-        let suffix = suggestion
-            .as_ref()
-            .map(|name| format!(" (did you mean `{name}`?)"))
-            .unwrap_or_default();
-        diag.warn(
-            "unresolved-reference",
-            format!(
-                "agent `{}` references skill `{skill_name}`, which is not shipped{suffix}",
-                agent.name
-            ),
-        );
+        match warning {
+            crate::validate::ValidationWarning::MissingSkill {
+                agent,
+                skill_name,
+                suggestion,
+            } => {
+                let suffix = suggestion
+                    .as_ref()
+                    .map(|name| format!(" (did you mean `{name}`?)"))
+                    .unwrap_or_default();
+                diag.warn(
+                    "unresolved-reference",
+                    format!(
+                        "agent `{}` references skill `{skill_name}`, which is not shipped{suffix}",
+                        agent.name
+                    ),
+                );
+            }
+            crate::validate::ValidationWarning::ProvidedSkillUnavailable {
+                agent,
+                skill_name,
+                provider,
+            } => {
+                // A plugin carries no host-provided skills: the host supplies this one at
+                // launch, wherever the plugin is installed.
+                diag.warn(
+                    warning.code(),
+                    format!(
+                        "agent `{}` references skill `{skill_name}`, which host program `{provider}` supplies at launch; this plugin ships without it",
+                        agent.name
+                    ),
+                );
+            }
+            other => diag.warn(other.code(), other.message()),
+        }
     }
 }
 

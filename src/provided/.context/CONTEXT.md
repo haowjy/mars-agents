@@ -4,8 +4,8 @@
 `.mars/skills/` and record their names in `.mars/provided.lock`. Provided skills are not
 dependencies: they are absent from `mars.toml`, `mars.lock` and the resolve graph, so nothing
 projects them into a managed target and every committed file stays byte-identical with or without
-a host. The readers (sync's ref validator, sync ownership, `mars check`, `mars doctor`) are the
-other half of that story: see "What readers see".
+a host. The readers (sync's ref validator and ownership check) are the other half of that story:
+see "What readers see".
 
 ## The fast path runs before the lock
 
@@ -73,20 +73,29 @@ absent, corrupt or newer-than-this-Mars file reads as "nothing provided" (one
 `provided-lock-unusable` warning for the last two). Only `mars provide`, the writer, refuses a
 newer record. A read error that is not a missing file still fails the sync.
 
-Two facts come out of it, and each has one consumer. `provides(provider, skill)` feeds
-`validate::classify_unresolved_ref`, the one classifier behind sync's `provided-skill-*` /
-`missing-skill` reporting, `mars check` and the resolver's deferral; the resolver and `check` pass
-no provided names, so a dependency ref's validity depends on the requesting package alone and never
-on what a machine has installed. `owns(dest)` feeds `sync::ownership::Ownership`, the one ownership
-predicate: a destination is Mars-owned if `mars.lock` claims it or a provider installed it, so a
-package item (or a `.mars-src/` item) replaces a provided directory instead of colliding, on every
-machine. The next `mars provide` sees the claim in `mars.lock` and drops its record (`shadowed`).
+Two facts come out of it, and each has one consumer. `provides(name)` feeds sync's
+`validate::validate_skill_refs`, the one reporter of refs against what is installed: a ref a
+package defers to a provider (`uses-providers`, via `validate::deferred_provider`) is satisfied
+where `provides` says so and warns `provided-skill-unavailable` where it does not. The resolver
+and `mars check` ask only the package's half (`deferred_provider`), so a dependency ref's validity
+depends on the requesting package alone and never on what a machine has installed. `owns(dest)`
+feeds `sync::ownership::Ownership`, the one ownership predicate: a destination is Mars-owned if
+`mars.lock` claims it or a provider installed it, so a package item (or a `.mars-src/` item)
+replaces a provided directory instead of colliding, on every machine. The next `mars provide` sees
+the claim in `mars.lock` and drops its record (`shadowed`).
 
 Availability is the disk's and ownership is the record's. `provides` answers true only while
 `.mars/skills/<name>` is a directory, decided once in `ProvidedNames::load`, because a recorded name
 with no directory is a leftover and a ref it "satisfies" is a ref an agent cannot load. `owns` takes
 the full record instead: owning an absent path is harmless, and a crash between a package's replace
 and the `mars.lock` write must still find the directory counted as Mars's.
+
+The reader holds the record as two sets of names, not a provider map: the loader already rejects a
+name filed under a provider that is not its own (`<skill>__<provider>`), so a reader that has the
+name has every fact the key could add. That is why `provides` takes a name and not a provider — the
+second half of the check ("is it in that provider's list?") could never be false, and doctor no
+longer reads the record at all: it has no manifest to judge a declaration against, so a
+provider-shaped missing name gets the wording any missing skill gets.
 
 A sync that replaces a provided directory journals nothing (`sync/recovery.rs` journals only absent
 destinations), so a crash between the replace and the `mars.lock` write leaves the package's bytes

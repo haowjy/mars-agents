@@ -11,17 +11,17 @@ use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::types::{SourceName, SourceOrigin};
-use crate::validate::{RefClass, ValidationWarning, classify_unresolved_ref};
+use crate::validate::{ValidationWarning, deferred_provider};
 use mars_schema::item::ItemKind;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
 /// reference skills that exist in the target state.
 ///
-/// The one reporter of refs against what is installed: the resolver never reports a ref it
-/// defers to a declared provider, and `provided` (`None` where provided skills must not count,
-/// as in plugin builds) is judged only here, by [`classify_unresolved_ref`].
-/// `local_declared` is the `[package] uses-providers` of the project's own items, `None` for a
-/// consumer project without a `[package]` table.
+/// The one reporter of refs against what is installed, and the only place that combines a
+/// package's declaration with this machine: the resolver never reports a ref it defers to a
+/// declared provider, and `provided` (`None` where provided skills must not count, as in plugin
+/// builds) is read only here. `local_declared` is the `[package] uses-providers` of the project's
+/// own items, `None` for a consumer project without a `[package]` table.
 pub(crate) fn validate_skill_refs(
     target: &TargetState,
     graph: &ResolvedGraph,
@@ -67,30 +67,40 @@ pub(crate) fn validate_skill_refs(
                 continue;
             }
             let agent = item.id.clone();
-            warnings.push(
-                match classify_unresolved_ref(&skill_name, declared, provided) {
-                    RefClass::Satisfied => continue,
-                    RefClass::Unavailable { provider } => {
-                        ValidationWarning::ProvidedSkillUnavailable {
-                            agent,
-                            provider: provider.to_string(),
-                            skill_name,
-                        }
+            let provided_here = provided.is_some_and(|names| names.provides(&skill_name));
+            let warning = match mars_schema::provider::provider_of(&skill_name) {
+                // The package declares the provider: the ref is valid wherever it supplies the
+                // skill, and says so where it does not.
+                Some(provider) if deferred_provider(&skill_name, declared) == Some(provider) => {
+                    if provided_here {
+                        continue;
                     }
-                    RefClass::Undeclared { provider } => {
-                        ValidationWarning::ProvidedSkillUndeclared {
-                            agent,
-                            provider: provider.to_string(),
-                            skill_name,
-                        }
-                    }
-                    RefClass::Missing { .. } => ValidationWarning::MissingSkill {
+                    ValidationWarning::ProvidedSkillUnavailable {
                         agent,
-                        suggestion: find_suggestion(&skill_name, &available_skills),
+                        provider: provider.to_string(),
                         skill_name,
-                    },
+                    }
+                }
+                // Provided here. A consumer project's own items have no `[package]` table, so
+                // nothing needs declaring and the ref is satisfied; a package that does not
+                // declare the provider would not resolve it for consumers.
+                Some(provider) if provided_here => {
+                    if declared.is_none() {
+                        continue;
+                    }
+                    ValidationWarning::ProvidedSkillUndeclared {
+                        agent,
+                        provider: provider.to_string(),
+                        skill_name,
+                    }
+                }
+                _ => ValidationWarning::MissingSkill {
+                    agent,
+                    suggestion: find_suggestion(&skill_name, &available_skills),
+                    skill_name,
                 },
-            );
+            };
+            warnings.push(warning);
         }
     }
 

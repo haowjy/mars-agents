@@ -12,7 +12,7 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::error::MarsError;
-use crate::validate::{RefClass, classify_unresolved_ref, undeclared_provider_hint};
+use crate::validate::{deferred_provider, undeclared_provider_hint};
 use mars_schema::dialect::Dialect;
 
 use super::output;
@@ -386,11 +386,12 @@ fn check_prepared(
                         if available.contains(skill.as_str()) || graph_skills.contains_key(skill) {
                             continue;
                         }
-                        match classify_unresolved_ref(skill, declared, None) {
-                            RefClass::Unavailable { .. } => {}
-                            RefClass::Missing {
-                                provider: Some(provider),
-                            } if declared.is_some() => {
+                        // A declared provider is valid wherever it supplies the skill.
+                        if deferred_provider(skill, declared).is_some() {
+                            continue;
+                        }
+                        match mars_schema::provider::provider_of(skill) {
+                            Some(provider) if declared.is_some() => {
                                 errors.push(undeclared_provider_error(agent, skill, provider));
                             }
                             _ => errors.push(format!(
@@ -411,11 +412,12 @@ fn check_prepared(
                 if available.contains(skill.as_str()) {
                     continue;
                 }
-                match classify_unresolved_ref(skill, declared, None) {
-                    RefClass::Unavailable { .. } => {}
-                    RefClass::Missing {
-                        provider: Some(provider),
-                    } if declared.is_some() => {
+                // A declared provider is valid wherever it supplies the skill.
+                if deferred_provider(skill, declared).is_some() {
+                    continue;
+                }
+                match mars_schema::provider::provider_of(skill) {
+                    Some(provider) if declared.is_some() => {
                         errors.push(undeclared_provider_error(agent, skill, provider));
                     }
                     _ => warnings.push(format!(

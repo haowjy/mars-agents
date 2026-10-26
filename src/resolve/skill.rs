@@ -200,14 +200,13 @@ pub(crate) fn resolve_skill_ref(
                 .map_or(&[][..], |manifest| {
                     manifest.package.uses_providers.as_slice()
                 });
-            let hint = match validate::classify_unresolved_ref(skill.as_str(), Some(declared), None)
-            {
-                validate::RefClass::Unavailable { .. } => return Ok(None),
-                validate::RefClass::Missing {
-                    provider: Some(provider),
-                } => Some(validate::undeclared_provider_hint(provider)),
-                _ => None,
-            };
+            // A declared provider resolves wherever it supplies the skill; the resolver only
+            // needs the package's answer, never what this machine installed.
+            if validate::deferred_provider(skill.as_str(), Some(declared)).is_some() {
+                return Ok(None);
+            }
+            let hint = mars_schema::provider::provider_of(skill.as_str())
+                .map(validate::undeclared_provider_hint);
             return Err(ResolutionError::SkillNotFound {
                 skill: missing_skill,
                 required_by,

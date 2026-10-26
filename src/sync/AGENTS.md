@@ -110,10 +110,13 @@ and bootstrap documents keep their binary-owned discovery and materialization.
   no journal entry. A crash between that replace and the lock write is repaired by `mars provide`
   (foreign bytes under a recorded name are replaced) and re-taken by the next sync.
 - **Ref reporting** (`validate::validate_skill_refs`): the one reporter of skill refs against what
-  is installed. The resolver never reads provided names and reports nothing for a ref it defers to
-  a declared provider; `validate::classify_unresolved_ref` decides `provided-skill-unavailable`,
-  `provided-skill-undeclared` or `missing-skill`. `mars check` calls the same classifier without
-  provided names, because it is the publish gate.
+  is installed, and the only place that combines a package's declaration with this machine. A ref a
+  package defers to a provider (`validate::deferred_provider`: the name is `<x>__<p>` and the
+  package lists `p`) is satisfied where `ProvidedNames::provides` says the skill is installed, and
+  warns `provided-skill-unavailable` where it is not; a provided name the package does not declare
+  warns `provided-skill-undeclared`; anything else is `missing-skill`. The resolver and `mars check`
+  ask only `deferred_provider`, because they judge a ref by its package alone and must give the same
+  verdict on every machine.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
 visibility, dependency collisions, and local shadowing therefore choose config entries once for

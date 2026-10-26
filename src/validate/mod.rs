@@ -82,49 +82,22 @@ impl ValidationWarning {
     }
 }
 
-/// How a skill ref that no skill in the target state satisfies stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RefClass<'a> {
-    /// A provider that the requester may rely on has provided it here: nothing to report.
-    Satisfied,
-    /// The requester's package declares the provider; the provider has not provided it here.
-    Unavailable { provider: &'a str },
-    /// A provider has provided it here, but the requester's package does not declare it.
-    Undeclared { provider: &'a str },
-    /// Nothing supplies it. `provider` is the one the name is spelled for (`x__p`).
-    Missing { provider: Option<&'a str> },
-}
-
-/// Classify a ref to a skill that is not in the target state.
+/// The provider a ref is deferred to, when the requesting package declares it.
+///
+/// The package-only half of a ref's validity: `<x>__<p>` is valid wherever `p` supplies it when
+/// the package lists `p` in `[package] uses-providers`. The resolver and `mars check` ask only
+/// this question, so a package resolves the same on every machine; sync's validator is the one
+/// reporter that also knows what this machine installed.
 ///
 /// `declared` is the requesting package's `uses-providers`: `Some` for a package (a dependency,
-/// or a package repository's own items), `None` for a consumer project's local items, which
-/// need no declaration. `provided` is what this machine's providers installed, or `None` where
-/// that must not matter: the resolver and `mars check` judge a ref by its package alone, so a
-/// package behaves the same on every machine.
-pub(crate) fn classify_unresolved_ref<'a>(
-    name: &'a str,
-    declared: Option<&[String]>,
-    provided: Option<&crate::provided::ProvidedNames>,
-) -> RefClass<'a> {
-    let Some(provider) = mars_schema::provider::provider_of(name) else {
-        return RefClass::Missing { provider: None };
-    };
-    let is_provided = provided.is_some_and(|names| names.provides(provider, name));
-    match declared {
-        Some(list) if list.iter().any(|declared| declared == provider) => {
-            if is_provided {
-                RefClass::Satisfied
-            } else {
-                RefClass::Unavailable { provider }
-            }
-        }
-        Some(_) if is_provided => RefClass::Undeclared { provider },
-        None if is_provided => RefClass::Satisfied,
-        Some(_) | None => RefClass::Missing {
-            provider: Some(provider),
-        },
-    }
+/// or a package repository's own items), `None` for a consumer project's local items, which need
+/// no declaration.
+pub(crate) fn deferred_provider<'a>(name: &'a str, declared: Option<&[String]>) -> Option<&'a str> {
+    let provider = mars_schema::provider::provider_of(name)?;
+    declared?
+        .iter()
+        .any(|declared| declared == provider)
+        .then_some(provider)
 }
 
 /// The hint for a `<skill>__<provider>` ref that no package ships and no package declares.

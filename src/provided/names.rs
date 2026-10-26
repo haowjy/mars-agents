@@ -6,6 +6,10 @@
 //! for the last two), because a plain run without the host must neither delete provided skills
 //! nor fail on them. (`mars provide` itself refuses a newer record; it is the writer.)
 //!
+//! The record is flattened here on purpose: the loader rejects any name filed under a provider
+//! that is not its own (`<skill>__<provider>`), so a reader that has the name has every fact the
+//! provider key could add. Read it as two sets.
+//!
 //! Availability is the disk's, ownership is the record's. A recorded name counts only while
 //! `.mars/skills/<name>` is a directory — the record is a superset of the disk by design, so a
 //! name it lists with no directory is a leftover, not something an agent can use. Ownership
@@ -22,8 +26,9 @@ use crate::types::DestPath;
 
 #[derive(Debug, Default)]
 pub(crate) struct ProvidedNames {
-    /// The full record: ownership is the record's, deliberately a superset of the disk.
-    lock: ProvidedLock,
+    /// Every name the record lists, across providers: ownership is the record's, deliberately a
+    /// superset of the disk.
+    recorded: HashSet<String>,
     /// Recorded names whose `.mars/skills/<name>` is a directory: what an agent can use here.
     installed: HashSet<String>,
 }
@@ -33,15 +38,18 @@ impl ProvidedNames {
         let loaded = ProvidedLock::load(root)?;
         let Some(unusable) = loaded.unusable else {
             let skills_dir = root.join(".mars").join("skills");
-            let installed = loaded
+            let recorded: HashSet<String> = loaded
                 .record
                 .providers()
-                .flat_map(|(_, record)| record.skills.iter())
+                .flat_map(|(_, provider)| provider.skills.iter().cloned())
+                .collect();
+            let installed = recorded
+                .iter()
                 .filter(|name| skills_dir.join(name).is_dir())
                 .cloned()
                 .collect();
             return Ok(Self {
-                lock: loaded.record,
+                recorded,
                 installed,
             });
         };
@@ -49,30 +57,16 @@ impl ProvidedNames {
         Ok(Self::default())
     }
 
-    /// Whether `provider` installed `skill` here: the record lists it and its directory is on
-    /// disk. A recorded name whose directory is gone — a package replaced it and was removed, or
-    /// a crash interrupted the apply — does not satisfy a ref.
-    pub(crate) fn provides(&self, provider: &str, skill: &str) -> bool {
-        self.installed.contains(skill)
-            && self
-                .lock
-                .provider(provider)
-                .is_some_and(|record| record.skills.iter().any(|name| name == skill))
-    }
-
-    /// Whether this machine records `provider` at all. `mars doctor` uses it to tell a name a
-    /// host may supply from one that merely looks like a provider's.
-    pub(crate) fn records_provider(&self, provider: &str) -> bool {
-        self.lock.provider(provider).is_some()
+    /// Whether a provider installed `name` here. A recorded name whose directory is gone — a
+    /// package replaced it and was removed, or a crash interrupted the apply — is not available.
+    pub(crate) fn provides(&self, name: &str) -> bool {
+        self.installed.contains(name)
     }
 
     /// Whether a provider installed the skill directory at `dest` (`skills/<name>`).
     pub(crate) fn owns(&self, dest: &DestPath) -> bool {
-        let Some(name) = dest.as_str().strip_prefix("skills/") else {
-            return false;
-        };
-        self.lock
-            .providers()
-            .any(|(_, record)| record.skills.iter().any(|skill| skill == name))
+        dest.as_str()
+            .strip_prefix("skills/")
+            .is_some_and(|name| self.recorded.contains(name))
     }
 }

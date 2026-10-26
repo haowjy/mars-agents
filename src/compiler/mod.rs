@@ -149,7 +149,7 @@ fn compile_inner(
                 &models_cache,
                 routing_settings,
             )
-            .with_settings_policies(effective_settings.model_policies.clone())
+            .with_settings(effective_settings.clone())
         });
     let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
 

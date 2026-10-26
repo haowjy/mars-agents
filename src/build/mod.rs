@@ -21,6 +21,7 @@ use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
 use mars_schema::agent::AgentProfile;
 use mars_schema::frontmatter::SkillsSpec;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
 
 pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 
@@ -34,6 +35,9 @@ pub struct LaunchBundleRequest {
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
+    pub network: Option<NetworkPolicy>,
+    pub network_allow: Vec<NetworkHost>,
+    pub network_deny: Vec<NetworkHost>,
     pub extra_skills: Vec<String>,
     pub models_refresh: crate::models::ModelsRefreshControl,
 }
@@ -120,6 +124,9 @@ pub fn build_launch_bundle(
             effort_override: request.effort.as_deref(),
             approval_override: request.approval.as_deref(),
             sandbox_override: request.sandbox.as_deref(),
+            network_override: request.network.as_ref(),
+            network_allow: &request.network_allow,
+            network_deny: &request.network_deny,
             models_refresh: request.models_refresh,
         },
     )?;

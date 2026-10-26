@@ -260,6 +260,9 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
+            network_override: None,
+            network_allow: &[],
+            network_deny: &[],
             models_refresh: crate::models::ModelsRefreshControl::background(),
         }
     }

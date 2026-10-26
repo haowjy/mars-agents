@@ -203,7 +203,7 @@ pub(super) struct TreeInput<'a> {
     pub metadata: &'a PackageMetadata,
     pub root_source: &'a SourceName,
     pub agent_overlays: &'a IndexMap<String, crate::config::AgentOverlay>,
-    pub settings_policies: &'a [mars_schema::model_policy::ModelPolicyRule],
+    pub settings: &'a crate::config::Settings,
     pub aliases: &'a IndexMap<String, crate::models::ModelAlias>,
     pub graph: &'a ResolvedGraph,
     pub target: &'a TargetState,
@@ -502,12 +502,8 @@ fn write_agent(
             .unwrap_or(token),
         alias,
     });
-    effective = crate::build::policy::profile_for_model(
-        &effective,
-        overlay,
-        input.settings_policies,
-        model_ref,
-    );
+    effective =
+        crate::build::policy::profile_for_model(&effective, overlay, input.settings, model_ref);
     let lowered =
         lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
     let plugin_lossy_fields;

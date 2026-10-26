@@ -14,8 +14,9 @@ use crate::types::{
 };
 use mars_schema::dialect::Dialect;
 use mars_schema::model_policy::ModelPolicyRule;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
 pub use mars_schema::package::PackageMetadata as PackageInfo;
-use mars_schema::permission_set::PermissionSet;
+use mars_schema::permission_set::{PermissionSet, merge_permission_set};
 use mars_schema::tool_names::OverlayToolName;
 
 pub mod layering;
@@ -23,6 +24,7 @@ pub mod migrations;
 pub mod routing_settings;
 mod save;
 pub mod targets;
+mod user;
 
 pub use layering::{
     merged_settings, overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays,
@@ -263,6 +265,22 @@ pub struct AgentOverlay {
     pub approval: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkPolicy>,
+    #[serde(
+        default,
+        rename = "network-allow",
+        alias = "network_allow",
+        skip_serializing_if = "PermissionSet::is_noop"
+    )]
+    pub network_allow: PermissionSet<NetworkHost>,
+    #[serde(
+        default,
+        rename = "network-deny",
+        alias = "network_deny",
+        skip_serializing_if = "PermissionSet::is_noop"
+    )]
+    pub network_deny: PermissionSet<NetworkHost>,
     #[serde(
         default,
         alias = "model-invocable",
@@ -353,6 +371,26 @@ pub struct LocalSettings {
     pub default_harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    #[serde(
+        default,
+        alias = "default-network",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub default_network: Option<NetworkPolicy>,
+    #[serde(
+        default,
+        rename = "network-allow",
+        alias = "network_allow",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub network_allow: Option<PermissionSet<NetworkHost>>,
+    #[serde(
+        default,
+        rename = "network-deny",
+        alias = "network_deny",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub network_deny: Option<PermissionSet<NetworkHost>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_order: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -406,6 +444,27 @@ pub struct Settings {
     /// Project-wide default model token when no CLI override or profile model is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// Project-wide network mode when no higher policy layer sets one.
+    #[serde(
+        default,
+        alias = "default-network",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub default_network: Option<NetworkPolicy>,
+    #[serde(
+        default,
+        rename = "network-allow",
+        alias = "network_allow",
+        skip_serializing_if = "PermissionSet::is_noop"
+    )]
+    pub network_allow: PermissionSet<NetworkHost>,
+    #[serde(
+        default,
+        rename = "network-deny",
+        alias = "network_deny",
+        skip_serializing_if = "PermissionSet::is_noop"
+    )]
+    pub network_deny: PermissionSet<NetworkHost>,
     /// Ordered harness preference for launch-bundle candidate selection.
     ///
     /// When set, replaces built-in provider preference ordering for candidate
@@ -504,6 +563,9 @@ impl Default for Settings {
             min_mars_version: None,
             default_harness: None,
             default_model: None,
+            default_network: None,
+            network_allow: PermissionSet::default(),
+            network_deny: PermissionSet::default(),
             harness_order: None,
             provider_order: None,
             catalog_providers: None,
@@ -914,17 +976,37 @@ struct ProjectConfigWarning {
     message: String,
 }
 
-/// `[settings]` keys Mars once read and now ignores, in `mars.toml` and `mars.local.toml` alike.
-const STALE_SETTINGS_KEYS: &[&str] = &["default_network", "network-allow", "network-deny"];
-
 /// Overlay keys Mars once read and now ignores.
-const STALE_AGENT_OVERLAY_KEYS: &[&str] = &[
-    "network",
-    "network-allow",
-    "network-deny",
-    "autocompact",
-    "autocompact_pct",
-];
+const STALE_AGENT_OVERLAY_KEYS: &[&str] = &["autocompact", "autocompact_pct"];
+
+const NETWORK_SETTINGS_KEYS: &str = "default_network (or default-network), network-allow (or network_allow), network-deny (or network_deny)";
+const NETWORK_OVERLAY_KEYS: &str =
+    "network, network-allow (or network_allow), network-deny (or network_deny)";
+
+/// A key that looks like network policy and is none Mars reads. It is ignored, so a mistyped
+/// `network-deny` would lose its deny without a word; the warning keeps the loss visible.
+fn looks_like_network_key(key: &str) -> bool {
+    key.starts_with("network")
+        || key.starts_with("default_network")
+        || key.starts_with("default-network")
+}
+
+fn network_key_warnings(
+    surface: &str,
+    unknown: &BTreeMap<String, toml::Value>,
+    accepted: &str,
+) -> Vec<ProjectConfigWarning> {
+    unknown
+        .keys()
+        .filter(|key| looks_like_network_key(key))
+        .map(|key| ProjectConfigWarning {
+            code: "unknown-network-key",
+            message: format!(
+                "{surface}: unknown network key `{key}` is ignored; accepted keys: {accepted}"
+            ),
+        })
+        .collect()
+}
 
 fn stale_overlay_warnings(
     file: &str,
@@ -1015,23 +1097,25 @@ fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectC
             &local.settings.unknown,
         ),
     ] {
+        warnings.extend(network_key_warnings(
+            &format!("{file} [settings]"),
+            settings,
+            NETWORK_SETTINGS_KEYS,
+        ));
         warnings.extend(stale_overlay_warnings(file, agents));
+        for (name, overlay) in agents {
+            warnings.extend(network_key_warnings(
+                &format!("{file} [agents.{name}]"),
+                &overlay.unknown,
+                NETWORK_OVERLAY_KEYS,
+            ));
+        }
         for (name, overlay) in skills {
             if overlay.unknown.contains_key("tools") {
                 warnings.push(ProjectConfigWarning {
                     code: "stale-config-key",
                     message: format!(
                         "{file} [skills.{name}.tools] is no longer read and is ignored; delete it"
-                    ),
-                });
-            }
-        }
-        for key in STALE_SETTINGS_KEYS {
-            if settings.contains_key(*key) {
-                warnings.push(ProjectConfigWarning {
-                    code: "stale-config-key",
-                    message: format!(
-                        "{file} [settings] `{key}` is no longer read and is ignored; delete it"
                     ),
                 });
             }
@@ -1114,13 +1198,34 @@ fn tool_overlay_warnings(
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
-    let effective = load_project_config_layers(root)?.effective;
+    let mut effective = load_project_config_layers(root)?.effective;
+    apply_user_network_settings(&mut effective)?;
     Ok(effective)
 }
 
 pub fn load_user_effective_project_config() -> Result<EffectiveProjectConfig, MarsError> {
-    let effective = EffectiveProjectConfig::default();
+    let mut effective = EffectiveProjectConfig::default();
+    apply_user_network_settings(&mut effective)?;
     Ok(effective)
+}
+
+/// Folds the user config's network defaults under the project's: the user mode applies only
+/// when the project sets none, and host lists merge user-first so project deny entries stay.
+fn apply_user_network_settings(effective: &mut EffectiveProjectConfig) -> Result<(), MarsError> {
+    let Some(user) = user::load()? else {
+        return Ok(());
+    };
+    effective.warnings.extend(user.warnings);
+    if effective.settings.default_network.is_none() {
+        effective.settings.default_network = user.default_network;
+    }
+    let mut allow = user.network_allow.entries().to_vec();
+    merge_permission_set(&mut allow, &effective.settings.network_allow);
+    effective.settings.network_allow = PermissionSet::Add(allow);
+    let mut deny = user.network_deny.entries().to_vec();
+    merge_permission_set(&mut deny, &effective.settings.network_deny);
+    effective.settings.network_deny = PermissionSet::Add(deny);
+    Ok(())
 }
 
 pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {

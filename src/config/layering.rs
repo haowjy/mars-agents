@@ -55,6 +55,8 @@ pub fn overlay_skill_overlays(
 
 fn compose_agent_overlay(lower: &AgentOverlay, higher: &AgentOverlay) -> AgentOverlay {
     let mut merged = higher.clone();
+    merged.network_allow = compose_permission_sets(&lower.network_allow, &higher.network_allow);
+    merged.network_deny = compose_permission_sets(&lower.network_deny, &higher.network_deny);
     merged.tools = compose_tool_permission_sets(&lower.tools, &higher.tools);
     merged
 }
@@ -100,6 +102,9 @@ impl LocalSettings {
             && self.min_mars_version.is_none()
             && self.default_harness.is_none()
             && self.default_model.is_none()
+            && self.default_network.is_none()
+            && self.network_allow.is_none()
+            && self.network_deny.is_none()
             && self.harness_order.is_none()
             && self.provider_order.is_none()
             && self.catalog_providers.is_none()
@@ -145,6 +150,15 @@ impl LocalSettings {
         }
         if let Some(value) = &self.default_model {
             merged.default_model = Some(value.clone());
+        }
+        if let Some(value) = &self.default_network {
+            merged.default_network = Some(value.clone());
+        }
+        if let Some(value) = &self.network_allow {
+            merged.network_allow = compose_permission_sets(&merged.network_allow, value);
+        }
+        if let Some(value) = &self.network_deny {
+            merged.network_deny = compose_permission_sets(&merged.network_deny, value);
         }
         if let Some(value) = &self.harness_order {
             merged.harness_order = Some(value.clone());

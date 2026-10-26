@@ -136,8 +136,9 @@ pub(crate) struct NativeModelRoutingRuntime<'a> {
     cache: &'a ModelsCache,
     catalog_model_slugs: Vec<String>,
     routing_settings: ResolvedRoutingSettings,
-    /// `[[settings.model-policies]]`: the lowest policy layer, known at sync.
-    settings_policies: Vec<mars_schema::model_policy::ModelPolicyRule>,
+    /// `[[settings.model-policies]]` and the network defaults: the lowest policy layer, known at
+    /// sync.
+    settings: crate::config::Settings,
     session: CapabilitySession,
     installed_for_native_targets: HashSet<String>,
     memo: HashMap<(String, String, Option<String>), Option<String>>,
@@ -156,12 +157,10 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         Self::with_session(aliases, cache, routing_settings, session)
     }
 
-    /// Settings model policies join the native precedence chain, as in the bundle.
-    pub(crate) fn with_settings_policies(
-        mut self,
-        policies: Vec<mars_schema::model_policy::ModelPolicyRule>,
-    ) -> Self {
-        self.settings_policies = policies;
+    /// Settings model policies and network defaults join the native precedence chain, as in the
+    /// bundle.
+    pub(crate) fn with_settings(mut self, settings: crate::config::Settings) -> Self {
+        self.settings = settings;
         self
     }
 
@@ -183,7 +182,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             cache,
             catalog_model_slugs: crate::models::catalog_model_slugs(cache),
             routing_settings,
-            settings_policies: Vec::new(),
+            settings: crate::config::Settings::default(),
             session,
             installed_for_native_targets,
             memo: HashMap::new(),
@@ -286,7 +285,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         crate::build::policy::profile_for_model(
             profile,
             overlay,
-            &self.settings_policies,
+            &self.settings,
             resolved
                 .as_ref()
                 .map(|(token, resolved)| crate::build::policy::ModelRef {
@@ -1217,7 +1216,7 @@ pub(crate) fn materialize_native_agents_after_link(
     let routing_settings = ResolvedRoutingSettings::from_settings(&input.effective.settings);
     let mut model_router = (!matches!(policy, AgentSurfacePolicy::SuppressAll)).then(|| {
         NativeModelRoutingRuntime::collect(&model_aliases, &models_cache, routing_settings)
-            .with_settings_policies(input.effective.settings.model_policies.clone())
+            .with_settings(input.effective.settings.clone())
     });
     // Per-agent overlays merged from mars.toml + mars.local.toml (link path lacks the
     // project-level effective.agents map the sync path carries).

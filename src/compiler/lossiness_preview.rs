@@ -83,7 +83,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
     let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
         .then(|| {
             NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
-                .with_settings_policies(settings.model_policies.clone())
+                .with_settings(settings.clone())
         });
 
     for definition in &prepared.definitions {

@@ -47,29 +47,33 @@ impl RemovalPlan {
         for (target_root, records) in previous {
             for (key, record) in records {
                 let surface = Surface::of_key(key);
-                per_pair
+                let removal = per_pair
                     .entry((target_root.clone(), surface))
                     .or_insert_with(|| SurfaceRemoval {
                         keys_to_remove: Vec::new(),
                         prior_records: BTreeMap::new(),
-                    })
-                    .prior_records
-                    .insert(key.clone(), record.clone());
-                if desired
+                    });
+                removal.prior_records.insert(key.clone(), record.clone());
+                match desired
                     .get(target_root)
-                    .is_none_or(|entries| !entries.contains_key(key))
+                    .and_then(|entries| entries.get(key))
                 {
-                    stale_keys
-                        .entry(target_root.clone())
-                        .or_default()
-                        .push(key.clone());
-                    if surface == Surface::Mcp {
-                        per_pair
-                            .get_mut(&(target_root.clone(), surface))
-                            .expect("pair was inserted above")
-                            .keys_to_remove
+                    None => {
+                        stale_keys
+                            .entry(target_root.clone())
+                            .or_default()
                             .push(key.clone());
+                        if surface == Surface::Mcp {
+                            removal.keys_to_remove.push(key.clone());
+                        }
                     }
+                    // A changed MCP record may mean the entry moves (OpenCode's
+                    // native section). Remove the old one from where the old
+                    // record says it lives; the write then places the new one.
+                    Some(new) if surface == Surface::Mcp && new != record => {
+                        removal.keys_to_remove.push(key.clone());
+                    }
+                    Some(_) => {}
                 }
             }
         }

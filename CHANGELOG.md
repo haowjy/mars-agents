@@ -76,6 +76,18 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - `approval: yolo` in an Agent file is one error, not two.
 - `mars doctor` hashes a bootstrap document as its directory, so it no longer fails with `Not a directory` (v0.19.0 did too).
 - `mars check --root PATH` validates `PATH`; `--root` was ignored.
+- `mars sync --diff` and `mars version`'s validation pass no longer create `.mars/` state: a dry
+  run stages in a temporary directory and never creates a sync lock (it takes an existing one so a
+  concurrent real sync cannot show it a torn snapshot), so a package repo that does not gitignore
+  `.mars/` stays clean for the next release.
+- OpenCode sync now registers MCP servers under native `mcp` entries with `{env:VAR}`
+  environment references and records each written entry in `mars.lock`. Legacy `mcpServers`
+  entries Mars owns migrate on the next sync, and stale cleanup removes only the section the lock
+  names, so same-named user entries survive. A non-object `mcp` value fails sync before any write.
+- A failed MCP config write keeps the lock records of unchanged entries, which are still on disk,
+  so a later sync can still remove them. It used to drop every record for that target.
+- OpenCode sync now warns when a hook fragment lacks the required default `{ id, setup }` export,
+  matching plugin builds while still installing the fragment.
 - Plugin-only package metadata no longer blocks `mars version` for packages without `[plugin]`,
   and malformed non-table `plugin` values survive config loading and saving so non-plugin commands
   can continue while `mars check` and plugin builds report the invalid value.

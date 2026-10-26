@@ -78,6 +78,20 @@ This protects new canonical writes, not native/config emission (#149).
 Preexisting outputs selected for explicit force adoption are intentionally not journaled: a later
 apply failure leaves the lock unpublished, and the next sync must use `--force` again.
 
+### Dry Runs
+
+A dry run (`mars sync --diff`, `mars validate`/`export`, `mars version`'s
+validation pass) leaves the project's files as it found them: its pending
+generation is a temporary directory (`PendingStagingGeneration::scratch`), and
+it never creates or reclaims `.mars/.staging.pending`, never publishes
+`.mars/staging`, and never creates `.mars/sync.lock`. It still takes the sync
+flock when a real sync already created the lock file, because recovery reads
+`mars.lock` and the intent journal and a publisher running between those reads
+would show it a torn snapshot; `FileLock::acquire_existing` opens without
+creating. A package repo that does not gitignore `.mars/` therefore gains no
+path a later clean-tree check or `git add -A` would pick up (issue #201). Any
+new phase that writes project state must honor `request.options.dry_run`.
+
 ### Key Operations
 
 | Function | Responsibility |

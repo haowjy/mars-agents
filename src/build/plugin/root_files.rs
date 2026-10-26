@@ -16,6 +16,10 @@ use super::metadata::PackageMetadata;
 
 pub(super) struct RootFilePlan {
     pub(super) root_files: BTreeMap<String, String>,
+    /// Hashes of the root files this plan replaces. Recorded in the sentinel so
+    /// a publication that dies before rewriting them can be resumed instead of
+    /// refused as a hand edit.
+    pub(super) root_files_previous: BTreeMap<String, String>,
     pub(super) root_directories: BTreeSet<String>,
     package_root: PathBuf,
     writes: BTreeMap<String, Vec<u8>>,
@@ -64,6 +68,7 @@ pub(super) fn plan(
     if matches!(destination, PluginBuildDestination::Out(_)) {
         return Ok(RootFilePlan {
             root_files: BTreeMap::new(),
+            root_files_previous: BTreeMap::new(),
             root_directories: BTreeSet::new(),
             package_root,
             writes: BTreeMap::new(),
@@ -160,9 +165,38 @@ pub(super) fn plan(
             created_directories.insert(directory.to_string());
         }
     }
+    // A retire whose delete has not run yet (interrupted publication) keeps its
+    // owned directory recorded, so the retry can remove it once it is empty.
+    for path in &deletes {
+        if let Some(directory) = catalog_directory(path)
+            && state.root_directories.contains(directory)
+        {
+            root_directories.insert(directory.to_string());
+        }
+    }
 
     let touched: BTreeSet<String> = writes.keys().chain(deletes.iter()).cloned().collect();
     check_gitignored(&package_root, out_dir, staging, &touched)?;
+
+    // Publication swaps the tree and sentinel first and rewrites root files
+    // after, so a death in between leaves the previous Mars-written bytes in
+    // place. Record only the paths this publication really replaces or deletes:
+    // a path it leaves byte-identical needs no recovery, and a retired path
+    // stops being claimed once its bytes no longer match.
+    let mut root_files_previous = BTreeMap::new();
+    for state in &state.root_files {
+        let Some(disk_hash) = state.disk_output_hash() else {
+            continue;
+        };
+        let key = portable_path(state.path())?;
+        let replaced = match writes.get(&key) {
+            Some(bytes) => crate::hash::hash_bytes(bytes) != disk_hash,
+            None => deletes.contains(&key),
+        };
+        if replaced {
+            root_files_previous.insert(key, disk_hash.to_string());
+        }
+    }
 
     let root_files = writes
         .iter()
@@ -170,6 +204,7 @@ pub(super) fn plan(
         .collect();
     Ok(RootFilePlan {
         root_files,
+        root_files_previous,
         root_directories,
         package_root,
         writes,

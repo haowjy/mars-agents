@@ -153,10 +153,18 @@ pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
 
 const PENDING_STAGING_GENERATION: &str = ".staging.pending";
 
-/// Project-owned scratch generation. A normal early return removes it; an
-/// interrupted process leaves the one reserved path for the next lock holder.
+/// Scratch generation that holds every normalized package tree until the
+/// compiler's diagnostic gate passes. A real sync owns the reserved project path
+/// (an early return removes it; an interrupted process leaves it for the next
+/// lock holder). A dry run owns a temporary directory outside the project, so it
+/// leaves the project's files as it found them.
 pub(crate) struct PendingStagingGeneration {
-    path: PathBuf,
+    location: GenerationLocation,
+}
+
+enum GenerationLocation {
+    Project(PathBuf),
+    Scratch(tempfile::TempDir),
 }
 
 impl PendingStagingGeneration {
@@ -164,17 +172,31 @@ impl PendingStagingGeneration {
         fs::create_dir_all(mars_dir)?;
         let path = mars_dir.join(PENDING_STAGING_GENERATION);
         fs::create_dir(&path)?;
-        Ok(Self { path })
+        Ok(Self {
+            location: GenerationLocation::Project(path),
+        })
+    }
+
+    pub(crate) fn scratch() -> Result<Self, MarsError> {
+        Ok(Self {
+            location: GenerationLocation::Scratch(tempfile::TempDir::new()?),
+        })
     }
 
     pub(crate) fn path(&self) -> &Path {
-        &self.path
+        match &self.location {
+            GenerationLocation::Project(path) => path,
+            GenerationLocation::Scratch(dir) => dir.path(),
+        }
     }
 }
 
 impl Drop for PendingStagingGeneration {
     fn drop(&mut self) {
-        let _ = safe_remove(&self.path);
+        // A scratch directory removes itself.
+        if let GenerationLocation::Project(path) = &self.location {
+            let _ = safe_remove(path);
+        }
     }
 }
 

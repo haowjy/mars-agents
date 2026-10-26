@@ -1,0 +1,49 @@
+{
+  "classification": {
+    "kind": "mars-legacy"
+  },
+  "definitions": [
+    {
+      "kind": "skill",
+      "slug": "current",
+      "source_path": "skills/current/SKILL.md",
+      "output_path": "skills/current/SKILL.md",
+      "reading": {
+        "kind": "skill",
+        "result": {
+          "fields": {
+            "name": "current",
+            "description": "Current",
+            "skill_type": null,
+            "model_invocable": true,
+            "user_invocable": true,
+            "license": null,
+            "compatibility": null,
+            "metadata": null,
+            "had_model_invocable_field": false,
+            "has_frontmatter": true,
+            "passthrough_fields": []
+          },
+          "body": "# Body\n",
+          "unknown": [],
+          "diagnostics": []
+        }
+      },
+      "raw_frontmatter": [
+        [
+          "name",
+          "current"
+        ],
+        [
+          "description",
+          "Current"
+        ]
+      ],
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {}
+}

@@ -9,6 +9,10 @@ use crate::upgrade::DefinitionKind;
 
 const RECURSIVE_SKIP_DIRS: &[&str] = &["node_modules", ".git", "dist", "build", "__pycache__"];
 const MAX_DISCOVERY_WALK_DEPTH: usize = 5;
+const SOURCE_MANIFEST_PATHS: &[&str] = &[
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SelectedDefinition {
@@ -28,6 +32,16 @@ pub(crate) struct Discovery {
     pub definitions: Vec<SelectedDefinition>,
     pub skipped_generated_dirs: BTreeSet<String>,
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
+}
+
+impl Discovery {
+    pub(crate) fn empty() -> Self {
+        Self {
+            definitions: Vec::new(),
+            skipped_generated_dirs: BTreeSet::new(),
+            diagnostics: BTreeMap::new(),
+        }
+    }
 }
 
 pub(crate) fn discover(source: &impl TreeSource) -> Discovery {
@@ -116,6 +130,15 @@ pub(crate) fn discover(source: &impl TreeSource) -> Discovery {
         .into_iter()
         .map(|definition| definition.definition)
         .collect::<Vec<_>>();
+    if !source.is_file("mars.toml") {
+        definitions.extend(discover_declared_definitions(
+            source,
+            &skipped_generated_dirs,
+            &mut diagnostics,
+        ));
+    }
+    definitions.sort_by(|left, right| left.source_path.cmp(&right.source_path));
+    definitions.dedup_by(|left, right| left.source_path == right.source_path);
     definitions.sort_by(|left, right| {
         left.kind
             .cmp(&right.kind)
@@ -153,6 +176,180 @@ pub(crate) fn discover(source: &impl TreeSource) -> Discovery {
     }
 }
 
+fn discover_declared_definitions(
+    source: &impl TreeSource,
+    skipped: &BTreeSet<String>,
+    diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
+) -> Vec<SelectedDefinition> {
+    let mut definitions = Vec::new();
+    for manifest_path in SOURCE_MANIFEST_PATHS {
+        let Some(bytes) = source.read(manifest_path) else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            diagnostics
+                .entry((*manifest_path).to_string())
+                .or_default()
+                .push(SchemaDiagnostic::new(
+                    "source-manifest.invalid-json",
+                    Severity::Error,
+                    Vec::new(),
+                    format!("failed to parse `{manifest_path}`"),
+                ));
+            continue;
+        };
+        let Some(object) = json.as_object() else {
+            continue;
+        };
+        for (kind, keys) in [
+            (
+                DefinitionKind::Skill,
+                ["skills", "skill_paths", "skillPaths"].as_slice(),
+            ),
+            (
+                DefinitionKind::Agent,
+                ["agents", "agent_paths", "agentPaths"].as_slice(),
+            ),
+        ] {
+            for key in keys {
+                if let Some(value) = object.get(*key) {
+                    let mut paths = Vec::new();
+                    collect_declared_paths(value, &mut paths);
+                    for raw in paths {
+                        let Some(path) = raw.strip_prefix("./").and_then(normalize_declared_path)
+                        else {
+                            if raw.starts_with("./") {
+                                diagnostics
+                                    .entry((*manifest_path).to_string())
+                                    .or_default()
+                                    .push(SchemaDiagnostic::new(
+                                        "source-manifest.path-escape",
+                                        Severity::Error,
+                                        vec![crate::diagnostic::PathSegment::Key(
+                                            (*key).to_string(),
+                                        )],
+                                        format!("declared path `{raw}` escapes the package root"),
+                                    ));
+                            }
+                            continue;
+                        };
+                        if is_skipped(&path, skipped) {
+                            continue;
+                        }
+                        match kind {
+                            DefinitionKind::Skill => {
+                                let definition = join(&path, "SKILL.md");
+                                if source.is_file(&definition) {
+                                    definitions.push(SelectedDefinition {
+                                        kind,
+                                        slug: basename(&path).to_string(),
+                                        source_path: definition,
+                                        skill_root: Some(path),
+                                    });
+                                } else if source.is_dir(&path) {
+                                    for child in source.children(&path) {
+                                        let definition = join(&child, "SKILL.md");
+                                        if source.is_dir(&child) && source.is_file(&definition) {
+                                            definitions.push(SelectedDefinition {
+                                                kind,
+                                                slug: basename(&child).to_string(),
+                                                source_path: definition,
+                                                skill_root: Some(child),
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    push_missing_declared_path(
+                                        diagnostics,
+                                        manifest_path,
+                                        key,
+                                        raw,
+                                    );
+                                }
+                            }
+                            DefinitionKind::Agent => {
+                                if source.is_file(&path) && path.ends_with(".md") {
+                                    definitions.push(SelectedDefinition {
+                                        kind,
+                                        slug: file_stem(&path).to_string(),
+                                        source_path: path,
+                                        skill_root: None,
+                                    });
+                                } else if source.is_dir(&path) {
+                                    for child in source.children(&path) {
+                                        if source.is_file(&child) && child.ends_with(".md") {
+                                            definitions.push(SelectedDefinition {
+                                                kind,
+                                                slug: file_stem(&child).to_string(),
+                                                source_path: child,
+                                                skill_root: None,
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    push_missing_declared_path(
+                                        diagnostics,
+                                        manifest_path,
+                                        key,
+                                        raw,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    definitions
+}
+
+fn collect_declared_paths<'a>(value: &'a serde_json::Value, paths: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(path) => paths.push(path),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_declared_paths(value, paths);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            if let Some(path) = object.get("path").and_then(serde_json::Value::as_str) {
+                paths.push(path);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_declared_path(path: &str) -> Option<String> {
+    if path.is_empty()
+        || path
+            .split('/')
+            .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
+fn push_missing_declared_path(
+    diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
+    manifest_path: &str,
+    key: &str,
+    raw: &str,
+) {
+    diagnostics
+        .entry(manifest_path.to_string())
+        .or_default()
+        .push(SchemaDiagnostic::new(
+            "source-manifest.path-missing",
+            Severity::Error,
+            vec![crate::diagnostic::PathSegment::Key(key.to_string())],
+            format!("declared path `{raw}` does not exist"),
+        ));
+}
+
 fn generated_plugin_dirs(
     source: &impl TreeSource,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
@@ -161,7 +358,10 @@ fn generated_plugin_dirs(
     let mut queue = VecDeque::from([String::new()]);
     while let Some(dir) = queue.pop_front() {
         let marker = join(&dir, SENTINEL_FILE);
-        if source.read(&marker).is_some_and(is_valid_sentinel) {
+        if source
+            .read(&marker)
+            .is_some_and(|bytes| is_valid_sentinel(&bytes))
+        {
             diagnostics
                 .entry(marker)
                 .or_default()

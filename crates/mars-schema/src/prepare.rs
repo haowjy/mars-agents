@@ -24,6 +24,7 @@ pub enum PrepareContext {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Classification {
+    #[serde(rename = "schema-1")]
     Schema1,
     MarsLegacy,
     SchemaNewer {
@@ -110,9 +111,29 @@ pub fn prepare(
     context: PrepareContext,
     declared_dialect: Option<Dialect>,
 ) -> Prepared {
-    let mut discovery = discover(source);
+    if source
+        .read(crate::plugin_metadata::SENTINEL_FILE)
+        .is_some_and(|bytes| crate::plugin_metadata::is_valid_sentinel(&bytes))
+    {
+        let discovery = discover(source);
+        return Prepared {
+            classification: Classification::Empty,
+            manifest: None,
+            definitions: Vec::new(),
+            payload: Vec::new(),
+            diagnostics: discovery.diagnostics,
+        };
+    }
     let manifest_bytes = source.read("mars.toml");
-    let manifest_classification = classify_manifest(manifest_bytes);
+    let manifest_classification = classify_manifest(manifest_bytes.as_deref());
+    let mut discovery = if matches!(
+        &manifest_classification,
+        ManifestClassification::Invalid { .. } | ManifestClassification::SchemaNewer { .. }
+    ) {
+        crate::discover::Discovery::empty()
+    } else {
+        discover(source)
+    };
     let classification = match manifest_classification {
         ManifestClassification::Schema1 => Classification::Schema1,
         ManifestClassification::MarsLegacy => Classification::MarsLegacy,
@@ -123,7 +144,14 @@ pub fn prepare(
         }
         ManifestClassification::NoManifest => {
             let (dialect, evidence) = resolve_dialect(source, declared_dialect);
-            if discovery.definitions.is_empty() && evidence.paths.is_empty() {
+            let has_plugin_manifest = [
+                ".claude-plugin/plugin.json",
+                ".claude-plugin/marketplace.json",
+            ]
+            .into_iter()
+            .any(|path| source.is_file(path));
+            if discovery.definitions.is_empty() && evidence.paths.is_empty() && !has_plugin_manifest
+            {
                 Classification::Empty
             } else {
                 Classification::Foreign { dialect, evidence }
@@ -131,7 +159,7 @@ pub fn prepare(
         }
     };
 
-    let mut manifest = manifest_bytes.map(|bytes| {
+    let mut manifest = manifest_bytes.as_deref().map(|bytes| {
         prepare_manifest(
             bytes,
             classification == Classification::MarsLegacy,
@@ -215,6 +243,9 @@ pub fn prepare(
         Vec::new()
     };
 
+    discovery
+        .diagnostics
+        .retain(|_, diagnostics| !diagnostics.is_empty());
     Prepared {
         classification,
         manifest: manifest.take(),
@@ -229,6 +260,14 @@ fn prepare_manifest(
     upgrade: bool,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedManifest {
+    let invalid_utf8 = std::str::from_utf8(bytes).err().map(|error| {
+        SchemaDiagnostic::new(
+            "text.invalid-utf8",
+            Severity::Error,
+            Vec::new(),
+            format!("mars.toml is not UTF-8: {error}"),
+        )
+    });
     let (normalized_bytes, change, upgrade_diagnostics) = match std::str::from_utf8(bytes) {
         Ok(text) if upgrade => match crate::upgrade::upgrade_manifest(text) {
             Ok(result) => upgrade_result(text, result),
@@ -247,19 +286,7 @@ fn prepare_manifest(
             }
         },
         Ok(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
-        Err(error) => {
-            push(
-                diagnostics,
-                "mars.toml",
-                SchemaDiagnostic::new(
-                    "text.invalid-utf8",
-                    Severity::Error,
-                    Vec::new(),
-                    format!("mars.toml is not UTF-8: {error}"),
-                ),
-            );
-            (bytes.to_vec(), ChangeRecord::None, Vec::new())
-        }
+        Err(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
     };
     diagnostics
         .entry("mars.toml".to_string())
@@ -270,7 +297,7 @@ fn prepare_manifest(
             fields: None,
             body: None,
             unknown: Vec::new(),
-            diagnostics: Vec::new(),
+            diagnostics: invalid_utf8.into_iter().collect(),
         },
         crate::manifest::read,
     );
@@ -293,8 +320,38 @@ fn prepare_definition(
     classification: &Classification,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedDefinition {
-    let bytes = source.read(&selected.source_path).unwrap_or_default();
-    let (normalized_bytes, change, upgrade_diagnostics) = match std::str::from_utf8(bytes) {
+    let Some(bytes) = source.read(&selected.source_path) else {
+        let diagnostic = SchemaDiagnostic::new(
+            "definition.read-missing",
+            Severity::Error,
+            Vec::new(),
+            "selected definition could not be read",
+        );
+        push(diagnostics, &selected.source_path, diagnostic.clone());
+        let reading = match selected.kind {
+            DefinitionKind::Agent => PreparedDefinitionRead::Agent(empty_reading(Some(diagnostic))),
+            DefinitionKind::Skill => PreparedDefinitionRead::Skill(empty_reading(Some(diagnostic))),
+        };
+        return PreparedDefinition {
+            kind: selected.kind,
+            slug: selected.slug.clone(),
+            source_path: selected.source_path.clone(),
+            output_path: selected.source_path.clone(),
+            normalized_bytes: Vec::new(),
+            reading,
+            raw_frontmatter: Vec::new(),
+            change: ChangeRecord::None,
+        };
+    };
+    let invalid_utf8 = std::str::from_utf8(&bytes).err().map(|error| {
+        SchemaDiagnostic::new(
+            "text.invalid-utf8",
+            Severity::Error,
+            Vec::new(),
+            format!("definition is not UTF-8: {error}"),
+        )
+    });
+    let (normalized_bytes, change, upgrade_diagnostics) = match std::str::from_utf8(&bytes) {
         Ok(text) => match classification {
             Classification::MarsLegacy => {
                 match crate::upgrade::upgrade_definition(selected.kind, text) {
@@ -310,7 +367,7 @@ fn prepare_definition(
                                 error.to_string(),
                             ),
                         );
-                        (bytes.to_vec(), ChangeRecord::None, Vec::new())
+                        (bytes.clone(), ChangeRecord::None, Vec::new())
                     }
                 }
             }
@@ -332,26 +389,14 @@ fn prepare_definition(
                             Vec::new(),
                         )
                     } else {
-                        (bytes.to_vec(), ChangeRecord::None, Vec::new())
+                        (bytes.clone(), ChangeRecord::None, Vec::new())
                     }
                 }
-                Err(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
+                Err(_) => (bytes.clone(), ChangeRecord::None, Vec::new()),
             },
-            _ => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
+            _ => (bytes.clone(), ChangeRecord::None, Vec::new()),
         },
-        Err(error) => {
-            push(
-                diagnostics,
-                &selected.source_path,
-                SchemaDiagnostic::new(
-                    "text.invalid-utf8",
-                    Severity::Error,
-                    Vec::new(),
-                    format!("definition is not UTF-8: {error}"),
-                ),
-            );
-            (bytes.to_vec(), ChangeRecord::None, Vec::new())
-        }
+        Err(_) => (bytes.clone(), ChangeRecord::None, Vec::new()),
     };
     diagnostics
         .entry(selected.source_path.clone())
@@ -366,15 +411,15 @@ fn prepare_definition(
         (DefinitionKind::Skill, Some(text)) => {
             PreparedDefinitionRead::Skill(crate::skill::read(text))
         }
-        (DefinitionKind::Agent, None) => PreparedDefinitionRead::Agent(empty_reading()),
-        (DefinitionKind::Skill, None) => PreparedDefinitionRead::Skill(empty_reading()),
+        (DefinitionKind::Agent, None) => PreparedDefinitionRead::Agent(empty_reading(invalid_utf8)),
+        (DefinitionKind::Skill, None) => PreparedDefinitionRead::Skill(empty_reading(invalid_utf8)),
     };
     diagnostics
         .entry(selected.source_path.clone())
         .or_default()
         .extend(reading.diagnostics().iter().cloned());
     let raw_frontmatter = text
-        .and_then(|text| Frontmatter::parse(text).ok())
+        .and_then(|text| raw_frontmatter(selected.kind, text))
         .map(|frontmatter| {
             frontmatter
                 .keys()
@@ -396,6 +441,15 @@ fn prepare_definition(
     }
 }
 
+fn raw_frontmatter(kind: DefinitionKind, text: &str) -> Option<Frontmatter> {
+    match kind {
+        DefinitionKind::Agent => Frontmatter::parse_preserving_structure(text)
+            .ok()
+            .map(|(frontmatter, _)| frontmatter),
+        DefinitionKind::Skill => Frontmatter::parse(text).ok(),
+    }
+}
+
 impl PreparedDefinitionRead {
     fn diagnostics(&self) -> &[SchemaDiagnostic] {
         match self {
@@ -405,12 +459,12 @@ impl PreparedDefinitionRead {
     }
 }
 
-fn empty_reading<T>() -> DefinitionRead<T> {
+fn empty_reading<T>(diagnostic: Option<SchemaDiagnostic>) -> DefinitionRead<T> {
     DefinitionRead {
         fields: None,
         body: None,
         unknown: Vec::new(),
-        diagnostics: Vec::new(),
+        diagnostics: diagnostic.into_iter().collect(),
     }
 }
 

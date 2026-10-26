@@ -17,6 +17,15 @@ non-block top-level mapping or failed semantic verification falls back to a repo
 frontmatter rewrite. Unchanged definitions and schema-v1 manifests remain byte-identical. The
 fixtures under `fixtures/upgrade/` are the published upgrade contract.
 
+`prepare` is the package-reading boundary. It classifies a `TreeSource`, selects Agents and
+skills once, normalizes and strictly reads every selected definition and applicable manifest,
+and returns source/output paths, normalized bytes, authored-file change records, payload
+mappings, and source-keyed structured diagnostics. Source paths are normalized package-relative
+identities and never describe materialization storage. Consumers apply filters, renames,
+overlays, and other consumer configuration only after preparation. `prepare` lists payload but
+never reads payload bytes; `FileTree` is its in-memory WASM and fixture adapter. The cases under
+`fixtures/prepare/` are the serialized package-preparation contract.
+
 `agent`, `skill`, and `manifest` are the only readers for schema-v1 definitions. Their
 serialized reading and diagnostics are pinned by `fixtures/read/`; callers consume these
 types directly rather than reading owned frontmatter keys themselves. Unknown fields are

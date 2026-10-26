@@ -51,7 +51,8 @@ The canonical store (`.mars/`) is installed from the **prepared** tree, never ra
 bytes. Schema-v1 definitions stay byte-identical unless a consumer overlay changes them.
 Legacy definitions use the same pure conversion as `mars migrate`, including its minimal
 top-level block edits; staging writes that edited source directly unless a consumer overlay
-requires another transform. Foreign frontmatter is lifted through `staging/lift.rs`.
+requires another transform. Foreign frontmatter is lifted by `mars_schema::lift`;
+`staging/lift.rs` is the temporary binary-dialect adapter used by the pre-P4b pipeline.
 
 ## Non-canonical skill tool handling
 
@@ -90,7 +91,7 @@ name (dependency source name or configured fallback).
 
 Foreign MCP permission tokens in `tools:` / `disallowed-tools:` (and skill
 `allowed-tools` / `disallowedTools`) lift to canonical `mcp(...)` during dialect staging
-(`staging/lift.rs`):
+(`mars_schema::lift`):
 
 | Foreign form | Dialect | Lifts to |
 |---|---|---|

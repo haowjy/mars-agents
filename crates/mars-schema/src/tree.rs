@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Paths use `/` separators, are never absolute, and contain no empty, `.` or
 /// `..` components. The empty path names the tree root for directory queries.
 pub trait TreeSource {
-    fn read(&self, path: &str) -> Option<&[u8]>;
+    fn read(&self, path: &str) -> Option<Vec<u8>>;
     fn is_file(&self, path: &str) -> bool;
     fn is_dir(&self, path: &str) -> bool;
 
@@ -19,6 +19,7 @@ pub trait TreeSource {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FileTree {
     files: BTreeMap<String, Vec<u8>>,
+    children: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl FileTree {
@@ -43,6 +44,22 @@ impl FileTree {
     ) -> Result<(), TreePathError> {
         let path = path.into();
         validate_file_path(&path)?;
+        let components = path.split('/').collect::<Vec<_>>();
+        let has_file_ancestor =
+            (1..components.len()).any(|end| self.files.contains_key(&components[..end].join("/")));
+        let descendant_prefix = format!("{path}/");
+        let has_file_descendant = self
+            .files
+            .range(path.clone()..)
+            .next()
+            .is_some_and(|(file, _)| file.starts_with(&descendant_prefix));
+        if has_file_ancestor || has_file_descendant {
+            return Err(TreePathError {
+                path,
+                reason: "a path cannot be both a file and a directory",
+            });
+        }
+        index_children(&mut self.children, &path);
         self.files.insert(path, bytes.into());
         Ok(())
     }
@@ -53,8 +70,8 @@ impl FileTree {
 }
 
 impl TreeSource for FileTree {
-    fn read(&self, path: &str) -> Option<&[u8]> {
-        self.files.get(path).map(Vec::as_slice)
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        self.files.get(path).cloned()
     }
 
     fn is_file(&self, path: &str) -> bool {
@@ -62,33 +79,23 @@ impl TreeSource for FileTree {
     }
 
     fn is_dir(&self, path: &str) -> bool {
-        if path.is_empty() {
-            return true;
-        }
-        let prefix = format!("{path}/");
-        self.files.keys().any(|file| file.starts_with(&prefix))
+        path.is_empty() || self.children.contains_key(path)
     }
 
     fn children(&self, dir: &str) -> Vec<String> {
-        let prefix = if dir.is_empty() {
-            String::new()
-        } else {
-            format!("{dir}/")
-        };
-        self.files
-            .keys()
-            .filter_map(|file| {
-                let remainder = file.strip_prefix(&prefix)?;
-                let child = remainder.split('/').next()?;
-                Some(if dir.is_empty() {
-                    child.to_owned()
-                } else {
-                    format!("{dir}/{child}")
-                })
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
+        self.children
+            .get(dir)
+            .map(|children| children.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+fn index_children(index: &mut BTreeMap<String, BTreeSet<String>>, path: &str) {
+    let components = path.split('/').collect::<Vec<_>>();
+    for child_index in 0..components.len() {
+        let parent = components[..child_index].join("/");
+        let child = components[..=child_index].join("/");
+        index.entry(parent).or_default().insert(child);
     }
 }
 

@@ -79,23 +79,6 @@ fn materialize_prepared_tree(
         crate::platform::fs::safe_remove(destination)?;
     }
     fs::create_dir_all(destination)?;
-    for entry in crate::fs::authored_tree_entries(
-        authored_root,
-        &[],
-        crate::fs::AuthoredSymlinkPolicy::Follow,
-        diag,
-    )? {
-        let output = destination.join(&entry.relative);
-        match entry.kind {
-            crate::fs::AuthoredEntryKind::Directory => fs::create_dir_all(&output)?,
-            crate::fs::AuthoredEntryKind::File => {
-                if let Some(parent) = output.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::copy(entry.source, output)?;
-            }
-        }
-    }
     if let Some(manifest) = &prepared.manifest {
         fs::write(
             destination.join(&manifest.output_path),
@@ -125,6 +108,54 @@ fn materialize_prepared_tree(
             fs::create_dir_all(parent)?;
         }
         fs::write(output, bytes)?;
+    }
+    for payload in &prepared.payload {
+        let source = crate::fs::strict_authored_file(
+            authored_root,
+            &authored_root.join(&payload.source_path),
+        )?;
+        let output = destination.join(&payload.output_path);
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, output)?;
+    }
+    // Hooks, bootstrap documents, MCP definitions and foreign source manifests
+    // remain binary-owned package surfaces.
+    for relative in ["hooks", "bootstrap", "mcp"] {
+        let root = authored_root.join(relative);
+        if !root.is_dir() {
+            continue;
+        }
+        fs::create_dir_all(destination.join(relative))?;
+        for entry in crate::fs::authored_tree_entries(
+            &root,
+            &[],
+            crate::fs::AuthoredSymlinkPolicy::Follow,
+            diag,
+        )? {
+            let output = destination.join(relative).join(&entry.relative);
+            match entry.kind {
+                crate::fs::AuthoredEntryKind::Directory => fs::create_dir_all(output)?,
+                crate::fs::AuthoredEntryKind::File => {
+                    if let Some(parent) = output.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::copy(entry.source, output)?;
+                }
+            }
+        }
+    }
+    for relative in crate::discover::SOURCE_MANIFEST_PATHS {
+        let source = authored_root.join(relative);
+        if source.is_file() {
+            let source = crate::fs::strict_authored_file(authored_root, &source)?;
+            let output = destination.join(relative);
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(source, output)?;
+        }
     }
     Ok(())
 }

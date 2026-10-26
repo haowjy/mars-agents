@@ -24,18 +24,22 @@
             "A Claude agent whose network keys are partly invalid"
           ],
           [
+            "network-allow",
+            [
+              "good.example"
+            ]
+          ],
+          [
+            "network-deny",
+            [
+              "blocked.example"
+            ]
+          ],
+          [
             "harness-overrides",
             {
               "claude": {
-                "network": "nope",
-                "network-allow": [
-                  "good.example",
-                  "https://bad.example"
-                ],
-                "network-deny": [
-                  "blocked.example",
-                  "bad host"
-                ]
+                "network": "nope"
               }
             }
           ]
@@ -51,8 +55,12 @@
           "approval": null,
           "sandbox": null,
           "network": null,
-          "network-allow": [],
-          "network-deny": [],
+          "network-allow": [
+            "good.example"
+          ],
+          "network-deny": [
+            "blocked.example"
+          ],
           "effort": null,
           "skills": {
             "load": [],
@@ -62,15 +70,7 @@
           "tools": [],
           "harness-overrides": {
             "claude": {
-              "network": "nope",
-              "network-allow": [
-                "good.example",
-                "https://bad.example"
-              ],
-              "network-deny": [
-                "blocked.example",
-                "bad host"
-              ]
+              "network": "nope"
             }
           },
           "model-policies": []
@@ -88,28 +88,30 @@
   "changes": {
     "agents/n.md": [
       {
+        "code": "field.set-aside",
+        "severity": "warning",
+        "path": [
+          "network-allow",
+          1
+        ],
+        "message": "`network-allow.1` is not valid in schema v1 (agent field `network-allow[1]` has invalid value `https://bad.example`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed); that entry was dropped and the rest of `network-allow` is kept"
+      },
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "network-deny",
+          1
+        ],
+        "message": "agent `n` lost the restriction `network-deny: bad host`: that entry was dropped and the rest of `network-deny` is kept. Schema v1 does not accept it (agent field `network-deny[1]` has invalid value `bad host`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed)"
+      },
+      {
         "code": "field.restriction-lost",
         "severity": "warning",
         "path": [
           "network"
         ],
         "message": "agent `n` lost the restriction `network`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (agent field `network` has invalid value `nope`; allowed: allow, deny, allowlist)"
-      },
-      {
-        "code": "field.set-aside",
-        "severity": "warning",
-        "path": [
-          "network-allow"
-        ],
-        "message": "`network-allow` is not valid in schema v1 (agent field `network-allow[1]` has invalid value `https://bad.example`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed); it was moved under `harness-overrides.claude`, which Mars does not enforce"
-      },
-      {
-        "code": "field.restriction-lost",
-        "severity": "warning",
-        "path": [
-          "network-deny"
-        ],
-        "message": "agent `n` lost the restriction `network-deny`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (agent field `network-deny[1]` has invalid value `bad host`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed)"
       }
     ]
   }

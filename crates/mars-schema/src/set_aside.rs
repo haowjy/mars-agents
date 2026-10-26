@@ -6,6 +6,9 @@
 //! - A key Mars lowers itself (`LoweredField`, `skill::LOWERED_KEYS`) is never moved: native lowering would keep Mars's
 //!   value and drop the override. A mapping or list loses only its rejected entries; a scalar, or
 //!   a container the reader rejects as a whole, is dropped.
+//! - A host set (`network-allow`, `network-deny`) loses only its rejected entries too, though
+//!   Mars does not lower it: moving the whole list under `harness-overrides` would drop its valid
+//!   hosts, and a lost deny host widens the agent.
 //! - Any other rejected key is moved under `harness-overrides.<harness>` when a harness could
 //!   read it, and dropped when none could.
 //! - Losing a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`,
@@ -43,6 +46,9 @@ const RESTRICTION_KEYS: &[&str] = &[
     "tools",
     "disallowed-tools",
 ];
+
+/// Lists whose valid entries stay in place when one entry is rejected.
+const HOST_SET_KEYS: &[&str] = &["network-allow", "network-deny"];
 
 /// Where a rejected key goes.
 #[derive(Clone, Copy)]
@@ -190,7 +196,7 @@ fn drop_entries(
 }
 
 /// What was lost, when a restriction was: a `deny` or `ask` tool entry (or a tool-flag `false`),
-/// an entry of `disallowed-tools`, or a whole restriction key.
+/// an entry of `disallowed-tools`, a `network-deny` host, or a whole restriction key.
 fn restriction_lost(path: &[PathSegment], removed: &Value) -> Option<String> {
     let Some(PathSegment::Key(key)) = path.first() else {
         return None;
@@ -204,7 +210,7 @@ fn restriction_lost(path: &[PathSegment], removed: &Value) -> Option<String> {
         "tools" => {
             matches!(removed.as_str(), Some("deny" | "ask")) || *removed == Value::Bool(false)
         }
-        "disallowed-tools" => true,
+        "disallowed-tools" | "network-deny" => true,
         _ => false,
     };
     let value = match removed {
@@ -213,6 +219,7 @@ fn restriction_lost(path: &[PathSegment], removed: &Value) -> Option<String> {
     };
     restricting.then(|| match key.as_str() {
         "tools" => format!("`{}: {value}`", path_text(path)),
+        "network-deny" => format!("`network-deny: {value}`"),
         _ => format!("`{}`", path_text(path)),
     })
 }
@@ -295,7 +302,7 @@ pub(crate) fn set_aside_rejected_keys(
             DefinitionKind::Skill => skill::LOWERED_KEYS.contains(&key.as_str()),
         };
         let whole_key = rejections.iter().any(|rejection| rejection.path.len() == 1);
-        if reserved
+        if (reserved || HOST_SET_KEYS.contains(&key.as_str()))
             && !whole_key
             && let Some(removed) = drop_entries(fm, &key, &rejections)
         {

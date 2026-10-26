@@ -29,19 +29,6 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - `when` on a `model-policies` rule (one non-empty line) describes when the rule's model fits. `mars models prompting @agent` prints the Agent's guide ahead of the alias's text, and the Agent inventory marks Agents that have one. `mars check` warns on a policy alias it cannot resolve, naming the agent and file.
 - `ls` and `work` are tool capabilities. `harness-overrides.flow` is a reserved namespace for Flow that Mars passes through and never interprets.
 - Reference pages for [schema v1](docs/config/schema-v1.md) and [migration](docs/config/migrating-to-schema-v1.md), and READMEs for the crate and the npm package.
-- `mars build plugin [PATH] [--out <dir>]` builds owned Claude, Cursor, and OpenCode plugin trees
-  from a package's publish graph. Explicit output uses the nested
-  `<dir>/{claude,cursor,opencode}/` layout with a root `.mars-plugin.json` sentinel.
-- `[plugin]` configures committed output, identity, marketplace, description, and harnesses.
-  Configured builds also generate the Claude and Cursor catalogs and root OpenCode `package.json`;
-  `[package]` supplies author, homepage, and license metadata.
-- `mars check` reports stale, hand-edited, skipped, or root-conflicted configured plugin output and
-  warns when plugin packages do not require Mars 0.19.0 or newer.
-- Build and commit configured multi-harness plugin output during `mars version`, with rollback-safe
-  publication and a `--no-plugins` escape hatch.
-- Plugin builds refuse source symlinks that leave the package, and special files, so published
-  output never carries files from outside it. `[package].authors` takes `"Name <email>"` strings or
-  `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
 
 ### Changed
 - Mars prepares every package (dependencies, `.mars-src`, the local package, `mars check`, `validate`, `migrate`, publish inputs) through `mars_schema::prepare` before it mutates anything. The authored tree stays untouched; sync projects prepared bytes into the recoverable `.mars/.staging.pending` generation after the diagnostic gate and publishes it by rename. Relative path dependencies resolve from the authored origin. Pre-v1 `.mars-src` content is upgraded in memory with a warning that names `mars migrate`.
@@ -83,6 +70,29 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - `approval: yolo` in an Agent file is one error, not two.
 - `mars doctor` hashes a bootstrap document as its directory, so it no longer fails with `Not a directory` (v0.19.0 did too).
 - `mars check --root PATH` validates `PATH`; `--root` was ignored.
+
+### Security
+- `mars sync` refuses a dependency holding a symlink that leaves the package (`authored package entry escapes package root`). v0.19.0 copied the target, such as `/etc/hostname`, into `.mars/`.
+- A dependency URL, tag, ref or locked commit that starts with `-` is refused before git runs (`--upload-pack=<cmd>` would run `<cmd>`), and `--` precedes the repository and the checked-out revision. `plugin` names are letters, digits, `-`, `_` and `.`, starting with a letter or digit, so `mars add <marketplace> --plugin ..` is an error. `mars-schema` refuses a marketplace entry's unsafe repository or ref (option-like, whitespace, `ext::`, `file://`, an absolute path, any scheme but `https://` and `ssh://`) as an `unsupported` source with a reason, and a `sha` that is not a full commit; a plugin name that is not a name is left out of the list. A marketplace can no longer name a local repository for a plugin.
+
+## [0.19.0] - 2026-10-26
+
+### Added
+- `mars build plugin [PATH] [--out <dir>]` builds owned Claude, Cursor, and OpenCode plugin trees
+  from a package's publish graph. Explicit output uses the nested
+  `<dir>/{claude,cursor,opencode}/` layout with a root `.mars-plugin.json` sentinel.
+- `[plugin]` configures committed output, identity, marketplace, description, and harnesses.
+  Configured builds also generate the Claude and Cursor catalogs and root OpenCode `package.json`;
+  `[package]` supplies author, homepage, and license metadata.
+- `mars check` reports stale, hand-edited, skipped, or root-conflicted configured plugin output and
+  warns when plugin packages do not require Mars 0.19.0 or newer.
+- Build and commit configured multi-harness plugin output during `mars version`, with rollback-safe
+  publication and a `--no-plugins` escape hatch.
+- Plugin builds refuse source symlinks that leave the package, and special files, so published
+  output never carries files from outside it. `[package].authors` takes `"Name <email>"` strings or
+  `{ name, email }` tables, and plugin-only metadata never blocks `mars sync` or `mars list`.
+
+### Fixed
 - `mars sync --diff` and `mars version`'s validation pass no longer create `.mars/` state: a dry
   run stages in a temporary directory and never creates a sync lock (it takes an existing one so a
   concurrent real sync cannot show it a torn snapshot), so a package repo that does not gitignore
@@ -115,10 +125,6 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - MCP server collisions now prefer the shallowest package, then dependency declaration order,
   so a package's own server cannot lose to a transitive dependency.
 - Skill and hook copies now preserve source executable bits.
-
-### Security
-- `mars sync` refuses a dependency holding a symlink that leaves the package (`authored package entry escapes package root`). v0.19.0 copied the target, such as `/etc/hostname`, into `.mars/`.
-- A dependency URL, tag, ref or locked commit that starts with `-` is refused before git runs (`--upload-pack=<cmd>` would run `<cmd>`), and `--` precedes the repository and the checked-out revision. `plugin` names are letters, digits, `-`, `_` and `.`, starting with a letter or digit, so `mars add <marketplace> --plugin ..` is an error. `mars-schema` refuses a marketplace entry's unsafe repository or ref (option-like, whitespace, `ext::`, `file://`, an absolute path, any scheme but `https://` and `ssh://`) as an `unsupported` source with a reason, and a `sha` that is not a full commit; a plugin name that is not a name is left out of the list. A marketplace can no longer name a local repository for a plugin.
 
 ## [0.18.4] - 2026-10-25
 

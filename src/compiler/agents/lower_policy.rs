@@ -12,10 +12,12 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 ///
-/// Launch-time fields (approval, sandbox, mode where not emitted, …) are
+/// Launch-time fields (approval, sandbox, network, mode where not emitted, …) are
 /// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
 /// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
-/// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly.
+/// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly. One exception:
+/// Codex lowers `network` as [`Lossiness::Dropped`], because its native artifact carries
+/// `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
@@ -52,6 +54,18 @@ impl<'a> Effective<'a> {
 
     fn sandbox(&self) -> Option<&mars_schema::agent::SandboxMode> {
         self.profile.sandbox.as_ref()
+    }
+
+    fn network(&self) -> Option<&mars_schema::network::NetworkPolicy> {
+        self.profile.network.as_ref()
+    }
+
+    fn has_network_allow_hosts(&self) -> bool {
+        !self.profile.network_allow.entries().is_empty()
+    }
+
+    fn has_network_deny_hosts(&self) -> bool {
+        !self.profile.network_deny.entries().is_empty()
     }
 
     fn skills(&self) -> &SkillsSpec {
@@ -680,6 +694,21 @@ impl<'a> AgentLoweringCtx<'a> {
 
     fn record_meridian_only_fields(&mut self) {
         self.record_if_present(
+            "network",
+            self.eff.network().is_some(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
+            "network-allow",
+            self.eff.has_network_allow_hosts(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
+            "network-deny",
+            self.eff.has_network_deny_hosts(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
             "model-policies",
             !self.profile.model_policies.is_empty(),
             Lossiness::MeridianOnly,
@@ -903,7 +932,7 @@ pub fn lower_to_claude(
 ///   (as developer_instructions)
 /// - Skills: designed body guidance (Codex has no native field)
 /// - Dropped: tools (no allowlist), disallowed-tools,
-///   mcp (approximate), mode, model-policies, fanout
+///   mcp (approximate), network, mode, model-policies, fanout
 /// - harness-overrides.codex entries are added as TOML keys unless Mars lowers that key itself
 pub fn lower_to_codex(
     profile: &AgentProfile,
@@ -965,6 +994,19 @@ pub fn lower_to_codex(
         "Codex per-tool MCP gating lives in server config, not the tool list",
         &mut lossy,
     );
+    for (field, present) in [
+        ("network", eff.network().is_some()),
+        ("network-allow", eff.has_network_allow_hosts()),
+        ("network-deny", eff.has_network_deny_hosts()),
+    ] {
+        if present {
+            lossy.push(LossyField {
+                field: field.into(),
+                target: target.into(),
+                classification: Lossiness::Dropped,
+            });
+        }
+    }
     if profile.mode.is_some() {
         lossy.push(LossyField {
             field: "mode".into(),

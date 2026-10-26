@@ -207,6 +207,11 @@ fn run_show(
             .as_ref()
             .map(|s| s.as_str())
             .unwrap_or_default();
+        let network_str = profile
+            .network
+            .as_ref()
+            .map(|n| n.as_str())
+            .unwrap_or_default();
         let effort_str = profile
             .effort
             .as_ref()
@@ -227,6 +232,7 @@ fn run_show(
                 "subagents": profile.subagents,
                 "approval": approval_str,
                 "sandbox": sandbox_str,
+                "network": network_str,
                 "effort": effort_str,
                 "rules": profile.tools.rules,
                 // Deprecated: derived from `rules`; cannot carry `ask`, `*` or the capability.
@@ -243,6 +249,7 @@ fn run_show(
             println!("model:       {model_str}");
             println!("approval:    {approval_str}");
             println!("sandbox:     {sandbox_str}");
+            println!("network:     {network_str}");
             println!("effort:      {effort_str}");
             println!("scope:       {scope}");
             println!("source_path: {}", disk_path.display());

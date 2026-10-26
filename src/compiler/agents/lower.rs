@@ -128,6 +128,43 @@ mod tests {
     }
 
     #[test]
+    fn claude_lowering_drops_approval_sandbox_network_mode() {
+        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\nmode: subagent\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        for leaked in [
+            "approval:",
+            "sandbox:",
+            "network:",
+            "network-allow:",
+            "network-deny:",
+        ] {
+            assert!(!text.contains(leaked), "{leaked} leaked: {text}");
+        }
+        // Launch-time fields are meridian-only, not target-enforced drops.
+        let meridian_only: Vec<_> = out
+            .lossy_fields
+            .iter()
+            .filter(|f| matches!(f.classification, Lossiness::MeridianOnly))
+            .map(|f| f.field.as_str())
+            .collect();
+        for field in [
+            "approval",
+            "sandbox",
+            "network",
+            "network-allow",
+            "network-deny",
+            "mode",
+        ] {
+            assert!(
+                meridian_only.contains(&field),
+                "{field} not in lossy: {meridian_only:?}"
+            );
+        }
+    }
+
+    #[test]
     fn claude_harness_override_does_not_replace_skills_before_lowering() {
         let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
@@ -208,6 +245,27 @@ mod tests {
     }
 
     // --- 3.3: Codex lowering ---
+
+    #[test]
+    fn codex_lowering_drops_network_and_keeps_sandbox() {
+        let content = "---\nname: coder\nharness: codex\nsandbox: workspace-write\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\n---\n# Coder";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("sandbox_mode = \"workspace-write\""),
+            "sandbox missing: {text}"
+        );
+        assert!(!text.contains("network"), "network leaked: {text}");
+        for field in ["network", "network-allow", "network-deny"] {
+            assert!(
+                out.lossy_fields.iter().any(|lossy| lossy.field == field
+                    && matches!(lossy.classification, Lossiness::Dropped)),
+                "{field} not dropped: {:?}",
+                out.lossy_fields
+            );
+        }
+    }
 
     #[test]
     fn codex_harness_override_does_not_replace_execution_policy() {

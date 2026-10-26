@@ -9,13 +9,14 @@ use serde::{Deserialize, Serialize};
 pub enum Dialect {
     Claude,
     /// The Agent Skills standard on its own: translation is the identity plus relocation.
-    #[serde(rename = "agent-skills")]
+    #[serde(rename = "agent-skills", alias = "agentskills", alias = "agent_skills")]
     AgentSkills,
     Codex,
-    #[serde(rename = "opencode")]
+    /// `open-code` is the spelling v0.19.0 accepted in `mars.toml`.
+    #[serde(rename = "opencode", alias = "open-code")]
     OpenCode,
     Cursor,
-    #[serde(rename = "mars-native")]
+    #[serde(rename = "mars-native", alias = "marsnative", alias = "mars_native")]
     MarsNative,
 }
 

@@ -465,7 +465,7 @@ pub fn resolve_policy(
         provenance.insert("harness_order_position".to_string(), position.to_string());
     }
     let native_config = mars_schema::harness::parse(harness_resolution.harness.value.as_str())
-        .and_then(|harness| input.profile.effective_native_config(&harness).cloned());
+        .and_then(|harness| input.profile.effective_native_config(&harness));
     let execution_resolution = execution::resolve_execution_policy(
         &input,
         resolved_model.alias,

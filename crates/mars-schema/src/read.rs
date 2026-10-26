@@ -1,10 +1,9 @@
 //! The serialized v1 reading shared by native and WASM callers.
 
 use serde::Serialize;
-use serde_yaml::Value;
 
 use crate::diagnostic::SchemaDiagnostic;
-use crate::edit::MAX_SAFE_INTEGER;
+use crate::ordered::OrderedValue;
 
 /// The serialized v1 reading of one schema-owned file.
 ///
@@ -46,7 +45,7 @@ pub fn read(path: &str, text: &str) -> Result<Reading, UnrecognizedPath> {
 #[derive(Debug, Clone, Serialize)]
 pub struct DefinitionRead<T> {
     /// Ordered top-level mapping, retaining unknown authored keys.
-    pub frontmatter: Vec<(String, serde_json::Value)>,
+    pub frontmatter: Vec<(String, OrderedValue)>,
     pub fields: Option<T>,
     pub body: Option<String>,
     pub diagnostics: Vec<SchemaDiagnostic>,
@@ -55,7 +54,7 @@ pub struct DefinitionRead<T> {
 pub(crate) fn frontmatter_json(
     mapping: &serde_yaml::Mapping,
     diagnostics: &mut Vec<SchemaDiagnostic>,
-) -> Vec<(String, serde_json::Value)> {
+) -> Vec<(String, OrderedValue)> {
     mapping
         .iter()
         .filter_map(|(key, value)| {
@@ -68,7 +67,7 @@ pub(crate) fn frontmatter_json(
                 ));
                 return None;
             };
-            match json_value(value) {
+            match OrderedValue::from_yaml(value) {
                 Ok(value) => Some((key.to_owned(), value)),
                 Err(message) => {
                     diagnostics.push(SchemaDiagnostic::new(
@@ -82,40 +81,4 @@ pub(crate) fn frontmatter_json(
             }
         })
         .collect()
-}
-
-pub(crate) fn json_value(value: &Value) -> Result<serde_json::Value, String> {
-    match value {
-        Value::Null => Ok(serde_json::Value::Null),
-        Value::Bool(v) => Ok((*v).into()),
-        Value::Number(v) => {
-            let beyond = v
-                .as_i64()
-                .is_some_and(|n| n.unsigned_abs() > MAX_SAFE_INTEGER)
-                || v.as_u64().is_some_and(|n| n > MAX_SAFE_INTEGER);
-            if beyond {
-                return Err(format!(
-                    "integer {v} is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
-                ));
-            }
-            serde_json::to_value(v).map_err(|e| e.to_string())
-        }
-        Value::String(v) => Ok(v.clone().into()),
-        Value::Sequence(values) => values
-            .iter()
-            .map(json_value)
-            .collect::<Result<Vec<_>, _>>()
-            .map(serde_json::Value::Array),
-        Value::Mapping(values) => {
-            let mut out = serde_json::Map::new();
-            for (key, value) in values {
-                let Some(key) = key.as_str() else {
-                    return Err("YAML mapping contains a non-string key".into());
-                };
-                out.insert(key.to_owned(), json_value(value)?);
-            }
-            Ok(serde_json::Value::Object(out))
-        }
-        Value::Tagged(_) => Err("YAML tags have no JSON representation".into()),
-    }
 }

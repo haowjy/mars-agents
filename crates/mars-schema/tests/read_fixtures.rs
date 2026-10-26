@@ -25,10 +25,7 @@ fn read_fixtures_match() {
     for dir in common::cases("read") {
         let (path, file) = fixture_path(&dir);
         let reading = mars_schema::read::read(path, &fs::read_to_string(file).unwrap()).unwrap();
-        common::assert_file(
-            &dir.join("expected.json"),
-            &common::pretty(&serde_json::to_value(reading).unwrap()),
-        );
+        common::assert_file(&dir.join("expected.json"), &common::pretty(&reading));
     }
 }
 

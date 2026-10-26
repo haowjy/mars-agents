@@ -80,7 +80,7 @@ impl<'a> Effective<'a> {
         self.tools.rules.iter().any(|rule| rule.is_mcp())
     }
 
-    fn native_config(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    fn native_config(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
         self.profile.effective_native_config(&self.harness)
     }
 }

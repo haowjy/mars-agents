@@ -1,39 +1,39 @@
 {
-  "body": "",
-  "diagnostics": [
-    {
-      "code": "field.removed",
-      "message": "`fanout` was removed; use consumer `[settings.meridian.fanout]`",
-      "path": [
-        "fanout"
-      ],
-      "severity": "error"
-    }
-  ],
-  "fields": {
-    "approval": null,
-    "description": null,
-    "effort": null,
-    "harness": null,
-    "harness-overrides": {},
-    "mode": null,
-    "model": null,
-    "model-invocable": true,
-    "model-policies": [],
-    "name": null,
-    "sandbox": null,
-    "skills": {
-      "available": [],
-      "load": []
-    },
-    "subagents": [],
-    "tools": [],
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "fanout",
       2
     ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "fanout"
+      ],
+      "message": "`fanout` was removed; use consumer `[settings.meridian.fanout]`"
+    }
   ]
 }

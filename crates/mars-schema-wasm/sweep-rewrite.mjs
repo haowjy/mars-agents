@@ -25,6 +25,10 @@ const schemaPath = path => {
   return null;
 };
 
+// deepStrictEqual ignores key order; compare it at every depth.
+const keyOrder = value => Array.isArray(value) ? value.map(keyOrder)
+  : value && typeof value === "object" ? Object.keys(value).map(key => [key, keyOrder(value[key])]) : null;
+
 let files = 0, unreadable = 0;
 for (const root of process.argv.slice(2)) {
   for (const file of walk(root)) {
@@ -38,7 +42,8 @@ for (const root of process.argv.slice(2)) {
     const block = wasm.rewriteBlock(before.frontmatter);
     const after = wasm.read(path, `---\n${block}---\n${before.body}`);
     assert.deepStrictEqual(after.frontmatter, before.frontmatter, relative(root, file));
+    assert.deepStrictEqual(keyOrder(after.frontmatter), keyOrder(before.frontmatter), `${relative(root, file)} key order`);
     files++;
   }
 }
-console.log(`rewriteBlock sweep: ${files} files, 0 value changes (${unreadable} skipped as unreadable YAML)`);
+console.log(`rewriteBlock sweep: ${files} files, 0 value changes, 0 order changes (${unreadable} skipped as unreadable YAML)`);

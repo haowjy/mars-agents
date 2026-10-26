@@ -1,45 +1,45 @@
 {
-  "body": "",
-  "diagnostics": [
-    {
-      "code": "yaml.anchor",
-      "message": "YAML anchors and aliases are not supported",
-      "path": [],
-      "severity": "error"
-    },
-    {
-      "code": "field.unknown",
-      "message": "unknown field `x` is preserved",
-      "path": [
-        "x"
-      ],
-      "severity": "warning"
-    }
-  ],
-  "fields": {
-    "approval": null,
-    "description": null,
-    "effort": null,
-    "harness": null,
-    "harness-overrides": {},
-    "mode": null,
-    "model": null,
-    "model-invocable": true,
-    "model-policies": [],
-    "name": null,
-    "sandbox": null,
-    "skills": {
-      "available": [],
-      "load": []
-    },
-    "subagents": [],
-    "tools": [],
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "x",
       "hello"
     ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "yaml.anchor",
+      "severity": "error",
+      "path": [],
+      "message": "YAML anchors and aliases are not supported"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "x"
+      ],
+      "message": "unknown field `x` is preserved"
+    }
   ]
 }

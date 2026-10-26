@@ -2,69 +2,10 @@
   "classification": {
     "kind": "mars-legacy"
   },
-  "definitions": [
-    {
-      "change": {
-        "kind": "none"
-      },
-      "kind": "skill",
-      "output_path": "skills/steady/SKILL.md",
-      "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "compatibility": null,
-          "description": "Stable",
-          "license": null,
-          "metadata": null,
-          "model-invocable": true,
-          "name": "steady",
-          "user-invocable": true
-        },
-        "frontmatter": [
-          [
-            "name",
-            "steady"
-          ],
-          [
-            "description",
-            "Stable"
-          ]
-        ]
-      },
-      "slug": "steady",
-      "source_path": "skills/steady/SKILL.md"
-    }
-  ],
-  "diagnostics": {
-    "mars.toml": [
-      {
-        "code": "legacy-package",
-        "message": "package uses the pre-v1 format; apply the reported authored-file changes",
-        "path": [],
-        "severity": "warning"
-      }
-    ]
-  },
   "manifest": {
-    "change": {
-      "kind": "edited",
-      "paths": [
-        [
-          "package",
-          "schema"
-        ]
-      ]
-    },
+    "source_path": "mars.toml",
     "output_path": "mars.toml",
     "reading": {
-      "body": null,
-      "diagnostics": [],
-      "fields": {
-        "name": "demo",
-        "schema": 1,
-        "version": "1.0.0"
-      },
       "frontmatter": [
         [
           "name",
@@ -78,9 +19,68 @@
           "version",
           "1.0.0"
         ]
-      ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
     },
-    "source_path": "mars.toml"
+    "change": {
+      "kind": "edited",
+      "paths": [
+        [
+          "package",
+          "schema"
+        ]
+      ]
+    }
   },
-  "payload": []
+  "definitions": [
+    {
+      "kind": "skill",
+      "slug": "steady",
+      "source_path": "skills/steady/SKILL.md",
+      "output_path": "skills/steady/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "steady"
+          ],
+          [
+            "description",
+            "Stable"
+          ]
+        ],
+        "fields": {
+          "name": "steady",
+          "description": "Stable",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {
+    "mars.toml": [
+      {
+        "code": "legacy-package",
+        "severity": "warning",
+        "path": [],
+        "message": "package uses the pre-v1 format; apply the reported authored-file changes"
+      }
+    ]
+  }
 }

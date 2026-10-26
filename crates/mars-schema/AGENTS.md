@@ -51,8 +51,10 @@ strings are quoted, never block scalars. `emit_value(value, indent)`: `indent` i
 key's column; a scalar is one line with no leading newline; a non-empty collection starts with
 `\n` and its children sit at `indent + 2`; output never ends in a newline. Integers beyond
 ±(2^53 − 1) are refused. `rewrite_block` returns the whole block between the fences, keys in order,
-ending in exactly one newline. Nested mapping keys come out sorted (`serde_json` without
-`preserve_order`).
+ending in exactly one newline. Raw values are `ordered::OrderedValue` (mapping keys in authored
+order, serialized in order, strict about NaN and big integers), never `serde_json::Value`, whose
+keys sort; `serde_json/preserve_order` stays off because it would reorder every binary `--json`
+output. Native config for the bundle is converted to `serde_json::Map` at the boundary.
 
 `mars-schema-wasm` serializes with `Serializer::json_compatible()` (plain objects, `null`) and
 exposes `read`, `emitValue`, `rewriteBlock`, `vocabulary` and `prepare` (provisional until P5) as

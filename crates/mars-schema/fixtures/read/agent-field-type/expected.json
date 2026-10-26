@@ -1,39 +1,39 @@
 {
-  "body": "",
-  "diagnostics": [
-    {
-      "code": "field.value",
-      "message": "agent field `model-invocable` has invalid value `true`; allowed: boolean",
-      "path": [
-        "model-invocable"
-      ],
-      "severity": "error"
-    }
-  ],
-  "fields": {
-    "approval": null,
-    "description": null,
-    "effort": null,
-    "harness": null,
-    "harness-overrides": {},
-    "mode": null,
-    "model": null,
-    "model-invocable": true,
-    "model-policies": [],
-    "name": null,
-    "sandbox": null,
-    "skills": {
-      "available": [],
-      "load": []
-    },
-    "subagents": [],
-    "tools": [],
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "model-invocable",
       "true"
     ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-invocable"
+      ],
+      "message": "agent field `model-invocable` has invalid value `true`; allowed: boolean"
+    }
   ]
 }

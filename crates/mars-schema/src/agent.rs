@@ -1,8 +1,9 @@
 //! Agent definition reader.
 
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 use crate::HarnessId;
+use crate::ordered::OrderedValue;
 use serde_yaml::Value;
 
 use crate::frontmatter::{Frontmatter, FrontmatterError, SkillsSpec};
@@ -171,7 +172,7 @@ impl EffortLevel {
 #[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(transparent)]
 pub struct HarnessOverrides {
-    pub entries: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
+    pub entries: IndexMap<String, IndexMap<String, OrderedValue>>,
 }
 
 fn mars_schema_harness_known(value: &str) -> Option<HarnessId> {
@@ -183,7 +184,7 @@ fn harness_key(harness: &HarnessId) -> &'static str {
 }
 
 impl HarnessOverrides {
-    pub fn get(&self, harness: &HarnessId) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    pub fn get(&self, harness: &HarnessId) -> Option<&IndexMap<String, OrderedValue>> {
         self.entries.get(harness_key(harness))
     }
 }
@@ -240,13 +241,19 @@ pub struct AgentProfile {
 }
 
 impl AgentProfile {
+    /// The harness's passthrough block as a JSON map (keys then sort), if it has entries.
     pub fn effective_native_config(
         &self,
         harness: &HarnessId,
-    ) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    ) -> Option<serde_json::Map<String, serde_json::Value>> {
         self.harness_overrides
             .get(harness)
             .filter(|map| !map.is_empty())
+            .map(|map| {
+                map.iter()
+                    .map(|(key, value)| (key.clone(), value.to_json()))
+                    .collect()
+            })
     }
 }
 // ---------------------------------------------------------------------------
@@ -330,7 +337,7 @@ fn parse_native_config_value(
     path: &[crate::diagnostic::PathSegment],
     value: &Value,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
-) -> Option<serde_json::Value> {
+) -> Option<OrderedValue> {
     match value {
         Value::Null => {
             push_agent_invalid(
@@ -341,13 +348,13 @@ fn parse_native_config_value(
             );
             None
         }
-        Value::Bool(v) => Some(serde_json::Value::Bool(*v)),
-        Value::String(v) => Some(serde_json::Value::String(v.clone())),
+        Value::Bool(v) => Some(OrderedValue::Bool(*v)),
+        Value::String(v) => Some(OrderedValue::String(v.clone())),
         Value::Number(v) => {
             if v.as_i64()
-                .is_some_and(|n| n.unsigned_abs() > crate::edit::MAX_SAFE_INTEGER)
+                .is_some_and(|n| n.unsigned_abs() > crate::ordered::MAX_SAFE_INTEGER)
                 || v.as_u64()
-                    .is_some_and(|n| n > crate::edit::MAX_SAFE_INTEGER)
+                    .is_some_and(|n| n > crate::ordered::MAX_SAFE_INTEGER)
             {
                 push_agent_invalid(
                     diags,
@@ -357,12 +364,12 @@ fn parse_native_config_value(
                 );
                 None
             } else if let Some(number) = v.as_i64().map(serde_json::Number::from) {
-                Some(serde_json::Value::Number(number))
+                Some(OrderedValue::Number(number))
             } else if let Some(number) = v.as_u64().map(serde_json::Number::from) {
-                Some(serde_json::Value::Number(number))
+                Some(OrderedValue::Number(number))
             } else if let Some(float) = v.as_f64() {
                 match serde_json::Number::from_f64(float) {
-                    Some(number) => Some(serde_json::Value::Number(number)),
+                    Some(number) => Some(OrderedValue::Number(number)),
                     None => {
                         push_agent_invalid(
                             diags,
@@ -387,10 +394,10 @@ fn parse_native_config_value(
                     out.push(parsed);
                 }
             }
-            Some(serde_json::Value::Array(out))
+            Some(OrderedValue::Array(out))
         }
         Value::Mapping(mapping) => {
-            let mut out = serde_json::Map::new();
+            let mut out = IndexMap::new();
             for (key, entry) in mapping {
                 let Some(key_text) = key.as_str() else {
                     push_agent_invalid(diags, path.to_vec(), format!("{key:?}"), "string keys");
@@ -402,7 +409,7 @@ fn parse_native_config_value(
                     out.insert(key_text.to_string(), parsed);
                 }
             }
-            Some(serde_json::Value::Object(out))
+            Some(OrderedValue::Object(out))
         }
         _ => {
             push_agent_invalid(
@@ -454,7 +461,7 @@ fn parse_harness_overrides(
         {
             push_unknown_harness_override(diags, harness_name);
         }
-        let mut parsed = serde_json::Map::new();
+        let mut parsed = IndexMap::new();
         for (target_key, target_value) in sub_mapping {
             let Some(key_text) = target_key.as_str() else {
                 push_agent_invalid(

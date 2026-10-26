@@ -1,31 +1,19 @@
 {
   "classification": {
+    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "paths": [],
-      "source": "predicted"
-    },
-    "kind": "foreign"
+      "source": "predicted",
+      "paths": []
+    }
   },
   "definitions": [
     {
-      "change": {
-        "kind": "none"
-      },
       "kind": "skill",
+      "slug": "demo",
+      "source_path": "skills/demo/SKILL.md",
       "output_path": "skills/demo/SKILL.md",
       "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "compatibility": null,
-          "description": "Demo",
-          "license": null,
-          "metadata": null,
-          "model-invocable": true,
-          "name": "demo",
-          "user-invocable": true
-        },
         "frontmatter": [
           [
             "name",
@@ -35,17 +23,29 @@
             "description",
             "Demo"
           ]
-        ]
+        ],
+        "fields": {
+          "name": "demo",
+          "description": "Demo",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
       },
-      "slug": "demo",
-      "source_path": "skills/demo/SKILL.md"
+      "change": {
+        "kind": "none"
+      }
     }
   ],
-  "diagnostics": {},
   "payload": [
     {
-      "output_path": "skills/demo/script.py",
-      "source_path": "skills/demo/script.py"
+      "source_path": "skills/demo/script.py",
+      "output_path": "skills/demo/script.py"
     }
-  ]
+  ],
+  "diagnostics": {}
 }

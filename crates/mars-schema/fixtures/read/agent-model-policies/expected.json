@@ -1,35 +1,4 @@
 {
-  "body": "body",
-  "diagnostics": [],
-  "fields": {
-    "approval": null,
-    "description": null,
-    "effort": null,
-    "harness": null,
-    "harness-overrides": {},
-    "mode": null,
-    "model": null,
-    "model-invocable": true,
-    "model-policies": [
-      {
-        "match": {
-          "model": "gpt-6"
-        },
-        "override": {
-          "effort": "high"
-        }
-      }
-    ],
-    "name": null,
-    "sandbox": null,
-    "skills": {
-      "available": [],
-      "load": []
-    },
-    "subagents": [],
-    "tools": [],
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "model-policies",
@@ -44,5 +13,36 @@
         }
       ]
     ]
-  ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": [
+      {
+        "match": {
+          "model": "gpt-6"
+        },
+        "override": {
+          "effort": "high"
+        }
+      }
+    ]
+  },
+  "body": "body",
+  "diagnostics": []
 }

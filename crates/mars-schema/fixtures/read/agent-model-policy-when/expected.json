@@ -1,64 +1,4 @@
 {
-  "body": "body\n",
-  "diagnostics": [
-    {
-      "code": "field.value",
-      "message": "agent field `model-policies[2].when` has invalid value `String(\"\")`; allowed: non-empty one-line string",
-      "path": [
-        "model-policies",
-        1,
-        "when"
-      ],
-      "severity": "error"
-    },
-    {
-      "code": "field.value",
-      "message": "agent field `model-policies[3].when` has invalid value `String(\"two\\nlines\")`; allowed: non-empty one-line string",
-      "path": [
-        "model-policies",
-        2,
-        "when"
-      ],
-      "severity": "error"
-    },
-    {
-      "code": "field.value",
-      "message": "agent field `model-policies[4].when` has invalid value `String(\"trailing\\n\")`; allowed: non-empty one-line string",
-      "path": [
-        "model-policies",
-        3,
-        "when"
-      ],
-      "severity": "error"
-    }
-  ],
-  "fields": {
-    "approval": null,
-    "description": null,
-    "effort": null,
-    "harness": null,
-    "harness-overrides": {},
-    "mode": null,
-    "model": null,
-    "model-invocable": true,
-    "model-policies": [
-      {
-        "match": {
-          "alias": "a"
-        },
-        "when": "one line"
-      }
-    ],
-    "name": null,
-    "sandbox": null,
-    "skills": {
-      "available": [],
-      "load": []
-    },
-    "subagents": [],
-    "tools": [],
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "model-policies",
@@ -89,5 +29,65 @@
         }
       ]
     ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": [
+      {
+        "match": {
+          "alias": "a"
+        },
+        "when": "one line"
+      }
+    ]
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-policies",
+        1,
+        "when"
+      ],
+      "message": "agent field `model-policies[2].when` has invalid value `String(\"\")`; allowed: non-empty one-line string"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-policies",
+        2,
+        "when"
+      ],
+      "message": "agent field `model-policies[3].when` has invalid value `String(\"two\\nlines\")`; allowed: non-empty one-line string"
+    },
+    {
+      "code": "field.value",
+      "severity": "error",
+      "path": [
+        "model-policies",
+        3,
+        "when"
+      ],
+      "message": "agent field `model-policies[4].when` has invalid value `String(\"trailing\\n\")`; allowed: non-empty one-line string"
+    }
   ]
 }

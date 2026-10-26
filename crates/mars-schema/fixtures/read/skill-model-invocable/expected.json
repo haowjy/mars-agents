@@ -1,36 +1,36 @@
 {
-  "body": "body",
-  "diagnostics": [
-    {
-      "code": "field.required",
-      "message": "`name` must be a non-empty string",
-      "path": [
-        "name"
-      ],
-      "severity": "error"
-    },
-    {
-      "code": "field.required",
-      "message": "`description` must be a non-empty string",
-      "path": [
-        "description"
-      ],
-      "severity": "error"
-    }
-  ],
-  "fields": {
-    "compatibility": null,
-    "description": null,
-    "license": null,
-    "metadata": null,
-    "model-invocable": false,
-    "name": null,
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "model-invocable",
       false
     ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "model-invocable": false,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
   ]
 }

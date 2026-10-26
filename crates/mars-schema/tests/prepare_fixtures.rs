@@ -1,5 +1,6 @@
 use std::{fs, path::Path};
 
+use mars_schema::ordered::OrderedValue;
 use mars_schema::{
     dialect::Dialect,
     prepare::{ChangeRecord, PrepareContext, Prepared, prepare},
@@ -24,7 +25,9 @@ fn prepare_fixtures_match() {
         let tree = common::load_tree(&case.join("input"));
         let prepared = prepare(&tree, request.context, request.declared_dialect);
         // The bytes are checked against `expected/` below, not inlined in `expected.json`.
-        let mut value = serde_json::to_value(&prepared).unwrap();
+        // Through the ordered type, so key order stays in the expected file.
+        let mut value: OrderedValue =
+            serde_json::from_str(&serde_json::to_string(&prepared).unwrap()).unwrap();
         strip_bytes(&mut value);
         common::assert_file(&case.join("expected.json"), &common::pretty(&value));
         assert_changed_bytes(&case, &prepared);
@@ -46,13 +49,13 @@ fn prepare_fixtures_match() {
     }
 }
 
-fn strip_bytes(value: &mut serde_json::Value) {
+fn strip_bytes(value: &mut OrderedValue) {
     match value {
-        serde_json::Value::Object(map) => {
-            map.remove("normalized_bytes");
+        OrderedValue::Object(map) => {
+            map.shift_remove("normalized_bytes");
             map.values_mut().for_each(strip_bytes);
         }
-        serde_json::Value::Array(values) => values.iter_mut().for_each(strip_bytes),
+        OrderedValue::Array(values) => values.iter_mut().for_each(strip_bytes),
         _ => {}
     }
 }

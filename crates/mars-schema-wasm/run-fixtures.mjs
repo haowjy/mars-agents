@@ -27,8 +27,13 @@ const tree = (dir, prefix = "") => {
   return files;
 };
 let checked = 0;
+// Key order at every depth. deepStrictEqual ignores it, and the writer's order is part of the file.
+const keyOrder = value => Array.isArray(value) ? value.map(keyOrder)
+  : value && typeof value === "object" && !(value instanceof Uint8Array)
+    ? Object.keys(value).map(key => [key, keyOrder(value[key])]) : null;
 const check = (actual, expected, label) => {
   assert.deepStrictEqual(actual, expected, label);
+  assert.deepStrictEqual(keyOrder(actual), keyOrder(expected), `${label} key order`);
   checked++;
 };
 
@@ -129,6 +134,10 @@ const first = wasm.read("agents/a.md", source);
 const block = wasm.rewriteBlock(first.frontmatter);
 assert.ok(block.endsWith("\n") && !block.endsWith("\n\n"));
 check(wasm.read("agents/a.md", `---\n${block}---\nbody\n`).frontmatter, first.frontmatter, "rewriteBlock round trip");
+const nested = wasm.read("agents/a.md", text("read", "agent-nested-order", "agent.md"));
+const nestedBlock = wasm.rewriteBlock(nested.frontmatter);
+assert.ok(nestedBlock.indexOf("write: allow") < nestedBlock.indexOf("bash: ask") && nestedBlock.indexOf("zeta") < nestedBlock.indexOf("alpha"));
+check(wasm.read("agents/a.md", `---\n${nestedBlock}---\nbody\n`).frontmatter, nested.frontmatter, "rewriteBlock keeps nested key order");
 assert.equal(wasm.rewriteBlock([]), "");
 assert.throws(() => wasm.rewriteBlock([["a", 1], ["a", 2]]), /duplicate/);
 assert.throws(() => wasm.emitValue(NaN, 0), /NaN/);

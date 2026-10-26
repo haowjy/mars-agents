@@ -1,28 +1,28 @@
 {
-  "body": "body",
-  "diagnostics": [
-    {
-      "code": "field.required",
-      "message": "`description` must be a non-empty string",
-      "path": [
-        "description"
-      ],
-      "severity": "error"
-    }
-  ],
-  "fields": {
-    "compatibility": null,
-    "description": null,
-    "license": null,
-    "metadata": null,
-    "model-invocable": true,
-    "name": "skill",
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "name",
       " skill "
     ]
+  ],
+  "fields": {
+    "name": "skill",
+    "description": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "body",
+  "diagnostics": [
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
   ]
 }

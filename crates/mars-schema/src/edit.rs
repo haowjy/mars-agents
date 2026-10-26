@@ -5,11 +5,9 @@
 //! every character YAML parsers disagree about, so the output reads back as the
 //! same value in `serde_yaml` and in other YAML libraries.
 
-use serde_json::{Number, Value};
+use serde_json::Number;
 
-/// Largest integer magnitude JavaScript represents unambiguously (`Number.MAX_SAFE_INTEGER`):
-/// 2^53 is also what 2^53 + 1 rounds to.
-pub(crate) const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue as Value};
 
 /// A value that cannot be written as YAML without changing it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -32,7 +32,7 @@ pub fn assert_file(expected: &Path, actual: &str) {
 }
 
 /// Pretty JSON with a trailing newline, the on-disk form of `expected.json`.
-pub fn pretty(value: &serde_json::Value) -> String {
+pub fn pretty(value: &impl serde::Serialize) -> String {
     serde_json::to_string_pretty(value).unwrap() + "\n"
 }
 

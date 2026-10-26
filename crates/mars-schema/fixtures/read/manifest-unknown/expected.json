@@ -1,21 +1,4 @@
 {
-  "body": null,
-  "diagnostics": [
-    {
-      "code": "field.unknown",
-      "message": "unknown package field `future` is preserved",
-      "path": [
-        "package",
-        "future"
-      ],
-      "severity": "warning"
-    }
-  ],
-  "fields": {
-    "name": "pkg",
-    "schema": 1,
-    "version": "0.1.0"
-  },
   "frontmatter": [
     [
       "future",
@@ -33,5 +16,22 @@
       "version",
       "0.1.0"
     ]
+  ],
+  "fields": {
+    "name": "pkg",
+    "version": "0.1.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "package",
+        "future"
+      ],
+      "message": "unknown package field `future` is preserved"
+    }
   ]
 }

@@ -1,27 +1,4 @@
 {
-  "body": "body\n",
-  "diagnostics": [
-    {
-      "code": "field.type",
-      "message": "`metadata.type` must be a string",
-      "path": [
-        "metadata",
-        "type"
-      ],
-      "severity": "error"
-    }
-  ],
-  "fields": {
-    "compatibility": null,
-    "description": "demo",
-    "license": null,
-    "metadata": {
-      "type": 12
-    },
-    "model-invocable": true,
-    "name": "demo",
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "name",
@@ -37,5 +14,28 @@
         "type": 12
       }
     ]
+  ],
+  "fields": {
+    "name": "demo",
+    "description": "demo",
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": {
+      "type": 12
+    }
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.type",
+      "severity": "error",
+      "path": [
+        "metadata",
+        "type"
+      ],
+      "message": "`metadata.type` must be a string"
+    }
   ]
 }

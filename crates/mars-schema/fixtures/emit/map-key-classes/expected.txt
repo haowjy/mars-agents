@@ -1,31 +1,30 @@
 
-      "": v
-      " sp": v
-      "!t": v
-      "\"x": v
-      "#k": v
-      "%x": v
-      "&a": v
-      "'x": v
       "*": v
       "*.md": v
-      "- x": v
-      "-lead": v
-      "012": v
-      "1": v
-      ">": v
       "@x": v
-      "[x": v
       "`x": v
-      "a\nb": v
-      a/b: v
-      "a: b": v
-      "null": v
-      plain: v
-      "true": v
-      with.dot: v
-      "{x": v
+      "%x": v
       "|": v
+      ">": v
+      "[x": v
+      "{x": v
+      "\"x": v
+      "'x": v
+      "&a": v
+      "!t": v
+      "true": v
+      "null": v
       "~": v
-      "\x7f": v
+      "#k": v
+      "- x": v
+      "012": v
+      " sp": v
+      "": v
+      "a: b": v
+      "a\nb": v
       "汉字": v
+      plain: v
+      with.dot: v
+      a/b: v
+      "-lead": v
+      "\x7f": v

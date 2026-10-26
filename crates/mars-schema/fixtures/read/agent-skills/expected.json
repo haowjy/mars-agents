@@ -1,41 +1,41 @@
 {
-  "body": "body",
-  "diagnostics": [],
-  "fields": {
-    "approval": null,
-    "description": null,
-    "effort": null,
-    "harness": null,
-    "harness-overrides": {},
-    "mode": null,
-    "model": null,
-    "model-invocable": true,
-    "model-policies": [],
-    "name": null,
-    "sandbox": null,
-    "skills": {
-      "available": [
-        "b"
-      ],
-      "load": [
-        "a"
-      ]
-    },
-    "subagents": [],
-    "tools": [],
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "skills",
       {
-        "available": [
-          "b"
-        ],
         "load": [
           "a"
+        ],
+        "available": [
+          "b"
         ]
       }
     ]
-  ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "effort": null,
+    "skills": {
+      "load": [
+        "a"
+      ],
+      "available": [
+        "b"
+      ]
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body",
+  "diagnostics": []
 }

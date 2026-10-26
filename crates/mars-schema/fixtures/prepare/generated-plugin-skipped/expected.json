@@ -1,31 +1,19 @@
 {
   "classification": {
+    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "paths": [],
-      "source": "predicted"
-    },
-    "kind": "foreign"
+      "source": "predicted",
+      "paths": []
+    }
   },
   "definitions": [
     {
-      "change": {
-        "kind": "none"
-      },
       "kind": "skill",
+      "slug": "kept",
+      "source_path": "skills/kept/SKILL.md",
       "output_path": "skills/kept/SKILL.md",
       "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "compatibility": null,
-          "description": "Kept",
-          "license": null,
-          "metadata": null,
-          "model-invocable": true,
-          "name": "kept",
-          "user-invocable": true
-        },
         "frontmatter": [
           [
             "name",
@@ -35,21 +23,33 @@
             "description",
             "Kept"
           ]
-        ]
+        ],
+        "fields": {
+          "name": "kept",
+          "description": "Kept",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
       },
-      "slug": "kept",
-      "source_path": "skills/kept/SKILL.md"
+      "change": {
+        "kind": "none"
+      }
     }
   ],
+  "payload": [],
   "diagnostics": {
     "vendor/out/.mars-plugin.json": [
       {
         "code": "generated-plugin-tree-skipped",
-        "message": "skipping generated plugin tree at `vendor/out` while reading authored package input",
+        "severity": "info",
         "path": [],
-        "severity": "info"
+        "message": "skipping generated plugin tree at `vendor/out` while reading authored package input"
       }
     ]
-  },
-  "payload": []
+  }
 }

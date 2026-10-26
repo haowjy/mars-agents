@@ -4,9 +4,16 @@
 
 use std::fs;
 
-use serde_json::{Value, json};
+use indexmap::IndexMap;
+use mars_schema::ordered::OrderedValue as Value;
 
 mod common;
+
+#[derive(serde::Deserialize)]
+struct Case {
+    value: Value,
+    indent: usize,
+}
 
 /// Splice `emitted` in as the value of a key at column `indent`, nested under parent keys at
 /// columns 0, 2, ...; the value then reads back at `x-test` (and `k` for each level below).
@@ -27,15 +34,17 @@ fn splice(emitted: &str, indent: usize) -> String {
 }
 
 fn nest(value: &Value, indent: usize) -> Value {
-    (0..indent / 2).fold(value.clone(), |inner, _| json!({ "k": inner }))
+    (0..indent / 2).fold(value.clone(), |inner, _| {
+        Value::Object(IndexMap::from([("k".to_owned(), inner)]))
+    })
 }
 
 #[test]
 fn emit_fixtures_match_and_round_trip() {
     for case in common::cases("emit") {
-        let input: Value =
+        let input: Case =
             serde_json::from_slice(&fs::read(case.join("value.json")).unwrap()).unwrap();
-        let (value, indent) = (&input["value"], input["indent"].as_u64().unwrap() as usize);
+        let (value, indent) = (&input.value, input.indent);
         let emitted = mars_schema::edit::emit_value(value, indent);
         if case.join("expected-error.txt").exists() {
             let message = emitted.unwrap_err().to_string();
@@ -93,6 +102,33 @@ fn rewrite_block_round_trips_a_frontmatter() {
 
 #[test]
 fn rewrite_block_refuses_duplicate_keys() {
-    let pairs = [("a".to_owned(), json!(1)), ("a".to_owned(), json!(2))];
+    let pairs = [
+        ("a".to_owned(), Value::Number(1.into())),
+        ("a".to_owned(), Value::Number(2.into())),
+    ];
     assert!(mars_schema::edit::rewrite_block(&pairs).is_err());
+}
+
+/// Nested mapping order survives read → rewrite_block → read, and emission.
+#[test]
+fn nested_key_order_survives() {
+    let source = "---\nz: 1\ntools:\n  write: allow\n  \"*\": deny\n  bash: ask\nharness-overrides:\n  flow:\n    zeta: {b: 1, a: 2}\n    alpha: [{y: 1, x: 2}]\n---\nb\n";
+    let first = mars_schema::agent::read(source);
+    let block = mars_schema::edit::rewrite_block(&first.frontmatter).unwrap();
+    assert_eq!(
+        block,
+        "z: 1\ntools:\n  write: allow\n  \"*\": deny\n  bash: ask\nharness-overrides:\n  flow:\n    zeta:\n      b: 1\n      a: 2\n    alpha:\n      - \"y\": 1\n        x: 2\n"
+    );
+    let serialized = serde_json::to_string(&first.frontmatter).unwrap();
+    assert!(
+        serialized.contains(r#"{"write":"allow","*":"deny","bash":"ask"}"#),
+        "{serialized}"
+    );
+    let fields = serde_json::to_string(&first.fields).unwrap();
+    assert!(
+        fields.contains(
+            r#""harness-overrides":{"flow":{"zeta":{"b":1,"a":2},"alpha":[{"y":1,"x":2}]}}"#
+        ),
+        "{fields}"
+    );
 }

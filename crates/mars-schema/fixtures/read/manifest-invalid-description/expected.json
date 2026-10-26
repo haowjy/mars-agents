@@ -1,16 +1,4 @@
 {
-  "body": null,
-  "diagnostics": [
-    {
-      "code": "manifest.invalid-field",
-      "message": "invalid package field: invalid type: integer `4`, expected a string\nin `description`\n",
-      "path": [
-        "package"
-      ],
-      "severity": "error"
-    }
-  ],
-  "fields": null,
   "frontmatter": [
     [
       "description",
@@ -28,5 +16,17 @@
       "version",
       "1.0.0"
     ]
+  ],
+  "fields": null,
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "manifest.invalid-field",
+      "severity": "error",
+      "path": [
+        "package"
+      ],
+      "message": "invalid package field: invalid type: integer `4`, expected a string\nin `description`\n"
+    }
   ]
 }

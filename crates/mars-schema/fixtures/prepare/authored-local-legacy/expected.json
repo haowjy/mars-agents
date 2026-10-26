@@ -4,42 +4,11 @@
   },
   "definitions": [
     {
-      "change": {
-        "kind": "edited",
-        "paths": [
-          [
-            "model-invocable"
-          ],
-          [
-            "model_invocable"
-          ]
-        ]
-      },
       "kind": "agent",
+      "slug": "local",
+      "source_path": "agents/local.md",
       "output_path": "agents/local.md",
       "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "approval": null,
-          "description": "Local",
-          "effort": null,
-          "harness": null,
-          "harness-overrides": {},
-          "mode": null,
-          "model": null,
-          "model-invocable": false,
-          "model-policies": [],
-          "name": "local",
-          "sandbox": null,
-          "skills": {
-            "available": [],
-            "load": []
-          },
-          "subagents": [],
-          "tools": [],
-          "user-invocable": true
-        },
         "frontmatter": [
           [
             "name",
@@ -53,21 +22,52 @@
             "model-invocable",
             false
           ]
-        ]
+        ],
+        "fields": {
+          "name": "local",
+          "description": "Local",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": false,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "# Body\n",
+        "diagnostics": []
       },
-      "slug": "local",
-      "source_path": "agents/local.md"
+      "change": {
+        "kind": "edited",
+        "paths": [
+          [
+            "model-invocable"
+          ],
+          [
+            "model_invocable"
+          ]
+        ]
+      }
     }
   ],
+  "payload": [],
   "diagnostics": {
     "agents/local.md": [
       {
         "code": "legacy-package",
-        "message": "package uses the pre-v1 format; apply the reported authored-file changes",
+        "severity": "warning",
         "path": [],
-        "severity": "warning"
+        "message": "package uses the pre-v1 format; apply the reported authored-file changes"
       }
     ]
-  },
-  "payload": []
+  }
 }

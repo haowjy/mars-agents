@@ -39,7 +39,7 @@ fn serialize_metadata<S: serde::Serializer>(
     use serde::Serialize;
     value
         .as_ref()
-        .and_then(|value| crate::read::json_value(value).ok())
+        .and_then(|value| crate::ordered::OrderedValue::from_yaml(value).ok())
         .serialize(serializer)
 }
 

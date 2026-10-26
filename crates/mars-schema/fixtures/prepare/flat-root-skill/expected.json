@@ -1,31 +1,19 @@
 {
   "classification": {
+    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "paths": [],
-      "source": "predicted"
-    },
-    "kind": "foreign"
+      "source": "predicted",
+      "paths": []
+    }
   },
   "definitions": [
     {
-      "change": {
-        "kind": "none"
-      },
       "kind": "skill",
+      "slug": "flat",
+      "source_path": "SKILL.md",
       "output_path": "SKILL.md",
       "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "compatibility": null,
-          "description": "Flat",
-          "license": null,
-          "metadata": null,
-          "model-invocable": true,
-          "name": "flat",
-          "user-invocable": true
-        },
         "frontmatter": [
           [
             "name",
@@ -35,17 +23,29 @@
             "description",
             "Flat"
           ]
-        ]
+        ],
+        "fields": {
+          "name": "flat",
+          "description": "Flat",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
       },
-      "slug": "flat",
-      "source_path": "SKILL.md"
+      "change": {
+        "kind": "none"
+      }
     }
   ],
-  "diagnostics": {},
   "payload": [
     {
-      "output_path": "notes.md",
-      "source_path": "notes.md"
+      "source_path": "notes.md",
+      "output_path": "notes.md"
     }
-  ]
+  ],
+  "diagnostics": {}
 }

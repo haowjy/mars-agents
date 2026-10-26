@@ -1,44 +1,45 @@
 {
   "capabilities": [
     {
+      "name": "bash",
       "aliases": [
         "shell",
         "terminal",
         "exec_command",
         "shell_command"
-      ],
-      "name": "bash"
+      ]
     },
     {
+      "name": "read",
       "aliases": [
         "cat",
         "view",
         "file_read"
-      ],
-      "name": "read"
+      ]
     },
     {
+      "name": "write",
       "aliases": [
         "file_write",
         "apply_patch"
-      ],
-      "name": "write"
+      ]
     },
     {
+      "name": "edit",
       "aliases": [
         "sed",
         "str_replace"
-      ],
-      "name": "edit"
+      ]
     },
     {
+      "name": "agent",
       "aliases": [
         "subagent",
         "spawn_agent"
-      ],
-      "name": "agent"
+      ]
     },
     {
+      "name": "task",
       "aliases": [
         "todo_read",
         "todoread",
@@ -53,134 +54,133 @@
         "task_update",
         "taskupdate",
         "update_plan"
-      ],
-      "name": "task"
+      ]
     },
     {
-      "aliases": [],
-      "name": "skill"
+      "name": "skill",
+      "aliases": []
     },
     {
-      "aliases": [],
-      "name": "workflow"
+      "name": "workflow",
+      "aliases": []
     },
     {
+      "name": "glob",
       "aliases": [
         "find"
-      ],
-      "name": "glob"
+      ]
     },
     {
+      "name": "grep",
       "aliases": [
         "rg",
         "search",
         "ripgrep"
-      ],
-      "name": "grep"
+      ]
     },
     {
+      "name": "notebook",
       "aliases": [
         "jupyter",
         "notebook_edit",
         "notebookedit"
-      ],
-      "name": "notebook"
+      ]
     },
     {
-      "aliases": [],
-      "name": "web"
+      "name": "web",
+      "aliases": []
     },
     {
+      "name": "web_search",
       "aliases": [
         "websearch"
-      ],
-      "name": "web_search"
+      ]
     },
     {
+      "name": "web_fetch",
       "aliases": [
         "webfetch",
         "fetch",
         "curl"
-      ],
-      "name": "web_fetch"
+      ]
     },
     {
+      "name": "ask_user",
       "aliases": [
         "askuser",
         "request_user_input",
         "ask_question",
         "ask_user_question",
         "askuserquestion"
-      ],
-      "name": "ask_user"
+      ]
     },
     {
-      "aliases": [],
-      "name": "cron"
+      "name": "cron",
+      "aliases": []
     },
     {
+      "name": "notifications",
       "aliases": [
         "pushnotification",
         "push_notification"
-      ],
-      "name": "notifications"
+      ]
     },
     {
+      "name": "plan_mode",
       "aliases": [
         "planmode",
         "switch_mode"
-      ],
-      "name": "plan_mode"
+      ]
     },
     {
-      "aliases": [],
-      "name": "worktree"
+      "name": "worktree",
+      "aliases": []
     },
     {
-      "aliases": [],
-      "name": "lsp"
+      "name": "lsp",
+      "aliases": []
     },
     {
-      "aliases": [],
-      "name": "monitor"
+      "name": "monitor",
+      "aliases": []
     },
     {
+      "name": "send_user_file",
       "aliases": [
         "senduserfile"
-      ],
-      "name": "send_user_file"
+      ]
     },
     {
+      "name": "schedule_wakeup",
       "aliases": [
         "schedulewakeup"
-      ],
-      "name": "schedule_wakeup"
+      ]
     },
     {
+      "name": "remote_trigger",
       "aliases": [
         "remotetrigger"
-      ],
-      "name": "remote_trigger"
+      ]
     },
     {
+      "name": "tool_search",
       "aliases": [
         "toolsearch"
-      ],
-      "name": "tool_search"
+      ]
     },
     {
-      "aliases": [],
-      "name": "ls"
+      "name": "ls",
+      "aliases": []
     },
     {
-      "aliases": [],
-      "name": "work"
+      "name": "work",
+      "aliases": []
     },
     {
+      "name": "image",
       "aliases": [
         "view_image"
-      ],
-      "name": "image"
+      ]
     }
   ],
   "natives": {
@@ -215,35 +215,35 @@
       },
       "edit": {
         "kind": "scoped-tools",
-        "note": "Claude uses Edit(path) to scope every built-in file-editing tool",
-        "scoped": [
-          "Edit"
-        ],
         "unscoped": [
           "Edit",
           "Write",
           "NotebookEdit"
-        ]
+        ],
+        "scoped": [
+          "Edit"
+        ],
+        "note": "Claude uses Edit(path) to scope every built-in file-editing tool"
       },
       "glob": {
         "kind": "scoped-tools",
-        "note": "Claude scopes Glob paths through Read(path), which also covers other built-in file readers at that path",
+        "unscoped": [
+          "Glob"
+        ],
         "scoped": [
           "Read"
         ],
-        "unscoped": [
-          "Glob"
-        ]
+        "note": "Claude scopes Glob paths through Read(path), which also covers other built-in file readers at that path"
       },
       "grep": {
         "kind": "scoped-tools",
-        "note": "Claude scopes Grep paths through Read(path), which also covers other built-in file readers at that path",
+        "unscoped": [
+          "Grep"
+        ],
         "scoped": [
           "Read"
         ],
-        "unscoped": [
-          "Grep"
-        ]
+        "note": "Claude scopes Grep paths through Read(path), which also covers other built-in file readers at that path"
       },
       "image": {
         "kind": "no-switch",
@@ -266,13 +266,13 @@
       },
       "notebook": {
         "kind": "scoped-tools",
-        "note": "Claude scopes NotebookEdit through Edit(path), which also covers other built-in file edits at that path",
+        "unscoped": [
+          "NotebookEdit"
+        ],
         "scoped": [
           "Edit"
         ],
-        "unscoped": [
-          "NotebookEdit"
-        ]
+        "note": "Claude scopes NotebookEdit through Edit(path), which also covers other built-in file edits at that path"
       },
       "notifications": {
         "kind": "tools",
@@ -372,13 +372,13 @@
       },
       "write": {
         "kind": "scoped-tools",
-        "note": "Claude scopes Write through Edit(path): an allow adds no practical write power because Write can replace the whole file, while a deny also refuses other built-in file edits at that path",
+        "unscoped": [
+          "Write"
+        ],
         "scoped": [
           "Edit"
         ],
-        "unscoped": [
-          "Write"
-        ]
+        "note": "Claude scopes Write through Edit(path): an allow adds no practical write power because Write can replace the whole file, while a deny also refuses other built-in file edits at that path"
       }
     },
     "codex": {

@@ -1,31 +1,19 @@
 {
   "classification": {
+    "kind": "foreign",
     "dialect": "claude",
     "evidence": {
-      "paths": [],
-      "source": "predicted"
-    },
-    "kind": "foreign"
+      "source": "predicted",
+      "paths": []
+    }
   },
   "definitions": [
     {
-      "change": {
-        "kind": "none"
-      },
       "kind": "skill",
+      "slug": "nested",
+      "source_path": "skills/outer/nested/SKILL.md",
       "output_path": "skills/outer/nested/SKILL.md",
       "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "compatibility": null,
-          "description": "Nested",
-          "license": null,
-          "metadata": null,
-          "model-invocable": true,
-          "name": "nested",
-          "user-invocable": true
-        },
         "frontmatter": [
           [
             "name",
@@ -35,29 +23,29 @@
             "description",
             "Nested"
           ]
-        ]
+        ],
+        "fields": {
+          "name": "nested",
+          "description": "Nested",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
       },
-      "slug": "nested",
-      "source_path": "skills/outer/nested/SKILL.md"
-    },
-    {
       "change": {
         "kind": "none"
-      },
+      }
+    },
+    {
       "kind": "skill",
+      "slug": "outer",
+      "source_path": "skills/outer/SKILL.md",
       "output_path": "skills/outer/SKILL.md",
       "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "compatibility": null,
-          "description": "Outer",
-          "license": null,
-          "metadata": null,
-          "model-invocable": true,
-          "name": "outer",
-          "user-invocable": true
-        },
         "frontmatter": [
           [
             "name",
@@ -67,21 +55,33 @@
             "description",
             "Outer"
           ]
-        ]
+        ],
+        "fields": {
+          "name": "outer",
+          "description": "Outer",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "# Body\n",
+        "diagnostics": []
       },
-      "slug": "outer",
-      "source_path": "skills/outer/SKILL.md"
+      "change": {
+        "kind": "none"
+      }
     }
   ],
-  "diagnostics": {},
   "payload": [
     {
-      "output_path": "skills/outer/guide.md",
-      "source_path": "skills/outer/guide.md"
+      "source_path": "skills/outer/guide.md",
+      "output_path": "skills/outer/guide.md"
     },
     {
-      "output_path": "skills/outer/nested/assets/data.bin",
-      "source_path": "skills/outer/nested/assets/data.bin"
+      "source_path": "skills/outer/nested/assets/data.bin",
+      "output_path": "skills/outer/nested/assets/data.bin"
     }
-  ]
+  ],
+  "diagnostics": {}
 }

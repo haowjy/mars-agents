@@ -2,65 +2,10 @@
   "classification": {
     "kind": "schema-1"
   },
-  "definitions": [
-    {
-      "change": {
-        "kind": "none"
-      },
-      "kind": "agent",
-      "output_path": "agents/bom.md",
-      "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "approval": null,
-          "description": "BOM",
-          "effort": null,
-          "harness": null,
-          "harness-overrides": {},
-          "mode": null,
-          "model": null,
-          "model-invocable": true,
-          "model-policies": [],
-          "name": "bom",
-          "sandbox": null,
-          "skills": {
-            "available": [],
-            "load": []
-          },
-          "subagents": [],
-          "tools": [],
-          "user-invocable": true
-        },
-        "frontmatter": [
-          [
-            "name",
-            "bom"
-          ],
-          [
-            "description",
-            "BOM"
-          ]
-        ]
-      },
-      "slug": "bom",
-      "source_path": "agents/bom.md"
-    }
-  ],
-  "diagnostics": {},
   "manifest": {
-    "change": {
-      "kind": "none"
-    },
+    "source_path": "mars.toml",
     "output_path": "mars.toml",
     "reading": {
-      "body": null,
-      "diagnostics": [],
-      "fields": {
-        "name": "demo",
-        "schema": 1,
-        "version": "1.0.0"
-      },
       "frontmatter": [
         [
           "name",
@@ -74,9 +19,64 @@
           "version",
           "1.0.0"
         ]
-      ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
     },
-    "source_path": "mars.toml"
+    "change": {
+      "kind": "none"
+    }
   },
-  "payload": []
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "bom",
+      "source_path": "agents/bom.md",
+      "output_path": "agents/bom.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "bom"
+          ],
+          [
+            "description",
+            "BOM"
+          ]
+        ],
+        "fields": {
+          "name": "bom",
+          "description": "BOM",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {}
 }

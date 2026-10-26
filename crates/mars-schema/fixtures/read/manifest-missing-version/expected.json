@@ -1,22 +1,4 @@
 {
-  "body": null,
-  "diagnostics": [
-    {
-      "code": "manifest.version-missing",
-      "message": "package version is missing",
-      "path": [
-        "package",
-        "version"
-      ],
-      "severity": "warning"
-    }
-  ],
-  "fields": {
-    "description": "kept",
-    "name": "demo",
-    "schema": 1,
-    "version": ""
-  },
   "frontmatter": [
     [
       "description",
@@ -30,5 +12,23 @@
       "schema",
       1
     ]
+  ],
+  "fields": {
+    "name": "demo",
+    "version": "",
+    "description": "kept",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "manifest.version-missing",
+      "severity": "warning",
+      "path": [
+        "package",
+        "version"
+      ],
+      "message": "package version is missing"
+    }
   ]
 }

@@ -44,7 +44,7 @@ export interface DefinitionRead<Fields> {
   /**
    * Every top-level key with its value in file order, unknown keys included. A key whose
    * value has no JSON form (a YAML tag, a non-string map key, an integer beyond ±(2^53 − 1)) is absent and has a
-   * `yaml.non-json-value` diagnostic. Nested mapping keys are sorted. For `mars.toml`, the
+   * `yaml.non-json-value` diagnostic. Mapping keys, nested ones included, are in file order (JavaScript lists integer-like keys such as `"1"` first). For `mars.toml`, the
    * pairs of the `[package]` table.
    */
   frontmatter: [string, JsonValue][];
@@ -152,8 +152,9 @@ export function emitValue(value: JsonValue, indent: number): string;
 
 /**
  * The full frontmatter block between the `---` fences for these top-level pairs, in order,
- * ending in exactly one newline (`""` for no keys). Nested mapping keys come out sorted,
- * as in the reading. Throws for a duplicate key.
+ * ending in exactly one newline (`""` for no keys). Mapping keys keep the order given
+ * (a JavaScript object lists integer-like keys such as `"1"` first, whatever order they
+ * were set in). Throws for a duplicate key.
  */
 export function rewriteBlock(frontmatter: [string, JsonValue][]): string;
 

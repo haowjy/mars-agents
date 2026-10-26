@@ -2,92 +2,10 @@
   "classification": {
     "kind": "mars-legacy"
   },
-  "definitions": [
-    {
-      "change": {
-        "kind": "edited",
-        "paths": [
-          [
-            "model-invocable"
-          ],
-          [
-            "model_invocable"
-          ]
-        ]
-      },
-      "kind": "agent",
-      "output_path": "agents/coder.md",
-      "reading": {
-        "body": "# Body\n",
-        "diagnostics": [],
-        "fields": {
-          "approval": null,
-          "description": "Codes",
-          "effort": null,
-          "harness": null,
-          "harness-overrides": {},
-          "mode": null,
-          "model": null,
-          "model-invocable": false,
-          "model-policies": [],
-          "name": "coder",
-          "sandbox": null,
-          "skills": {
-            "available": [],
-            "load": []
-          },
-          "subagents": [],
-          "tools": [],
-          "user-invocable": true
-        },
-        "frontmatter": [
-          [
-            "name",
-            "coder"
-          ],
-          [
-            "description",
-            "Codes"
-          ],
-          [
-            "model-invocable",
-            false
-          ]
-        ]
-      },
-      "slug": "coder",
-      "source_path": "agents/coder.md"
-    }
-  ],
-  "diagnostics": {
-    "mars.toml": [
-      {
-        "code": "legacy-package",
-        "message": "package uses the pre-v1 format; apply the reported authored-file changes",
-        "path": [],
-        "severity": "warning"
-      }
-    ]
-  },
   "manifest": {
-    "change": {
-      "kind": "edited",
-      "paths": [
-        [
-          "package",
-          "schema"
-        ]
-      ]
-    },
+    "source_path": "mars.toml",
     "output_path": "mars.toml",
     "reading": {
-      "body": null,
-      "diagnostics": [],
-      "fields": {
-        "name": "demo",
-        "schema": 1,
-        "version": "1.0.0"
-      },
       "frontmatter": [
         [
           "name",
@@ -101,9 +19,91 @@
           "version",
           "1.0.0"
         ]
-      ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
     },
-    "source_path": "mars.toml"
+    "change": {
+      "kind": "edited",
+      "paths": [
+        [
+          "package",
+          "schema"
+        ]
+      ]
+    }
   },
-  "payload": []
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "coder",
+      "source_path": "agents/coder.md",
+      "output_path": "agents/coder.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "coder"
+          ],
+          [
+            "description",
+            "Codes"
+          ],
+          [
+            "model-invocable",
+            false
+          ]
+        ],
+        "fields": {
+          "name": "coder",
+          "description": "Codes",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": false,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "# Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "edited",
+        "paths": [
+          [
+            "model-invocable"
+          ],
+          [
+            "model_invocable"
+          ]
+        ]
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {
+    "mars.toml": [
+      {
+        "code": "legacy-package",
+        "severity": "warning",
+        "path": [],
+        "message": "package uses the pre-v1 format; apply the reported authored-file changes"
+      }
+    ]
+  }
 }

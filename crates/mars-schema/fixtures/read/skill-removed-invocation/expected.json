@@ -1,44 +1,44 @@
 {
-  "body": "",
-  "diagnostics": [
-    {
-      "code": "field.removed",
-      "message": "`invocation` was removed; use `model-invocable` and `user-invocable`",
-      "path": [
-        "invocation"
-      ],
-      "severity": "error"
-    },
-    {
-      "code": "field.required",
-      "message": "`name` must be a non-empty string",
-      "path": [
-        "name"
-      ],
-      "severity": "error"
-    },
-    {
-      "code": "field.required",
-      "message": "`description` must be a non-empty string",
-      "path": [
-        "description"
-      ],
-      "severity": "error"
-    }
-  ],
-  "fields": {
-    "compatibility": null,
-    "description": null,
-    "license": null,
-    "metadata": null,
-    "model-invocable": true,
-    "name": null,
-    "user-invocable": true
-  },
   "frontmatter": [
     [
       "invocation",
       true
     ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "invocation"
+      ],
+      "message": "`invocation` was removed; use `model-invocable` and `user-invocable`"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
   ]
 }

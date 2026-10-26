@@ -6,7 +6,7 @@ mod common;
 
 #[test]
 fn vocabulary_matches_fixture() {
-    let actual = serde_json::to_value(mars_schema::tool_natives::vocabulary()).unwrap();
+    let actual = mars_schema::tool_natives::vocabulary();
     common::assert_file(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/vocabulary/expected.json"),
         &common::pretty(&actual),

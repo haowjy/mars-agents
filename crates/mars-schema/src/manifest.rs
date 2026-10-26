@@ -2,6 +2,7 @@
 //!
 //! The reading's `frontmatter` holds the `[package]` table's pairs, unknown keys included.
 
+use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue};
 use crate::package::PackageMetadata;
 
 /// Read package identity while leaving consumer-only top-level tables outside the schema.
@@ -124,24 +125,24 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
 }
 
 /// `None` for an integer JavaScript cannot hold exactly.
-fn toml_json(value: &toml::Value) -> Option<serde_json::Value> {
+fn toml_json(value: &toml::Value) -> Option<OrderedValue> {
     Some(match value {
-        toml::Value::String(v) => v.clone().into(),
-        toml::Value::Integer(v) if v.unsigned_abs() > crate::edit::MAX_SAFE_INTEGER => return None,
-        toml::Value::Integer(v) => (*v).into(),
-        toml::Value::Float(v) => serde_json::Number::from_f64(*v)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number),
-        toml::Value::Boolean(v) => (*v).into(),
-        toml::Value::Datetime(v) => v.to_string().into(),
-        toml::Value::Array(values) => values
-            .iter()
-            .map(toml_json)
-            .collect::<Option<Vec<_>>>()?
-            .into(),
-        toml::Value::Table(table) => table
-            .iter()
-            .map(|(key, value)| Some((key.clone(), toml_json(value)?)))
-            .collect::<Option<serde_json::Map<_, _>>>()?
-            .into(),
+        toml::Value::String(v) => OrderedValue::String(v.clone()),
+        toml::Value::Integer(v) if v.unsigned_abs() > MAX_SAFE_INTEGER => return None,
+        toml::Value::Integer(v) => OrderedValue::Number((*v).into()),
+        toml::Value::Float(v) => {
+            serde_json::Number::from_f64(*v).map_or(OrderedValue::Null, OrderedValue::Number)
+        }
+        toml::Value::Boolean(v) => OrderedValue::Bool(*v),
+        toml::Value::Datetime(v) => OrderedValue::String(v.to_string()),
+        toml::Value::Array(values) => {
+            OrderedValue::Array(values.iter().map(toml_json).collect::<Option<_>>()?)
+        }
+        toml::Value::Table(table) => OrderedValue::Object(
+            table
+                .iter()
+                .map(|(key, value)| Some((key.clone(), toml_json(value)?)))
+                .collect::<Option<_>>()?,
+        ),
     })
 }

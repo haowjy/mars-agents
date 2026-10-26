@@ -79,8 +79,15 @@ retirement removes only an owned, now-empty directory. Configured builds
 reject final paths that remain gitignored after negation, while explicit `--out` builds have no root
 files and may target ignored CI output. After the
 tree and root-file plan succeed, the output layer hashes every tree and writes one root
-`.mars-plugin.json`; publication applies root writes/deletes and then swaps the staged output with
-two renames. Publication and startup recovery share a cross-process lock keyed by the absolute
+`.mars-plugin.json`; publication swaps the staged output with two renames and then applies root
+writes/deletes. Because the sentinel records the root hashes that second step replaces
+(`root_files_previous`), a build that dies between the two steps resumes instead of refusing its own
+earlier bytes as a hand edit. The record holds only paths whose bytes the publication changes, and a
+path it holds counts only while the bytes on disk still match it: a match is `PreviousBuild` (the
+build may finish the write or delete, and `mars check` warns), while a mismatch means the previous
+record no longer describes the file, so the path drops out entirely and a user's own file at a
+retired path is neither refused nor deleted.
+Publication and startup recovery share a cross-process lock keyed by the absolute
 output path; non-empty trees without a valid sentinel are never replaced.
 Recovery removes the reserved staging sibling whenever it is a real directory, including a partial
 tree killed before the sentinel write. It refuses a symlink or non-directory at that name and

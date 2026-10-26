@@ -10,6 +10,7 @@ use crate::error::MarsError;
 
 const SCHEMA_VERSION: u32 = 3;
 const DEFAULT_TTL_SECS: u64 = 60;
+const LOCK_FILE: &str = ".pi.lock";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiProbeCacheEntry {
@@ -64,13 +65,8 @@ fn should_probe_pi(installed: &HashSet<String>, is_offline: bool) -> bool {
     !is_offline && installed.contains("pi")
 }
 
-fn cache_dir() -> Result<PathBuf, MarsError> {
-    let root = crate::platform::cache::global_cache_root()?;
-    Ok(root.join("availability"))
-}
-
 fn cache_path() -> Result<PathBuf, MarsError> {
-    Ok(cache_dir()?.join("pi.json"))
+    Ok(super::cache_dir()?.join("pi.json"))
 }
 
 fn ttl_secs() -> u64 {
@@ -239,7 +235,7 @@ fn trigger_background_refresh_with<S>(spawn_refresh: S)
 where
     S: Fn() -> Result<(), ()>,
 {
-    let Some(lock) = super::probe_lock(".pi.lock", "pi") else {
+    let Some(lock) = super::probe_lock(LOCK_FILE, "pi") else {
         return;
     };
     if let Some(entry) = read_cache_tolerant()
@@ -261,7 +257,7 @@ where
     F: Fn() -> PiProbeResult,
 {
     use super::ObservedOutcome;
-    let lock = super::probe_lock_blocking(".pi.lock");
+    let lock = super::probe_lock_blocking(LOCK_FILE);
     if lock.is_none() {
         // Without the lock, do not overwrite a last-good listing or race a
         // background writer. It is still useful as support evidence.
@@ -443,7 +439,7 @@ fn persist_probe_attempt(
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
-    let Some(_lock) = super::probe_lock_blocking(".pi.lock") else {
+    let Some(_lock) = super::probe_lock_blocking(LOCK_FILE) else {
         return Ok(0);
     };
 

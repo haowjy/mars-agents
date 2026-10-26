@@ -10,6 +10,7 @@ use crate::error::MarsError;
 
 const SCHEMA_VERSION: u32 = 1;
 const DEFAULT_TTL_SECS: u64 = 60;
+const LOCK_FILE: &str = ".opencode-probe.lock";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeCacheEntry {
@@ -68,13 +69,8 @@ pub fn read_cached_probe_result_usable() -> Option<OpenCodeProbeResult> {
     entry.result
 }
 
-fn cache_dir() -> Result<PathBuf, MarsError> {
-    let root = crate::platform::cache::global_cache_root()?;
-    Ok(root.join("availability"))
-}
-
 fn cache_path() -> Result<PathBuf, MarsError> {
-    Ok(cache_dir()?.join("opencode-probe.json"))
+    Ok(super::cache_dir()?.join("opencode-probe.json"))
 }
 
 fn ttl_secs() -> u64 {
@@ -243,7 +239,7 @@ fn trigger_background_refresh_with<S>(spawn_refresh: S)
 where
     S: Fn() -> Result<(), ()>,
 {
-    let Some(lock) = super::probe_lock(".opencode-probe.lock", "opencode") else {
+    let Some(lock) = super::probe_lock(LOCK_FILE, "opencode") else {
         return;
     };
     if let Some(entry) = read_cache_tolerant()
@@ -265,7 +261,7 @@ where
     F: Fn() -> OpenCodeProbeResult,
 {
     use super::ObservedOutcome;
-    let lock = super::probe_lock_blocking(".opencode-probe.lock");
+    let lock = super::probe_lock_blocking(LOCK_FILE);
     if lock.is_none() {
         // Without the lock, do not overwrite a last-good listing or race a
         // background writer. It is still useful as support evidence.
@@ -433,7 +429,7 @@ fn write_failed_attempt(
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
-    let Some(_lock) = super::probe_lock_blocking(".opencode-probe.lock") else {
+    let Some(_lock) = super::probe_lock_blocking(LOCK_FILE) else {
         return Ok(0);
     };
 

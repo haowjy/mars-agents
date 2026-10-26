@@ -15,7 +15,7 @@ use crate::discover::{enclosing_generated_dir, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 pub use crate::dispatch::{Kind, Mirror};
 use crate::item::DefinitionKind;
-use crate::prepare::PrepareContext;
+use crate::prepare::{Classification, PrepareContext};
 use crate::tree::{SubTree, TreeSource};
 
 /// What the caller declares about a root; everything is optional.
@@ -246,7 +246,14 @@ pub(crate) fn list_items(
 ) -> Vec<InspectedItem> {
     let discovery = &dispatched.discovery;
     let mut payload = BTreeMap::<String, Vec<String>>::new();
-    let by_owner = payload_paths(source, discovery, discovery.definitions.iter(), diagnostics);
+    let foreign = matches!(dispatched.classification, Classification::Foreign(_));
+    let by_owner = payload_paths(
+        source,
+        discovery,
+        foreign,
+        discovery.definitions.iter(),
+        diagnostics,
+    );
     for (path, _) in by_owner {
         // The owner is the deepest skill root containing the file.
         if let Some(owner) = discovery

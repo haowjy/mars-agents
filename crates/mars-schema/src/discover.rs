@@ -446,12 +446,15 @@ pub(crate) fn enclosing_generated_dir(source: &impl TreeSource, path: &str) -> O
     })
 }
 
-/// The files a skill carries, source path to output path. `all` is every discovered
-/// definition, so a nested skill is never its parent's payload whether or not it is selected;
-/// `selected` are the skills whose payload is wanted.
+/// The files a skill carries, source path to output path. `discovery.definitions` is every
+/// discovered definition, so a nested skill is never its parent's payload whether or not it is
+/// selected; `selected` are the skills whose payload is wanted. A foreign repository's skill
+/// leaves out `.git` and `node_modules` (vendored trees, not the skill); a Mars package installs
+/// whatever its skill holds, as every Mars release has.
 pub(crate) fn payload_paths<'a>(
     source: &impl TreeSource,
     discovery: &Discovery,
+    foreign: bool,
     selected: impl IntoIterator<Item = &'a SelectedDefinition>,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> Vec<(String, String)> {
@@ -475,7 +478,7 @@ pub(crate) fn payload_paths<'a>(
             for child in source.children(&dir) {
                 if source.is_dir(&child) {
                     if (child != root && skill_roots.contains(child.as_str()))
-                        || matches!(basename(&child), ".git" | "node_modules")
+                        || (foreign && matches!(basename(&child), ".git" | "node_modules"))
                         || !discovery.boundary.admits(source, &child, &mut generated)
                     {
                         continue;

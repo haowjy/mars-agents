@@ -241,6 +241,7 @@ pub(crate) fn prepare_root(
         payload_paths(
             source,
             &dispatched.discovery,
+            matches!(classification, Classification::Foreign(_)),
             selected.iter().copied(),
             &mut diagnostics,
         )

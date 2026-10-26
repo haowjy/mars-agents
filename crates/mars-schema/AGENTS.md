@@ -72,7 +72,8 @@ skills folder and replaces the default Agents and commands folders. Items are th
 `skills/<name>/SKILL.md`, listed paths, or for a bare tree every `SKILL.md` directory within five
 levels without entering a found skill; each is relocated to `skills/<slug>/` or
 `agents/<slug>.md`. Payload is assigned before selection, so a nested skill is never its
-parent's payload.
+parent's payload. A foreign repository's skill leaves out `.git` and `node_modules`; a Mars package's
+skill carries everything it holds, as every Mars release has.
 
 ## inspect and normalize
 

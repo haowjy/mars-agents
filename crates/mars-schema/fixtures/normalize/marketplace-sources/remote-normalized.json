@@ -1,0 +1,231 @@
+{
+  "gh": {
+    "kind": "plugin",
+    "packages": [
+      {
+        "id": "gh",
+        "provenance": {
+          "translator": "{version}",
+          "dialect": "claude",
+          "source": {
+            "name": "gh-plugin",
+            "url": "https://github.com/acme/gh-plugin",
+            "requested_ref": "v1",
+            "resolved_commit": "2222222222222222222222222222222222222222"
+          },
+          "marketplace": {
+            "plugin": "gh",
+            "plugin_source": {
+              "kind": "remote",
+              "repository": "https://github.com/acme/gh-plugin",
+              "checkout": {
+                "kind": "ref",
+                "name": "v1"
+              }
+            }
+          },
+          "selected_items": [
+            "skills/remote-skill/SKILL.md"
+          ]
+        },
+        "prepared": {
+          "classification": {
+            "kind": "foreign",
+            "dialect": "claude",
+            "evidence": {
+              "source": "predicted",
+              "paths": [
+                ".claude-plugin/plugin.json"
+              ]
+            }
+          },
+          "manifest": {
+            "output_path": "mars.toml",
+            "reading": {
+              "frontmatter": [
+                [
+                  "schema",
+                  1
+                ],
+                [
+                  "name",
+                  "gh"
+                ],
+                [
+                  "version",
+                  "0.3.0"
+                ],
+                [
+                  "description",
+                  "From GitHub"
+                ]
+              ],
+              "fields": {
+                "name": "gh",
+                "version": "0.3.0",
+                "description": "From GitHub",
+                "schema": 1
+              },
+              "body": null,
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "generated"
+            }
+          },
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "remote-skill",
+              "source_path": "skills/remote-skill/SKILL.md",
+              "output_path": "skills/remote-skill/SKILL.md",
+              "reading": {
+                "frontmatter": [
+                  [
+                    "name",
+                    "remote-skill"
+                  ],
+                  [
+                    "description",
+                    "A skill."
+                  ]
+                ],
+                "fields": {
+                  "name": "remote-skill",
+                  "description": "A skill.",
+                  "model-invocable": true,
+                  "user-invocable": true,
+                  "license": null,
+                  "compatibility": null,
+                  "metadata": null
+                },
+                "body": "# Body\n",
+                "diagnostics": []
+              },
+              "change": {
+                "kind": "none"
+              }
+            }
+          ],
+          "payload": [],
+          "diagnostics": {}
+        }
+      }
+    ],
+    "diagnostics": {}
+  },
+  "market": {
+    "kind": "marketplace",
+    "packages": [],
+    "diagnostics": {
+      ".claude-plugin/marketplace.json": [
+        {
+          "code": "marketplace.nested-marketplace",
+          "severity": "error",
+          "path": [],
+          "message": "plugin `market` is itself a marketplace, which cannot be imported as a plugin"
+        }
+      ]
+    }
+  },
+  "subdir": {
+    "kind": "plugin",
+    "packages": [
+      {
+        "id": "subdir",
+        "provenance": {
+          "translator": "{version}",
+          "dialect": "claude",
+          "source": {
+            "name": "mono",
+            "url": "https://github.com/acme/mono",
+            "resolved_commit": "3333333333333333333333333333333333333333",
+            "subpath": "plugins/sub"
+          },
+          "marketplace": {
+            "plugin": "subdir",
+            "plugin_source": {
+              "kind": "unsupported",
+              "reason": "`sha` is not a full 40-character commit"
+            }
+          },
+          "selected_items": [
+            "skills/deep/SKILL.md"
+          ]
+        },
+        "prepared": {
+          "classification": {
+            "kind": "foreign",
+            "dialect": "claude",
+            "evidence": {
+              "source": "predicted",
+              "paths": []
+            }
+          },
+          "manifest": {
+            "output_path": "mars.toml",
+            "reading": {
+              "frontmatter": [
+                [
+                  "schema",
+                  1
+                ],
+                [
+                  "name",
+                  "subdir"
+                ]
+              ],
+              "fields": {
+                "name": "subdir",
+                "version": "",
+                "schema": 1
+              },
+              "body": null,
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "generated"
+            }
+          },
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "deep",
+              "source_path": "skills/deep/SKILL.md",
+              "output_path": "skills/deep/SKILL.md",
+              "reading": {
+                "frontmatter": [
+                  [
+                    "name",
+                    "deep"
+                  ],
+                  [
+                    "description",
+                    "A skill."
+                  ]
+                ],
+                "fields": {
+                  "name": "deep",
+                  "description": "A skill.",
+                  "model-invocable": true,
+                  "user-invocable": true,
+                  "license": null,
+                  "compatibility": null,
+                  "metadata": null
+                },
+                "body": "# Body\n",
+                "diagnostics": []
+              },
+              "change": {
+                "kind": "none"
+              }
+            }
+          ],
+          "payload": [],
+          "diagnostics": {}
+        }
+      }
+    ],
+    "diagnostics": {}
+  }
+}

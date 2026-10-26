@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 use crate::discover::SelectedDefinition;
 use crate::frontmatter::Frontmatter;
-use crate::upgrade::DefinitionKind;
+use crate::item::DefinitionKind;
 
 /// `selected` are the source paths of the definitions being imported.
 pub(crate) fn skill_checks(

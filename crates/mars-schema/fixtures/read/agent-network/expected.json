@@ -1,0 +1,55 @@
+{
+  "frontmatter": [
+    [
+      "network",
+      "allowlist"
+    ],
+    [
+      "network-allow",
+      [
+        "GitHub.COM.",
+        "*.Example.com",
+        "**.all.example",
+        "::ffff:127.0.0.1"
+      ]
+    ],
+    [
+      "network-deny",
+      [
+        "blocked.example"
+      ]
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": "allowlist",
+    "network-allow": [
+      "github.com",
+      "*.example.com",
+      "**.all.example",
+      "127.0.0.1"
+    ],
+    "network-deny": [
+      "blocked.example"
+    ],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body",
+  "diagnostics": []
+}

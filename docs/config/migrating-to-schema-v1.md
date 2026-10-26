@@ -9,7 +9,7 @@ mars migrate            # rewrite them
 mars check              # confirm the package is clean
 ```
 
-`mars migrate` deletes some keys without a replacement and prints each one after the files it edited, grouped by code (`field.removed`, `skill.tools-dropped`), one line per file and key, none left out. `--json` carries the same list as `dropped`. Review the result with `git diff` before you commit.
+`mars migrate` deletes some keys without a replacement and prints each one after the files it edited, grouped by code (`field.removed`, `skill.tools-dropped`, `field.set-aside`, `field.restriction-lost`), one line per file and key, none left out. A key that restricted an agent (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) and has no schema 1 meaning is listed under `field.restriction-lost`, in a package and in a project's `.mars-src` alike; `mars sync` prints the same line for a pre-v1 dependency on every run. `--json` carries the same list as `dropped`. Review the result with `git diff` before you commit.
 
 A value with no schema 1 meaning stops the run and names the file and key (``agents/b.md: agent field `model-policies[0].override.effort` has invalid value `bogus` ``). The legacy `effort` values `adaptive` and `disabled` are mapped to `medium` and `none`, in `effort:` and in a model policy's `override.effort`.
 
@@ -23,22 +23,22 @@ A value with no schema 1 meaning stops the run and names the file and key (``age
 | Agent | `approval: yolo` | `approval: never` |
 | Agent | `effort: adaptive`, `effort: disabled` | `effort: medium`, `effort: none` |
 | Agent | `permission: read` (or `edit`) | `harness-overrides.flow.permission: read` |
-| Agent | `model_invocable`, `user_invocable`, `disallowed_tools` | the hyphenated spelling |
-| Agent | `network`, `network-allow`, `network-deny`, `autocompact`, `autocompact_pct`, `fanout`, `models`, `mcp-tools` | **deleted**, with no replacement written |
-| Agent | `network`, `autocompact`, `autocompact_pct` or `harness` inside a `model-policies` `override` | **deleted** |
+| Agent | `model_invocable`, `user_invocable`, `disallowed_tools`, `network_allow`, `network_deny` | the hyphenated spelling |
+| Agent | `autocompact`, `autocompact_pct`, `fanout`, `models`, `mcp-tools` | **deleted**, with no replacement written |
+| Agent | `autocompact`, `autocompact_pct` or `harness` inside a `model-policies` `override` | **deleted** |
 | Skill | `type: principle` | `metadata.type: principle` |
 | Skill | `when_to_use: ...` | appended to `description` after a blank line |
 | Skill | `tools`, `disallowed-tools`, `allowed-tools` (and snake_case spellings) | **deleted** |
 | Skill | `model_invocable`, `user_invocable` | the hyphenated spelling |
 | Agent, skill | a key only Claude reads (Agent: `color`, `maxTurns`, `permissionMode`, `memory`, `background`, `isolation`, `initialPrompt`, `hooks`; skill: `argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) | moved to `harness-overrides.claude`, so `.claude/` keeps it and the other harnesses stop receiving it |
 
-Where a deleted key held something you still want, put it where schema 1 keeps it: compaction on the model alias (`[models.<alias>] autocompact = ...`), fan-out candidates in the consumer's `[settings.meridian.fanout]`, MCP grants as `mcp(server): allow` entries in `tools`, `models` as `model-policies`. `network` has no replacement because no consumer acted on it.
+Where a deleted key held something you still want, put it where schema 1 keeps it: compaction on the model alias (`[models.<alias>] autocompact = ...`), fan-out candidates in the consumer's `[settings.meridian.fanout]`, MCP grants as `mcp(server): allow` entries in `tools`, `models` as `model-policies`. `network`, `network-allow` and `network-deny` are schema 1 keys, so a profile that sets them keeps them.
 
 An Agent that sets `tools` as a list with only some names used to restrict nothing; the map form `{name: allow}` states the same grants. It still restricts nothing. To restrict an Agent to a list, write the allowlist form: `"*": deny` plus an `allow` per capability.
 
 ## An example
 
-`mars migrate` on `meridian-base` 0.11.18 changed 25 files (+47, −24): its manifest, one Agent and 23 skills. The three kinds of change:
+`mars migrate` on `meridian-base` 0.11.18 changed 24 files (+56, −26): its manifest and 23 skills. Two of those changes:
 
 ```diff
 --- a/mars.toml
@@ -51,14 +51,6 @@ An Agent that sets `tools` as a list with only some names used to restrict nothi
  
  [dependencies]
  
---- a/agents/kb-maintainer.md
-+++ b/agents/kb-maintainer.md
-@@ -40,7 +40,6 @@ tools:
-   'bash(git clean:*)': deny
-   ask_user: deny
- sandbox: workspace-write
--network: allow
- ---
 --- a/skills/grill/SKILL.md
 +++ b/skills/grill/SKILL.md
 @@ -1,11 +1,12 @@
@@ -77,7 +69,7 @@ An Agent that sets `tools` as a list with only some names used to restrict nothi
 
 ## It edits minimally
 
-The upgrade changes the top-level keys that need it and leaves every other byte alone: comments, quoting, key order, blank lines and the body. A definition with nothing to change is not written. In the example above the 23 skills changed by the lines shown and no other line moved.
+The upgrade changes the top-level keys that need it and leaves every other byte alone: comments, quoting, key order, blank lines and the body. A definition with nothing to change is not written. In the example above each file changed on the lines the table above names and no other line moved.
 
 A changed key's block is written again in YAML's standard style, so a key that changed can lose its original layout (a flow map such as `{alias: opus}` becomes a block mapping). When a definition's top level is not a block mapping, or the edited text fails Mars's check that it reads the same as the upgraded value, Mars rewrites the whole frontmatter instead and reports the file as `fully rewrote`; `--json` lists those files under `fully_rewritten_files`.
 
@@ -87,21 +79,31 @@ Running it again is a no-op: `definition format is already schema v1`.
 
 ## Consumer projects
 
-A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions (until then `mars sync` upgrades them in memory and warns: ``authored `.mars-src` content uses the pre-v1 format; run `mars migrate` ``); with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
+A project with no `[package]` table installs packages and publishes none. `mars migrate` there upgrades only the project's own `.mars-src/` definitions (until then `mars sync` upgrades them in memory and warns: ``authored `.mars-src` content uses the pre-v1 format (2 files to upgrade); run `mars migrate` ``); with none, it exits 0 and says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories`.
 
-The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `default_network` or `network` in an overlay, are ignored and warned about by name; delete them. An invalid overlay `effort`, `approval` or `sandbox` is an error. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
+The project's own consumer tables (`[settings]`, `[models]`, `[agents.<name>]`, `[skills.<name>]`) are not part of the schema and are not rewritten. Keys in them that Mars no longer reads, such as `autocompact` in an overlay, are ignored and warned about by name; delete them. An invalid overlay `effort`, `approval` or `sandbox` is an error. A `[skills.<name>.tools]` table is ignored too. See [Overlays](mars-toml.md#agentsname-overlay).
 
 ## A dependency that has not migrated
 
 A dependency without `schema = 1` still installs. Mars upgrades its definitions in memory with the same rules as `mars migrate`, installs the result into `.mars/`, and warns once per package:
 
 ```text
-warning: package `legacy` uses the pre-v1 format; run `mars migrate` in its repository
+warning: package `legacy` uses the pre-v1 format (3 files to upgrade); run `mars migrate` in its repository
 ```
 
-The warning names the package so you can ask its maintainer to migrate; nothing in your project needs to change, and the dependency's repository is not modified. The upgrade also drops a skill's tool keys with a warning that names the file.
+The warning names the package and how many of its files the upgrade changes, so you can ask its maintainer to migrate; nothing in your project needs to change, and the dependency's repository is not modified. The keys the upgrade dropped or moved, file by file, are listed only by `mars migrate` in the package's own repository.
 
-A dependency that declares `schema = 1` and breaks its rules is different: Mars reports each error with the file and the replacement and fails `mars sync` before it writes anything. A tree with no `mars.toml` is not upgraded in memory. [Claude's rules](mars-toml.md#dialect) translate its definitions and the result is read strictly, so a removed Mars key such as `network` is an error.
+A tree with no `mars.toml` is read as the dialect it looks like, or the one the dependency declares ([Claude's rules](mars-toml.md#dialect) unless an Agent is written the way only OpenCode writes one), and what only pre-v1 Mars wrote is rewritten key by key in whichever dialect that is. `model_invocable` and `user_invocable` are renamed; the fields Mars removed without a replacement (`network`, `network-allow`, `network-deny`, `fanout`, `models`, `mcp-tools`, `autocompact`, `autocompact_pct`, and the removed model-policy override keys) are dropped; `approval: yolo`, `effort: adaptive` and `effort: disabled` are rewritten; and a `permission` of `read` or `edit` moves to `harness-overrides.flow.permission`. One such key never changes how its neighbours are read, so a pre-v1 Mars agent with `tools: [Read, Grep]` still installs restricted to those two tools, as v0.19.0 read it, and a Claude agent beside a pre-v1 Mars skill keeps its `tools` string. `mars sync` shows the count of files translated; to migrate the dependency for good, its maintainer adds a `mars.toml` with a `[package]` table (name and version, no `schema`) and runs `mars migrate`. `[package] schema = 1` declares the package already migrated, so `mars migrate` would change nothing and the old keys would be errors.
+
+A tree with no `mars.toml` that is declared `dialect = "mars-native"` is a pre-v1 package, upgraded in memory with its own wording, because `mars migrate` needs a manifest to find the package:
+
+```text
+warning: package `legacy` has no `mars.toml` and is declared `mars-native` (1 file to upgrade); add a `mars.toml` with a `[package]` table (name and version, no `schema`) and run `mars migrate` in its repository
+```
+
+A tree that is already schema v1 (a `mars-native` declaration over current definitions) installs with no warning.
+
+A dependency that declares `schema = 1` and breaks its rules is different: Mars reports each error with the file and the replacement and fails `mars sync` before it writes anything. A translated or upgraded definition is never refused: what it cannot make schema v1 is moved under `harness-overrides.<dialect>` or dropped with a warning that names it, so an OpenCode agent with `tools: {write: false}` or a `permission` map installs. A key Mars lowers itself (an Agent's `model`, `effort`, `tools`, `disallowed-tools`, `skills` and `mode`; a skill's `license`, `metadata` and `user-invocable`) is never moved there, because a native file would keep Mars's value and drop the override: an invalid entry of `tools` is dropped and the rest kept, and an invalid scalar such as `effort: ultra` is dropped. A pre-v1 file's leftovers are dropped the same way, not written to `harness-overrides.flow`, which holds only Flow's own key, `permission`. Dropping or moving a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) is a warning on its own file that names the agent, and is not folded into the count.
 
 ## `mars migrate` and `mars upgrade`
 
@@ -109,4 +111,4 @@ They share nothing. `mars upgrade` moves your dependencies to newer versions wit
 
 ## After migrating
 
-Commit the result and release it. A package that now declares `schema = 1` needs a Mars that reads schema 1, so raise its `requires-mars` to the first Mars release that does: consumers on older Mars versions then keep resolving the last release that they can read ([`requires-mars`](mars-toml.md#package-optional)).
+Commit the result and release it. A package that now declares `schema = 1` needs a Mars that reads schema 1, so set its `requires-mars` to `">=0.20.0"`, the first Mars release that does (`mars check` warns when it allows an older one): consumers on older Mars versions then keep resolving the last release that they can read ([`requires-mars`](mars-toml.md#package-optional)).

@@ -15,6 +15,9 @@
     "user-invocable": true,
     "approval": null,
     "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
     "effort": null,
     "skills": {
       "load": [],
@@ -34,14 +37,6 @@
         "approval"
       ],
       "message": "approval value `yolo` was removed; use `never`"
-    },
-    {
-      "code": "field.value",
-      "severity": "error",
-      "path": [
-        "approval"
-      ],
-      "message": "agent field `approval` has invalid value `yolo`; allowed: default, auto, confirm, never"
     }
   ]
 }

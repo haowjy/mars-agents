@@ -6,19 +6,16 @@ use toml_edit::{DocumentMut, Item};
 use crate::claude;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum DefinitionKind {
-    Agent,
-    Skill,
-}
+use crate::item::DefinitionKind;
+use crate::{
+    agent::{REMOVED_AGENT_FIELDS, REMOVED_AGENT_VALUES},
+    skill,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UpgradeResult {
     pub text: String,
+    /// What the upgrade changed, one note per key it dropped or moved.
     pub diagnostics: Vec<SchemaDiagnostic>,
     /// A changed definition whose source shape prevented top-level block editing.
     pub fully_rewritten: bool,
@@ -27,7 +24,7 @@ pub struct UpgradeResult {
 }
 
 impl UpgradeResult {
-    pub fn changed_from(&self, input: &str) -> bool {
+    pub(crate) fn changed_from(&self, input: &str) -> bool {
         self.text != input
     }
 }
@@ -61,7 +58,7 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
 
     let edited_paths = changed_mapping_paths(original.mapping(), frontmatter.mapping());
 
-    let fallback = frontmatter.render();
+    let fallback = with_line_ending_of(text, frontmatter.render());
     let minimally_edited = edit_top_level_blocks(text, original.mapping(), frontmatter.mapping())
         .and_then(|edited| {
             Frontmatter::parse(&edited)
@@ -105,11 +102,34 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
         ]);
     }
     Ok(UpgradeResult {
-        text: document.to_string(),
+        text: with_line_ending_of(text, document.to_string()),
         diagnostics,
         fully_rewritten: false,
         edited_paths,
     })
+}
+
+/// Whether the file's first line ends in `\r\n`.
+fn is_crlf(text: &str) -> bool {
+    text.find('\n')
+        .is_some_and(|end| text.as_bytes()[..end].ends_with(b"\r"))
+}
+
+/// `written` uses `\n` where the upgrade added lines; a CRLF file stays CRLF.
+fn with_line_ending_of(original: &str, written: String) -> String {
+    if !is_crlf(original) {
+        return written;
+    }
+    let mut out = String::with_capacity(written.len() + written.len() / 16);
+    let mut previous = '\0';
+    for character in written.chars() {
+        if character == '\n' && previous != '\r' {
+            out.push('\r');
+        }
+        out.push(character);
+        previous = character;
+    }
+    out
 }
 
 fn changed_mapping_paths(before: &Mapping, after: &Mapping) -> Vec<Vec<PathSegment>> {
@@ -150,6 +170,7 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
         return None;
     }
 
+    let render = |key: &str, value: &Value| with_line_ending_of(text, render_block(key, value));
     let mut output = String::with_capacity(text.len());
     output.push_str(prefix);
     let first_key_offset = blocks.first().map_or(yaml.len(), |block| block.start);
@@ -166,7 +187,7 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
             if before_value == after_value {
                 output.push_str(block.text);
             } else {
-                output.push_str(&render_block(block.key, after_value));
+                output.push_str(&render(block.key, after_value));
             }
             emitted.push(block.key);
         }
@@ -178,9 +199,9 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
             continue;
         }
         if !output.ends_with('\n') {
-            output.push('\n');
+            output.push_str(&with_line_ending_of(text, "\n".to_owned()));
         }
-        output.push_str(&render_block(key, value));
+        output.push_str(&render(key, value));
     }
     output.push_str(suffix);
     Some(output)
@@ -268,43 +289,47 @@ fn source_blocks(yaml: &str) -> Option<Vec<SourceBlock<'_>>> {
     Some(blocks)
 }
 
-fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
-    upgrade_tools(fm);
+/// The rules for what only pre-v1 Mars wrote, key by key: the invocability renames, the
+/// discarded Agent fields, the removed values, a scalar `permission` and the removed model-policy
+/// override keys. No foreign dialect defines any of them, so every translation applies them
+/// before its own rules (`lift_frontmatter`), and the legacy upgrade is the same rules plus its
+/// own. A tree is never classified as pre-v1 Mars by finding one: its other keys are read in the
+/// dialect they belong to.
+pub(crate) fn lift_mars_only_keys(
+    fm: &mut Frontmatter,
+    kind: DefinitionKind,
+    notes: &mut Vec<SchemaDiagnostic>,
+) -> bool {
+    let before = fm.mapping().clone();
     rename_field(fm, "model_invocable", "model-invocable");
     rename_field(fm, "user_invocable", "user-invocable");
-
-    for key in [
-        "network",
-        "network-allow",
-        "network-deny",
-        "fanout",
-        "models",
-        "mcp-tools",
-        "autocompact",
-        "autocompact_pct",
-    ] {
-        if fm.remove(key).is_some() {
-            diagnostics.push(removed(&[key], key));
+    if kind == DefinitionKind::Agent {
+        rename_field(fm, "network_allow", "network-allow");
+        rename_field(fm, "network_deny", "network-deny");
+        for field in REMOVED_AGENT_FIELDS.iter().filter(|field| field.discarded) {
+            if fm.remove(field.key).is_some() {
+                notes.push(removed(&[field.key], field.key));
+            }
         }
+        for removed in REMOVED_AGENT_VALUES {
+            replace_scalar(fm, removed.key, removed.value, removed.replacement);
+        }
+        move_permission(fm);
+        strip_model_policy_overrides(fm, notes);
     }
+    fm.mapping() != &before
+}
 
-    replace_scalar(fm, "effort", "adaptive", "medium");
-    replace_scalar(fm, "effort", "disabled", "none");
-    replace_scalar(fm, "approval", "yolo", "never");
-    move_permission(fm);
-    strip_model_policy_overrides(fm, diagnostics);
+fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
+    upgrade_tools(fm);
+    lift_mars_only_keys(fm, DefinitionKind::Agent, diagnostics);
     // A pre-v1 file passed unknown keys to every harness; Claude's own keep reaching Claude.
-    claude::translate::move_to_claude_overrides(
-        fm,
-        claude::translate::CLAUDE_ONLY_AGENT_KEYS,
-        "agent.claude-keys-moved",
-        diagnostics,
-    );
+    claude::translate::move_to_claude_overrides(fm, DefinitionKind::Agent, diagnostics);
+    set_aside_rejected_keys(fm, DefinitionKind::Agent, diagnostics);
 }
 
 fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
-    rename_field(fm, "model_invocable", "model-invocable");
-    rename_field(fm, "user_invocable", "user-invocable");
+    lift_mars_only_keys(fm, DefinitionKind::Skill, diagnostics);
 
     if let Some(skill_type) = fm.get("type").cloned() {
         let metadata = fm
@@ -337,13 +362,7 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
         }
     }
 
-    for key in [
-        "tools",
-        "disallowed-tools",
-        "allowed-tools",
-        "disallowed_tools",
-        "allowed_tools",
-    ] {
+    for key in skill::tool_keys() {
         if fm.remove(key).is_some() {
             diagnostics.push(SchemaDiagnostic::new(
                 "skill.tools-dropped",
@@ -354,10 +373,23 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
         }
     }
 
-    claude::translate::move_to_claude_overrides(
+    claude::translate::move_to_claude_overrides(fm, DefinitionKind::Skill, diagnostics);
+    set_aside_rejected_keys(fm, DefinitionKind::Skill, diagnostics);
+}
+
+/// What the rules above could not make schema v1 is dropped, with a warning naming it, so the
+/// upgrade never hands the strict reader a value it rejects. It is not kept under
+/// `harness-overrides.flow`: Flow defines one key, `permission`, and `lift_mars_only_keys` writes
+/// it there when it is `read` or `edit`. Anything else in that namespace would not be Flow's.
+fn set_aside_rejected_keys(
+    fm: &mut Frontmatter,
+    kind: DefinitionKind,
+    diagnostics: &mut Vec<SchemaDiagnostic>,
+) {
+    crate::set_aside::set_aside_rejected_keys(
         fm,
-        claude::translate::CLAUDE_ONLY_SKILL_KEYS,
-        "skill.claude-keys-moved",
+        kind,
+        crate::set_aside::Destination::Nowhere,
         diagnostics,
     );
 }
@@ -443,7 +475,7 @@ fn strip_model_policy_overrides(fm: &mut Frontmatter, diagnostics: &mut Vec<Sche
                 overrides.insert(key, Value::String(new.to_string()));
             }
         }
-        for key in ["network", "autocompact", "autocompact_pct", "harness"] {
+        for key in ["autocompact", "autocompact_pct", "harness"] {
             if overrides.remove(Value::String(key.to_string())).is_some() {
                 diagnostics.push(SchemaDiagnostic::new(
                     "field.removed",

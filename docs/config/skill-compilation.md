@@ -152,7 +152,7 @@ harness-overrides:
 ---
 ```
 
-Importing a Claude skill moves Claude's own keys (`argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) here, unchanged and in file order, with an info message (`skill.claude-keys-moved`). `.claude/` keeps them; no other harness sees them. `model` and `effort` have schema meaning on Agents only, so a skill's are Claude's.
+Importing a Claude skill moves Claude's own keys (`argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`) here, unchanged and in file order, with an info note per file (`skill.claude-keys-moved`, in `Prepared.changes`; `mars sync` prints one line per package with the count of files translated). `.claude/` keeps them; no other harness sees them. `model` and `effort` have schema meaning on Agents only, so a skill's are Claude's.
 
 ## Unknown Fields
 
@@ -259,7 +259,7 @@ The launch bundle reads skills from `.mars/skills/`; Meridian gets skill content
 
 Mars reads every skill with the schema reader and emits diagnostics during `mars sync`, `mars check` and `mars validate`.
 Field-loss diagnostics also surface via `mars check` and `mars init`, which run a
-lossiness preview (`lossiness_preview::collect_source_lossiness_diagnostics`)
+lossiness preview (`lossiness_preview::collect_prepared_source_lossiness_diagnostics`)
 against the project's configured managed targets.
 
 | Code | Severity | Cause |
@@ -269,6 +269,8 @@ against the project's configured managed targets.
 | `field.type` | error | A field has the wrong type, such as a non-string `metadata.type` or `model-invocable: yes` |
 | `field.unknown` | warning | An unknown field; it stays in the file and reaches no native file |
 | `skill.claude-keys-moved` | info | Import moved Claude-only keys to `harness-overrides.claude` |
+| `skill.claude-keys-conflict` | warning | A Claude-only key was dropped because `harness-overrides.claude` already sets it; the override's value wins |
+| `skill.claude-keys-unmoved` | warning | Claude-only keys stayed in place because `harness-overrides` or `harness-overrides.claude` is not a mapping |
 | `skill.no-frontmatter` | warning | A body-only skill |
 | `skill-field-dropped` | metadata | Internal lossiness metadata for fields with no native equivalent; used by verbose tooling, not a guaranteed user-visible warning |
 | `skill-variant-unknown-harness` | warning | Unknown harness key under `variants/` |

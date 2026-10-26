@@ -2,10 +2,12 @@
   "kind": "skill-tree",
   "dialect": {
     "dialect": "claude",
-    "source": "predicted",
-    "evidence": [
-      "skills/everything/SKILL.md"
-    ]
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        "skills/everything/SKILL.md"
+      ]
+    }
   },
   "also_found": [],
   "plugins": [],

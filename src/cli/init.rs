@@ -131,11 +131,13 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
     // has no package to read through the publish lens.
     if crate::config::load(&project_root)?.package.is_some() {
         let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
-        let lens = crate::resolve::PublishLens::load(&project_root, &mut publish_diag)?;
+        let (lens, prepared) = crate::resolve::PublishLens::load(&project_root, &mut publish_diag)?;
         let mut diagnostics = publish_diag.drain();
         diagnostics.extend(
-            crate::compiler::lossiness_preview::collect_source_lossiness_diagnostics(
+            crate::compiler::lossiness_preview::collect_prepared_source_lossiness_diagnostics(
                 &lens,
+                &prepared,
+                &project_root,
                 crate::diagnostic::LossinessMode::Surface,
             )?,
         );

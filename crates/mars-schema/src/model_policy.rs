@@ -1,5 +1,7 @@
 //! Model-policy definition and validation shared by profiles and consumer config.
 
+use crate::agent::{ApprovalMode, EffortLevel, SandboxMode};
+use crate::network::NetworkPolicy;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
@@ -20,11 +22,16 @@ pub struct ModelPolicyOverride {
     pub sandbox: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
 }
 
 impl ModelPolicyOverride {
     pub fn is_empty(&self) -> bool {
-        self.effort.is_none() && self.sandbox.is_none() && self.approval.is_none()
+        self.effort.is_none()
+            && self.sandbox.is_none()
+            && self.approval.is_none()
+            && self.network.is_none()
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
@@ -32,6 +39,7 @@ impl ModelPolicyOverride {
             "effort" => self.effort.as_deref(),
             "sandbox" => self.sandbox.as_deref(),
             "approval" => self.approval.as_deref(),
+            "network" => self.network.as_deref(),
             _ => None,
         }
     }
@@ -80,6 +88,10 @@ pub enum ModelPolicyRuleParseError {
     UnknownOverrideKey {
         key: String,
     },
+    /// A host set is layered by settings, profile, overlay and CLI, never by a model rule.
+    NetworkHostsNotAllowed {
+        key: String,
+    },
     OverrideValueInvalid {
         key: String,
         found: String,
@@ -118,7 +130,10 @@ impl ModelPolicyRuleParseError {
                 "model policy `override` must be a mapping".to_string()
             }
             Self::UnknownOverrideKey { key } => format!(
-                "unknown model policy override `{key}`; expected effort, sandbox, or approval"
+                "unknown model policy override `{key}`; expected effort, sandbox, approval, or network"
+            ),
+            Self::NetworkHostsNotAllowed { key } => format!(
+                "model policy override `{key}` is not supported; set it on settings, the profile, an agent overlay, or the CLI"
             ),
             Self::OverrideValueInvalid {
                 key,
@@ -138,7 +153,7 @@ impl ModelPolicyRuleParseError {
     }
 }
 
-pub fn parse_model_policy_rule_value(
+pub(crate) fn parse_model_policy_rule_value(
     value: &serde_yaml::Value,
 ) -> Result<ModelPolicyRule, ModelPolicyRuleParseError> {
     let rule = value
@@ -256,6 +271,11 @@ fn parse_overrides(
             .ok_or_else(|| ModelPolicyRuleParseError::UnknownOverrideKey {
                 key: crate::ordered::plain(key),
             })?;
+        if matches!(key, "network-allow" | "network-deny") {
+            return Err(ModelPolicyRuleParseError::NetworkHostsNotAllowed {
+                key: key.to_string(),
+            });
+        }
         let raw =
             value
                 .as_str()
@@ -264,42 +284,35 @@ fn parse_overrides(
                     found: crate::ordered::plain(value),
                     allowed: allowed_override_values(key),
                 })?;
+        let invalid = || ModelPolicyRuleParseError::OverrideValueInvalid {
+            key: key.to_string(),
+            found: raw.to_string(),
+            allowed: allowed_override_values(key),
+        };
         match key {
             "effort" => {
-                let normalized = raw.to_ascii_lowercase();
-                if !matches!(
-                    normalized.as_str(),
-                    "none" | "low" | "medium" | "high" | "xhigh" | "max"
-                ) {
-                    return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
-                        key: key.to_string(),
-                        found: raw.to_string(),
-                        allowed: allowed_override_values(key),
-                    });
-                }
-                overrides.effort = Some(if normalized == "max" {
-                    "xhigh".to_string()
-                } else {
-                    normalized
-                });
+                overrides.effort =
+                    Some(EffortLevel::parse(raw).ok_or_else(invalid)?.as_str().into());
             }
-            "sandbox"
-                if matches!(
-                    raw,
-                    "default" | "read-only" | "workspace-write" | "danger-full-access"
-                ) =>
-            {
-                overrides.sandbox = Some(raw.to_string());
+            "sandbox" => {
+                overrides.sandbox =
+                    Some(SandboxMode::parse(raw).ok_or_else(invalid)?.as_str().into());
             }
-            "approval" if matches!(raw, "default" | "auto" | "confirm" | "never") => {
-                overrides.approval = Some(raw.to_string());
+            "approval" => {
+                overrides.approval = Some(
+                    ApprovalMode::parse(raw)
+                        .ok_or_else(invalid)?
+                        .as_str()
+                        .into(),
+                );
             }
-            "sandbox" | "approval" => {
-                return Err(ModelPolicyRuleParseError::OverrideValueInvalid {
-                    key: key.to_string(),
-                    found: raw.to_string(),
-                    allowed: allowed_override_values(key),
-                });
+            "network" => {
+                overrides.network = Some(
+                    NetworkPolicy::parse(raw)
+                        .ok_or_else(invalid)?
+                        .as_str()
+                        .into(),
+                );
             }
             _ => {
                 return Err(ModelPolicyRuleParseError::UnknownOverrideKey {
@@ -313,10 +326,11 @@ fn parse_overrides(
 
 fn allowed_override_values(key: &str) -> &'static str {
     match key {
-        "effort" => "none, low, medium, high, xhigh",
-        "sandbox" => "default, read-only, workspace-write, danger-full-access",
-        "approval" => "default, auto, confirm, never",
-        _ => "effort, sandbox, approval",
+        "effort" => EffortLevel::ALLOWED,
+        "sandbox" => SandboxMode::ALLOWED,
+        "approval" => ApprovalMode::ALLOWED,
+        "network" => NetworkPolicy::ALLOWED,
+        _ => "effort, sandbox, approval, network",
     }
 }
 

@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover::DiscoveredItem;
 use crate::error::MarsError;
-use mars_schema::item::ItemKind;
+use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::prepare::{PrepareContext, PreparedDefinition};
 
-pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
+pub use mars_schema::prepare::LOCAL_SOURCE_DIR;
 
 #[derive(Debug, Clone)]
 pub struct LocalDiscoveredItem {
@@ -71,7 +71,9 @@ pub fn discover_local_items(
         )?;
         root_candidates.extend(prepared_items(project_root, package_name, prepared));
     }
-    root_candidates.extend(binary_items(project_root, package_name.is_some(), diag)?);
+    // A package's own `bootstrap/` documents are for its consumers; v0.19.0 selected only the
+    // package's Agents and skills (plus the project's hooks and MCP servers) as self items.
+    root_candidates.extend(binary_items(project_root, false, diag)?);
     for candidate in root_candidates {
         if let Some(winner) = selected
             .iter()
@@ -161,18 +163,14 @@ fn prepared_items(
             {
                 definition.slug = name.to_owned();
             }
-            let kind = match definition.kind {
-                mars_schema::upgrade::DefinitionKind::Agent => ItemKind::Agent,
-                mars_schema::upgrade::DefinitionKind::Skill => ItemKind::Skill,
-            };
-            let source_path = match kind {
-                ItemKind::Agent => PathBuf::from(&definition.source_path),
-                ItemKind::Skill if definition.source_path == "SKILL.md" => PathBuf::from("."),
-                ItemKind::Skill => PathBuf::from(&definition.source_path)
+            let kind = ItemKind::from(definition.kind);
+            let source_path = match definition.kind {
+                DefinitionKind::Agent => PathBuf::from(&definition.source_path),
+                DefinitionKind::Skill if definition.source_path == "SKILL.md" => PathBuf::from("."),
+                DefinitionKind::Skill => PathBuf::from(&definition.source_path)
                     .parent()
                     .expect("skill definition has a parent")
                     .to_path_buf(),
-                _ => unreachable!(),
             };
             let prefix = if source_path == Path::new(".") {
                 "".to_string()

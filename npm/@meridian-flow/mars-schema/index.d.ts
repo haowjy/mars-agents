@@ -50,9 +50,10 @@ export interface DefinitionRead<Fields> {
   diagnostics: Diagnostic[];
 }
 
-export type Effort = "none" | "low" | "medium" | "high" | "xhigh";
+export type Effort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 export type Sandbox = "default" | "read-only" | "workspace-write" | "danger-full-access";
 export type Approval = "default" | "auto" | "confirm" | "never";
+export type Network = "allow" | "deny" | "allowlist";
 export type Harness = "claude" | "codex" | "pi" | "opencode" | "cursor";
 
 export interface ToolRule {
@@ -64,7 +65,7 @@ export interface ToolRule {
 
 export interface ModelPolicyRule {
   match: { model: string } | { alias: string } | { "model-glob": string };
-  override?: { effort?: Effort; sandbox?: Sandbox; approval?: Approval };
+  override?: { effort?: Effort; sandbox?: Sandbox; approval?: Approval; network?: Network };
   "no-fallback"?: boolean;
   /** One non-empty line. */
   when?: string;
@@ -80,6 +81,11 @@ export interface AgentFields {
   "user-invocable": boolean;
   approval: Approval | null;
   sandbox: Sandbox | null;
+  /** Shell network mode; `null` follows the sandbox. */
+  network: Network | null;
+  /** Canonical hosts (lowercase, no trailing dot); `{ replace }` clears the lower layers' hosts. */
+  "network-allow": string[] | { replace: string[] };
+  "network-deny": string[];
   effort: Effort | null;
   skills: { load: string[]; available: string[] };
   subagents: string[];
@@ -183,16 +189,22 @@ export function vocabulary(): Vocabulary;
 
 export type Dialect = "claude" | "agent-skills" | "codex" | "opencode" | "cursor" | "mars-native";
 
+/** A foreign dialect a root is read as, and why: `prepare` classifies with it, `inspect` reports it. */
+export interface DialectChoice {
+  dialect: Dialect;
+  evidence: {
+    source: "declared" | "predicted";
+    /** The files that decided a predicted dialect; empty for a declared one. */
+    paths: string[];
+  };
+}
+
 export type Classification =
   | { kind: "schema-1" }
   | { kind: "mars-legacy" }
   | { kind: "schema-newer"; schema: number }
   | { kind: "invalid" }
-  | {
-      kind: "foreign";
-      dialect: Dialect;
-      evidence: { source: "declared" | "predicted"; paths: string[] };
-    }
+  | ({ kind: "foreign" } & DialectChoice)
   | { kind: "marketplace" }
   | { kind: "empty" };
 
@@ -230,19 +242,35 @@ export interface Prepared {
   definitions: PreparedDefinition[];
   payload: { source_path: string; output_path: string }[];
   /**
-   * Package-level diagnostics by source path: discovery, upgrade and translation (`skill.*`,
-   * `agent.*`, `import.*`). A file's own reading diagnostics are on its `reading`.
+   * Package-level findings by source path: what discovery and translation met and could not
+   * convert (`skill.*`, `agent.*`, `import.*`). A file's own reading diagnostics are on its
+   * `reading`.
    */
   diagnostics: { [sourcePath: string]: Diagnostic[] };
+  /**
+   * What preparing changed in each file, by source path: the keys a pre-v1 upgrade
+   * (`classification.kind === "mars-legacy"`) or a foreign translation dropped, moved or
+   * repaired (legacy keys, skill tool rules, Claude-only keys, a repaired `description`, a key
+   * set aside under `harness-overrides` or dropped). A change coded `field.restriction-lost`
+   * means a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) was
+   * dropped or moved, so the agent is less restricted than its file says; a caller reports
+   * these every time. A file changed when its `change.kind` is not `none` or `generated`.
+   * Absent when empty.
+   */
+  changes?: { [sourcePath: string]: Diagnostic[] };
 }
 
 /**
- * The single-root core that `normalize` builds on: classify one package root, select, upgrade
- * or translate, and read. Throws for an unrecognized `context` or `declaredDialect`.
+ * Reads one root held in memory: classify it, select its definitions, upgrade a pre-v1 package
+ * or translate a foreign one, and read each result. This is the supported way to read a single
+ * package, a consumer's `.mars-src` (`"authored-local"`) or a project directory (`"project"`,
+ * where a `mars.toml` with no `[package]` is consumer configuration) without choosing items;
+ * `normalize` is `prepare` plus a selection, a generated `mars.toml` and provenance. Throws for
+ * an unrecognized `context` or `declaredDialect`.
  */
 export function prepare(input: {
   files: Map<string, Uint8Array>;
-  context?: "package" | "authored-local";
+  context?: "package" | "authored-local" | "project";
   declaredDialect?: Dialect;
 }): Prepared;
 
@@ -314,7 +342,7 @@ export interface InspectedItem {
 export interface Inspection {
   kind: Kind;
   /** The dialect read, how it was chosen, and the files that decided it. */
-  dialect?: { dialect: Dialect; source: "declared" | "predicted"; evidence: string[] };
+  dialect?: DialectChoice;
   /** Other harnesses' copies of the package: found, not read. A `weak` one never decides. */
   also_found: { dialect: Dialect; paths: string[]; weak: boolean }[];
   name?: string;
@@ -365,8 +393,6 @@ export interface NormalizedPackage {
     dialect?: Dialect;
     source: SourceInfo;
     marketplace?: { plugin: string; plugin_source: PluginSource };
-    /** Where a remote plugin's files came from. */
-    content?: SourceInfo;
     selected_items: string[];
   };
   prepared: Prepared;
@@ -380,13 +406,13 @@ export interface Normalized {
 }
 
 /**
- * Schema v1 packages for a selection. `remoteTrees` maps a marketplace plugin name to its
- * fetched root (any `git-subdir` path already applied).
+ * Schema v1 packages for a selection. A remote marketplace plugin is fetched by the caller (any
+ * `git-subdir` path applied) and normalized as its own tree with `hint.plugin` set to its entry;
+ * `source` then describes the fetched repository.
  */
 export function normalize(input: {
   tree: Tree;
   source?: SourceInfo;
   hint?: Hint;
   selection?: Selection;
-  remoteTrees?: { [plugin: string]: { tree: Tree; source?: SourceInfo } };
 }): Normalized;

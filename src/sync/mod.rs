@@ -142,9 +142,9 @@ pub(crate) struct LoadedConfig {
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
     pub provided: crate::provided::ProvidedNames,
     pub dependency_changes: Vec<DependencyUpsertChange>,
-    /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock.
+    /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock. A dry run holds it only when `.mars/sync.lock` already exists, and never creates it: it mutates nothing the lock guards.
     #[allow(dead_code)]
-    pub sync_lock: FileLock,
+    pub sync_lock: Option<FileLock>,
 }
 
 impl LoadedConfig {
@@ -352,17 +352,26 @@ pub(crate) fn load_config(
     let project_root = &ctx.project_root;
     let mars_dir = project_root.join(".mars");
 
-    // The lock is the sole project-state write allowed before preparation's
-    // complete diagnostic gate. All package trees live in owned scratch space.
-    let lock_path = mars_dir.join("sync.lock");
-    let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
-    let recovered_pending_generation = crate::platform::fs::recover_pending_staging(&mars_dir)?;
-    if recovered_pending_generation {
-        diag.warn(
-            "sync-recovered-staging",
-            "reclaimed an interrupted canonical staging generation",
-        );
-    }
+    // A dry run is a preview: it must leave the project's files as it found
+    // them. It never creates the lock file or reclaims a pending generation,
+    // and stages in scratch space outside the project (`resolve_graph`). It
+    // still takes the flock when a real sync already created it: recovery reads
+    // `mars.lock` and the intent journal, and a publisher running between those
+    // reads would show it a torn snapshot.
+    let sync_lock = if request.options.dry_run {
+        crate::fs::FileLock::acquire_existing(&mars_dir.join("sync.lock"))?
+    } else {
+        // The lock is the sole project-state write allowed before preparation's
+        // complete diagnostic gate. All package trees live in owned scratch space.
+        let lock = crate::fs::FileLock::acquire(&mars_dir.join("sync.lock"))?;
+        if crate::platform::fs::recover_pending_staging(&mars_dir)? {
+            diag.warn(
+                "sync-recovered-staging",
+                "reclaimed an interrupted canonical staging generation",
+            );
+        }
+        Some(lock)
+    };
 
     // Load config under lock (auto-init when mutating and missing).
     let mut config = match crate::config::load(project_root) {
@@ -447,7 +456,7 @@ pub(crate) fn load_config(
         old_lock,
         provided,
         dependency_changes,
-        sync_lock: _sync_lock,
+        sync_lock,
     })
 }
 
@@ -475,8 +484,11 @@ pub(crate) fn resolve_graph(
             (name.clone(), path)
         })
         .collect();
-    let preparation =
-        crate::platform::fs::PendingStagingGeneration::create(&ctx.project_root.join(".mars"))?;
+    let preparation = if request.options.dry_run {
+        crate::platform::fs::PendingStagingGeneration::scratch()?
+    } else {
+        crate::platform::fs::PendingStagingGeneration::create(&ctx.project_root.join(".mars"))?
+    };
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
         .with_source_overrides(source_overrides);
     let graph = crate::resolve::resolve(
@@ -1150,10 +1162,10 @@ fn validate_targets(
     if let ResolutionMode::Maximize { targets, .. } = resolution {
         for name in targets {
             if !effective.dependencies.contains_key(name) {
-                return Err(MarsError::Source {
-                    source_name: name.to_string(),
-                    message: format!("dependency `{name}` not found in mars.toml"),
-                });
+                return Err(mutation::dependency_not_found(
+                    effective.dependencies.keys(),
+                    name,
+                ));
             }
         }
     }

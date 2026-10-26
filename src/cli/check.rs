@@ -13,7 +13,9 @@ use serde::Serialize;
 
 use crate::error::MarsError;
 use crate::validate::{deferred_provider, undeclared_provider_hint};
-use mars_schema::dialect::Dialect;
+
+use mars_schema::prepare::Classification;
+use mars_schema::read::Reading;
 
 use super::output;
 
@@ -36,17 +38,17 @@ pub(crate) struct CheckReport {
     warnings: Vec<String>,
 }
 
-/// Run `mars check`.
-pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
-    let authored_base = match &args.path {
-        Some(p) => {
-            if p.is_absolute() {
-                p.clone()
-            } else {
-                std::env::current_dir()?.join(p)
-            }
+/// Run `mars check`. `--root` names the directory like `PATH` does, and naming both is an error.
+pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
+    let authored_base = match (args.path.as_deref(), root) {
+        (Some(_), Some(_)) => {
+            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                message: "`mars check` takes a PATH or --root, not both".to_string(),
+            }));
         }
-        None => std::env::current_dir()?,
+        (Some(path), None) | (None, Some(path)) if path.is_absolute() => path.to_path_buf(),
+        (Some(path), None) | (None, Some(path)) => std::env::current_dir()?.join(path),
+        (None, None) => std::env::current_dir()?,
     };
 
     if !authored_base.is_dir() {
@@ -56,46 +58,14 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     }
 
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
-    let consumer_config = std::fs::read_to_string(authored_base.join("mars.toml"))
-        .ok()
-        .and_then(|content| content.parse::<toml::Value>().ok())
-        .is_some_and(|manifest| manifest.get("package").is_none());
-    let (prepared, normalized_manifest) = if consumer_config {
-        let prepared = crate::package_prepare::prepare_authored_without_manifest(
-            &authored_base,
-            mars_schema::prepare::PrepareContext::AuthoredLocal,
-            Some(Dialect::MarsNative),
-            &mut publish_diag,
-        )?;
-        (
-            prepared,
-            Some(std::fs::read(authored_base.join("mars.toml"))?),
-        )
-    } else {
-        let prepared = crate::package_prepare::prepare_authored(
-            &authored_base,
-            mars_schema::prepare::PrepareContext::Package,
-            None,
-            &mut publish_diag,
-        )?;
-        let manifest = prepared
-            .manifest
-            .as_ref()
-            .map(|manifest| manifest.normalized_bytes.clone());
-        (prepared, manifest)
-    };
-    let lens = crate::resolve::PublishLens::from_prepared_manifest(
-        &authored_base,
-        normalized_manifest.as_deref(),
-    )?;
+    let (lens, prepared) = crate::resolve::PublishLens::load(&authored_base, &mut publish_diag)?;
     let mut report = check_prepared(&prepared, &authored_base, &lens, &mut publish_diag)?;
     let known_aliases = crate::models::merged_runtime_aliases(
         &Default::default(),
         lens.manifest.as_ref().map(|config| &config.models),
     );
     for definition in &prepared.definitions {
-        let mars_schema::prepare::PreparedDefinitionRead::Agent(reading) = &definition.reading
-        else {
+        let Reading::Agent(reading) = &definition.reading else {
             continue;
         };
         let Some(profile) = reading.fields.as_ref() else {
@@ -112,6 +82,9 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
             }
         }
     }
+    report
+        .warnings
+        .extend(requires_mars_warning(&prepared, &lens));
     report
         .warnings
         .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);
@@ -177,7 +150,41 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
     if clean { Ok(0) } else { Ok(1) }
 }
 
+/// The first Mars that reads schema 1: older ones read a `schema = 1` package as pre-v1.
+const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
+/// The first Mars whose `mars version` keeps `[plugin]`.
 const PLUGIN_MARS_FLOOR: &str = "0.19.0";
+
+/// The `requires-mars` floor this package needs and does not set: the highest of the floors
+/// its declarations call for.
+fn requires_mars_warning(
+    prepared: &mars_schema::prepare::Prepared,
+    lens: &crate::resolve::PublishLens,
+) -> Option<String> {
+    let config = lens.manifest.as_ref()?;
+    let package = config.package.as_ref()?;
+    crate::resolve::validate_package_requirement_syntax(package).ok()?;
+    let (floor, reason) = if prepared.classification == Classification::Schema1 {
+        (
+            SCHEMA_1_MARS_FLOOR,
+            "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
+        )
+    } else if config.plugin.is_some() {
+        (
+            PLUGIN_MARS_FLOOR,
+            "older Mars versions may drop [plugin] during `mars version`",
+        )
+    } else {
+        return None;
+    };
+    let has_floor = crate::resolve::requirement_has_floor(
+        package.requires_mars.as_deref(),
+        &Version::parse(floor).expect("Mars floor is valid semver"),
+    );
+    (!has_floor).then(|| {
+        format!("[package] `requires-mars` should be `\">={floor}\"` or a higher floor; {reason}")
+    })
+}
 
 fn plugin_warnings(
     base: &Path,
@@ -198,19 +205,6 @@ fn plugin_warnings(
             None
         }
     };
-    let Some(package) = config.package.as_ref() else {
-        return Ok(warnings);
-    };
-    if crate::resolve::validate_package_requirement_syntax(package).is_ok()
-        && !crate::resolve::requirement_has_floor(
-            package.requires_mars.as_deref(),
-            &Version::parse(PLUGIN_MARS_FLOOR).expect("plugin Mars floor is valid semver"),
-        )
-    {
-        warnings.push(format!(
-            "plugin packages should set [package] `requires-mars = \">={PLUGIN_MARS_FLOOR}\"` or a higher floor, then rebuild the plugin; older Mars versions may drop [plugin] during `mars version`"
-        ));
-    }
 
     let Some(metadata) = metadata else {
         return Ok(warnings);
@@ -227,6 +221,7 @@ fn plugin_warnings(
         }
     }
     warnings.extend(state.inputs.iter().filter_map(|state| state.message()));
+    warnings.extend(state.builder.iter().filter_map(|state| state.message()));
     warnings.extend(state.version.iter().filter_map(|state| state.message()));
     warnings.extend(state.root_files.iter().filter_map(|state| state.message()));
 
@@ -277,10 +272,10 @@ fn check_prepared(
     for definition in &prepared.definitions {
         let path = authored_root.join(&definition.source_path);
         let linked_item = match definition.kind {
-            mars_schema::upgrade::DefinitionKind::Agent => path
+            mars_schema::item::DefinitionKind::Agent => path
                 .symlink_metadata()
                 .is_ok_and(|m| m.file_type().is_symlink()),
-            mars_schema::upgrade::DefinitionKind::Skill => path.parent().is_some_and(|root| {
+            mars_schema::item::DefinitionKind::Skill => path.parent().is_some_and(|root| {
                 root.symlink_metadata()
                     .is_ok_and(|m| m.file_type().is_symlink())
             }),
@@ -288,16 +283,12 @@ fn check_prepared(
         if linked_item {
             warnings.push(format!(
                 "skipping symlinked {} `{}` — source packages should not contain symlinks",
-                match definition.kind {
-                    mars_schema::upgrade::DefinitionKind::Agent => "agent",
-                    mars_schema::upgrade::DefinitionKind::Skill => "skill",
-                },
-                definition.slug
+                definition.kind, definition.slug
             ));
             continue;
         }
         match &definition.reading {
-            mars_schema::prepare::PreparedDefinitionRead::Agent(reading) => {
+            Reading::Agent(reading) => {
                 let filename = path
                     .file_stem()
                     .and_then(|name| name.to_str())
@@ -329,7 +320,7 @@ fn check_prepared(
                     }
                 }
             }
-            mars_schema::prepare::PreparedDefinitionRead::Skill(reading) => {
+            Reading::Skill(reading) => {
                 let dirname = if definition.source_path == "SKILL.md" {
                     definition.slug.clone()
                 } else {
@@ -355,10 +346,17 @@ fn check_prepared(
                     }
                 }
             }
+            // A prepared definition is an Agent or a skill, as its `kind` says.
+            Reading::Manifest(_) => {}
         }
     }
 
-    if agent_names.is_empty() && skill_names.is_empty() {
+    // A package preparation could not read has already said why.
+    let readable = !matches!(
+        prepared.classification,
+        Classification::Invalid | Classification::SchemaNewer { .. }
+    );
+    if readable && agent_names.is_empty() && skill_names.is_empty() {
         errors.push("no agents or skills found — is this a mars source package?".to_string());
     }
     let available = skill_names
@@ -437,49 +435,7 @@ fn check_prepared(
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let consumer = std::fs::read_to_string(base.join("mars.toml"))
-        .ok()
-        .and_then(|content| content.parse::<toml::Value>().ok())
-        .is_some_and(|manifest| manifest.get("package").is_none());
-    let prepared = if consumer {
-        crate::package_prepare::prepare_authored_without_manifest(
-            base,
-            mars_schema::prepare::PrepareContext::AuthoredLocal,
-            Some(Dialect::MarsNative),
-            &mut diag,
-        )?
-    } else {
-        crate::package_prepare::prepare_authored(
-            base,
-            mars_schema::prepare::PrepareContext::Package,
-            None,
-            &mut diag,
-        )?
-    };
-    let lens = match crate::resolve::PublishLens::from_prepared_manifest(
-        base,
-        if consumer {
-            Some(std::fs::read(base.join("mars.toml"))?)
-        } else {
-            prepared
-                .manifest
-                .as_ref()
-                .map(|manifest| manifest.normalized_bytes.clone())
-        }
-        .as_deref(),
-    ) {
-        Ok(lens) => lens,
-        Err(error) => {
-            return Ok(CheckReport {
-                agents: 0,
-                skills: 0,
-                errors: vec![format!(
-                    "failed to load mars.toml for dependency checks: {error}\n  hint: fix mars.toml syntax (Windows paths in TOML must use `/` or escaped `\\\\`)"
-                )],
-                warnings: Vec::new(),
-            });
-        }
-    };
+    let (lens, prepared) = crate::resolve::PublishLens::load(base, &mut diag)?;
     let mut report = check_prepared(&prepared, base, &lens, &mut diag)?;
     for diagnostic in diag.drain() {
         let rendered = format!("[{}] {}", diagnostic.code, diagnostic.message);
@@ -526,7 +482,7 @@ fn resolve_available_skills(
             continue;
         };
         for definition in &prepared.definitions {
-            if definition.kind == mars_schema::upgrade::DefinitionKind::Skill
+            if definition.kind == mars_schema::item::DefinitionKind::Skill
                 && prepared_skill_passes_filters(definition, package_filters)
             {
                 let version_str = node
@@ -678,7 +634,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 
@@ -708,7 +664,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 
@@ -725,7 +681,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 
@@ -757,6 +713,12 @@ mod tests {
     #[test]
     fn check_errors_for_malformed_agent_model_policy() {
         let dir = TempDir::new().unwrap();
+        // Only an authored schema v1 package is refused for its fields.
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\nschema = 1\n",
+        )
+        .unwrap();
         write_agent_content(
             dir.path(),
             "browser-tester",
@@ -1041,20 +1003,10 @@ mod tests {
         )
         .unwrap();
 
-        let report = super::check_dir(dir.path()).unwrap();
-        let joined = report.errors.join("\n");
+        let error = super::check_dir(dir.path()).unwrap_err().to_string();
         assert!(
-            joined.contains("failed to load mars.toml for dependency checks"),
-            "expected config parse/load error to surface: {joined}"
-        );
-        let has_local_warning = report
-            .warnings
-            .iter()
-            .any(|w| w.contains("external dependency: `missing-skill`"));
-        assert!(
-            !has_local_warning,
-            "must not silently fall back to local-only warnings on invalid config: {:?}",
-            report.warnings
+            error.contains("TOML parse error"),
+            "an invalid mars.toml must fail the check, not fall back to local-only warnings: {error}"
         );
     }
 }

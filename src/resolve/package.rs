@@ -18,7 +18,6 @@ use super::SourceProvider;
 use super::constraint::parse_version_constraint;
 use super::context::ResolverContext;
 use super::filter::is_unfiltered_request;
-use super::path::apply_subpath;
 use super::requires::{EngineRequirementFailure, check_package_requirements};
 use super::types::{PendingItem, ResolveOptions, ResolvedNode, VersionConstraint};
 use super::version::resolve_single_source;
@@ -78,27 +77,6 @@ impl RegisteredPackage {
             .keys()
             .filter(|(kind, _)| *kind == ItemKind::Skill)
             .map(|(_, name)| name)
-    }
-}
-
-/// A resolved source as a package root: the source below its `subpath`, or the plugin the
-/// dependency names out of the marketplace the source holds.
-fn root_package(
-    pending_src: &PendingSource,
-    resolved: &crate::source::ResolvedRef,
-    provider: &dyn SourceProvider,
-    locked: Option<&LockFile>,
-    options: &ResolveOptions,
-    diag: &mut DiagnosticCollector,
-) -> Result<super::RootedSourceRef, MarsError> {
-    if pending_src.source_id.plugin().is_some() {
-        super::plugin::acquire(pending_src, resolved, provider, locked, options, diag)
-    } else {
-        apply_subpath(
-            &pending_src.name,
-            &resolved.tree_path,
-            pending_src.subpath.as_ref(),
-        )
     }
 }
 
@@ -229,8 +207,14 @@ pub(crate) fn resolve_package_bottom_up(
                 });
 
                 if ref_changed {
-                    let new_rooted =
-                        root_package(pending_src, &new_ref, provider, locked, options, diag)?;
+                    let new_rooted = super::plugin::root_package(
+                        pending_src,
+                        &new_ref,
+                        provider,
+                        locked,
+                        options,
+                        diag,
+                    )?;
                     let staged = prepare_package(
                         &pending_src.name,
                         new_rooted,
@@ -332,7 +316,14 @@ pub(crate) fn resolve_package_bottom_up(
                 diag,
             ) {
                 Ok(ref_) => {
-                    let rooted = root_package(pending_src, &ref_, provider, locked, options, diag)?;
+                    let rooted = super::plugin::root_package(
+                        pending_src,
+                        &ref_,
+                        provider,
+                        locked,
+                        options,
+                        diag,
+                    )?;
                     let staged = prepare_package(
                         &pending_src.name,
                         rooted,

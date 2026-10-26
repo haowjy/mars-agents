@@ -21,15 +21,12 @@ use crate::compiler::lossiness::Lossiness;
 mod tests {
     use super::*;
     use mars_schema::{HarnessId, frontmatter::Frontmatter};
-    use mars_schema::{
-        agent::{AgentProfile, parse_agent_content},
-        diagnostic::SchemaDiagnostic,
-    };
+    use mars_schema::{agent::AgentProfile, diagnostic::SchemaDiagnostic};
 
     fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<SchemaDiagnostic>) {
-        let mut diags = Vec::new();
-        let (profile, fm) = parse_agent_content(content, &mut diags).unwrap();
-        (profile, fm, diags)
+        let reading = mars_schema::agent::read(content);
+        let fm = Frontmatter::parse(content).unwrap();
+        (reading.fields.unwrap(), fm, reading.diagnostics)
     }
 
     // --- 3.3: Claude lowering ---
@@ -39,7 +36,7 @@ mod tests {
         let content = "---\r\nname: coder\r\ndescription: Code impl agent\r\nmodel: gpt55\r\nharness: claude\r\nskills:\r\n  load: [dev-principles, dev-principles]\r\n  available: [review, review, dev-principles]\r\ntools:\r\n  '*': deny\r\n  Bash: allow\r\n  Write: allow\r\n---\r\n# Coder\r\n```text\r\nYou write code.";
         let (profile, fm, _) = profile_from(content);
         let body = fm.body();
-        let out = lower_to_claude(&profile, &fm, body, &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, body, &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(text.contains("name: coder"), "name missing: {text}");
         assert!(
@@ -79,7 +76,7 @@ mod tests {
         let content = "---\nname: coder\nharness: claude\ntools:\n  '*': deny\n  my_custom_tool: allow\n  mcp__server__Tool: allow\n---\n# Body";
         let (profile, fm, diags) = profile_from(content);
         assert!(diags.is_empty());
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
 
         assert!(
@@ -131,10 +128,47 @@ mod tests {
     }
 
     #[test]
+    fn claude_lowering_drops_approval_sandbox_network_mode() {
+        let content = "---\nname: coder\nharness: claude\napproval: auto\nsandbox: read-only\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\nmode: subagent\n---\n# Body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        for leaked in [
+            "approval:",
+            "sandbox:",
+            "network:",
+            "network-allow:",
+            "network-deny:",
+        ] {
+            assert!(!text.contains(leaked), "{leaked} leaked: {text}");
+        }
+        // Launch-time fields are meridian-only, not target-enforced drops.
+        let meridian_only: Vec<_> = out
+            .lossy_fields
+            .iter()
+            .filter(|f| matches!(f.classification, Lossiness::MeridianOnly))
+            .map(|f| f.field.as_str())
+            .collect();
+        for field in [
+            "approval",
+            "sandbox",
+            "network",
+            "network-allow",
+            "network-deny",
+            "mode",
+        ] {
+            assert!(
+                meridian_only.contains(&field),
+                "{field} not in lossy: {meridian_only:?}"
+            );
+        }
+    }
+
+    #[test]
     fn claude_harness_override_does_not_replace_skills_before_lowering() {
         let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             text.contains("base-skill"),
@@ -150,7 +184,7 @@ mod tests {
     fn claude_harness_override_does_not_replace_mcp() {
         let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(plugin:base): allow\nharness-overrides:\n  claude:\n    tools: [plugin:claude]\n    color: red\n---\n# body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             text.contains("color: red"),
@@ -180,7 +214,7 @@ mod tests {
     fn claude_agent_model_invocable_false_warn_drops_without_skill_key() {
         let content = "---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             !text.contains("disable-model-invocation"),
@@ -197,7 +231,7 @@ mod tests {
     fn claude_agent_user_invocable_false_warn_drops() {
         let content = "---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body";
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, &fm, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
         let text = String::from_utf8(out.bytes).unwrap();
         assert!(
             !text.contains("user-invocable"),
@@ -211,6 +245,27 @@ mod tests {
     }
 
     // --- 3.3: Codex lowering ---
+
+    #[test]
+    fn codex_lowering_drops_network_and_keeps_sandbox() {
+        let content = "---\nname: coder\nharness: codex\nsandbox: workspace-write\nnetwork: allowlist\nnetwork-allow: [example.com]\nnetwork-deny: [blocked.example]\n---\n# Coder";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("sandbox_mode = \"workspace-write\""),
+            "sandbox missing: {text}"
+        );
+        assert!(!text.contains("network"), "network leaked: {text}");
+        for field in ["network", "network-allow", "network-deny"] {
+            assert!(
+                out.lossy_fields.iter().any(|lossy| lossy.field == field
+                    && matches!(lossy.classification, Lossiness::Dropped)),
+                "{field} not dropped: {:?}",
+                out.lossy_fields
+            );
+        }
+    }
 
     #[test]
     fn codex_harness_override_does_not_replace_execution_policy() {
@@ -307,7 +362,6 @@ mod tests {
         let out = lower_for_harness_with_model(
             &HarnessId::Claude,
             &profile,
-            &fm,
             fm.body(),
             &NativeModel::Inherit,
         );
@@ -498,7 +552,6 @@ mod tests {
         let claude_out = lower_for_harness_with_model(
             &HarnessId::Claude,
             &claude_profile,
-            &claude_fm,
             claude_fm.body(),
             &NativeModel::Set("o3".to_string()),
         );
@@ -517,7 +570,6 @@ mod tests {
         let codex_out = lower_for_harness_with_model(
             &HarnessId::Codex,
             &codex_profile,
-            &codex_fm,
             codex_fm.body(),
             &NativeModel::Set("o3".to_string()),
         );
@@ -542,7 +594,6 @@ mod tests {
         let out = lower_for_harness_with_model(
             &HarnessId::Claude,
             &profile,
-            &fm,
             &body,
             &NativeModel::Inherit,
         );
@@ -555,7 +606,6 @@ mod tests {
         let out2 = lower_for_harness_with_model(
             &HarnessId::Codex,
             &profile2,
-            &fm2,
             &body2,
             &NativeModel::Inherit,
         );
@@ -571,7 +621,6 @@ mod tests {
         let out3 = lower_for_harness_with_model(
             &HarnessId::Cursor,
             &profile3,
-            &fm3,
             fm3.body(),
             &NativeModel::Inherit,
         );

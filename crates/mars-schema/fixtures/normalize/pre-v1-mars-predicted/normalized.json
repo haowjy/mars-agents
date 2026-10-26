@@ -1,0 +1,201 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "legacy-dep",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {
+          "name": "legacy-dep"
+        },
+        "selected_items": [
+          "agents/old.md",
+          "skills/review/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "legacy-dep"
+              ]
+            ],
+            "fields": {
+              "name": "legacy-dep",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "old",
+            "source_path": "agents/old.md",
+            "output_path": "agents/old.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "old"
+                ],
+                [
+                  "description",
+                  "An agent written for Mars before schema v1"
+                ],
+                [
+                  "tools",
+                  {
+                    "*": "deny",
+                    "Read": "allow",
+                    "Grep": "allow"
+                  }
+                ],
+                [
+                  "approval",
+                  "never"
+                ],
+                [
+                  "network",
+                  "deny"
+                ]
+              ],
+              "fields": {
+                "name": "old",
+                "description": "An agent written for Mars before schema v1",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": "never",
+                "sandbox": null,
+                "network": "deny",
+                "network-allow": [],
+                "network-deny": [],
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "*",
+                    "pattern": null,
+                    "action": "deny"
+                  },
+                  {
+                    "capability": "read",
+                    "pattern": null,
+                    "action": "allow"
+                  },
+                  {
+                    "capability": "grep",
+                    "pattern": null,
+                    "action": "allow"
+                  }
+                ],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "Review the change.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "review",
+            "source_path": "skills/review/SKILL.md",
+            "output_path": "skills/review/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "review"
+                ],
+                [
+                  "description",
+                  "A skill written for Mars before schema v1"
+                ],
+                [
+                  "model-invocable",
+                  false
+                ],
+                [
+                  "metadata",
+                  {
+                    "type": "workflow"
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "review",
+                "description": "A skill written for Mars before schema v1",
+                "model-invocable": false,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": {
+                  "type": "workflow"
+                }
+              },
+              "body": "Read the diff.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {},
+        "changes": {
+          "agents/old.md": [
+            {
+              "code": "field.removed",
+              "severity": "warning",
+              "path": [
+                "fanout"
+              ],
+              "message": "removed legacy key `fanout`"
+            },
+            {
+              "code": "field.removed",
+              "severity": "warning",
+              "path": [
+                "autocompact"
+              ],
+              "message": "removed legacy key `autocompact`"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

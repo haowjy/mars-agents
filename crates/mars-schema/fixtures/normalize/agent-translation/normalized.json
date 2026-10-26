@@ -4,7 +4,7 @@
     {
       "id": "package",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {},
         "selected_items": [
@@ -86,6 +86,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -169,6 +172,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": "high",
                 "skills": {
                   "load": [],
@@ -295,6 +301,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -362,6 +371,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -425,6 +437,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -451,12 +466,16 @@
               "severity": "warning",
               "path": [],
               "message": "inline `mcpServers` definitions are not converted; only the server names carry over"
-            },
+            }
+          ]
+        },
+        "changes": {
+          "agents/everything.md": [
             {
               "code": "agent.claude-keys-moved",
               "severity": "info",
               "path": [],
-              "message": "moved Claude-only keys to harness-overrides.claude: color, initialPrompt, maxTurns"
+              "message": "moved Claude-only keys to harness-overrides.claude: `color`, `initialPrompt`, `maxTurns`"
             }
           ]
         }

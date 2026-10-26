@@ -4,9 +4,7 @@ use std::path::PathBuf;
 
 use crate::content::ContentRoots;
 use crate::error::MarsError;
-use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
-use mars_schema::skill::{parse_skill_content, parse_skill_profile};
 
 use super::output;
 
@@ -94,16 +92,13 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             }
         };
 
-        let fm = match frontmatter::parse(&content) {
-            Ok(fm) => fm,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", skill_md.display());
+        let profile = match mars_schema::skill::read(&content).into_fields() {
+            Ok(profile) => profile,
+            Err(why) => {
+                eprintln!("warning: skipping {}: {why}", skill_md.display());
                 continue;
             }
         };
-
-        let mut diags = Vec::new();
-        let profile = parse_skill_profile(&fm, &mut diags);
 
         if args.model_invocable && !profile.model_invocable {
             continue;
@@ -194,11 +189,10 @@ fn run_show(
             }
         };
 
-        let mut diags = Vec::new();
-        let (profile, _fm) = match parse_skill_content(&content, &mut diags) {
-            Ok(p) => p,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", skill_md.display());
+        let profile = match mars_schema::skill::read(&content).into_fields() {
+            Ok(profile) => profile,
+            Err(why) => {
+                eprintln!("warning: skipping {}: {why}", skill_md.display());
                 continue;
             }
         };

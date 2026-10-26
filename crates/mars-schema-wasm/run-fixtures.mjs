@@ -16,8 +16,9 @@ const fixtures = fileURLToPath(new URL("../mars-schema/fixtures/", import.meta.u
 const cases = suite => readdirSync(join(fixtures, suite), { withFileTypes: true })
   .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
 const text = (...parts) => readFileSync(join(fixtures, ...parts), "utf8");
-// Integers beyond 2^53 stay exact (as BigInt), as they do when Rust reads the same file.
-const json = (...parts) => JSON.parse(text(...parts), (_key, value, { source }) =>
+// Integers beyond 2^53 stay exact (as BigInt), as they do when Rust reads the same file. The
+// crate's version, which results carry, is `{version}` in the files.
+const json = (...parts) => JSON.parse(text(...parts).replaceAll("{version}", wasm.version()), (_key, value, { source }) =>
   typeof value === "number" && Number.isInteger(value) && !Number.isSafeInteger(value) && /^-?\d+$/.test(source) ? BigInt(source) : value);
 const tree = (dir, prefix = "") => {
   const files = new Map();
@@ -73,8 +74,9 @@ for (const name of cases("prepare")) {
 }
 assert.throws(() => wasm.prepare({ files: new Map(), context: "nonsense" }));
 
-// normalize: inspection, the staged inspection of each fetched remote plugin, and the packages
-// equal the fixtures; each package's definition and manifest files equal expected/<id>/<path>
+// normalize: inspection, the staged inspection and normalization of each fetched remote plugin
+// (its own tree, with `hint.plugin` set to the marketplace entry), and the packages equal the
+// fixtures; each package's definition and manifest files equal expected/<id>/<path>
 const defined = object => Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 for (const name of cases("normalize")) {
   const dir = join(fixtures, "normalize", name);
@@ -83,20 +85,23 @@ for (const name of cases("normalize")) {
   const hint = request.hint ?? {};
   const inspection = wasm.inspect({ tree: root, hint });
   check(inspection, json("normalize", name, "inspection.json"), `normalize/${name} inspection`);
-  const remoteTrees = {};
+  const result = wasm.normalize(defined({ tree: root, source: request.source, hint: request.hint, selection: request.selection }));
+  const packages = [...result.packages];
   const remoteInspections = {};
+  const remoteNormalized = {};
   for (const [plugin, remote] of Object.entries(request.remote ?? {}).sort(([a], [b]) => (a < b ? -1 : 1))) {
     const fetched = tree(join(dir, remote.dir));
-    remoteTrees[plugin] = defined({ tree: fetched, source: remote.source });
     const entry = inspection.plugins.find(candidate => candidate.entry.name === plugin).entry;
-    remoteInspections[plugin] = wasm.inspect({ tree: fetched, hint: { plugin: { entry, at_marketplace_root: false } } });
+    const remoteHint = { plugin: { entry, at_marketplace_root: false } };
+    remoteInspections[plugin] = wasm.inspect({ tree: fetched, hint: remoteHint });
+    remoteNormalized[plugin] = wasm.normalize(defined({ tree: fetched, source: remote.source, hint: remoteHint }));
+    packages.push(...remoteNormalized[plugin].packages);
   }
   if (existsSync(join(dir, "remote-inspections.json"))) check(remoteInspections, json("normalize", name, "remote-inspections.json"), `normalize/${name} remote inspections`);
-  const result = wasm.normalize(defined({ tree: root, source: request.source, hint: request.hint, selection: request.selection, remoteTrees: Object.keys(remoteTrees).length ? remoteTrees : undefined }));
   const expectedDir = join(dir, "expected");
   const expectedFiles = existsSync(expectedDir) ? tree(expectedDir) : new Map();
   let produced = 0;
-  for (const pkg of result.packages) {
+  for (const pkg of packages) {
     for (const file of [pkg.prepared.manifest, ...pkg.prepared.definitions].filter(Boolean)) {
       const want = expectedFiles.get(`${pkg.id}/${file.output_path}`);
       assert.ok(file.normalized_bytes instanceof Uint8Array, `normalize/${name} bytes are a Uint8Array`);
@@ -107,6 +112,10 @@ for (const name of cases("normalize")) {
   assert.equal(produced, expectedFiles.size, `normalize/${name} file count`);
   stripBytes(result);
   check(result, json("normalize", name, "normalized.json"), `normalize/${name}`);
+  if (existsSync(join(dir, "remote-normalized.json"))) {
+    for (const normalized of Object.values(remoteNormalized)) stripBytes(normalized);
+    check(remoteNormalized, json("normalize", name, "remote-normalized.json"), `normalize/${name} remote normalized`);
+  }
 }
 assert.throws(() => wasm.normalize({ tree: new Map(), hint: { dialect: "nonsense" } }));
 
@@ -124,7 +133,7 @@ for (const name of cases("upgrade")) {
   const item = kind === "manifest" ? result.manifest : result.definitions.find(d => d.source_path === path);
   assert.equal(Buffer.from(item.normalized_bytes).toString("utf8"), text("upgrade", name, `expected.${ext}`), `upgrade/${name} text`);
   assert.equal(item.change.kind === "fully-rewritten", existsSync(join(fixtures, "upgrade", name, "fully-rewritten.txt")), `upgrade/${name} rewrite mode`);
-  const messages = (result.diagnostics[path] ?? []).filter(d => d.code !== "legacy-package").map(d => d.message);
+  const messages = (result.changes?.[path] ?? []).map(d => d.message);
   const keys = json("upgrade", name, "expected-diagnostics.json");
   assert.equal(messages.length, keys.length, `upgrade/${name} diagnostics ${JSON.stringify(messages)}`);
   for (const key of keys) assert.ok(messages.some(m => m.includes(`\`${key}\``)), `upgrade/${name} names ${key}`);

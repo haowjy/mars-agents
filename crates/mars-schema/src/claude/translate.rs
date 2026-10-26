@@ -3,10 +3,12 @@
 
 use serde_yaml::{Mapping, Value};
 
+use crate::HarnessId;
 use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 use crate::frontmatter::Frontmatter;
+use crate::harness_overrides::move_harness_only_keys;
 use crate::invocability::find_invocability_field;
-use crate::item::ItemKind;
+use crate::item::DefinitionKind;
 use crate::lift::{claude_task_to_agent, lift_foreign_tools};
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
 use crate::tool_policy;
@@ -15,7 +17,7 @@ use crate::tool_policy;
 /// `harness-overrides.claude`, which only `.claude/` output receives. (`model` and `effort`
 /// have v1 meaning on Agents only; a skill carries neither.) `tools` and the `allowed-tools`
 /// family have their own warning.
-pub(crate) const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
+const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "argument-hint",
     "arguments",
     "model",
@@ -27,16 +29,20 @@ pub(crate) const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "shell",
 ];
 
-const SKILL_TOOL_KEYS: &[&str] = &[
-    "tools",
-    "allowed-tools",
-    "allowed_tools",
-    "disallowed-tools",
-    "disallowed_tools",
+/// Spellings only Claude writes, which a manifest-free tree can be predicted Claude from.
+/// Deliberately narrower than the vocabulary above and the rewrites below: `model`, `effort`,
+/// `tools` and `hooks` also appear in Mars's own files, and the rewritten spellings are read
+/// in code, not in a table, so this list is not derived from either. `allowed-tools` is not
+/// here: the Agent Skills standard defines it, so a skill carrying it is not Claude's.
+pub(crate) const EVIDENCE_KEYS: &[&str] = &[
+    "disable-model-invocation",
     "disallowedTools",
+    "disallowed-tools",
+    "argument-hint",
+    "mcpServers",
 ];
 
-pub(crate) const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
+const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "color",
     "initialPrompt",
     "maxTurns",
@@ -47,15 +53,16 @@ pub(crate) const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "hooks",
 ];
 
+/// `changes` gets what the lift dropped or moved; `findings` what it could not convert.
 pub(crate) fn lift(
-    item_kind: ItemKind,
+    kind: DefinitionKind,
     fm: &mut Frontmatter,
-    diagnostics: &mut Vec<SchemaDiagnostic>,
+    changes: &mut Vec<SchemaDiagnostic>,
+    findings: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
-    match item_kind {
-        ItemKind::Skill | ItemKind::BootstrapDoc => lift_skill(fm, diagnostics),
-        ItemKind::Agent => lift_agent(fm, diagnostics),
-        ItemKind::Hook | ItemKind::McpServer => false,
+    match kind {
+        DefinitionKind::Skill => lift_skill(fm, changes, findings),
+        DefinitionKind::Agent => lift_agent(fm, changes, findings),
     }
 }
 
@@ -68,55 +75,25 @@ fn warn(diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String) {
     ));
 }
 
-/// Move the listed keys, in file order and unchanged, under `harness-overrides.claude`. An
-/// override already written there wins over a moved key of the same name.
+/// Move the kind's Claude-only keys under `harness-overrides.claude`.
 pub(crate) fn move_to_claude_overrides(
     fm: &mut Frontmatter,
-    keys: &[&str],
-    code: &str,
-    diagnostics: &mut Vec<SchemaDiagnostic>,
+    kind: DefinitionKind,
+    changes: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
-    let moved = fm
-        .keys()
-        .into_iter()
-        .filter(|key| keys.contains(&key.as_str()))
-        .filter_map(|key| fm.remove(&key).map(|value| (key, value)))
-        .collect::<Vec<_>>();
-    if moved.is_empty() {
-        return false;
-    }
-    let mut overrides = match fm.remove("harness-overrides") {
-        Some(Value::Mapping(existing)) => existing,
-        _ => Mapping::new(),
+    let keys = match kind {
+        DefinitionKind::Agent => CLAUDE_ONLY_AGENT_KEYS,
+        DefinitionKind::Skill => CLAUDE_ONLY_SKILL_KEYS,
     };
-    let claude_key = Value::String("claude".into());
-    let mut claude = match overrides.remove(&claude_key) {
-        Some(Value::Mapping(existing)) => existing,
-        _ => Mapping::new(),
-    };
-    let names = moved
-        .iter()
-        .map(|(key, _)| key.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    for (key, value) in moved.iter().cloned() {
-        claude.entry(Value::String(key)).or_insert(value);
-    }
-    overrides.insert(claude_key, Value::Mapping(claude));
-    fm.insert("harness-overrides", Value::Mapping(overrides));
-    diagnostics.push(SchemaDiagnostic::new(
-        code,
-        Severity::Info,
-        Vec::new(),
-        format!("moved Claude-only keys to harness-overrides.claude: {names}"),
-    ));
-    true
+    move_harness_only_keys(fm, kind, HarnessId::Claude, keys, changes)
 }
 
-fn remove_keys(fm: &mut Frontmatter, keys: &[&str]) -> Vec<String> {
-    keys.iter()
+fn remove_keys(
+    fm: &mut Frontmatter,
+    keys: impl IntoIterator<Item = &'static str>,
+) -> Vec<&'static str> {
+    keys.into_iter()
         .filter(|key| fm.remove(key).is_some())
-        .map(|key| (*key).to_owned())
         .collect()
 }
 
@@ -129,12 +106,16 @@ fn scalar_text(value: &Value) -> Option<String> {
     }
 }
 
-fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> bool {
+fn lift_skill(
+    fm: &mut Frontmatter,
+    changes: &mut Vec<SchemaDiagnostic>,
+    findings: &mut Vec<SchemaDiagnostic>,
+) -> bool {
     let mut changed = false;
     let rendered = fm.render();
     if rendered.contains("${CLAUDE_PLUGIN_ROOT}") || rendered.contains("${CLAUDE_SKILL_DIR}") {
         warn(
-            diagnostics,
+            findings,
             "skill.plugin-variable",
             "refers to `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_SKILL_DIR}`, which are left as written and do not resolve outside Claude Code".into(),
         );
@@ -150,7 +131,7 @@ fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
     } else if fm.remove("disable-model-invocation").is_some() {
         changed = true;
     }
-    changed |= !remove_keys(fm, &["invocation", "allow_implicit_invocation"]).is_empty();
+    changed |= !remove_keys(fm, ["invocation", "allow_implicit_invocation"]).is_empty();
 
     // `type` and a top-level `version` live under `metadata`, which already holds string pairs.
     if matches!(fm.get("metadata"), None | Some(Value::Mapping(_))) {
@@ -197,11 +178,11 @@ fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
                 .iter()
                 .any(|entry| entry.starts_with("Bash"))
         });
-    let dropped = remove_keys(fm, SKILL_TOOL_KEYS);
+    let dropped = remove_keys(fm, crate::skill::tool_keys());
     if !dropped.is_empty() {
         changed = true;
         warn(
-            diagnostics,
+            changes,
             "skill.tools-dropped",
             format!(
                 "removed {}: schema v1 has no skill tool rules, and Claude's `allowed-tools` grants without restricting",
@@ -211,18 +192,13 @@ fn lift_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
     }
     if names_bash || fm.body().contains("scripts/") {
         warn(
-            diagnostics,
+            findings,
             "skill.needs-scripts",
             "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run".into(),
         );
     }
 
-    changed |= move_to_claude_overrides(
-        fm,
-        CLAUDE_ONLY_SKILL_KEYS,
-        "skill.claude-keys-moved",
-        diagnostics,
-    );
+    changed |= move_to_claude_overrides(fm, DefinitionKind::Skill, changes);
     changed
 }
 
@@ -246,7 +222,11 @@ fn mcp_server_names(value: &Value) -> (Vec<String>, bool) {
     (names, has_definitions)
 }
 
-fn lift_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> bool {
+fn lift_agent(
+    fm: &mut Frontmatter,
+    changes: &mut Vec<SchemaDiagnostic>,
+    findings: &mut Vec<SchemaDiagnostic>,
+) -> bool {
     let mut changed = false;
     let mut denied = Vec::new();
     for key in ["disallowedTools", "disallowed-tools", "disallowed_tools"] {
@@ -264,7 +244,7 @@ fn lift_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
         tool_policy::append_mcp_server_entries_to_tools(fm, &names);
         if has_definitions {
             warn(
-                diagnostics,
+                findings,
                 "agent.mcp-not-converted",
                 "inline `mcpServers` definitions are not converted; only the server names carry over".into(),
             );
@@ -295,12 +275,7 @@ fn lift_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) -> 
         changed = true;
     }
 
-    changed |= move_to_claude_overrides(
-        fm,
-        CLAUDE_ONLY_AGENT_KEYS,
-        "agent.claude-keys-moved",
-        diagnostics,
-    );
+    changed |= move_to_claude_overrides(fm, DefinitionKind::Agent, changes);
     changed
 }
 

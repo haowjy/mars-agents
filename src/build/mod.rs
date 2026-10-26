@@ -19,8 +19,9 @@ use crate::cli::MarsContext;
 use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
 use crate::config::EffectiveProjectConfig;
 use crate::error::{ConfigError, MarsError};
-use mars_schema::agent::{AgentProfile, parse_agent_content};
+use mars_schema::agent::AgentProfile;
 use mars_schema::frontmatter::SkillsSpec;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
 
 pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 
@@ -34,6 +35,9 @@ pub struct LaunchBundleRequest {
     pub effort: Option<String>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
+    pub network: Option<NetworkPolicy>,
+    pub network_allow: Vec<NetworkHost>,
+    pub network_deny: Vec<NetworkHost>,
     pub extra_skills: Vec<String>,
     pub models_refresh: crate::models::ModelsRefreshControl,
 }
@@ -61,35 +65,27 @@ pub fn build_launch_bundle(
                 source,
             })?;
 
-        let mut parse_diags = Vec::new();
-        let (parsed_profile, frontmatter) = parse_agent_content(&agent_content, &mut parse_diags)
-            .map_err(|err| {
-            MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "failed to parse agent `{agent}` from {}: {err}",
-                    agent_path.display()
-                ),
-            })
-        })?;
-
-        if let Some(fatal) = parse_diags.iter().find(|diag| diag.is_error()) {
-            return Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "agent `{agent}` has invalid frontmatter in {}: {}",
-                    agent_path.display(),
-                    fatal.message()
-                ),
-            }));
-        }
+        let valid = mars_schema::agent::read(&agent_content)
+            .into_valid()
+            .map_err(|error| {
+                MarsError::Config(ConfigError::Invalid {
+                    message: format!(
+                        "agent `{agent}` has invalid frontmatter in {}: {}",
+                        agent_path.display(),
+                        error.message()
+                    ),
+                })
+            })?;
 
         warnings.extend(
-            parse_diags
+            valid
+                .warnings
                 .iter()
                 .map(|diag| format!("agent `{agent}`: {}", diag.message())),
         );
-        agent_body = Some(frontmatter.body().to_string());
+        agent_body = Some(valid.body);
         agent_source_path = Some(agent_path);
-        profile = parsed_profile;
+        profile = valid.fields;
     } else {
         profile = empty_agent_profile();
         agent_body = None;
@@ -128,6 +124,9 @@ pub fn build_launch_bundle(
             effort_override: request.effort.as_deref(),
             approval_override: request.approval.as_deref(),
             sandbox_override: request.sandbox.as_deref(),
+            network_override: request.network.as_ref(),
+            network_allow: &request.network_allow,
+            network_deny: &request.network_deny,
             models_refresh: request.models_refresh,
         },
     )?;
@@ -196,6 +195,9 @@ fn empty_agent_profile() -> AgentProfile {
         had_user_invocable_field: false,
         approval: None,
         sandbox: None,
+        network: None,
+        network_allow: Default::default(),
+        network_deny: Default::default(),
         effort: None,
         skills: SkillsSpec::default(),
         subagents: Vec::new(),

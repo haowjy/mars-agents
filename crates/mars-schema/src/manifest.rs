@@ -12,31 +12,21 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
     let value: toml::Value = match toml::from_str(content) {
         Ok(value) => value,
         Err(error) => {
-            return crate::read::DefinitionRead {
-                frontmatter: Vec::new(),
-                fields: None,
-                body: None,
-                diagnostics: vec![SchemaDiagnostic::new(
-                    "toml.invalid",
-                    Severity::Error,
-                    Vec::new(),
-                    error.to_string(),
-                )],
-            };
+            return crate::read::DefinitionRead::unread(vec![SchemaDiagnostic::new(
+                "toml.invalid",
+                Severity::Error,
+                Vec::new(),
+                error.to_string(),
+            )]);
         }
     };
     let Some(package) = value.get("package").and_then(toml::Value::as_table) else {
-        return crate::read::DefinitionRead {
-            frontmatter: Vec::new(),
-            fields: None,
-            body: None,
-            diagnostics: vec![SchemaDiagnostic::new(
-                "manifest.package-required",
-                Severity::Error,
-                key_path("package"),
-                "manifest requires a [package] table",
-            )],
-        };
+        return crate::read::DefinitionRead::unread(vec![SchemaDiagnostic::new(
+            "manifest.package-required",
+            Severity::Error,
+            key_path("package"),
+            "manifest requires a [package] table",
+        )]);
     };
     let known = [
         "name",
@@ -50,6 +40,19 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
         "license",
         "uses-providers",
     ];
+    // A newer schema's other fields may mean something this Mars cannot read, so the one thing
+    // to say is to upgrade.
+    if let Some(toml::Value::Integer(schema @ 2..)) = package.get("schema") {
+        return crate::read::DefinitionRead::unread(vec![SchemaDiagnostic::new(
+            "schema.newer",
+            Severity::Error,
+            child_path("package", "schema"),
+            format!(
+                "package declares schema {schema}; this Mars (v{}) reads schema 1 — upgrade Mars",
+                crate::VERSION
+            ),
+        )]);
+    }
     let mut diagnostics = Vec::new();
     for key in package.keys() {
         if key == "visibility" {

@@ -8,7 +8,7 @@
 //! commit is replayed from the lock while the marketplace is the locked commit, and resolved anew
 //! otherwise (`mars upgrade`, or a marketplace that moved). `mars-schema` never fetches.
 
-use mars_schema::claude::manifest::{Checkout, PluginSource};
+use mars_schema::claude::manifest::{Checkout, MARKETPLACE_MANIFEST, PluginSource};
 use mars_schema::inspect::{Hint, InspectedPlugin, Kind, PluginHint, inspect};
 
 use super::SourceProvider;
@@ -24,8 +24,16 @@ use crate::source::ResolvedRef;
 use crate::source::canonical::canonicalize_git_url;
 use crate::types::{CommitHash, SourceId, SourceSubpath, SourceUrl};
 
-/// Root `pending`'s package at the plugin it names in the marketplace `marketplace` holds.
-pub(crate) fn acquire(
+/// Root `pending`'s package in the resolved source `marketplace`: at the plugin it names in the
+/// marketplace the source holds, or at the source below its `subpath`. A dependency that names no
+/// plugin still takes a marketplace's only one (v0.19.0 installed such a dependency); with several,
+/// preparing the source asks for a choice.
+///
+/// The manifest check on disk stays here because `inspect` walks and lists the whole tree: asking
+/// it of every unnamed dependency on every resolve would cost a second walk for a case only
+/// marketplaces have. Moving the one-plugin rule into `inspect` as a default plugin would not
+/// remove that check, so it is not moved.
+pub(crate) fn root_package(
     pending: &PendingSource,
     marketplace: &ResolvedRef,
     provider: &dyn SourceProvider,
@@ -33,12 +41,16 @@ pub(crate) fn acquire(
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<RootedSourceRef, MarsError> {
-    let plugin_name = pending
-        .source_id
-        .plugin()
-        .expect("plugin acquisition runs for a dependency that names a plugin");
     let name = &pending.name;
     let invalid = |message: String| MarsError::InvalidRequest { message };
+    let named = pending.source_id.plugin();
+    let plain = || apply_subpath(name, &marketplace.tree_path, pending.subpath.as_ref());
+    if named.is_none()
+        && (pending.subpath.is_some()
+            || !marketplace.tree_path.join(MARKETPLACE_MANIFEST).is_file())
+    {
+        return plain();
+    }
 
     let tree = DiskTreeSource::new(&marketplace.tree_path)?;
     let inspection = inspect(&tree, &Hint::default());
@@ -49,21 +61,39 @@ pub(crate) fn acquire(
         crate::config::SourceSpec::Git(git) => git.url.to_string(),
         crate::config::SourceSpec::Path(path) => path.display().to_string(),
     };
-    if inspection.kind != Kind::Marketplace {
-        return Err(invalid(format!(
-            "`{name}` names plugin `{plugin_name}`, but {source} is not a Claude marketplace (it has no `.claude-plugin/marketplace.json`)"
-        )));
-    }
-    let Some(plugin) = inspection
-        .plugins
-        .iter()
-        .find(|plugin| plugin.entry.name == plugin_name)
-    else {
-        return Err(invalid(format!(
-            "`{name}` names plugin `{plugin_name}`, which the marketplace at {source} does not list; its plugins are:\n{}",
-            plugin_list(&inspection.plugins)
-        )));
+    let plugin = match (named, inspection.plugins.as_slice()) {
+        (Some(plugin_name), _) => {
+            match inspection.kind {
+                Kind::Marketplace => {}
+                // The manifest decides before a marketplace file does: a Mars package's own
+                // plugin output carries one at its root.
+                Kind::Schema1 | Kind::MarsLegacy | Kind::SchemaNewer => {
+                    return Err(invalid(format!(
+                        "`{name}` names plugin `{plugin_name}`, but {source} is a Mars package (it has a `mars.toml`) and is read as one: drop `plugin` (`--plugin` on `mars add`)"
+                    )));
+                }
+                _ => {
+                    return Err(invalid(format!(
+                        "`{name}` names plugin `{plugin_name}`, but {source} is not a Claude marketplace (it has no `.claude-plugin/marketplace.json`)"
+                    )));
+                }
+            }
+            inspection
+                .plugins
+                .iter()
+                .find(|plugin| plugin.entry.name == plugin_name)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "`{name}` names plugin `{plugin_name}`, which the marketplace at {source} does not list; its plugins are:\n{}",
+                        plugin_list(&inspection.plugins)
+                    ))
+                })?
+        }
+        (None, [only]) if inspection.kind == Kind::Marketplace => only,
+        // Several plugins: preparing the marketplace reports them and asks for a choice.
+        (None, _) => return plain(),
     };
+    let plugin_name = plugin.entry.name.as_str();
     if let Some(reason) = &plugin.refused {
         return Err(invalid(format!(
             "plugin `{plugin_name}` of `{name}` cannot be installed: {reason}"
@@ -90,16 +120,6 @@ pub(crate) fn acquire(
             path,
             checkout,
         } => {
-            let marketplace_is_local = match &pending.spec {
-                crate::config::SourceSpec::Path(_) => true,
-                crate::config::SourceSpec::Git(git) => git.url.as_ref().starts_with("file://"),
-            };
-            let remote = remote_source(name.as_ref(), plugin_name, repository, checkout)?;
-            if remote.is_local() && !marketplace_is_local {
-                return Err(invalid(format!(
-                    "plugin `{plugin_name}` of `{name}` lives at local repository `{repository}`; only a marketplace read from a local source may name one"
-                )));
-            }
             let subpath = match path {
                 Some(path) => optional_subpath(name.as_ref(), path)?,
                 None => None,
@@ -113,7 +133,9 @@ pub(crate) fn acquire(
                 &url,
                 subpath.as_ref(),
             )?;
-            let fetched = fetch_content(pending, &remote, replay, provider, options, diag)?;
+            let fetched = fetch_content(
+                pending, repository, checkout, replay, provider, options, diag,
+            )?;
             let rooted = apply_subpath(name, &fetched.tree_path, subpath.as_ref())?;
             let content = LockedContent {
                 url: Some(url),
@@ -137,6 +159,7 @@ pub(crate) fn acquire(
                 at_marketplace_root,
             },
             content,
+            named: named.is_some(),
         }),
         ..rooted
     })
@@ -162,54 +185,6 @@ fn optional_subpath(name: &str, path: &str) -> Result<Option<SourceSubpath>, Mar
         .map_err(|error| MarsError::InvalidRequest {
             message: format!("plugin path `{path}` of `{name}` is not usable: {error}"),
         })
-}
-
-/// A marketplace-named repository: third-party text that reaches `git`'s argument list.
-struct RemoteSource {
-    url: String,
-    checkout: Checkout,
-}
-
-impl RemoteSource {
-    fn is_local(&self) -> bool {
-        self.url.starts_with("file://") || self.url.starts_with('/')
-    }
-}
-
-fn remote_source(
-    name: &str,
-    plugin: &str,
-    repository: &str,
-    checkout: &Checkout,
-) -> Result<RemoteSource, MarsError> {
-    let refuse = |what: &str, value: &str| MarsError::InvalidRequest {
-        message: format!(
-            "plugin `{plugin}` of `{name}` has an unusable {what} `{value}` in its marketplace entry"
-        ),
-    };
-    let scp_like = repository
-        .split_once(':')
-        .is_some_and(|(user_host, path)| user_host.contains('@') && !path.is_empty());
-    let known_scheme = ["https://", "ssh://", "file://", "/"]
-        .iter()
-        .any(|prefix| repository.starts_with(prefix));
-    if repository.starts_with('-')
-        || repository.chars().any(char::is_whitespace)
-        || !(known_scheme || scp_like)
-    {
-        return Err(refuse("repository", repository));
-    }
-    if let Checkout::Ref { name: reference } = checkout
-        && (reference.is_empty()
-            || reference.starts_with('-')
-            || reference.chars().any(char::is_whitespace))
-    {
-        return Err(refuse("ref", reference));
-    }
-    Ok(RemoteSource {
-        url: repository.to_owned(),
-        checkout: checkout.clone(),
-    })
 }
 
 /// The lock's record of this very dependency (same source and plugin).
@@ -259,19 +234,21 @@ fn replayable_commit(
     Ok(replay)
 }
 
-/// Fetch the plugin's repository at the entry's `sha`, the replayed commit, or its `ref` (else
+/// Fetch the plugin's repository (the crate has refused any that is not a network repository)
+/// at the entry's `sha`, the replayed commit, or its `ref` (else
 /// the default branch) as it is now.
 fn fetch_content(
     pending: &PendingSource,
-    remote: &RemoteSource,
+    repository: &str,
+    checkout: &Checkout,
     replay: Option<CommitHash>,
     provider: &dyn SourceProvider,
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let url = SourceUrl::from(remote.url.as_str());
+    let url = SourceUrl::from(repository);
     let name = pending.name.as_ref();
-    if let Checkout::Sha { sha } = &remote.checkout {
+    if let Checkout::Sha { sha } = checkout {
         return provider.fetch_git_commit(&url, sha, name, diag);
     }
     if let Some(commit) = replay {
@@ -292,7 +269,7 @@ fn fetch_content(
             result => return result,
         }
     }
-    let reference = match &remote.checkout {
+    let reference = match checkout {
         Checkout::Ref { name } => name.as_str(),
         _ => "HEAD",
     };

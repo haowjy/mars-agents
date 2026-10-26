@@ -8,7 +8,7 @@ use crate::compiler::native_agent_manifest::{
 };
 use crate::content::ContentRoots;
 use crate::error::{ConfigError, MarsError};
-use mars_schema::agent::{AgentMode, parse_agent_content};
+use mars_schema::agent::AgentMode;
 use mars_schema::model_policy::ModelPolicyMatchType;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,8 +137,6 @@ pub(crate) fn build_inventory_prompt(
     let mut lines = vec![
         "# Meridian Agents".to_string(),
         "".to_string(),
-        "Write prompts to `$(meridian work path prompts/<name>.md)`.".to_string(),
-        "Use `--bg` + `meridian spawn wait` for parallel work.".to_string(),
         "Use `/handoff` when passing control back to the user.".to_string(),
     ];
 
@@ -188,30 +186,28 @@ fn parse_inventory_agent(
         )
     })?;
 
-    let mut parse_diags = Vec::new();
-    let (profile, _frontmatter) =
-        parse_agent_content(&content, &mut parse_diags).map_err(|err| {
+    let valid = mars_schema::agent::read(&content)
+        .into_valid()
+        .map_err(|error| {
             format!(
-                "failed to parse agent inventory file {}: {err}",
-                path.display()
-            )
-        })?;
-
-    let mut warnings = Vec::new();
-    for diag in parse_diags {
-        if diag.is_error() {
-            return Err(format!(
                 "agent inventory file {} has invalid frontmatter: {}",
                 path.display(),
+                error.message()
+            )
+        })?;
+    let profile = valid.fields;
+
+    let warnings = valid
+        .warnings
+        .iter()
+        .map(|diag| {
+            format!(
+                "agent inventory parse warning in {}: {}",
+                path.display(),
                 diag.message()
-            ));
-        }
-        warnings.push(format!(
-            "agent inventory parse warning in {}: {}",
-            path.display(),
-            diag.message()
-        ));
-    }
+            )
+        })
+        .collect::<Vec<_>>();
     if !profile.model_invocable {
         return Ok((None, warnings));
     }
@@ -456,7 +452,8 @@ Implement changes.
             build_inventory_prompt(&content_roots(&mars_dir), &[], "claude", &[], &mut warnings)
                 .unwrap();
 
-        assert!(inventory.contains("Write prompts to `$(meridian work path prompts/<name>.md)`."));
+        assert!(!inventory.contains("Write prompts to"));
+        assert!(!inventory.contains("Use `--bg`"));
         assert!(inventory.contains("## Subagent"));
         assert!(
             inventory.contains(

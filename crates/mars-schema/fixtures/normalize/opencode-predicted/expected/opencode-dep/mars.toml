@@ -1,0 +1,3 @@
+[package]
+schema = 1
+name = "opencode-dep"

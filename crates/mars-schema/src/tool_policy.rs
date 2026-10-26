@@ -192,7 +192,7 @@ pub fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: &[Strin
 /// The tool names in a `tools:` / `disallowed-tools:` value. A scalar is Claude's own
 /// agent-file spelling, `tools: Read, Grep`: a comma-separated list. Commas inside a scope
 /// (`bash(rg a,b)`) belong to the entry.
-pub fn tool_entries(val: &Value) -> Vec<String> {
+pub(crate) fn tool_entries(val: &Value) -> Vec<String> {
     let Value::String(raw) = val else {
         return yaml_str_list(val);
     };

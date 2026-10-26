@@ -93,7 +93,7 @@ write_versions() {
   sed -i -E "0,/^version = \".*\"/s//version = \"${version}\"/" "$ROOT_DIR/pyproject.toml"
 
   local pkg
-  for pkg in "$ROOT_DIR"/npm/@meridian-flow/mars-agents*/package.json; do
+  for pkg in "$ROOT_DIR"/npm/@meridian-flow/*/package.json; do
     [[ -f "$pkg" ]] || continue
     node -e "
       const fs = require('fs');
@@ -104,6 +104,14 @@ write_versions() {
         pkg.optionalDependencies[dep] = '$version';
       }
       fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+      // A package's lockfile records its own version twice.
+      const lockPath = '${pkg%package.json}package-lock.json';
+      if (fs.existsSync(lockPath)) {
+        const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+        lock.version = '$version';
+        lock.packages[''].version = '$version';
+        fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
+      }
     "
   done
 
@@ -204,7 +212,7 @@ main() {
   write_versions "$version"
   promote_changelog "$version" "$today"
 
-  git add Cargo.toml crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/mars-agents*/package.json
+  git add Cargo.toml crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/*/package.json npm/@meridian-flow/*/package-lock.json
   git commit -m "release: v$version"
   create_tag "$tag"
   [[ "$push" -eq 0 ]] || push_release "$tag"

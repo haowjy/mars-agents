@@ -7,6 +7,7 @@ use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
 use crate::error::MarsError;
 use mars_schema::HarnessId;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
 
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
@@ -37,7 +38,7 @@ fn parse_harness(value: &str) -> Result<HarnessId, String> {
     mars_schema::harness::parse(value).ok_or_else(|| {
         format!(
             "unknown harness `{value}`; expected one of: {}",
-            mars_schema::harness::NAMES.join(", ")
+            mars_schema::harness::names()
         )
     })
 }
@@ -49,6 +50,7 @@ enum EffortArg {
     Medium,
     High,
     Xhigh,
+    Max,
 }
 
 impl EffortArg {
@@ -59,6 +61,7 @@ impl EffortArg {
             Self::Medium => "medium",
             Self::High => "high",
             Self::Xhigh => "xhigh",
+            Self::Max => "max",
         }
     }
 }
@@ -140,6 +143,18 @@ pub struct LaunchBundleArgs {
     #[arg(long, value_enum)]
     sandbox: Option<SandboxArg>,
 
+    /// Override shell network access: allow, deny, or allowlist.
+    #[arg(long)]
+    network: Option<NetworkPolicy>,
+
+    /// Add a host to the network allow set (repeatable).
+    #[arg(long = "network-allow", action = ArgAction::Append)]
+    network_allow: Vec<NetworkHost>,
+
+    /// Add a host to the network deny set (repeatable).
+    #[arg(long = "network-deny", action = ArgAction::Append)]
+    network_deny: Vec<NetworkHost>,
+
     /// Add extra skills by name. Supports `--skill a --skill b` and `--skill a,b`.
     #[arg(long = "skill", value_delimiter = ',', action = ArgAction::Append)]
     pub extra_skills: Vec<String>,
@@ -215,6 +230,9 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             effort: args.effort.as_ref().map(|e| e.as_str().to_string()),
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
+            network: args.network.clone(),
+            network_allow: args.network_allow.clone(),
+            network_deny: args.network_deny.clone(),
             extra_skills: args.extra_skills.clone(),
             models_refresh,
         },

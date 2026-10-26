@@ -53,11 +53,9 @@ pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutpu
 mod tests {
     use super::*;
     use crate::compiler::lossiness::{Lossiness, LossyField};
-    use mars_schema::skill::parse_skill_content;
 
     fn parse_profile(content: &str) -> SkillProfile {
-        let mut diags = Vec::new();
-        parse_skill_content(content, &mut diags).unwrap().0
+        mars_schema::skill::read(content).fields.unwrap()
     }
 
     fn profile() -> SkillProfile {
@@ -314,9 +312,9 @@ mod tests {
 
     #[test]
     fn no_frontmatter_body_only_all_harnesses() {
-        let mut diags = Vec::new();
-        let (profile, fm) = parse_skill_content("# Body\nbytes", &mut diags).unwrap();
-        let body = fm.body();
+        let reading = mars_schema::skill::read("# Body\nbytes");
+        let body = reading.body.as_deref().unwrap();
+        let profile = reading.fields.unwrap();
         for harness in [
             HarnessId::Claude,
             HarnessId::Codex,

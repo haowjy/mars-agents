@@ -42,7 +42,7 @@ mars init [TARGET] [--link DIR...]
 - Idempotent: re-running is a no-op for init, but still processes `--link`
 - When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
   against configured managed targets, reporting what each target cannot express
-  (lossiness diagnostics via `collect_source_lossiness_diagnostics`). A consumer
+  (lossiness diagnostics via `collect_prepared_source_lossiness_diagnostics`). A consumer
   project has no package to publish, so it gets no preview
 
 ```bash
@@ -73,7 +73,7 @@ mars add <source...> [filter flags]
 
 **Rules:**
 - `--subpath` and `--plugin` require exactly one source.
-- A marketplace source without `--plugin` is an error that lists its plugins; the dependency is not written.
+- A marketplace source with exactly one plugin installs it without `--plugin`. With several, `--plugin` is required: the error lists them and the dependency is not written.
 - Filter flags require exactly one source. Multi-source add is only for whole-source installs.
 - Re-adding an existing dependency updates it. Filter fields are replaced atomically when any filter flag is present; version-only changes preserve existing filters.
 - Source specifiers:
@@ -114,6 +114,8 @@ mars remove <name>
 ```
 
 Removes the named dependency from `mars.toml` and runs sync to clean up installed items. Whole-source removal only; to narrow a source's installed items, use `mars add` with updated filters.
+
+A dependency added with `--subpath`, `--plugin` or a path in the specifier is named `<repository>/<path or plugin>` (`mars add anthropics/skills --plugin claude-api` is `skills/claude-api`). `mars remove skills` finds nothing and names the dependencies that start with `skills/`; remove one by its full name.
 
 ---
 
@@ -529,11 +531,13 @@ Validate a source package before publishing.
 
 ```bash
 mars check [path]
+mars check --root PATH
 ```
 
 | Argument | Description |
 |---|---|
 | `path` | Directory to validate (default: current directory) |
+| `--root PATH` | The same directory, named as every other command names its root; giving it with `path` is an error |
 
 Does not require a mars project (no `mars.toml` needed). Validates:
 - `requires-mars` and `requires-meridian` syntax when `[package]` is present
@@ -545,13 +549,16 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Skill dependency references (warns about external deps). A ref `<skill>__<provider>` passes when `[package] uses-providers` lists the provider; otherwise it is an error naming `uses-providers`, with or without `[dependencies]`. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine
 - Symlinks in source packages (warned as unsupported)
 - Missing `SKILL.md` in skill directories
-- Configured plugin output: missing/skipped builds, stale inputs or versions, hand-edited or
-  missing generated files, and conflicts at generated package-root paths
-- Plugin compatibility: unknown `[plugin].harnesses` values and a missing
-  `[package].requires-mars = ">=0.19.0"` (or higher) floor
+- Configured plugin output: missing/skipped builds, stale inputs, a different package or Mars
+  version, hand-edited or missing generated files, root files left holding an earlier build's
+  output, and conflicts at generated package-root paths
+- `[package].requires-mars` floor: `">=0.20.0"` (or higher) for a package that declares
+  `schema = 1`, the first Mars that reads it; `">=0.19.0"` for a plugin package with no
+  `schema`, the first that keeps `[plugin]`
+- Plugin compatibility: unknown `[plugin].harnesses` values
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
-preview** (`collect_source_lossiness_diagnostics`) against the configured managed
+preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed
 targets — reports what each native target cannot express from the source tree's
 agents and skills.
 
@@ -779,18 +786,21 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 **Agent/profile mode** (`--agent <name>`):
 - Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
 - Requires a project with `mars sync` already run
-- Inherits the profile's fields (model, harness, effort, approval, sandbox, skills, tools, model-policies)
+- Inherits the profile's fields (model, harness, effort, approval, sandbox, network, skills, tools, model-policies)
 - Model precedence is `--model` > the `[agents.<name>]` overlay > profile model > `settings.default_model`.
-- Effort, approval and sandbox follow the [precedence chain](../config/schema-v1.md#model-policies): CLI flag, overlay field, the first matching `model-policies` rule, the profile's own value, then the alias's `default_effort`.
+- Effort, approval, sandbox and network follow the [precedence chain](../config/schema-v1.md#model-policies): CLI flag, overlay field, the first matching `model-policies` rule, the profile's own value, then (`network` only) the `[settings]` and user-config `default-network`, or (`effort` only) the alias's `default_effort`.
 
 | Flag | Description |
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
 | `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`). |
-| `--effort <level>` | Override effort: `none`, `low`, `medium`, `high`, `xhigh`. `none` asks for no reasoning effort and is written as `"effort": "none"` in the bundle; see [Effort](../config/schema-v1.md#effort) for what each harness does with it. |
+| `--effort <level>` | Override effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. `none` asks for no reasoning effort and is written as `"effort": "none"` in the bundle; see [Effort](../config/schema-v1.md#effort) for what each harness does with it. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |
 | `--sandbox <mode>` | Override sandbox: `default`, `read-only`, `workspace-write`, `danger-full-access`. |
+| `--network <mode>` | Override shell network mode: `allow`, `deny`, `allowlist`. Built-in web tools remain controlled by `tools: web`. |
+| `--network-allow <host>` | Add an allowed host. Repeatable; accepts exact hosts, IPs, `*.x`, and `**.x`. |
+| `--network-deny <host>` | Add a denied host. Repeatable; uses the same host grammar. |
 | `--skill <name>` | Add extra skills by name. Repeatable; also accepts `--skill a,b`. |
 
 **Output JSON structure:**
@@ -815,6 +825,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
     "effort": "high",
     "approval": "auto",
     "sandbox": "workspace-write",
+    "network": { "mode": "allow", "allow": [], "deny": ["blocked.example"] },
     "autocompact": null,
     "autocompact_pct": null,
     "timeout": null
@@ -848,6 +859,7 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
     "effort_source": "cli|overlay|overlay-model-policy|profile-model-policy|profile|settings-model-policy|alias|unset",
     "approval_source": "...",
     "sandbox_source": "...",
+    "network_source": "cli|overlay|overlay-model-policy|profile|profile-model-policy|settings-model-policy|config|unset",
     "autocompact_source": "...",
     "autocompact_pct_source": "...",
     "matched_policy_rule": "profile:0",
@@ -862,7 +874,12 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
 - `skills.*.skill_type` is the skill's `metadata.type`, or `reference` when it sets none.
-- `execution_policy` holds `effort`, `approval`, `sandbox`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction or network setting. `effort` is `none` when `--effort none` or a rule set it.
+- `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is `none` when `--effort none` or a rule set it.
+- `execution_policy.network` is one resolved `{mode, allow, deny}` object. `mode` is
+  `"allow"`, `"deny"`, `"allowlist"`, or `null`; Meridian resolves a remaining unset mode
+  from the sandbox. Mars removes inert sets (`deny` removes both; `allow` removes `allow`) and
+  turns an empty allowlist into `deny` with a warning. The field governs shell connections
+  only; `tools: web` separately governs built-in web tools. See [Network](../config/schema-v1.md#network).
 - Each `provenance.*_source` names the step of the precedence chain that supplied the value, and `matched_policy_rule` names the one `model-policies` rule that matched the chosen model (`profile:<index>`, `overlay:<index>` or `settings:<index>`), even when a higher step then set the field; it is absent when no rule matched.
 
 **`tools.capability_natives`** is always present, independent of the profile's tool policy. It

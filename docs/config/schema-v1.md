@@ -24,9 +24,9 @@ Mars classifies a package root before it reads any definition:
 | `mars.toml` | Mars does |
 |---|---|
 | `[package] schema = 1` | Reads every definition strictly. Errors fail `mars sync`. |
-| `[package]` without `schema` | Treats the package as pre-v1: upgrades its definitions **in memory**, installs the upgraded text, and warns once per package: ``package `name` uses the pre-v1 format; run `mars migrate` in its repository``. The package's files are not touched. |
+| `[package]` without `schema` | Treats the package as pre-v1: upgrades its definitions **in memory**, installs the upgraded text, and warns once per package: ``package `name` uses the pre-v1 format (3 files to upgrade); run `mars migrate` in its repository``. The package's files are not touched. |
 | `schema` higher than 1, or not an integer | Refuses the package. A Mars that does not know the schema cannot read it. |
-| no `mars.toml` | The tree is a foreign layout (a Claude plugin, a marketplace, a tree of `SKILL.md` directories, a Codex, OpenCode or Cursor repository). Mars translates it into a schema v1 package and then reads that strictly; a tree of plain `agents/` and `skills/` folders is translated by Claude's rules, so a removed key in it is an error, not an upgrade. See [Dialect](mars-toml.md#dialect). |
+| no `mars.toml` | The tree is a foreign layout (a Claude plugin, a marketplace, a tree of `SKILL.md` directories, a Codex, OpenCode or Cursor repository). Mars translates it into a schema v1 package; a tree of plain `agents/` and `skills/` folders is translated by Claude's rules (or OpenCode's, when an Agent has a `permission` map or a `tools` map of booleans), and the keys only pre-v1 Mars defined are rewritten per key whatever the dialect. A key or value the translation cannot make schema v1 is moved under `harness-overrides.<dialect>` (or dropped when no harness reads it, or when Mars lowers it itself) with a warning, never an error: only an authored schema v1 file is read strictly. See [Dialect](mars-toml.md#dialect). |
 
 The same classification runs for dependencies, the local package, `.mars-src/`, `mars check`, `mars validate`, `mars migrate` and plugin builds. Reading finishes for the whole dependency graph before anything is written; see [the sync pipeline](../internals/sync-pipeline.md#preparation-and-the-gate).
 
@@ -37,7 +37,7 @@ The same classification runs for dependencies, the local package, `.mars-src/`, 
 - **YAML** must be a mapping, or empty. Schema 1 refuses duplicate keys, anchors and aliases (`yaml.anchor`), and a `...` document-end marker (`yaml.document-end`). A top level that is a list or a scalar is `frontmatter.not-mapping`.
 - **Booleans** are `true` and `false`. `yes`, `no`, `on` and `off` are strings, so they are errors in a boolean field.
 - **Case.** Enumerated values are exact, except `effort` and `harness`, which are case-insensitive.
-- **Unknown keys** are kept in the installed file and, for skills, written to every harness's native `SKILL.md`. Each produces a `field.unknown` warning.
+- **Unknown keys** are kept in the authored file and reach no native file, in Agents and skills alike. Each produces a `field.unknown` warning; [Unknown keys](#unknown-keys) says where harness-specific keys belong.
 
 ## Agent keys
 
@@ -52,7 +52,10 @@ The same classification runs for dependencies, the local package, `.mars-src/`, 
 | `user-invocable` | boolean, default `true` | Whether the user can invoke it directly. |
 | `approval` | `default`, `auto`, `confirm`, `never` | Tool-call approval policy. `default` is an explicit request for the harness default; leaving the key out means unset. |
 | `sandbox` | `default`, `read-only`, `workspace-write`, `danger-full-access` | Filesystem access. |
-| `effort` | `none`, `low`, `medium`, `high`, `xhigh` | See [Effort](#effort). `max` is accepted as `xhigh`. |
+| `network` | `allow`, `deny`, `allowlist` | Shell network access; see [Network](#network). |
+| `network-allow` | list of hosts, or `{replace: [...]}` | Hosts an `allowlist` permits. |
+| `network-deny` | list of hosts | Hosts that stay denied. A package's Agent cannot replace this set. |
+| `effort` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | See [Effort](#effort). |
 | `skills` | list, or `{load: [...], available: [...]}` | A bare list means `load`. |
 | `subagents` | list of names | The Agents this one may spawn. |
 | `tools` | map of capability to `allow`, `deny` or `ask` | See [Tool capabilities](#tool-capabilities). |
@@ -75,7 +78,7 @@ A schema 1 file that carries one of these is an error (`field.removed`) naming t
 | `permission` | `harness-overrides.flow.permission` |
 | `fanout` | the consumer's `[settings.meridian.fanout]` |
 | `models` | `model-policies` |
-| `network`, `network-allow`, `network-deny` | nothing: no consumer enforced them |
+| `network_allow`, `network_deny` | `network-allow`, `network-deny` |
 | `autocompact`, `autocompact_pct` | the same keys on the model alias, in `[models.<alias>]` |
 
 ## Skill keys
@@ -120,7 +123,7 @@ Removed: `package.visibility`, with nothing to replace it.
 
 ## Effort
 
-`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high` or `xhigh`. `max` is accepted as `xhigh`, and values are case-insensitive.
+`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high`, `xhigh` or `max`, in rising order; values are case-insensitive. `xhigh` and `max` are two levels. Claude Code has both. Codex's highest is `xhigh`, so Mars writes `max` there as `xhigh` and warns that it approximated.
 
 **`none` means reasoning off.** It is a value of its own: an absent `effort` means "the model's default", and `none` asks for no reasoning. Mars keeps the distinction end to end. The launch bundle carries `"effort": "none"`, and each harness's native file spells it as that harness does:
 
@@ -135,6 +138,19 @@ The launcher reads the bundle's `effort` and maps it for its harness. `mars buil
 
 `adaptive` and `disabled` are not values. `mars migrate` rewrites them to `medium` and `none`.
 
+## Network
+
+`network` is the Agent's shell network policy: `allow`, `deny` or `allowlist`. An absent `network` means unset, and Mars does not pick a default: the launch bundle carries `"mode": null` and Meridian follows the sandbox. `network-allow` and `network-deny` are host sets. A host is an exact name, an IP address, `*.example.com` (subdomains only) or `**.example.com` (the apex and its subdomains); the reader lowercases it, drops a trailing dot and refuses a URL, a port, a path, a bare `*` and a non-punycode name.
+
+Host sets are permission sets, so a plain list adds and `{replace: [...]}` clears the lower entries. An Agent in a package may replace `network-allow` but not `network-deny`: a package cannot lift a deny the consumer set.
+
+The mode resolves through the [precedence chain for `effort`, `sandbox` and `approval`](#model-policies), with the consumer's `[settings] default-network` just above the end of it. Host sets do not take a winner; they merge in layer order (settings, Agent, the consumer's overlay, the command line), come out sorted, and the project's deny entries are never replaced by a higher layer. Two rules then close the policy:
+
+- `allowlist` with no allowed host resolves to `deny` and warns.
+- `deny` empties both host sets, and `allow` empties the allow set.
+
+The launch bundle carries the result as `execution_policy.network` (`{mode, allow, deny}`), and `provenance.network_source` names the layer that set the mode: `cli`, `overlay`, `overlay-model-policy`, `profile`, `profile-model-policy`, `settings-model-policy`, `config` or `unset`. Mars does not enforce the policy; Meridian does. Native agent files resolve the same chain without the command-line layer and report `network` as meridian-only, or as dropped for Codex, whose native file keeps Codex's own network default. See [Agent profiles](agent-profiles.md#network).
+
 ## Model policies
 
 `model-policies` lists per-model settings for one Agent. Each rule is:
@@ -142,28 +158,29 @@ The launcher reads the bundle's `effort` and maps it for its harness. `mars buil
 ```yaml
 model-policies:
   - match: {alias: opus}            # exactly one of alias, model, model-glob
-    override: {effort: medium}      # optional: effort, sandbox, approval
+    override: {effort: medium}      # optional: effort, sandbox, approval, network
     when: Architecture review across module boundaries   # optional, one line
     no-fallback: true               # optional, default false
 ```
 
 - **`match`** holds exactly one of `alias` (the alias the model was chosen through), `model` (the concrete model ID) or `model-glob` (a glob over the concrete model ID).
-- **`override`** may set `effort`, `sandbox` and `approval`. Any other key, such as `network` or `harness`, is an error.
+- **`override`** may set `effort`, `sandbox`, `approval` and `network`. Any other key, such as `harness`, is an error, and so are the host sets `network-allow` and `network-deny`: a rule picks the mode, and the hosts come from the Agent, the consumer and the command line.
 - **`when`** is one non-empty line saying when this model is a good choice for this Agent. It is guidance for the caller, not a condition Mars evaluates. `mars models prompting @agent` prints each rule's `when`, and the Agent inventory in the system prompt marks an Agent that has a guide. `mars check` warns when a rule's `alias` is not defined.
 - **`no-fallback`** keeps a rule from being a launch backup. See [Agent profiles](agent-profiles.md#model-policies).
 
 **First match wins; there is no merging.** Mars looks for the first rule that matches the chosen model: the consumer's `[agents.<name>]` rules first, then the Agent's own, then `[[settings.model-policies]]`. Only that rule's `override` applies. A field the rule does not set falls through to the next layer below.
 
-**Precedence for `effort`, `sandbox` and `approval`**, highest first:
+**Precedence for `effort`, `sandbox`, `approval` and `network`**, highest first:
 
-1. the command line (`--effort`, `--sandbox`, `--approval`)
+1. the command line (`--effort`, `--sandbox`, `--approval`, `--network`)
 2. the consumer's `[agents.<name>]` overlay field
 3. the matched rule's `override`, when the rule comes from the overlay
 4. the matched rule's `override`, when the rule comes from the Agent
 5. the Agent's top-level field
 6. the matched rule's `override`, when the rule comes from `[[settings.model-policies]]`
-7. the model alias's `default_effort` (`effort` only)
-8. unset: the harness decides
+7. the consumer's `[settings] default-network` (`network` only), then the user config's
+8. the model alias's `default_effort` (`effort` only)
+9. unset: the harness decides
 
 So the Agent's own policy wins over its top-level field: top-level `effort` is the default for any model without a rule, and a rule is the exception for one model. Native agent files and plugin builds resolve the same chain, without the command-line layer, so a native file and a launch bundle agree.
 
@@ -179,7 +196,7 @@ It never replaces a top-level field of the same name.
 ```yaml
 harness-overrides:
   codex:
-    sandbox_workspace_write: {network_access: true}   # a Codex config key, carried as written
+    model_reasoning_summary: concise                  # a Codex config key, carried as written
   flow:
     permission: read                                  # Meridian Flow's own key
 ```

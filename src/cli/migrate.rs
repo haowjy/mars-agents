@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mars_schema::prepare::{ChangeRecord, PrepareContext, Prepared};
+use mars_schema::prepare::{ChangeRecord, PrepareContext, Prepared, project_authored_root};
 use serde::Serialize;
 
 use crate::error::MarsError;
@@ -42,15 +42,9 @@ struct PendingWrite {
 
 pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let root = &ctx.project_root;
-    let manifest = std::fs::read_to_string(root.join("mars.toml"))?;
-    let consumer = manifest
-        .parse::<toml::Value>()
-        .is_ok_and(|value| value.get("package").is_none());
-    let (authored_root, context) = if consumer {
-        (root.join(".mars-src"), PrepareContext::AuthoredLocal)
-    } else {
-        (root.clone(), PrepareContext::Package)
-    };
+    let manifest = std::fs::read(root.join("mars.toml"))?;
+    let (authored_root, context) = project_authored_root(root, Some(&manifest));
+    let consumer = context == PrepareContext::AuthoredLocal;
 
     if !authored_root.is_dir() {
         if consumer && !json {
@@ -77,11 +71,11 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     report(args.check, pending, dropped, json)
 }
 
-/// Package-level diagnostics are what upgrading removed (legacy keys, skill tool rules);
+/// The upgrade's diagnostics are what upgrading removed (legacy keys, skill tool rules);
 /// each is listed with its file, none truncated.
 fn dropped_keys(project_root: &Path, authored_root: &Path, prepared: &Prepared) -> Vec<DroppedKey> {
     let mut dropped = Vec::new();
-    for (source_path, diagnostics) in &prepared.diagnostics {
+    for (source_path, diagnostics) in &prepared.changes {
         let file = relative_path(project_root, &authored_root.join(source_path));
         for diagnostic in diagnostics {
             dropped.push(DroppedKey {

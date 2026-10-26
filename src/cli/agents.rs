@@ -4,8 +4,6 @@ use std::path::PathBuf;
 
 use crate::content::ContentRoots;
 use crate::error::MarsError;
-use mars_schema::agent::{parse_agent_content, parse_agent_profile};
-use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
 use mars_schema::tool_policy::ToolAction;
 
@@ -86,16 +84,13 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             }
         };
 
-        let fm = match frontmatter::parse(&content) {
-            Ok(fm) => fm,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+        let profile = match mars_schema::agent::read(&content).into_fields() {
+            Ok(profile) => profile,
+            Err(why) => {
+                eprintln!("warning: skipping {}: {why}", disk_path.display());
                 continue;
             }
         };
-
-        let mut diags = Vec::new();
-        let profile = parse_agent_profile(&fm, &mut diags);
 
         let mode_str = match &profile.mode {
             Some(m) => m.as_str().to_string(),
@@ -186,11 +181,10 @@ fn run_show(
             }
         };
 
-        let mut diags = Vec::new();
-        let (profile, _fm) = match parse_agent_content(&content, &mut diags) {
-            Ok(p) => p,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+        let profile = match mars_schema::agent::read(&content).into_fields() {
+            Ok(profile) => profile,
+            Err(why) => {
+                eprintln!("warning: skipping {}: {why}", disk_path.display());
                 continue;
             }
         };
@@ -213,6 +207,11 @@ fn run_show(
             .as_ref()
             .map(|s| s.as_str())
             .unwrap_or_default();
+        let network_str = profile
+            .network
+            .as_ref()
+            .map(|n| n.as_str())
+            .unwrap_or_default();
         let effort_str = profile
             .effort
             .as_ref()
@@ -233,6 +232,7 @@ fn run_show(
                 "subagents": profile.subagents,
                 "approval": approval_str,
                 "sandbox": sandbox_str,
+                "network": network_str,
                 "effort": effort_str,
                 "rules": profile.tools.rules,
                 // Deprecated: derived from `rules`; cannot carry `ask`, `*` or the capability.
@@ -249,6 +249,7 @@ fn run_show(
             println!("model:       {model_str}");
             println!("approval:    {approval_str}");
             println!("sandbox:     {sandbox_str}");
+            println!("network:     {network_str}");
             println!("effort:      {effort_str}");
             println!("scope:       {scope}");
             println!("source_path: {}", disk_path.display());

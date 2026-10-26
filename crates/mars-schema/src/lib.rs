@@ -5,9 +5,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod agent;
 pub mod dialect;
-mod discover;
+pub mod discover;
 mod dispatch;
 pub mod harness;
+pub mod harness_overrides;
 pub mod inspect;
 pub mod manifest;
 pub mod normalize;
@@ -32,11 +33,14 @@ pub mod tool_natives;
 pub mod tool_policy;
 
 pub mod model_policy;
+pub mod network;
 pub mod ordered;
+pub mod permission_set;
 
 pub mod diagnostic;
 pub mod edit;
 pub mod package;
 mod plugin_metadata;
 pub mod prepare;
+mod set_aside;
 pub mod upgrade;

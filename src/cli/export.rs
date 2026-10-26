@@ -11,6 +11,8 @@
 //! - No host-absolute paths in output except documented opaque command strings
 //!   (hook `command` fields, which are absolute by necessity).
 
+use std::borrow::Cow;
+
 use serde::Serialize;
 
 use crate::cli::MarsContext;
@@ -101,7 +103,7 @@ pub struct ExportOutput {
 #[derive(Debug, Serialize)]
 pub struct ExportDiagnostic {
     pub level: &'static str,
-    pub code: &'static str,
+    pub code: Cow<'static, str>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
@@ -182,7 +184,7 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
             // Compile failed entirely — report as failed with the error as a diagnostic.
             let diagnostics = vec![ExportDiagnostic {
                 level: "error",
-                code: "pipeline-failed",
+                code: "pipeline-failed".into(),
                 message: err.to_string(),
                 context: None,
                 category: Some("config"),
@@ -246,7 +248,7 @@ fn export_diagnostic(d: &crate::diagnostic::Diagnostic) -> ExportDiagnostic {
             DiagnosticLevel::Warning => "warning",
             DiagnosticLevel::Info => "info",
         },
-        code: d.code,
+        code: d.code.clone(),
         message: d.message.clone(),
         context: d.context.clone(),
         category: d.category.map(|c| match c {
@@ -307,7 +309,7 @@ mod tests {
         use crate::diagnostic::{Diagnostic, DiagnosticLevel};
         let d = Diagnostic {
             level: DiagnosticLevel::Error,
-            code: "test",
+            code: "test".into(),
             message: "msg".to_string(),
             context: None,
             category: None,

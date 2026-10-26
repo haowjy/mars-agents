@@ -249,7 +249,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     match &cli.command {
         // Root-free commands resolve their own root, because it is theirs to check.
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
-        Command::Check(args) => check::run(args, cli.json),
+        Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
         Command::Provide(args) => provide::run(args, cli.root.as_deref(), cli.json),
         // All other commands require context

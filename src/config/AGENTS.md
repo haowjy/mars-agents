@@ -1,6 +1,7 @@
 # src/config/ — Config Loading & Routing Settings
 
-mars.toml + mars.local.toml schemas, load/save, and merge to EffectiveConfig.
+User network defaults plus mars.toml + mars.local.toml schemas, load/save, and merge to
+EffectiveConfig.
 
 ## Mental Model
 
@@ -23,7 +24,9 @@ pipeline operates on EffectiveConfig only
 | `EffectiveConfig` | Merged result — what the pipeline operates on |
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
 | `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, and `user_invocable` |
-| `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, invocability, tools, and model policies |
+| `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
+| `user.rs` | Restricted user `config.toml` network tier (`default_network`, host sets) and ignored-key warnings, folded under the project's settings by `apply_user_network_settings` |
+| `mars_schema::network::{NetworkPolicy, NetworkHost}` | The typed parsers behind every mode and host surface: profile, overlay, settings, user config and CLI |
 
 `load()` parses `plugin` and the plugin-only `[package]` fields `authors`, `homepage`, and
 `license` as raw TOML values. It applies no publish defaults and validates none of their content,
@@ -48,13 +51,16 @@ list from the raw project/local config; empty lists and replacement tables are s
 ## Layering (`layering.rs`)
 
 - `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
+- Network host permission sets compose across user, project, and local settings; other settings
+  lists retain replacement semantics.
 - Model aliases are **replace-by-key**. Agent and skill overlays also replace the whole keyed
-  entry, except agent tool permission sets compose across project and local entries.
+  entry, except their four network/tool permission sets compose across project and local entries.
 - Composition means a project tool list survives a matching local block that omits the list. A
-  local block that adds only a tool set still replaces project scalars; repeat any project scalar
-  the local entry must retain.
-- Unknown project settings and agent-overlay keys remain forward-compatible.
-  `mars.local.toml [settings]` remains strict and rejects unknown keys.
+  local block that adds only a network or tool set still replaces project scalars; repeat any
+  project scalar the local entry must retain.
+- Unknown project and local settings and agent-overlay keys remain forward-compatible.
+  Network-looking unknowns are retained and warned (`unknown-network-key`) because silently
+  dropping a deny would fail open.
 - Removed `[settings.model_visibility]` is an error only for the consumer's
   project `mars.toml` and `mars.local.toml`. `load_manifest` parses only
   exported package sections, ignoring an upstream package's consumer settings.

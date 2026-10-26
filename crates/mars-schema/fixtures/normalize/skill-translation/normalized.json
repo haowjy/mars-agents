@@ -4,7 +4,7 @@
     {
       "id": "package",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {},
         "selected_items": [
@@ -306,16 +306,6 @@
               "message": "name `Bad Name` has characters outside `a-z`, `0-9` and `-`"
             }
           ],
-          "skills/colon/SKILL.md": [
-            {
-              "code": "skill.description-repaired",
-              "severity": "warning",
-              "path": [
-                "description"
-              ],
-              "message": "the unquoted `description` held a colon, which YAML cannot read; it was quoted"
-            }
-          ],
           "skills/everything/SKILL.md": [
             {
               "code": "skill.plugin-variable",
@@ -324,22 +314,10 @@
               "message": "refers to `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_SKILL_DIR}`, which are left as written and do not resolve outside Claude Code"
             },
             {
-              "code": "skill.tools-dropped",
-              "severity": "warning",
-              "path": [],
-              "message": "removed allowed-tools, disallowed-tools: schema v1 has no skill tool rules, and Claude's `allowed-tools` grants without restricting"
-            },
-            {
               "code": "skill.needs-scripts",
               "severity": "warning",
               "path": [],
               "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
-            },
-            {
-              "code": "skill.claude-keys-moved",
-              "severity": "info",
-              "path": [],
-              "message": "moved Claude-only keys to harness-overrides.claude: argument-hint, model, hooks"
             }
           ],
           "skills/mismatch/SKILL.md": [
@@ -358,6 +336,32 @@
                 "description"
               ],
               "message": "description is over 1024 characters"
+            }
+          ]
+        },
+        "changes": {
+          "skills/colon/SKILL.md": [
+            {
+              "code": "skill.description-repaired",
+              "severity": "warning",
+              "path": [
+                "description"
+              ],
+              "message": "the unquoted `description` held a colon, which YAML cannot read; it was quoted"
+            }
+          ],
+          "skills/everything/SKILL.md": [
+            {
+              "code": "skill.tools-dropped",
+              "severity": "warning",
+              "path": [],
+              "message": "removed allowed-tools, disallowed-tools: schema v1 has no skill tool rules, and Claude's `allowed-tools` grants without restricting"
+            },
+            {
+              "code": "skill.claude-keys-moved",
+              "severity": "info",
+              "path": [],
+              "message": "moved Claude-only keys to harness-overrides.claude: `argument-hint`, `model`, `hooks`"
             }
           ]
         }

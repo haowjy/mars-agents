@@ -21,10 +21,13 @@ pub fn cases(suite: &str) -> Vec<PathBuf> {
     cases
 }
 
-/// Compare `actual` with the file at `expected`, or rewrite the file when updating.
+/// Compare `actual` with the file at `expected`, or rewrite the file when updating. The crate's
+/// version, which results carry (`translator`, `schema.newer`), is the text `{version}` in the
+/// file, so a release bump leaves the fixtures as they are.
 pub fn assert_file(expected: &Path, actual: &str) {
+    let actual = actual.replace(mars_schema::VERSION, "{version}");
     if std::env::var_os("MARS_UPDATE_FIXTURES").is_some() {
-        fs::write(expected, actual).unwrap();
+        fs::write(expected, &actual).unwrap();
         return;
     }
     let want = fs::read_to_string(expected).unwrap();

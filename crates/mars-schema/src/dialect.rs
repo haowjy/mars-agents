@@ -4,20 +4,19 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::HarnessId;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Dialect {
     Claude,
     /// The Agent Skills standard on its own: translation is the identity plus relocation.
-    #[serde(rename = "agent-skills")]
+    #[serde(rename = "agent-skills", alias = "agentskills", alias = "agent_skills")]
     AgentSkills,
     Codex,
-    #[serde(rename = "opencode")]
+    /// `open-code` is the spelling v0.19.0 accepted in `mars.toml`.
+    #[serde(rename = "opencode", alias = "open-code")]
     OpenCode,
     Cursor,
-    #[serde(rename = "mars-native")]
+    #[serde(rename = "mars-native", alias = "marsnative", alias = "mars_native")]
     MarsNative,
 }
 
@@ -44,24 +43,48 @@ impl Dialect {
             _ => None,
         }
     }
+}
 
-    pub fn from_harness_id(id: HarnessId) -> Option<Self> {
-        match id {
-            HarnessId::Claude => Some(Self::Claude),
-            HarnessId::Codex => Some(Self::Codex),
-            HarnessId::OpenCode => Some(Self::OpenCode),
-            HarnessId::Cursor => Some(Self::Cursor),
-            HarnessId::Pi => None,
+/// A foreign dialect a root is read as, and why. This one value is what `prepare` classifies a
+/// foreign root with and what `inspect` reports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DialectChoice {
+    pub dialect: Dialect,
+    pub evidence: DialectEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DialectEvidence {
+    pub source: DialectEvidenceSource,
+    /// The files that decided a predicted dialect; empty for a declared one.
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DialectEvidenceSource {
+    Declared,
+    Predicted,
+}
+
+impl DialectChoice {
+    pub(crate) fn declared(dialect: Dialect) -> Self {
+        Self {
+            dialect,
+            evidence: DialectEvidence {
+                source: DialectEvidenceSource::Declared,
+                paths: Vec::new(),
+            },
         }
     }
 
-    pub fn to_harness_id(self) -> Option<HarnessId> {
-        match self {
-            Self::Claude => Some(HarnessId::Claude),
-            Self::Codex => Some(HarnessId::Codex),
-            Self::OpenCode => Some(HarnessId::OpenCode),
-            Self::Cursor => Some(HarnessId::Cursor),
-            Self::AgentSkills | Self::MarsNative => None,
+    pub(crate) fn predicted(dialect: Dialect, paths: Vec<String>) -> Self {
+        Self {
+            dialect,
+            evidence: DialectEvidence {
+                source: DialectEvidenceSource::Predicted,
+                paths,
+            },
         }
     }
 }

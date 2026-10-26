@@ -8,6 +8,8 @@ use crate::error::MarsError;
 
 pub(crate) const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
+/// The Mars that writes a sentinel's `mars_version`, and the one `mars check` compares it with.
+pub(crate) const MARS_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) fn generated_root_files() -> impl Iterator<Item = &'static str> {
     crate::plugin::PLUGIN_TREE_SPECS
         .iter()
@@ -31,6 +33,14 @@ pub(crate) struct PluginSentinel {
     pub files: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub root_files: std::collections::BTreeMap<String, String>,
+    /// Root-file hashes this build replaces or deletes: the Mars-owned bytes
+    /// still on disk if publication died before rewriting them. Publishing the
+    /// tree and the root files takes two steps; without this record the next
+    /// build could not tell its own earlier write from a hand edit. A path
+    /// counts only while its bytes still match, so a user's own file at a
+    /// retired path is never claimed.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub root_files_previous: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub root_directories: std::collections::BTreeSet<String>,
 }
@@ -70,6 +80,10 @@ impl PluginSentinel {
                 .iter()
                 .all(|(path, hash)| valid_entry(path, hash))
             && self
+                .root_files_previous
+                .iter()
+                .all(|(path, hash)| valid_entry(path, hash))
+            && self
                 .root_directories
                 .iter()
                 .all(|path| generated_root_directories().any(|allowed| allowed == path))
@@ -87,6 +101,7 @@ pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), Mar
     if let Some(unsupported) = sentinel
         .root_files
         .keys()
+        .chain(sentinel.root_files_previous.keys())
         .find(|recorded| !generated_root_files().any(|allowed| allowed == recorded.as_str()))
     {
         return Err(invalid(format!(

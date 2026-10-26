@@ -2,8 +2,10 @@
   "kind": "skill-tree",
   "dialect": {
     "dialect": "codex",
-    "source": "declared",
-    "evidence": []
+    "evidence": {
+      "source": "declared",
+      "paths": []
+    }
   },
   "also_found": [
     {

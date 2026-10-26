@@ -164,7 +164,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
                 MarsError::Config(ConfigError::Invalid {
                     message: format!(
                         "unknown harness `{name}`; valid harnesses: {}",
-                        mars_schema::harness::NAMES.join(", ")
+                        mars_schema::harness::names()
                     ),
                 })
             })

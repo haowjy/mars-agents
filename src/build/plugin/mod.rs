@@ -11,8 +11,8 @@ mod tree;
 
 pub(crate) use inspect::inspect_validated;
 pub use inspect::{
-    PluginDirectoryState, PluginInputsState, PluginOutputState, PluginRootFileState,
-    PluginVersionState, inspect,
+    PluginBuilderState, PluginDirectoryState, PluginInputsState, PluginOutputState,
+    PluginRootFileState, PluginVersionState, inspect,
 };
 
 use std::path::{Path, PathBuf};
@@ -144,8 +144,14 @@ impl StagedPluginBuild {
     }
 
     pub fn publish(self) -> Result<PluginBuildReport, MarsError> {
-        root_files::apply(&self.root_files)?;
+        // Replace the tree and sentinel first: that step is a rename swap, so it
+        // either completes or restores the previous tree, and a failure there
+        // leaves the package's root files untouched. Root files are rewritten
+        // after, and the new sentinel records the hashes it replaces, so an
+        // interrupted second step is recovered by the next build instead of
+        // refused.
         self.output.publish()?;
+        root_files::apply(&self.root_files)?;
         Ok(self.report)
     }
 }
@@ -270,7 +276,7 @@ fn stage_plugin_inner(
         metadata: &metadata,
         root_source: &root_source,
         agent_overlays: &manifest.agents,
-        settings_policies: &manifest.settings.model_policies,
+        settings: &manifest.settings,
         aliases: &aliases,
         graph: &graph,
         target: &prepared_target.target,
@@ -312,13 +318,14 @@ fn stage_plugin_inner(
             Ok((
                 crate::plugin_metadata::PluginSentinel {
                     schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
-                    mars_version: env!("CARGO_PKG_VERSION").to_string(),
+                    mars_version: crate::plugin_metadata::MARS_VERSION.to_string(),
                     plugin_name: plugin_name.clone(),
                     version: metadata.version.clone(),
                     inputs_hash,
                     dependencies: resolved_dependency_identities(&graph, &root_source),
                     files: std::collections::BTreeMap::new(),
                     root_files: root_file_plan.root_files.clone(),
+                    root_files_previous: root_file_plan.root_files_previous.clone(),
                     root_directories: root_file_plan.root_directories.clone(),
                 },
                 (built_trees, collected, root_file_plan),

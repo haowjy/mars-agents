@@ -633,8 +633,7 @@ pub(crate) fn check_unmanaged_collisions(
             // Check if disk content matches what we'd install — if so,
             // this is a partial prior install (crash recovery), not an
             // unmanaged user file. Safe to overwrite.
-            let hash_path = hash_path_for_kind(&disk_path, target_item.id.kind);
-            if let Ok(disk_hash) = hash::compute_hash(&hash_path, target_item.id.kind)
+            if let Ok(disk_hash) = hash::compute_hash(&disk_path, target_item.id.kind)
                 && target_item
                     .expected_installed_hash()
                     .is_ok_and(|expected| disk_hash == expected.as_str())
@@ -794,16 +793,6 @@ fn join_parent_leaf(parent: &str, leaf: &str) -> String {
         leaf.to_string()
     } else {
         format!("{parent}/{leaf}")
-    }
-}
-
-fn hash_path_for_kind(path: &Path, kind: ItemKind) -> PathBuf {
-    if kind == ItemKind::BootstrapDoc {
-        path.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
     }
 }
 

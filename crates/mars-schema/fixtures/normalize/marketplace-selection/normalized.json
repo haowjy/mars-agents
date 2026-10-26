@@ -4,7 +4,7 @@
     {
       "id": "one",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {},
         "marketplace": {
@@ -97,7 +97,7 @@
         "code": "marketplace.remote-not-fetched",
         "severity": "error",
         "path": [],
-        "message": "plugin `far`: lives in another repository and was not fetched"
+        "message": "plugin `far`: lives in another repository: fetch it and normalize that tree with `hint.plugin`"
       }
     ]
   }

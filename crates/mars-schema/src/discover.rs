@@ -1,14 +1,19 @@
-//! Definition selection over a host-independent package tree.
+//! Definition selection over a host-independent package tree, and the one bounded directory
+//! walk every convention scan shares (the binary's bootstrap walk included).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::diagnostic::{SchemaDiagnostic, Severity};
+use crate::item::DefinitionKind;
 use crate::plugin_metadata::{SENTINEL_FILE, is_valid_sentinel};
 use crate::tree::TreeSource;
-use crate::upgrade::DefinitionKind;
 
+/// Never walked: high-volume output that often holds docs shaped like agents or skills.
 pub(crate) const RECURSIVE_SKIP_DIRS: &[&str] =
     &["node_modules", ".git", "dist", "build", "__pycache__"];
+/// Real layouts like `vendor/pkg/.claude/skills/foo` and `packages/group/tooling/agents/foo.md`
+/// fit; deeper convention directories are skipped silently so a repository tree is not an
+/// unbounded discovery surface.
 const MAX_DISCOVERY_WALK_DEPTH: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,7 +76,8 @@ struct LayeredDefinition {
 pub(crate) struct Discovery {
     pub definitions: Vec<SelectedDefinition>,
     pub dropped: Vec<DroppedItem>,
-    pub skipped_generated_dirs: BTreeSet<String>,
+    /// What this root's walks never enter; payload enumeration applies it too.
+    pub boundary: Boundary,
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
 }
 
@@ -80,79 +86,246 @@ impl Discovery {
         Self {
             definitions: Vec::new(),
             dropped: Vec::new(),
-            skipped_generated_dirs: BTreeSet::new(),
+            boundary: Boundary::default(),
             diagnostics: BTreeMap::new(),
+        }
+    }
+
+    /// A root that is itself a generated plugin tree holds nothing to read.
+    pub(crate) fn generated_root() -> Self {
+        let mut discovery = Self::empty();
+        report_generated(&mut discovery.diagnostics, [""]);
+        discovery
+    }
+}
+
+/// The directories no walk enters: hidden ones, the skip list, `[plugin].dir`, and any
+/// directory holding a valid generated-plugin marker. A walk checks each directory it is about
+/// to enter, so a marker is found only inside the bounded walk and never by a scan of the tree.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Boundary {
+    /// `[plugin].dir`, excluded by path even before any marker exists, so the package's own
+    /// committed output never adds noise.
+    plugin_dir: Option<String>,
+}
+
+impl Boundary {
+    /// Reads `[plugin].dir` (`plugin` when the table omits it) from the root's `mars.toml`. A
+    /// value that is not a package-relative path is ignored: config validation reports it.
+    pub(crate) fn of(source: &impl TreeSource) -> Self {
+        let plugin_dir = source
+            .read("mars.toml")
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+            .and_then(|manifest| {
+                let plugin = manifest.get("plugin")?.as_table()?;
+                match plugin.get("dir") {
+                    None => Some("plugin".to_owned()),
+                    Some(dir) => dir.as_str().map(str::to_owned),
+                }
+            })
+            .map(|dir| dir.trim_end_matches('/').to_owned())
+            .filter(|dir| {
+                !dir.is_empty()
+                    && !dir.starts_with('/')
+                    && dir
+                        .split('/')
+                        .all(|part| !part.is_empty() && !matches!(part, "." | ".."))
+            });
+        Self { plugin_dir }
+    }
+
+    fn in_plugin_dir(&self, path: &str) -> bool {
+        self.plugin_dir
+            .as_deref()
+            .is_some_and(|dir| within(path, dir))
+    }
+
+    /// Whether `dir`, whose parents are already clear, may be entered. A directory holding a
+    /// marker is recorded in `generated`. Hidden directories are not searched for markers: a
+    /// dot-prefixed directory can be intentional authored content in a skill's payload.
+    pub(crate) fn admits(
+        &self,
+        source: &impl TreeSource,
+        dir: &str,
+        generated: &mut Vec<String>,
+    ) -> bool {
+        if self.in_plugin_dir(dir) {
+            return false;
+        }
+        if !is_hidden(dir) && has_marker(source, dir) {
+            generated.push(dir.to_owned());
+            return false;
+        }
+        true
+    }
+
+    /// Why `path` is not input, if it is not: for a path a manifest names, whose parents
+    /// nothing has checked.
+    fn exclusion(&self, source: &impl TreeSource, path: &str) -> Option<Excluded> {
+        if self.in_plugin_dir(path) {
+            return Some(Excluded::PluginDir);
+        }
+        enclosing_generated_dir(source, path).map(Excluded::Generated)
+    }
+
+    /// [`Boundary::exclusion`], recording a generated tree.
+    pub(crate) fn excludes(
+        &self,
+        source: &impl TreeSource,
+        path: &str,
+        generated: &mut Vec<String>,
+    ) -> bool {
+        match self.exclusion(source, path) {
+            Some(Excluded::Generated(dir)) => {
+                generated.push(dir);
+                true
+            }
+            Some(Excluded::PluginDir) => true,
+            None => false,
         }
     }
 }
 
-/// Mars's convention walk: `agents/` and `skills/` containers at the shallowest layer.
-/// Output paths equal source paths.
-pub(crate) fn discover(source: &impl TreeSource, fallback_name: Option<&str>) -> Discovery {
-    let mut diagnostics = BTreeMap::new();
-    let skipped_generated_dirs = generated_plugin_dirs(source, &mut diagnostics);
-    if skipped_generated_dirs.contains("") {
-        return Discovery {
-            skipped_generated_dirs,
-            diagnostics,
-            ..Discovery::empty()
-        };
-    }
+/// Why a path is not package input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Excluded {
+    /// It lies in the manifest's `[plugin].dir`, where Mars writes its own output.
+    PluginDir,
+    /// It lies in this generated plugin tree (the directory holding the marker).
+    Generated(String),
+}
 
-    let mut found = Vec::new();
+/// Why a package-relative path a manifest names is not input, if it is not.
+pub fn excluded(source: &impl TreeSource, path: &str) -> Option<Excluded> {
+    Boundary::of(source).exclusion(source, path)
+}
+
+fn within(path: &str, dir: &str) -> bool {
+    path == dir
+        || path
+            .strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn has_marker(source: &impl TreeSource, dir: &str) -> bool {
+    source
+        .read(&join(dir, SENTINEL_FILE))
+        .is_some_and(|bytes| is_valid_sentinel(&bytes))
+}
+
+/// An info diagnostic per generated tree, once each, at its marker.
+pub(crate) fn report_generated<'a>(
+    diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
+    dirs: impl IntoIterator<Item = &'a str>,
+) {
+    for dir in dirs {
+        let found = diagnostics.entry(join(dir, SENTINEL_FILE)).or_default();
+        if found
+            .iter()
+            .any(|diagnostic| diagnostic.code == "generated-plugin-tree-skipped")
+        {
+            continue;
+        }
+        found.push(SchemaDiagnostic::new(
+            "generated-plugin-tree-skipped",
+            Severity::Info,
+            Vec::new(),
+            format!(
+                "skipping generated plugin tree at `{}` while reading authored package input",
+                if dir.is_empty() { "." } else { dir }
+            ),
+        ));
+    }
+}
+
+/// Breadth-first over the directories convention scans look in: the root, then each directory
+/// the boundary admits that is not hidden or on the skip list, up to five levels down.
+/// `visit` sees each directory and says whether to descend; it may record generated trees it
+/// meets in the list it is given. Returns every generated tree the walk skipped.
+pub(crate) fn walk(
+    source: &impl TreeSource,
+    boundary: &Boundary,
+    mut visit: impl FnMut(&str, &mut Vec<String>) -> bool,
+) -> Vec<String> {
+    let mut generated = Vec::new();
     let mut queue = VecDeque::from([(String::new(), 0usize)]);
     while let Some((dir, depth)) = queue.pop_front() {
-        let name = basename(&dir);
-        if name == "agents" {
-            for path in source.children(&dir) {
-                if source.is_file(&path) && path.ends_with(".md") {
-                    found.push(LayeredDefinition {
-                        definition: SelectedDefinition::new(
-                            DefinitionKind::Agent,
-                            file_stem(&path).to_owned(),
-                            path,
-                            None,
-                        ),
-                        layer: component_count(&dir),
-                    });
-                }
+        if !visit(&dir, &mut generated) || depth == MAX_DISCOVERY_WALK_DEPTH {
+            continue;
+        }
+        for child in source.children(&dir) {
+            if !is_hidden(&child)
+                && !RECURSIVE_SKIP_DIRS.contains(&basename(&child))
+                && source.is_dir(&child)
+                && boundary.admits(source, &child, &mut generated)
+            {
+                queue.push_back((child, depth + 1));
             }
-        } else if name == "skills" {
-            for path in source.children(&dir) {
-                if source.is_dir(&path)
-                    && !is_hidden(&path)
-                    && !is_skipped(&path, &skipped_generated_dirs)
-                {
-                    let definition = join(&path, "SKILL.md");
-                    if source.is_file(&definition) {
+        }
+    }
+    generated
+}
+
+/// The directories of a root a convention scan visits, with the generated plugin trees the
+/// walk skipped (the caller reports them). This is the walk `mars-schema` selects Agents and
+/// skills with; a caller scanning for something else (the binary's bootstrap documents)
+/// reuses it rather than keeping its own skip list, depth, or marker rule.
+pub fn walk_dirs(source: &impl TreeSource, mut visit: impl FnMut(&str)) -> Vec<String> {
+    walk(source, &Boundary::of(source), |dir, _| {
+        visit(dir);
+        true
+    })
+}
+
+/// Mars's convention walk: `agents/` and `skills/` containers at the shallowest layer.
+/// Output paths equal source paths. The root is not a generated tree: `dispatch` checks first.
+pub(crate) fn discover(source: &impl TreeSource, fallback_name: Option<&str>) -> Discovery {
+    let boundary = Boundary::of(source);
+    let mut found = Vec::new();
+    let generated = walk(source, &boundary, |dir, generated| {
+        let layer = component_count(dir);
+        match basename(dir) {
+            "agents" => {
+                for path in source.children(dir) {
+                    if source.is_file(&path) && path.ends_with(".md") {
                         found.push(LayeredDefinition {
                             definition: SelectedDefinition::new(
-                                DefinitionKind::Skill,
-                                basename(&path).to_owned(),
-                                definition,
-                                Some(path),
+                                DefinitionKind::Agent,
+                                file_stem(&path).to_owned(),
+                                path,
+                                None,
                             ),
-                            layer: component_count(&dir),
+                            layer,
                         });
                     }
                 }
             }
-        }
-
-        if depth == MAX_DISCOVERY_WALK_DEPTH {
-            continue;
-        }
-        for path in source.children(&dir) {
-            if !source.is_dir(&path)
-                || is_hidden(&path)
-                || RECURSIVE_SKIP_DIRS.contains(&basename(&path))
-                || is_skipped(&path, &skipped_generated_dirs)
-            {
-                continue;
+            "skills" => {
+                for path in source.children(dir) {
+                    if !is_hidden(&path)
+                        && source.is_dir(&path)
+                        && boundary.admits(source, &path, generated)
+                    {
+                        let definition = join(&path, "SKILL.md");
+                        if source.is_file(&definition) {
+                            found.push(LayeredDefinition {
+                                definition: SelectedDefinition::new(
+                                    DefinitionKind::Skill,
+                                    basename(&path).to_owned(),
+                                    definition,
+                                    Some(path),
+                                ),
+                                layer,
+                            });
+                        }
+                    }
+                }
             }
-            queue.push_back((path, depth + 1));
+            _ => {}
         }
-    }
+        true
+    });
 
     let had_convention_definition = !found.is_empty();
     if let Some(shallowest) = found.iter().map(|definition| definition.layer).min() {
@@ -176,8 +349,9 @@ pub(crate) fn discover(source: &impl TreeSource, fallback_name: Option<&str>) ->
             .map(|definition| definition.definition)
             .collect(),
         Vec::new(),
-        skipped_generated_dirs,
-        diagnostics,
+        boundary,
+        generated,
+        BTreeMap::new(),
     )
 }
 
@@ -185,9 +359,11 @@ pub(crate) fn discover(source: &impl TreeSource, fallback_name: Option<&str>) ->
 pub(crate) fn finish(
     mut definitions: Vec<SelectedDefinition>,
     dropped: Vec<DroppedItem>,
-    skipped_generated_dirs: BTreeSet<String>,
+    boundary: Boundary,
+    generated: Vec<String>,
     mut diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> Discovery {
+    report_generated(&mut diagnostics, generated.iter().map(String::as_str));
     definitions.sort_by(|left, right| left.source_path.cmp(&right.source_path));
     definitions.dedup_by(|left, right| left.source_path == right.source_path);
     definitions.sort_by(|left, right| {
@@ -222,7 +398,7 @@ pub(crate) fn finish(
     Discovery {
         definitions,
         dropped,
-        skipped_generated_dirs,
+        boundary,
         diagnostics,
     }
 }
@@ -266,62 +442,24 @@ pub(crate) fn enclosing_generated_dir(source: &impl TreeSource, path: &str) -> O
     let mut components = std::iter::once("").chain(path.split('/').filter(|part| !part.is_empty()));
     components.find_map(|component| {
         prefix = join(&prefix, component);
-        source
-            .read(&join(&prefix, SENTINEL_FILE))
-            .is_some_and(|bytes| is_valid_sentinel(&bytes))
-            .then(|| prefix.clone())
+        has_marker(source, &prefix).then(|| prefix.clone())
     })
 }
 
-pub(crate) fn generated_plugin_dirs(
-    source: &impl TreeSource,
-    diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
-) -> BTreeSet<String> {
-    let mut generated = BTreeSet::new();
-    let mut queue = VecDeque::from([String::new()]);
-    while let Some(dir) = queue.pop_front() {
-        let marker = join(&dir, SENTINEL_FILE);
-        if source
-            .read(&marker)
-            .is_some_and(|bytes| is_valid_sentinel(&bytes))
-        {
-            diagnostics
-                .entry(marker)
-                .or_default()
-                .push(SchemaDiagnostic::new(
-                    "generated-plugin-tree-skipped",
-                    Severity::Info,
-                    Vec::new(),
-                    format!(
-                        "skipping generated plugin tree at `{}` while reading authored package input",
-                        if dir.is_empty() { "." } else { &dir }
-                    ),
-                ));
-            generated.insert(dir);
-            continue;
-        }
-        for child in source.children(&dir) {
-            // Hidden surfaces are not searched for generated plugin trees.
-            // They remain visible to flat-skill payload enumeration, where a
-            // dot-prefixed directory can be intentional authored content.
-            if !is_hidden(&child) && source.is_dir(&child) {
-                queue.push_back(child);
-            }
-        }
-    }
-    generated
-}
-
-/// The files a skill carries, source path to output path. `all` is every discovered
-/// definition, so a nested skill is never its parent's payload whether or not it is selected;
-/// `selected` are the skills whose payload is wanted.
+/// The files a skill carries, source path to output path. `discovery.definitions` is every
+/// discovered definition, so a nested skill is never its parent's payload whether or not it is
+/// selected; `selected` are the skills whose payload is wanted. A foreign repository's skill
+/// leaves out `.git` and `node_modules` (vendored trees, not the skill); a Mars package installs
+/// whatever its skill holds, as every Mars release has.
 pub(crate) fn payload_paths<'a>(
     source: &impl TreeSource,
-    all: &[SelectedDefinition],
+    discovery: &Discovery,
+    foreign: bool,
     selected: impl IntoIterator<Item = &'a SelectedDefinition>,
-    skipped_generated_dirs: &BTreeSet<String>,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> Vec<(String, String)> {
+    let all = &discovery.definitions;
+    let mut generated = Vec::new();
     let definition_paths = all
         .iter()
         .map(|definition| definition.source_path.as_str())
@@ -338,12 +476,10 @@ pub(crate) fn payload_paths<'a>(
         let mut queue = VecDeque::from([root.to_owned()]);
         while let Some(dir) = queue.pop_front() {
             for child in source.children(&dir) {
-                if is_skipped(&child, skipped_generated_dirs) {
-                    continue;
-                }
                 if source.is_dir(&child) {
                     if (child != root && skill_roots.contains(child.as_str()))
-                        || matches!(basename(&child), ".git" | "node_modules")
+                        || (foreign && matches!(basename(&child), ".git" | "node_modules"))
+                        || !discovery.boundary.admits(source, &child, &mut generated)
                     {
                         continue;
                     }
@@ -374,6 +510,7 @@ pub(crate) fn payload_paths<'a>(
             }
         }
     }
+    report_generated(diagnostics, generated.iter().map(String::as_str));
     payload.into_iter().collect()
 }
 
@@ -403,14 +540,4 @@ fn component_count(path: &str) -> usize {
 
 pub(crate) fn is_hidden(path: &str) -> bool {
     basename(path).starts_with('.')
-}
-
-pub(crate) fn is_skipped(path: &str, skipped: &BTreeSet<String>) -> bool {
-    skipped.iter().any(|dir| {
-        dir.is_empty()
-            || path == dir
-            || path
-                .strip_prefix(dir)
-                .is_some_and(|rest| rest.starts_with('/'))
-    })
 }

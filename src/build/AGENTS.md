@@ -77,10 +77,19 @@ plan until publication applies the plan and calls `StagedPlugin::publish`. Confi
 the Claude/Cursor catalogs and OpenCode root package; explicit `--out` builds plan none. The shared
 offline `inspect` classifies the owned directory, its fingerprint/version, and every recorded or
 expected root file. Sentinel ownership is limited to the three generated root paths and records a
-catalog directory only when Mars created its previously missing parent. Root publication accepts an
-absent path, an unchanged recorded file, or bytes identical to the new build, and removes recorded
-files plus owned, now-empty catalog directories retired by a narrowed harness set. Configured-build
-planning also rejects final staged or root-file paths that remain ignored after gitignore negation.
+catalog directory only when Mars created its previously missing parent. Publication swaps the tree
+and sentinel first — a rename swap that either completes or restores the previous tree, so a
+failure there leaves package root files untouched — then rewrites the root files. The sentinel
+records the root hashes that step replaces (`root_files_previous`), and only for paths whose bytes
+it actually replaces or deletes, so a build that dies between the two steps is resumed by the next
+build instead of refused. Root publication accepts an absent path, a file matching the sentinel's
+current hash, a file still matching the previous build's output (classified `PreviousBuild`, which
+the build may replace or delete and `mars check` reports as an unfinished publication), or bytes
+identical to the new build; it removes recorded files plus owned, now-empty catalog directories
+retired by a narrowed harness set. A path only the previous build recorded counts only while its
+bytes still match, so a user's own file at a retired path is neither refused nor deleted.
+Configured-build planning also rejects final staged or root-file paths that remain ignored after
+gitignore negation.
 The output
 layer stages the whole output in a sibling directory, records one root
 `<out>/.mars-plugin.json` sentinel, and publishes with a two-rename swap under the lock.
@@ -103,7 +112,7 @@ generated-file hashes are the only output-integrity source.
 ## Mental Model
 
 ```
-LaunchBundleRequest {agent, fallback_root, model, harness, effort, approval, sandbox, extra_skills}
+LaunchBundleRequest {agent, fallback_root, model, harness, effort, approval, sandbox, network, network_allow, network_deny, extra_skills}
     ↓
 [agent mode] read root then fallback .mars/agents/<name>.md → AgentProfile + body
 [ad-hoc mode] empty_agent_profile() + "" body

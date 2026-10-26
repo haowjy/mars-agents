@@ -5,7 +5,7 @@ use serde_yaml::{Mapping, Value};
 use crate::compiler::harness_descriptor::{self};
 use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
 use mars_schema::HarnessId;
-use mars_schema::skill::SkillProfile;
+use mars_schema::skill::{self, SkillProfile};
 
 fn yk(s: &str) -> Value {
     Value::String(s.to_string())
@@ -197,15 +197,7 @@ pub(super) fn lower_skill_with_policy(
         &mut yaml,
         profile,
         harness,
-        &[
-            "name",
-            "description",
-            "license",
-            "metadata",
-            "disable-model-invocation",
-            "user-invocable",
-            "alwaysApply",
-        ],
+        skill::LOWERED_KEYS,
         &mut lossy_fields,
     );
 

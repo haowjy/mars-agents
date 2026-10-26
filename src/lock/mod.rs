@@ -381,7 +381,10 @@ impl OutputRecord {
 /// Ownership record for one target-native config entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigEntryRecord {
-    /// Canonical JSON for the exact post-substitution hook entry array.
+    /// Canonical JSON for the exact post-substitution entry the target wrote:
+    /// a hook's entry array, or OpenCode's `mcp` server object. Other MCP
+    /// records carry none; for OpenCode that means an older release wrote the
+    /// entry under `mcpServers`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted_json: Option<String>,
 }
@@ -1380,12 +1383,12 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
             .rooted_ref
             .plugin
             .as_ref()
-            .map(|plugin| plugin.name().to_owned()),
+            .and_then(|plugin| plugin.locked_name().map(str::to_owned)),
         content: node
             .rooted_ref
             .plugin
             .as_ref()
-            .map(|plugin| plugin.content.clone()),
+            .and_then(|plugin| plugin.locked_content().cloned()),
     }
 }
 

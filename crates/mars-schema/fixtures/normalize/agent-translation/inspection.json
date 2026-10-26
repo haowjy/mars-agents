@@ -2,12 +2,14 @@
   "kind": "skill-tree",
   "dialect": {
     "dialect": "claude",
-    "source": "predicted",
-    "evidence": [
-      "agents/denies-only.md",
-      "agents/everything.md",
-      "agents/spaced.md"
-    ]
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        "agents/denies-only.md",
+        "agents/everything.md",
+        "agents/spaced.md"
+      ]
+    }
   },
   "also_found": [],
   "plugins": [],

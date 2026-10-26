@@ -79,6 +79,16 @@ jobs:
                 exit 1
               fi
             done < <(jq -r '.optionalDependencies // {} | to_entries[] | "\(.key)\t\(.value)"' "${pkg}")
+
+            lock="${pkg%package.json}package-lock.json"
+            if [[ -f "${lock}" ]]; then
+              for lock_version in "$(jq -r '.version // empty' "${lock}")" "$(jq -r '.packages[""].version // empty' "${lock}")"; do
+                if [[ "${lock_version}" != "${TAG_VERSION}" ]]; then
+                  echo "::error::${lock} version (${lock_version}) does not match release tag version (${TAG_VERSION})"
+                  exit 1
+                fi
+              done
+            fi
           done
 
           escaped_tag_version="$(sed 's/[][\\.^$*+?(){}|/-]/\\&/g' <<<"${TAG_VERSION}")"
@@ -451,6 +461,13 @@ jobs:
         run: |
           VERSION=${{ steps.release_meta.outputs.version }}
           NPM_DIST_TAG=${{ steps.release_meta.outputs.npm_dist_tag }}
+
+          # Skip if already published
+          if npm view "@meridian-flow/mars-schema@$VERSION" version >/dev/null 2>&1; then
+            echo "Skipping @meridian-flow/mars-schema@$VERSION — already published"
+            exit 0
+          fi
+
           rustup target add wasm32-unknown-unknown
           cargo install wasm-bindgen-cli --locked --version 0.2.122
           npm --prefix npm/@meridian-flow/mars-schema version "$VERSION" --no-git-tag-version --allow-same-version

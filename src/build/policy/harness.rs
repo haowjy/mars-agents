@@ -190,7 +190,7 @@ mod tests {
     use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
     use crate::routing::MatchEvidence;
     use mars_schema::agent::AgentProfile;
-    use mars_schema::agent::HarnessOverrides;
+    use mars_schema::harness_overrides::HarnessOverrides;
 
     static EMPTY_RUNTIME_ALIASES: LazyLock<IndexMap<String, ModelAlias>> =
         LazyLock::new(IndexMap::new);
@@ -216,6 +216,9 @@ mod tests {
             had_user_invocable_field: false,
             approval: None,
             sandbox: None,
+            network: None,
+            network_allow: Default::default(),
+            network_deny: Default::default(),
             effort: None,
             skills: mars_schema::frontmatter::SkillsSpec::default(),
             subagents: Vec::new(),
@@ -257,6 +260,9 @@ mod tests {
             effort_override: None,
             approval_override: None,
             sandbox_override: None,
+            network_override: None,
+            network_allow: &[],
+            network_deny: &[],
             models_refresh: crate::models::ModelsRefreshControl::background(),
         }
     }

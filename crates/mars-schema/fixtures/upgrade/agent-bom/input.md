@@ -1,5 +1,5 @@
 ﻿---
 name: coder
-network: allow
+fanout: 2
 ---
 body

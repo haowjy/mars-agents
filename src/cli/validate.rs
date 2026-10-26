@@ -8,6 +8,8 @@
 //! - `--strict`: escalate warnings to errors (missing env vars, etc.).
 //! - `--json`: emit diagnostics as structured JSON for tooling.
 
+use std::borrow::Cow;
+
 use serde::Serialize;
 
 use crate::cli::MarsContext;
@@ -42,7 +44,7 @@ pub struct ValidateReport {
 #[derive(Debug, Serialize)]
 pub struct ValidateDiagnostic {
     pub level: &'static str,
-    pub code: &'static str,
+    pub code: Cow<'static, str>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
@@ -55,7 +57,7 @@ impl ValidateDiagnostic {
         let level = effective_level(d.level, strict);
         ValidateDiagnostic {
             level: level_str(level),
-            code: d.code,
+            code: d.code.clone(),
             message: d.message.clone(),
             context: d.context.clone(),
             category: d.category.map(category_str),
@@ -183,7 +185,7 @@ fn category_str(cat: DiagnosticCategory) -> &'static str {
 fn validation_warning_to_diagnostic(vw: &crate::validate::ValidationWarning) -> Diagnostic {
     Diagnostic {
         level: DiagnosticLevel::Warning,
-        code: vw.code(),
+        code: vw.code().into(),
         message: vw.message(),
         context: None,
         category: Some(DiagnosticCategory::Validation),
@@ -198,7 +200,7 @@ mod tests {
     fn make_diag(level: DiagnosticLevel) -> Diagnostic {
         Diagnostic {
             level,
-            code: "test",
+            code: "test".into(),
             message: "test message".to_string(),
             context: None,
             category: None,
@@ -233,7 +235,7 @@ mod tests {
     fn validate_diag_from_diagnostic_maps_category() {
         let diag = Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: "compat-version",
+            code: "compat-version".into(),
             message: "test".to_string(),
             context: None,
             category: Some(DiagnosticCategory::Compatibility),
@@ -247,7 +249,7 @@ mod tests {
     fn validate_diag_strict_escalation_in_json() {
         let diag = Diagnostic {
             level: DiagnosticLevel::Warning,
-            code: "missing-skill",
+            code: "missing-skill".into(),
             message: "test".to_string(),
             context: None,
             category: Some(DiagnosticCategory::Validation),

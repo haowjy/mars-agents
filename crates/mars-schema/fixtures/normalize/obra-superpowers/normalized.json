@@ -4,7 +4,7 @@
     {
       "id": "superpowers",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {
           "name": "superpowers"

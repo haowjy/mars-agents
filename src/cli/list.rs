@@ -181,13 +181,12 @@ fn run_status(
         }
 
         let disk_path = dest_path.resolve(root);
-        let hash_path = hash_path_for_kind(&disk_path, item.kind);
-        let status = if !hash_path.exists() {
+        let status = if !disk_path.exists() {
             "missing".to_string()
         } else if super::conflict_markers::file_has_conflict_markers(&disk_path) {
             "conflicted".to_string()
         } else {
-            let disk_hash = hash::compute_hash(&hash_path, item.kind)?;
+            let disk_hash = hash::compute_hash(&disk_path, item.kind)?;
             if disk_hash == item.installed_checksum.as_ref() {
                 "ok".to_string()
             } else {
@@ -207,16 +206,6 @@ fn run_status(
     entries.sort_by(|a, b| (&a.source, &a.item).cmp(&(&b.source, &b.item)));
     output::print_list(&entries, json);
     Ok(0)
-}
-
-fn hash_path_for_kind(path: &Path, kind: ItemKind) -> std::path::PathBuf {
-    if kind == ItemKind::BootstrapDoc {
-        path.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    }
 }
 
 #[cfg(test)]

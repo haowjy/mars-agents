@@ -4,7 +4,7 @@
     {
       "id": "lists",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "dialect": "claude",
         "source": {},
         "selected_items": [
@@ -75,6 +75,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],

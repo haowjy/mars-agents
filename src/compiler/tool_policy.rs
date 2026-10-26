@@ -10,8 +10,8 @@
 
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use crate::config::AgentOverlayTools;
-use crate::permission_set::{PermissionSet, merge_permission_set};
 use mars_schema::HarnessId;
+use mars_schema::permission_set::{PermissionSet, merge_permission_set};
 use mars_schema::tool_names::{Capability, OverlayToolName, is_mcp_wire_token, render_scoped};
 use mars_schema::tool_natives::{self, Native};
 use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
@@ -466,17 +466,19 @@ fn overlay_rules(names: &[OverlayToolName], action: ToolAction) -> Vec<ToolRule>
 mod tests {
     use super::*;
     use mars_schema::HarnessId;
-    use mars_schema::agent::{parse_agent_content, parse_agent_profile};
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
     use mars_schema::tool_policy::{append_mcp_server_entries_to_tools, yaml_str_list};
     use serde_yaml::Value;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
-        let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
-        assert!(diags.is_empty(), "agent diags: {diags:?}");
-        profile.tools
+        let reading = mars_schema::agent::read(yaml);
+        assert!(
+            reading.diagnostics.is_empty(),
+            "agent diags: {:?}",
+            reading.diagnostics
+        );
+        reading.fields.unwrap().tools
     }
 
     /// Native names and status of a raw tool entry on a harness, via parse then table.
@@ -569,12 +571,12 @@ mod tests {
     #[test]
     fn v1_list_form_is_rejected_without_rules() {
         let yaml = "---\nname: a\ndescription: d\ntools: [read, grep]\n---\n";
-        let mut diags = Vec::new();
-        let (profile, _) = parse_agent_content(yaml, &mut diags).unwrap();
+        let reading = mars_schema::agent::read(yaml);
+        let profile = reading.fields.unwrap();
         assert!(profile.tools.rules.is_empty());
         assert!(!profile.tools.is_allowlist());
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].code, "tools.list-form");
+        assert_eq!(reading.diagnostics.len(), 1);
+        assert_eq!(reading.diagnostics[0].code, "tools.list-form");
     }
 
     #[test]
@@ -639,8 +641,7 @@ mod tests {
             &mut fm,
             &["context7".to_string()]
         ));
-        let mut diags = Vec::new();
-        let policy = parse_agent_profile(&fm, &mut diags).tools;
+        let policy = mars_schema::agent::read(&fm.render()).fields.unwrap().tools;
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)"]);
         assert!(!policy.is_allowlist());
     }

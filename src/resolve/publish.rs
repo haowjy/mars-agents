@@ -23,20 +23,16 @@ pub struct PublishLens {
 }
 
 impl PublishLens {
-    pub fn load(package_root: &Path, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
-        let prepared = crate::package_prepare::prepare_authored(
-            package_root,
-            mars_schema::prepare::PrepareContext::Package,
-            None,
-            diag,
-        )?;
-        Self::from_prepared_manifest(
-            package_root,
-            prepared
-                .manifest
-                .as_ref()
-                .map(|manifest| manifest.normalized_bytes.as_slice()),
-        )
+    /// Prepare `package_root` (a package or a consumer project) and read its lens.
+    pub fn load(
+        package_root: &Path,
+        diag: &mut DiagnosticCollector,
+    ) -> Result<(Self, mars_schema::prepare::Prepared), MarsError> {
+        let (prepared, manifest) = crate::package_prepare::prepare_project(package_root, diag)?;
+        Ok((
+            Self::from_prepared_manifest(package_root, manifest.as_deref())?,
+            prepared,
+        ))
     }
 
     pub(crate) fn from_prepared_manifest(

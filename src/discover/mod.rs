@@ -1,12 +1,13 @@
 //! Filesystem discovery for package-provided agents, skills, and bootstrap docs.
 //!
-//! Discovery is intentionally convention-based: a bounded walk finds directories
-//! named `agents`, `skills`, and `bootstrap` instead of carrying harness-specific
-//! blocklists. Hidden dot-directories are skipped during that walk so generated
-//! harness surfaces like `.claude/` and tool caches like `.git/` are not imported
-//! unless a dependency explicitly roots discovery there with `subpath`.
+//! Discovery is intentionally convention-based: the bounded walk `mars-schema` owns finds
+//! directories named `bootstrap` (and, for Agents and skills, `agents` and `skills`) instead of
+//! carrying harness-specific blocklists. That walk skips hidden dot-directories, so generated
+//! harness surfaces like `.claude/` and tool caches like `.git/` are not imported unless a
+//! dependency explicitly roots discovery there with `subpath`. This module keeps no copy of its
+//! skip list, depth, or generated-tree rule.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
@@ -14,22 +15,15 @@ use serde_json::Value;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::ItemId;
+use crate::package_prepare::DiskTreeSource;
 use crate::types::ItemName;
+use mars_schema::discover::{Excluded, excluded, walk_dirs};
 use mars_schema::item::ItemKind;
 
-// These high-volume generated directories are skipped in addition to the dot-dir
-// rule to avoid slow walks and false-positive imports from dependency/build
-// outputs that sometimes contain docs shaped like agents or skills.
-const RECURSIVE_SKIP_DIRS: &[&str] = &["node_modules", ".git", "dist", "build", "__pycache__"];
 pub(crate) const SOURCE_MANIFEST_PATHS: &[&str] = &[
     ".claude-plugin/plugin.json",
     ".claude-plugin/marketplace.json",
 ];
-// Covers real package layouts like `vendor/pkg/.claude/skills/foo` and
-// `packages/group/tooling/agents/foo.md` while intentionally skipping
-// over-depth convention dirs silently so arbitrary repo trees do not become
-// unbounded discovery surfaces.
-const MAX_DISCOVERY_WALK_DEPTH: usize = 5;
 const HOOKS_DIR_NAME: &str = "hooks";
 const BOOTSTRAP_DIR_NAME: &str = "bootstrap";
 const MANIFEST_BOOTSTRAP_KEYS: &[&str] = &["bootstrapDocs", "bootstrap_docs"];
@@ -175,15 +169,26 @@ fn scan_bootstrap_dir(
 
 fn scan_declared_bootstrap_path(
     package_root: &Path,
-    configured_plugin_dir: Option<&Path>,
+    tree: &DiskTreeSource,
     declared_path: &Path,
     items: &mut Vec<DiscoveredItem>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut visited = HashSet::new();
     let candidate = package_root.join(declared_path);
-    if path_is_in_generated_plugin_tree(package_root, configured_plugin_dir, &candidate, diag) {
-        return Ok(());
+    // A declared file is judged by the directory it sits in.
+    let judged = if candidate.is_dir() {
+        declared_path
+    } else {
+        declared_path.parent().unwrap_or(Path::new(""))
+    };
+    match excluded(tree, &tree_path(judged)) {
+        None => {}
+        Some(Excluded::PluginDir) => return Ok(()),
+        Some(Excluded::Generated(dir)) => {
+            crate::fs::report_generated_tree(&package_root.join(dir), diag);
+            return Ok(());
+        }
     }
     if candidate.join("BOOTSTRAP.md").is_file() {
         register_bootstrap_doc(package_root, declared_path, items, &mut visited)?;
@@ -199,6 +204,14 @@ fn scan_declared_bootstrap_path(
         scan_bootstrap_dir(package_root, declared_path, items, &mut visited, diag)?;
     }
     Ok(())
+}
+
+/// A relative path as the `/`-separated name `mars-schema` trees use.
+fn tree_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn register_bootstrap_doc(
@@ -235,27 +248,20 @@ fn register_bootstrap_doc(
 /// Bootstrap docs a plugin manifest declares with `bootstrapDocs`.
 fn declared_bootstrap_items(
     package_root: &Path,
+    tree: &DiskTreeSource,
     source_name: &str,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<DiscoveredItem>, MarsError> {
-    if generated_plugin_tree(package_root, diag) {
-        return Ok(Vec::new());
-    }
     let mut items = Vec::new();
-    let configured_plugin_dir = configured_plugin_dir(package_root);
     for declared_path in declared_bootstrap_paths(package_root, source_name)? {
-        scan_declared_bootstrap_path(
-            package_root,
-            configured_plugin_dir.as_deref(),
-            &declared_path,
-            &mut items,
-            diag,
-        )?;
+        scan_declared_bootstrap_path(package_root, tree, &declared_path, &mut items, diag)?;
     }
     Ok(dedupe_items_by_path(items))
 }
 
-/// Discover only binary-owned bootstrap document surfaces from an authored tree.
+/// Discover only binary-owned bootstrap document surfaces from an authored tree: the
+/// `bootstrap/` containers the schema crate's bounded walk reaches, grounded to the shallowest
+/// layer, plus the documents a plugin manifest declares.
 pub(crate) fn discover_bootstrap_surfaces(
     package_root: &Path,
     diag: &mut DiagnosticCollector,
@@ -263,39 +269,25 @@ pub(crate) fn discover_bootstrap_surfaces(
     if !package_root.is_dir() || generated_plugin_tree(package_root, diag) {
         return Ok(Vec::new());
     }
-    let configured_plugin_dir = configured_plugin_dir(package_root);
+    let tree = DiskTreeSource::new(package_root)?;
+    let mut containers = Vec::new();
+    let generated = walk_dirs(&tree, |dir| {
+        if dir.rsplit('/').next() == Some(BOOTSTRAP_DIR_NAME) {
+            containers.push(PathBuf::from(dir));
+        }
+    });
+    if let Some(error) = tree.take_error() {
+        return Err(error);
+    }
+    for dir in generated {
+        crate::fs::report_generated_tree(&package_root.join(dir), diag);
+    }
     let mut layered = Vec::new();
     let mut scratch = Vec::new();
     let mut visited = HashSet::new();
-    let mut queue = VecDeque::from([(package_root.to_path_buf(), 0usize)]);
-    while let Some((base_dir, depth)) = queue.pop_front() {
-        let base_rel = if base_dir == package_root {
-            PathBuf::new()
-        } else {
-            relative_to(package_root, &base_dir)?
-        };
-        if base_dir.file_name().and_then(|name| name.to_str()) == Some(BOOTSTRAP_DIR_NAME) {
-            scan_bootstrap_dir(package_root, &base_rel, &mut scratch, &mut visited, diag)?;
-            push_layered_items(&mut layered, &mut scratch, convention_layer(&base_rel));
-        }
-        if depth == MAX_DISCOVERY_WALK_DEPTH {
-            continue;
-        }
-        for path in read_dir_paths_sorted(&base_dir)? {
-            if !path.is_dir() || configured_plugin_tree(configured_plugin_dir.as_deref(), &path) {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            if name.starts_with('.')
-                || RECURSIVE_SKIP_DIRS.contains(&name)
-                || generated_plugin_tree(&path, diag)
-            {
-                continue;
-            }
-            queue.push_back((path, depth + 1));
-        }
+    for container in containers {
+        scan_bootstrap_dir(package_root, &container, &mut scratch, &mut visited, diag)?;
+        push_layered_items(&mut layered, &mut scratch, convention_layer(&container));
     }
     let mut items: Vec<_> = ground_items_to_shallowest_layer(layered)
         .into_iter()
@@ -303,6 +295,7 @@ pub(crate) fn discover_bootstrap_surfaces(
         .collect();
     items.extend(declared_bootstrap_items(
         package_root,
+        &tree,
         "unknown-source",
         diag,
     )?);
@@ -345,8 +338,8 @@ pub(crate) fn definition_item(
     path: &str,
 ) -> DiscoveredItem {
     let (kind, source_path) = match definition.kind {
-        mars_schema::upgrade::DefinitionKind::Agent => (ItemKind::Agent, PathBuf::from(path)),
-        mars_schema::upgrade::DefinitionKind::Skill => (
+        mars_schema::item::DefinitionKind::Agent => (ItemKind::Agent, PathBuf::from(path)),
+        mars_schema::item::DefinitionKind::Skill => (
             ItemKind::Skill,
             match Path::new(path).parent() {
                 Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
@@ -380,48 +373,6 @@ pub(crate) fn package_items(
             .map(|definition| definition_item(definition, &definition.output_path)),
     );
     finalize_items(source_name.unwrap_or("unknown-source"), items)
-}
-
-fn path_is_in_generated_plugin_tree(
-    package_root: &Path,
-    configured_plugin_dir: Option<&Path>,
-    path: &Path,
-    diag: &mut DiagnosticCollector,
-) -> bool {
-    if configured_plugin_tree(configured_plugin_dir, path) {
-        return true;
-    }
-    let mut current = if path.is_dir() {
-        Some(path)
-    } else {
-        path.parent()
-    };
-    while let Some(directory) = current {
-        if generated_plugin_tree(directory, diag) {
-            return true;
-        }
-        if directory == package_root {
-            break;
-        }
-        current = directory.parent();
-    }
-    false
-}
-
-fn configured_plugin_tree(configured_plugin_dir: Option<&Path>, path: &Path) -> bool {
-    configured_plugin_dir.is_some_and(|dir| path.starts_with(dir))
-}
-
-fn configured_plugin_dir(package_root: &Path) -> Option<PathBuf> {
-    let content = std::fs::read_to_string(package_root.join("mars.toml")).ok()?;
-    let manifest: toml::Value = toml::from_str(&content).ok()?;
-    let plugin = manifest.get("plugin")?.as_table()?;
-    let dir = match plugin.get("dir") {
-        None => PathBuf::from("plugin"),
-        Some(value) => PathBuf::from(value.as_str()?),
-    };
-    crate::config::validate_plugin_dir(&dir).ok()?;
-    Some(package_root.join(dir))
 }
 
 fn generated_plugin_tree(path: &Path, diag: &mut DiagnosticCollector) -> bool {

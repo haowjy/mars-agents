@@ -1,9 +1,9 @@
 //! Shared output formatting for CLI commands.
 //!
 //! Supports two modes: human-readable tables and JSON.
-//! Respects `NO_COLOR` env var for colored output.
+//! Colors only a terminal, and never when `NO_COLOR` is set.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use serde::Serialize;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
@@ -19,19 +19,24 @@ pub fn print_warnings(warnings: &[String]) {
     }
 }
 
-/// Check if colored output should be used.
+/// Color only a terminal: `ColorChoice::Auto` checks `TERM` and `NO_COLOR` but not whether the
+/// stream is a terminal, so piped output carried raw escape codes.
 ///
 /// Respects `NO_COLOR` env var (https://no-color.org/).
-pub fn use_color() -> bool {
-    std::env::var_os("NO_COLOR").is_none()
-}
-
-fn color_choice() -> ColorChoice {
-    if use_color() {
+fn color_choice(is_terminal: bool) -> ColorChoice {
+    if is_terminal && std::env::var_os("NO_COLOR").is_none() {
         ColorChoice::Auto
     } else {
         ColorChoice::Never
     }
+}
+
+fn stdout_stream() -> StandardStream {
+    StandardStream::stdout(color_choice(std::io::stdout().is_terminal()))
+}
+
+fn stderr_stream() -> StandardStream {
+    StandardStream::stderr(color_choice(std::io::stderr().is_terminal()))
 }
 
 /// Entry in the list command output.
@@ -232,7 +237,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
 
 fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
     if let Some(halt) = &report.recovery_halt {
-        let mut stderr = StandardStream::stderr(color_choice());
+        let mut stderr = stderr_stream();
         let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
         let _ = writeln!(stderr, "  recovery halted before materialization");
         let _ = stderr.reset();
@@ -257,7 +262,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         return;
     }
 
-    let mut stdout = StandardStream::stdout(color_choice());
+    let mut stdout = stdout_stream();
 
     let mut installed = 0usize;
     let mut updated = 0usize;
@@ -350,7 +355,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
     }
 
     // Print diagnostics to stderr so machine-readable stdout remains stable.
-    let mut stderr = StandardStream::stderr(color_choice());
+    let mut stderr = stderr_stream();
     for diag in &report.diagnostics {
         let color = match diag.level {
             crate::diagnostic::DiagnosticLevel::Error => Color::Red,
@@ -445,7 +450,7 @@ fn print_list_human(entries: &[ListEntry]) {
         "SOURCE", "ITEM", "VERSION"
     );
 
-    let mut stdout = StandardStream::stdout(color_choice());
+    let mut stdout = stdout_stream();
     for entry in entries {
         let _ = write!(
             stdout,
@@ -480,7 +485,7 @@ pub fn print_doctor(errors: &[String], warnings: &[String], json: bool) {
         };
         println!("{}", serde_json::to_string(&report).unwrap_or_default());
     } else {
-        let mut stdout = StandardStream::stdout(color_choice());
+        let mut stdout = stdout_stream();
         if errors.is_empty() && warnings.is_empty() {
             let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
             let _ = writeln!(stdout, "  all checks passed");
@@ -517,7 +522,7 @@ pub fn print_json<T: Serialize>(value: &T) {
 
 /// Print a simple success message.
 pub fn print_success(msg: &str) {
-    let mut stdout = StandardStream::stdout(color_choice());
+    let mut stdout = stdout_stream();
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
     let _ = write!(stdout, "  ✓ ");
     let _ = stdout.reset();
@@ -526,7 +531,7 @@ pub fn print_success(msg: &str) {
 
 /// Print pipeline diagnostics to stderr (same format as sync report output).
 pub fn print_diagnostics(diagnostics: &[Diagnostic]) {
-    let mut stderr = StandardStream::stderr(color_choice());
+    let mut stderr = stderr_stream();
     for diag in diagnostics {
         let color = match diag.level {
             crate::diagnostic::DiagnosticLevel::Error => Color::Red,
@@ -541,7 +546,7 @@ pub fn print_diagnostics(diagnostics: &[Diagnostic]) {
 
 /// Print a warning message (yellow).
 pub fn print_warn(msg: &str) {
-    let mut stdout = StandardStream::stdout(color_choice());
+    let mut stdout = stdout_stream();
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
     let _ = write!(stdout, "  ⚠ ");
     let _ = stdout.reset();
@@ -550,7 +555,7 @@ pub fn print_warn(msg: &str) {
 
 /// Print an error message (red).
 pub fn print_error(msg: &str) {
-    let mut stdout = StandardStream::stdout(color_choice());
+    let mut stdout = stdout_stream();
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
     let _ = write!(stdout, "  ✗ ");
     let _ = stdout.reset();

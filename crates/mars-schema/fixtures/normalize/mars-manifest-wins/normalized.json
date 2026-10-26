@@ -4,7 +4,7 @@
     {
       "id": "native",
       "provenance": {
-        "translator": "0.18.3",
+        "translator": "{version}",
         "source": {},
         "selected_items": [
           "skills/native/SKILL.md"

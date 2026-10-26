@@ -36,6 +36,9 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `hook_fragment_mode()` | Declares `MergeJson { events }` or `File` fragment placement |
 | `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
 | `mcp_config_file_names()` | Config files mutated by MCP entries |
+| `mcp_section_key()` | Top-level key holding MCP servers (`mcpServers`; OpenCode `mcp`); preflight validates it |
+| `config_entry_record(entry)` | Lock record for one emitted entry; OpenCode records the exact `mcp` server JSON |
+| `hook_fragment_problem(content)` | Names a contract violation in a file-mode fragment; callers build the warning |
 | `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
 | `legacy_hook_config_file_names()` | One-release legacy hook files for old lock records |
 | `remove_owned_hook_entries(token, records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |

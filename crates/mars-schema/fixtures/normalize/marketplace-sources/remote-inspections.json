@@ -3,10 +3,12 @@
     "kind": "plugin",
     "dialect": {
       "dialect": "claude",
-      "source": "predicted",
-      "evidence": [
-        ".claude-plugin/plugin.json"
-      ]
+      "evidence": {
+        "source": "predicted",
+        "paths": [
+          ".claude-plugin/plugin.json"
+        ]
+      }
     },
     "also_found": [],
     "name": "gh",
@@ -28,10 +30,12 @@
     "kind": "plugin",
     "dialect": {
       "dialect": "claude",
-      "source": "predicted",
-      "evidence": [
-        ".claude-plugin/marketplace.json"
-      ]
+      "evidence": {
+        "source": "predicted",
+        "paths": [
+          ".claude-plugin/marketplace.json"
+        ]
+      }
     },
     "also_found": [],
     "name": "market",
@@ -43,8 +47,10 @@
     "kind": "plugin",
     "dialect": {
       "dialect": "claude",
-      "source": "predicted",
-      "evidence": []
+      "evidence": {
+        "source": "predicted",
+        "paths": []
+      }
     },
     "also_found": [],
     "name": "subdir",

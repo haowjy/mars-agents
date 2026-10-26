@@ -34,7 +34,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
 - `tool_policy.rs` — runtime projection, overlay merging and specificity over schema-owned tool rules. Authored parsing, vocabulary, aliases and native tables live in `mars-schema`.
 - `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and grouped diagnostic emission (`emit_agent_lossiness_warnings`, `emit_skill_lossiness_warnings`)
-- `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
+- `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_prepared_source_lossiness_diagnostics`). Called by `mars check` and `mars init`.
 - `mars-schema::invocability` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
 - `mars-schema::tool_names` — the capability vocabulary, aliases and `tool(pattern)` grammar
 - `mars-schema::tool_natives` — explicit per-harness native tool tables. Nothing is derived by naming convention.
@@ -97,9 +97,14 @@ accept/reject to `routing::evaluate_candidates*` constrained to the target harne
   Plugin builds pass qualified skill names into the same lowering path; their prose rewriter
   handles authored references separately.
 - `mars_schema::HarnessId` — Claude, Codex, OpenCode, Cursor, Pi
+- `network`, `network-allow`, and `network-deny` are launch-time Meridian fields. Native
+  lowerers omit them; Codex records all three as dropped, while other targets record them as
+  Meridian-only. They are read from the profile as it launches
+  (`build::policy::profile_for_model`), so an overlay, a model-policy `network` override and
+  the `[settings]` defaults count.
 ### Harness Override Passthrough
 
-`harness-overrides.<harness>` blocks are target-native passthrough on Agents and skills. Mars validates only the outer mapping shape and serializability. Lowering writes each harness's own block into its native file (Markdown frontmatter; extra top-level keys after Codex's) and never another harness's; a key the lowering owns (`AgentMarkdownField::keys`, the skill identity/invocability keys, Codex's seven) keeps Mars's value and the override is reported as `Dropped`. Unknown (non-override) keys reach no native file. Unknown override harness keys are warnings and are preserved for forward compatibility.
+`harness-overrides.<harness>` blocks are target-native passthrough on Agents and skills. Mars validates only the outer mapping shape and serializability. Lowering writes each harness's own block into its native file (Markdown frontmatter; extra top-level keys after Codex's) and never another harness's; a key the lowering owns (`mars_schema::agent::LoweredField::keys`, `mars_schema::skill::LOWERED_KEYS`, Codex's seven) keeps Mars's value and the override is reported as `Dropped`. OpenCode's `permission` is the exception: Mars writes `deny` entries for the Agent's deny rules and merges them over the author's `harness-overrides.opencode.permission`, so only an entry that contradicts a deny is dropped. Unknown (non-override) keys reach no native file. Unknown override harness keys are warnings and are preserved for forward compatibility.
 
 ## Shared Tool Policy (`tool_policy.rs`)
 

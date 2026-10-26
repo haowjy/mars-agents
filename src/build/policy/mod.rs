@@ -5,12 +5,14 @@ use std::path::Path;
 use indexmap::IndexMap;
 
 use crate::build::bundle::ExecutionPolicy;
-use crate::config::{AgentOverlay, EffectiveProjectConfig};
+use crate::config::{AgentOverlay, EffectiveProjectConfig, Settings};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
 use crate::routing;
 use mars_schema::agent::AgentProfile;
+use mars_schema::network::{NetworkHost, NetworkPolicy};
+use mars_schema::permission_set::PermissionSet;
 
 mod execution;
 mod harness;
@@ -55,6 +57,9 @@ pub struct PolicyInput<'a> {
     pub effort_override: Option<&'a str>,
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
+    pub network_override: Option<&'a NetworkPolicy>,
+    pub network_allow: &'a [NetworkHost],
+    pub network_deny: &'a [NetworkHost],
     pub models_refresh: models::ModelsRefreshControl,
 }
 
@@ -471,8 +476,10 @@ pub fn resolve_policy(
         resolved_model.alias,
         overlay,
         matched_policy.as_ref(),
+        &effective_config.settings,
         native_config,
     );
+    warnings.extend(execution_resolution.network.warnings.iter().cloned());
 
     provenance.insert(
         "effort_source".to_string(),
@@ -485,6 +492,10 @@ pub fn resolve_policy(
     provenance.insert(
         "sandbox_source".to_string(),
         execution_resolution.sandbox.source.label().to_string(),
+    );
+    provenance.insert(
+        "network_source".to_string(),
+        execution_resolution.network.mode.source.label().to_string(),
     );
     provenance.insert(
         "autocompact_source".to_string(),
@@ -510,6 +521,7 @@ pub fn resolve_policy(
         .or(execution_resolution.effort.matched_rule)
         .or(execution_resolution.approval.matched_rule)
         .or(execution_resolution.sandbox.matched_rule)
+        .or(execution_resolution.network.mode.matched_rule)
         .or_else(|| {
             matched_policy
                 .as_ref()
@@ -607,6 +619,7 @@ pub fn resolve_policy(
             effort,
             approval: execution_resolution.approval.value,
             sandbox: execution_resolution.sandbox.value,
+            network: execution_resolution.network.policy,
             autocompact: execution_resolution.autocompact.value,
             autocompact_pct: execution_resolution.autocompact_pct.value,
             timeout: None,
@@ -625,24 +638,25 @@ pub(crate) struct ModelRef<'a> {
     pub alias: Option<&'a ModelAlias>,
 }
 
-/// The profile as it launches on one model: effort, approval and sandbox resolved through
-/// the launch bundle's precedence functions, with every layer known at sync time (overlay
-/// scalars, the first matching model policy across overlay, profile and settings, the
-/// profile's top-level fields, the alias default effort); only the CLI layer is absent.
-/// `model` is `None` when the artifact emits no model: no policy or alias applies then.
+/// The profile as it launches on one model: effort, approval, sandbox and network resolved
+/// through the launch bundle's precedence functions, with every layer known at sync time
+/// (overlay scalars, the first matching model policy across overlay, profile and settings, the
+/// profile's top-level fields, `[settings]` network defaults, the alias default effort); only
+/// the CLI layer is absent. `model` is `None` when the artifact emits no model: no policy or
+/// alias applies then.
 ///
 /// `profile` is the overlay-resolved native profile, whose `model_policies` already start
-/// with the overlay's own, so they are matched here as one list ahead of `settings_policies`.
+/// with the overlay's own, so they are matched here as one list ahead of the settings policies.
 pub(crate) fn profile_for_model(
     profile: &AgentProfile,
     overlay: Option<&AgentOverlay>,
-    settings_policies: &[ModelPolicyRule],
+    settings: &Settings,
     model: Option<ModelRef<'_>>,
 ) -> AgentProfile {
     use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
     let matched = model.as_ref().and_then(|model| {
         match_model_policy(
-            effective_policies(None, &profile.model_policies, settings_policies),
+            effective_policies(None, &profile.model_policies, &settings.model_policies),
             model.canonical_id,
             model.alias.map(|_| model.token),
         )
@@ -661,6 +675,21 @@ pub(crate) fn profile_for_model(
         .value
         .as_deref()
         .and_then(SandboxMode::parse);
+    let network = execution::resolve_network(
+        execution::CliNetwork {
+            mode: None,
+            allow: &[],
+            deny: &[],
+        },
+        profile,
+        overlay,
+        matched.as_ref(),
+        settings,
+    )
+    .policy;
+    resolved.network = network.mode;
+    resolved.network_allow = PermissionSet::Add(network.allow);
+    resolved.network_deny = PermissionSet::Add(network.deny);
     resolved
 }
 

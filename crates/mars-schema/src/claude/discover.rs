@@ -1,46 +1,46 @@
 //! What a Claude plugin or skill tree contains, and where each item lands in schema v1.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::manifest::{PLUGIN_MANIFEST, PluginSpec, SkillSources};
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::discover::{
-    Discovery, DroppedItem, RECURSIVE_SKIP_DIRS, SelectedDefinition, basename, file_stem, finish,
-    generated_plugin_dirs, is_hidden, is_skipped, join, root_skill_slug,
+    Boundary, Discovery, DroppedItem, RECURSIVE_SKIP_DIRS, SelectedDefinition, basename, file_stem,
+    finish, is_hidden, join, root_skill_slug, walk,
 };
+use crate::item::DefinitionKind;
 use crate::tree::TreeSource;
-use crate::upgrade::DefinitionKind;
-
-/// A skill directory is searched for within this many levels of the root.
-const MAX_SKILL_DEPTH: usize = 5;
 
 type Diagnostics = BTreeMap<String, Vec<SchemaDiagnostic>>;
 
+/// The skills, Agents and commands a plugin's rules select. The root is not a generated tree:
+/// `dispatch` checks first.
 pub(crate) fn discover_claude(
     source: &impl TreeSource,
     spec: &PluginSpec,
     fallback_name: Option<&str>,
 ) -> Discovery {
     let mut diagnostics = Diagnostics::new();
-    let skipped = generated_plugin_dirs(source, &mut diagnostics);
-    if skipped.contains("") {
-        return Discovery {
-            skipped_generated_dirs: skipped,
-            diagnostics,
-            ..Discovery::empty()
-        };
-    }
+    let boundary = Boundary::of(source);
+    let mut generated = Vec::new();
     let name = spec.name.as_deref().or(fallback_name);
 
     let mut skills = BTreeSet::new();
     match &spec.skills {
-        SkillSources::Walk => walk_skills(source, &skipped, &mut skills),
+        SkillSources::Walk => generated.extend(walk_skills(source, &boundary, &mut skills)),
         SkillSources::Declared { default, listed } => {
             if *default {
-                default_skills(source, &skipped, &mut skills);
+                default_skills(source, &boundary, &mut generated, &mut skills);
             }
             for raw in listed {
-                listed_skills(source, raw, &skipped, &mut skills, &mut diagnostics);
+                listed_skills(
+                    source,
+                    &boundary,
+                    raw,
+                    &mut generated,
+                    &mut skills,
+                    &mut diagnostics,
+                );
             }
         }
     }
@@ -62,7 +62,14 @@ pub(crate) fn discover_claude(
         })
         .collect::<Vec<_>>();
 
-    for path in agent_files(source, spec, &skipped, &mut diagnostics) {
+    for path in markdown_files(
+        source,
+        &boundary,
+        spec.agents.as_deref(),
+        "agents",
+        &mut generated,
+        &mut diagnostics,
+    ) {
         definitions.push(
             SelectedDefinition::new(
                 DefinitionKind::Agent,
@@ -73,50 +80,64 @@ pub(crate) fn discover_claude(
             .relocated(),
         );
     }
-    let dropped = command_files(source, spec, &skipped, &mut diagnostics);
-    finish(definitions, dropped, skipped, diagnostics)
-}
-
-fn is_dir_visible(source: &impl TreeSource, path: &str, skipped: &BTreeSet<String>) -> bool {
-    source.is_dir(path)
-        && !is_hidden(path)
-        && !RECURSIVE_SKIP_DIRS.contains(&basename(path))
-        && !is_skipped(path, skipped)
+    // Commands are only reported, never imported.
+    let dropped = markdown_files(
+        source,
+        &boundary,
+        spec.commands.as_deref(),
+        "commands",
+        &mut generated,
+        &mut diagnostics,
+    )
+    .into_iter()
+    .map(|source_path| DroppedItem {
+        slug: file_stem(&source_path).to_owned(),
+        source_path,
+    })
+    .collect();
+    finish(definitions, dropped, boundary, generated, diagnostics)
 }
 
 /// Every `SKILL.md` directory within five levels, not searched further once found. A root
 /// `SKILL.md` counts only when nothing else is found.
 fn walk_skills(
     source: &impl TreeSource,
-    skipped: &BTreeSet<String>,
+    boundary: &Boundary,
     skills: &mut BTreeSet<String>,
-) {
-    let mut queue = VecDeque::from([(String::new(), 0usize)]);
-    while let Some((dir, depth)) = queue.pop_front() {
-        for child in source.children(&dir) {
-            if !is_dir_visible(source, &child, skipped) {
-                continue;
-            }
-            if source.is_file(&join(&child, "SKILL.md")) {
-                skills.insert(child);
-            } else if depth + 1 < MAX_SKILL_DEPTH {
-                queue.push_back((child, depth + 1));
-            }
+) -> Vec<String> {
+    let generated = walk(source, boundary, |dir, _| {
+        if dir.is_empty() {
+            return true;
         }
-    }
+        if source.is_file(&join(dir, "SKILL.md")) {
+            skills.insert(dir.to_owned());
+            return false;
+        }
+        true
+    });
     if skills.is_empty() && source.is_file("SKILL.md") {
         skills.insert(String::new());
     }
+    generated
 }
 
 /// `skills/<name>/SKILL.md`, one level deep.
 fn default_skills(
     source: &impl TreeSource,
-    skipped: &BTreeSet<String>,
+    boundary: &Boundary,
+    generated: &mut Vec<String>,
     skills: &mut BTreeSet<String>,
 ) {
+    if boundary.excludes(source, "skills", generated) {
+        return;
+    }
     for child in source.children("skills") {
-        if is_dir_visible(source, &child, skipped) && source.is_file(&join(&child, "SKILL.md")) {
+        if !is_hidden(&child)
+            && !RECURSIVE_SKIP_DIRS.contains(&basename(&child))
+            && source.is_dir(&child)
+            && boundary.admits(source, &child, generated)
+            && source.is_file(&join(&child, "SKILL.md"))
+        {
             skills.insert(child);
         }
     }
@@ -125,15 +146,16 @@ fn default_skills(
 /// A listed path is a folder holding `SKILL.md`, or a folder of `<name>/SKILL.md` folders.
 fn listed_skills(
     source: &impl TreeSource,
+    boundary: &Boundary,
     raw: &str,
-    skipped: &BTreeSet<String>,
+    generated: &mut Vec<String>,
     skills: &mut BTreeSet<String>,
     diagnostics: &mut Diagnostics,
 ) {
     let Some(path) = declared_path(raw, "skills", diagnostics) else {
         return;
     };
-    if is_skipped(&path, skipped) && !path.is_empty() {
+    if !path.is_empty() && boundary.excludes(source, &path, generated) {
         return;
     }
     // A listed file would make the probes below look inside it.
@@ -150,58 +172,23 @@ fn listed_skills(
     }
 }
 
-/// Default `agents/*.md`, replaced by a manifest list of `.md` files.
-fn agent_files(
-    source: &impl TreeSource,
-    spec: &PluginSpec,
-    skipped: &BTreeSet<String>,
-    diagnostics: &mut Diagnostics,
-) -> Vec<String> {
-    markdown_files(
-        source,
-        spec.agents.as_deref(),
-        "agents",
-        skipped,
-        diagnostics,
-    )
-}
-
-/// Commands are only reported, never imported.
-fn command_files(
-    source: &impl TreeSource,
-    spec: &PluginSpec,
-    skipped: &BTreeSet<String>,
-    diagnostics: &mut Diagnostics,
-) -> Vec<DroppedItem> {
-    markdown_files(
-        source,
-        spec.commands.as_deref(),
-        "commands",
-        skipped,
-        diagnostics,
-    )
-    .into_iter()
-    .map(|source_path| DroppedItem {
-        slug: file_stem(&source_path).to_owned(),
-        source_path,
-    })
-    .collect()
-}
-
+/// `folder/*.md`, replaced by a manifest list of `.md` files.
 fn markdown_files(
     source: &impl TreeSource,
+    boundary: &Boundary,
     listed: Option<&[String]>,
     folder: &str,
-    skipped: &BTreeSet<String>,
+    generated: &mut Vec<String>,
     diagnostics: &mut Diagnostics,
 ) -> Vec<String> {
     let mut files = Vec::new();
     match listed {
         None => {
-            for child in source.children(folder) {
-                if source.is_file(&child) && child.ends_with(".md") && !is_skipped(&child, skipped)
-                {
-                    files.push(child);
+            if !boundary.excludes(source, folder, generated) {
+                for child in source.children(folder) {
+                    if source.is_file(&child) && child.ends_with(".md") {
+                        files.push(child);
+                    }
                 }
             }
         }
@@ -210,7 +197,7 @@ fn markdown_files(
                 let Some(path) = declared_path(raw, folder, diagnostics) else {
                     continue;
                 };
-                if is_skipped(&path, skipped) {
+                if boundary.excludes(source, &path, generated) {
                     continue;
                 }
                 if source.is_file(&path) && path.ends_with(".md") {

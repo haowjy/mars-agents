@@ -227,7 +227,7 @@ impl<'de> Deserialize<'de> for ModelAlias {
                 harness::normalize_harness_name(harness_name).ok_or_else(|| {
                     serde::de::Error::custom(format!(
                         "invalid harness '{harness_name}'; valid harnesses: {}",
-                        harness::VALID_HARNESSES.join(", ")
+                        mars_schema::harness::names()
                     ))
                 })?,
             )
@@ -2022,7 +2022,7 @@ match = ["claude-opus-*"]
 
         let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
         assert!(err.contains("invalid harness 'gemini'"));
-        assert!(err.contains("valid harnesses: claude, codex, pi, cursor, opencode"));
+        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor"));
     }
 
     #[test]

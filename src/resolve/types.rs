@@ -10,6 +10,7 @@ use crate::config::{EffectiveDependency, FilterMode, Manifest};
 use crate::error::ResolutionError;
 use crate::source::ResolvedRef;
 use crate::types::{ItemName, SourceId, SourceName};
+use mars_schema::claude::manifest::PluginSource;
 use mars_schema::item::ItemKind;
 
 /// The resolved dependency graph — all sources with concrete versions.
@@ -163,13 +164,29 @@ pub struct RootedSourceRef {
 #[derive(Debug, Clone)]
 pub struct PluginRoot {
     pub hint: mars_schema::inspect::PluginHint,
-    /// Where the plugin's files came from; recorded in the lock.
+    /// Where the plugin's files came from.
     pub content: crate::lock::LockedContent,
+    /// The dependency named this plugin; otherwise its marketplace lists only this one.
+    pub named: bool,
 }
 
 impl PluginRoot {
     pub fn name(&self) -> &str {
         &self.hint.entry.name
+    }
+
+    /// The plugin the lock records: only one the dependency named, so a lock written for a
+    /// dependency that never named one (v0.19.0's) still describes it.
+    pub fn locked_name(&self) -> Option<&str> {
+        self.named.then(|| self.name())
+    }
+
+    /// Where the plugin's files came from, when the lock must say: for a plugin the dependency
+    /// named, or one in another repository, which a later sync fetches again by this record. An
+    /// only plugin in the marketplace's own tree is the marketplace's commit and needs none.
+    pub fn locked_content(&self) -> Option<&crate::lock::LockedContent> {
+        (self.named || matches!(self.hint.entry.source, PluginSource::Remote { .. }))
+            .then_some(&self.content)
     }
 }
 

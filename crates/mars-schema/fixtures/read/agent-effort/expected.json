@@ -15,7 +15,10 @@
     "user-invocable": true,
     "approval": null,
     "sandbox": null,
-    "effort": "xhigh",
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": "max",
     "skills": {
       "load": [],
       "available": []

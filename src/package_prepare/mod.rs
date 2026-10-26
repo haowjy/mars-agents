@@ -5,7 +5,6 @@
 //! result onto binary diagnostics and materialization.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,7 +25,6 @@ use crate::error::MarsError;
 pub(crate) struct DiskTreeSource {
     root: PathBuf,
     canonical_root: PathBuf,
-    hide_manifest: bool,
     error: RefCell<Option<MarsError>>,
 }
 
@@ -40,14 +38,8 @@ impl DiskTreeSource {
         Ok(Self {
             root: root.to_path_buf(),
             canonical_root,
-            hide_manifest: false,
             error: RefCell::new(None),
         })
-    }
-
-    pub(crate) fn without_manifest(mut self) -> Self {
-        self.hide_manifest = true;
-        self
     }
 
     pub(crate) fn take_error(&self) -> Option<MarsError> {
@@ -102,9 +94,6 @@ impl DiskTreeSource {
 
 impl TreeSource for DiskTreeSource {
     fn read(&self, path: &str) -> Option<Vec<u8>> {
-        if self.hide_manifest && path == "mars.toml" {
-            return None;
-        }
         let logical = self.path(path)?;
         let actual = self.confined(&logical)?;
         match fs::metadata(&actual) {
@@ -133,9 +122,6 @@ impl TreeSource for DiskTreeSource {
     }
 
     fn is_file(&self, path: &str) -> bool {
-        if self.hide_manifest && path == "mars.toml" {
-            return false;
-        }
         self.path(path)
             .and_then(|path| self.confined(&path))
             .and_then(|path| fs::metadata(path).ok())
@@ -245,7 +231,6 @@ pub(crate) fn prepare_rooted(
             ..Hint::default()
         },
         selection: Selection::default(),
-        remote_trees: BTreeMap::new(),
     };
     let mut normalized = normalize(&request);
     if let Some(error) = source.take_error() {
@@ -256,28 +241,24 @@ pub(crate) fn prepare_rooted(
             diag.schema(diagnostic, &format!("{source_name}: {path}"), false);
         }
     }
-    if let Some(plugin) = &rooted.plugin {
-        // The plugin was chosen from its marketplace; what is wrong is the plugin itself.
-        if let Some(refusal) = normalized
-            .diagnostics
-            .values()
-            .flatten()
-            .find(|diagnostic| diagnostic.is_error() && diagnostic.code.starts_with("marketplace."))
-        {
-            return Err(MarsError::InvalidRequest {
+    if normalized.kind == Kind::Marketplace {
+        return Err(match &rooted.plugin {
+            // The plugin was chosen from its marketplace; what is wrong is the plugin itself,
+            // which the crate refuses by reporting the root as a marketplace.
+            Some(plugin) => MarsError::InvalidRequest {
                 message: format!(
                     "`{source_name}`, plugin `{}`: {}",
                     plugin.name(),
-                    refusal.message
+                    normalized
+                        .diagnostics
+                        .values()
+                        .flatten()
+                        .find(|diagnostic| diagnostic.is_error())
+                        .map_or("it cannot be imported", |refusal| refusal.message.as_str())
                 ),
-            });
-        }
-    } else if normalized.kind == Kind::Marketplace {
-        return Err(marketplace_choice_error(
-            source_name,
-            &source,
-            &request.hint,
-        ));
+            },
+            None => marketplace_choice_error(source_name, &source, &request.hint),
+        });
     }
     let [package] = normalized.packages.as_mut_slice() else {
         return Err(MarsError::InvalidRequest {
@@ -295,9 +276,7 @@ pub(crate) fn prepare_rooted(
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
-        &format!(
-            "package `{package_name}` uses the pre-v1 format; run `mars migrate` in its repository"
-        ),
+        &Subject::Package(package_name),
         diag,
     );
 
@@ -362,65 +341,116 @@ pub(crate) fn prepare_authored(
     if let Some(error) = source.take_error() {
         return Err(error);
     }
-    let legacy_warning = match context {
-        PrepareContext::AuthoredLocal => {
-            "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`".to_string()
-        }
-        PrepareContext::Package => package_legacy_warning(&prepared, root),
+    // A package carries its manifest; authored content has none to name it by.
+    let package_name = prepared
+        .manifest
+        .is_some()
+        .then(|| authored_package_name(&prepared, root));
+    let subject = match &package_name {
+        Some(name) => Subject::Package(name),
+        None => Subject::AuthoredSource,
     };
-    report_diagnostics(&prepared, &source_label(root), &legacy_warning, diag);
+    report_diagnostics(&prepared, &source_label(root), &subject, diag);
     Ok(prepared)
 }
 
-pub(crate) fn prepare_authored_without_manifest(
+/// Prepare a directory that is a package root or a consumer project, with the `mars.toml`
+/// bytes a publish lens reads: the prepared manifest, or a consumer project's own
+/// configuration, which preparation does not touch.
+pub(crate) fn prepare_project(
     root: &Path,
-    context: PrepareContext,
-    dialect: Option<Dialect>,
     diag: &mut DiagnosticCollector,
-) -> Result<Prepared, MarsError> {
-    let source = DiskTreeSource::new(root)?.without_manifest();
-    let prepared = mars_schema::prepare::prepare(&source, context, dialect);
-    if let Some(error) = source.take_error() {
-        return Err(error);
-    }
-    let legacy_warning = match context {
-        PrepareContext::AuthoredLocal => {
-            "authored `.mars-src` content uses the pre-v1 format; run `mars migrate`".to_string()
-        }
-        PrepareContext::Package => package_legacy_warning(&prepared, root),
+) -> Result<(Prepared, Option<Vec<u8>>), MarsError> {
+    let prepared = prepare_authored(root, PrepareContext::Project, None, diag)?;
+    let manifest = match &prepared.manifest {
+        Some(manifest) => Some(manifest.normalized_bytes.clone()),
+        None => match fs::read(root.join("mars.toml")) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(MarsError::Io {
+                    operation: "read consumer configuration".to_string(),
+                    path: root.join("mars.toml"),
+                    source,
+                });
+            }
+        },
     };
-    report_diagnostics(&prepared, &source_label(root), &legacy_warning, diag);
-    Ok(prepared)
+    Ok((prepared, manifest))
+}
+
+/// What a report is about, as its one-line summaries name it.
+pub(crate) enum Subject<'a> {
+    /// A package, named by its manifest; `mars migrate` runs in its repository.
+    Package(&'a str),
+    /// The project's own `.mars-src` content.
+    AuthoredSource,
 }
 
 /// `label` names a package-relative path in a diagnostic. A dependency is named by its
 /// package (`meridian-base: skills/poc/SKILL.md`), never by where the cache keeps its
 /// archive; a project's own sources keep their real path.
+///
+/// What preparing changed in each file (`Prepared::changes`) is not repeated on every sync: a
+/// pre-v1 package gets one warning and a translated one a summary line, each with the count of
+/// files, and `mars migrate` lists the changes. Except the ones that lost a restriction, which
+/// are printed every time with the file they are in.
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     label: &dyn Fn(&str) -> String,
-    legacy_warning: &str,
+    subject: &Subject<'_>,
     diag: &mut DiagnosticCollector,
 ) {
-    let mut warn_legacy = false;
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
         for diagnostic in diagnostics {
-            if diagnostic.code == "legacy-package" {
-                warn_legacy = true;
-                continue;
-            }
-            if prepared.classification == Classification::MarsLegacy
-                && diagnostic.code == "field.removed"
-                && diagnostic.message.starts_with("removed legacy key")
-            {
-                continue;
-            }
             diag.schema(diagnostic, &context, false);
         }
     }
-    if warn_legacy {
-        diag.warn_once("legacy-package", legacy_warning);
+    for (relative, lost) in prepared.lost_restrictions() {
+        diag.schema(lost, &label(relative), false);
+    }
+    let files = prepared.changed_files();
+    if files == 0 {
+        return;
+    }
+    let (name, migrate) = match subject {
+        Subject::Package(name) => (
+            format!("package `{name}`"),
+            "run `mars migrate` in its repository",
+        ),
+        Subject::AuthoredSource => (
+            "authored `.mars-src` content".to_string(),
+            "run `mars migrate`",
+        ),
+    };
+    let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
+    match &prepared.classification {
+        Classification::MarsLegacy => {
+            let no_manifest = prepared
+                .manifest
+                .as_ref()
+                .is_some_and(|manifest| manifest.source_path.is_none());
+            let format = if no_manifest {
+                "has no `mars.toml` and is declared `mars-native`"
+            } else {
+                "uses the pre-v1 format"
+            };
+            let advice = if no_manifest {
+                "add a `mars.toml` with a `[package]` table (name and version, no `schema`) and run `mars migrate` in its repository"
+            } else {
+                migrate
+            };
+            diag.warn_once(
+                "legacy-package",
+                format!("{name} {format} ({count} to upgrade); {advice}"),
+            );
+        }
+        Classification::Foreign(choice) => diag.info(
+            "package-translated",
+            format!("{name} is read as {}: {count} translated", choice.dialect),
+        ),
+        _ => {}
     }
 }
 
@@ -429,16 +459,16 @@ fn source_label(root: &Path) -> impl Fn(&str) -> String + '_ {
     move |relative| format!("source `{}`", root.join(relative).display())
 }
 
-fn package_legacy_warning(prepared: &Prepared, root: &Path) -> String {
-    let name = prepared
+fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
+    prepared
         .manifest
         .as_ref()
         .and_then(|manifest| manifest.reading.fields.as_ref())
         .map(|package| package.name.as_str())
         .filter(|name| !name.is_empty())
         .or_else(|| root.file_name().and_then(|name| name.to_str()))
-        .unwrap_or("unknown");
-    format!("package `{name}` uses the pre-v1 format; run `mars migrate` in its repository")
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 /// Prepare a real on-disk tree for graph fixtures, with no dependency entry (so no dialect hint).

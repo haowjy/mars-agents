@@ -1,7 +1,4 @@
 [
-  "network",
-  "network-allow",
-  "network-deny",
   "fanout",
   "models",
   "mcp-tools",

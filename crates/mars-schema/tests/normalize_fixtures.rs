@@ -1,13 +1,15 @@
 //! The `inspect` and `normalize` contract. Each case under `fixtures/normalize/` holds
-//! `input/` (the repository), `request.json` (hint, source, selection, and `remote` trees to
-//! hand `normalize`), `inspection.json`, `normalized.json` (without file bytes) and
-//! `expected/<package id>/` (every manifest and definition file the packages hold).
+//! `input/` (the repository), `request.json` (hint, source, selection, and the `remote` plugin
+//! trees the caller fetched), `inspection.json`, `normalized.json` (without file bytes) and
+//! `expected/<package id>/` (every manifest and definition file the packages hold). Each fetched
+//! plugin is inspected and normalized as its own tree with `hint.plugin` set to its marketplace
+//! entry: `remote-inspections.json` and `remote-normalized.json`.
 
 use std::{collections::BTreeMap, fs};
 
 use mars_schema::{
     inspect::{Hint, PluginHint, inspect},
-    normalize::{NormalizeRequest, RemoteTree, Selection, SourceInfo, normalize},
+    normalize::{NormalizeRequest, Normalized, Selection, SourceInfo, normalize},
     tree::{FileTree, TreeSource},
 };
 use serde::Deserialize;
@@ -47,60 +49,67 @@ fn normalize_fixtures_match() {
         let inspection = inspect(&tree, &request.hint);
         common::assert_file(&case.join("inspection.json"), &common::pretty(&inspection));
 
-        let remote_trees: BTreeMap<String, FileTree> = request
-            .remote
-            .iter()
-            .map(|(plugin, remote)| (plugin.clone(), common::load_tree(&case.join(&remote.dir))))
-            .collect();
-        if !remote_trees.is_empty() {
-            // The staged flow: inspect each fetched tree as the plugin its entry names.
-            let remote_inspections: BTreeMap<_, _> = remote_trees
-                .iter()
-                .map(|(plugin, remote)| {
-                    let entry = inspection
-                        .plugins
-                        .iter()
-                        .find(|candidate| &candidate.entry.name == plugin)
-                        .unwrap_or_else(|| panic!("{}: no plugin {plugin}", case.display()))
-                        .entry
-                        .clone();
-                    let hint = Hint {
-                        plugin: Some(PluginHint {
-                            entry,
-                            at_marketplace_root: false,
-                        }),
-                        ..Hint::default()
-                    };
-                    (plugin.clone(), inspect(remote, &hint))
-                })
-                .collect();
-            common::assert_file(
-                &case.join("remote-inspections.json"),
-                &common::pretty(&remote_inspections),
-            );
-        }
-
+        let mut packages = Vec::new();
         let normalized = normalize(&NormalizeRequest {
             tree: &tree,
             source: request.source.clone(),
             hint: request.hint.clone(),
             selection: request.selection.clone(),
-            remote_trees: remote_trees
-                .iter()
-                .map(|(plugin, remote)| {
-                    (
-                        plugin.clone(),
-                        RemoteTree {
-                            tree: remote,
-                            source: request.remote[plugin].source.clone(),
-                        },
-                    )
-                })
-                .collect(),
         });
         common::assert_file(
             &case.join("normalized.json"),
             &common::pretty(&common::without_bytes(&normalized)),
+        );
+        packages.extend(&normalized.packages);
+
+        // The staged flow: each fetched plugin tree, read as the plugin its entry names.
+        let remote_trees: BTreeMap<&String, FileTree> = request
+            .remote
+            .iter()
+            .map(|(plugin, remote)| (plugin, common::load_tree(&case.join(&remote.dir))))
+            .collect();
+        let mut remote_inspections = BTreeMap::new();
+        let mut remote_normalized: BTreeMap<&String, Normalized> = BTreeMap::new();
+        for (plugin, remote) in &remote_trees {
+            let entry = inspection
+                .plugins
+                .iter()
+                .find(|candidate| &candidate.entry.name == *plugin)
+                .unwrap_or_else(|| panic!("{}: no plugin {plugin}", case.display()))
+                .entry
+                .clone();
+            let hint = Hint {
+                plugin: Some(PluginHint {
+                    entry,
+                    at_marketplace_root: false,
+                }),
+                ..Hint::default()
+            };
+            remote_inspections.insert(*plugin, inspect(remote, &hint));
+            remote_normalized.insert(
+                *plugin,
+                normalize(&NormalizeRequest {
+                    tree: remote,
+                    source: request.remote[*plugin].source.clone(),
+                    hint,
+                    selection: Selection::default(),
+                }),
+            );
+        }
+        if !remote_trees.is_empty() {
+            common::assert_file(
+                &case.join("remote-inspections.json"),
+                &common::pretty(&remote_inspections),
+            );
+            common::assert_file(
+                &case.join("remote-normalized.json"),
+                &common::pretty(&common::without_bytes(&remote_normalized)),
+            );
+        }
+        packages.extend(
+            remote_normalized
+                .values()
+                .flat_map(|normalized| &normalized.packages),
         );
 
         let expected = case.join("expected");
@@ -108,7 +117,7 @@ fn normalize_fixtures_match() {
             let _ = fs::remove_dir_all(&expected);
         }
         let mut produced = BTreeMap::new();
-        for package in &normalized.packages {
+        for package in packages {
             let prepared = &package.prepared;
             let files = prepared
                 .manifest
@@ -147,7 +156,7 @@ fn normalize_fixtures_match() {
         // Payload is listed, never read: its bytes are not in the result.
         for package in &normalized.packages {
             for payload in &package.prepared.payload {
-                assert!(tree.is_file(&payload.source_path) || !remote_trees.is_empty());
+                assert!(tree.is_file(&payload.source_path));
             }
         }
     }

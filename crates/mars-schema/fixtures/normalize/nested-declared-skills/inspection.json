@@ -2,10 +2,12 @@
   "kind": "plugin",
   "dialect": {
     "dialect": "claude",
-    "source": "predicted",
-    "evidence": [
-      ".claude-plugin/plugin.json"
-    ]
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        ".claude-plugin/plugin.json"
+      ]
+    }
   },
   "also_found": [],
   "name": "nest",

@@ -523,6 +523,14 @@ jobs:
                 pkg.optionalDependencies[dep] = '${NEXT_VERSION}';
               }
               fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+              // A package's lockfile records its own version twice.
+              const lockPath = '${pkg%package.json}package-lock.json';
+              if (fs.existsSync(lockPath)) {
+                const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+                lock.version = '${NEXT_VERSION}';
+                lock.packages[''].version = '${NEXT_VERSION}';
+                fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
+              }
             "
           done
 
@@ -556,7 +564,7 @@ jobs:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
           TRIGGER_SHA: ${{ github.sha }}
         run: |
-          git add Cargo.toml crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/*/package.json
+          git add Cargo.toml crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/*/package.json npm/@meridian-flow/*/package-lock.json
           git commit -m "release: v${NEXT_VERSION}" -m "Release-Trigger: ${TRIGGER_SHA}"
           echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 

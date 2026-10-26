@@ -54,17 +54,9 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             errors.push(format!("{dest_path_str} has unresolved conflict markers"));
         }
 
-        // Check checksum matches
-        match hash::compute_hash(&disk_path, item.kind) {
-            Ok(disk_hash) => {
-                if disk_hash != item.installed_checksum {
-                    // Not necessarily an issue — could be a local modification
-                    // But we report it as informational
-                }
-            }
-            Err(e) => {
-                errors.push(format!("can't hash {dest_path_str}: {e}"));
-            }
+        // A differing checksum is a local modification, not a fault; only an unreadable item is.
+        if let Err(e) = hash::compute_hash(&disk_path, item.kind) {
+            errors.push(format!("can't hash {dest_path_str}: {e}"));
         }
     }
 

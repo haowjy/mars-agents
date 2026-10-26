@@ -180,6 +180,35 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     ) {
     }
 
+    /// Name what is wrong with an opaque file-mode hook fragment, if anything.
+    ///
+    /// Most targets treat file fragments as opaque text. Targets with a native
+    /// loader report a contract violation; callers build the diagnostic text.
+    fn hook_fragment_problem(&self, _content: &str) -> Option<&'static str> {
+        None
+    }
+
+    /// Top-level key of the config-file object holding this target's MCP
+    /// servers. Preflight validates it before anything is written.
+    fn mcp_section_key(&self) -> &'static str {
+        "mcpServers"
+    }
+
+    /// Build the ownership record for one emitted config entry.
+    ///
+    /// `emitted_json` is the canonical JSON of what the adapter wrote, so
+    /// removal can match the entry structurally and a changed entry shows up as
+    /// a changed record. MCP entries default to no JSON (name-only ownership);
+    /// a target overrides this when it records the entry it writes.
+    fn config_entry_record(&self, entry: &ConfigEntry) -> crate::lock::ConfigEntryRecord {
+        crate::lock::ConfigEntryRecord {
+            emitted_json: match entry {
+                ConfigEntry::Hook(hook) => serde_json::to_string(&hook.entries).ok(),
+                ConfigEntry::McpServer(_) => None,
+            },
+        }
+    }
+
     /// Remove hook entries recorded in the previous lock by structural equality.
     fn remove_owned_hook_entries(
         &self,
@@ -214,7 +243,10 @@ pub(crate) fn parse_json_file(path: &Path) -> Result<serde_json::Value, MarsErro
     })
 }
 
-pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
+pub(crate) fn validate_json_config_file(
+    path: &Path,
+    mcp_section_key: &str,
+) -> Result<(), MarsError> {
     if !path.is_file() {
         return Ok(());
     }
@@ -225,11 +257,11 @@ pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
         })
     })?;
     if object
-        .get("mcpServers")
+        .get(mcp_section_key)
         .is_some_and(|value| !value.is_object())
     {
         return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: mcpServers is not an object", path.display()),
+            message: format!("{}: {mcp_section_key} is not an object", path.display()),
         }));
     }
     if let Some(hooks) = object.get("hooks") {

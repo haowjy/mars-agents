@@ -6,20 +6,21 @@ Two files with a clean boundary: `registry.rs` is pure data; `host.rs` is I/O co
 
 ### `registry.rs` — canonical harness vocabulary
 
-`harness::registry` is the **only** owner of valid harness identity. No other
-module should validate harness names, define provider candidate orders, or
-maintain a list of known harness binaries independently.
+`mars_schema::harness` owns harness identity (`HarnessId`, `ALL`, `parse`, `names()`);
+`harness::registry` owns what Mars knows about each one. No other module should validate
+harness names, define provider candidate orders, or maintain a list of known harness
+binaries independently.
 
-- `HarnessId`: `Claude | Codex | Pi | OpenCode | Cursor`
+- `HarnessId`: `Claude | Codex | Pi | OpenCode | Cursor` (from `mars_schema::harness`)
 - `HarnessClass`: `Native { provider }` (claude↔anthropic, codex↔openai) |
   `ProbeBacked { listing }` (Pi/Cursor `Gated`, OpenCode `Ungated`)
-- `parse(name)` / `is_known(name)` — case-insensitive, trim-safe
+- `mars_schema::harness::parse(name)` — case-insensitive, trim-safe; `names()` lists every name for error messages
 - `provider_candidate_order(provider)` — canonical evaluation order for a given provider
 - `UNKNOWN_PROVIDER_FALLBACK_ORDER` — `[Pi, OpenCode, Cursor]` for unknown/non-native providers
 - `native_harness_for_provider(provider)` — only returns `Some` for anthropic→Claude, openai→Codex
 
-**Invariant:** Adding a new harness means one change here (new descriptor in `DESCRIPTORS`)
-plus registration in `all()` and `names()`. Nothing else needs updating.
+**Invariant:** Adding a new harness means a `HarnessId` variant in `mars_schema::harness` (and
+its `ALL` entry) plus a descriptor in `DESCRIPTORS` here. Nothing else needs updating.
 
 ### `host.rs` — capability snapshot
 
@@ -97,4 +98,4 @@ let options = CapabilityCollectionOptions {
 
 This prevents probe refresh and uses stale cache (or returns empty probe result).
 
-**Do NOT** add harness-name validation logic outside this module. Use `registry::parse()` or `registry::is_known()`.
+**Do NOT** add harness-name validation logic outside this module. Use `mars_schema::harness::parse()`.

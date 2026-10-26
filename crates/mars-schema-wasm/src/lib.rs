@@ -92,9 +92,9 @@ fn file_tree(files: BTreeMap<String, ByteBuf>) -> Result<mars_schema::tree::File
     )?)
 }
 
-/// Prepare one rooted package from `{files: Map<path, Uint8Array>, context?, declaredDialect?}`:
-/// the single-root core `normalize` builds on. An unrecognized `context` or `declaredDialect`
-/// throws.
+/// Prepare one root from `{files: Map<path, Uint8Array>, context?, declaredDialect?}`. A supported
+/// export in its own right: `normalize` is this plus a selection, a generated manifest and
+/// provenance. An unrecognized `context` or `declaredDialect` throws.
 #[wasm_bindgen]
 pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
     #[derive(serde::Deserialize)]
@@ -134,20 +134,13 @@ pub fn inspect(input: JsValue) -> Result<JsValue, JsError> {
     ))
 }
 
-/// Schema v1 packages for a selection: `{tree, source?, hint?, selection?, remoteTrees?}` to a
-/// `Normalized`. `remoteTrees` maps a marketplace plugin name to `{tree, source?}`, the plugin's
-/// fetched root.
+/// Schema v1 packages for a selection: `{tree, source?, hint?, selection?}` to a `Normalized`.
+/// A remote marketplace plugin is fetched by the caller and normalized as its own tree, with
+/// `hint.plugin` set to the plugin's entry.
 #[wasm_bindgen]
 pub fn normalize(input: JsValue) -> Result<JsValue, JsError> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
-    struct Remote {
-        tree: BTreeMap<String, ByteBuf>,
-        #[serde(default)]
-        source: mars_schema::normalize::SourceInfo,
-    }
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields, rename_all = "camelCase")]
     struct Input {
         tree: BTreeMap<String, ByteBuf>,
         #[serde(default)]
@@ -156,33 +149,15 @@ pub fn normalize(input: JsValue) -> Result<JsValue, JsError> {
         hint: mars_schema::inspect::Hint,
         #[serde(default)]
         selection: mars_schema::normalize::Selection,
-        #[serde(default)]
-        remote_trees: BTreeMap<String, Remote>,
     }
     let input: Input = serde_wasm_bindgen::from_value(input)?;
     let tree = file_tree(input.tree)?;
-    let remote_trees = input
-        .remote_trees
-        .into_iter()
-        .map(|(plugin, remote)| Ok((plugin, (file_tree(remote.tree)?, remote.source))))
-        .collect::<Result<BTreeMap<_, _>, JsError>>()?;
-    let normalized = mars_schema::normalize::normalize(&mars_schema::normalize::NormalizeRequest {
-        tree: &tree,
-        source: input.source,
-        hint: input.hint,
-        selection: input.selection,
-        remote_trees: remote_trees
-            .iter()
-            .map(|(plugin, (tree, source))| {
-                (
-                    plugin.clone(),
-                    mars_schema::normalize::RemoteTree {
-                        tree,
-                        source: source.clone(),
-                    },
-                )
-            })
-            .collect(),
-    });
-    to_js(&normalized)
+    to_js(&mars_schema::normalize::normalize(
+        &mars_schema::normalize::NormalizeRequest {
+            tree: &tree,
+            source: input.source,
+            hint: input.hint,
+            selection: input.selection,
+        },
+    ))
 }

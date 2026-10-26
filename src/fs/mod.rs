@@ -520,6 +520,33 @@ impl FileLock {
         }
     }
 
+    /// Acquire the lock of a lock file that already exists, without creating it.
+    ///
+    /// A reader that must not add the lock file to the project (a dry run) uses
+    /// this to serialize only with an owner that already created it. `None`
+    /// means no lock file existed, so no writer holds the resource.
+    pub fn acquire_existing(lock_path: &Path) -> Result<Option<Self>, MarsError> {
+        // Opened for writing (without create) because NFS emulates flock with
+        // fcntl locks, which refuse an exclusive lock on a read-only handle.
+        let file = match fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lock_path)
+        {
+            Ok(file) => file,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(MarsError::Io {
+                    operation: "open lock file".to_string(),
+                    path: lock_path.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        platform::lock_exclusive(&file)?;
+        Ok(Some(FileLock { _fd: file }))
+    }
+
     /// Open (or create) the lock file, creating parent dirs if needed.
     fn open_lock_file(lock_path: &Path) -> Result<fs::File, MarsError> {
         if let Some(parent) = lock_path.parent() {

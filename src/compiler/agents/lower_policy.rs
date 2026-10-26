@@ -186,6 +186,9 @@ enum AgentLossinessStep {
     ModeDropped,
     ToolsDropped,
     DisallowedToolsDropped,
+    /// OpenCode: `deny` rules become `permission` entries, the one tool control its agent file
+    /// has (`tools` booleans are deprecated); what cannot be written is reported as dropped.
+    DisallowedToolsAsPermission,
     EffortApproximate(&'static str),
     McpApproximate(&'static str),
     McpDropped,
@@ -259,7 +262,7 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         AgentLossinessStep::Approval,
         AgentLossinessStep::Sandbox,
         AgentLossinessStep::ToolsDropped,
-        AgentLossinessStep::DisallowedToolsDropped,
+        AgentLossinessStep::DisallowedToolsAsPermission,
         AgentLossinessStep::EffortApproximate("effort maps to --variant on subprocess only"),
         AgentLossinessStep::McpApproximate(
             "MCP grants on subprocess errors; streaming uses session payload",
@@ -343,6 +346,40 @@ fn native_overrides<'a>(
     allowed
 }
 
+/// OpenCode's `permission` map: `deny` for each tool Mars denies, over the author's
+/// `harness-overrides.opencode.permission`. An entry of theirs that disagrees with a Mars deny is
+/// dropped, as for any key Mars lowers itself; the rest of their map is kept.
+fn opencode_permission(
+    denied: &[String],
+    author: Option<serde_json::Value>,
+    target: &str,
+    lossy: &mut Vec<LossyField>,
+) -> serde_yaml::Mapping {
+    let dropped = |field: String| LossyField {
+        field,
+        target: target.into(),
+        classification: Lossiness::Dropped,
+    };
+    let mut permission = match author.map(serde_yaml::to_value) {
+        Some(Ok(serde_yaml::Value::Mapping(map))) => map,
+        Some(_) => {
+            lossy.push(dropped("harness-overrides.opencode.permission".into()));
+            serde_yaml::Mapping::new()
+        }
+        None => serde_yaml::Mapping::new(),
+    };
+    for name in denied {
+        if let Some(existing) = permission.insert(yk(name), yv("deny"))
+            && existing != yv("deny")
+        {
+            lossy.push(dropped(format!(
+                "harness-overrides.opencode.permission.{name}"
+            )));
+        }
+    }
+    permission
+}
+
 fn yk(s: &str) -> serde_yaml::Value {
     serde_yaml::Value::String(s.to_string())
 }
@@ -361,6 +398,8 @@ struct AgentLoweringCtx<'a> {
     native_skills: Vec<String>,
     yaml: serde_yaml::Mapping,
     lossy: Vec<LossyField>,
+    /// Native names of the `deny` rules that lower to `permission` entries.
+    denied: Vec<String>,
 }
 
 impl<'a> AgentLoweringCtx<'a> {
@@ -383,6 +422,7 @@ impl<'a> AgentLoweringCtx<'a> {
             native_skills: lowered_skills.native_preload,
             yaml: serde_yaml::Mapping::new(),
             lossy: Vec::new(),
+            denied: Vec::new(),
         }
     }
 
@@ -531,6 +571,7 @@ impl<'a> AgentLoweringCtx<'a> {
                 self.eff.has_tool_denial(),
                 Lossiness::Dropped,
             ),
+            AgentLossinessStep::DisallowedToolsAsPermission => self.collect_denied_as_permission(),
             AgentLossinessStep::EffortApproximate(note) => {
                 if self.eff.effort().is_some() {
                     self.lossy.push(LossyField {
@@ -557,6 +598,29 @@ impl<'a> AgentLoweringCtx<'a> {
                 record_agent_invocation_lossiness(self.profile, self.target_name(), &mut self.lossy)
             }
         }
+    }
+
+    /// A scoped rule (`bash(git *)`) has no `name: deny` spelling, so it is reported, not written.
+    fn collect_denied_as_permission(&mut self) {
+        let target = self.target_name();
+        let projection = self.eff.tools.project(self.harness);
+        let denied = native_tools_for_action(
+            &projection,
+            ToolAction::Deny,
+            "disallowed-tools",
+            target,
+            &mut self.lossy,
+        );
+        let (scoped, unscoped): (Vec<_>, Vec<_>) =
+            denied.into_iter().partition(|name| name.contains('('));
+        if !scoped.is_empty() {
+            self.lossy.push(LossyField {
+                field: format!("disallowed-tools ({} is scoped)", scoped.join(", ")),
+                target: target.into(),
+                classification: Lossiness::Dropped,
+            });
+        }
+        self.denied = unscoped;
     }
 
     fn record_approval(&mut self) {
@@ -624,7 +688,7 @@ impl<'a> AgentLoweringCtx<'a> {
             .iter()
             .flat_map(|field| field.keys().iter().copied())
             .collect::<Vec<_>>();
-        let overrides = native_overrides(
+        let mut overrides = native_overrides(
             self.profile,
             self.harness,
             &reserved,
@@ -632,6 +696,16 @@ impl<'a> AgentLoweringCtx<'a> {
             self.target_name(),
             &mut self.lossy,
         );
+        if !self.denied.is_empty() {
+            let author = overrides
+                .iter()
+                .position(|(key, _)| *key == "permission")
+                .map(|at| overrides.remove(at).1);
+            let permission =
+                opencode_permission(&self.denied, author, self.target_name(), &mut self.lossy);
+            self.yaml
+                .insert(yk("permission"), serde_yaml::Value::Mapping(permission));
+        }
         for (key, value) in overrides {
             self.yaml.insert(
                 yk(key),

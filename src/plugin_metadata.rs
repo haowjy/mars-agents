@@ -16,9 +16,9 @@ pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
 ///
 /// `GENERATED_ROOT_FILES` is the only list of them: publishing excludes these
 /// paths from authored-source walks, and sentinel validation accepts only them.
-/// A tree row takes its file from [`Self::marketplace`] or [`Self::package`],
-/// which fail to compile unless the entry is declared, so a tree cannot generate
-/// a root file the list does not cover.
+/// A tree row names one of these constants directly; `build::plugin::spec`'s test
+/// keeps the tree rows and this list in agreement, so a tree cannot generate a
+/// root file the list does not cover.
 #[derive(Clone, Copy)]
 pub(crate) struct GeneratedRootFile {
     path: &'static str,
@@ -51,51 +51,13 @@ impl GeneratedRootFile {
     pub(crate) fn catalog_directory(self) -> Option<&'static str> {
         self.catalog_directory
     }
-
-    /// The declared marketplace catalog `file` names.
-    pub(crate) const fn marketplace(file: Self) -> Self {
-        Self::declared(file, true)
-    }
-
-    /// The declared package manifest file `file` names.
-    pub(crate) const fn package(file: Self) -> Self {
-        Self::declared(file, false)
-    }
-
-    const fn declared(file: Self, has_catalog_directory: bool) -> Self {
-        let mut index = 0;
-        while index < GENERATED_ROOT_FILES.len() {
-            let declared = GENERATED_ROOT_FILES[index];
-            if str_eq(declared.path, file.path) {
-                assert!(declared.catalog_directory.is_some() == has_catalog_directory);
-                return declared;
-            }
-            index += 1;
-        }
-        panic!("generated root file is not declared in GENERATED_ROOT_FILES");
-    }
-}
-
-const fn str_eq(left: &str, right: &str) -> bool {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut index = 0;
-    while index < left.len() {
-        if left[index] != right[index] {
-            return false;
-        }
-        index += 1;
-    }
-    true
 }
 
 /// Every package-root path Mars generates: the root files and their catalog directories.
 pub(crate) fn generated_root_paths() -> impl Iterator<Item = &'static str> {
     GENERATED_ROOT_FILES
         .iter()
-        .flat_map(|file| std::iter::once(file.path).chain(file.catalog_directory))
+        .flat_map(|file| std::iter::once(file.path()).chain(file.catalog_directory()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,13 +129,13 @@ impl PluginSentinel {
 }
 
 fn is_generated_root_file(path: &str) -> bool {
-    GENERATED_ROOT_FILES.iter().any(|file| file.path == path)
+    GENERATED_ROOT_FILES.iter().any(|file| file.path() == path)
 }
 
 fn is_generated_root_directory(path: &str) -> bool {
     GENERATED_ROOT_FILES
         .iter()
-        .any(|file| file.catalog_directory == Some(path))
+        .any(|file| file.catalog_directory() == Some(path))
 }
 
 fn valid_entry(path: &str, hash: &str) -> bool {

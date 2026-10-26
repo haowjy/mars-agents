@@ -13,7 +13,7 @@ use crate::target::{ConfigEntry, TargetAdapter};
 use super::super::metadata::PackageMetadata;
 use super::super::spec::{Finish, PluginRoot, RootFile, TreeProfile};
 use super::WrittenTreeContents;
-use crate::plugin_metadata::{GeneratedRootFile, OPENCODE_ROOT_FILE};
+use crate::plugin_metadata::OPENCODE_ROOT_FILE;
 
 const TARGET_ROOT: &str = ".opencode";
 const INDEX_TEMPLATE: &str = include_str!("../opencode/index.mjs");
@@ -23,7 +23,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     key: "opencode",
     harness: HarnessKind::OpenCode,
     root_file: RootFile::NpmPackage {
-        file: GeneratedRootFile::package(OPENCODE_ROOT_FILE),
+        file: OPENCODE_ROOT_FILE,
     },
     dropped_agent_fields: &[],
     approximate_lowers_to_dropped: false,

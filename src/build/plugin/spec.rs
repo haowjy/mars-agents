@@ -9,8 +9,7 @@
 //!
 //! The rows also carry the published documentation data — verification detail,
 //! install evidence, support notes — that only the README freshness test reads, so
-//! a shipped build would report those fields as dead.
-#![cfg_attr(not(test), allow(dead_code))]
+//! the shipped build marks exactly those items as expected-dead.
 
 use std::path::Path;
 
@@ -66,13 +65,15 @@ impl NameRule {
 ///
 /// A marketplace catalog always has a catalog directory and a marketplace-name rule;
 /// an npm package manifest has neither. Keeping them in the variant means a tree
-/// cannot declare one without the other, and the file itself comes from
-/// `plugin_metadata::GENERATED_ROOT_FILES`, so a tree cannot generate a root file
-/// that staging and sentinel validation do not know about.
+/// cannot declare one without the other, and the file itself names a
+/// `plugin_metadata::GENERATED_ROOT_FILES` constant, which the test below checks
+/// covers every tree, so staging and sentinel validation know each generated root
+/// file.
 #[derive(Clone, Copy)]
 pub(super) enum RootFile {
     Marketplace {
         file: GeneratedRootFile,
+        catalog_directory: &'static str,
         /// Prefix for the catalog's plugin `source` entry (`./` or empty).
         source_prefix: &'static str,
         name_rule: NameRule,
@@ -91,7 +92,9 @@ impl RootFile {
 
     pub(super) fn catalog_directory(self) -> Option<&'static str> {
         match self {
-            Self::Marketplace { file, .. } => file.catalog_directory(),
+            Self::Marketplace {
+                catalog_directory, ..
+            } => Some(catalog_directory),
             Self::NpmPackage { .. } => None,
         }
     }
@@ -116,6 +119,7 @@ pub(super) enum VerificationLevel {
 }
 
 impl VerificationLevel {
+    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Live => "live",
@@ -127,11 +131,13 @@ impl VerificationLevel {
 #[derive(Clone, Copy)]
 pub(super) struct Verification {
     pub level: VerificationLevel,
+    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
     pub detail: &'static str,
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct VerificationRow {
+    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
     pub install: Verification,
     pub skills: Verification,
     pub agents: Option<Verification>,
@@ -145,9 +151,13 @@ pub(super) struct VerificationRow {
 /// qualify a computed answer but cannot contradict it.
 #[derive(Clone, Copy)]
 pub(super) struct SupportNotes {
+    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
     pub skills: Option<&'static str>,
+    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
     pub agents: Option<&'static str>,
+    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
     pub hooks: Option<&'static str>,
+    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
     pub mcp: Option<&'static str>,
 }
 
@@ -168,16 +178,18 @@ pub(super) enum Finish {
 pub(super) enum PluginRoot {
     /// The harness substitutes this token at load time; the tree writes it literally.
     Token(&'static str),
-    /// The tree's own runtime code resolves its root, so paths stay package-relative.
+    /// The tree's own runtime code resolves its root at load time, so the Mars
+    /// token stays in the generated file for that runtime to substitute.
     RuntimeResolved,
 }
 
 impl PluginRoot {
-    /// `relative`, a package-root-relative path, as this tree's generated files write it.
-    pub(super) fn qualify(self, relative: &str) -> String {
+    /// `relative`, a package-root-relative path that an authored file names with
+    /// `mars_token`, as this tree's generated files write it.
+    pub(super) fn resolve(self, mars_token: &str, relative: &str) -> String {
         match self {
             Self::Token(token) => format!("{token}/{relative}"),
-            Self::RuntimeResolved => relative.to_string(),
+            Self::RuntimeResolved => mars_token.to_string(),
         }
     }
 }
@@ -209,6 +221,7 @@ pub(crate) struct PluginHarnessSpec {
     pub(crate) key: &'static str,
     pub(super) name_rule: NameRule,
     pub(super) display_name: &'static str,
+    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
     pub(super) notes: SupportNotes,
     /// Agent evidence is also the `loads agents` fact: a harness without the
     /// surface has no evidence, and `support_state` reports it impossible.
@@ -447,4 +460,36 @@ pub(super) fn valid_npm_package_name(name: &str) -> bool {
                     || matches!(byte, b'-' | b'_' | b'.' | b'~')
             })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::plugin_metadata::GENERATED_ROOT_FILES;
+
+    use super::trees;
+
+    /// Staging excludes and sentinel validation accept only `GENERATED_ROOT_FILES`,
+    /// so a tree whose root file is missing from it, or whose catalog directory
+    /// disagrees, would fail every configured build at the sentinel check.
+    #[test]
+    fn tree_root_files_match_the_generated_root_file_table() {
+        for tree in trees() {
+            let path = tree.root_file.path();
+            let declared = GENERATED_ROOT_FILES
+                .iter()
+                .find(|file| file.path() == path)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "tree `{}` generates `{path}`, which `GENERATED_ROOT_FILES` does not declare",
+                        tree.key
+                    )
+                });
+            assert_eq!(
+                declared.catalog_directory(),
+                tree.root_file.catalog_directory(),
+                "tree `{}` disagrees with `GENERATED_ROOT_FILES` about the catalog directory of `{path}`",
+                tree.key
+            );
+        }
+    }
 }

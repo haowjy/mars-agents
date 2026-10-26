@@ -18,10 +18,11 @@ harness and its tree cannot disagree and adding a harness is one row. `TreeProfi
 single key for both staged directory names and reported output paths. `RootFile` and `Finish` are
 enums: a marketplace cannot be declared without its catalog directory and name rule, and the
 standard finish owns its manifest path. `GENERATED_ROOT_FILES` in `plugin_metadata.rs` is the one
-declared list of generated root files; staging and sentinel validation read it, and a tree names its
-entry through `GeneratedRootFile::marketplace`/`package`, which does not compile unless the entry is
-declared. `PluginRoot` is an enum, so a tree either writes a harness token literally or resolves its
-root at runtime; the merged-hook path mapping matches on it instead of unwrapping an optional token.
+declared list of generated root files; staging and sentinel validation read it, and a tree row names
+its constant directly, with `spec`'s test failing if a tree's root file or catalog directory is not
+in that list. `PluginRoot` is an enum: a tree either writes a harness token literally or keeps the
+Mars token for its own runtime to substitute, so the merged-hook path mapping matches on it instead
+of unwrapping an optional token.
 Harness identity, variant key, and sync root come from `compiler::harness_descriptor`; authored-hook
 checks run once before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode
 have their own tree identities. The OpenCode tree is an npm-shaped package whose fixed `index.mjs`

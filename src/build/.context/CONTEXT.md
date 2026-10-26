@@ -40,16 +40,17 @@ directory and report key. `RootFile` is an enum, so a marketplace catalog always
 and name rule, and `Finish` is an enum, so the standard manifest always has its path; the finish
 dispatch lives in `tree/` so `spec` stays declarative. `GeneratedRootFile` entries are declared once
 in `plugin_metadata.rs`'s `GENERATED_ROOT_FILES`, which staging and sentinel validation read; a tree
-names its entry through a const constructor that fails to compile unless the entry is declared, so
-tree rows and that list cannot drift. `PluginRoot` is an enum, so a tree states whether its
-generated files write a harness token literally or resolve the root at runtime, and the hook-path
-mapping matches on it instead of unwrapping an optional token. Their authored-hook check runs once
-before the item loop; every selected hook is copied. `tree::write_tree` is the sole item loop. The
-OpenCode finish writer emits an npm-shaped package with a fixed `index.mjs`; at runtime it registers
-the built skills and MCP servers and imports every targeted hook from in-memory TypeScript data
-URLs. A heuristic default-export check warns but never removes a hook; hook-directory substitution
-is JavaScript-string encoded before import, and each hook's load and setup are isolated so a failure
-does not block later hooks.
+row names its constant directly, and a `spec` test fails if the tree's root file is missing from
+that list or its catalog directory disagrees, so tree rows and the list cannot drift. `PluginRoot`
+is an enum, so a tree states whether its generated files write a harness token literally or keep the
+Mars token for its own runtime to substitute, and the hook-path mapping matches on it instead of
+unwrapping an optional token. Their authored-hook check runs once before the item loop; every
+selected hook is copied. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits
+an npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
+servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
+default-export check warns but never removes a hook; hook-directory substitution is JavaScript-string
+encoded before import, and each hook's load and setup are isolated so a failure does not block later
+hooks.
 `tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
 selected MCP union once; per-tree writers report only lowering behavior.
 `TargetState::exported_hooks` retains filtered exported graph hooks even when no requested tree

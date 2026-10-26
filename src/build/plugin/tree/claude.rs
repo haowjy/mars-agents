@@ -9,7 +9,7 @@ use super::super::spec::{
     valid_claude_plugin_name,
 };
 use super::invalid_item;
-use crate::plugin_metadata::{CLAUDE_ROOT_FILE, GeneratedRootFile};
+use crate::plugin_metadata::CLAUDE_ROOT_FILE;
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
 
@@ -17,7 +17,8 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     key: "claude",
     harness: HarnessKind::Claude,
     root_file: RootFile::Marketplace {
-        file: GeneratedRootFile::marketplace(CLAUDE_ROOT_FILE),
+        file: CLAUDE_ROOT_FILE,
+        catalog_directory: ".claude-plugin",
         source_prefix: "./",
         name_rule: NameRule {
             validate: valid_claude_plugin_name,

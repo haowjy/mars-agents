@@ -315,9 +315,10 @@ pub(super) fn write_tree(
         &mcp,
         adapter,
         |hook| {
-            profile
-                .plugin_root
-                .qualify(&format!("hooks/{}", hook.def.name))
+            profile.plugin_root.resolve(
+                crate::compiler::hooks::HOOK_DIR_TOKEN,
+                &format!("hooks/{}", hook.def.name),
+            )
         },
         diag,
     );

@@ -8,13 +8,14 @@ use super::super::spec::{
     Finish, NameRule, PluginHarnessSpec, PluginRoot, RootFile, TreeProfile,
     valid_cursor_plugin_name,
 };
-use crate::plugin_metadata::{CURSOR_ROOT_FILE, GeneratedRootFile};
+use crate::plugin_metadata::CURSOR_ROOT_FILE;
 
 pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     key: "cursor",
     harness: HarnessKind::Cursor,
     root_file: RootFile::Marketplace {
-        file: GeneratedRootFile::marketplace(CURSOR_ROOT_FILE),
+        file: CURSOR_ROOT_FILE,
+        catalog_directory: ".cursor-plugin",
         source_prefix: "",
         name_rule: NameRule {
             validate: valid_cursor_plugin_name,

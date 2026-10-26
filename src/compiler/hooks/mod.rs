@@ -334,8 +334,11 @@ pub fn load_file_fragment(
     Ok(substitute_hook_dir(&raw, hook_dir))
 }
 
+/// The authored placeholder for the directory a hook's files are installed in.
+pub(crate) const HOOK_DIR_TOKEN: &str = "${MARS_HOOK_DIR}";
+
 fn substitute_hook_dir(text: &str, hook_dir: &str) -> String {
-    text.replace("${MARS_HOOK_DIR}", hook_dir)
+    text.replace(HOOK_DIR_TOKEN, hook_dir)
 }
 
 fn substitute_json_strings(mut value: Value, hook_dir: &str) -> Value {

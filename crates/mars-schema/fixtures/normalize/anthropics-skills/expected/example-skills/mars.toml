@@ -1,0 +1,4 @@
+[package]
+schema = 1
+name = "example-skills"
+description = "Examples"

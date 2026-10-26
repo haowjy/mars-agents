@@ -1,0 +1,5 @@
+[package]
+schema = 1
+name = "mattpocock-skills"
+version = "1.0.0"
+description = "Engineering skills"

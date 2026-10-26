@@ -407,10 +407,7 @@ pub fn resolve_spec(
             if entry.is_some_and(|entry| entry.strict == Some(false))
                 && entry_lists.has_components()
             {
-                return Err(format!(
-                    "plugin `{}` has conflicting manifests: both plugin.json and the marketplace entry specify components",
-                    name.as_deref().unwrap_or("?")
-                ));
+                return Err("conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components".to_owned());
             }
             // A non-strict entry with no components adds nothing, so appending is uniform.
             let append = |own: &Option<Vec<String>>, entry: &Option<Vec<String>>| {

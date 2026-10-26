@@ -1,0 +1,101 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "Some Repo",
+      "provenance": {
+        "translator": "0.18.3",
+        "dialect": "agent-skills",
+        "source": {
+          "name": "Some Repo"
+        },
+        "selected_items": [
+          "SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "agent-skills",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "Some Repo"
+              ]
+            ],
+            "fields": {
+              "name": "Some Repo",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "some-repo",
+            "source_path": "SKILL.md",
+            "output_path": "skills/some-repo/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "Not A Slug"
+                ],
+                [
+                  "description",
+                  "A root skill."
+                ]
+              ],
+              "fields": {
+                "name": "Not A Slug",
+                "description": "A root skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {
+          "SKILL.md": [
+            {
+              "code": "skill.name-invalid",
+              "severity": "warning",
+              "path": [
+                "name"
+              ],
+              "message": "name `Not A Slug` has characters outside `a-z`, `0-9` and `-`"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

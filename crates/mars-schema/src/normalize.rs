@@ -328,7 +328,7 @@ fn finish_package<T: TreeSource>(
                 Some(reason(
                     Severity::Error,
                     "normalize.unreadable",
-                    "cannot be read as a package",
+                    "the package cannot be read",
                 )),
             );
             return;
@@ -343,7 +343,11 @@ fn finish_package<T: TreeSource>(
     {
         leave_out(
             prepared,
-            Some(reason(Severity::Error, "normalize.refused", "was left out")),
+            Some(reason(
+                Severity::Error,
+                "normalize.refused",
+                "the package has errors and was left out",
+            )),
         );
         return;
     }

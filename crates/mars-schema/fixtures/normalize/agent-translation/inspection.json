@@ -1,0 +1,47 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "claude",
+    "source": "predicted",
+    "evidence": [
+      "agents/denies-only.md",
+      "agents/everything.md",
+      "agents/spaced.md"
+    ]
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "denies-only",
+      "source_path": "agents/denies-only.md",
+      "output_path": "agents/denies-only.md"
+    },
+    {
+      "kind": "agent",
+      "slug": "everything",
+      "source_path": "agents/everything.md",
+      "output_path": "agents/everything.md"
+    },
+    {
+      "kind": "agent",
+      "slug": "list",
+      "source_path": "agents/list.md",
+      "output_path": "agents/list.md"
+    },
+    {
+      "kind": "agent",
+      "slug": "spaced",
+      "source_path": "agents/spaced.md",
+      "output_path": "agents/spaced.md"
+    },
+    {
+      "kind": "agent",
+      "slug": "untouched",
+      "source_path": "agents/untouched.md",
+      "output_path": "agents/untouched.md"
+    }
+  ],
+  "diagnostics": {}
+}

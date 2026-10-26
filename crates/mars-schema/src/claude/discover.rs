@@ -265,7 +265,8 @@ fn missing_path(diagnostics: &mut Diagnostics, key: &str, raw: &str) {
         .or_default()
         .push(SchemaDiagnostic::new(
             "source-manifest.path-missing",
-            Severity::Error,
+            // Claude loads the rest of the plugin.
+            Severity::Warning,
             vec![PathSegment::Key(key.to_owned())],
             format!("declared path `{raw}` does not exist"),
         ));

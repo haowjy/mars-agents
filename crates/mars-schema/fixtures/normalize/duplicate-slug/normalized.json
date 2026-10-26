@@ -1,0 +1,22 @@
+{
+  "kind": "skill-tree",
+  "packages": [],
+  "diagnostics": {
+    ".": [
+      {
+        "code": "normalize.refused",
+        "severity": "error",
+        "path": [],
+        "message": "the package has errors and was left out"
+      }
+    ],
+    "two/review/SKILL.md": [
+      {
+        "code": "import.duplicate-slug",
+        "severity": "error",
+        "path": [],
+        "message": "skill slug `review` is selected by both `one/review/SKILL.md` and `two/review/SKILL.md`"
+      }
+    ]
+  }
+}

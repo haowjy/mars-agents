@@ -1,0 +1,193 @@
+{
+  "kind": "marketplace",
+  "packages": [
+    {
+      "id": "superpowers",
+      "provenance": {
+        "translator": "0.18.3",
+        "dialect": "claude",
+        "source": {
+          "name": "superpowers"
+        },
+        "marketplace": {
+          "plugin": "superpowers",
+          "plugin_source": {
+            "kind": "local",
+            "path": ""
+          }
+        },
+        "selected_items": [
+          "skills/brainstorming/SKILL.md",
+          "skills/test-driven-development/SKILL.md",
+          "skills/using-git-worktrees/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/plugin.json",
+              ".claude-plugin/marketplace.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "superpowers"
+              ],
+              [
+                "version",
+                "5.0.0"
+              ],
+              [
+                "description",
+                "Core skills library"
+              ]
+            ],
+            "fields": {
+              "name": "superpowers",
+              "version": "5.0.0",
+              "description": "Core skills library",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "brainstorming",
+            "source_path": "skills/brainstorming/SKILL.md",
+            "output_path": "skills/brainstorming/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "brainstorming"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "brainstorming",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "test-driven-development",
+            "source_path": "skills/test-driven-development/SKILL.md",
+            "output_path": "skills/test-driven-development/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "test-driven-development"
+                ],
+                [
+                  "description",
+                  "Use when implementing any feature."
+                ]
+              ],
+              "fields": {
+                "name": "test-driven-development",
+                "description": "Use when implementing any feature.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "using-git-worktrees",
+            "source_path": "skills/using-git-worktrees/SKILL.md",
+            "output_path": "skills/using-git-worktrees/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "using-git-worktrees"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "using-git-worktrees",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/brainstorming/scripts/server.cjs",
+            "output_path": "skills/brainstorming/scripts/server.cjs"
+          },
+          {
+            "source_path": "skills/test-driven-development/references/tips.md",
+            "output_path": "skills/test-driven-development/references/tips.md"
+          }
+        ],
+        "diagnostics": {
+          "hooks/hooks.json": [
+            {
+              "code": "import.hooks-not-converted",
+              "severity": "warning",
+              "path": [],
+              "message": "hooks are not converted yet"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

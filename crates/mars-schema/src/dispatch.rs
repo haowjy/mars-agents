@@ -229,6 +229,14 @@ pub(crate) fn dispatch(
         }
         let decided = match decided {
             Some(decided) => decided,
+            // A Claude marketplace named this root as a plugin.
+            None if as_plugin.is_some() => (
+                Dialect::Claude,
+                DialectEvidence {
+                    source: DialectEvidenceSource::Predicted,
+                    paths: Vec::new(),
+                },
+            ),
             None => predict_from_items(source, &discovery),
         };
         let dialect = decided.0;

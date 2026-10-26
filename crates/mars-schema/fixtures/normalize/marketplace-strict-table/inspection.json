@@ -1,0 +1,158 @@
+{
+  "kind": "marketplace",
+  "dialect": {
+    "dialect": "claude",
+    "source": "predicted",
+    "evidence": [
+      ".claude-plugin/marketplace.json"
+    ]
+  },
+  "also_found": [],
+  "plugins": [
+    {
+      "entry": {
+        "name": "appended",
+        "source": {
+          "kind": "local",
+          "path": "appended"
+        },
+        "lists": {
+          "skills": [
+            "./extra/more"
+          ]
+        }
+      },
+      "at_marketplace_root": false,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "default",
+          "source_path": "skills/default/SKILL.md",
+          "skill_root": "skills/default",
+          "output_path": "skills/default/SKILL.md"
+        },
+        {
+          "kind": "skill",
+          "slug": "more",
+          "source_path": "extra/more/SKILL.md",
+          "skill_root": "extra/more",
+          "output_path": "skills/more/SKILL.md"
+        },
+        {
+          "kind": "skill",
+          "slug": "own",
+          "source_path": "extra/own/SKILL.md",
+          "skill_root": "extra/own",
+          "output_path": "skills/own/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "manifest-only",
+        "source": {
+          "kind": "local",
+          "path": "manifest-only"
+        },
+        "strict": false,
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "solo",
+          "source_path": "skills/solo/SKILL.md",
+          "skill_root": "skills/solo",
+          "output_path": "skills/solo/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "conflicting",
+        "source": {
+          "kind": "local",
+          "path": "conflicting"
+        },
+        "strict": false,
+        "lists": {
+          "skills": [
+            "./extra"
+          ]
+        }
+      },
+      "at_marketplace_root": false,
+      "items": [],
+      "refused": "conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components",
+      "diagnostics": {
+        ".claude-plugin/plugin.json": [
+          {
+            "code": "plugin.conflicting-manifests",
+            "severity": "error",
+            "path": [],
+            "message": "conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components"
+          }
+        ]
+      }
+    },
+    {
+      "entry": {
+        "name": "entry-is-manifest",
+        "source": {
+          "kind": "local",
+          "path": "entry-only"
+        },
+        "lists": {
+          "skills": [
+            "./listed"
+          ],
+          "agents": [
+            "./agents/one.md"
+          ]
+        }
+      },
+      "at_marketplace_root": false,
+      "items": [
+        {
+          "kind": "agent",
+          "slug": "one",
+          "source_path": "agents/one.md",
+          "output_path": "agents/one.md"
+        },
+        {
+          "kind": "skill",
+          "slug": "default",
+          "source_path": "skills/default/SKILL.md",
+          "skill_root": "skills/default",
+          "output_path": "skills/default/SKILL.md"
+        },
+        {
+          "kind": "skill",
+          "slug": "listed",
+          "source_path": "listed/SKILL.md",
+          "skill_root": "listed",
+          "output_path": "skills/listed/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "missing",
+        "source": {
+          "kind": "local",
+          "path": "nowhere"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "`nowhere` does not exist in the marketplace",
+      "diagnostics": {}
+    }
+  ],
+  "items": [],
+  "diagnostics": {}
+}

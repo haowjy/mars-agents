@@ -1,0 +1,28 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "claude",
+    "source": "declared",
+    "evidence": []
+  },
+  "also_found": [
+    {
+      "dialect": "codex",
+      "paths": [
+        ".codex/skills"
+      ],
+      "weak": false
+    }
+  ],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "visible",
+      "source_path": "skills/visible/SKILL.md",
+      "skill_root": "skills/visible",
+      "output_path": "skills/visible/SKILL.md"
+    }
+  ],
+  "diagnostics": {}
+}

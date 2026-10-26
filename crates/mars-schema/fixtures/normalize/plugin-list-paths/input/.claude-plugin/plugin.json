@@ -1,0 +1,1 @@
+{"name": "lists", "skills": ["./skills/a", "./missing", "../escape", "bare"], "agents": ["./agents/real.md", "./agents/dir", "./agents/gone.md"], "commands": ["./cmds/x.md"]}

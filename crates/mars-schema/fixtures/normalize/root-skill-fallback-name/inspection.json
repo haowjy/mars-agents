@@ -1,0 +1,20 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "agent-skills",
+    "source": "predicted",
+    "evidence": []
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "skill",
+      "source_path": "SKILL.md",
+      "skill_root": "",
+      "output_path": "skills/skill/SKILL.md"
+    }
+  ],
+  "diagnostics": {}
+}

@@ -1,0 +1,4 @@
+---
+description: Deploy
+---
+run deploy

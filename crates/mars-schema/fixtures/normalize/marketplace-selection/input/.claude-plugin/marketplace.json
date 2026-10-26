@@ -1,0 +1,1 @@
+{"name": "m", "plugins": [{"name": "one", "source": "./one"}, {"name": "two", "source": "./two"}, {"name": "far", "source": {"source": "github", "repo": "acme/far"}}]}

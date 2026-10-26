@@ -1,0 +1,42 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "claude",
+    "source": "predicted",
+    "evidence": []
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "review",
+      "source_path": "agents/review.md",
+      "output_path": "agents/review.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "review",
+      "source_path": "one/review/SKILL.md",
+      "skill_root": "one/review",
+      "output_path": "skills/review/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "review",
+      "source_path": "two/review/SKILL.md",
+      "skill_root": "two/review",
+      "output_path": "skills/review/SKILL.md"
+    }
+  ],
+  "diagnostics": {
+    "two/review/SKILL.md": [
+      {
+        "code": "import.duplicate-slug",
+        "severity": "error",
+        "path": [],
+        "message": "skill slug `review` is selected by both `one/review/SKILL.md` and `two/review/SKILL.md`"
+      }
+    ]
+  }
+}

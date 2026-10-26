@@ -1,0 +1,79 @@
+{
+  "kind": "marketplace",
+  "dialect": {
+    "dialect": "claude",
+    "source": "predicted",
+    "evidence": [
+      ".claude-plugin/marketplace.json"
+    ]
+  },
+  "also_found": [],
+  "plugins": [
+    {
+      "entry": {
+        "name": "one",
+        "source": {
+          "kind": "local",
+          "path": "one"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "a",
+          "source_path": "skills/a/SKILL.md",
+          "skill_root": "skills/a",
+          "output_path": "skills/a/SKILL.md"
+        },
+        {
+          "kind": "skill",
+          "slug": "b",
+          "source_path": "skills/b/SKILL.md",
+          "skill_root": "skills/b",
+          "output_path": "skills/b/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "two",
+        "source": {
+          "kind": "local",
+          "path": "two"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "c",
+          "source_path": "skills/c/SKILL.md",
+          "skill_root": "skills/c",
+          "output_path": "skills/c/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "far",
+        "source": {
+          "kind": "remote",
+          "repository": "https://github.com/acme/far",
+          "checkout": {
+            "kind": "default-branch"
+          }
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "diagnostics": {}
+    }
+  ],
+  "items": [],
+  "diagnostics": {}
+}

@@ -1,0 +1,40 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "agent-skills",
+    "source": "predicted",
+    "evidence": []
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "dropped",
+      "source_path": "skills/dropped/SKILL.md",
+      "skill_root": "skills/dropped",
+      "output_path": "skills/dropped/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "main",
+      "source_path": "skills/main/SKILL.md",
+      "skill_root": "skills/main",
+      "output_path": "skills/main/SKILL.md",
+      "payload": [
+        "skills/main/guide.md"
+      ]
+    },
+    {
+      "kind": "skill",
+      "slug": "shared",
+      "source_path": "skills/shared/SKILL.md",
+      "skill_root": "skills/shared",
+      "output_path": "skills/shared/SKILL.md",
+      "payload": [
+        "skills/shared/README.md"
+      ]
+    }
+  ],
+  "diagnostics": {}
+}

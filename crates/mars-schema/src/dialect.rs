@@ -14,6 +14,7 @@ pub enum Dialect {
     #[serde(rename = "agent-skills")]
     AgentSkills,
     Codex,
+    #[serde(rename = "opencode")]
     OpenCode,
     Cursor,
     #[serde(rename = "mars-native")]

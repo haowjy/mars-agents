@@ -1,0 +1,126 @@
+{
+  "kind": "marketplace",
+  "dialect": {
+    "dialect": "claude",
+    "source": "predicted",
+    "evidence": [
+      ".claude-plugin/marketplace.json"
+    ]
+  },
+  "also_found": [],
+  "plugins": [
+    {
+      "entry": {
+        "name": "local",
+        "source": {
+          "kind": "local",
+          "path": "plugins/local"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "here",
+          "source_path": "skills/here/SKILL.md",
+          "skill_root": "skills/here",
+          "output_path": "skills/here/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "gh",
+        "source": {
+          "kind": "remote",
+          "repository": "https://github.com/acme/gh-plugin",
+          "checkout": {
+            "kind": "ref",
+            "name": "v1"
+          }
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "pinned",
+        "source": {
+          "kind": "remote",
+          "repository": "https://github.com/acme/pinned",
+          "checkout": {
+            "kind": "sha",
+            "sha": "0123456789abcdef0123456789abcdef01234567"
+          }
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "subdir",
+        "source": {
+          "kind": "remote",
+          "repository": "https://github.com/acme/mono",
+          "path": "plugins/sub",
+          "checkout": {
+            "kind": "ref",
+            "name": "main"
+          }
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "market",
+        "source": {
+          "kind": "remote",
+          "repository": "https://github.com/acme/market",
+          "checkout": {
+            "kind": "default-branch"
+          }
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "from-npm",
+        "source": {
+          "kind": "unsupported",
+          "reason": "`npm` sources cannot be imported"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: `npm` sources cannot be imported",
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "archive",
+        "source": {
+          "kind": "unsupported",
+          "reason": "`archive` sources cannot be imported"
+        },
+        "lists": {}
+      },
+      "at_marketplace_root": false,
+      "refused": "can't import from this source: `archive` sources cannot be imported",
+      "diagnostics": {}
+    }
+  ],
+  "items": [],
+  "diagnostics": {}
+}

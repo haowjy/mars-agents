@@ -1,0 +1,230 @@
+{
+  "kind": "marketplace",
+  "packages": [
+    {
+      "id": "mattpocock-skills",
+      "provenance": {
+        "translator": "0.18.3",
+        "dialect": "claude",
+        "source": {
+          "name": "skills"
+        },
+        "marketplace": {
+          "plugin": "mattpocock-skills",
+          "plugin_source": {
+            "kind": "local",
+            "path": ""
+          }
+        },
+        "selected_items": [
+          "skills/engineering/diagnose/SKILL.md",
+          "skills/misc/git-guardrails/SKILL.md",
+          "skills/productivity/grill-me/SKILL.md",
+          "skills/engineering/tdd/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/plugin.json",
+              ".claude-plugin/marketplace.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "mattpocock-skills"
+              ],
+              [
+                "version",
+                "1.0.0"
+              ],
+              [
+                "description",
+                "Engineering skills"
+              ]
+            ],
+            "fields": {
+              "name": "mattpocock-skills",
+              "version": "1.0.0",
+              "description": "Engineering skills",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "diagnose",
+            "source_path": "skills/engineering/diagnose/SKILL.md",
+            "output_path": "skills/diagnose/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "diagnose"
+                ],
+                [
+                  "description",
+                  "Diagnose bugs."
+                ],
+                [
+                  "model-invocable",
+                  false
+                ]
+              ],
+              "fields": {
+                "name": "diagnose",
+                "description": "Diagnose bugs.",
+                "model-invocable": false,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "git-guardrails",
+            "source_path": "skills/misc/git-guardrails/SKILL.md",
+            "output_path": "skills/git-guardrails/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "git-guardrails"
+                ],
+                [
+                  "description",
+                  "Guard git."
+                ]
+              ],
+              "fields": {
+                "name": "git-guardrails",
+                "description": "Guard git.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Run scripts/guard.sh before pushing.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "grill-me",
+            "source_path": "skills/productivity/grill-me/SKILL.md",
+            "output_path": "skills/grill-me/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "grill-me"
+                ],
+                [
+                  "description",
+                  "Interview me."
+                ]
+              ],
+              "fields": {
+                "name": "grill-me",
+                "description": "Interview me.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "tdd",
+            "source_path": "skills/engineering/tdd/SKILL.md",
+            "output_path": "skills/tdd/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "tdd"
+                ],
+                [
+                  "description",
+                  "Test-driven development."
+                ]
+              ],
+              "fields": {
+                "name": "tdd",
+                "description": "Test-driven development.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/engineering/diagnose/scripts/trace.sh",
+            "output_path": "skills/diagnose/scripts/trace.sh"
+          },
+          {
+            "source_path": "skills/misc/git-guardrails/scripts/guard.sh",
+            "output_path": "skills/git-guardrails/scripts/guard.sh"
+          }
+        ],
+        "diagnostics": {
+          "skills/misc/git-guardrails/SKILL.md": [
+            {
+              "code": "skill.needs-scripts",
+              "severity": "warning",
+              "path": [],
+              "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

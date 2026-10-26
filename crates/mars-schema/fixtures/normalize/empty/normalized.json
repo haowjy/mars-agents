@@ -1,0 +1,14 @@
+{
+  "kind": "empty",
+  "packages": [],
+  "diagnostics": {
+    ".": [
+      {
+        "code": "normalize.empty",
+        "severity": "info",
+        "path": [],
+        "message": "has nothing to import"
+      }
+    ]
+  }
+}

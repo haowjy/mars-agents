@@ -1,0 +1,22 @@
+{
+  "kind": "invalid",
+  "packages": [],
+  "diagnostics": {
+    ".": [
+      {
+        "code": "normalize.unreadable",
+        "severity": "error",
+        "path": [],
+        "message": "the package cannot be read"
+      }
+    ],
+    ".claude-plugin/plugin.json": [
+      {
+        "code": "source-manifest.invalid-json",
+        "severity": "error",
+        "path": [],
+        "message": "failed to parse `.claude-plugin/plugin.json`: key must be a string at line 1 column 3"
+      }
+    ]
+  }
+}

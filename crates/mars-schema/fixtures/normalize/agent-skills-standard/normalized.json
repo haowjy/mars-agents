@@ -1,0 +1,142 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "0.18.3",
+        "dialect": "agent-skills",
+        "source": {},
+        "selected_items": [
+          "skills/notes/SKILL.md",
+          "skills/pdf/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "agent-skills",
+          "evidence": {
+            "source": "predicted",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "package"
+              ]
+            ],
+            "fields": {
+              "name": "package",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "notes",
+            "source_path": "skills/notes/SKILL.md",
+            "output_path": "skills/notes/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "notes"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "notes",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "pdf",
+            "source_path": "skills/pdf/SKILL.md",
+            "output_path": "skills/pdf/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "pdf"
+                ],
+                [
+                  "description",
+                  "Read PDFs."
+                ],
+                [
+                  "license",
+                  "MIT"
+                ],
+                [
+                  "compatibility",
+                  "any"
+                ],
+                [
+                  "metadata",
+                  {
+                    "a": "b"
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "pdf",
+                "description": "Read PDFs.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": "MIT",
+                "compatibility": "any",
+                "metadata": {
+                  "a": "b"
+                }
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [
+          {
+            "source_path": "skills/pdf/agents/openai.yaml",
+            "output_path": "skills/pdf/agents/openai.yaml"
+          }
+        ],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

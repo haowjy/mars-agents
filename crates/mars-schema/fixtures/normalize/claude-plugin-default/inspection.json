@@ -1,0 +1,52 @@
+{
+  "kind": "plugin",
+  "dialect": {
+    "dialect": "claude",
+    "source": "predicted",
+    "evidence": [
+      ".claude-plugin/plugin.json"
+    ]
+  },
+  "also_found": [],
+  "name": "toolbox",
+  "version": "1.2.0",
+  "description": "Daily tools",
+  "plugins": [],
+  "items": [
+    {
+      "kind": "agent",
+      "slug": "helper",
+      "source_path": "agents/helper.md",
+      "output_path": "agents/helper.md"
+    },
+    {
+      "kind": "agent",
+      "slug": "plan",
+      "source_path": "agents/plan.md",
+      "output_path": "agents/plan.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "plan",
+      "source_path": "skills/plan/SKILL.md",
+      "skill_root": "skills/plan",
+      "output_path": "skills/plan/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "review",
+      "source_path": "skills/review/SKILL.md",
+      "skill_root": "skills/review",
+      "output_path": "skills/review/SKILL.md",
+      "payload": [
+        "skills/review/checklist.md"
+      ]
+    },
+    {
+      "kind": "command",
+      "slug": "deploy",
+      "source_path": "commands/deploy.md"
+    }
+  ],
+  "diagnostics": {}
+}

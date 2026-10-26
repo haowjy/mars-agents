@@ -1,0 +1,88 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "package",
+      "provenance": {
+        "translator": "0.18.3",
+        "dialect": "claude",
+        "source": {},
+        "selected_items": [
+          "skills/visible/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "declared",
+            "paths": []
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "package"
+              ]
+            ],
+            "fields": {
+              "name": "package",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "visible",
+            "source_path": "skills/visible/SKILL.md",
+            "output_path": "skills/visible/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "visible"
+                ],
+                [
+                  "description",
+                  "A skill."
+                ]
+              ],
+              "fields": {
+                "name": "visible",
+                "description": "A skill.",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Body\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

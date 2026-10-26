@@ -1,0 +1,60 @@
+{
+  "kind": "skill-tree",
+  "dialect": {
+    "dialect": "claude",
+    "source": "predicted",
+    "evidence": [
+      "skills/everything/SKILL.md"
+    ]
+  },
+  "also_found": [],
+  "plugins": [],
+  "items": [
+    {
+      "kind": "skill",
+      "slug": "badname",
+      "source_path": "skills/badname/SKILL.md",
+      "skill_root": "skills/badname",
+      "output_path": "skills/badname/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "broken",
+      "source_path": "skills/broken/SKILL.md",
+      "skill_root": "skills/broken",
+      "output_path": "skills/broken/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "colon",
+      "source_path": "skills/colon/SKILL.md",
+      "skill_root": "skills/colon",
+      "output_path": "skills/colon/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "everything",
+      "source_path": "skills/everything/SKILL.md",
+      "skill_root": "skills/everything",
+      "output_path": "skills/everything/SKILL.md",
+      "payload": [
+        "skills/everything/scripts/go.sh"
+      ]
+    },
+    {
+      "kind": "skill",
+      "slug": "mismatch",
+      "source_path": "skills/mismatch/SKILL.md",
+      "skill_root": "skills/mismatch",
+      "output_path": "skills/mismatch/SKILL.md"
+    },
+    {
+      "kind": "skill",
+      "slug": "plain",
+      "source_path": "skills/plain/SKILL.md",
+      "skill_root": "skills/plain",
+      "output_path": "skills/plain/SKILL.md"
+    }
+  ],
+  "diagnostics": {}
+}

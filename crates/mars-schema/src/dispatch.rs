@@ -120,7 +120,7 @@ pub(crate) fn dispatch(
             Kind::Empty,
             Classification::Empty,
             Layout::None,
-            discover(source, fallback_name),
+            Discovery::generated_root(),
             Vec::new(),
         );
     }

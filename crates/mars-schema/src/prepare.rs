@@ -256,9 +256,8 @@ pub(crate) fn prepare_root(
     let payload = if can_read_definitions {
         payload_paths(
             source,
-            all,
+            &dispatched.discovery,
             selected.iter().copied(),
-            &dispatched.discovery.skipped_generated_dirs,
             &mut diagnostics,
         )
         .into_iter()

@@ -123,16 +123,7 @@
           }
         ],
         "payload": [],
-        "diagnostics": {
-          "plugin/.mars-plugin.json": [
-            {
-              "code": "generated-plugin-tree-skipped",
-              "severity": "info",
-              "path": [],
-              "message": "skipping generated plugin tree at `plugin` while reading authored package input"
-            }
-          ]
-        }
+        "diagnostics": {}
       }
     }
   ],

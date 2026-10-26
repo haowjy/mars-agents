@@ -19,9 +19,13 @@ fixtures under `fixtures/upgrade/` are the published upgrade contract.
 
 `prepare` is the one-root reading core. `dispatch` classifies the root in the order of
 `mars-normalize` (generated output, then a Mars manifest, then a declared dialect, then the
-dialect predicted from evidence in the root, then empty) and chooses a layout. The Mars
-convention walk (`discover`) serves Mars packages and the Codex, OpenCode and Cursor lifts, with
-output paths equal to source paths. The Claude layout (`claude/`) serves `claude` and
+dialect predicted from evidence in the root, then empty) and chooses a layout. One bounded
+directory walk (`discover::walk`) owns what no scan enters: hidden directories, the skip list,
+depth five, `[plugin].dir` (read from `mars.toml`) and any directory holding a valid generated-plugin
+marker (checked as the walk is about to enter a directory, never by scanning the tree). The Mars
+convention scan over it (`discover`) serves Mars packages and the Codex, OpenCode and Cursor lifts,
+with output paths equal to source paths; the Claude layout and the binary's bootstrap scan
+(`discover::walk_dirs`) use the same walk. The Claude layout (`claude/`) serves `claude` and
 `agent-skills`: `claude::manifest` parses `plugin.json` and `marketplace.json` and applies
 Claude's merge and `strict` rules (a list adds to the default skills folder and replaces the
 default Agents and commands folders), `claude::discover` finds the items (the default

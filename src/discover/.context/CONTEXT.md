@@ -13,7 +13,7 @@ binary-only inventory here for hooks and bootstrap documents, then combine it wi
 path is the parent of its output path). Nothing here walks a tree for Agents or skills, and nothing
 may: crate preparation owns those definitions.
 
-Bootstrap discovery is convention-based. A single bounded recursive walk starts at the rooted package directory and scans any directory named `bootstrap/` up to `MAX_DISCOVERY_WALK_DEPTH = 5` for child directories containing `BOOTSTRAP.md`.
+Bootstrap discovery is convention-based. It uses `mars_schema::discover::walk_dirs`, the one bounded walk the crate selects Agents and skills with, and scans each directory named `bootstrap/` it reaches for child directories containing `BOOTSTRAP.md`. The walk owns the boundary (depth five, hidden directories, the skip list, `[plugin].dir`, generated plugin trees); nothing here keeps a copy of it.
 
 Hooks are the exception to the layered walk: only direct children of the
 package-root `hooks/` directory are discovered. The compiler and general item
@@ -33,10 +33,12 @@ skills.
 before staging.
 
 Directories containing a valid `.mars-plugin.json` are generated plugin trees and are
-excluded at any depth, including hook and MCP discovery, with one info diagnostic per skipped
-path. A valid package-relative `[plugin].dir` is a stronger source boundary: discovery excludes it
-by path without reporting it, even before a sentinel exists, so the package's own committed output
-never adds noise to `sync` or `check`. Canonical staging applies the sentinel boundary before any
+excluded wherever the bounded walk meets them (the walk checks the marker of each directory it is
+about to enter, and never scans the tree for markers), including hook and MCP discovery, with one
+info diagnostic per skipped path. A valid package-relative `[plugin].dir`, which the crate reads
+from `mars.toml`, is a stronger source boundary: the walk excludes it by path without reporting
+it, even before a sentinel exists, so the package's own committed output never adds noise to
+`sync` or `check`. Canonical staging applies the sentinel boundary before any
 downstream copy or hash; those lower-level primitives remain byte-faithful. The authored-tree
 filesystem walk also protects local-source installs that bypass whole-package staging. Other
 configured non-hidden output trees remain discoverable; use hidden targets for those authored-root

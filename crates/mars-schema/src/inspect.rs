@@ -248,13 +248,7 @@ pub(crate) fn list_items(
 ) -> Vec<InspectedItem> {
     let discovery = &dispatched.discovery;
     let mut payload = BTreeMap::<String, Vec<String>>::new();
-    let by_owner = payload_paths(
-        source,
-        &discovery.definitions,
-        discovery.definitions.iter(),
-        &discovery.skipped_generated_dirs,
-        diagnostics,
-    );
+    let by_owner = payload_paths(source, discovery, discovery.definitions.iter(), diagnostics);
     for (path, _) in by_owner {
         // The owner is the deepest skill root containing the file.
         if let Some(owner) = discovery

@@ -197,7 +197,7 @@ Agents and skills come from each package's `Prepared` result, so no walk selects
 
 After building all items:
 5. **Detect cross-source destination collisions** — dependency agents and skills from different sources that want the same destination path are both auto-renamed with `__{source_name}`; explicit dependency `rename` mappings run first and can prevent or customize the rename
-6. **Check unmanaged collisions** — prune items that would overwrite files not tracked in the lock
+6. **Check unmanaged collisions** — prune items that would overwrite a canonical path Mars does not own: `mars.lock` does not claim it and `.mars/provided.lock` does not list it (see [canonical ownership](lock-file.md#canonical-ownership))
 7. **Rewrite frontmatter** — build one `RenameIndex` from explicit skill renames and automatic collision renames that survived pruning, then apply one rewrite pass per agent; dependency fallback candidates follow mars.toml declaration order (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
 8. **Validate** — validate skill references in agent frontmatter, and warn on `config-rename-dangle` (config-side references to names that renames have replaced)
 

@@ -1,8 +1,13 @@
 # src/lock/ — Target-Scoped Lock Outputs
 
-`mars.lock` is the ownership registry for managed content. Lock v3 stores one
+`mars.lock` is the ownership registry for package-installed content. Lock v3 stores one
 logical item with one or more output records. Every output record is scoped by
 the target root that received it.
+
+Canonical ownership is decided by one rule, which lives in
+`docs/internals/lock-file.md#canonical-ownership`: a destination under `.mars/` is Mars-owned when
+`mars.lock` claims it **or** `.mars/provided.lock` lists it. This crate answers the first half
+(`LockIndex`); `sync::ownership::Ownership` is the one place that combines both.
 
 ## Contracts
 
@@ -96,7 +101,7 @@ views over that schema:
 | Method | Use |
 |---|---|
 | `find_output(target_root, dest_path)` | Diff, mutation, collision, and carry-forward checks for one concrete target |
-| `contains_installed_output(target_root, dest_path)` | Checks that require an installed-content claim, including collision and overwrite decisions |
+| `contains_installed_output(target_root, dest_path)` | Checks that require an installed-content claim; canonical ownership adds provided destinations on top, so callers deciding that go through `sync::ownership::Ownership` |
 | `contains_output(target_root, dest_path)` | Checks where either installed or pending-deletion authority is sufficient, chiefly deletion |
 | `find_by_dest_path(dest_path)` | Broad/legacy lookup where target root is intentionally irrelevant |
 | `contains_dest_path(dest_path)` | Broad/legacy existence check |

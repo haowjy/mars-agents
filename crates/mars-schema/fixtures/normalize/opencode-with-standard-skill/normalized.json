@@ -1,0 +1,220 @@
+{
+  "kind": "skill-tree",
+  "packages": [
+    {
+      "id": "mixed-opencode",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "opencode",
+        "source": {
+          "name": "mixed-opencode"
+        },
+        "selected_items": [
+          "agents/reviewer.md",
+          "skills/fmt/SKILL.md",
+          "skills/lint/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "opencode",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              "agents/reviewer.md"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "mixed-opencode"
+              ]
+            ],
+            "fields": {
+              "name": "mixed-opencode",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "reviewer",
+            "source_path": "agents/reviewer.md",
+            "output_path": "agents/reviewer.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "reviewer"
+                ],
+                [
+                  "description",
+                  "Reviews code and never writes"
+                ],
+                [
+                  "tools",
+                  {
+                    "write": "deny"
+                  }
+                ],
+                [
+                  "harness-overrides",
+                  {
+                    "opencode": {
+                      "permission": {
+                        "edit": "deny"
+                      }
+                    }
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "reviewer",
+                "description": "Reviews code and never writes",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "write",
+                    "pattern": null,
+                    "action": "deny"
+                  }
+                ],
+                "harness-overrides": {
+                  "opencode": {
+                    "permission": {
+                      "edit": "deny"
+                    }
+                  }
+                },
+                "model-policies": []
+              },
+              "body": "Review the diff.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "fmt",
+            "source_path": "skills/fmt/SKILL.md",
+            "output_path": "skills/fmt/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "fmt"
+                ],
+                [
+                  "description",
+                  "Formats code with prettier"
+                ]
+              ],
+              "fields": {
+                "name": "fmt",
+                "description": "Formats code with prettier",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Run prettier.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "fully-rewritten"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "lint",
+            "source_path": "skills/lint/SKILL.md",
+            "output_path": "skills/lint/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "lint"
+                ],
+                [
+                  "description",
+                  "Lints a path"
+                ],
+                [
+                  "argument-hint",
+                  "<path>"
+                ]
+              ],
+              "fields": {
+                "name": "lint",
+                "description": "Lints a path",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Lint the path.\n",
+              "diagnostics": [
+                {
+                  "code": "field.unknown",
+                  "severity": "warning",
+                  "path": [
+                    "argument-hint"
+                  ],
+                  "message": "unknown field `argument-hint` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+                }
+              ]
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {},
+        "changes": {
+          "agents/reviewer.md": [
+            {
+              "code": "agent.opencode-keys-moved",
+              "severity": "info",
+              "path": [],
+              "message": "moved OpenCode-only keys to harness-overrides.opencode: `permission`"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

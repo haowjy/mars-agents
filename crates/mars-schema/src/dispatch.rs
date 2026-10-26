@@ -109,12 +109,16 @@ pub(crate) struct AsPlugin<'a> {
     pub at_marketplace_root: bool,
 }
 
+/// What the Agent Skills specification (agentskills.io/specification) defines for `SKILL.md`,
+/// `allowed-tools` included, which it marks experimental. A skill using only these says nothing
+/// about the harness it was written for.
 const STANDARD_SKILL_KEYS: &[&str] = &[
     "name",
     "description",
     "license",
     "compatibility",
     "metadata",
+    "allowed-tools",
 ];
 
 pub(crate) fn dispatch(
@@ -271,11 +275,6 @@ fn classify(
             None if as_plugin.is_some() => DialectChoice::predicted(Dialect::Claude, Vec::new()),
             None => predict_from_items(source, &discovery),
         };
-        if !matches!(choice.dialect, Dialect::Claude | Dialect::AgentSkills) {
-            // Predicted from the items: read as the dialect's own convention, as when declared.
-            let mirrors = also_found(choice.dialect);
-            return foreign_convention(source, choice, fallback_name, mirrors);
-        }
         let mirrors = also_found(choice.dialect);
         let has_items = !discovery.definitions.is_empty()
             || !discovery.dropped.is_empty()
@@ -293,31 +292,17 @@ fn classify(
     }
 
     let choice = decided.expect("a non-Claude dialect was decided");
-    let mirrors = also_found(choice.dialect);
-    foreign_convention(source, choice, fallback_name, mirrors)
-}
-
-/// A non-Claude dialect's root, read by Mars's convention walk.
-fn foreign_convention(
-    source: &impl TreeSource,
-    choice: DialectChoice,
-    fallback_name: Option<&str>,
-    mirrors: Vec<Mirror>,
-) -> Dispatched {
     let discovery = discover(source, fallback_name);
-    let (classification, layout) =
-        if discovery.definitions.is_empty() && choice.evidence.paths.is_empty() {
-            (Classification::Empty, Layout::None)
-        } else {
-            (Classification::Foreign(choice), Layout::Convention)
-        };
-    Dispatched {
-        manifest: None,
-        classification,
-        layout,
-        discovery,
-        also_found: mirrors,
+    let mirrors = also_found(choice.dialect);
+    if discovery.definitions.is_empty() && choice.evidence.paths.is_empty() {
+        return done(Classification::Empty, Layout::None, discovery, mirrors);
     }
+    done(
+        Classification::Foreign(choice),
+        Layout::Convention,
+        discovery,
+        mirrors,
+    )
 }
 
 /// Marketplace, plugin or bare tree, from the manifests in the root. A manifest that does not
@@ -382,11 +367,12 @@ fn claude_layout(
     }
 }
 
-/// No manifest or container decided: the discovered files do. Claude-only keys predict Claude;
-/// an Agent written the way only OpenCode writes one predicts OpenCode; skills with only the
-/// standard's keys are `agent-skills`; anything else is Claude, Mars's default.
+/// No manifest or container decided: the discovered files do, strongest first. A Claude-only key
+/// on an Agent predicts Claude; an Agent written the way only OpenCode writes one predicts
+/// OpenCode; a Claude-only key on a skill predicts Claude; skills with only the standard's keys
+/// are `agent-skills`; anything else is Claude, Mars's default.
 fn predict_from_items(source: &impl TreeSource, discovery: &Discovery) -> DialectChoice {
-    let mut claude_paths = Vec::new();
+    let (mut claude_agents, mut claude_skills) = (Vec::new(), Vec::new());
     let mut opencode_paths = Vec::new();
     let mut standard_only = true;
     let mut skills = 0;
@@ -408,7 +394,10 @@ fn predict_from_items(source: &impl TreeSource, discovery: &Discovery) -> Dialec
             .iter()
             .any(|key| crate::claude::translate::EVIDENCE_KEYS.contains(&key.as_str()))
         {
-            claude_paths.push(definition.source_path.clone());
+            match definition.kind {
+                DefinitionKind::Agent => claude_agents.push(definition.source_path.clone()),
+                DefinitionKind::Skill => claude_skills.push(definition.source_path.clone()),
+            }
         }
         if definition.kind == DefinitionKind::Agent && crate::lift::is_opencode_agent(&frontmatter)
         {
@@ -422,12 +411,18 @@ fn predict_from_items(source: &impl TreeSource, discovery: &Discovery) -> Dialec
             standard_only = false;
         }
     }
-    if !claude_paths.is_empty() {
-        claude_paths.truncate(5);
-        DialectChoice::predicted(Dialect::Claude, claude_paths)
+    // An Agent decides what a skill cannot: Claude skills are everywhere, so a Claude-only
+    // skill key does not outweigh an Agent written the way only OpenCode writes one.
+    if !claude_agents.is_empty() {
+        claude_agents.extend(claude_skills);
+        claude_agents.truncate(5);
+        DialectChoice::predicted(Dialect::Claude, claude_agents)
     } else if !opencode_paths.is_empty() {
         opencode_paths.truncate(5);
         DialectChoice::predicted(Dialect::OpenCode, opencode_paths)
+    } else if !claude_skills.is_empty() {
+        claude_skills.truncate(5);
+        DialectChoice::predicted(Dialect::Claude, claude_skills)
     } else if skills > 0 && standard_only {
         DialectChoice::predicted(Dialect::AgentSkills, Vec::new())
     } else {

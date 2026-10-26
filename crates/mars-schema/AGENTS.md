@@ -56,8 +56,11 @@ Prediction from the items reads each dialect's own vocabulary and holds none its
 `claude::translate::EVIDENCE_KEYS` (narrower than that module's moved-key lists, because `model`,
 `effort`, `tools` and `hooks` also appear in Mars's own files, and the rewritten spellings are read in
 code, so it is not derived from them) and `lift::is_opencode_agent` (a `permission` map or a `tools` map
-of booleans: the two spellings `lift_opencode_agent` translates). Claude evidence wins over OpenCode's;
-a tree predicted OpenCode is read by Mars's convention walk, as when declared.
+of booleans: the two spellings `lift_opencode_agent` translates). An Agent decides what a skill
+cannot: Claude evidence on an Agent wins, then OpenCode's, then Claude evidence that came only from
+skills. `allowed-tools` is not Claude evidence on a skill, because the Agent Skills specification
+defines it (`STANDARD_SKILL_KEYS`). A tree predicted OpenCode keeps the layout found for it, so
+Claude's notices (commands, hooks, MCP servers) still print.
 
 `PrepareContext` is `Package` (a package root), `AuthoredLocal` (a consumer project's
 `.mars-src`) or `Project` (a directory that is either: a `mars.toml` with no `[package]` is

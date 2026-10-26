@@ -1,0 +1,80 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "opencode",
+    "evidence": {
+      "source": "predicted",
+      "paths": [
+        "agents/review.md"
+      ]
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "review",
+      "source_path": "agents/review.md",
+      "output_path": "agents/review.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "review"
+          ],
+          [
+            "description",
+            "Reviews code and never writes"
+          ],
+          [
+            "tools",
+            {
+              "write": "deny"
+            }
+          ]
+        ],
+        "fields": {
+          "name": "review",
+          "description": "Reviews code and never writes",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [
+            {
+              "capability": "write",
+              "pattern": null,
+              "action": "deny"
+            }
+          ],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "Review the diff.\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "fully-rewritten"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {
+    "commands": [
+      {
+        "code": "import.commands-dropped",
+        "severity": "warning",
+        "path": [],
+        "message": "commands are not imported (convert one to a skill): commands/ship.md"
+      }
+    ]
+  }
+}

@@ -83,12 +83,23 @@ impl OrderedValue {
                     let Some(key) = key.as_str() else {
                         return Err("YAML mapping contains a non-string key".into());
                     };
+                    reject_unholdable_key(key)?;
                     out.insert(key.to_owned(), Self::from_yaml(value)?);
                 }
                 Self::Object(out)
             }
             Value::Tagged(_) => return Err("YAML tags have no JSON representation".into()),
         })
+    }
+}
+
+/// `__proto__` set on a plain JavaScript object changes its prototype instead of adding a key,
+/// so a reading could not carry it.
+pub(crate) fn reject_unholdable_key(key: &str) -> Result<(), String> {
+    if key == "__proto__" {
+        Err("key `__proto__` cannot be held as a plain property by JavaScript".into())
+    } else {
+        Ok(())
     }
 }
 

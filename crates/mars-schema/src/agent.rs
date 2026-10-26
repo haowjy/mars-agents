@@ -333,6 +333,24 @@ fn push_agent_tool_invalid(
     push_agent_invalid(diags, path, value, allowed);
 }
 
+/// Report a key JavaScript cannot hold as a plain property; the key is left out of the reading.
+fn push_unholdable_key(
+    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+    path: &[crate::diagnostic::PathSegment],
+    key: &str,
+) -> bool {
+    let Err(message) = crate::ordered::reject_unholdable_key(key) else {
+        return false;
+    };
+    diags.push(crate::diagnostic::SchemaDiagnostic::new(
+        "yaml.non-json-value",
+        crate::diagnostic::Severity::Error,
+        path.to_vec(),
+        message,
+    ));
+    true
+}
+
 fn parse_native_config_value(
     path: &[crate::diagnostic::PathSegment],
     value: &Value,
@@ -405,6 +423,9 @@ fn parse_native_config_value(
                 };
                 let mut child_path = path.to_vec();
                 child_path.push(crate::diagnostic::PathSegment::Key(key_text.to_owned()));
+                if push_unholdable_key(diags, &child_path, key_text) {
+                    continue;
+                }
                 if let Some(parsed) = parse_native_config_value(&child_path, entry, diags) {
                     out.insert(key_text.to_string(), parsed);
                 }
@@ -447,6 +468,9 @@ fn parse_harness_overrides(
         };
         let mut harness_path = root.clone();
         harness_path.push(PathSegment::Key(harness_name.to_owned()));
+        if push_unholdable_key(diags, &harness_path, harness_name) {
+            continue;
+        }
         let Some(sub_mapping) = v.as_mapping() else {
             push_agent_invalid(
                 diags,
@@ -474,6 +498,9 @@ fn parse_harness_overrides(
             };
             let mut value_path = harness_path.clone();
             value_path.push(PathSegment::Key(key_text.to_owned()));
+            if push_unholdable_key(diags, &value_path, key_text) {
+                continue;
+            }
             if let Some(value) = parse_native_config_value(&value_path, target_value, diags) {
                 parsed.insert(key_text.to_string(), value);
             }

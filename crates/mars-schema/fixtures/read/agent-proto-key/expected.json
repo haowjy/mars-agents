@@ -1,0 +1,64 @@
+{
+  "frontmatter": [],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {
+      "flow": {
+        "ok": "y"
+      }
+    },
+    "model-policies": []
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.unknown",
+      "severity": "warning",
+      "path": [
+        "x-u"
+      ],
+      "message": "unknown field `x-u` is preserved"
+    },
+    {
+      "code": "yaml.non-json-value",
+      "severity": "error",
+      "path": [
+        "harness-overrides",
+        "flow",
+        "__proto__"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    },
+    {
+      "code": "yaml.non-json-value",
+      "severity": "error",
+      "path": [
+        "x-u"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    },
+    {
+      "code": "yaml.non-json-value",
+      "severity": "error",
+      "path": [
+        "harness-overrides"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    }
+  ]
+}

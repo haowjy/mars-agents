@@ -51,6 +51,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - Importing a Claude plugin keeps its Claude-only keys instead of deleting them: `color`, `maxTurns`, `permissionMode`, `memory`, `background`, `isolation`, `initialPrompt` and `hooks` on Agents, and `argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths` and `shell` on skills move unchanged to `harness-overrides.claude`, with an info message (`agent.claude-keys-moved`, `skill.claude-keys-moved`) in place of the old `*.claude-keys-dropped` warning.
 - `mars migrate` prints each key it removed, by code and file (and as `dropped` in `--json`), and maps `adaptive`/`disabled` effort in `model-policies` overrides as it does in `effort:`.
 - `[agents.<name>]` `effort`, `approval` and `sandbox` are checked when `mars.toml` loads (`approval = "yolo"` is an error); stale overlay keys (`network*`, `autocompact*`, `tools.mcp`, `[skills.x.tools]`, `[settings] default_network`) warn by name.
+- The pre-v1 upgrade (in memory and `mars migrate`) moves Claude-only keys to `harness-overrides.claude`, the same list the Claude importer uses, so a pre-v1 skill's `argument-hint` still reaches `.claude/`.
 - Removing a frontmatter key no longer reorders the keys after it.
 
 ### Fixed

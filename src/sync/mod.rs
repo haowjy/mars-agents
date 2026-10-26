@@ -139,7 +139,7 @@ pub(crate) struct LoadedConfig {
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     pub dependency_changes: Vec<DependencyUpsertChange>,
-    /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock. A dry run holds no lock: it must not create `.mars/`, and it mutates nothing the lock guards.
+    /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock. A dry run holds it only when `.mars/sync.lock` already exists, and never creates it: it mutates nothing the lock guards.
     #[allow(dead_code)]
     pub sync_lock: Option<FileLock>,
     /// Owns the dry-run staging directory. A preview used to stage under
@@ -341,10 +341,13 @@ pub(crate) fn load_config(
     let mars_dir = project_root.join(".mars");
 
     // A dry run is a preview: it must leave the project's files as it found
-    // them, so it stages into a temporary directory and takes no flock (which
-    // would create `.mars/sync.lock`). It mutates no state a lock guards.
+    // them, so it stages into a temporary directory and never creates the lock
+    // file. It still takes the flock when a real sync already created it:
+    // recovery reads `mars.lock` and the intent journal, and a publisher
+    // running between those reads would show it a torn snapshot.
     let (sync_lock, dry_run_staging) = if request.options.dry_run {
-        (None, Some(tempfile::TempDir::new()?))
+        let lock = crate::fs::FileLock::acquire_existing(&mars_dir.join("sync.lock"))?;
+        (lock, Some(tempfile::TempDir::new()?))
     } else {
         let sync_lock = crate::fs::FileLock::acquire(&mars_dir.join("sync.lock"))?;
         (Some(sync_lock), None)

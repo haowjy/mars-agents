@@ -10,8 +10,8 @@
 
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use crate::config::AgentOverlayTools;
-use crate::permission_set::{PermissionSet, merge_permission_set};
 use mars_schema::HarnessId;
+use mars_schema::permission_set::{PermissionSet, merge_permission_set};
 use mars_schema::tool_names::{Capability, OverlayToolName, is_mcp_wire_token, render_scoped};
 use mars_schema::tool_natives::{self, Native};
 use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};

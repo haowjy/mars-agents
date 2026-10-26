@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
 use super::{AgentOverlay, AgentOverlayTools, LocalConfig, LocalSettings, Settings, SkillOverlay};
-use crate::permission_set::{PermissionSet, compose_permission_sets};
+use mars_schema::permission_set::{PermissionSet, compose_permission_sets};
 
 fn overlay_map_replace_by_key<V: Clone>(
     base: &IndexMap<String, V>,

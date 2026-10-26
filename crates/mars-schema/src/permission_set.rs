@@ -1,3 +1,5 @@
+//! One layer of an additive permission set: a plain list adds to lower layers, `replace` clears them.
+
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -97,7 +99,7 @@ impl<T> PermissionSet<T> {
 }
 
 /// Apply the permission-set rule once for every permission kind.
-pub(crate) fn merge_permission_set<T: Clone + Eq>(merged: &mut Vec<T>, layer: &PermissionSet<T>) {
+pub fn merge_permission_set<T: Clone + Eq>(merged: &mut Vec<T>, layer: &PermissionSet<T>) {
     if layer.replaces() {
         merged.clear();
     }
@@ -109,7 +111,7 @@ pub(crate) fn merge_permission_set<T: Clone + Eq>(merged: &mut Vec<T>, layer: &P
 }
 
 /// Compose adjacent authored layers while preserving whether they clear still-lower layers.
-pub(crate) fn compose_permission_sets<T: Clone + Eq>(
+pub fn compose_permission_sets<T: Clone + Eq>(
     lower: &PermissionSet<T>,
     higher: &PermissionSet<T>,
 ) -> PermissionSet<T> {

@@ -304,6 +304,8 @@ pub(crate) fn lift_mars_only_keys(
     rename_field(fm, "model_invocable", "model-invocable");
     rename_field(fm, "user_invocable", "user-invocable");
     if kind == DefinitionKind::Agent {
+        rename_field(fm, "network_allow", "network-allow");
+        rename_field(fm, "network_deny", "network-deny");
         for field in REMOVED_AGENT_FIELDS.iter().filter(|field| field.discarded) {
             if fm.remove(field.key).is_some() {
                 notes.push(removed(&[field.key], field.key));
@@ -473,7 +475,7 @@ fn strip_model_policy_overrides(fm: &mut Frontmatter, diagnostics: &mut Vec<Sche
                 overrides.insert(key, Value::String(new.to_string()));
             }
         }
-        for key in ["network", "autocompact", "autocompact_pct", "harness"] {
+        for key in ["autocompact", "autocompact_pct", "harness"] {
             if overrides.remove(Value::String(key.to_string())).is_some() {
                 diagnostics.push(SchemaDiagnostic::new(
                     "field.removed",

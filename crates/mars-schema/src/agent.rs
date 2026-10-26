@@ -8,13 +8,12 @@ use crate::frontmatter::{Frontmatter, SkillsSpec};
 use crate::harness_overrides::{HarnessOverrides, parse_harness_overrides};
 use crate::invocability::parse_invocability_axis;
 use crate::model_policy::ModelPolicyRule;
+use crate::network::{NetworkHost, NetworkPolicy};
+use crate::permission_set::PermissionSet;
 use crate::tool_policy::{self, EffectiveToolPolicy};
 
 /// `lift_mars_only_keys` drops the `discarded` keys; the legacy upgrade rewrites the rest.
 pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
-    RemovedField::discarded("network", "remove this unenforced field"),
-    RemovedField::discarded("network-allow", "remove this unenforced field"),
-    RemovedField::discarded("network-deny", "remove this unenforced field"),
     RemovedField::discarded("fanout", "use consumer `[settings.meridian.fanout]`"),
     RemovedField::discarded("models", "use `model-policies`"),
     RemovedField::discarded("mcp-tools", "put MCP capability references in `tools`"),
@@ -23,6 +22,8 @@ pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
     RemovedField::replaced("disallowed-tools", "use `tools: {<capability>: deny}`"),
     RemovedField::replaced("model_invocable", "use `model-invocable`"),
     RemovedField::replaced("user_invocable", "use `user-invocable`"),
+    RemovedField::replaced("network_allow", "use `network-allow`"),
+    RemovedField::replaced("network_deny", "use `network-deny`"),
     RemovedField::replaced(
         "permission",
         "move it under `harness-overrides.flow.permission`",
@@ -264,6 +265,9 @@ pub struct AgentProfile {
     pub had_user_invocable_field: bool,
     pub approval: Option<ApprovalMode>,
     pub sandbox: Option<SandboxMode>,
+    pub network: Option<NetworkPolicy>,
+    pub network_allow: PermissionSet<NetworkHost>,
+    pub network_deny: PermissionSet<NetworkHost>,
     pub effort: Option<EffortLevel>,
 
     // --- Tool fields ---
@@ -388,7 +392,15 @@ fn push_model_policy_parse_error(
                 diags,
                 grandchild("override", &key),
                 key,
-                "effort, sandbox, approval",
+                "effort, sandbox, approval, network",
+            );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::NetworkHostsNotAllowed { key } => {
+            push_agent_invalid(
+                diags,
+                grandchild("override", &key),
+                key,
+                "network host sets on settings, profile, overlay, or CLI",
             );
         }
         crate::model_policy::ModelPolicyRuleParseError::OverrideValueInvalid {
@@ -525,6 +537,67 @@ fn read_string_list(
         .collect()
 }
 
+/// A host set: a list of hosts, or for an allow set `{replace: [...]}`, which clears the lower
+/// layers' hosts. A package profile cannot replace a deny set, so a project's deny always applies.
+fn read_host_set(
+    field: &'static str,
+    value: &Value,
+    allow_replace: bool,
+    diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
+) -> PermissionSet<NetworkHost> {
+    use crate::diagnostic::{PathSegment, key_path};
+    const SHAPE: &str = "list of exact hosts, IPs, *.example.com, or **.example.com; or {replace: [...]} for an allow set";
+    let mut path = key_path(field);
+    let (replace, entries) = match value {
+        Value::Sequence(entries) => (false, entries),
+        Value::Mapping(mapping)
+            if mapping.len() == 1
+                && mapping
+                    .get("replace")
+                    .is_some_and(|entries| entries.is_sequence()) =>
+        {
+            if !allow_replace {
+                push_agent_invalid(
+                    diags,
+                    path,
+                    crate::ordered::plain(value),
+                    "plain list; package profiles cannot replace a deny set",
+                );
+                return PermissionSet::default();
+            }
+            path.push(PathSegment::Key("replace".to_owned()));
+            let entries = mapping.get("replace").and_then(Value::as_sequence);
+            (true, entries.expect("checked to be a sequence"))
+        }
+        _ => {
+            push_agent_invalid(diags, path, crate::ordered::plain(value), SHAPE);
+            return PermissionSet::default();
+        }
+    };
+    let hosts = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let parsed = entry
+                .as_str()
+                .ok_or_else(|| crate::ordered::plain(entry))
+                .and_then(|text| text.parse::<NetworkHost>().map_err(|_| text.to_owned()));
+            parsed
+                .map_err(|found| {
+                    let mut entry_path = path.clone();
+                    entry_path.push(PathSegment::Index(index));
+                    push_agent_invalid(diags, entry_path, found, NetworkHost::ALLOWED);
+                })
+                .ok()
+        })
+        .collect();
+    if replace {
+        PermissionSet::Replace { replace: hosts }
+    } else {
+        PermissionSet::Add(hosts)
+    }
+}
+
 fn read_skills(value: &Value, diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>) -> SkillsSpec {
     use crate::diagnostic::{PathSegment, key_path};
     let root = key_path("skills");
@@ -563,6 +636,9 @@ pub(crate) fn read_fields(
         had_user_invocable_field: false,
         approval: None,
         sandbox: None,
+        network: None,
+        network_allow: PermissionSet::default(),
+        network_deny: PermissionSet::default(),
         effort: None,
         skills: SkillsSpec::default(),
         subagents: Vec::new(),
@@ -643,6 +719,25 @@ pub(crate) fn read_fields(
                         None
                     })
                 });
+            }
+            "network" => {
+                profile.network = read_string(value, "network", false, diags).and_then(|network| {
+                    NetworkPolicy::parse(&network).or_else(|| {
+                        push_agent_invalid(
+                            diags,
+                            key_path("network"),
+                            network,
+                            NetworkPolicy::ALLOWED,
+                        );
+                        None
+                    })
+                });
+            }
+            "network-allow" => {
+                profile.network_allow = read_host_set("network-allow", value, true, diags);
+            }
+            "network-deny" => {
+                profile.network_deny = read_host_set("network-deny", value, false, diags);
             }
             "effort" => {
                 profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {

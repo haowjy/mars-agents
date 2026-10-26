@@ -15,6 +15,9 @@
     "user-invocable": true,
     "approval": null,
     "sandbox": "read-only",
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
     "effort": null,
     "skills": {
       "load": [],

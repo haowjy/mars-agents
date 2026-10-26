@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
-use crate::permission_set::PermissionSet;
 use crate::types::managed_cmd;
 use crate::types::{
     ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
@@ -16,6 +15,7 @@ use crate::types::{
 use mars_schema::dialect::Dialect;
 use mars_schema::model_policy::ModelPolicyRule;
 pub use mars_schema::package::PackageMetadata as PackageInfo;
+use mars_schema::permission_set::PermissionSet;
 use mars_schema::tool_names::OverlayToolName;
 
 pub mod layering;

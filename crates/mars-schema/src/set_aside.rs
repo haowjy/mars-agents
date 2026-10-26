@@ -8,7 +8,8 @@
 //!   a container the reader rejects as a whole, is dropped.
 //! - Any other rejected key is moved under `harness-overrides.<harness>` when a harness could
 //!   read it, and dropped when none could.
-//! - Losing a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) is
+//! - Losing a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`,
+//!   `network`, `network-deny`) is
 //!   one of the changes like any other, with its own code ([`RESTRICTION_LOST`]) that names the
 //!   agent. `mars migrate` lists it with the rest, and a sync prints it on every run
 //!   (`Prepared::lost_restrictions`).
@@ -37,6 +38,8 @@ const RESTRICTION_KEYS: &[&str] = &[
     "permission",
     "sandbox",
     "approval",
+    "network",
+    "network-deny",
     "tools",
     "disallowed-tools",
 ];

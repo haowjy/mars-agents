@@ -86,6 +86,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -169,6 +172,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": "high",
                 "skills": {
                   "load": [],
@@ -295,6 +301,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -362,6 +371,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -425,6 +437,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": null,
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],

@@ -6,5 +6,6 @@ tools:
   Read: allow
   Grep: allow
 approval: never
+network: deny
 ---
 Review the change.

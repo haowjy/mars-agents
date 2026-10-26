@@ -53,6 +53,7 @@ export interface DefinitionRead<Fields> {
 export type Effort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 export type Sandbox = "default" | "read-only" | "workspace-write" | "danger-full-access";
 export type Approval = "default" | "auto" | "confirm" | "never";
+export type Network = "allow" | "deny" | "allowlist";
 export type Harness = "claude" | "codex" | "pi" | "opencode" | "cursor";
 
 export interface ToolRule {
@@ -64,7 +65,7 @@ export interface ToolRule {
 
 export interface ModelPolicyRule {
   match: { model: string } | { alias: string } | { "model-glob": string };
-  override?: { effort?: Effort; sandbox?: Sandbox; approval?: Approval };
+  override?: { effort?: Effort; sandbox?: Sandbox; approval?: Approval; network?: Network };
   "no-fallback"?: boolean;
   /** One non-empty line. */
   when?: string;
@@ -80,6 +81,11 @@ export interface AgentFields {
   "user-invocable": boolean;
   approval: Approval | null;
   sandbox: Sandbox | null;
+  /** Shell network mode; `null` follows the sandbox. */
+  network: Network | null;
+  /** Canonical hosts (lowercase, no trailing dot); `{ replace }` clears the lower layers' hosts. */
+  "network-allow": string[] | { replace: string[] };
+  "network-deny": string[];
   effort: Effort | null;
   skills: { load: string[]; available: string[] };
   subagents: string[];

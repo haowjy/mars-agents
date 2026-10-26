@@ -75,6 +75,10 @@
                 [
                   "approval",
                   "never"
+                ],
+                [
+                  "network",
+                  "deny"
                 ]
               ],
               "fields": {
@@ -87,6 +91,9 @@
                 "user-invocable": true,
                 "approval": "never",
                 "sandbox": null,
+                "network": "deny",
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -169,14 +176,6 @@
         "diagnostics": {},
         "changes": {
           "agents/old.md": [
-            {
-              "code": "field.removed",
-              "severity": "warning",
-              "path": [
-                "network"
-              ],
-              "message": "removed legacy key `network`"
-            },
             {
               "code": "field.removed",
               "severity": "warning",

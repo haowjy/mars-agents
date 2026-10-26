@@ -59,6 +59,10 @@
                   "Plans work"
                 ],
                 [
+                  "network",
+                  "allow"
+                ],
+                [
                   "tools",
                   {
                     "Bash": "deny"
@@ -75,6 +79,9 @@
                 "user-invocable": true,
                 "approval": null,
                 "sandbox": null,
+                "network": "allow",
+                "network-allow": [],
+                "network-deny": [],
                 "effort": null,
                 "skills": {
                   "load": [],
@@ -99,9 +106,6 @@
               "paths": [
                 [
                   "disallowed-tools"
-                ],
-                [
-                  "network"
                 ],
                 [
                   "tools"
@@ -151,19 +155,7 @@
           }
         ],
         "payload": [],
-        "diagnostics": {},
-        "changes": {
-          "agents/planner.md": [
-            {
-              "code": "field.removed",
-              "severity": "warning",
-              "path": [
-                "network"
-              ],
-              "message": "removed legacy key `network`"
-            }
-          ]
-        }
+        "diagnostics": {}
       }
     }
   ],

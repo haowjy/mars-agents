@@ -58,7 +58,14 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
 
     let edited_paths = changed_mapping_paths(original.mapping(), frontmatter.mapping());
 
-    let fallback = with_line_ending_of(text, frontmatter.render());
+    // The fallback re-renders the frontmatter only. The body is authored prompt text that may be
+    // byte-sensitive (embedded examples, mixed line endings), so it is copied from the input
+    // rather than from the render, which ends every line in LF.
+    let fallback = {
+        let mut rewritten = with_line_ending_of(text, frontmatter.render_frontmatter());
+        rewritten.push_str(original.body());
+        rewritten
+    };
     let minimally_edited = edit_top_level_blocks(text, original.mapping(), frontmatter.mapping())
         .and_then(|edited| {
             Frontmatter::parse(&edited)

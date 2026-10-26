@@ -250,6 +250,19 @@ impl Frontmatter {
         if !self.has_frontmatter && self.yaml.is_empty() {
             return self.body.clone();
         }
+        let mut out = self.render_frontmatter();
+        out.push_str(&self.body);
+        out
+    }
+
+    /// Serialize only the frontmatter block, delimiters included.
+    ///
+    /// A caller that changes the frontmatter and must keep the authored body byte for byte
+    /// (`mars migrate`'s full rewrite) renders this and appends the parsed body itself.
+    pub(crate) fn render_frontmatter(&self) -> String {
+        if !self.has_frontmatter && self.yaml.is_empty() {
+            return String::new();
+        }
 
         let mut out = if self.has_bom {
             String::from("\u{feff}---\n")
@@ -268,7 +281,6 @@ impl Frontmatter {
             }
         }
         out.push_str("---\n");
-        out.push_str(&self.body);
         out
     }
 }

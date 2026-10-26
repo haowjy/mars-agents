@@ -8,6 +8,8 @@ use crate::error::MarsError;
 
 pub(crate) const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
+/// The Mars that writes a sentinel's `mars_version`, and the one `mars check` compares it with.
+pub(crate) const MARS_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) fn generated_root_files() -> impl Iterator<Item = &'static str> {
     crate::plugin::PLUGIN_TREE_SPECS
         .iter()

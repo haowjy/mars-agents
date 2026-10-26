@@ -11,8 +11,8 @@ mod tree;
 
 pub(crate) use inspect::inspect_validated;
 pub use inspect::{
-    PluginDirectoryState, PluginInputsState, PluginOutputState, PluginRootFileState,
-    PluginVersionState, inspect,
+    PluginBuilderState, PluginDirectoryState, PluginInputsState, PluginOutputState,
+    PluginRootFileState, PluginVersionState, inspect,
 };
 
 use std::path::{Path, PathBuf};
@@ -314,7 +314,7 @@ fn stage_plugin_inner(
             Ok((
                 crate::plugin_metadata::PluginSentinel {
                     schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
-                    mars_version: env!("CARGO_PKG_VERSION").to_string(),
+                    mars_version: crate::plugin_metadata::MARS_VERSION.to_string(),
                     plugin_name: plugin_name.clone(),
                     version: metadata.version.clone(),
                     inputs_hash,

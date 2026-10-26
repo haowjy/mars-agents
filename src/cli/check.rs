@@ -196,6 +196,7 @@ fn plugin_warnings(
         }
     }
     warnings.extend(state.inputs.iter().filter_map(|state| state.message()));
+    warnings.extend(state.builder.iter().filter_map(|state| state.message()));
     warnings.extend(state.version.iter().filter_map(|state| state.message()));
     warnings.extend(state.root_files.iter().filter_map(|state| state.message()));
 

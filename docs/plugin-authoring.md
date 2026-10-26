@@ -81,7 +81,9 @@ conflict with a package-root generated file. It also warns when:
 
 - `[package].requires-mars` does not require Mars 0.19.0 or newer;
 - plugin-only package or `[plugin]` metadata is invalid, including an unknown harness;
-- generated output records a different package version.
+- generated output records a different package version;
+- generated output was built by a different Mars version, which may write different files
+  for the same inputs.
 
 `mars check` does not rebuild output. Use `mars build plugin`, review the resulting diff,
 and run the check again.

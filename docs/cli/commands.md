@@ -549,9 +549,9 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Skill dependency references (warns about external deps)
 - Symlinks in source packages (warned as unsupported)
 - Missing `SKILL.md` in skill directories
-- Configured plugin output: missing/skipped builds, stale inputs or versions, hand-edited or
-  missing generated files, root files left holding an earlier build's output, and conflicts at
-  generated package-root paths
+- Configured plugin output: missing/skipped builds, stale inputs, a different package or Mars
+  version, hand-edited or missing generated files, root files left holding an earlier build's
+  output, and conflicts at generated package-root paths
 - Plugin compatibility: unknown `[plugin].harnesses` values and a missing
   `[package].requires-mars = ">=0.19.0"` (or higher) floor
 

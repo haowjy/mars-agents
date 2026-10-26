@@ -29,6 +29,7 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
 - `when` on a `model-policies` rule (one non-empty line) describes when the rule's model fits. `mars models prompting @agent` prints the Agent's guide ahead of the alias's text, and the Agent inventory marks Agents that have one. `mars check` warns on a policy alias it cannot resolve, naming the agent and file.
 - `ls` and `work` are tool capabilities. `harness-overrides.flow` is a reserved namespace for Flow that Mars passes through and never interprets.
 - Reference pages for [schema v1](docs/config/schema-v1.md) and [migration](docs/config/migrating-to-schema-v1.md), and READMEs for the crate and the npm package.
+- `mars check` warns when committed plugin output was built by another Mars version than the running one (the sentinel's `mars_version`): a Mars upgrade can write different files for the same inputs, which the input fingerprint cannot see. Rebuild with `mars build plugin`.
 
 ### Changed
 - Mars prepares every package (dependencies, `.mars-src`, the local package, `mars check`, `validate`, `migrate`, publish inputs) through `mars_schema::prepare` before it mutates anything. The authored tree stays untouched; sync projects prepared bytes into the recoverable `.mars/.staging.pending` generation after the diagnostic gate and publishes it by rename. Relative path dependencies resolve from the authored origin. Pre-v1 `.mars-src` content is upgraded in memory with a warning that names `mars migrate`.

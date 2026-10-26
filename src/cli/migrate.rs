@@ -60,7 +60,7 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let prepared =
         crate::package_prepare::prepare_authored(&authored_root, context, None, &mut diagnostics)?;
     diagnostics.fail_on_errors()?;
-    let pending = pending_writes(root, &authored_root, &prepared);
+    let pending = pending_writes(root, &authored_root, &prepared, !consumer)?;
     let dropped = dropped_keys(root, &authored_root, &prepared);
 
     if !args.check {
@@ -102,19 +102,33 @@ fn pending_writes(
     project_root: &Path,
     authored_root: &Path,
     prepared: &Prepared,
-) -> Vec<PendingWrite> {
+    package: bool,
+) -> Result<Vec<PendingWrite>, MarsError> {
     let mut pending = Vec::new();
-    if let Some(manifest) = &prepared.manifest
-        && let Some(source_path) = &manifest.source_path
+    // `prepare` upgrades a pre-v1 manifest in memory; a package already at schema 1 still gets
+    // the `requires-mars` floor schema 1 needs, which an earlier v1 Mars left out.
+    if package
+        && let Some(manifest) = prepared.manifest.as_ref()
+        && let Some(source_path) = manifest.source_path.as_deref()
     {
-        push_change(
-            project_root,
-            authored_root,
-            source_path,
-            &manifest.normalized_bytes,
-            &manifest.change,
-            &mut pending,
-        );
+        let path = authored_root.join(source_path);
+        let text = std::fs::read_to_string(&path)?;
+        let upgraded = if manifest.change == ChangeRecord::None {
+            mars_schema::upgrade::ensure_requires_mars_floor(&text)
+        } else {
+            mars_schema::upgrade::upgrade_manifest(&text)
+        }
+        .map_err(|error| crate::error::ConfigError::Invalid {
+            message: format!("failed to upgrade {}: {error}", path.display()),
+        })?;
+        if upgraded.text != text {
+            pending.push(PendingWrite {
+                relative: relative_path(project_root, &path),
+                path,
+                bytes: upgraded.text.into_bytes(),
+                fully_rewritten: upgraded.fully_rewritten,
+            });
+        }
     }
     for definition in &prepared.definitions {
         push_change(
@@ -127,7 +141,7 @@ fn pending_writes(
         );
     }
     pending.sort_by(|left, right| left.relative.cmp(&right.relative));
-    pending
+    Ok(pending)
 }
 
 fn push_change(

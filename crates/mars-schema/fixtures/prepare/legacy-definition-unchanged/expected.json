@@ -18,12 +18,17 @@
         [
           "schema",
           1
+        ],
+        [
+          "requires-mars",
+          ">={version}"
         ]
       ],
       "fields": {
         "name": "demo",
         "version": "1.0.0",
-        "schema": 1
+        "schema": 1,
+        "requires-mars": ">={version}"
       },
       "body": null,
       "diagnostics": []
@@ -34,6 +39,10 @@
         [
           "package",
           "schema"
+        ],
+        [
+          "package",
+          "requires-mars"
         ]
       ]
     }

@@ -17,62 +17,14 @@ fn parse_requirement(
     engine: &'static str,
     raw: &str,
 ) -> Result<VersionReq, ResolutionError> {
-    let raw = raw.trim();
-    let parts: Vec<&str> = raw.split('.').collect();
-    let normalized = if (1..=3).contains(&parts.len())
-        && parts
-            .iter()
-            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
-    {
-        let mut parts = parts;
-        while parts.len() < 3 {
-            parts.push("0");
+    mars_schema::package::parse_requirement(raw).map_err(|error| {
+        ResolutionError::InvalidEngineRequirement {
+            package: package.to_string(),
+            engine: engine.to_string(),
+            requirement: raw.trim().to_string(),
+            message: error.to_string(),
         }
-        format!(">={}", parts.join("."))
-    } else {
-        raw.to_string()
-    };
-    VersionReq::parse(&normalized).map_err(|error| ResolutionError::InvalidEngineRequirement {
-        package: package.to_string(),
-        engine: engine.to_string(),
-        requirement: raw.to_string(),
-        message: error.to_string(),
     })
-}
-
-pub(crate) fn requirement_has_floor(requirement: Option<&str>, floor: &Version) -> bool {
-    let Some(raw) = requirement else {
-        return false;
-    };
-    let Ok(requirement) = parse_requirement("plugin package", "mars", raw) else {
-        return false;
-    };
-    requirement
-        .comparators
-        .iter()
-        .any(|comparator| comparator_floor(comparator).is_some_and(|minimum| minimum >= *floor))
-}
-
-fn comparator_floor(comparator: &semver::Comparator) -> Option<Version> {
-    use semver::Op;
-
-    // Partial strict bounds advance to the next specified component: `>0.18`
-    // means `>=0.19.0`, unlike the fully specified `>0.18.0`.
-    let (major, minor, patch) = match comparator.op {
-        Op::Greater if comparator.minor.is_none() => (comparator.major.checked_add(1)?, 0, 0),
-        Op::Greater if comparator.patch.is_none() => {
-            (comparator.major, comparator.minor?.checked_add(1)?, 0)
-        }
-        Op::Exact | Op::Greater | Op::GreaterEq | Op::Tilde | Op::Caret | Op::Wildcard => (
-            comparator.major,
-            comparator.minor.unwrap_or(0),
-            comparator.patch.unwrap_or(0),
-        ),
-        _ => return None,
-    };
-    let mut version = Version::new(major, minor, patch);
-    version.pre = comparator.pre.clone();
-    Some(version)
 }
 
 pub(crate) fn validate_package_requirement_syntax(

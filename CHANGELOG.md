@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Codex gets `effort: max` as `max`: its models accept the level, so the native file and the launch bundle no longer write `xhigh` and warn that they approximated.
+- `mars migrate` sets `[package] requires-mars` to `">=0.20.0"` when it is missing and raises a requirement that allows an older Mars; a higher floor is kept. `mars check` no longer asks for a hand edit after a migration.
 
 ## [0.20.0] - 2026-10-26
 

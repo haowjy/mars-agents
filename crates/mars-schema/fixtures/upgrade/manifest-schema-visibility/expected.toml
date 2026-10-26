@@ -2,6 +2,7 @@
 name = "demo"
 version = "1.0.0"
 schema = 1
+requires-mars = ">=0.20.0"
 
 [agents.demo]
 model = "opus"

@@ -81,6 +81,11 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
     })
 }
 
+/// Convert a `mars.toml` to schema v1, and give it the `requires-mars` floor schema 1 needs.
+///
+/// `prepare` and `mars migrate` run this on a pre-v1 package; a package already at schema 1 is
+/// left alone, because `mars migrate` completes its floor with [`ensure_requires_mars_floor`]
+/// instead of rewriting what already reads as v1.
 pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
     let mut document = text.parse::<DocumentMut>()?;
     let package = document
@@ -95,25 +100,71 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
             edited_paths: Vec::new(),
         });
     }
-    let mut edited_paths = vec![vec![
-        PathSegment::Key("package".to_string()),
-        PathSegment::Key("schema".to_string()),
-    ]];
-    package.insert("schema", toml_edit::value(1));
     let mut diagnostics = Vec::new();
+    let mut edited_paths = vec![package_path("schema")];
+    package.insert("schema", toml_edit::value(1));
     if package.remove("visibility").is_some() {
         diagnostics.push(removed(&["package", "visibility"], "visibility"));
-        edited_paths.push(vec![
-            PathSegment::Key("package".to_string()),
-            PathSegment::Key("visibility".to_string()),
-        ]);
+        edited_paths.push(package_path("visibility"));
     }
+    set_requires_mars_floor(package, &mut edited_paths);
     Ok(UpgradeResult {
         text: with_line_ending_of(text, document.to_string()),
         diagnostics,
         fully_rewritten: false,
         edited_paths,
     })
+}
+
+/// Give a manifest already at schema 1 the `requires-mars` floor schema 1 needs.
+///
+/// `mars migrate` runs this on a package an earlier v1 Mars migrated, whose requirement may
+/// still allow a Mars that reads the package as pre-v1. A higher floor is left alone, and the
+/// rest of the file keeps its bytes, comments and key order.
+pub fn ensure_requires_mars_floor(text: &str) -> Result<UpgradeResult, UpgradeError> {
+    let mut document = text.parse::<DocumentMut>()?;
+    let package = document
+        .get_mut("package")
+        .and_then(Item::as_table_mut)
+        .ok_or(UpgradeError::MissingPackage)?;
+    let mut edited_paths = Vec::new();
+    set_requires_mars_floor(package, &mut edited_paths);
+    Ok(UpgradeResult {
+        text: if edited_paths.is_empty() {
+            text.to_string()
+        } else {
+            with_line_ending_of(text, document.to_string())
+        },
+        diagnostics: Vec::new(),
+        fully_rewritten: false,
+        edited_paths,
+    })
+}
+
+fn set_requires_mars_floor(
+    package: &mut toml_edit::Table,
+    edited_paths: &mut Vec<Vec<PathSegment>>,
+) {
+    let floor = semver::Version::parse(crate::package::SCHEMA_1_MARS_FLOOR)
+        .expect("the schema 1 Mars floor is semver");
+    if crate::package::requirement_has_floor(
+        package.get("requires-mars").and_then(Item::as_str),
+        &floor,
+    ) {
+        return;
+    }
+    package.insert(
+        "requires-mars",
+        toml_edit::value(format!(">={}", crate::package::SCHEMA_1_MARS_FLOOR)),
+    );
+    edited_paths.push(package_path("requires-mars"));
+}
+
+fn package_path(key: &str) -> Vec<PathSegment> {
+    vec![
+        PathSegment::Key("package".to_string()),
+        PathSegment::Key(key.to_string()),
+    ]
 }
 
 /// Whether the file's first line ends in `\r\n`.

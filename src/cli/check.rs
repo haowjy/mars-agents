@@ -151,7 +151,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 }
 
 /// The first Mars that reads schema 1: older ones read a `schema = 1` package as pre-v1.
-const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
+const SCHEMA_1_MARS_FLOOR: &str = mars_schema::package::SCHEMA_1_MARS_FLOOR;
 /// The first Mars whose `mars version` keeps `[plugin]`.
 const PLUGIN_MARS_FLOOR: &str = "0.19.0";
 
@@ -177,7 +177,7 @@ fn requires_mars_warning(
     } else {
         return None;
     };
-    let has_floor = crate::resolve::requirement_has_floor(
+    let has_floor = mars_schema::package::requirement_has_floor(
         package.requires_mars.as_deref(),
         &Version::parse(floor).expect("Mars floor is valid semver"),
     );

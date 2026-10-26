@@ -7,7 +7,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - An installed `.mars` tree an older Mars wrote reads again without `mars sync` first: when an installed Agent or skill reports a pre-v1 spelling, it is upgraded in memory exactly as a pre-v1 package is and read again, so a skill's `type` or an Agent's `model_invocable` no longer drops it from the launch bundle, `mars skills`, `mars agents` or `mars models prompting`. Schema v1 text and files that are invalid rather than pre-v1 read as before; authored packages that declare `schema = 1` stay strict.
 - Codex gets `effort: max` as `max`: its models accept the level, so the native file and the launch bundle no longer write `xhigh` and warn that they approximated.
-- `mars migrate` sets `[package] requires-mars` to `">=0.20.0"` when it is missing and raises a requirement that allows an older Mars; a higher floor is kept. `mars check` no longer asks for a hand edit after a migration.
+- `mars migrate` adds `[package] requires-mars = ">=0.20.0"` to a package that has no requirement, so a migrated schema v1 package needs no hand edit. It never rewrites an existing one: a requirement that allows a Mars older than 0.20.0 is reported with `mars check`'s warning and left as authored, and so is a manifest it cannot edit minimally (an inline `[package]` table).
 
 ## [0.20.0] - 2026-10-26
 

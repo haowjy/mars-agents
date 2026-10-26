@@ -25,8 +25,8 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 | `lift` | The Codex, Cursor and OpenCode lifts; the shared tool-name rewrite |
 | `set_aside` | The class guard: after a foreign or pre-v1 definition is translated, every key the strict reader still rejects is moved under `harness-overrides.<dialect>` or dropped, with one warning. A key Mars lowers itself (`agent::LoweredField`, `skill::LOWERED_KEYS`: the lists native lowering reads too) is never moved: a mapping or list loses only its rejected entries and a scalar is dropped; `network-allow` and `network-deny` are treated the same, though Mars does not lower them, so one bad host never takes the valid ones with it. A rejected `permission` map is OpenCode's, so its note says to declare `dialect = "open-code"`, not Flow's advice. A lost restriction is a change with its own code, `field.restriction-lost` (`Prepared::lost_restrictions` filters them, so a sync prints them every run and `mars migrate` lists them with the rest); `harness_overrides::move_keys_under` is the one mover |
 | `inspect`, `normalize` | `dispatch` and `prepare` over a whole repository; the generated `mars.toml` and provenance |
-| `upgrade` | The pre-v1 to v1 conversion, shared by `prepare` and `mars migrate` (definitions; a manifest's `schema`, removed `visibility` and `requires-mars` floor), and `ensure_requires_mars_floor` for a manifest already at schema 1 |
-| `package` | Versioned package metadata, `classify_manifest`, `parse_requirement` and `requirement_has_floor`, the `requires-mars` floor `mars check` and the upgrade share |
+| `upgrade` | The pre-v1 to v1 conversion, shared by `prepare` and `mars migrate` (definitions; a manifest's `schema` and removed `visibility`; it never touches `requires-mars`), and `ensure_requires_mars_floor`, which adds a missing floor and reports an existing requirement it will not rewrite |
+| `package` | Versioned package metadata, `classify_manifest`, `parse_requirement` and `requirement_has_floor`: the `requires-mars` floor rule, and the advice `mars check` and `mars migrate` share |
 | `item` | `ItemKind` and `DefinitionKind` (Agent, Skill) |
 | `dialect`, `harness` | `Dialect`, `DialectChoice`, `HarnessId`, `harness::names()`; the only harness-name parser |
 | `tool_names`, `tool_natives`, `tool_policy`, `mcp`, `model_policy`, `invocability` | The vocabularies and parsers for `tools`, MCP references, model policies and the invocability axes |
@@ -141,8 +141,11 @@ leaves the keys in place with a warning.
 `mars migrate`. Definition upgrades edit only changed top-level blocks and keep all other
 authored bytes. A non-block top-level mapping or failed semantic verification falls back to a
 reported full frontmatter rewrite. Unchanged definitions and schema-v1 manifests remain
-byte-identical; `mars migrate` completes a manifest already at schema 1 with
-`ensure_requires_mars_floor` (`>=0.20.0`, the first Mars that reads schema 1) and nothing else.
+byte-identical. `requires-mars` is not part of the upgrade: the requirement gates whether a
+package may be read at all, so `prepare` never changes a dependency's requirement. `mars migrate`
+adds `>=0.20.0` to a manifest that has none, prints `mars check`'s advice for an existing
+requirement that admits an older Mars (leaving its value and comment), and leaves a manifest it
+cannot edit minimally (an inline `package` table) alone with that advice instead of failing.
 What preparing changed in a file, whether a pre-v1 upgrade or a foreign translation
 dropped, moved or repaired it, is one channel, `Prepared.changes`; `Prepared.diagnostics` holds only
 what discovery and translation could not convert. `Prepared::changed_files` counts the authored files

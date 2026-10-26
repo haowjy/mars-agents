@@ -23,11 +23,13 @@ struct MigrateReport {
     files: Vec<String>,
     fully_rewritten_files: Vec<String>,
     /// What the migration removed or could not carry over, by file.
-    dropped: Vec<DroppedKey>,
+    dropped: Vec<Notice>,
+    /// What the migration left alone and why, by file.
+    warnings: Vec<Notice>,
 }
 
 #[derive(Serialize)]
-struct DroppedKey {
+struct Notice {
     file: String,
     code: String,
     message: String,
@@ -53,14 +55,14 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 root.display()
             ));
         }
-        return report(args.check, Vec::new(), Vec::new(), json);
+        return report(args.check, Vec::new(), Vec::new(), Vec::new(), json);
     }
 
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
     let prepared =
         crate::package_prepare::prepare_authored(&authored_root, context, None, &mut diagnostics)?;
     diagnostics.fail_on_errors()?;
-    let pending = pending_writes(root, &authored_root, &prepared, !consumer)?;
+    let (pending, warnings) = pending_writes(root, &authored_root, &prepared, !consumer)?;
     let dropped = dropped_keys(root, &authored_root, &prepared);
 
     if !args.check {
@@ -68,17 +70,17 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             crate::platform::fs::atomic_write_file(&file.path, &file.bytes)?;
         }
     }
-    report(args.check, pending, dropped, json)
+    report(args.check, pending, dropped, warnings, json)
 }
 
 /// The upgrade's diagnostics are what upgrading removed (legacy keys, skill tool rules);
 /// each is listed with its file, none truncated.
-fn dropped_keys(project_root: &Path, authored_root: &Path, prepared: &Prepared) -> Vec<DroppedKey> {
+fn dropped_keys(project_root: &Path, authored_root: &Path, prepared: &Prepared) -> Vec<Notice> {
     let mut dropped = Vec::new();
     for (source_path, diagnostics) in &prepared.changes {
         let file = relative_path(project_root, &authored_root.join(source_path));
         for diagnostic in diagnostics {
-            dropped.push(DroppedKey {
+            dropped.push(Notice {
                 file: file.clone(),
                 code: diagnostic.code.clone(),
                 message: diagnostic.message.clone(),
@@ -98,36 +100,50 @@ fn relative_path(project_root: &Path, path: &Path) -> String {
         .join("/")
 }
 
+/// The manifest travels through `prepare`'s normalized bytes, which carry the pre-v1 upgrade, and
+/// then through the one key `migrate` adds: a `requires-mars` floor when the package has none.
+/// Every other write is a definition the upgrade or a translation changed.
 fn pending_writes(
     project_root: &Path,
     authored_root: &Path,
     prepared: &Prepared,
     package: bool,
-) -> Result<Vec<PendingWrite>, MarsError> {
+) -> Result<(Vec<PendingWrite>, Vec<Notice>), MarsError> {
     let mut pending = Vec::new();
-    // `prepare` upgrades a pre-v1 manifest in memory; a package already at schema 1 still gets
-    // the `requires-mars` floor schema 1 needs, which an earlier v1 Mars left out.
+    let mut warnings = Vec::new();
     if package
         && let Some(manifest) = prepared.manifest.as_ref()
         && let Some(source_path) = manifest.source_path.as_deref()
     {
         let path = authored_root.join(source_path);
-        let text = std::fs::read_to_string(&path)?;
-        let upgraded = if manifest.change == ChangeRecord::None {
-            mars_schema::upgrade::ensure_requires_mars_floor(&text)
-        } else {
-            mars_schema::upgrade::upgrade_manifest(&text)
-        }
-        .map_err(|error| crate::error::ConfigError::Invalid {
-            message: format!("failed to upgrade {}: {error}", path.display()),
-        })?;
-        if upgraded.text != text {
-            pending.push(PendingWrite {
-                relative: relative_path(project_root, &path),
-                path,
-                bytes: upgraded.text.into_bytes(),
-                fully_rewritten: upgraded.fully_rewritten,
-            });
+        let relative = relative_path(project_root, &path);
+        let normalized = std::str::from_utf8(&manifest.normalized_bytes)
+            .expect("preparation refuses a manifest that is not UTF-8");
+        match mars_schema::upgrade::ensure_requires_mars_floor(normalized) {
+            Ok(outcome) => {
+                if let Some(message) = outcome.warning {
+                    warnings.push(Notice {
+                        file: relative.clone(),
+                        code: "requires-mars-floor".to_string(),
+                        message,
+                    });
+                }
+                if outcome.text != std::fs::read_to_string(&path)? {
+                    pending.push(PendingWrite {
+                        path,
+                        relative,
+                        bytes: outcome.text.into_bytes(),
+                        fully_rewritten: false,
+                    });
+                }
+            }
+            // A package an earlier Mars migrated succeeded here; a manifest shape this step
+            // cannot inspect is left alone like an inline table, never turned into a failure.
+            Err(error) => warnings.push(Notice {
+                file: relative,
+                code: "requires-mars-floor".to_string(),
+                message: error.to_string(),
+            }),
         }
     }
     for definition in &prepared.definitions {
@@ -141,7 +157,7 @@ fn pending_writes(
         );
     }
     pending.sort_by(|left, right| left.relative.cmp(&right.relative));
-    Ok(pending)
+    Ok((pending, warnings))
 }
 
 fn push_change(
@@ -168,7 +184,8 @@ fn push_change(
 fn report(
     check: bool,
     pending: Vec<PendingWrite>,
-    dropped: Vec<DroppedKey>,
+    dropped: Vec<Notice>,
+    warnings: Vec<Notice>,
     json: bool,
 ) -> Result<i32, MarsError> {
     let files = pending
@@ -187,6 +204,7 @@ fn report(
             files,
             fully_rewritten_files,
             dropped,
+            warnings,
         });
         return Ok(i32::from(check && !pending.is_empty()));
     }
@@ -202,6 +220,9 @@ fn report(
             };
             output::print_info(&format!("{verb} {}", file.relative));
         }
+    }
+    for warning in &warnings {
+        output::print_warn(&format!("{}: {}", warning.file, warning.message));
     }
     let mut code = "";
     for key in &dropped {

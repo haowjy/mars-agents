@@ -65,6 +65,33 @@ fn comparator_floor(comparator: &semver::Comparator) -> Option<Version> {
     Some(version)
 }
 
+/// The advice `mars check` prints for a schema v1 package's `requires-mars`, which `mars migrate`
+/// prints with it when it leaves an authored requirement alone.
+pub fn schema_1_requires_mars_warning(requirement: Option<&str>) -> Option<String> {
+    requires_mars_floor_warning(
+        requirement,
+        SCHEMA_1_MARS_FLOOR,
+        "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
+    )
+}
+
+/// The advice for a requirement that is missing or admits a Mars older than `floor`. `None` when
+/// it does not, or when it is not a requirement this Mars can read: a broken requirement is its
+/// own error.
+pub fn requires_mars_floor_warning(
+    requirement: Option<&str>,
+    floor: &str,
+    reason: &str,
+) -> Option<String> {
+    if let Some(raw) = requirement {
+        parse_requirement(raw).ok()?;
+    }
+    let floor = Version::parse(floor).expect("a Mars floor is valid semver");
+    (!requirement_has_floor(requirement, &floor)).then(|| {
+        format!("[package] `requires-mars` should be `\">={floor}\"` or a higher floor; {reason}")
+    })
+}
+
 /// Package metadata carried by `mars.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PackageMetadata {

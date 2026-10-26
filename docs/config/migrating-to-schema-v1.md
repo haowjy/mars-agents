@@ -45,8 +45,7 @@ An Agent that sets `tools` as a list with only some names used to restrict nothi
 +++ b/mars.toml
 @@ -4,6 +4,7 @@ version = "0.11.18"
  description = "Core coordination primitives for Meridian — agent profiles and skills for spawning, state tracking, and session context."
--requires-mars = ">=0.18.0"
-+requires-mars = ">=0.20.0"
+ requires-mars = ">=0.18.0"
  requires-meridian = ">=0.14.0"
 +schema = 1
  
@@ -70,7 +69,7 @@ An Agent that sets `tools` as a list with only some names used to restrict nothi
 
 ## It edits minimally
 
-The upgrade changes only the top-level keys that need it; everything else stays as authored: quoting, key order, blank lines and the body. A definition with nothing to change is not written. In the example above each file changed on the lines the table above names and no other line moved. In `mars.toml` those keys are `schema`, the removed `visibility`, and `requires-mars`: a missing requirement, or one that allows a Mars older than 0.20.0, becomes `">=0.20.0"`; a higher floor is left alone. `mars migrate` applies the manifest keys even to a package already at `schema = 1`, so a package an earlier v1 Mars migrated gains its floor without a hand edit.
+The upgrade changes only the top-level keys that need it; everything else stays as authored: quoting, key order, blank lines and the body. A definition with nothing to change is not written. In the example above `requires-mars` keeps its authored value and each file changed on the lines the table above names and no other line moved. In `mars.toml`, migrate adds `schema = 1` and a missing `requires-mars = ">=0.20.0"`; it drops the removed `visibility`. It never rewrites a requirement that is already there: one that allows a Mars older than 0.20.0 gets the same warning `mars check` prints, naming the file, and keeps its value and comment for the author to decide. A manifest migrate cannot edit minimally, such as an inline `package = { ... }` table, is left as authored with that warning instead of failing, so a package already at `schema = 1` migrates exactly as before. `mars migrate` adds the floor to a package an earlier v1 Mars migrated, which needs no hand edit.
 
 A top-level key's block runs from its own line to the line before the next key that starts a line. Indented lines, blank lines and comment lines in between belong to the block above, so a comment you meant for the next key and wrote directly after a changed key's value is rewritten with that block and lost. A comment after a key that does not change survives, and so does anything above the first key.
 
@@ -116,4 +115,6 @@ They share nothing. `mars upgrade` moves your dependencies to newer versions wit
 
 ## After migrating
 
-Commit the result and release it. `mars migrate` also sets `[package] requires-mars` to `">=0.20.0"`, the first Mars release that reads schema 1, when it is missing or allows an older Mars; a higher floor is kept. That keeps consumers on older Mars versions resolving the last release they can read ([`requires-mars`](mars-toml.md#package-optional)). A package already at `schema = 1` that predates the floor gets it from the same command, so `mars check` needs no hand edit after a migration.
+Commit the result and release it. `mars migrate` also adds `[package] requires-mars = ">=0.20.0"`, the first Mars release that reads schema 1, when the package has no requirement. That keeps consumers on older Mars versions resolving the last release they can read ([`requires-mars`](mars-toml.md#package-optional)).
+
+An existing `requires-mars` is never rewritten, because it is the author's decision which Mars versions may read the package. If it allows one older than 0.20.0, `mars migrate` prints the warning `mars check` prints and leaves the value, its comments and any upper bounds alone. Raise it by hand when the package can drop older consumers; `mars check` keeps warning until you do.

@@ -62,7 +62,7 @@
             "path": [
               "future"
             ],
-            "message": "unknown field `future` is preserved"
+            "message": "unknown field `future` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
           }
         ]
       },

@@ -39,7 +39,7 @@
       "path": [
         "x"
       ],
-      "message": "unknown field `x` is preserved"
+      "message": "unknown field `x` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
     }
   ]
 }

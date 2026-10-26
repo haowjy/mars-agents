@@ -100,7 +100,7 @@
       "path": [
         "z"
       ],
-      "message": "unknown field `z` is preserved"
+      "message": "unknown field `z` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
     },
     {
       "code": "field.unknown",
@@ -108,7 +108,7 @@
       "path": [
         "x-last"
       ],
-      "message": "unknown field `x-last` is preserved"
+      "message": "unknown field `x-last` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
     }
   ]
 }

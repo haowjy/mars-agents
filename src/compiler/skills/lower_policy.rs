@@ -70,9 +70,31 @@ fn insert_license_metadata(yaml: &mut Mapping, profile: &SkillProfile) {
     }
 }
 
-fn insert_passthrough(yaml: &mut Mapping, profile: &SkillProfile) {
-    for (key, value) in &profile.passthrough_fields {
-        yaml.insert(yk(key), value.clone());
+/// Write the harness's `harness-overrides` block into the frontmatter. A key Mars lowers
+/// itself keeps Mars's value and is reported as dropped; `reserved` also covers keys Mars
+/// would lower but had no value for.
+fn insert_overrides(
+    yaml: &mut Mapping,
+    profile: &SkillProfile,
+    harness: HarnessId,
+    reserved: &[&str],
+    lossy_fields: &mut Vec<LossyField>,
+) {
+    let Some(block) = profile.harness_overrides.get(&harness) else {
+        return;
+    };
+    for (key, value) in block {
+        if reserved.contains(&key.as_str()) || yaml.contains_key(yk(key)) {
+            lossy_fields.push(dropped(
+                &format!("harness-overrides.{harness}.{key}"),
+                harness_descriptor::descriptor(harness).display_name,
+            ));
+        } else {
+            yaml.insert(
+                yk(key),
+                serde_yaml::to_value(value).expect("override value should serialize"),
+            );
+        }
     }
 }
 
@@ -147,11 +169,9 @@ pub(super) fn lower_skill_with_policy(
             insert_disable_model_invocation(&mut yaml, profile);
             insert_user_invocation(&mut yaml, profile);
             insert_license_metadata(&mut yaml, profile);
-            insert_passthrough(&mut yaml, profile);
         }
         HarnessId::Codex => {
             insert_license_metadata(&mut yaml, profile);
-            insert_passthrough(&mut yaml, profile);
             if profile.had_model_invocable_field && !profile.model_invocable {
                 siblings.push(codex_openai_yaml_sibling());
             }
@@ -159,22 +179,35 @@ pub(super) fn lower_skill_with_policy(
         }
         HarnessId::OpenCode => {
             insert_license_metadata(&mut yaml, profile);
-            insert_passthrough(&mut yaml, profile);
             record_user_invocation_loss(&mut lossy_fields, profile, target_name);
         }
         HarnessId::Pi => {
             insert_disable_model_invocation(&mut yaml, profile);
             insert_license_metadata(&mut yaml, profile);
-            insert_passthrough(&mut yaml, profile);
             record_user_invocation_loss(&mut lossy_fields, profile, target_name);
         }
         HarnessId::Cursor => {
             insert_license_metadata(&mut yaml, profile);
-            insert_passthrough(&mut yaml, profile);
             apply_cursor_rule_mode(&mut yaml, profile);
             record_user_invocation_loss(&mut lossy_fields, profile, target_name);
         }
     }
+
+    insert_overrides(
+        &mut yaml,
+        profile,
+        harness,
+        &[
+            "name",
+            "description",
+            "license",
+            "metadata",
+            "disable-model-invocation",
+            "user-invocable",
+            "alwaysApply",
+        ],
+        &mut lossy_fields,
+    );
 
     LoweredOutput {
         bytes: render(yaml, body),

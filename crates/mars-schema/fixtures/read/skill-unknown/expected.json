@@ -22,7 +22,7 @@
       "path": [
         "future-key"
       ],
-      "message": "unknown field `future-key` is preserved"
+      "message": "unknown field `future-key` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
     },
     {
       "code": "field.required",

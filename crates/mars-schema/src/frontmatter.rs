@@ -220,7 +220,7 @@ impl Frontmatter {
 
     /// Remove a top-level frontmatter field.
     pub fn remove(&mut self, key: &str) -> Option<Value> {
-        self.yaml.remove(yaml_key(key))
+        self.yaml.shift_remove(yaml_key(key))
     }
 
     /// Serialize back to full markdown.

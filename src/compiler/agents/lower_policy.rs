@@ -30,15 +30,13 @@ use mars_schema::tool_policy::ToolAction;
 
 /// Effective field values read from top-level Mars semantics.
 struct Effective<'a> {
-    harness: HarnessId,
     profile: &'a AgentProfile,
     tools: &'a EffectiveToolPolicy,
 }
 
 impl<'a> Effective<'a> {
-    fn new(profile: &'a AgentProfile, harness: HarnessId) -> Self {
+    fn new(profile: &'a AgentProfile) -> Self {
         Self {
-            harness,
             profile,
             tools: &profile.tools,
         }
@@ -78,10 +76,6 @@ impl<'a> Effective<'a> {
 
     fn has_mcp_policy(&self) -> bool {
         self.tools.rules.iter().any(|rule| rule.is_mcp())
-    }
-
-    fn native_config(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
-        self.profile.effective_native_config(&self.harness)
     }
 }
 
@@ -155,7 +149,7 @@ fn record_agent_invocation_lossiness(
 /// - Preserved: name, description, model, tools, disallowed-tools, body
 /// - Skills: load is native-preloaded where supported; other channels use designed body guidance
 /// - Meridian-only (launch-time): approval, sandbox, mode,, model-policies, fanout
-/// - Dropped: harness, harness-overrides, legacy-models
+/// - Dropped: harness, legacy-models. `harness-overrides.<harness>` keys are added unless Mars lowers that key
 ///
 /// What model field a lowered native agent should carry. The native compiler is the
 /// sole caller; this replaces a bare `Option<&str>` so "emit no model" is expressible
@@ -330,6 +324,49 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     ],
 };
 
+impl AgentMarkdownField {
+    /// Frontmatter keys this field lowers, whether or not the profile has a value for them.
+    fn keys(self) -> &'static [&'static str] {
+        match self {
+            Self::Identity => &["name", "description"],
+            Self::Model => &["model"],
+            Self::Skills => &["skills"],
+            Self::ClaudeTools => &["tools", "disallowed-tools"],
+            Self::ClaudeEffort => &["effort"],
+            Self::Mode => &["mode"],
+        }
+    }
+}
+
+/// Entries of the profile's `harness-overrides.<harness>` block that may be written to the
+/// harness's native file: a key Mars lowers itself keeps Mars's value (`reserved`, or already
+/// present), and each such override is reported as dropped.
+fn native_overrides<'a>(
+    profile: &'a AgentProfile,
+    harness: HarnessId,
+    reserved: &[&str],
+    present: impl Fn(&str) -> bool,
+    target: &str,
+    lossy: &mut Vec<LossyField>,
+) -> Vec<(&'a str, serde_json::Value)> {
+    let Some(block) = profile.harness_overrides.get(&harness) else {
+        return Vec::new();
+    };
+    let mut allowed = Vec::new();
+    for (key, value) in block {
+        if reserved.contains(&key.as_str()) || present(key) {
+            lossy.push(LossyField {
+                field: format!("harness-overrides.{harness}.{key}"),
+                target: target.into(),
+                classification: Lossiness::Dropped,
+            });
+        } else {
+            allowed.push((key.as_str(), value.to_json()));
+        }
+    }
+    allowed
+}
+
 fn yk(s: &str) -> serde_yaml::Value {
     serde_yaml::Value::String(s.to_string())
 }
@@ -358,7 +395,7 @@ impl<'a> AgentLoweringCtx<'a> {
         body: &str,
         model_field: &'a NativeModel,
     ) -> Self {
-        let eff = Effective::new(profile, harness);
+        let eff = Effective::new(profile);
         let lowered_skills = lower_agent_skills(eff.skills(), policy.skills, body);
         Self {
             harness,
@@ -602,14 +639,29 @@ impl<'a> AgentLoweringCtx<'a> {
             !self.profile.model_policies.is_empty(),
             Lossiness::MeridianOnly,
         );
-        self.record_if_present(
-            "native-config",
-            self.eff.native_config().is_some(),
-            Lossiness::MeridianOnly,
-        );
     }
 
-    fn finish(self) -> LoweredOutput {
+    fn finish(mut self) -> LoweredOutput {
+        let reserved = self
+            .policy
+            .fields
+            .iter()
+            .flat_map(|field| field.keys().iter().copied())
+            .collect::<Vec<_>>();
+        let overrides = native_overrides(
+            self.profile,
+            self.harness,
+            &reserved,
+            |key| self.yaml.contains_key(yk(key)),
+            self.target_name(),
+            &mut self.lossy,
+        );
+        for (key, value) in overrides {
+            self.yaml.insert(
+                yk(key),
+                serde_yaml::to_value(value).expect("override value should serialize"),
+            );
+        }
         LoweredOutput {
             bytes: render_markdown(self.yaml, &self.body),
             lossy_fields: self.lossy,
@@ -798,13 +850,13 @@ pub fn lower_to_claude(
 /// - Skills: designed body guidance (Codex has no native field)
 /// - Dropped: tools (no allowlist), disallowed-tools,
 ///   mcp (approximate), mode, model-policies, fanout
-/// - harness-overrides.codex is launch-bundle passthrough only, not native lowering input
+/// - harness-overrides.codex entries are added as TOML keys unless Mars lowers that key itself
 pub fn lower_to_codex(
     profile: &AgentProfile,
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    let eff = Effective::new(profile, HarnessId::Codex);
+    let eff = Effective::new(profile);
     let target = "Codex";
     let lowered_skills = lower_agent_skills(eff.skills(), AgentSkillsPolicy::BodyGuidance, body);
     let mut lossy = Vec::new();
@@ -861,13 +913,6 @@ pub fn lower_to_codex(
             classification: Lossiness::MeridianOnly,
         });
     }
-    if eff.native_config().is_some() {
-        lossy.push(LossyField {
-            field: "native-config".into(),
-            target: target.into(),
-            classification: Lossiness::MeridianOnly,
-        });
-    }
     record_agent_invocation_lossiness(profile, target, &mut lossy);
 
     #[derive(serde::Serialize)]
@@ -899,7 +944,34 @@ pub fn lower_to_codex(
             .then_some(lowered_skills.body.trim_end()),
     };
 
-    let out = toml::to_string_pretty(&doc).unwrap_or_default();
+    let mut out = toml::to_string_pretty(&doc).unwrap_or_default();
+    // The fields above are all top-level scalars, so the override tables can follow them.
+    let overrides = native_overrides(
+        profile,
+        HarnessId::Codex,
+        &[
+            "name",
+            "description",
+            "model",
+            "model_reasoning_effort",
+            "sandbox_mode",
+            "approval_policy",
+            "developer_instructions",
+        ],
+        |_| false,
+        target,
+        &mut lossy,
+    );
+    if !overrides.is_empty() {
+        let table = overrides
+            .into_iter()
+            .map(|(key, value)| {
+                let value = toml::Value::try_from(value).expect("override value should be TOML");
+                (key.to_owned(), value)
+            })
+            .collect::<toml::Table>();
+        out.push_str(&toml::to_string_pretty(&table).unwrap_or_default());
+    }
 
     LoweredOutput {
         bytes: out.into_bytes(),

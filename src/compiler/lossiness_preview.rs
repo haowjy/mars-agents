@@ -392,13 +392,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+            "[settings]\ntargets = [\".claude\"]\nagent_emission = \"always\"\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("agents")).unwrap();
         std::fs::write(
             dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
+            "---\nname: worker\ndescription: test\napproval: auto\n---\n# Worker",
         )
         .unwrap();
 
@@ -421,21 +421,20 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+            "[settings]\ntargets = [\".claude\"]\nagent_emission = \"always\"\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.path().join("agents")).unwrap();
         std::fs::write(
             dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
+            "---\nname: worker\ndescription: test\napproval: auto\n---\n# Worker",
         )
         .unwrap();
 
         let diags = collect_lossiness(dir.path(), LossinessMode::Verbose).unwrap();
         assert!(
             diags.iter().any(|d| {
-                d.category == Some(DiagnosticCategory::Lossiness)
-                    && d.message.contains("native-config")
+                d.category == Some(DiagnosticCategory::Lossiness) && d.message.contains("approval")
             }),
             "expected verbose meridian-only diagnostic: {diags:?}"
         );

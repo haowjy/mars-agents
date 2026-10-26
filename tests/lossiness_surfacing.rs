@@ -10,16 +10,15 @@ const LOSSY_CURSOR_AGENT: &str = r#"---
 name: cursor-worker
 description: Cursor worker
 harness: cursor
-harness-overrides:
-  cursor:
-    native-config:
-      cursor.only: true
+model-policies:
+  - match: {model: gpt-6}
+    override: {effort: low}
 ---
 # Cursor body
 "#;
 
 const LOSSINESS_SUMMARY_SNIPPET: &str = "launch-time field mapping handled by meridian at spawn";
-const LOSSINESS_VERBOSE_SNIPPET: &str = "not lowered (meridian-only) for .cursor (native-config)";
+const LOSSINESS_VERBOSE_SNIPPET: &str = "not lowered (meridian-only) for .cursor (model-policies)";
 
 fn setup_lossy_synced_project(dir: &TempDir) -> std::path::PathBuf {
     let source = create_source(dir, "base", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);

@@ -13,7 +13,12 @@ tools:
   Write: deny
   Bash(rm *): deny
   agent(untrusted): deny
-x-custom: 1
 effort: high
+x-custom: 1
+harness-overrides:
+  claude:
+    color: purple
+    initialPrompt: /go
+    maxTurns: 4
 ---
 Body

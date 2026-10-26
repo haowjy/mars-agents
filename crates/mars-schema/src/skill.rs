@@ -25,9 +25,9 @@ pub struct SkillProfile {
     pub had_model_invocable_field: bool,
     #[serde(skip)]
     pub has_frontmatter: bool,
-    /// Frontmatter fields not recognized by mars — passed through to all targets.
+    /// Per-harness native keys (`harness-overrides:`), written only to that harness's file.
     #[serde(skip)]
-    pub passthrough_fields: Vec<(String, Value)>,
+    pub harness_overrides: crate::agent::HarnessOverrides,
 }
 
 /// Non-JSON YAML (tags, non-string keys) is left out, as in the reading's `frontmatter`,
@@ -76,7 +76,7 @@ fn parse_skill_profile_inner(
         metadata: None,
         had_model_invocable_field: false,
         has_frontmatter: fm.has_frontmatter(),
-        passthrough_fields: Vec::new(),
+        harness_overrides: Default::default(),
     };
     let mut classification_diagnostics = Vec::new();
     let mut field_diagnostics = Vec::new();
@@ -157,6 +157,10 @@ fn parse_skill_profile_inner(
                     ));
                 }
             }
+            "harness-overrides" => {
+                profile.harness_overrides =
+                    crate::agent::parse_harness_overrides("skill", value, &mut field_diagnostics);
+            }
             RESERVED_IMPORT_MARKER => {
                 if reject_import_marker {
                     classification_diagnostics.push(SchemaDiagnostic::new(
@@ -178,17 +182,13 @@ fn parse_skill_profile_inner(
                         key_path(&key),
                         format!("`{key}` was removed; {replacement}"),
                     ));
-                    if matches!(key.as_str(), "model_invocable" | "user_invocable") {
-                        profile.passthrough_fields.push((key, value.clone()));
-                    }
                 } else {
                     classification_diagnostics.push(SchemaDiagnostic::new(
                         "field.unknown",
                         Severity::Warning,
                         key_path(&key),
-                        format!("unknown field `{key}` is preserved"),
+                        crate::agent::UNKNOWN_FIELD_MESSAGE.replace("{key}", &key),
                     ));
-                    profile.passthrough_fields.push((key, value.clone()));
                 }
             }
         }

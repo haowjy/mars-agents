@@ -41,6 +41,10 @@ dialect predicted from evidence in the root, then empty) and chooses a layout. `
 is the one classification and `DialectChoice` the one record of a dialect and its evidence;
 `inspect` reports a `Kind` derived from the classification and layout, not a parallel enum.
 
+A root with no manifest is a pre-v1 Mars package, read through the upgrade, when it is declared
+`mars-native` or a definition carries a key only pre-v1 Mars defined (`RemovedField::mars_only`)
+or `approval: yolo`; the rest are read under the dialect declared or predicted.
+
 `PrepareContext` is `Package` (a package root), `AuthoredLocal` (a consumer project's
 `.mars-src`) or `Project` (a directory that is either: a `mars.toml` with no `[package]` is
 consumer configuration and the tree is read as authored content). The crate decides; callers do

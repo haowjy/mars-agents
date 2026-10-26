@@ -3,8 +3,10 @@
 //!
 //! 1. A directory holding a valid `.mars-plugin.json` is generated output, never input.
 //! 2. A Mars manifest decides; no declaration overrides it.
-//! 3. A declared dialect, else
-//! 4. the dialect predicted from evidence in the root, strongest first.
+//! 3. A declared dialect (`mars-native` on a root with no manifest is a pre-v1 Mars package,
+//!    which the upgrade reads), else
+//! 4. the dialect predicted from evidence in the root, strongest first; a key only pre-v1 Mars
+//!    defined, found in a definition, makes it a pre-v1 Mars package too.
 //! 5. No items at all is `empty`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -234,6 +236,17 @@ fn classify(
         ManifestClassification::NoManifest => {}
     }
 
+    // Mars content with no manifest has no `schema`, so it is pre-v1 by definition: it takes the
+    // upgrade, which leaves a file already in v1 as it is.
+    if declared == Some(Dialect::MarsNative) {
+        return done(
+            Classification::MarsLegacy,
+            Layout::Convention,
+            discover(source, fallback_name),
+            Vec::new(),
+        );
+    }
+
     let evidence = collect_evidence(source);
     // Hidden containers and harness manifests decide before any item is read; frontmatter
     // evidence needs the items, which Claude's rules find for both of its dialects.
@@ -267,7 +280,17 @@ fn classify(
             Some(choice) => choice,
             // A Claude marketplace named this root as a plugin.
             None if as_plugin.is_some() => DialectChoice::predicted(Dialect::Claude, Vec::new()),
-            None => predict_from_items(source, &discovery),
+            None => match predict_from_items(source, &discovery) {
+                Prediction::Foreign(choice) => choice,
+                Prediction::MarsLegacy => {
+                    return done(
+                        Classification::MarsLegacy,
+                        Layout::Convention,
+                        discover(source, fallback_name),
+                        Vec::new(),
+                    );
+                }
+            },
         };
         let mirrors = also_found(choice.dialect);
         let has_items = !discovery.definitions.is_empty()
@@ -345,10 +368,35 @@ fn claude_layout(
     }
 }
 
-/// No manifest or container decided: the discovered files do. Claude-only keys predict
-/// Claude; skills with only the standard's keys are `agent-skills`; anything else is Claude,
-/// Mars's default.
-fn predict_from_items(source: &impl TreeSource, discovery: &Discovery) -> DialectChoice {
+/// What the items of a manifest-free root say they are.
+enum Prediction {
+    Foreign(DialectChoice),
+    /// A key only pre-v1 Mars defined (see [`is_pre_v1_mars`]).
+    MarsLegacy,
+}
+
+/// A file only pre-v1 Mars could have written: a removed key no foreign import reads
+/// (`disallowed-tools` is one Claude's import reads, so it is not evidence), or `approval: yolo`.
+fn is_pre_v1_mars(kind: DefinitionKind, frontmatter: &crate::frontmatter::Frontmatter) -> bool {
+    let removed = match kind {
+        DefinitionKind::Agent => crate::agent::REMOVED_AGENT_FIELDS,
+        DefinitionKind::Skill => crate::skill::REMOVED_SKILL_FIELDS,
+    };
+    frontmatter.keys().iter().any(|key| {
+        removed
+            .iter()
+            .any(|field| field.mars_only && field.key == key.as_str())
+    }) || (kind == DefinitionKind::Agent
+        && frontmatter
+            .get("approval")
+            .and_then(serde_yaml::Value::as_str)
+            == Some("yolo"))
+}
+
+/// No manifest or container decided: the discovered files do. A key only pre-v1 Mars defined
+/// makes the root a pre-v1 Mars package; Claude-only keys predict Claude; skills with only the
+/// standard's keys are `agent-skills`; anything else is Claude, Mars's default.
+fn predict_from_items(source: &impl TreeSource, discovery: &Discovery) -> Prediction {
     let mut claude_paths = Vec::new();
     let mut standard_only = true;
     let mut skills = 0;
@@ -365,6 +413,9 @@ fn predict_from_items(source: &impl TreeSource, discovery: &Discovery) -> Dialec
         else {
             continue;
         };
+        if is_pre_v1_mars(definition.kind, &frontmatter) {
+            return Prediction::MarsLegacy;
+        }
         let keys = frontmatter.keys();
         if keys.iter().any(|key| CLAUDE_KEYS.contains(&key.as_str())) {
             claude_paths.push(definition.source_path.clone());
@@ -377,14 +428,14 @@ fn predict_from_items(source: &impl TreeSource, discovery: &Discovery) -> Dialec
             standard_only = false;
         }
     }
-    if !claude_paths.is_empty() {
+    Prediction::Foreign(if !claude_paths.is_empty() {
         claude_paths.truncate(5);
         DialectChoice::predicted(Dialect::Claude, claude_paths)
     } else if skills > 0 && standard_only {
         DialectChoice::predicted(Dialect::AgentSkills, Vec::new())
     } else {
         DialectChoice::predicted(Dialect::Claude, Vec::new())
-    }
+    })
 }
 
 /// Files that vouch for a dialect, found in the root only.

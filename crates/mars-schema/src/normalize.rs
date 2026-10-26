@@ -309,7 +309,10 @@ fn finish_package<T: TreeSource>(
     };
     if prepared.manifest.is_none()
         && !refused
-        && matches!(prepared.classification, Classification::Foreign(_))
+        && matches!(
+            prepared.classification,
+            Classification::Foreign(_) | Classification::MarsLegacy
+        )
     {
         let name = spec
             .and_then(|spec| spec.name.clone())

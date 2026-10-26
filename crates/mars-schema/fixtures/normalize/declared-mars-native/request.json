@@ -1,0 +1,4 @@
+{
+  "source": { "name": "native-dep" },
+  "hint": { "dialect": "mars-native" }
+}

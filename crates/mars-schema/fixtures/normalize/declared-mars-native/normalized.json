@@ -1,0 +1,171 @@
+{
+  "kind": "mars-legacy",
+  "packages": [
+    {
+      "id": "native-dep",
+      "provenance": {
+        "translator": "0.18.3",
+        "source": {
+          "name": "native-dep"
+        },
+        "selected_items": [
+          "agents/planner.md",
+          "skills/plan/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "mars-legacy"
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "native-dep"
+              ]
+            ],
+            "fields": {
+              "name": "native-dep",
+              "version": "",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "agent",
+            "slug": "planner",
+            "source_path": "agents/planner.md",
+            "output_path": "agents/planner.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "planner"
+                ],
+                [
+                  "description",
+                  "Plans work"
+                ],
+                [
+                  "tools",
+                  {
+                    "Bash": "deny"
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "planner",
+                "description": "Plans work",
+                "harness": null,
+                "model": null,
+                "mode": null,
+                "model-invocable": true,
+                "user-invocable": true,
+                "approval": null,
+                "sandbox": null,
+                "effort": null,
+                "skills": {
+                  "load": [],
+                  "available": []
+                },
+                "subagents": [],
+                "tools": [
+                  {
+                    "capability": "bash",
+                    "pattern": null,
+                    "action": "deny"
+                  }
+                ],
+                "harness-overrides": {},
+                "model-policies": []
+              },
+              "body": "Plan the work.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "edited",
+              "paths": [
+                [
+                  "disallowed-tools"
+                ],
+                [
+                  "network"
+                ],
+                [
+                  "tools"
+                ]
+              ]
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "plan",
+            "source_path": "skills/plan/SKILL.md",
+            "output_path": "skills/plan/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "plan"
+                ],
+                [
+                  "description",
+                  "Already schema v1"
+                ],
+                [
+                  "metadata",
+                  {
+                    "type": "workflow"
+                  }
+                ]
+              ],
+              "fields": {
+                "name": "plan",
+                "description": "Already schema v1",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": {
+                  "type": "workflow"
+                }
+              },
+              "body": "Write the plan.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "diagnostics": {},
+        "upgrade_diagnostics": {
+          "agents/planner.md": [
+            {
+              "code": "field.removed",
+              "severity": "warning",
+              "path": [
+                "network"
+              ],
+              "message": "removed legacy key `network`"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "diagnostics": {}
+}

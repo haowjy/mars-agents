@@ -12,21 +12,23 @@ use crate::tool_policy::{self, EffectiveToolPolicy};
 
 /// The legacy upgrade drops the `discarded` keys and rewrites the rest.
 pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
-    RemovedField::discarded("network", "remove this unenforced field"),
-    RemovedField::discarded("network-allow", "remove this unenforced field"),
-    RemovedField::discarded("network-deny", "remove this unenforced field"),
-    RemovedField::discarded("fanout", "use consumer `[settings.meridian.fanout]`"),
-    RemovedField::discarded("models", "use `model-policies`"),
-    RemovedField::discarded("mcp-tools", "put MCP capability references in `tools`"),
-    RemovedField::discarded("autocompact", "configure compaction on the model alias"),
-    RemovedField::discarded("autocompact_pct", "configure compaction on the model alias"),
+    RemovedField::discarded("network", "remove this unenforced field").mars_only(),
+    RemovedField::discarded("network-allow", "remove this unenforced field").mars_only(),
+    RemovedField::discarded("network-deny", "remove this unenforced field").mars_only(),
+    RemovedField::discarded("fanout", "use consumer `[settings.meridian.fanout]`").mars_only(),
+    RemovedField::discarded("models", "use `model-policies`").mars_only(),
+    RemovedField::discarded("mcp-tools", "put MCP capability references in `tools`").mars_only(),
+    RemovedField::discarded("autocompact", "configure compaction on the model alias").mars_only(),
+    RemovedField::discarded("autocompact_pct", "configure compaction on the model alias")
+        .mars_only(),
     RemovedField::replaced("disallowed-tools", "use `tools: {<capability>: deny}`"),
-    RemovedField::replaced("model_invocable", "use `model-invocable`"),
-    RemovedField::replaced("user_invocable", "use `user-invocable`"),
+    RemovedField::replaced("model_invocable", "use `model-invocable`").mars_only(),
+    RemovedField::replaced("user_invocable", "use `user-invocable`").mars_only(),
     RemovedField::replaced(
         "permission",
         "move it under `harness-overrides.flow.permission`",
-    ),
+    )
+    .mars_only(),
 ];
 
 // ---------------------------------------------------------------------------

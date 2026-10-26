@@ -280,6 +280,7 @@ mod tests {
             version: None,
             dialect: None,
             filter: Default::default(),
+            unknown: Default::default(),
             plugin: None,
         };
         assert_eq!(infer_origin(&dep), "git");
@@ -295,6 +296,7 @@ mod tests {
             version: None,
             dialect: None,
             filter: Default::default(),
+            unknown: Default::default(),
             plugin: None,
         };
         assert_eq!(infer_origin(&dep), "path");

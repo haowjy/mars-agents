@@ -14,7 +14,7 @@ pub enum ConfigMutation {
     /// Add or update a dependency in mars.toml.
     UpsertDependency {
         name: SourceName,
-        entry: DependencyEntry,
+        entry: Box<DependencyEntry>,
     },
     /// Add or update multiple dependencies in mars.toml atomically under one sync lock.
     BatchUpsert(Vec<(SourceName, DependencyEntry)>),
@@ -180,12 +180,13 @@ mod tests {
                 ..FilterConfig::default()
             },
             plugin: None,
+            unknown: Default::default(),
         };
         apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
-                entry: entry1,
+                entry: Box::new(entry1),
             },
         )
         .unwrap();
@@ -203,12 +204,13 @@ mod tests {
                 ..FilterConfig::default()
             },
             plugin: None,
+            unknown: Default::default(),
         };
         apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
-                entry: entry2,
+                entry: Box::new(entry2),
             },
         )
         .unwrap();
@@ -236,12 +238,13 @@ mod tests {
                 ..FilterConfig::default()
             },
             plugin: None,
+            unknown: Default::default(),
         };
         apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
-                entry: entry1,
+                entry: Box::new(entry1),
             },
         )
         .unwrap();
@@ -255,12 +258,13 @@ mod tests {
             dialect: None,
             filter: FilterConfig::default(),
             plugin: None,
+            unknown: Default::default(),
         };
         apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
-                entry: entry2,
+                entry: Box::new(entry2),
             },
         )
         .unwrap();
@@ -292,12 +296,13 @@ mod tests {
                 ..FilterConfig::default()
             },
             plugin: None,
+            unknown: Default::default(),
         };
         apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
-                entry: entry1,
+                entry: Box::new(entry1),
             },
         )
         .unwrap();
@@ -314,12 +319,13 @@ mod tests {
                 ..FilterConfig::default()
             },
             plugin: None,
+            unknown: Default::default(),
         };
         apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
-                entry: entry2,
+                entry: Box::new(entry2),
             },
         )
         .unwrap();
@@ -351,6 +357,7 @@ mod tests {
                     dialect: None,
                     filter: FilterConfig::default(),
                     plugin: None,
+                    unknown: Default::default(),
                 },
             ),
             (
@@ -363,6 +370,7 @@ mod tests {
                     dialect: None,
                     filter: FilterConfig::default(),
                     plugin: None,
+                    unknown: Default::default(),
                 },
             ),
         ];
@@ -387,12 +395,13 @@ mod tests {
                 ..FilterConfig::default()
             },
             plugin: None,
+            unknown: Default::default(),
         };
         apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
-                entry: entry1,
+                entry: Box::new(entry1),
             },
         )
         .unwrap();
@@ -408,12 +417,13 @@ mod tests {
                 ..FilterConfig::default()
             },
             plugin: None,
+            unknown: Default::default(),
         };
         let changes = apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
-                entry: entry2,
+                entry: Box::new(entry2),
             },
         )
         .unwrap();

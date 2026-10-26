@@ -149,6 +149,7 @@ fn path_dependency_entry(path: &std::path::Path) -> DependencyEntry {
         dialect: None,
         plugin: None,
         filter: FilterConfig::default(),
+        unknown: Default::default(),
     }
 }
 
@@ -161,6 +162,7 @@ fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> Depen
         dialect: None,
         plugin: None,
         filter,
+        unknown: Default::default(),
     }
 }
 
@@ -620,6 +622,7 @@ fn planned_bump_entries_bump_all_outdated_pins() {
             dialect: None,
             filter: FilterConfig::default(),
             plugin: None,
+            unknown: Default::default(),
         },
     );
 
@@ -757,7 +760,7 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::UpsertDependency {
             name: "base".into(),
-            entry: path_dependency_entry(source.path()),
+            entry: Box::new(path_dependency_entry(source.path())),
         }),
         options: SyncOptions {
             dry_run: true,

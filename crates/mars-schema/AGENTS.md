@@ -153,7 +153,9 @@ is converted to `serde_json::Map` at the boundary.
 exposes `read`, `emitValue`, `rewriteBlock`, `vocabulary`, `prepare`, `inspect` and `normalize`
 as `@meridian-flow/mars-schema` (trees are `Map<path, Uint8Array>`). `prepare` is a supported
 export on its own: the way to read one root without choosing items. The npm `node/`, `web/` and
-`fixtures/` are built by `scripts/build-schema-wasm.sh`, never committed.
+`fixtures/` are built by `scripts/build-schema-wasm.sh`, never committed. The script builds the
+`wasm` Cargo profile (opt-level `z` for every dependency, so about a quarter smaller than
+`release` and about 60% slower to parse); the native `release` profile is untouched.
 
 `fixtures/<suite>/<case>/` are the published contract: `read`, `emit`, `upgrade`, `prepare`,
 `normalize` and `vocabulary`. Fixtures are checked in Rust (`tests/`) and in Node

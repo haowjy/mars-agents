@@ -5,9 +5,9 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 pkg="$root/npm/@meridian-flow/mars-schema"
 target_dir="$(realpath -m "${CARGO_TARGET_DIR:-$root/target}")"
-wasm="$target_dir/wasm32-unknown-unknown/release/mars_schema_wasm.wasm"
+wasm="$target_dir/wasm32-unknown-unknown/wasm/mars_schema_wasm.wasm"
 
-cargo build --manifest-path "$root/Cargo.toml" -p mars-schema-wasm --release --target wasm32-unknown-unknown
+cargo build --manifest-path "$root/Cargo.toml" -p mars-schema-wasm --profile wasm --target wasm32-unknown-unknown
 
 stage="$(mktemp -d "$pkg/.build.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT

@@ -245,7 +245,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     match &cli.command {
         // Root-free commands
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
-        Command::Check(args) => check::run(args, cli.json),
+        Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
         // All other commands require context
         cmd => {

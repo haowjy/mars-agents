@@ -529,11 +529,13 @@ Validate a source package before publishing.
 
 ```bash
 mars check [path]
+mars check --root PATH
 ```
 
 | Argument | Description |
 |---|---|
 | `path` | Directory to validate (default: current directory) |
+| `--root PATH` | The same directory, named as every other command names its root; giving it with `path` is an error |
 
 Does not require a mars project (no `mars.toml` needed). Validates:
 - `requires-mars` and `requires-meridian` syntax when `[package]` is present

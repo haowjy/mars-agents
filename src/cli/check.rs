@@ -37,17 +37,17 @@ pub(crate) struct CheckReport {
     warnings: Vec<String>,
 }
 
-/// Run `mars check`.
-pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
-    let authored_base = match &args.path {
-        Some(p) => {
-            if p.is_absolute() {
-                p.clone()
-            } else {
-                std::env::current_dir()?.join(p)
-            }
+/// Run `mars check`. `--root` names the directory like `PATH` does, and naming both is an error.
+pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
+    let authored_base = match (args.path.as_deref(), root) {
+        (Some(_), Some(_)) => {
+            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
+                message: "`mars check` takes a PATH or --root, not both".to_string(),
+            }));
         }
-        None => std::env::current_dir()?,
+        (Some(path), None) | (None, Some(path)) if path.is_absolute() => path.to_path_buf(),
+        (Some(path), None) | (None, Some(path)) => std::env::current_dir()?.join(path),
+        (None, None) => std::env::current_dir()?,
     };
 
     if !authored_base.is_dir() {
@@ -589,7 +589,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 
@@ -619,7 +619,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 
@@ -636,7 +636,7 @@ mod tests {
             path: Some(dir.path().to_path_buf()),
             verbose: false,
         };
-        let code = super::run(&args, true).unwrap();
+        let code = super::run(&args, None, true).unwrap();
         assert_eq!(code, 0);
     }
 

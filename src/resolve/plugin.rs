@@ -63,10 +63,20 @@ pub(crate) fn root_package(
     };
     let plugin = match (named, inspection.plugins.as_slice()) {
         (Some(plugin_name), _) => {
-            if inspection.kind != Kind::Marketplace {
-                return Err(invalid(format!(
-                    "`{name}` names plugin `{plugin_name}`, but {source} is not a Claude marketplace (it has no `.claude-plugin/marketplace.json`)"
-                )));
+            match inspection.kind {
+                Kind::Marketplace => {}
+                // The manifest decides before a marketplace file does: a Mars package's own
+                // plugin output carries one at its root.
+                Kind::Schema1 | Kind::MarsLegacy | Kind::SchemaNewer => {
+                    return Err(invalid(format!(
+                        "`{name}` names plugin `{plugin_name}`, but {source} is a Mars package (it has a `mars.toml`) and is read as one: drop `plugin` (`--plugin` on `mars add`)"
+                    )));
+                }
+                _ => {
+                    return Err(invalid(format!(
+                        "`{name}` names plugin `{plugin_name}`, but {source} is not a Claude marketplace (it has no `.claude-plugin/marketplace.json`)"
+                    )));
+                }
             }
             inspection
                 .plugins

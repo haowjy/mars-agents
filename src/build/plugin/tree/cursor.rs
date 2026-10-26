@@ -5,15 +5,16 @@ use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
 
 use super::super::spec::{
-    Finish, NameRule, PluginHarnessSpec, RootFile, TreeProfile, valid_cursor_plugin_name,
+    Finish, NameRule, PluginHarnessSpec, PluginRoot, RootFile, TreeProfile,
+    valid_cursor_plugin_name,
 };
+use crate::plugin_metadata::{CURSOR_ROOT_FILE, GeneratedRootFile};
 
 pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     key: "cursor",
     harness: HarnessKind::Cursor,
     root_file: RootFile::Marketplace {
-        path: crate::plugin_metadata::CURSOR_MARKETPLACE_FILE,
-        catalog_directory: crate::plugin_metadata::CURSOR_CATALOG_DIRECTORY,
+        file: GeneratedRootFile::marketplace(CURSOR_ROOT_FILE),
         source_prefix: "",
         name_rule: NameRule {
             validate: valid_cursor_plugin_name,
@@ -24,7 +25,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     approximate_lowers_to_dropped: true,
     agents: Some(preserve_agent),
     native_model_aliases: &[],
-    plugin_root_token: Some("${CURSOR_PLUGIN_ROOT}"),
+    plugin_root: PluginRoot::Token("${CURSOR_PLUGIN_ROOT}"),
     check_hook,
     write_config: write_config_entries,
     finish: Finish::StandardManifest {

@@ -282,9 +282,7 @@ fn remove_empty_catalog_directory(package_root: &Path, relative: &str) -> Result
 }
 
 fn catalog_directory(path: &str) -> Option<&'static str> {
-    spec::trees()
-        .find(|tree| tree.root_file.path() == path)
-        .and_then(|tree| tree.root_file.catalog_directory())
+    spec::tree_for_root_file(Path::new(path)).and_then(|tree| tree.root_file.catalog_directory())
 }
 
 fn path_exists(path: &Path) -> Result<bool, MarsError> {

@@ -62,7 +62,7 @@ sync/build → resolve ← source
 | Change | Modules |
 |---|---|
 | New harness | `harness/registry.rs`, `target/` adapter, `compiler/agents/lower.rs` |
-| New plugin harness / tree | `build/plugin/spec.rs` (one harness row); for a new tree, one profile plus writer in `build/plugin/tree/` and one `TREE_PROFILES` entry |
+| New plugin harness / tree | `build/plugin/spec.rs` (one harness row); for a new tree, one profile plus writer in `build/plugin/tree/`, one `TREE_PROFILES` entry, and the root file it generates declared in `plugin_metadata.rs` so the profile can name it |
 | New CLI command | `cli/mod.rs` (enum + dispatch), `cli/<cmd>.rs` |
 | Config schema change | `config/mod.rs`, `config/routing_settings.rs` |
 | Sync pipeline phase | `sync/mod.rs` (phase struct + function) |

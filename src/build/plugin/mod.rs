@@ -6,8 +6,8 @@ mod model;
 pub mod output;
 mod references;
 mod root_files;
-pub(crate) mod spec;
-pub mod support;
+mod spec;
+mod support;
 mod tree;
 
 pub(crate) use inspect::inspect_validated;

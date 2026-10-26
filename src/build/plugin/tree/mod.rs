@@ -16,13 +16,13 @@ use super::PluginComponents;
 use super::metadata::PackageMetadata;
 use super::model::{ModelFallbackReason, resolve_model};
 use super::references::qualify_body_references;
-use super::spec::{AgentPolicy, TreeProfile};
+use super::spec::{AgentPolicy, Finish, TreeProfile};
 
 pub(in crate::build::plugin) mod claude;
 pub(in crate::build::plugin) mod cursor;
 pub(in crate::build::plugin) mod opencode;
 
-pub(crate) struct WrittenTreeContents<'a> {
+pub(super) struct WrittenTreeContents<'a> {
     pub skills: &'a [String],
     pub hooks: &'a [&'a crate::compiler::hooks::ParsedHookItem],
     pub config_entries: &'a [ConfigEntry],
@@ -98,6 +98,24 @@ pub(super) fn standard_config_entries(
         }
     }
     (mcp, hooks)
+}
+
+/// Run a tree's finish step. The standard manifest path and a custom writer are
+/// both tree facts, so the dispatch lives with the writers and `spec` stays
+/// declarative.
+pub(super) fn finish(
+    profile: &TreeProfile,
+    root: &Path,
+    metadata: &PackageMetadata,
+    contents: &WrittenTreeContents<'_>,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    match profile.finish {
+        Finish::StandardManifest { path, description } => {
+            write_standard_manifest(root, path, description, metadata)
+        }
+        Finish::Custom(writer) => writer(profile, root, metadata, contents, diag),
+    }
 }
 
 pub(super) struct TermSet {
@@ -297,13 +315,9 @@ pub(super) fn write_tree(
         &mcp,
         adapter,
         |hook| {
-            format!(
-                "{}/hooks/{}",
-                profile
-                    .plugin_root_token
-                    .expect("merged hook config needs a plugin root token"),
-                hook.def.name
-            )
+            profile
+                .plugin_root
+                .qualify(&format!("hooks/{}", hook.def.name))
         },
         diag,
     );
@@ -321,9 +335,7 @@ pub(super) fn write_tree(
         .filter(|entry| matches!(entry, ConfigEntry::McpServer(_)))
         .count();
 
-    profile
-        .finish
-        .run(profile, root, input.metadata, &contents, diag)?;
+    finish(profile, root, input.metadata, &contents, diag)?;
 
     normalize_text_tree(root)?;
     Ok(BuiltTree {

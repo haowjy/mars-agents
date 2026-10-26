@@ -5,9 +5,11 @@ use crate::sync::target::TargetItem;
 use crate::target::{ConfigEntry, McpServerEntry};
 
 use super::super::spec::{
-    Finish, NameRule, PluginHarnessSpec, RootFile, TreeProfile, valid_claude_plugin_name,
+    Finish, NameRule, PluginHarnessSpec, PluginRoot, RootFile, TreeProfile,
+    valid_claude_plugin_name,
 };
 use super::invalid_item;
+use crate::plugin_metadata::{CLAUDE_ROOT_FILE, GeneratedRootFile};
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
 
@@ -15,8 +17,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     key: "claude",
     harness: HarnessKind::Claude,
     root_file: RootFile::Marketplace {
-        path: crate::plugin_metadata::CLAUDE_MARKETPLACE_FILE,
-        catalog_directory: crate::plugin_metadata::CLAUDE_CATALOG_DIRECTORY,
+        file: GeneratedRootFile::marketplace(CLAUDE_ROOT_FILE),
         source_prefix: "./",
         name_rule: NameRule {
             validate: valid_claude_plugin_name,
@@ -27,7 +28,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     approximate_lowers_to_dropped: false,
     agents: Some(apply_agent_policy),
     native_model_aliases: NATIVE_MODEL_ALIASES,
-    plugin_root_token: Some("${CLAUDE_PLUGIN_ROOT}"),
+    plugin_root: PluginRoot::Token("${CLAUDE_PLUGIN_ROOT}"),
     check_hook,
     write_config: write_config_entries,
     finish: Finish::StandardManifest {

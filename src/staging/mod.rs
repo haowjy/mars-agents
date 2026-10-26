@@ -51,7 +51,6 @@ pub(crate) struct RootedStageOptions {
 }
 
 /// Stage a package tree and repoint `package_root` at the staged output.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_rooted_source(
     source_name: &SourceName,
     rooted: RootedSourceRef,
@@ -141,7 +140,6 @@ fn detect_unreadable_hook_surface(
 }
 
 /// Copy `source_root` into `dest_root`, rewriting frontmatter through lift.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_canonical_source(
     source_root: &Path,
     dest_root: &Path,

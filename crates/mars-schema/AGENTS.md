@@ -108,15 +108,17 @@ to `harness-overrides.<harness>`); removed fields are errors (`field.removed`). 
 vocabulary is one table iterated by every consumer: `REMOVED_AGENT_FIELDS` and
 `REMOVED_SKILL_FIELDS` serve the reader and, through their `discarded` entries, the upgrade
 (the skill table's discarded keys are also the import's skill tool keys, `skill::tool_keys`);
-`CLAUDE_ONLY_*` serve the upgrade and the Claude translation, which move Claude-only keys under
-`harness-overrides.claude` instead of deleting them.
+`claude::translate::move_to_claude_overrides` is the one mover of Claude-only keys, for the upgrade and
+the Claude translation: it moves them under `harness-overrides.claude` instead of deleting them. An
+override already there wins and the key it displaces is a warning; a non-mapping `harness-overrides`
+leaves the keys in place with a warning.
 
 `upgrade` is the single pure pre-v1-to-v1 conversion used by both package preparation and
 `mars migrate`. Definition upgrades edit only changed top-level blocks and keep all other
 authored bytes. A non-block top-level mapping or failed semantic verification falls back to a
 reported full frontmatter rewrite. Unchanged definitions and schema-v1 manifests remain
 byte-identical. What an upgrade dropped or could not carry over is `Prepared.upgrade_diagnostics`,
-and `Prepared::needs_migration` is the typed signal that a legacy package was read.
+and `Prepared::files_to_migrate` counts the authored files a legacy package's upgrade changed.
 
 Frontmatter is bounded (`MAX_FRONTMATTER_BYTES`, 64 KiB: `frontmatter.too-large`; `MAX_FLOW_DEPTH`, 64
 open brackets over the raw text: `frontmatter.too-deep`) in the one parse every reader shares,

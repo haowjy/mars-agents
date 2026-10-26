@@ -592,7 +592,7 @@ exclude = ["thinking"]
 | `exclude` | string[] | no | Glob patterns to exclude from matches |
 | `autocompact` | u32 | no | Token count threshold that triggers context compaction (0–4294967295) |
 | `autocompact_pct` | u8 | no | Context fill percentage (1–100) that triggers compaction; launchers may combine it with `autocompact` when the harness exposes both controls |
-| `default_effort` | string | no | Effort used when nothing above the alias sets one: `low`, `medium`, `high`, `xhigh` or `auto` (not `none`) |
+| `default_effort` | string | no | Effort used when nothing above the alias sets one: `low`, `medium`, `high`, `xhigh`, `max` or `auto` (not `none`) |
 | `prompting` | string | no | Guidance text that `mars models prompting <alias>` prints |
 
 Compaction settings come only from the alias. An Agent has no compaction keys in schema 1, and an `[agents.<name>]` overlay has none, so a threshold moves with the model rather than with the Agent. `default_effort` is the last step of the [precedence chain](schema-v1.md#model-policies).

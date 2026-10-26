@@ -241,7 +241,7 @@ impl<'de> Deserialize<'de> for ModelAlias {
         }
         let default_effort = raw.default_effort.filter(|value| !value.trim().is_empty());
         if let Some(ref effort) = default_effort {
-            const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "auto"];
+            const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max", "auto"];
             if !VALID_EFFORTS.contains(&effort.as_str()) {
                 return Err(serde::de::Error::custom(format!(
                     "invalid default_effort '{effort}'; accepted values: {}",

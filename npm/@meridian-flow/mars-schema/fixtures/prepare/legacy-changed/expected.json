@@ -6,6 +6,7 @@
     "source_path": "mars.toml",
     "output_path": "mars.toml",
     "reading": {
+      "frontmatter": [],
       "fields": {
         "name": "demo",
         "version": "1.0.0",
@@ -34,6 +35,20 @@
       "reading": {
         "kind": "agent",
         "result": {
+          "frontmatter": [
+            [
+              "name",
+              "coder"
+            ],
+            [
+              "description",
+              "Codes"
+            ],
+            [
+              "model-invocable",
+              false
+            ]
+          ],
           "fields": {
             "name": "coder",
             "description": "Codes",

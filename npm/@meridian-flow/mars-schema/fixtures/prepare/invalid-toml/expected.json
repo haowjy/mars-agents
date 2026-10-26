@@ -6,6 +6,7 @@
     "source_path": "mars.toml",
     "output_path": "mars.toml",
     "reading": {
+      "frontmatter": [],
       "fields": null,
       "body": null,
       "unknown": [],

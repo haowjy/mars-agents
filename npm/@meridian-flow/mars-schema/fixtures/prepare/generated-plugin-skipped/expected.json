@@ -16,6 +16,16 @@
       "reading": {
         "kind": "skill",
         "result": {
+          "frontmatter": [
+            [
+              "name",
+              "kept"
+            ],
+            [
+              "description",
+              "Kept"
+            ]
+          ],
           "fields": {
             "name": "kept",
             "description": "Kept",

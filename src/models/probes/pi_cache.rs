@@ -123,9 +123,14 @@ fn write_cache_at(path: &Path, entry: &PiProbeCacheEntry) -> Result<(), MarsErro
 }
 
 fn try_lock() -> Option<crate::fs::FileLock> {
-    crate::fs::FileLock::try_acquire(&lock_path().ok()?)
-        .ok()
-        .flatten()
+    match crate::fs::FileLock::try_acquire(&lock_path().ok()?) {
+        Ok(lock) => lock,
+        // Best-effort cache: a lock error skips the refresh, but say so — it is not contention.
+        Err(error) => {
+            eprintln!("debug: pi probe cache lock failed: {error}");
+            None
+        }
+    }
 }
 
 fn blocking_lock() -> Option<crate::fs::FileLock> {

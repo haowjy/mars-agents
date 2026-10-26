@@ -180,16 +180,21 @@ pub(super) fn plan(
 
     // Publication swaps the tree and sentinel first and rewrites root files
     // after, so a death in between leaves the previous Mars-written bytes in
-    // place. Only files that still match their live record may be claimed: a
-    // hand edit is never recorded as Mars content.
+    // place. Record only the paths this publication really replaces or deletes:
+    // a path it leaves byte-identical needs no recovery, and a retired path
+    // stops being claimed once its bytes no longer match.
     let mut root_files_previous = BTreeMap::new();
     for state in &state.root_files {
-        let PluginRootFileState::RecordedUnchanged { recorded_hash, .. } = state else {
+        let Some(disk_hash) = state.disk_output_hash() else {
             continue;
         };
         let key = portable_path(state.path())?;
-        if touched.contains(&key) {
-            root_files_previous.insert(key, recorded_hash.clone());
+        let replaced = match writes.get(&key) {
+            Some(bytes) => crate::hash::hash_bytes(bytes) != disk_hash,
+            None => deletes.contains(&key),
+        };
+        if replaced {
+            root_files_previous.insert(key, disk_hash.to_string());
         }
     }
 

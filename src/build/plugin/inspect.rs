@@ -123,6 +123,13 @@ pub enum PluginRootFileState {
         path: PathBuf,
         recorded_hash: String,
     },
+    /// The bytes on disk are the previous build's output: publication died
+    /// between replacing the tree and rewriting this file, or a checkout
+    /// restored an older build. The build may finish the job.
+    PreviousBuild {
+        path: PathBuf,
+        recorded_hash: String,
+    },
     RecordedChanged {
         path: PathBuf,
         recorded_hash: String,
@@ -137,15 +144,30 @@ impl PluginRootFileState {
         match self {
             Self::Absent { path, .. }
             | Self::RecordedUnchanged { path, .. }
+            | Self::PreviousBuild { path, .. }
             | Self::RecordedChanged { path, .. }
             | Self::Unrecorded { path } => path,
         }
     }
 
+    /// Hash of the Mars-owned bytes this inspection found on disk, if any.
+    ///
+    /// Today's output and the previous build's output are both Mars's own
+    /// bytes, so the build may replace or delete them, and a publication
+    /// records them as the bytes it replaces.
+    pub(super) fn disk_output_hash(&self) -> Option<&str> {
+        match self {
+            Self::RecordedUnchanged { recorded_hash, .. }
+            | Self::PreviousBuild { recorded_hash, .. } => Some(recorded_hash),
+            _ => None,
+        }
+    }
+
     /// Whether Mars may replace this path with `bytes`.
     ///
-    /// An absent path and an unchanged recorded path are owned. A changed or
-    /// unrecorded path is accepted only when publishing would be byte-identical.
+    /// An absent path, a path still matching its record, and one still holding
+    /// the previous build's output are owned. A changed or unrecorded path is
+    /// accepted only when publishing would be byte-identical.
     pub(crate) fn allows_write(
         &self,
         package_root: &Path,
@@ -185,6 +207,7 @@ impl PluginRootFileState {
         match self {
             Self::Absent { recorded_hash, .. } => recorded_hash.as_deref(),
             Self::RecordedUnchanged { recorded_hash, .. }
+            | Self::PreviousBuild { recorded_hash, .. }
             | Self::RecordedChanged { recorded_hash, .. } => Some(recorded_hash),
             Self::Unrecorded { .. } => None,
         }
@@ -194,6 +217,10 @@ impl PluginRootFileState {
     pub fn message(&self) -> Option<String> {
         match self {
             Self::Absent { .. } | Self::RecordedUnchanged { .. } => None,
+            Self::PreviousBuild { path, .. } => Some(format!(
+                "generated root file {} still holds the previous build's output; run `mars build plugin` to finish the interrupted publication or refresh it",
+                path.display()
+            )),
             Self::RecordedChanged { path, .. } => Some(root_file_conflict_message(
                 path,
                 "differs from the hash in the current Mars sentinel",
@@ -353,70 +380,93 @@ fn inspect_root_files(
     if let Some(recorded) = recorded {
         paths.extend(recorded.keys().cloned());
     }
-    // A path that only the previous build recorded is one this build retired
-    // (or one whose write died); retry its removal instead of orphaning it.
-    if let Some(previous) = previous {
-        paths.extend(previous.keys().cloned());
-    }
 
-    paths
+    let mut states: Vec<PluginRootFileState> = paths
         .into_iter()
-        .map(|path| {
-            let relative = PathBuf::from(&path);
-            if !relative
-                .components()
-                .all(|component| matches!(component, std::path::Component::Normal(_)))
-            {
-                return Err(MarsError::InvalidRequest {
-                    message: format!("invalid generated root-file path in Mars sentinel: {path}"),
-                });
+        .map(|path| root_file_state(package_root, &path, recorded, previous))
+        .collect::<Result<_, _>>()?;
+
+    // A path only the previous build recorded is one this build retired, or one
+    // whose write died. It stays in play only while its bytes are still that
+    // build's output: a user's own file at a retired path is not Mars's to
+    // touch or refuse, so a mismatch drops the path entirely.
+    if let Some(previous) = previous {
+        for (path, previous_hash) in previous {
+            if states.iter().any(|state| state.path() == Path::new(path)) {
+                continue;
             }
-            let state = root_file_hash(package_root, &relative)?;
-            Ok(match state {
-                RootPathState::Missing => PluginRootFileState::Absent {
-                    path: relative,
-                    recorded_hash: recorded.and_then(|files| files.get(&path)).cloned(),
-                },
-                // `previous` covers a publication that swapped the tree and
-                // sentinel but died before rewriting this root file: the bytes
-                // on disk are still Mars output, not a hand edit.
-                RootPathState::Regular(hash)
-                    if recorded_hash(recorded, &path) == Some(hash.as_str())
-                        || recorded_hash(previous, &path) == Some(hash.as_str()) =>
-                {
-                    PluginRootFileState::RecordedUnchanged {
-                        path: relative,
-                        recorded_hash: hash,
-                    }
-                }
-                RootPathState::Regular(_) | RootPathState::NonRegular
-                    if recorded.is_some_and(|files| files.contains_key(&path)) =>
-                {
-                    PluginRootFileState::RecordedChanged {
-                        path: relative,
-                        recorded_hash: recorded
-                            .and_then(|files| files.get(&path))
-                            .expect("recorded path has a hash")
-                            .clone(),
-                    }
-                }
-                RootPathState::Regular(_) | RootPathState::NonRegular
-                    if previous.is_some_and(|files| files.contains_key(&path)) =>
-                {
-                    PluginRootFileState::RecordedChanged {
-                        path: relative,
-                        recorded_hash: previous
-                            .and_then(|files| files.get(&path))
-                            .expect("previous path has a hash")
-                            .clone(),
-                    }
-                }
-                RootPathState::Regular(_) | RootPathState::NonRegular => {
-                    PluginRootFileState::Unrecorded { path: relative }
-                }
-            })
-        })
-        .collect()
+            let relative = relative_root_path(path)?;
+            let RootPathState::Regular(current) = root_file_hash(package_root, &relative)? else {
+                continue;
+            };
+            if current != *previous_hash {
+                continue;
+            }
+            states.push(PluginRootFileState::PreviousBuild {
+                path: relative,
+                recorded_hash: current,
+            });
+        }
+    }
+    Ok(states)
+}
+
+fn root_file_state(
+    package_root: &Path,
+    path: &str,
+    recorded: Option<&BTreeMap<String, String>>,
+    previous: Option<&BTreeMap<String, String>>,
+) -> Result<PluginRootFileState, MarsError> {
+    let relative = relative_root_path(path)?;
+    Ok(match root_file_hash(package_root, &relative)? {
+        RootPathState::Missing => PluginRootFileState::Absent {
+            path: relative,
+            recorded_hash: recorded.and_then(|files| files.get(path)).cloned(),
+        },
+        RootPathState::Regular(hash) if recorded_hash(recorded, path) == Some(hash.as_str()) => {
+            PluginRootFileState::RecordedUnchanged {
+                path: relative,
+                recorded_hash: hash,
+            }
+        }
+        // `previous` covers a publication that swapped the tree and sentinel
+        // but died before rewriting this root file, and a checkout that
+        // restored an older build: the bytes are Mars output either way, so the
+        // build may finish the job instead of refusing them as a hand edit.
+        RootPathState::Regular(hash) if recorded_hash(previous, path) == Some(hash.as_str()) => {
+            PluginRootFileState::PreviousBuild {
+                path: relative,
+                recorded_hash: hash,
+            }
+        }
+        RootPathState::Regular(_) | RootPathState::NonRegular
+            if recorded.is_some_and(|files| files.contains_key(path)) =>
+        {
+            PluginRootFileState::RecordedChanged {
+                path: relative,
+                recorded_hash: recorded
+                    .and_then(|files| files.get(path))
+                    .expect("recorded path has a hash")
+                    .clone(),
+            }
+        }
+        RootPathState::Regular(_) | RootPathState::NonRegular => {
+            PluginRootFileState::Unrecorded { path: relative }
+        }
+    })
+}
+
+fn relative_root_path(path: &str) -> Result<PathBuf, MarsError> {
+    let relative = PathBuf::from(path);
+    if !relative
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(MarsError::InvalidRequest {
+            message: format!("invalid generated root-file path in Mars sentinel: {path}"),
+        });
+    }
+    Ok(relative)
 }
 
 fn recorded_hash<'a>(

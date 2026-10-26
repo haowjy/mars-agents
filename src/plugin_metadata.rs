@@ -31,10 +31,12 @@ pub(crate) struct PluginSentinel {
     pub files: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub root_files: std::collections::BTreeMap<String, String>,
-    /// Root-file hashes this build replaced: the Mars-owned bytes still on disk
-    /// if publication died before rewriting them. Publishing the tree and the
-    /// root files takes two steps; without this record the next build could not
-    /// tell its own earlier write from a hand edit.
+    /// Root-file hashes this build replaces or deletes: the Mars-owned bytes
+    /// still on disk if publication died before rewriting them. Publishing the
+    /// tree and the root files takes two steps; without this record the next
+    /// build could not tell its own earlier write from a hand edit. A path
+    /// counts only while its bytes still match, so a user's own file at a
+    /// retired path is never claimed.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub root_files_previous: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]

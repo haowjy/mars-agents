@@ -279,7 +279,7 @@ fn push_agent_invalid(
         path.iter()
             .map(|segment| match segment {
                 PathSegment::Key(key) => key.clone(),
-                PathSegment::Index(index) => format!("[{}]", index + 1),
+                PathSegment::Index(index) => format!("[{}]", index),
             })
             .fold(String::new(), |mut display, segment| {
                 if !display.is_empty() && !segment.starts_with('[') {
@@ -399,7 +399,12 @@ fn parse_native_config_value(
                     }
                 }
             } else {
-                push_agent_invalid(diags, path.to_vec(), format!("{value:?}"), "JSON number");
+                push_agent_invalid(
+                    diags,
+                    path.to_vec(),
+                    crate::ordered::plain(value),
+                    "JSON number",
+                );
                 None
             }
         }
@@ -418,7 +423,12 @@ fn parse_native_config_value(
             let mut out = IndexMap::new();
             for (key, entry) in mapping {
                 let Some(key_text) = key.as_str() else {
-                    push_agent_invalid(diags, path.to_vec(), format!("{key:?}"), "string keys");
+                    push_agent_invalid(
+                        diags,
+                        path.to_vec(),
+                        crate::ordered::plain(key),
+                        "string keys",
+                    );
                     continue;
                 };
                 let mut child_path = path.to_vec();
@@ -436,7 +446,7 @@ fn parse_native_config_value(
             push_agent_invalid(
                 diags,
                 path.to_vec(),
-                format!("{value:?}"),
+                crate::ordered::plain(value),
                 "YAML/TOML/JSON-serializable value",
             );
             None
@@ -455,7 +465,7 @@ fn parse_harness_overrides(
         push_agent_invalid(
             diags,
             root.clone(),
-            format!("{val:?}"),
+            crate::ordered::plain(val),
             "mapping of harness name to target-native config mapping",
         );
         return out;
@@ -463,7 +473,12 @@ fn parse_harness_overrides(
 
     for (k, v) in mapping {
         let Some(harness_name) = k.as_str() else {
-            push_agent_invalid(diags, root.clone(), format!("{k:?}"), "string harness keys");
+            push_agent_invalid(
+                diags,
+                root.clone(),
+                crate::ordered::plain(k),
+                "string harness keys",
+            );
             continue;
         };
         let mut harness_path = root.clone();
@@ -475,7 +490,7 @@ fn parse_harness_overrides(
             push_agent_invalid(
                 diags,
                 harness_path,
-                format!("{v:?}"),
+                crate::ordered::plain(v),
                 "mapping of target-native keys",
             );
             continue;
@@ -491,7 +506,7 @@ fn parse_harness_overrides(
                 push_agent_invalid(
                     diags,
                     harness_path.clone(),
-                    format!("{target_key:?}"),
+                    crate::ordered::plain(target_key),
                     "string target-native keys",
                 );
                 continue;
@@ -620,7 +635,7 @@ fn parse_model_policies(
         push_model_policy_invalid(
             diags,
             crate::diagnostic::key_path("model-policies"),
-            format!("{val:?}"),
+            crate::ordered::plain(val),
             "sequence of rules",
         );
         return vec![];

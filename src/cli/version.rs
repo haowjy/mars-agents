@@ -1357,7 +1357,7 @@ mod tests {
         let err = run(&args, &ctx, true).unwrap_err();
         let message = err.to_string();
         assert!(
-            message.contains("package check failed") && message.contains("model-policies[1].match"),
+            message.contains("package check failed") && message.contains("model-policies[0].match"),
             "expected model-policies package check failure: {message}"
         );
 

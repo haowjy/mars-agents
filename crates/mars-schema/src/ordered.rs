@@ -193,3 +193,14 @@ impl<'de> Visitor<'de> for OrderedVisitor {
         Ok(OrderedValue::Object(out))
     }
 }
+
+/// A YAML value as plain text for a diagnostic: compact JSON when it has a JSON form (strings
+/// quoted, so an empty or multi-line one stays visible), else its YAML text. Never Rust `Debug`.
+pub(crate) fn plain(value: &serde_yaml::Value) -> String {
+    match OrderedValue::from_yaml(value) {
+        Ok(json) => serde_json::to_string(&json).unwrap_or_default(),
+        Err(_) => serde_yaml::to_string(value)
+            .map(|text| text.trim_end().to_owned())
+            .unwrap_or_default(),
+    }
+}

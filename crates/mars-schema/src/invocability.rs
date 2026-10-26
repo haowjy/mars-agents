@@ -11,7 +11,7 @@ use crate::frontmatter::Frontmatter;
 fn value_label(val: &Value) -> String {
     val.as_str()
         .map(str::to_owned)
-        .unwrap_or_else(|| format!("{val:?}"))
+        .unwrap_or_else(|| crate::ordered::plain(val))
 }
 
 /// A frontmatter invocability axis and the key that supplied it.

@@ -268,7 +268,7 @@ fn parse_tools_field(val: &Value, on_invalid: OnInvalid<'_>) -> Vec<ToolRule> {
     if permission_replace_entries(val).is_some() {
         on_invalid(
             field.clone(),
-            &serde_json::to_string(val).unwrap_or_else(|_| format!("{val:?}")),
+            &crate::ordered::plain(val),
             "plain list or mapping of tool to allow|deny|ask; package profiles cannot replace a permission set",
         );
         return Vec::new();
@@ -278,14 +278,18 @@ fn parse_tools_field(val: &Value, on_invalid: OnInvalid<'_>) -> Vec<ToolRule> {
             let mut rules = Vec::new();
             for (key, value) in mapping {
                 let Some(tool_name) = key.as_str() else {
-                    on_invalid(field.clone(), &format!("{key:?}"), "string tool keys");
+                    on_invalid(
+                        field.clone(),
+                        &crate::ordered::plain(key),
+                        "string tool keys",
+                    );
                     continue;
                 };
 
                 let mut entry_path = field.clone();
                 entry_path.push(PathSegment::Key(tool_name.to_owned()));
                 let Some(policy) = value.as_str() else {
-                    on_invalid(entry_path, &format!("{value:?}"), ACTIONS_ALLOWED);
+                    on_invalid(entry_path, &crate::ordered::plain(value), ACTIONS_ALLOWED);
                     continue;
                 };
                 let Some(action) = ToolAction::parse(policy) else {
@@ -311,7 +315,7 @@ fn parse_tools_field(val: &Value, on_invalid: OnInvalid<'_>) -> Vec<ToolRule> {
         _ => {
             on_invalid(
                 field,
-                &serde_json::to_string(val).unwrap_or_else(|_| format!("{val:?}")),
+                &crate::ordered::plain(val),
                 "mapping of tool to allow|deny|ask",
             );
             Vec::new()

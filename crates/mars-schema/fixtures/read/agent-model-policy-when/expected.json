@@ -67,7 +67,7 @@
         1,
         "when"
       ],
-      "message": "agent field `model-policies[2].when` has invalid value `String(\"\")`; allowed: non-empty one-line string"
+      "message": "agent field `model-policies[1].when` has invalid value `\"\"`; allowed: non-empty one-line string"
     },
     {
       "code": "field.value",
@@ -77,7 +77,7 @@
         2,
         "when"
       ],
-      "message": "agent field `model-policies[3].when` has invalid value `String(\"two\\nlines\")`; allowed: non-empty one-line string"
+      "message": "agent field `model-policies[2].when` has invalid value `\"two\\nlines\"`; allowed: non-empty one-line string"
     },
     {
       "code": "field.value",
@@ -87,7 +87,7 @@
         3,
         "when"
       ],
-      "message": "agent field `model-policies[4].when` has invalid value `String(\"trailing\\n\")`; allowed: non-empty one-line string"
+      "message": "agent field `model-policies[3].when` has invalid value `\"trailing\\n\"`; allowed: non-empty one-line string"
     }
   ]
 }

@@ -179,7 +179,7 @@ pub fn apply_renames(
             Err(error) => {
                 warnings.push(format!(
                     "warning: could not rewrite skill name in {}: {error}",
-                    skill_path.display()
+                    package_location(&item.source_name, &skill_path)
                 ));
                 continue;
             }
@@ -191,7 +191,7 @@ pub fn apply_renames(
             }
             Err(error) => warnings.push(format!(
                 "warning: could not rewrite skill name in {}: {error}",
-                skill_path.display()
+                package_location(&item.source_name, &skill_path)
             )),
         }
     }
@@ -247,7 +247,7 @@ pub fn apply_renames(
                 }
                 Err(error) => warnings.push(format!(
                     "warning: could not rewrite agent name in {}: {error}",
-                    source_path.display()
+                    package_location(&source_name, &source_path)
                 )),
             }
         }
@@ -358,6 +358,27 @@ fn renames_for_agent(
     renames_for_agent
 }
 
+/// `agents/<file>` or `skills/<name>/SKILL.md` within its package: a path inside the cache or
+/// an archive is no use to the person reading the warning.
+fn package_relative(path: &std::path::Path) -> String {
+    let parts: Vec<_> = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    match parts
+        .iter()
+        .rposition(|part| part == "agents" || part == "skills")
+    {
+        Some(at) => parts[at..].join("/"),
+        None => parts.last().cloned().unwrap_or_default(),
+    }
+}
+
+/// `<package>: agents/<file>`, naming the dependency instead of its cache location.
+fn package_location(source_name: &SourceName, path: &std::path::Path) -> String {
+    format!("{source_name}: {}", package_relative(path))
+}
+
 fn rewrite_content_for_agent(
     content: &mut String,
     renames: &IndexMap<String, String>,
@@ -380,7 +401,7 @@ fn rewrite_content_for_agent(
         Err(e) => {
             warnings.push(format!(
                 "warning: could not rewrite {label} refs in {}: {e}",
-                source_path.display()
+                package_relative(source_path)
             ));
         }
     }

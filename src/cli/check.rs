@@ -731,7 +731,7 @@ mod tests {
 
         let joined = report.errors.join("\n");
         assert!(
-            joined.contains("model-policies[1].match"),
+            joined.contains("model-policies[0].match"),
             "expected model-policies match error: {joined}"
         );
     }

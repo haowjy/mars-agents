@@ -258,7 +258,7 @@ pub(crate) fn prepare_rooted(
         .unwrap_or(source_name.as_ref());
     report_diagnostics(
         &prepared,
-        &rooted.authored_root,
+        &|relative| format!("{package_name}: {relative}"),
         &format!(
             "package `{package_name}` uses the pre-v1 format; run `mars migrate` in its repository"
         ),
@@ -316,7 +316,7 @@ pub(crate) fn prepare_authored(
         }
         PrepareContext::Package => package_legacy_warning(&prepared, root),
     };
-    report_diagnostics(&prepared, root, &legacy_warning, diag);
+    report_diagnostics(&prepared, &source_label(root), &legacy_warning, diag);
     Ok(prepared)
 }
 
@@ -337,19 +337,22 @@ pub(crate) fn prepare_authored_without_manifest(
         }
         PrepareContext::Package => package_legacy_warning(&prepared, root),
     };
-    report_diagnostics(&prepared, root, &legacy_warning, diag);
+    report_diagnostics(&prepared, &source_label(root), &legacy_warning, diag);
     Ok(prepared)
 }
 
+/// `label` names a package-relative path in a diagnostic. A dependency is named by its
+/// package (`meridian-base: skills/poc/SKILL.md`), never by where the cache keeps its
+/// archive; a project's own sources keep their real path.
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
-    authored_root: &Path,
+    label: &dyn Fn(&str) -> String,
     legacy_warning: &str,
     diag: &mut DiagnosticCollector,
 ) {
     let mut warn_legacy = false;
     for (relative, diagnostics) in prepared.all_diagnostics() {
-        let context = format!("source `{}`", authored_root.join(relative).display());
+        let context = label(relative);
         for diagnostic in diagnostics {
             if diagnostic.code == "legacy-package" {
                 warn_legacy = true;
@@ -367,6 +370,11 @@ pub(crate) fn report_diagnostics(
     if warn_legacy {
         diag.warn_once("legacy-package", legacy_warning);
     }
+}
+
+/// A project's own source file, by its real path.
+fn source_label(root: &Path) -> impl Fn(&str) -> String + '_ {
+    move |relative| format!("source `{}`", root.join(relative).display())
 }
 
 fn package_legacy_warning(prepared: &Prepared, root: &Path) -> String {

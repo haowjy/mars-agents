@@ -470,7 +470,7 @@ fn validate_json_reports_malformed_skill_frontmatter_error() {
         diagnostics.iter().any(|diag| {
             diag["code"] == "yaml.invalid"
                 && diag["message"].as_str().is_some_and(|message| {
-                    message.contains("planning/SKILL.md`")
+                    message.contains("skills/planning/SKILL.md")
                         && message.contains("malformed YAML frontmatter")
                 })
         }),

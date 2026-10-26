@@ -144,7 +144,7 @@ pub fn parse_model_policy_rule_value(
     let rule = value
         .as_mapping()
         .ok_or_else(|| ModelPolicyRuleParseError::RuleMustBeMapping {
-            found: format!("{value:?}"),
+            found: crate::ordered::plain(value),
         })?;
 
     let match_value = rule.get(serde_yaml::Value::String("match".to_string()));
@@ -153,7 +153,7 @@ pub fn parse_model_policy_rule_value(
             value
                 .as_mapping()
                 .ok_or_else(|| ModelPolicyRuleParseError::MatchMustBeMapping {
-                    found: format!("{value:?}"),
+                    found: crate::ordered::plain(value),
                 })?
         }
         None => return Err(ModelPolicyRuleParseError::MatchMissing),
@@ -162,12 +162,12 @@ pub fn parse_model_policy_rule_value(
     let mut entries = match_mapping.iter();
     let Some((match_key, match_value)) = entries.next() else {
         return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
-            found: format!("{match_mapping:?}"),
+            found: crate::ordered::plain(&serde_yaml::Value::Mapping(match_mapping.clone())),
         });
     };
     if entries.next().is_some() {
         return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
-            found: format!("{match_mapping:?}"),
+            found: crate::ordered::plain(&serde_yaml::Value::Mapping(match_mapping.clone())),
         });
     }
 
@@ -175,14 +175,14 @@ pub fn parse_model_policy_rule_value(
         match_key
             .as_str()
             .ok_or_else(|| ModelPolicyRuleParseError::MatchKeyMustBeString {
-                found: format!("{match_key:?}"),
+                found: crate::ordered::plain(match_key),
             })?;
     let value =
         match_value
             .as_str()
             .ok_or_else(|| ModelPolicyRuleParseError::MatchValueMustBeString {
                 key: key.to_string(),
-                found: format!("{match_value:?}"),
+                found: crate::ordered::plain(match_value),
             })?;
     let match_value = value.to_string();
     if match_value.is_empty() {
@@ -209,7 +209,7 @@ pub fn parse_model_policy_rule_value(
         Some(serde_yaml::Value::Bool(value)) => *value,
         Some(value) => {
             return Err(ModelPolicyRuleParseError::NoFallbackMustBeBoolean {
-                found: format!("{value:?}"),
+                found: crate::ordered::plain(value),
             });
         }
     };
@@ -223,7 +223,7 @@ pub fn parse_model_policy_rule_value(
         }
         Some(value) => {
             return Err(ModelPolicyRuleParseError::WhenInvalid {
-                found: format!("{value:?}"),
+                found: crate::ordered::plain(value),
             });
         }
     };
@@ -247,21 +247,21 @@ fn parse_overrides(
         value
             .as_mapping()
             .ok_or_else(|| ModelPolicyRuleParseError::OverrideMustBeMapping {
-                found: format!("{value:?}"),
+                found: crate::ordered::plain(value),
             })?;
     let mut overrides = ModelPolicyOverride::default();
     for (key, value) in mapping {
         let key = key
             .as_str()
             .ok_or_else(|| ModelPolicyRuleParseError::UnknownOverrideKey {
-                key: format!("{key:?}"),
+                key: crate::ordered::plain(key),
             })?;
         let raw =
             value
                 .as_str()
                 .ok_or_else(|| ModelPolicyRuleParseError::OverrideValueInvalid {
                     key: key.to_string(),
-                    found: format!("{value:?}"),
+                    found: crate::ordered::plain(value),
                     allowed: allowed_override_values(key),
                 })?;
         match key {

@@ -304,8 +304,8 @@ pub(crate) fn lift_mars_only_keys(
     rename_field(fm, "model_invocable", "model-invocable");
     rename_field(fm, "user_invocable", "user-invocable");
     if kind == DefinitionKind::Agent {
-        rename_field(fm, "network_allow", "network-allow");
-        rename_field(fm, "network_deny", "network-deny");
+        merge_host_set_spellings(fm, "network_allow", "network-allow");
+        merge_host_set_spellings(fm, "network_deny", "network-deny");
         for field in REMOVED_AGENT_FIELDS.iter().filter(|field| field.discarded) {
             if fm.remove(field.key).is_some() {
                 notes.push(removed(&[field.key], field.key));
@@ -499,6 +499,45 @@ fn rename_field(fm: &mut Frontmatter, old: &str, new: &str) {
     };
     if fm.get(new).is_none() {
         fm.insert(new, value);
+    }
+}
+
+/// A host set written under both spellings keeps every host of both: dropping either would
+/// lose a deny. A value that is not a host list or a `{replace: [...]}` map stays where it is, so
+/// the reader reports it.
+fn merge_host_set_spellings(fm: &mut Frontmatter, old: &str, new: &str) {
+    let (Some(old_value), Some(new_value)) = (fm.get(old), fm.get(new)) else {
+        return rename_field(fm, old, new);
+    };
+    let (Some((old_hosts, old_replaces)), Some((mut hosts, new_replaces))) =
+        (host_set_parts(old_value), host_set_parts(new_value))
+    else {
+        return;
+    };
+    for host in old_hosts {
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    let merged = if old_replaces || new_replaces {
+        let mut replace = serde_yaml::Mapping::new();
+        replace.insert(Value::String("replace".to_string()), Value::Sequence(hosts));
+        Value::Mapping(replace)
+    } else {
+        Value::Sequence(hosts)
+    };
+    fm.insert(new, merged);
+    fm.remove(old);
+}
+
+fn host_set_parts(value: &Value) -> Option<(Vec<Value>, bool)> {
+    match value {
+        Value::Sequence(hosts) => Some((hosts.clone(), false)),
+        Value::Mapping(map) if map.len() == 1 => map
+            .get("replace")
+            .and_then(Value::as_sequence)
+            .map(|hosts| (hosts.clone(), true)),
+        _ => None,
     }
 }
 

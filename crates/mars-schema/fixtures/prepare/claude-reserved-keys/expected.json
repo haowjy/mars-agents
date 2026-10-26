@@ -84,6 +84,38 @@
       "change": {
         "kind": "fully-rewritten"
       }
+    },
+    {
+      "kind": "skill",
+      "slug": "lint",
+      "source_path": "skills/lint/SKILL.md",
+      "output_path": "skills/lint/SKILL.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "lint"
+          ],
+          [
+            "description",
+            "A Claude skill whose lowered keys are partly invalid"
+          ]
+        ],
+        "fields": {
+          "name": "lint",
+          "description": "A Claude skill whose lowered keys are partly invalid",
+          "model-invocable": true,
+          "user-invocable": true,
+          "license": null,
+          "compatibility": null,
+          "metadata": null
+        },
+        "body": "Run the linter.\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "fully-rewritten"
+      }
     }
   ],
   "payload": [],
@@ -123,6 +155,24 @@
           "permission"
         ],
         "message": "agent `g` lost the restriction `permission`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (`permission` was removed; move it under `harness-overrides.flow.permission`)"
+      }
+    ],
+    "skills/lint/SKILL.md": [
+      {
+        "code": "field.set-aside",
+        "severity": "warning",
+        "path": [
+          "metadata"
+        ],
+        "message": "`metadata` is not valid in schema v1 (`metadata` must be a map); it was dropped, because Mars lowers `metadata` itself and an override would not carry it"
+      },
+      {
+        "code": "field.set-aside",
+        "severity": "warning",
+        "path": [
+          "user-invocable"
+        ],
+        "message": "`user-invocable` is not valid in schema v1 (`user-invocable` must be true or false); it was dropped, because Mars lowers `user-invocable` itself and an override would not carry it"
       }
     ]
   }

@@ -3,7 +3,7 @@
 //! consumer cannot edit never fails for it. Only an authored schema-v1 file is refused for its
 //! fields.
 //!
-//! - A key Mars lowers itself (`LoweredField`) is never moved: native lowering would keep Mars's
+//! - A key Mars lowers itself (`LoweredField`, `skill::LOWERED_KEYS`) is never moved: native lowering would keep Mars's
 //!   value and drop the override. A mapping or list loses only its rejected entries; a scalar, or
 //!   a container the reader rejects as a whole, is dropped.
 //! - Any other rejected key is moved under `harness-overrides.<harness>` when a harness could
@@ -23,6 +23,7 @@ use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::Frontmatter;
 use crate::harness_overrides::{Moved, move_keys_under};
 use crate::item::DefinitionKind;
+use crate::skill;
 
 /// Keys whose errors cannot be cured by moving them: the file's identity, and the block moves go
 /// to.
@@ -270,7 +271,10 @@ pub(crate) fn set_aside_rejected_keys(
     let mut changed = false;
     let mut movable = Vec::new();
     for (key, rejections) in rejected {
-        let reserved = kind == DefinitionKind::Agent && LoweredField::reserves(&key);
+        let reserved = match kind {
+            DefinitionKind::Agent => LoweredField::reserves(&key),
+            DefinitionKind::Skill => skill::LOWERED_KEYS.contains(&key.as_str()),
+        };
         let whole_key = rejections.iter().any(|rejection| rejection.path.len() == 1);
         if reserved
             && !whole_key

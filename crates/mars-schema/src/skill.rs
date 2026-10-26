@@ -42,6 +42,20 @@ fn serialize_metadata<S: serde::Serializer>(
         .serialize(serializer)
 }
 
+/// The frontmatter keys Mars writes into a harness's native skill file itself. A
+/// `harness-overrides` entry never replaces one (native lowering keeps Mars's value and reports
+/// the override as dropped), so the translation's set-aside never moves one there either. The
+/// Agent counterpart is [`crate::agent::LoweredField`].
+pub const LOWERED_KEYS: &[&str] = &[
+    "name",
+    "description",
+    "license",
+    "metadata",
+    "disable-model-invocation",
+    "user-invocable",
+    "alwaysApply",
+];
+
 /// Schema v1 skills carry no tool policy, so every spelling of one is a `discarded` key; the
 /// foreign-dialect import and the legacy upgrade drop them. The upgrade rewrites `type` and
 /// `when_to_use` and the invocability renames; the other removed keys stay for the author.

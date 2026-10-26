@@ -303,6 +303,7 @@ fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
     strip_model_policy_overrides(fm, diagnostics);
     // A pre-v1 file passed unknown keys to every harness; Claude's own keep reaching Claude.
     claude::translate::move_to_claude_overrides(fm, DefinitionKind::Agent, diagnostics);
+    set_aside_rejected_keys(fm, DefinitionKind::Agent, diagnostics);
 }
 
 fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
@@ -352,6 +353,23 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
     }
 
     claude::translate::move_to_claude_overrides(fm, DefinitionKind::Skill, diagnostics);
+    set_aside_rejected_keys(fm, DefinitionKind::Skill, diagnostics);
+}
+
+/// What the rules above could not make schema v1 is kept under `harness-overrides.flow`, the
+/// namespace a pre-v1 `permission` already moves to, so the upgrade never hands the strict
+/// reader a value it rejects.
+fn set_aside_rejected_keys(
+    fm: &mut Frontmatter,
+    kind: DefinitionKind,
+    diagnostics: &mut Vec<SchemaDiagnostic>,
+) {
+    crate::set_aside::set_aside_rejected_keys(
+        fm,
+        kind,
+        crate::set_aside::Destination::Overrides("flow"),
+        diagnostics,
+    );
 }
 
 fn upgrade_tools(fm: &mut Frontmatter) {

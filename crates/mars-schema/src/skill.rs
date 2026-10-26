@@ -69,7 +69,7 @@ pub(crate) fn tool_keys() -> impl Iterator<Item = &'static str> {
         .map(|field| field.key)
 }
 
-fn read_fields(
+pub(crate) fn read_fields(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> SkillProfile {

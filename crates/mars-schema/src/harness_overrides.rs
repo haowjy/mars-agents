@@ -8,6 +8,8 @@ use serde_yaml::Value;
 
 use crate::HarnessId;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path, push_invalid};
+use crate::frontmatter::Frontmatter;
+use crate::item::DefinitionKind;
 use crate::ordered::OrderedValue;
 
 /// Per-harness target-native passthrough blocks (`harness-overrides:`).
@@ -235,4 +237,137 @@ pub(crate) fn parse_harness_overrides(
     }
 
     out
+}
+
+/// How a move of top-level keys under `harness-overrides.<harness>` ended.
+pub(crate) enum Moved {
+    /// `harness-overrides` or its `<harness>` entry is not a mapping; nothing moved.
+    Blocked,
+    /// `moved` keys are under the override now; `displaced` keys were dropped because the
+    /// override already sets that key, and an override already written wins.
+    Done {
+        moved: Vec<String>,
+        displaced: Vec<String>,
+    },
+}
+
+/// Move the top-level `keys` of `fm`, in the order given and unchanged, under
+/// `harness-overrides.<harness>`.
+pub(crate) fn move_keys_under(fm: &mut Frontmatter, harness: &str, keys: &[String]) -> Moved {
+    let harness_key = Value::String(harness.to_owned());
+    let blocked = match fm.get("harness-overrides") {
+        None => false,
+        Some(Value::Mapping(overrides)) => overrides
+            .get(&harness_key)
+            .is_some_and(|entry| !entry.is_mapping()),
+        Some(_) => true,
+    };
+    if blocked {
+        return Moved::Blocked;
+    }
+    let mut overrides = match fm.remove("harness-overrides") {
+        Some(Value::Mapping(existing)) => existing,
+        _ => serde_yaml::Mapping::new(),
+    };
+    let mut entry = match overrides.remove(&harness_key) {
+        Some(Value::Mapping(existing)) => existing,
+        _ => serde_yaml::Mapping::new(),
+    };
+    let (mut moved, mut displaced) = (Vec::new(), Vec::new());
+    for key in keys {
+        let Some(value) = fm.remove(key) else {
+            continue;
+        };
+        match entry.get(key.as_str()) {
+            Some(existing) if *existing != value => displaced.push(key.clone()),
+            Some(_) => moved.push(key.clone()),
+            None => {
+                entry.insert(Value::String(key.clone()), value);
+                moved.push(key.clone());
+            }
+        }
+    }
+    overrides.insert(harness_key, Value::Mapping(entry));
+    fm.insert("harness-overrides", Value::Mapping(overrides));
+    Moved::Done { moved, displaced }
+}
+
+fn backticked(keys: &[String]) -> String {
+    keys.iter()
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Move the keys only `harness` reads (those of `keys` present in `fm`) to
+/// `harness-overrides.<harness>`, so that harness's native files keep them and no other
+/// harness's does. Reports an info note of what moved, a warning for a key an existing override
+/// displaced, and a warning when the keys could not move.
+pub(crate) fn move_harness_only_keys(
+    fm: &mut Frontmatter,
+    kind: DefinitionKind,
+    harness: HarnessId,
+    keys: &[&str],
+    changes: &mut Vec<SchemaDiagnostic>,
+) -> bool {
+    let (owner, harness_name) = (kind.to_string(), harness.as_str());
+    let title = match harness {
+        HarnessId::Claude => "Claude",
+        HarnessId::Codex => "Codex",
+        HarnessId::Pi => "Pi",
+        HarnessId::OpenCode => "OpenCode",
+        HarnessId::Cursor => "Cursor",
+    };
+    let present = fm
+        .keys()
+        .into_iter()
+        .filter(|key| keys.contains(&key.as_str()))
+        .collect::<Vec<_>>();
+    if present.is_empty() {
+        return false;
+    }
+    let mut note = |severity, suffix: &str, message: String| {
+        changes.push(SchemaDiagnostic::new(
+            format!("{owner}.{harness_name}-keys-{suffix}"),
+            severity,
+            Vec::new(),
+            message,
+        ));
+    };
+    match move_keys_under(fm, harness_name, &present) {
+        Moved::Blocked => {
+            note(
+                Severity::Warning,
+                "unmoved",
+                format!(
+                    "left {title}-only keys in place because harness-overrides or harness-overrides.{harness_name} is not a mapping: {}",
+                    backticked(&present)
+                ),
+            );
+            false
+        }
+        Moved::Done { moved, displaced } => {
+            if !moved.is_empty() {
+                note(
+                    Severity::Info,
+                    "moved",
+                    format!(
+                        "moved {title}-only keys to harness-overrides.{harness_name}: {}",
+                        backticked(&moved)
+                    ),
+                );
+            }
+            if !displaced.is_empty() {
+                note(
+                    Severity::Warning,
+                    "conflict",
+                    format!(
+                        "dropped {title}-only keys that harness-overrides.{harness_name} already sets, whose values win: {}",
+                        backticked(&displaced)
+                    ),
+                );
+            }
+            true
+        }
+    }
 }

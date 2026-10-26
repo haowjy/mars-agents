@@ -5,6 +5,8 @@ use serde_yaml::Value;
 use crate::diagnostic::SchemaDiagnostic;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
+use crate::harness::HarnessId;
+use crate::harness_overrides::move_harness_only_keys;
 use crate::invocability::find_invocability_field;
 use crate::item::DefinitionKind;
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
@@ -130,6 +132,7 @@ pub(crate) fn lift_foreign_tools(
             }
         }
     }
+    changed |= lift_tool_flags(fm);
     changed |= lift_tool_list_to_policy_map(fm, native_tools_restrict && came_from_native_tools);
     changed |= lift_foreign_mcp_tokens_in_field(fm, "tools", dialect);
     if dialect == Dialect::Claude {
@@ -165,15 +168,25 @@ pub fn lift_frontmatter(
 ) -> Lifted {
     let mut lifted = frontmatter.clone();
     let (mut changes, mut findings) = (Vec::new(), Vec::new());
-    let changed = match dialect {
+    let mut changed = match dialect {
         Dialect::MarsNative => false,
         Dialect::Claude | Dialect::AgentSkills => {
             crate::claude::translate::lift(kind, &mut lifted, &mut changes, &mut findings)
         }
         Dialect::Codex => lift_codex(kind, &mut lifted),
         Dialect::Cursor => lift_cursor(kind, &mut lifted),
-        Dialect::OpenCode => lift_opencode(kind, &mut lifted),
+        Dialect::OpenCode => lift_opencode(kind, &mut lifted, &mut changes),
     };
+    // Whatever the dialect's rules left that the strict reader rejects is set aside, never left
+    // to fail a package its consumer cannot edit.
+    if dialect != Dialect::MarsNative {
+        changed |= crate::set_aside::set_aside_rejected_keys(
+            &mut lifted,
+            kind,
+            crate::set_aside::Destination::for_dialect(dialect),
+            &mut changes,
+        );
+    }
     Lifted {
         frontmatter: lifted,
         changed,
@@ -262,9 +275,13 @@ fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     changed
 }
 
-fn lift_opencode(kind: DefinitionKind, fm: &mut Frontmatter) -> bool {
+fn lift_opencode(
+    kind: DefinitionKind,
+    fm: &mut Frontmatter,
+    changes: &mut Vec<SchemaDiagnostic>,
+) -> bool {
     match kind {
-        DefinitionKind::Agent => lift_opencode_agent(fm),
+        DefinitionKind::Agent => lift_opencode_agent(fm, changes),
         DefinitionKind::Skill => {
             let mut changed = false;
             changed |= strip_foreign_keys(fm, &["mode"]);
@@ -274,14 +291,72 @@ fn lift_opencode(kind: DefinitionKind, fm: &mut Frontmatter) -> bool {
     }
 }
 
-fn lift_opencode_agent(fm: &mut Frontmatter) -> bool {
+/// Agent keys OpenCode reads and schema v1 does not define; they move to
+/// `harness-overrides.opencode`, which only `.opencode/` output receives.
+const OPENCODE_ONLY_AGENT_KEYS: &[&str] = &[
+    "permission",
+    "temperature",
+    "top_p",
+    "steps",
+    "maxSteps",
+    "options",
+    "hidden",
+    "disable",
+    "color",
+    "prompt",
+];
+
+fn lift_opencode_agent(fm: &mut Frontmatter, changes: &mut Vec<SchemaDiagnostic>) -> bool {
     let mut changed = false;
 
-    if let Some(tools) = fm.remove("disallowedTools") {
-        if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
-            fm.insert("disallowed-tools", tools);
+    let mut denied = Vec::new();
+    for key in ["disallowedTools", "disallowed-tools", "disallowed_tools"] {
+        if let Some(value) = fm.remove(key) {
+            changed = true;
+            denied.extend(tool_policy::tool_entries(&value));
         }
-        changed = true;
     }
+    changed |= lift_tool_flags(fm);
+    if !denied.is_empty() {
+        let mut tools = match fm.get("tools") {
+            Some(Value::Mapping(existing)) => existing.clone(),
+            _ => serde_yaml::Mapping::new(),
+        };
+        for name in denied {
+            tools.insert(Value::String(name), Value::String("deny".into()));
+        }
+        fm.insert("tools", Value::Mapping(tools));
+    }
+    changed |= move_harness_only_keys(
+        fm,
+        DefinitionKind::Agent,
+        HarnessId::OpenCode,
+        OPENCODE_ONLY_AGENT_KEYS,
+        changes,
+    );
     changed
+}
+
+/// A foreign `tools` map of tool name to boolean (OpenCode's form) becomes schema v1's map of tool
+/// name to `allow` or `deny`.
+fn lift_tool_flags(fm: &mut Frontmatter) -> bool {
+    let Some(Value::Mapping(tools)) = fm.get("tools") else {
+        return false;
+    };
+    if !tools.values().any(Value::is_bool) {
+        return false;
+    }
+    let policy = tools
+        .iter()
+        .map(|(name, flag)| {
+            let action = match flag {
+                Value::Bool(true) => Value::String("allow".into()),
+                Value::Bool(false) => Value::String("deny".into()),
+                other => other.clone(),
+            };
+            (name.clone(), action)
+        })
+        .collect();
+    fm.insert("tools", Value::Mapping(policy));
+    true
 }

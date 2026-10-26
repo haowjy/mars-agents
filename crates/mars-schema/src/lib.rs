@@ -39,4 +39,5 @@ pub mod edit;
 pub mod package;
 mod plugin_metadata;
 pub mod prepare;
+mod set_aside;
 pub mod upgrade;

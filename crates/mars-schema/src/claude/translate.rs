@@ -3,8 +3,10 @@
 
 use serde_yaml::{Mapping, Value};
 
+use crate::HarnessId;
 use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 use crate::frontmatter::Frontmatter;
+use crate::harness_overrides::move_harness_only_keys;
 use crate::invocability::find_invocability_field;
 use crate::item::DefinitionKind;
 use crate::lift::{claude_task_to_agent, lift_foreign_tools};
@@ -60,100 +62,17 @@ fn warn(diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String) {
     ));
 }
 
-/// Move the kind's Claude-only keys, in file order and unchanged, under
-/// `harness-overrides.claude`. An override already written there wins over a moved key of the
-/// same name, and the key it displaces is reported by name. When `harness-overrides` or its
-/// `claude` entry is not a mapping the keys stay where they are for the reader to report.
+/// Move the kind's Claude-only keys under `harness-overrides.claude`.
 pub(crate) fn move_to_claude_overrides(
     fm: &mut Frontmatter,
     kind: DefinitionKind,
-    diagnostics: &mut Vec<SchemaDiagnostic>,
+    changes: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
-    let (keys, owner) = match kind {
-        DefinitionKind::Agent => (CLAUDE_ONLY_AGENT_KEYS, "agent"),
-        DefinitionKind::Skill => (CLAUDE_ONLY_SKILL_KEYS, "skill"),
+    let keys = match kind {
+        DefinitionKind::Agent => CLAUDE_ONLY_AGENT_KEYS,
+        DefinitionKind::Skill => CLAUDE_ONLY_SKILL_KEYS,
     };
-    let present = fm
-        .keys()
-        .into_iter()
-        .filter(|key| keys.contains(&key.as_str()))
-        .collect::<Vec<_>>();
-    if present.is_empty() {
-        return false;
-    }
-    let claude_key = Value::String("claude".into());
-    let blocked = match fm.get("harness-overrides") {
-        None => false,
-        Some(Value::Mapping(overrides)) => overrides
-            .get(&claude_key)
-            .is_some_and(|claude| !claude.is_mapping()),
-        Some(_) => true,
-    };
-    if blocked {
-        warn(
-            diagnostics,
-            &format!("{owner}.claude-keys-unmoved"),
-            format!(
-                "left Claude-only keys in place because harness-overrides or harness-overrides.claude is not a mapping: {}",
-                backticked(&present)
-            ),
-        );
-        return false;
-    }
-
-    let mut overrides = match fm.remove("harness-overrides") {
-        Some(Value::Mapping(existing)) => existing,
-        _ => Mapping::new(),
-    };
-    let mut claude = match overrides.remove(&claude_key) {
-        Some(Value::Mapping(existing)) => existing,
-        _ => Mapping::new(),
-    };
-    let (mut moved, mut displaced) = (Vec::new(), Vec::new());
-    for key in present {
-        let Some(value) = fm.remove(&key) else {
-            continue;
-        };
-        match claude.get(&key) {
-            Some(existing) if *existing != value => displaced.push(key),
-            Some(_) => moved.push(key),
-            None => {
-                claude.insert(Value::String(key.clone()), value);
-                moved.push(key);
-            }
-        }
-    }
-    overrides.insert(claude_key, Value::Mapping(claude));
-    fm.insert("harness-overrides", Value::Mapping(overrides));
-    if !moved.is_empty() {
-        diagnostics.push(SchemaDiagnostic::new(
-            format!("{owner}.claude-keys-moved"),
-            Severity::Info,
-            Vec::new(),
-            format!(
-                "moved Claude-only keys to harness-overrides.claude: {}",
-                backticked(&moved)
-            ),
-        ));
-    }
-    if !displaced.is_empty() {
-        warn(
-            diagnostics,
-            &format!("{owner}.claude-keys-conflict"),
-            format!(
-                "dropped Claude-only keys that harness-overrides.claude already sets, whose values win: {}",
-                backticked(&displaced)
-            ),
-        );
-    }
-    true
-}
-
-fn backticked(keys: &[String]) -> String {
-    keys.iter()
-        .map(|key| format!("`{key}`"))
-        .collect::<Vec<_>>()
-        .join(", ")
+    move_harness_only_keys(fm, kind, HarnessId::Claude, keys, changes)
 }
 
 fn remove_keys(

@@ -251,12 +251,18 @@ fn validate_json_reports_skill_removed_field_error() {
         &[("reader", agent_content)],
         &[("legacy", skill_content)],
     );
+    // Only an authored schema v1 package is refused for a removed field.
+    fs::write(
+        source.join("mars.toml"),
+        "[package]\nname = \"src\"\nversion = \"0.1.0\"\nschema = 1\n",
+    )
+    .unwrap();
     let project = dir.child("proj");
     project.create_dir_all().unwrap();
     project
         .child("mars.toml")
         .write_str(&format!(
-            "[dependencies]\nsrc = {{ path = \"{}\", dialect = \"mars-native\" }}\n",
+            "[dependencies]\nsrc = {{ path = \"{}\" }}\n",
             source.display().to_string().replace('\\', "/")
         ))
         .unwrap();

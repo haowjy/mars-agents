@@ -66,6 +66,20 @@ pub(crate) fn read_definition(kind: DefinitionKind, text: &str) -> Reading {
     }
 }
 
+/// What the strict field reader says about `fm`, without the structure parse.
+pub(crate) fn field_diagnostics(kind: DefinitionKind, fm: &Frontmatter) -> Vec<SchemaDiagnostic> {
+    let mut diagnostics = Vec::new();
+    match kind {
+        DefinitionKind::Agent => {
+            crate::agent::read_fields(fm, &mut diagnostics);
+        }
+        DefinitionKind::Skill => {
+            crate::skill::read_fields(fm, &mut diagnostics);
+        }
+    }
+    diagnostics
+}
+
 /// The structure-preserving parse and ordered frontmatter shared by the Agent and skill
 /// readers; `fields` is the kind's field reader. Diagnostics come in the order structure,
 /// fields, then values with no JSON form.

@@ -23,6 +23,7 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 | `discover` | The one bounded walk (`walk`, `walk_dirs`, `excluded`), the Mars convention scan, payload assignment |
 | `claude/` | The Claude layout: `manifest` (plugin and marketplace manifests, merge and `strict` rules), `discover` (items and where they land), `translate` (skills and Agents tables), `checks` (warnings that depend on where a skill landed) |
 | `lift` | The Codex, Cursor and OpenCode lifts; the shared tool-name rewrite |
+| `set_aside` | The class guard: after a foreign or pre-v1 definition is translated, every key the strict reader still rejects is moved under `harness-overrides.<dialect>` (`flow` for pre-v1 Mars) or dropped, with one warning; `harness_overrides::move_keys_under` is the one mover |
 | `inspect`, `normalize` | `dispatch` and `prepare` over a whole repository; the generated `mars.toml` and provenance |
 | `upgrade` | The pre-v1 to v1 conversion, shared by `prepare` and `mars migrate` |
 | `package` | Versioned package metadata, `classify_manifest` |
@@ -102,6 +103,10 @@ kind's field reader. `agent::read`, `skill::read`, `read::read` and `prepare` ar
 function, and the binary reads definitions through them (`DefinitionRead::into_valid` for a
 caller that refuses a file with any error). Callers consume these types directly rather than
 reading owned frontmatter keys themselves.
+
+Only an authored schema-v1 file is refused for its fields. A translated definition (foreign or pre-v1) is never
+left holding a key or value the strict reader rejects: `set_aside` moves it aside with a warning, so a package
+its consumer cannot edit still installs.
 
 Unknown fields are kept in the authored file but reach no native file (`field.unknown` points
 to `harness-overrides.<harness>`); removed fields are errors (`field.removed`). Each key

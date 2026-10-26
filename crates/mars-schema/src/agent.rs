@@ -490,7 +490,7 @@ fn read_skills(value: &Value, diags: &mut Vec<crate::diagnostic::SchemaDiagnosti
     }
 }
 
-fn read_fields(
+pub(crate) fn read_fields(
     fm: &Frontmatter,
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> AgentProfile {

@@ -74,6 +74,14 @@ fn changed_files(prepared: &Prepared) -> Vec<(&str, &[u8])> {
 fn assert_changed_bytes(case: &Path, prepared: &Prepared) {
     let expected_root = case.join("expected");
     let changed = changed_files(prepared);
+    if std::env::var_os("MARS_UPDATE_FIXTURES").is_some() {
+        let _ = fs::remove_dir_all(&expected_root);
+        for (path, bytes) in &changed {
+            let target = expected_root.join(path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, bytes).unwrap();
+        }
+    }
     let expected_count = if expected_root.exists() {
         let mut files = Vec::new();
         common::collect_files(&expected_root, &expected_root, &mut files);

@@ -668,6 +668,12 @@ mod tests {
     #[test]
     fn check_errors_for_malformed_agent_model_policy() {
         let dir = TempDir::new().unwrap();
+        // Only an authored schema v1 package is refused for its fields.
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\nschema = 1\n",
+        )
+        .unwrap();
         write_agent_content(
             dir.path(),
             "browser-tester",

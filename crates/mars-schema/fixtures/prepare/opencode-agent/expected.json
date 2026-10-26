@@ -1,0 +1,127 @@
+{
+  "classification": {
+    "kind": "foreign",
+    "dialect": "opencode",
+    "evidence": {
+      "source": "declared",
+      "paths": []
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "review",
+      "source_path": "agents/review.md",
+      "output_path": "agents/review.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "description",
+            "Reviews a change without editing it"
+          ],
+          [
+            "mode",
+            "subagent"
+          ],
+          [
+            "model",
+            "anthropic/claude-sonnet-4"
+          ],
+          [
+            "tools",
+            {
+              "write": "deny",
+              "edit": "deny",
+              "bash": "deny",
+              "read": "allow"
+            }
+          ],
+          [
+            "harness-overrides",
+            {
+              "opencode": {
+                "temperature": 0.1,
+                "permission": {
+                  "edit": "deny",
+                  "bash": {
+                    "git push": "ask",
+                    "*": "allow"
+                  }
+                }
+              }
+            }
+          ]
+        ],
+        "fields": {
+          "name": null,
+          "description": "Reviews a change without editing it",
+          "harness": null,
+          "model": "anthropic/claude-sonnet-4",
+          "mode": "subagent",
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [
+            {
+              "capability": "write",
+              "pattern": null,
+              "action": "deny"
+            },
+            {
+              "capability": "edit",
+              "pattern": null,
+              "action": "deny"
+            },
+            {
+              "capability": "bash",
+              "pattern": null,
+              "action": "deny"
+            },
+            {
+              "capability": "read",
+              "pattern": null,
+              "action": "allow"
+            }
+          ],
+          "harness-overrides": {
+            "opencode": {
+              "temperature": 0.1,
+              "permission": {
+                "edit": "deny",
+                "bash": {
+                  "git push": "ask",
+                  "*": "allow"
+                }
+              }
+            }
+          },
+          "model-policies": []
+        },
+        "body": "Review the diff and report findings.\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "fully-rewritten"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {},
+  "changes": {
+    "agents/review.md": [
+      {
+        "code": "agent.opencode-keys-moved",
+        "severity": "info",
+        "path": [],
+        "message": "moved OpenCode-only keys to harness-overrides.opencode: `temperature`, `permission`"
+      }
+    ]
+  }
+}

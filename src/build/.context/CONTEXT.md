@@ -30,32 +30,38 @@ before native projection, and plain derived-tree copies omit hook fragment paths
 other targets.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three
-tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. The harness and tree format facts live in the two tables in `plugin.rs`; consumers select rows
-instead of matching identities. Tree writer profiles derive their harness kind, variant key and
-target root from the compiler descriptor, reference one format row, and add only plugin-specific
-agent policy, native model aliases, hook-root token, config writer and finish writer.
-`PluginTree::as_str()` reads the format row and is the sole directory and report key. Their authored-hook check runs once before the item loop; every selected
-hook is copied. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits an
-npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
-servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
+tree identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode.
+`build/plugin/spec.rs` holds both registries: harness rows carry a direct `&'static TreeProfile`
+reference, so nothing joins the two tables by a matching key. Each profile lives beside its writer
+in `tree/`, derives harness kind, variant key and target root from the compiler descriptor, and
+carries the directory key, root file, dropped agent fields, lossiness adjustment, and its agent
+policy, native model aliases, hook-root token, config writer and finish writer. `TreeProfile.key`
+is the sole directory and report key. `RootFile` is an enum, so a marketplace catalog always has
+its directory and name rule, and `Finish` is an enum, so the standard manifest always has its path;
+generated root-file paths are crate-level constants in `plugin_metadata.rs` that staging reads and
+the tree rows reference.
+Their authored-hook check runs once before the item loop; every selected hook is copied.
+`tree::write_tree` is the sole item loop. The OpenCode finish writer emits an npm-shaped package
+with a fixed `index.mjs`; at runtime it registers the built skills and MCP servers and imports
+every targeted hook from in-memory TypeScript data URLs. A heuristic
 default-export check warns but never removes a hook; hook-directory substitution is
 JavaScript-string encoded before import, and each hook's load and setup are isolated so a failure
 does not block later hooks.
 `tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
-selected MCP union once;
-per-tree writers report only lowering behavior. `TargetState::exported_hooks` retains filtered
-exported graph hooks even when no requested tree selected a fragment, which is the input for plugin
-omission diagnostics. `support::emit` receives the full target so graph-wide agent and bootstrap
-counts never depend on one format's emitted components. Component support and verification come
-from each selected harness row plus its tree profile; per-harness table copy lives on those rows,
-and the same data renders the README tables. The Claude plugin tree writes same-name MCP environment
-pass-throughs as `env_vars`, which Claude, Codex, and Grok all accept. Renamed references keep
-Claude's `${VAR}` spelling and warn once per server because Codex passes the value literally; the
-sync writer is unchanged.
+selected MCP union once; per-tree writers report only lowering behavior.
+`TargetState::exported_hooks` retains filtered exported graph hooks even when no requested tree
+selected a fragment, which is the input for plugin omission diagnostics. `support::emit` receives
+the full target so graph-wide agent and bootstrap counts never depend on one format's emitted
+components. Component support and verification come from each selected harness row plus its tree
+profile; per-harness verification evidence and a prose note live on those rows. A README support
+cell is the computed state plus its note, and the test that keeps the README fresh uses the same
+renderer. The Claude plugin tree writes same-name MCP environment pass-throughs as `env_vars`,
+which Claude, Codex, and Grok all accept. Renamed references keep Claude's `${VAR}` spelling and
+warn once per server because Codex passes the value literally; the sync writer is unchanged.
 
-The Cursor tree is a `TreeProfile`, not a second walk: it preserves the shared Cursor agent
-lowering as-is, has no native model aliases or extra agent allowlist, and delegates `mcp.json` and
-the versioned `hooks/hooks.json` to the path-parameterized `.cursor` target writers. Plugin hook
+The Cursor tree is a profile like the others, not a second walk: it preserves the shared Cursor
+agent lowering as-is, has no native model aliases or extra agent allowlist, and delegates `mcp.json`
+and the versioned `hooks/hooks.json` to the path-parameterized `.cursor` target writers. Plugin hook
 paths substitute `${CURSOR_PLUGIN_ROOT}` before those writers run.
 
 The build request carries validated `PackageMetadata` and the semantic destination instead of only

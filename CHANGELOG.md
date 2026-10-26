@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Plugin specs are one registry: `build/plugin/spec.rs` holds every harness row pointing straight at
+  its `TreeProfile`, root files and finish writers are enums, README support cells render from the
+  computed support state, and staging has two entry points instead of an `Option` mode flag. No
+  generated plugin output changes; the README support table now restates tree-derived facts (Codex
+  hooks, Grok agent fields, OpenCode agents and hooks).
+
 ## [0.19.0] - 2026-10-26
 
 ### Added

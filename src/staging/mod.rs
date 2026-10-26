@@ -51,6 +51,7 @@ pub(crate) struct RootedStageOptions {
 }
 
 /// Stage a package tree and repoint `package_root` at the staged output.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_rooted_source(
     source_name: &SourceName,
     rooted: RootedSourceRef,
@@ -60,18 +61,20 @@ pub(crate) fn stage_rooted_source(
     staging_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<StagedRootedSource, MarsError> {
-    stage_rooted_source_with_policy(
-        source_name,
-        rooted,
-        options,
+    let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
+    stage_canonical_source(
+        &rooted.package_root,
+        &staged_package_root,
+        options.dialect,
         skill_overrides,
         renames,
-        staging_root,
+        Some(source_name.as_ref()),
         diag,
-        None,
-    )
+    )?;
+    staged_rooted_source(rooted, staged_package_root, diag)
 }
 
+/// Stage a package tree from publish inputs and repoint `package_root` at it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_rooted_source_for_publish_inputs(
     source_name: &SourceName,
@@ -83,40 +86,25 @@ pub(crate) fn stage_rooted_source_for_publish_inputs(
     inputs: &[PublishInput],
     diag: &mut DiagnosticCollector,
 ) -> Result<StagedRootedSource, MarsError> {
-    stage_rooted_source_with_policy(
-        source_name,
-        rooted,
-        options,
-        skill_overrides,
-        renames,
-        staging_root,
-        diag,
-        Some(inputs),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn stage_rooted_source_with_policy(
-    source_name: &SourceName,
-    rooted: RootedSourceRef,
-    options: RootedStageOptions,
-    skill_overrides: &IndexMap<String, SkillOverlay>,
-    renames: &RenameMap,
-    staging_root: &Path,
-    diag: &mut DiagnosticCollector,
-    publish_inputs: Option<&[PublishInput]>,
-) -> Result<StagedRootedSource, MarsError> {
     let staged_package_root = staging_dir_for(staging_root, source_name, options.dialect);
-    stage_canonical_source_with_policy(
+    stage_canonical_source_for_publish_inputs(
         &rooted.package_root,
         &staged_package_root,
         options.dialect,
         skill_overrides,
         renames,
         Some(source_name.as_ref()),
+        inputs,
         diag,
-        publish_inputs,
     )?;
+    staged_rooted_source(rooted, staged_package_root, diag)
+}
+
+fn staged_rooted_source(
+    rooted: RootedSourceRef,
+    staged_package_root: PathBuf,
+    diag: &mut DiagnosticCollector,
+) -> Result<StagedRootedSource, MarsError> {
     let hook_surface = detect_unreadable_hook_surface(&staged_package_root, diag)?;
     Ok(StagedRootedSource {
         rooted: RootedSourceRef {
@@ -153,6 +141,7 @@ fn detect_unreadable_hook_surface(
 }
 
 /// Copy `source_root` into `dest_root`, rewriting frontmatter through lift.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_canonical_source(
     source_root: &Path,
     dest_root: &Path,
@@ -162,55 +151,51 @@ pub(crate) fn stage_canonical_source(
     fallback_skill_name: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    stage_canonical_source_with_policy(
+    reset_staging_dir(dest_root)?;
+    copy_and_lift_tree(
         source_root,
         dest_root,
         dialect,
         skill_overrides,
         renames,
         fallback_skill_name,
+        &[],
         diag,
-        None,
     )
 }
 
+/// Copy only the given publish inputs from `source_root` into `dest_root`,
+/// rewriting frontmatter through lift.
 #[allow(clippy::too_many_arguments)]
-fn stage_canonical_source_with_policy(
+pub(crate) fn stage_canonical_source_for_publish_inputs(
     source_root: &Path,
     dest_root: &Path,
     dialect: Dialect,
     skill_overrides: &IndexMap<String, SkillOverlay>,
     renames: &RenameMap,
     fallback_skill_name: Option<&str>,
+    inputs: &[PublishInput],
     diag: &mut DiagnosticCollector,
-    publish_inputs: Option<&[PublishInput]>,
 ) -> Result<(), MarsError> {
+    reset_staging_dir(dest_root)?;
+    publish::copy_and_lift_inputs(
+        source_root,
+        dest_root,
+        dialect,
+        skill_overrides,
+        renames,
+        fallback_skill_name,
+        inputs,
+        diag,
+    )
+}
+
+fn reset_staging_dir(dest_root: &Path) -> Result<(), MarsError> {
     if dest_root.exists() {
         fs::remove_dir_all(dest_root)?;
     }
     fs::create_dir_all(dest_root)?;
-    match publish_inputs {
-        None => copy_and_lift_tree(
-            source_root,
-            dest_root,
-            dialect,
-            skill_overrides,
-            renames,
-            fallback_skill_name,
-            &[],
-            diag,
-        ),
-        Some(inputs) => publish::copy_and_lift_inputs(
-            source_root,
-            dest_root,
-            dialect,
-            skill_overrides,
-            renames,
-            fallback_skill_name,
-            inputs,
-            diag,
-        ),
-    }
+    Ok(())
 }
 
 /// Stage a single local item path (agent file or skill directory).

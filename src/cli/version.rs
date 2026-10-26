@@ -222,7 +222,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         if let Some(report) = &plugin_report {
             result["plugin"] = serde_json::json!({
                 "path": plugin_metadata.as_ref().expect("a plugin report needs plugin config").dir,
-                "trees": report.trees.iter().map(|tree| tree.tree.as_str()).collect::<Vec<_>>(),
+                "trees": report.trees.iter().map(|tree| tree.tree).collect::<Vec<_>>(),
                 "warnings": report.diagnostics.iter().filter(|diagnostic| {
                     diagnostic.level == DiagnosticLevel::Warning
                 }).count(),

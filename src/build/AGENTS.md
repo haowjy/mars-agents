@@ -9,14 +9,19 @@ package distribution.
 checkout: its items plus dependencies under its own filters, renames, and visibility rules. It
 resolves through `PublishLens`, stages every package, collects the flattened target once with
 sync's shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
-`TreeProfile`. `plugin.rs` owns the two declarative format tables: one row per consumer harness and one per
-published tree. Harness rows select a tree and carry naming, loader capability, display, and
-verification policy; tree rows carry the directory key, generated root-file renderer, marketplace
-naming, dropped agent fields, and lossiness adjustment. Writer `TreeProfile`s reference those tree
-rows and add only compiler and emission functions. Harness identity, variant key, and sync root come
-from `compiler::harness_descriptor`; authored-hook checks run once before copying. `PluginTree::as_str()` is
-the single key for both staged directory names and reported output paths. Claude, Codex, and Grok
-share the Claude tree; Cursor and OpenCode have their own tree identities. The OpenCode tree is an
+`TreeProfile`. `spec.rs` owns both declarative registries: `PLUGIN_HARNESS_SPECS`, one row per
+consumer harness (tree, naming rule, loader capability, display, README note, verification
+evidence), and `TREE_PROFILES`, one row per published tree defined beside its writer in `tree/`.
+A harness row points straight at its `TreeProfile`, which carries the directory key, root file,
+dropped agent fields, lossiness adjustment, and the agent/config/finish writers, so a harness and
+its tree cannot disagree and adding a harness is one row. `TreeProfile.key` is the single key for
+both staged directory names and reported output paths. `RootFile` and `Finish` are enums: a
+marketplace cannot be declared without its catalog directory and name rule, and the standard finish
+owns its manifest path. Generated root-file paths are crate-level constants in `plugin_metadata.rs`
+that staging also reads, so the tree rows reference rather than restate them. Harness identity,
+variant key, and sync root come from `compiler::harness_descriptor`; authored-hook checks run once
+before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode have their own
+tree identities. The OpenCode tree is an
 npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and imports every
 targeted hook fragment as an in-memory TypeScript data URL. A build warning reports fragments with
 no recognizable default export, but runtime isolation decides whether each hook loads.
@@ -43,9 +48,11 @@ including hooks no built root selected. A source check before the tree loop emit
 diagnostics, including skill-schema findings, once; tree writing emits only lowering diagnostics.
 Support diagnostics consume the full `TargetState` for graph-wide counts rather than inferring
 them from one tree. `support.rs` derives component support from each listed harness's tree profile
-plus Codex's agent-loader gap; per-harness display copy and verification evidence live on the
-harness spec rows, and the same data renders the README tables. The Claude plugin MCP writer emits
-same-name environment pass-throughs as `env_vars` for Claude/Codex/Grok compatibility; renamed
+plus Codex's agent-loader gap; verification evidence and an optional prose note live on the harness
+spec rows. Each README support cell is that computed state plus the note, so the prose can qualify a
+finding but never contradict it, and the README freshness test renders the same tables. The Claude
+plugin MCP writer emits same-name environment pass-throughs as `env_vars` for
+Claude/Codex/Grok compatibility; renamed
 references retain Claude's `${VAR}` form and warn that Codex passes it literally. Sync continues to
 use the native Claude writer.
 

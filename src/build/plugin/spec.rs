@@ -1,20 +1,53 @@
-//! Declarative harness and generated-tree plugin format specifications.
+//! Declarative plugin harness and generated-tree specifications.
+//!
+//! One row per consumer harness (tree, naming, loader capability, display, README
+//! notes, verification evidence) and one row per generated tree (`TREE_PROFILES`,
+//! defined beside the writer that emits it). Harness rows point at their tree row
+//! directly, so a harness and its tree cannot disagree and no lookup falls back to
+//! a search. Adding a harness is one row here; adding a tree is one profile in
+//! `tree/` plus one `TREE_PROFILES` entry.
 
-use serde::Serialize;
+use std::path::Path;
 
-/// A distinct generated plugin tree format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PluginTree {
-    Claude,
-    Cursor,
-    OpenCode,
-}
+use super::metadata::PackageMetadata;
+use super::tree::{WrittenTreeContents, claude, cursor, opencode};
+use crate::compiler::agents::HarnessKind;
+use crate::compiler::harness_descriptor::{CompilerHarnessDescriptor, descriptor};
+use crate::diagnostic::DiagnosticCollector;
+use crate::error::MarsError;
+use crate::sync::target::TargetItem;
+use crate::target::ConfigEntry;
 
+pub(crate) type AgentPolicy = fn(
+    &str,
+    &crate::frontmatter::Frontmatter,
+    &TargetItem,
+    &mut DiagnosticCollector,
+) -> Result<String, MarsError>;
+
+pub(crate) type ConfigWriter = fn(
+    &TreeProfile,
+    &Path,
+    &[ConfigEntry],
+    &[&'static PluginHarnessSpec],
+    &mut DiagnosticCollector,
+) -> Result<(), MarsError>;
+
+pub(crate) type FinishWriter = for<'a> fn(
+    &TreeProfile,
+    &Path,
+    &PackageMetadata,
+    &WrittenTreeContents<'a>,
+    &mut DiagnosticCollector,
+) -> Result<(), MarsError>;
+
+pub(crate) type HookCheck = fn(&crate::compiler::hooks::ParsedHookItem, &mut DiagnosticCollector);
+
+/// A harness naming rule: the shared validator plus the message a rejected name gets.
 #[derive(Clone, Copy)]
 pub(crate) struct NameRule {
-    validate: fn(&str) -> bool,
-    pub message: &'static str,
+    pub(crate) validate: fn(&str) -> bool,
+    pub(crate) message: &'static str,
 }
 
 impl NameRule {
@@ -23,17 +56,52 @@ impl NameRule {
     }
 }
 
+/// The root file a tree owns in the package, and the format facts that come with it.
+///
+/// A marketplace catalog always has a parent directory and a marketplace-name rule;
+/// an npm package manifest has neither. Keeping them in the variant means a tree
+/// cannot declare one without the other.
 #[derive(Clone, Copy)]
-pub(crate) enum RootFileRenderer {
-    Marketplace { source_prefix: &'static str },
-    OpenCodePackage,
+pub(crate) enum RootFile {
+    Marketplace {
+        path: &'static str,
+        catalog_directory: &'static str,
+        /// Prefix for the catalog's plugin `source` entry (`./` or empty).
+        source_prefix: &'static str,
+        name_rule: NameRule,
+    },
+    NpmPackage {
+        path: &'static str,
+    },
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct RootFileSpec {
-    pub path: &'static str,
-    pub catalog_directory: Option<&'static str>,
-    pub renderer: RootFileRenderer,
+impl RootFile {
+    pub(crate) fn path(self) -> &'static str {
+        match self {
+            Self::Marketplace { path, .. } | Self::NpmPackage { path } => path,
+        }
+    }
+
+    pub(crate) fn catalog_directory(self) -> Option<&'static str> {
+        match self {
+            Self::Marketplace {
+                catalog_directory, ..
+            } => Some(catalog_directory),
+            Self::NpmPackage { .. } => None,
+        }
+    }
+
+    /// The rule `[plugin].marketplace` must satisfy, when this tree renders a catalog.
+    pub(crate) fn marketplace_name_rule(self) -> Option<NameRule> {
+        match self {
+            Self::Marketplace { name_rule, .. } => Some(name_rule),
+            Self::NpmPackage { .. } => None,
+        }
+    }
+
+    pub(crate) fn is_marketplace(self) -> bool {
+        matches!(self, Self::Marketplace { .. })
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -66,31 +134,78 @@ pub(crate) struct VerificationRow {
     pub mcp: Verification,
 }
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct PluginSupportCells {
+/// Prose appended to a support cell the renderer computes from tree state.
+///
+/// The state itself is never prose: it comes from `support_state`, so a note can
+/// qualify a computed answer but cannot contradict it.
+#[derive(Clone, Copy)]
+pub(crate) struct SupportNotes {
     pub skills: Option<&'static str>,
     pub agents: Option<&'static str>,
     pub hooks: Option<&'static str>,
     pub mcp: Option<&'static str>,
 }
 
+/// How a tree writes its package-root manifest.
+#[derive(Clone, Copy)]
+pub(crate) enum Finish {
+    /// The standard plugin manifest: name, version, description, author, homepage, license.
+    StandardManifest {
+        path: &'static str,
+        description: &'static str,
+    },
+    /// Tree-specific root files: the OpenCode npm entry point and plugin data.
+    Custom(FinishWriter),
+}
+
+impl Finish {
+    pub(crate) fn run(
+        self,
+        profile: &TreeProfile,
+        root: &Path,
+        metadata: &PackageMetadata,
+        contents: &WrittenTreeContents<'_>,
+        diag: &mut DiagnosticCollector,
+    ) -> Result<(), MarsError> {
+        match self {
+            Self::StandardManifest { path, description } => {
+                super::tree::write_standard_manifest(root, path, description, metadata)
+            }
+            Self::Custom(writer) => writer(profile, root, metadata, contents, diag),
+        }
+    }
+}
+
+/// One generated plugin tree: its format, its lowering policy, and its writers.
+pub(crate) struct TreeProfile {
+    /// Staged directory name and the report's tree key.
+    pub(crate) key: &'static str,
+    pub(crate) harness: HarnessKind,
+    pub(crate) root_file: RootFile,
+    pub(crate) dropped_agent_fields: &'static [&'static str],
+    pub(crate) approximate_lowers_to_dropped: bool,
+    pub(crate) agents: Option<AgentPolicy>,
+    pub(crate) native_model_aliases: &'static [&'static str],
+    pub(crate) plugin_root_token: Option<&'static str>,
+    pub(crate) check_hook: HookCheck,
+    pub(crate) write_config: ConfigWriter,
+    pub(crate) finish: Finish,
+}
+
+impl TreeProfile {
+    pub(crate) fn descriptor(&self) -> &'static CompilerHarnessDescriptor {
+        descriptor(self.harness)
+    }
+}
+
 pub(crate) struct PluginHarnessSpec {
-    pub tree: PluginTree,
+    pub tree: &'static TreeProfile,
     pub key: &'static str,
     pub name_rule: NameRule,
     pub loads_agents: bool,
     pub display_name: &'static str,
-    pub support: PluginSupportCells,
+    pub notes: SupportNotes,
     pub verification: VerificationRow,
-}
-
-pub(crate) struct PluginTreeSpec {
-    pub tree: PluginTree,
-    pub key: &'static str,
-    pub root_file: Option<RootFileSpec>,
-    pub marketplace_name_rule: Option<NameRule>,
-    pub dropped_agent_fields: &'static [&'static str],
-    pub approximate_lowers_to_dropped: bool,
 }
 
 const fn verification(level: VerificationLevel, detail: &'static str) -> Verification {
@@ -118,19 +233,18 @@ const OPENCODE_NAME: NameRule = NameRule {
     message: "OpenCode names must be valid lowercase npm package names",
 };
 
+/// Every generated tree. Adding a tree starts here and in its `tree/` module.
+pub(crate) static TREE_PROFILES: &[&TreeProfile] =
+    &[&claude::PROFILE, &cursor::PROFILE, &opencode::PROFILE];
+
 pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
     PluginHarnessSpec {
         key: "claude",
-        tree: PluginTree::Claude,
+        tree: &claude::PROFILE,
         name_rule: CLAUDE_NAME,
         loads_agents: true,
         display_name: "Claude",
-        support: PluginSupportCells {
-            skills: None,
-            agents: None,
-            hooks: None,
-            mcp: None,
-        },
+        notes: SupportNotes::none(),
         verification: VerificationRow {
             install: verification(VerificationLevel::Live, " (local marketplace)"),
             skills: verification(VerificationLevel::Live, " (own and dependency skills)"),
@@ -144,15 +258,14 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
     },
     PluginHarnessSpec {
         key: "codex",
-        tree: PluginTree::Claude,
+        tree: &claude::PROFILE,
         name_rule: CODEX_NAME,
         loads_agents: false,
         display_name: "Codex",
-        support: PluginSupportCells {
-            skills: None,
-            agents: Some("**impossible**: Codex plugins don't load agents"),
-            hooks: Some("as Claude (reads the Claude tree's `hooks/hooks.json`)"),
-            mcp: Some("supported (same file as Claude)"),
+        notes: SupportNotes {
+            hooks: Some("reads the Claude tree's `hooks/hooks.json`"),
+            mcp: Some("same file as Claude"),
+            ..SupportNotes::none()
         },
         verification: VerificationRow {
             install: verification(VerificationLevel::Live, " (local marketplace)"),
@@ -164,15 +277,15 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
     },
     PluginHarnessSpec {
         key: "grok",
-        tree: PluginTree::Claude,
+        tree: &claude::PROFILE,
         name_rule: GROK_NAME,
         loads_agents: true,
         display_name: "Grok",
-        support: PluginSupportCells {
-            skills: None,
-            agents: Some("supported (same file as Claude)"),
+        notes: SupportNotes {
+            agents: Some("same file as Claude"),
             hooks: Some("as Claude"),
-            mcp: Some("supported (same file as Claude)"),
+            mcp: Some("same file as Claude"),
+            ..SupportNotes::none()
         },
         verification: VerificationRow {
             install: verification(VerificationLevel::Live, " (local marketplace)"),
@@ -187,16 +300,11 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
     },
     PluginHarnessSpec {
         key: "cursor",
-        tree: PluginTree::Cursor,
+        tree: &cursor::PROFILE,
         name_rule: CURSOR_NAME,
         loads_agents: true,
         display_name: "Cursor",
-        support: PluginSupportCells {
-            skills: None,
-            agents: None,
-            hooks: None,
-            mcp: None,
-        },
+        notes: SupportNotes::none(),
         verification: VerificationRow {
             install: verification(VerificationLevel::DocsOnly, " (account required)"),
             skills: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
@@ -210,17 +318,15 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
     },
     PluginHarnessSpec {
         key: "opencode",
-        tree: PluginTree::OpenCode,
+        tree: &opencode::PROFILE,
         name_rule: OPENCODE_NAME,
         loads_agents: false,
         display_name: "OpenCode",
-        support: PluginSupportCells {
-            skills: Some("supported (registered by `index.mjs`)"),
-            agents: Some("**impossible**: no API adds an agent"),
-            hooks: Some(
-                "supported for hooks with an `opencode` fragment that has a default `{id, setup}` export; others dropped with warning",
-            ),
-            mcp: Some("supported (registered by `index.mjs`)"),
+        notes: SupportNotes {
+            skills: Some("registered by `index.mjs`"),
+            hooks: Some("each fragment needs a default `{id, setup}` export"),
+            mcp: Some("registered by `index.mjs`"),
+            ..SupportNotes::none()
         },
         verification: VerificationRow {
             install: verification(VerificationLevel::Live, " (`git+file://`)"),
@@ -232,55 +338,16 @@ pub(crate) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
     },
 ];
 
-pub(crate) static CLAUDE_TREE_SPEC: PluginTreeSpec = PluginTreeSpec {
-    tree: PluginTree::Claude,
-    key: "claude",
-    root_file: Some(RootFileSpec {
-        path: ".claude-plugin/marketplace.json",
-        catalog_directory: Some(".claude-plugin"),
-        renderer: RootFileRenderer::Marketplace {
-            source_prefix: "./",
-        },
-    }),
-    marketplace_name_rule: Some(NameRule {
-        validate: valid_claude_plugin_name,
-        message: "Claude marketplace names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters",
-    }),
-    dropped_agent_fields: &["hooks", "mcpServers", "permissionMode", "initialPrompt"],
-    approximate_lowers_to_dropped: false,
-};
-
-pub(crate) static CURSOR_TREE_SPEC: PluginTreeSpec = PluginTreeSpec {
-    tree: PluginTree::Cursor,
-    key: "cursor",
-    root_file: Some(RootFileSpec {
-        path: ".cursor-plugin/marketplace.json",
-        catalog_directory: Some(".cursor-plugin"),
-        renderer: RootFileRenderer::Marketplace { source_prefix: "" },
-    }),
-    marketplace_name_rule: Some(NameRule {
-        validate: valid_cursor_plugin_name,
-        message: "Cursor marketplace names must contain only lowercase letters, digits, dots, or hyphens and start and end with a letter or digit",
-    }),
-    dropped_agent_fields: &[],
-    approximate_lowers_to_dropped: true,
-};
-
-pub(crate) static OPENCODE_TREE_SPEC: PluginTreeSpec = PluginTreeSpec {
-    tree: PluginTree::OpenCode,
-    key: "opencode",
-    root_file: Some(RootFileSpec {
-        path: "package.json",
-        catalog_directory: None,
-        renderer: RootFileRenderer::OpenCodePackage,
-    }),
-    marketplace_name_rule: None,
-    dropped_agent_fields: &[],
-    approximate_lowers_to_dropped: false,
-};
-
-pub(crate) static PLUGIN_TREE_SPECS: &[&PluginTreeSpec] =
-    &[&CLAUDE_TREE_SPEC, &CURSOR_TREE_SPEC, &OPENCODE_TREE_SPEC];
+impl SupportNotes {
+    const fn none() -> Self {
+        Self {
+            skills: None,
+            agents: None,
+            hooks: None,
+            mcp: None,
+        }
+    }
+}
 
 pub(crate) fn harness_specs() -> impl Iterator<Item = &'static PluginHarnessSpec> {
     PLUGIN_HARNESS_SPECS.iter()
@@ -288,6 +355,14 @@ pub(crate) fn harness_specs() -> impl Iterator<Item = &'static PluginHarnessSpec
 
 pub(crate) fn harness_spec(key: &str) -> Option<&'static PluginHarnessSpec> {
     harness_specs().find(|spec| spec.key == key)
+}
+
+pub(crate) fn trees() -> impl Iterator<Item = &'static TreeProfile> {
+    TREE_PROFILES.iter().copied()
+}
+
+pub(crate) fn tree_for_root_file(path: &Path) -> Option<&'static TreeProfile> {
+    trees().find(|tree| Path::new(tree.root_file.path()) == path)
 }
 
 pub(crate) fn unknown_plugin_harness_messages(harnesses: &[String]) -> Vec<String> {
@@ -306,21 +381,7 @@ pub(crate) fn unknown_plugin_harness_messages(harnesses: &[String]) -> Vec<Strin
         .collect()
 }
 
-impl PluginTree {
-    pub(crate) fn spec(self) -> &'static PluginTreeSpec {
-        PLUGIN_TREE_SPECS
-            .iter()
-            .copied()
-            .find(|spec| spec.tree == self)
-            .expect("every plugin tree has a format spec")
-    }
-
-    pub fn as_str(self) -> &'static str {
-        self.spec().key
-    }
-}
-
-fn valid_claude_plugin_name(name: &str) -> bool {
+pub(crate) fn valid_claude_plugin_name(name: &str) -> bool {
     !name.is_empty()
         && !name.chars().any(|character| {
             character.is_whitespace()
@@ -337,7 +398,7 @@ fn valid_claude_plugin_name(name: &str) -> bool {
         })
 }
 
-fn valid_cursor_plugin_name(name: &str) -> bool {
+pub(crate) fn valid_cursor_plugin_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     !bytes.is_empty()
         && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
@@ -347,14 +408,14 @@ fn valid_cursor_plugin_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b".-".contains(byte))
 }
 
-fn valid_codex_plugin_name(name: &str) -> bool {
+pub(crate) fn valid_codex_plugin_name(name: &str) -> bool {
     name.len() <= 64
         && !name.contains("--")
         && !name.contains("..")
         && valid_cursor_plugin_name(name)
 }
 
-fn valid_npm_package_name(name: &str) -> bool {
+pub(crate) fn valid_npm_package_name(name: &str) -> bool {
     if name.is_empty()
         || name.len() > 214
         || name != name.to_ascii_lowercase()

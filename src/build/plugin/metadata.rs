@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use super::spec::{PluginHarnessSpec, harness_specs};
 use crate::config::Config;
 use crate::error::ConfigError;
-use crate::plugin::{PluginHarnessSpec, harness_specs};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct PackageAuthor {
@@ -96,10 +96,10 @@ pub(crate) fn validate(config: &Config) -> Result<PackageMetadata, ConfigError> 
     };
     let mut checked = BTreeSet::new();
     for spec in &harnesses {
-        if !checked.insert(spec.tree.as_str()) {
+        if !checked.insert(spec.tree.key) {
             continue;
         }
-        let Some(rule) = spec.tree.spec().marketplace_name_rule else {
+        let Some(rule) = spec.tree.root_file.marketplace_name_rule() else {
             continue;
         };
         if !rule.accepts(&marketplace) {
@@ -145,7 +145,7 @@ fn parse_harnesses(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(message) = crate::plugin::unknown_plugin_harness_messages(&names)
+    if let Some(message) = super::spec::unknown_plugin_harness_messages(&names)
         .into_iter()
         .next()
     {

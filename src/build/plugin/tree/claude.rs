@@ -4,22 +4,36 @@ use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::{ConfigEntry, McpServerEntry};
 
-use super::{StandardTreeOutput, TreeProfile, invalid_item};
+use super::super::spec::{
+    Finish, NameRule, PluginHarnessSpec, RootFile, TreeProfile, valid_claude_plugin_name,
+};
+use super::invalid_item;
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
-pub(super) static PROFILE: TreeProfile = TreeProfile {
-    format: &crate::plugin::CLAUDE_TREE_SPEC,
+
+pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
+    key: "claude",
     harness: HarnessKind::Claude,
+    root_file: RootFile::Marketplace {
+        path: crate::plugin_metadata::CLAUDE_MARKETPLACE_FILE,
+        catalog_directory: crate::plugin_metadata::CLAUDE_CATALOG_DIRECTORY,
+        source_prefix: "./",
+        name_rule: NameRule {
+            validate: valid_claude_plugin_name,
+            message: "Claude marketplace names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters",
+        },
+    },
+    dropped_agent_fields: &["hooks", "mcpServers", "permissionMode", "initialPrompt"],
+    approximate_lowers_to_dropped: false,
     agents: Some(apply_agent_policy),
     native_model_aliases: NATIVE_MODEL_ALIASES,
     plugin_root_token: Some("${CLAUDE_PLUGIN_ROOT}"),
     check_hook,
-    standard_output: Some(StandardTreeOutput {
-        manifest_path: ".claude-plugin/plugin.json",
-        manifest_description: "Claude plugin manifest",
-    }),
     write_config: write_config_entries,
-    finish: super::finish_standard_tree,
+    finish: Finish::StandardManifest {
+        path: ".claude-plugin/plugin.json",
+        description: "Claude plugin manifest",
+    },
 };
 
 fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut DiagnosticCollector) {}
@@ -28,7 +42,7 @@ fn write_config_entries(
     _profile: &TreeProfile,
     root: &std::path::Path,
     entries: &[ConfigEntry],
-    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
+    harnesses: &[&'static PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let (mcp, hooks) = super::standard_config_entries(entries);
@@ -45,7 +59,7 @@ fn write_config_entries(
 fn write_plugin_mcp_json(
     path: &std::path::Path,
     servers: &[&McpServerEntry],
-    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
+    harnesses: &[&'static PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut root = serde_json::json!({ "mcpServers": {} });
@@ -125,7 +139,7 @@ fn apply_agent_policy(
         plugin.insert("disallowedTools", value);
     }
 
-    for &field in PROFILE.dropped_agent_fields() {
+    for &field in PROFILE.dropped_agent_fields {
         if source.get(field).is_some() {
             diag.warn(
                 "plugin-agent-field-dropped",

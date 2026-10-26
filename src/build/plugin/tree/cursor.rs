@@ -4,21 +4,33 @@ use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
 
-use super::{StandardTreeOutput, TreeProfile};
+use super::super::spec::{
+    Finish, NameRule, PluginHarnessSpec, RootFile, TreeProfile, valid_cursor_plugin_name,
+};
 
-pub(super) static PROFILE: TreeProfile = TreeProfile {
-    format: &crate::plugin::CURSOR_TREE_SPEC,
+pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
+    key: "cursor",
     harness: HarnessKind::Cursor,
+    root_file: RootFile::Marketplace {
+        path: crate::plugin_metadata::CURSOR_MARKETPLACE_FILE,
+        catalog_directory: crate::plugin_metadata::CURSOR_CATALOG_DIRECTORY,
+        source_prefix: "",
+        name_rule: NameRule {
+            validate: valid_cursor_plugin_name,
+            message: "Cursor marketplace names must contain only lowercase letters, digits, dots, or hyphens and start and end with a letter or digit",
+        },
+    },
+    dropped_agent_fields: &[],
+    approximate_lowers_to_dropped: true,
     agents: Some(preserve_agent),
     native_model_aliases: &[],
     plugin_root_token: Some("${CURSOR_PLUGIN_ROOT}"),
     check_hook,
-    standard_output: Some(StandardTreeOutput {
-        manifest_path: ".cursor-plugin/plugin.json",
-        manifest_description: "Cursor plugin manifest",
-    }),
     write_config: write_config_entries,
-    finish: super::finish_standard_tree,
+    finish: Finish::StandardManifest {
+        path: ".cursor-plugin/plugin.json",
+        description: "Cursor plugin manifest",
+    },
 };
 
 fn preserve_agent(
@@ -36,7 +48,7 @@ fn write_config_entries(
     _profile: &TreeProfile,
     root: &std::path::Path,
     entries: &[ConfigEntry],
-    _harnesses: &[&'static crate::plugin::PluginHarnessSpec],
+    _harnesses: &[&'static PluginHarnessSpec],
     _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let (mcp, hooks) = super::standard_config_entries(entries);

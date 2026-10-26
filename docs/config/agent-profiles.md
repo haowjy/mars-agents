@@ -1,6 +1,8 @@
 # Agent Profile Reference
 
-An agent profile is a markdown file with a YAML frontmatter block. The frontmatter declares identity, routing, and runtime policy fields. The markdown body becomes the agent's system prompt (instructions).
+An agent profile is a markdown file with a YAML frontmatter block. The frontmatter declares identity, routing and runtime policy. The markdown body becomes the agent's system prompt.
+
+This page describes each field. The format's contract (what schema 1 promises, the removed keys, the value tables) is [Schema v1](schema-v1.md). A profile that predates it can be upgraded with [`mars migrate`](migrating-to-schema-v1.md).
 
 ```yaml
 ---
@@ -11,30 +13,28 @@ harness: claude
 mode: subagent
 approval: auto
 sandbox: workspace-write
-network: allow
 effort: high
-autocompact: 200000
-autocompact_pct: 80
-skills: [dev-principles, shared-workspace]
+skills:
+  load: [dev-principles, shared-workspace]
+  available: [diagnose]
 tools:
   bash: allow
   write: allow
   edit: allow
   read: allow
-disallowed-tools: [agent, bash(git revert:*)]
+  agent: deny
+  "bash(git revert *)": deny
 harness-overrides:
   codex:
-    effort: medium
-    sandbox: workspace-write
+    sandbox_workspace_write:
+      network_access: true
 model-policies:
   - match:
       alias: opus
     no-fallback: true
     override:
       effort: high
-fanout:
-  - alias: opus
-  - alias: codex
+    when: Default choice for implementation
 ---
 
 # Coder
@@ -72,7 +72,7 @@ tools:
 You turn approved plans into working code. Focus on correctness, then clarity.
 ```
 
-Everything before the first `---` fence, or files with no frontmatter, is treated as a body-only agent with no profile fields set.
+The frontmatter is the block between a first line that is exactly `---` and the next line that is exactly `---`. A file whose first line is something else has no frontmatter: it is all body, and no profile field is set. A fence that opens and never closes is an error. The other file rules are in [Schema v1](schema-v1.md#file-rules).
 
 ---
 
@@ -121,8 +121,8 @@ description: Implementation agent for code changes
 Model alias or concrete model ID. Aliases defined in `[models]` in `mars.toml` are resolved per-target during compilation. If omitted, the harness uses its default model.
 
 ```yaml
-model: gpt55        # alias
-model: claude-opus-4-6  # concrete ID
+model: gpt55                # an alias
+# model: claude-opus-4-6    # or a concrete model ID
 ```
 
 ---
@@ -133,7 +133,7 @@ model: claude-opus-4-6  # concrete ID
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `claude`, `codex`, `opencode`, `cursor`, `pi` |
+| Allowed values | `claude`, `codex`, `opencode`, `cursor`, `pi` (case-insensitive) |
 | Default | none (universal agent) |
 
 Routing and model-selection hint. Native emission is controlled separately by
@@ -141,7 +141,7 @@ the agent emission policy. In standalone/default `EmitAll`, every canonical
 agent is lowered to every configured target harness, whether or not
 `harness:` is set; a nonmatching model field is omitted from that native artifact.
 Meridian-managed `SuppressAll` keeps agents canonical-only, while
-`EmitSelective` emits only qualifying copies.
+`EmitSelective` emits only qualifying copies. An unknown harness name is an error.
 
 ```yaml
 harness: claude
@@ -168,13 +168,31 @@ mode: subagent
 
 ---
 
+### `model-invocable` and `user-invocable`
+
+| | |
+|---|---|
+| Type | boolean |
+| Required | no |
+| Default | `true` |
+
+Who can invoke the agent. `model-invocable: false` keeps another model from choosing the agent by itself; `user-invocable: false` keeps the user from invoking it directly (a slash command or picker). Only the hyphenated spellings exist: `model_invocable` and `user_invocable` are errors that name them. A value must be `true` or `false`; `yes` and `no` are errors.
+
+No native agent file carries either key: an explicit `false` is reported as dropped lossiness. The consumer's `[agents.<name>]` overlay can set both; see [mars.toml](mars-toml.md#agentsname-overlay).
+
+```yaml
+model-invocable: false
+```
+
+---
+
 ### `approval`
 
 | | |
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `default`, `auto`, `confirm`, `yolo` |
+| Allowed values | `default`, `auto`, `confirm`, `never` |
 | Default | none (unset; harness decides) |
 
 Permission approval policy for tool calls.
@@ -184,9 +202,11 @@ Permission approval policy for tool calls.
 | `default` | Explicitly requests harness-default approval behavior |
 | `auto` | Auto-approve safe operations (edits, reads); prompt for destructive ops |
 | `confirm` | Prompt before every tool call |
-| `yolo` | Approve all tool calls without prompting |
+| `never` | Never prompt: tool calls run without approval |
 
 Omitting `approval` leaves it unset. `default` is an accepted explicit value, but it is not the same as an omitted field in the parsed profile.
+
+`yolo`, the earlier spelling of `never`, was removed: it is an error that names `never`, and `mars migrate` rewrites it.
 
 ```yaml
 approval: auto
@@ -220,106 +240,19 @@ sandbox: workspace-write
 
 ---
 
-### `network`
-
-| | |
-|---|---|
-| Type | string |
-| Required | no |
-| Allowed values | `allow`, `deny`, `allowlist` |
-| Default | none (unset; Meridian follows the resolved sandbox) |
-
-Controls whether the agent's shell commands may open connections, including the
-public internet, host services, and local sockets. It does not control built-in
-web tools; grant or deny those with `tools: web`.
-
-| Value | Behavior |
-|---|---|
-| `allow` | Allow shell commands to open connections |
-| `deny` | Deny shell commands from opening connections |
-| `allowlist` | Allow only `network-allow` hosts, minus `network-deny` hosts |
-
-Mars carries an omitted mode as `null` in the launch bundle; it does not choose a network
-default unless `[settings] default_network` (project, local, or user config) supplies one.
-Meridian resolves a remaining unset mode from the sandbox. There is no explicit `default`
-value. Harness projection reports enforcement limits.
-
-At launch, the mode resolves in this order: CLI `--network`, agent overlay,
-matching overlay model policy, profile, matching profile model policy, then
-matching settings model policy, project/local settings, and user config.
-
-```yaml
-network: allowlist
-network-allow: [github.com, "*.github.com", "**.pypi.org"]
-network-deny: [uploads.example]
-```
-
-`network-allow` and `network-deny` are permission sets. Plain lists add across user,
-project, local, profile, overlay, and CLI surfaces. `{replace: [...]}` clears lower entries
-([how lists combine](mars-toml.md#adding-to-or-replacing-a-permission-list));
-a package profile may replace its allow set but may not replace its deny set. Each entry is
-an exact host, an IP address, `*.x` (subdomains only), or `**.x` (apex plus subdomains).
-Wildcards require at least two DNS labels. Mars lowercases hosts, removes a trailing dot,
-canonicalizes IPv4-mapped IPv6 to IPv4, deduplicates, and sorts them. It rejects URLs, schemes,
-ports, paths, numeric or `0x`-style terminal DNS labels, empty strings, and a bare `*`;
-internationalized names must use punycode. `network_allow` / `network_deny` are accepted
-aliases. An unknown network-looking frontmatter key produces a warning instead of being
-silently ignored. An empty `allowlist` fails closed to `deny` with a warning.
-
----
-
 ### `effort`
 
 | | |
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `low`, `medium`, `high`, `xhigh`, `max` |
-| Default | none (harness model default) |
+| Allowed values | `none`, `low`, `medium`, `high`, `xhigh` (case-insensitive; `max` is accepted as `xhigh`) |
+| Default | none (the model's default) |
 
-Reasoning effort level. Maps to model-specific effort controls (`--effort` for Claude, `model_reasoning_effort` for Codex). `max` is accepted as an alias for `xhigh`; Claude lowering normalizes `xhigh` to `max`.
+Reasoning effort. `none` means reasoning off and is different from leaving the key out. Mars lowers it to each harness's own control (`--effort` for Claude, `model_reasoning_effort` for Codex); Claude has no off value, so its native file omits `effort` and Mars warns. The per-harness table is in [Schema v1](schema-v1.md#effort).
 
 ```yaml
 effort: high
-```
-
----
-
-### `autocompact`
-
-| | |
-|---|---|
-| Type | integer |
-| Required | no |
-| Range | 0–4294967295 |
-| Default | none |
-
-Context window compaction threshold in tokens. It is preserved in the launch bundle rather
-than native agent files. Meridian maps it to Claude's token-window flag and Codex's token
-limit; harnesses without a matching control report it unsupported.
-
-```yaml
-autocompact: 200000
-```
-
----
-
-### `autocompact_pct`
-
-| | |
-|---|---|
-| Type | integer |
-| Required | no |
-| Range | 1–100 |
-| Default | none |
-
-Context window compaction threshold as a percentage of the context window. It is preserved
-in the launch bundle rather than native agent files. Meridian maps it to Claude's percentage
-environment variable and Codex's percentage config; harnesses without a matching control
-report it unsupported.
-
-```yaml
-autocompact_pct: 80
 ```
 
 ---
@@ -375,7 +308,7 @@ it does not produce a lossiness warning. See
 
 The agents this agent is allowed to spawn. `subagents` is a first-class parsed field: mars preserves it in the `.mars/` canonical artifact and uses it during prompt assembly to filter the spawnable-agent **inventory** injected into the system prompt — only listed agents are advertised as spawn options. Meridian reads the same list at spawn time to scope the agent's spawnable roster.
 
-Like `model-policies` and `fanout`, `subagents` is Meridian-oriented metadata — preserved in `.mars/` for runtime consumers, with no harness-native field equivalent.
+Like `model-policies`, `subagents` is Meridian-oriented metadata — preserved in `.mars/` for runtime consumers, with no harness-native field equivalent.
 
 ```yaml
 subagents: [explorer, reviewer, coder]
@@ -387,29 +320,25 @@ subagents: [explorer, reviewer, coder]
 
 | | |
 |---|---|
-| Type | string[] or mapping (`tool-name: allow\|deny\|ask`) |
+| Type | mapping (`tool-name: allow\|deny\|ask`) |
 | Required | no |
 | Default | empty (harness default tool set) |
 
 Tool policy for the agent, written as rules: a capability, an optional scope, and an action
-(`allow`, `deny` or `ask`). Capability names are Mars's snake_case vocabulary (below); a
-scope goes in parentheses, `tool(pattern)`. Mars maps each capability to the harness's real
-tool names while it builds the launch bundle and lowers agent files; the author never writes
-a harness spelling.
+(`allow`, `deny` or `ask`). Capability names are Mars's snake_case vocabulary
+([the capability table](schema-v1.md#tool-capabilities)); a scope goes in parentheses,
+`tool(pattern)`. Mars maps each capability to the harness's real tool names while it builds the
+launch bundle and lowers agent files; the author never writes a harness spelling.
 
-Two forms:
+`tools` is a map. A rule states a grant or a denial and leaves everything else to the harness.
+Add `'*': deny` to make the map an allowlist: only the capabilities it allows remain. A
+capability that has only scoped allows (`bash(rg *)`) then runs only those commands.
 
-- **List form is deprecated.** `tools: [read, grep]` still only grants those entries and
-  restricts nothing. A non-empty list emits a deprecation warning. An empty list names no tools
-  and stays "no policy".
-- **Map form states rules.** `tools: {read: allow, edit: deny}` grants and denies those
-  entries and leaves everything else to the harness. Add `'*': deny` to make a map an
-  allowlist too. A capability that has only scoped allows (`bash(rg *)`) then runs only those
-  commands.
-
-`tools: {replace: [...]}` is invalid in a package profile. Replacement tables belong to
-consumer `[agents.<name>.tools]` and `[skills.<name>.tools]` overlays; a profile has no lower
-package policy to replace. See [Adding to or replacing a permission list](mars-toml.md#adding-to-or-replacing-a-permission-list).
+A list (`tools: [read, grep]`), the scalar spellings (`tools: allow`, `tools: Read, Grep`) and
+`disallowed-tools` are errors in schema 1. A denial is `tools: {agent: deny}`.
+`tools: {replace: [...]}` is an error as well: replacement tables belong to the consumer's
+`[agents.<name>.tools]` overlay, and a profile has no lower package policy to replace. See
+[Adding to or replacing a permission list](mars-toml.md#adding-to-or-replacing-a-permission-list).
 
 `ask` asks before the call. Native agent files (`.claude/agents/`) have no field for it, or
 for an allowlist with nothing allowed; Mars reports both as dropped lossiness. Meridian
@@ -428,42 +357,22 @@ tools:                                   # grants and denials
   "bash(git status *)": allow           # scoped pattern
   mcp(context7): allow                   # MCP grants — see below
   mcp(plugin:demo/query-docs): allow
-tools:                                   # explicit allowlist in map form
+  ls: allow
+```
+
+```yaml
+tools:                                   # explicit allowlist
   "*": deny
   "bash(rg *)": allow
 ```
 
 Readable aliases and native spellings (`Bash`, `shell`, `exec_command`, `AskUserQuestion`,
-`websearch`) resolve to the same capability. A name Mars does not recognize is kept as
-written and reported as `unknown` in the launch bundle; Mars never guesses a native spelling
-for it. `tools: allow` / `tools: deny` (a scalar) is a validation error. Any other scalar is
-Claude's own comma-separated spelling, `tools: Read, Grep`, and reads as the list
-`[Read, Grep]`, granting both entries (commas inside a scope, `bash(rg a,b)`, stay with their
-entry).
+`websearch`) resolve to the same capability. A name Mars does not recognize is kept and
+reported as `unknown` in the launch bundle; Mars never guesses a native spelling for it.
+`ls` and `work` are capabilities too: `ls` lists one folder (OpenCode, Pi and Meridian Flow have
+a tool for it), and `work` is Meridian Flow's work tool.
 
-**Capabilities.** One name per kind of tool. Where a capability covers several native tools,
-a rule covers all of them.
-
-| Capability | Meaning |
-|---|---|
-| `bash` | Shell commands |
-| `read`, `write`, `edit` | Read files; create files; modify files (`edit` covers writes and notebook edits on harnesses where they are separate tools) |
-| `notebook` | Jupyter notebook editing |
-| `glob`, `grep` | File and content search |
-| `agent` | Sub-agents (Claude `Agent` with `SendMessage` and `ListAgents`, OpenCode `task`) |
-| `task` | The task list (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`, Codex `update_plan`). Not sub-agents. Names are case-insensitive here, so `Task` is the task list in a `dialect = "mars-native"` package; in any other package staging reads `Task` as Claude's old sub-agent tool and lifts it to `agent` |
-| `skill`, `workflow` | Loading a skill; running a workflow |
-| `web` | `web_search` and `web_fetch` together |
-| `web_search`, `web_fetch` | One of the two |
-| `ask_user` | Asking the user a question |
-| `plan_mode`, `worktree`, `lsp`, `cron`, `monitor`, `notifications`, `send_user_file`, `schedule_wakeup`, `remote_trigger`, `tool_search` | Harness features that exist on some harnesses only |
-
-Per-harness native names and the loss rules are in
-[agent-compilation.md](agent-compilation.md#tool-name-projection).
-
-**MCP grants** — inline `mcp(...)` entries in `tools:` or `disallowed-tools:` gate MCP
-server/tool access. Server and tool segments are preserved **verbatim** (case-sensitive).
-`*` is the only wildcard.
+**MCP grants** — inline `mcp(...)` entries in `tools` gate MCP server/tool access. Server and tool segments are preserved **verbatim** (case-sensitive). `*` is the only wildcard.
 
 | Form | Meaning |
 |---|---|
@@ -477,32 +386,14 @@ server/tool access. Server and tool segments are preserved **verbatim** (case-se
 tools:
   mcp(context7): allow
   mcp(memory-bank/store): allow
-disallowed-tools: [mcp(github/delete_repo)]
+  mcp(github/delete_repo): deny
 ```
 
-The legacy `mcp-tools:` / `mcp_tools` frontmatter field is **removed** — use
-`tools: {mcp(server): allow}` instead. Per-harness projection and lossiness are documented in
-[agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
+The earlier `mcp-tools:` / `mcp_tools` frontmatter field was **removed**: write the same
+grants as `mcp(server): allow` entries in `tools`. Per-harness projection and lossiness are
+documented in [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 These entries govern tool permissions, not server registration. Server definitions come
 from package `mcp/<name>/mcp.toml` files and are installed by `mars sync`.
-
----
-
-### `disallowed-tools`
-
-| | |
-|---|---|
-| Type | string[] |
-| Required | no |
-| Default | empty |
-
-Tool denylist. These tools are blocked even if they'd otherwise be available. Uses the same canonical tool-name grammar and scoped pattern syntax as `tools`.
-
-```yaml
-disallowed-tools: [agent]
-disallowed-tools: [bash(git revert:*), bash(git reset:*)]
-disallowed-tools: [mcp(plugin:audit/*)]   # MCP denials use the same mcp(...) grammar
-```
 
 ---
 
@@ -516,41 +407,22 @@ Top-level Mars fields remain the semantic controls for routing, prompt assembly,
 harness-overrides:
   claude:
     customClaudeKey: true
-    tools: [ask_user, askuser]  # preserved exactly in passthrough
   codex:
     sandbox_workspace_write:  # Codex config keys, carried as written
       network_access: true
+  flow:
+    permission: read          # Meridian Flow's own keys; reserved namespace
 ```
 
 The selected block reaches the launch bundle as `execution_policy.native_config`; the launcher decides how to apply it. For Meridian, Codex applies it as `-c` overrides.
 
-Use top-level fields for Mars semantics. Use `harness-overrides` for harness-specific config Mars should carry without interpreting.
-
-Nested values are serializability-validated only. Mars preserves entries as target-harness native passthrough and does not interpret key semantics.
+Use top-level fields for Mars semantics. Use `harness-overrides` for harness-specific config Mars should carry without interpreting. `flow` is a reserved consumer namespace, not a harness: Mars keeps it and never interprets it, and routing never selects it. Any other unknown name is a warning, and its block is kept. See [Schema v1](schema-v1.md#harness-overrides-and-the-flow-namespace).
 
 ---
 
 ### `model-policies`
 
-Conditional model settings and profile fallback candidates resolved by Mars.
-`match` selects an `alias`, a literal `model` ID, or a `model-glob`. Optional
-`override` settings apply to the first matching rule in overlay → profile → settings
-order. Omit `override` or use `{}` for a candidate-only entry.
-
-For an implicit model choice, launch fallback scans **all concrete profile rules**
-in declaration order after trying the primary. It does not depend on where the
-primary's settings matched. `no-fallback: true` excludes only that entry from
-fallback; it cannot stop later entries or prevent using the model as primary or
-explicitly. Flagged entries still supply settings when they match the chosen model.
-Explicit model requests do not use model backups.
-
-Fallback skips globs and deduplicates by selector kind/token. Distinct aliases are
-not merged because they resolve to the same model. Overlay/global rules provide
-settings, not additional profile fallback candidates. Empty overrides stay valid.
-
-Inventory labels these rules as declared backups, with `(model ID)` marking literal
-selectors. They describe automatic fallback, not equivalent explicit overrides:
-`--model TOKEN` resolves an alias named `TOKEN` before treating it as a model ID.
+Conditional model settings, declared backups and a per-model guide for this agent. Each rule has a `match` (exactly one of `alias`, `model`, `model-glob`), an optional `override` of `effort`, `sandbox` and `approval`, an optional `when`, and an optional `no-fallback`.
 
 ```yaml
 model-policies:
@@ -559,56 +431,58 @@ model-policies:
     override:
       effort: high
       sandbox: workspace-write
-      network: deny
+    when: Architecture review that crosses module boundaries
   - match:
       model: gpt-5.5
     override:
-      harness: codex
       effort: medium
+  - match:
+      model-glob: "gpt-5*"
+    no-fallback: true
 ```
+
+Mars takes the first rule that matches the chosen model; only that rule's `override` applies, and it outranks the agent's top-level `effort`, `sandbox` and `approval`. The full precedence, the consumer overlay and settings layers, and `when` are in [Schema v1](schema-v1.md#model-policies). Any `override` key but `effort`, `sandbox` and `approval` is an error.
+
+**Declared backups.** For an implicit model choice, launch fallback scans **all concrete profile rules**
+in declaration order after trying the primary. It does not depend on where the
+primary's settings matched. `no-fallback: true` excludes only that entry from
+fallback; it cannot stop later entries or prevent using the model as primary or
+explicitly. Flagged entries still supply settings when they match the chosen model.
+Explicit model requests do not use model backups.
+
+Fallback skips globs and deduplicates by selector kind/token. Distinct aliases are
+not merged because they resolve to the same model. Overlay/global rules provide
+settings, not additional profile fallback candidates. Empty overrides stay valid, and a
+rule with no `override` is a candidate-only entry.
+
+Inventory labels these rules as declared backups, with `(model ID)` marking literal
+selectors. They describe automatic fallback, not equivalent explicit overrides:
+`--model TOKEN` resolves an alias named `TOKEN` before treating it as a model ID.
+
+**Guide.** `mars models prompting @agent` lists each rule that has a `when`, in declaration order, ahead of the model alias's own `prompting` text.
 
 The rule list is preserved in `.mars/` but not emitted as a harness-native field.
-Native agent materialization has separate `include_fanout` semantics: flagged rules
-and expanded globs can still participate. Launch fallback filtering does not change
-native emission or reconciliation.
+Native agent materialization applies `[settings.meridian.agent_copy] include_fanout`: with
+it, flagged rules and expanded globs can also qualify an agent for a harness. Launch fallback
+filtering does not change native emission or reconciliation.
 
-Mars parses the `match`/`override` structure during `mars check` and before
-`mars version`, reporting malformed shape. `override` may be omitted or empty.
-Launch-bundle execution overrides include `effort`, `approval`, `sandbox`,
-`network`, `autocompact`, and `autocompact_pct`; `network` uses the same policy
-layer and precedence as `sandbox`.
-
----
-
-### `fanout`
-
-Declares additional model candidates for inventory display in `meridian spawn --list`. Entries describe fallback or alternative models the agent can run on.
-
-```yaml
-fanout:
-  - alias: opus
-  - alias: codex
-  - model: gpt-5.5
-```
-
-`fanout` is Meridian-only — preserved in `.mars/` but stripped from harness-native artifacts.
-
-Mars currently preserves fanout entries as opaque metadata and only validates that `fanout` is a sequence; it does not validate each entry's internal shape.
+Mars parses the `match`/`override` structure when it reads the profile and reports a malformed
+shape as an error; `mars check` also warns when a rule's `alias` is not a defined alias.
 
 ---
 
 ## Validation
 
-Mars validates agent profiles at compile time and emits diagnostics:
+Mars reads every profile with the schema reader and reports diagnostics, each with a code and the key path:
 
 | Condition | Severity |
 |---|---|
-| Invalid field value (e.g. `effort: ultra`, malformed `model-policies`) | Error — field is skipped |
-| Unknown harness name | Warning — block is preserved for forward compatibility |
-| Legacy `models:` field | Warning — deprecated; use `fanout:` for display/inventory candidates and `model-policies:` for per-model overrides |
-| Unknown top-level fields | Tolerated (forward compatibility) |
+| A removed key (`network`, `disallowed-tools`, `fanout`, ...), a list-form `tools`, an invalid value (`effort: ultra`, `approval: yolo`), malformed `model-policies`, an unclosed or non-mapping frontmatter, a duplicate key | Error |
+| An unknown harness name in `harness:` | Error |
+| An unknown top-level field | Warning — the field is preserved |
+| An unknown name in `harness-overrides` (other than `flow`) | Warning — the block is preserved |
 
-Diagnostics are emitted during `mars sync` and `mars validate`. `mars check` and `mars version` use the same parser diagnostics as package-gating errors. Errors in a field skip that field during sync/validate; package gates fail until the source package is fixed.
+Errors fail `mars sync`, `mars check` and `mars validate` for the package that carries them, before anything is written. `mars check` exits 1 when it finds errors; `mars sync` exits 2. A profile of a package without `schema = 1` is upgraded in memory first, with one warning that names `mars migrate`; see [Migrating to schema v1](migrating-to-schema-v1.md).
 
 ---
 

@@ -10,7 +10,7 @@ policy requests all or selective copies through
 
 ## The Two Surfaces
 
-Every agent produces a `.mars/agents/<name>.md` artifact regardless of whether `harness:` is set. This is the canonical compiled output: all frontmatter fields preserved, body unchanged. Meridian reads from here at spawn time.
+Every agent produces a `.mars/agents/<name>.md` artifact regardless of whether `harness:` is set. This is the canonical compiled output: all frontmatter fields preserved, body unchanged. Meridian reads from here at spawn time. A package that predates [schema v1](schema-v1.md) arrives here upgraded to schema 1.
 
 When native emission selects an agent for a harness, a second artifact is emitted in the harness-native directory:
 
@@ -82,6 +82,8 @@ For launch bundles, Mars selects the `harness-overrides.<resolved-harness>` bloc
 
 Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. Codex native lowering still receives `effort: low`; the launch bundle carries `{ "effort": "high" }` under `execution_policy.native_config` for the harness/runtime to interpret.
 
+`harness-overrides.flow` is a reserved consumer namespace, not a harness. It stays in `.mars/agents/` and is never lowered or selected for a launch. See [Schema v1](schema-v1.md#harness-overrides-and-the-flow-namespace).
+
 ## Per-Target Field Mapping
 
 ### Skill references in native agents
@@ -132,29 +134,25 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `model` | `model:` | exact |
 | `skills.load` | `skills:` plus the end-of-body reminder used by `claude --agent` | exact for subagents; approximate for `--agent` |
 | `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
-| `tools` | `tools:` (+ projected `mcp__…` MCP tokens), only for a map-form `'*': deny` allowlist | Claude's `tools:` restricts the agent to what it lists. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost); `ask` rules and an allowlist with nothing allowed have no field, and Mars records each as dropped lossiness |
-| `disallowed-tools` | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
-| `effort` | `effort:` (`xhigh` → `max`) | exact |
+| `tools` allowlist (`'*': deny`) | `tools:` (+ projected `mcp__…` MCP tokens) | Claude's `tools:` restricts the agent to what it lists, so only an allowlist lowers to it. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost) |
+| `tools` denials | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
+| `tools` `ask` rules, an allowlist with nothing allowed | dropped | Claude agent files have no field for them; Mars records each as dropped lossiness |
+| `effort` | `effort:` (`xhigh` → `max`) | exact. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
-| `network` | dropped | meridian-only |
-| `network-allow`, `network-deny` | dropped | meridian-only |
 | `mode` | dropped | dropped |
-| `autocompact` | dropped | meridian-only |
-| `autocompact_pct` | dropped | meridian-only |
+| `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
 | `harness-overrides` | dropped | meridian-only |
-| `fanout` | dropped | meridian-only |
 | `harness` | dropped | dropped |
 
-`approval`, `sandbox`, `network`, and the network host sets are applied at launch time by
-Meridian through its harness projection layer, not stored in the agent file.
+`approval` and `sandbox` are applied at launch time by Meridian through its harness projection layer, not stored in the agent file. The same holds for the `effort`, `sandbox` and `approval` a matching `model-policies` rule or `[agents.<name>]` overlay sets: Mars resolves them for the native file with the [launch bundle's precedence](schema-v1.md#model-policies) minus the command line, so the file and the bundle agree.
 
 ### Tool name projection
 
 Mars owns both permission-rule names and unscoped harness tool names. A profile's capability
 (`edit`, `web`, `ask_user`, …) becomes both facts through one explicit table per harness
-(`src/compiler/tool_natives.rs`, which is authoritative; the table below is a reading copy);
+(`crates/mars-schema/src/tool_natives.rs`, which is authoritative; the table below is a reading copy of the [vocabulary fixture](../../crates/mars-schema/fixtures/vocabulary/expected.json));
 no name is derived by convention. The launch bundle puts permission spellings (including
 patterns) in `native` and unscoped availability names in `native_tools`. A capability can cover
 several native tools, and the launch bundle reports one of three outcomes per rule:
@@ -184,7 +182,7 @@ bundle's `native` carries for a bare rule; "(scoped: ...)" is the spelling once 
 a pattern. *absent*: the harness has no such tool, so a deny is already met. *no switch*: the
 harness can do it but has no tool to turn off (`native_status: unknown`, with a `note`).
 *unknown*: Mars has no entry for that harness. The table follows
-`src/compiler/tool_natives.rs`, which is the source of truth; change both together.
+`crates/mars-schema/src/tool_natives.rs`, which is the source of truth; change both together.
 
 | Capability | Covers | Claude | Codex | OpenCode | Pi | Cursor |
 |---|---|---|---|---|---|---|
@@ -214,6 +212,8 @@ harness can do it but has no tool to turn off (`native_status: unknown`, with a 
 | `remote_trigger` | remote triggers | `RemoteTrigger` | absent | absent | absent | unknown |
 | `tool_search` | load deferred tool definitions | `ToolSearch` | `tool_search` | absent | absent | unknown |
 | `image` | view an image file | no switch | `view_image` | no switch | no switch | unknown |
+| `ls` | list one folder | absent | absent | `list` | `ls` | absent |
+| `work` | Meridian Flow's work tool | absent | absent | absent | absent | absent |
 
 ¹ `TaskOutput` was removed from Claude in 2.1.277, which ignores the name. It stays because
 older builds offer it and Meridian denies it with the task list.
@@ -271,26 +271,22 @@ TOML format. Codex reads this for native agent invocation.
 | `name` | `name` | exact |
 | `description` | `description` | exact |
 | `model` | `model` | exact |
-| `effort` | `model_reasoning_effort` | exact |
+| `effort` | `model_reasoning_effort` | exact. `none` is written as `"none"`; some Codex models refuse it |
 | `sandbox` | `sandbox_mode` | exact |
 | `approval` | `approval_policy` | exact |
-| `network` | dropped | dropped |
-| `network-allow`, `network-deny` | dropped | dropped |
 | body | `developer_instructions` | exact |
 | `skills.load` | end-of-body `/name` guidance | approximate |
 | `skills.available` | end-of-body `/name` guidance | approximate |
-| `tools` | dropped | dropped |
-| `disallowed-tools` | dropped | dropped |
-| `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness); enable servers via `mcp/<name>/mcp.toml` | approximate |
+| `tools` allow and `ask` rules | dropped (reported as `tools`) | dropped |
+| `tools` deny rules | dropped (reported as `disallowed-tools`) | dropped |
+| `mcp(...)` in `tools` | dropped (lossiness); enable servers via `mcp/<name>/mcp.toml` | approximate |
 | `mode` | dropped | dropped |
-| `autocompact` | dropped | meridian-only |
-| `autocompact_pct` | dropped | meridian-only |
+| `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
-| `fanout` | dropped | meridian-only |
 
-Mars does not write `network_access` or host sets into Codex native TOML. Native Codex
-therefore keeps its own network default (off for `workspace-write`) rather than
-honoring the profile's `network` value.
+Mars writes no network settings into Codex native TOML, so native Codex keeps its own network
+default (off for `workspace-write`). A launch through Meridian can set Codex config such as
+`sandbox_workspace_write.network_access` with `harness-overrides.codex`.
 
 **Approval value mapping:**
 
@@ -299,7 +295,7 @@ honoring the profile's `network` value.
 | `default` | (omitted) |
 | `auto` | `"on-request"` |
 | `confirm` | `"untrusted"` |
-| `yolo` | `"never"` |
+| `never` | `"never"` |
 
 **Example output:**
 
@@ -332,16 +328,11 @@ YAML frontmatter + markdown body.
 | `skills.available` | end-of-body `/name` guidance | approximate |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
-| `network` | dropped | meridian-only |
-| `network-allow`, `network-deny` | dropped | meridian-only |
-| `tools` | dropped | dropped |
-| `disallowed-tools` | dropped | dropped |
-| `effort` | dropped from frontmatter | approximate |
-| `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness); launch bundle projects OpenCode tokens | approximate |
-| `autocompact` | dropped | meridian-only |
-| `autocompact_pct` | dropped | meridian-only |
+| `tools` (every rule) | dropped | dropped |
+| `effort` | dropped from frontmatter (any value, `none` included) | approximate |
+| `mcp(...)` in `tools` | dropped (lossiness); launch bundle projects OpenCode tokens | approximate |
+| `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
-| `fanout` | dropped | meridian-only |
 
 OpenCode has no per-agent skill preload field. Its separate `.opencode/skills/` surface makes the
 generated `/name` references resolvable.
@@ -363,25 +354,20 @@ YAML frontmatter + markdown body.
 | body | body | exact |
 | `approval` | runtime-only (meridian projects `--force`/`--yolo`) | approximate |
 | `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | approximate |
-| `network` | dropped | meridian-only |
-| `network-allow`, `network-deny` | dropped | meridian-only |
-| `tools` | dropped | dropped |
-| `disallowed-tools` | dropped | dropped |
-| `effort` | dropped from frontmatter | approximate |
-| `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness); launch bundle projects `Mcp(server:tool)` tokens | approximate |
-| `autocompact` | dropped | meridian-only |
-| `autocompact_pct` | dropped | meridian-only |
+| `tools` (every rule) | dropped | dropped |
+| `effort` | dropped from frontmatter; selects the model slug instead (below) | approximate |
+| `mcp(...)` in `tools` | dropped (lossiness); launch bundle projects `Mcp(server:tool)` tokens | approximate |
+| `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
-| `fanout` | dropped | meridian-only |
 
-**Approval value mapping:**
+**Approval value mapping** (Meridian's launch projection, not written by Mars):
 
 | `approval:` | Cursor CLI |
 |---|---|
 | `default` | (omitted) |
 | `auto` | `--force` |
 | `confirm` | (omitted — no Cursor equivalent) |
-| `yolo` | `--yolo` |
+| `never` | `--yolo` |
 
 **Sandbox value mapping:**
 
@@ -392,7 +378,7 @@ YAML frontmatter + markdown body.
 | `workspace-write` | `--sandbox disabled` |
 | `danger-full-access` | `--sandbox disabled` |
 
-`approval`, `sandbox`, and `network` are not stored in the Cursor native agent
+`approval` and `sandbox` are not stored in the Cursor native agent
 artifact — Cursor IDE doesn't read them from frontmatter. Meridian applies these
 at runtime through its harness projection layer.
 
@@ -413,18 +399,16 @@ YAML frontmatter + markdown body.
 | body | body | exact |
 | `skills.load` | end-of-body `/name` guidance | approximate |
 | `skills.available` | end-of-body `/name` guidance | approximate |
-| `effort` | dropped | approximate |
-| `mcp(...)` in `tools` / `disallowed-tools` | dropped (lossiness) | approximate |
-| `network` | dropped | meridian-only |
-| `network-allow`, `network-deny` | dropped | meridian-only |
+| `effort` | dropped (any value; Pi's own off spelling is `--thinking off`) | approximate |
+| `mcp(...)` in `tools` | dropped (lossiness) | approximate |
 | All other policy fields | dropped | dropped |
-| `autocompact`, `autocompact_pct`, `model-policies`, `fanout` | dropped | meridian-only |
+| `model-policies` | dropped | meridian-only |
 
 ## MCP tool-policy references
 
-MCP access is gated with inline `mcp(...)` entries in `tools:` (grant) and
-`disallowed-tools:` (deny). This replaces the removed `mcp-tools:` frontmatter field.
-Grammar and authoring examples: [agent-profiles.md](agent-profiles.md#tools).
+MCP access is gated with inline `mcp(...)` entries in `tools` (`allow`, `deny` or `ask`). This
+replaces the removed `mcp-tools:` frontmatter field. Grammar and authoring examples:
+[agent-profiles.md](agent-profiles.md#tools).
 
 Server and tool segments are preserved **verbatim** — no case normalization during parse
 or projection. `*` is the only wildcard. Five canonical forms:
@@ -440,7 +424,7 @@ or projection. `*` is the only wildcard. Five canonical forms:
 ### Per-harness projection
 
 Mars projects canonical `mcp(...)` refs to harness-native permission tokens during native
-lowering (Claude agents/skills) and in the **launch bundle** (`tools.rules[].native` is the
+lowering (Claude agents) and in the **launch bundle** (`tools.rules[].native` is the
 contract; `ToolsSpec.mcp` duplicates allowed names for older consumers). Neither field
 contains MCP server definitions. Unsupported refs are **omitted** from native output (never
 broaden permissions) and recorded as approximate lossiness.
@@ -463,13 +447,14 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 
 | Surface | MCP behavior |
 |---|---|
-| Claude agent native | Projected `mcp__…` tokens merged into `tools:` / `disallowed-tools:` (no `mcp-tools:` field) |
-| Claude skill native | Allowed MCP projected into `allowed-tools:` (grant semantics; approximate lossiness) |
+| Claude agent native | Projected `mcp__…` tokens merged into Claude's `tools:` (allowlist) and `disallowed-tools:` (denials) |
+| Skill native files | None: a skill carries no tool policy |
 | Codex / OpenCode / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
 | Launch bundle | `tools.rules[].native` carries permission tokens; legacy `ToolsSpec.mcp` duplicates allowed names. Neither carries server definitions |
 
-Implementation: [`src/compiler/mcp_ref.rs`](../../src/compiler/mcp_ref.rs) (`parse_mcp_ref`,
-`project_mcp_ref`). Inbound lift: [`src/staging/.context/CONTEXT.md`](../../src/staging/.context/CONTEXT.md).
+Implementation: grammar in [`crates/mars-schema/src/mcp.rs`](../../crates/mars-schema/src/mcp.rs),
+projection in [`src/compiler/mcp_ref.rs`](../../src/compiler/mcp_ref.rs) (`project_mcp_ref`). Foreign
+spellings are lifted by [`crates/mars-schema/src/lift.rs`](../../crates/mars-schema/src/lift.rs).
 
 ## Lossiness Model
 
@@ -486,13 +471,13 @@ Mars emits grouped diagnostics for actionable dropped and approximate fields dur
 Expected body-guided skill channels are documented mappings and do not emit warnings:
 
 ```
-warning[agent-field-dropped]: agent `coder`: 2 fields dropped for .codex (disallowed-tools, tools)
-warning[agent-field-approximate]: agent `reviewer`: 2 fields approximately mapped for .cursor (mode: Cursor may use the same mode concept; sandbox: Cursor only supports enabled/disabled)
+warning: agent `coder`: 2 fields dropped for .codex (disallowed-tools, tools)
+warning: agent `reviewer`: 2 fields approximately mapped for .cursor (mode: Cursor may use the same mode concept; sandbox: Cursor only supports enabled/disabled)
 ```
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
-Under `mars validate --strict`, dropped fields with non-default values promote to errors. This lets CI catch cases like a `tools:` map with `'*': deny`, `bash: allow`, and `write: allow` targeting Codex, which cannot honor the allowlist.
+`mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars check` and `mars init`.
 
 ## Lossiness Matrix
 
@@ -507,20 +492,16 @@ Compact per-field, per-target classification:
 | `mode` | preserved | dropped | dropped | approximate | approximate | approximate |
 | `approval` | preserved | dropped | exact | dropped | approximate | dropped |
 | `sandbox` | preserved | dropped | exact | dropped | approximate | dropped |
-| `network` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
-| `network-allow`, `network-deny` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
-| `tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
-| `disallowed-tools` | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
-| `mcp(...)` in `tools` / `disallowed-tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate |
-| `effort` | preserved | exact | exact | approximate | approximate | approximate |
-| `autocompact` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
-| `autocompact_pct` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| `model-invocable`, `user-invocable` | preserved | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` |
+| `tools` allowlist and denials | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
+| `tools` `ask` rules | preserved | dropped | dropped | dropped | dropped | dropped |
+| `mcp(...)` in `tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate |
+| `effort` | preserved | exact (`none` omitted with a warning) | exact | approximate | approximate | approximate |
 | `skills.load` | preserved | exact for subagents; approximate for `--agent` | approximate | approximate | exact | approximate |
 | `skills.available` | preserved | approximate | approximate | approximate | approximate | approximate |
 | matched `harness-overrides.<target>` passthrough | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | `harness-overrides` | preserved | passthrough | passthrough | passthrough | passthrough | passthrough |
-| `fanout` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
 | body | preserved | exact | approximate | exact | exact | exact |
 
 ## Stale Artifact Cleanup

@@ -378,7 +378,10 @@ fn generated_plugin_dirs(
             continue;
         }
         for child in source.children(&dir) {
-            if source.is_dir(&child) {
+            // Hidden surfaces are not searched for generated plugin trees.
+            // They remain visible to flat-skill payload enumeration, where a
+            // dot-prefixed directory can be intentional authored content.
+            if !is_hidden(&child) && source.is_dir(&child) {
                 queue.push_back(child);
             }
         }

@@ -33,14 +33,11 @@ sync/build → resolve ← source
 
 - `cli/` dispatches commands, finds project root, formats output
 - `sync/` orchestrates the pipeline (load → resolve → build → plan → apply → sync targets → finalize)
-- `package_prepare` owns the classification boundary: schema-v1, legacy upgrade, or foreign lift
-- `resolve/` resolves dependency graphs from authored locations, then prepares rooted dependencies after `apply_subpath`
-- `staging/` materializes and validates every selected definition in owned scratch space; sync publishes the complete tree only after the diagnostic gate, with `sync.lock` as the sole pre-gate write
-- `discover/` owns source item discovery: a bounded convention walk over non-hidden
-  package layers for agents, skills, and bootstrap docs; whole hook directories
-  are discovered only under the package-root `hooks/`; see
-  `src/discover/.context/CONTEXT.md`
-- `dialect/` resolves inbound lift dialect per rooted package (explicit `dialect` key > foreign-container path inference > default — Claude for deps, MarsNative for `.mars-src`); declared-package self inputs explicitly use MarsNative; inference does not make hidden containers discovery roots
+- `package_prepare` is the lazy filesystem adapter for crate-owned `mars_schema::prepare`
+- `resolve/` prepares every rooted dependency after `apply_subpath`, retains authored origin plus `Prepared`, and resolves relative dependencies from that origin
+- `staging/` only materializes prepared bytes and applies consumer overlays in owned scratch space; sync publishes after the diagnostic gate through an identifiable pending generation
+- `discover/` owns binary-only hooks, MCP items and bootstrap documents; Agent and skill selection belongs to `mars-schema`
+- `dialect/` parses binary configuration vocabulary; crate preparation owns inference and lift semantics
 - `skill_source_name` — single flat-root skill naming rule shared by discovery and staging overlay lookup
 - `source/` fetches git/path sources, manages global cache
 - `config/` parses mars.toml + mars.local.toml, merges to EffectiveConfig

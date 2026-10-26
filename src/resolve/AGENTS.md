@@ -37,62 +37,48 @@ against the final `ResolvedGraph` after the restart loop settles — never
 trust state accumulated during passes, since a restart can change which
 sources and versions appear in the final graph.
 
-## Staging Seam
+## Prepared package seam
 
-`ResolveOptions.staging_root` enables per-dependency canonical source staging.
-`package_prepare::prepare_rooted` runs **after** `apply_subpath` in both resolution paths
-(first-resolve and re-resolution). It always calls `package_prepare::classify`
-before manifest reading or discovery; classification does not depend on materialization.
-When `staging_root` is set:
+After `apply_subpath`, `package_prepare::prepare_rooted` calls `mars_schema::prepare` once for the
+candidate. Each final `ResolvedNode` retains the crate result. The node also keeps two filesystem
+locations with distinct roles:
 
-1. Schema-v1 packages copy without schema rewrites.
-2. Legacy packages run `mars_schema::upgrade` and warn once per package.
-3. Manifest-free sources resolve their foreign dialect and use the foreign lift.
-4. The resolver repoints `package_root` to the staged tree.
+- `rooted_ref.authored_root`: immutable origin after subpath; relative manifest dependencies use it
+  at every depth and diagnostics render against it.
+- `rooted_ref.package_root`: optional normalized materialization for filesystem-based compiler and
+  binary-only hook/bootstrap consumers.
 
-All content-reading consumers provide an owned temporary staging root and read the prepared tree.
-Dependency origins remain the authored package roots, so relative path dependencies resolve before
-prepared bytes replace the content view.
+Binary-owned dependency declarations are parsed once from the prepared normalized manifest.
+Agent and skill graph items come from `Prepared.definitions`; consumer filters and renames follow.
+Resolver restart passes may repeat candidate preparation while selecting a version, but commands do
+not rediscover or revalidate the settled graph.
 
-`ResolveOptions.source_overrides` applies project-local path overrides by source
-name to both direct and manifest-discovered transitive dependencies. Declared
-source identity remains separate from the effective override identity, so an
-override cannot collapse conflicting same-name declarations. Staging records
-removed-schema package hooks in `ResolvedGraph.unreadable_hook_surfaces`. The
-sync recovery gate is its only consumer; downstream compilation has no
-unreadable-content exception.
+`ResolveOptions.source_overrides` applies local path overrides by source name while declared source
+identity remains separate. Removed hook schema state is binary-owned and recorded in
+`ResolvedGraph.unreadable_hook_surfaces`.
 
-## Key Traits
+## Provider traits
 
-| Trait | Role |
-|---|---|
-| `VersionLister` | Lists semver-tagged versions from git remote |
-| `SourceFetcher` | Fetches concrete source trees (git version/ref/commit, path) |
-| `ManifestReader` | Reads source manifests for transitive deps |
-| `SourceProvider` | Composite of all three — production impl |
-| `RealSourceProvider` (`provider.rs`) | Production bridge from resolver traits to git/path source fetching for sync, link, and publish |
+`VersionLister` lists remote versions and `SourceFetcher` obtains concrete checkouts. Production
+manifest semantics do not use `ManifestReader`; its implementation remains test scaffolding for
+resolver fixtures that inject manifests without authored files.
 
 ## Types
 
-- `PendingSource` — unresolved dependency request with constraint
-- `PendingItem` — agent/skill to resolve from a package
-- `ResolvedGraph` — final output: nodes + deterministic alphabetical order
-- `ResolverContext` — accumulates registry, visited items, version constraints
-- `VersionConstraint` — `Semver`, `Latest`, `RefPin`
+- `PendingSource` — unresolved dependency request and its declared/effective identities
+- `PendingItem` — selected Agent or skill waiting for DFS traversal
+- `ResolvedNode` — source identity, immutable authored origin, prepared result and parsed manifest
+- `ResolvedGraph` — final nodes, filters and deterministic order
+- `ResolverContext` — restart, constraint and traversal state
 
 `ResolvedGraph::dependency_depths()` and `dependency_decl_orders()` derive traversal properties
-from the graph plus the consumer's ordered direct dependencies for compiler ordering; callers do
-not reconstruct them in sync or lowering. Depth is the shortest distance from a direct dependency.
+from the graph plus direct dependency order.
 
-## Production Lenses
+## Publish lens
 
-- `PublishLens` loads the consumer-facing config once: it ignores `mars.local.toml`
-  and clears local dependencies while retaining the optional manifest and effective config.
-  source fetches use `GlobalCache`; content-reading callers supply owned temporary staging and
-  diagnostics belong to the caller.
-  `resolve_publish_graph_from_config` gives internal publish consumers the same provider and
-  no-lock boundary with a caller-built consumer view. Resolve relative package dependencies
-  before staging: staging changes the package root from which relative paths are interpreted.
+`PublishLens` prepares the authored root and builds the consumer-facing config from normalized
+manifest bytes. It ignores `mars.local.toml` and clears local dependencies. Plugin and check graph
+resolution use the same source provider and prepared-node path as sync.
 
 ## Version Policy
 

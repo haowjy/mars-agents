@@ -44,7 +44,7 @@ pub fn discover_local_items(
             None,
             diag,
         )?;
-        prepared_items(&local_root, prepared)
+        prepared_items(&local_root, Some("_self"), prepared)
     } else {
         Vec::new()
     };
@@ -56,7 +56,7 @@ pub fn discover_local_items(
             None,
             diag,
         )?;
-        for candidate in prepared_items(project_root, prepared) {
+        for candidate in prepared_items(project_root, package_name, prepared) {
             if let Some(winner) = selected
                 .iter()
                 .find(|item| item.discovered.id == candidate.discovered.id)
@@ -81,12 +81,19 @@ pub fn discover_local_items(
 
 fn prepared_items(
     root: &Path,
+    flat_skill_name: Option<&str>,
     prepared: mars_schema::prepare::Prepared,
 ) -> Vec<LocalDiscoveredItem> {
     prepared
         .definitions
         .into_iter()
-        .map(|definition| {
+        .map(|mut definition| {
+            if definition.source_path == "SKILL.md"
+                && definition.slug == "skill"
+                && let Some(name) = flat_skill_name
+            {
+                definition.slug = name.to_owned();
+            }
             let kind = match definition.kind {
                 mars_schema::upgrade::DefinitionKind::Agent => ItemKind::Agent,
                 mars_schema::upgrade::DefinitionKind::Skill => ItemKind::Skill,

@@ -204,12 +204,7 @@ pub(crate) fn materialize_local_prepared(
             path
         }
         ItemKind::Skill => {
-            let definition_relative = if item.discovered.source_path == Path::new(".") {
-                PathBuf::from("SKILL.md")
-            } else {
-                PathBuf::from("SKILL.md")
-            };
-            fs::write(destination.join(definition_relative), definition_bytes)?;
+            fs::write(destination.join("SKILL.md"), definition_bytes)?;
             for payload in &item.payload {
                 let relative = PathBuf::from(&payload.source_path);
                 let relative = if item.discovered.source_path == Path::new(".") {

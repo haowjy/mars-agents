@@ -7,7 +7,7 @@ binary-only inventory here for hooks and bootstrap documents, then combine it wi
 
 ## Contract
 
-`discover` selects the kinds `mars-schema` does not own: hooks, MCP items and bootstrap documents
+`discover` selects the kinds `mars-schema` does not own: hooks and bootstrap documents
 (`discover_binary_owned_items`). `package_items` adds the package's Agents and skills from the
 `Prepared` result each caller already holds (`definition_item` maps one definition; a skill's item
 path is the parent of its output path). Nothing here walks a tree for Agents or skills, and nothing
@@ -34,7 +34,7 @@ before staging.
 
 Directories containing a valid `.mars-plugin.json` are generated plugin trees and are
 excluded wherever the bounded walk meets them (the walk checks the marker of each directory it is
-about to enter, and never scans the tree for markers), including hook and MCP discovery, with one
+about to enter, and never scans the tree for markers), including hook and bootstrap discovery, with one
 info diagnostic per skipped path. A valid package-relative `[plugin].dir`, which the crate reads
 from `mars.toml`, is a stronger source boundary: the walk excludes it by path without reporting
 it, even before a sentinel exists, so the package's own committed output never adds noise to
@@ -67,7 +67,7 @@ A package-root `SKILL.md` is a flat-root skill that preparation reports with an 
 
 Only `bootstrapDocs` is read from `.claude-plugin/plugin.json` and `marketplace.json` here; the paths are normalized, checked to stay under the package root, and registered as bootstrap docs. Skills and Agents a manifest lists are the schema crate's (`claude::manifest`), where the manifest's lists add to or replace the default folders as Claude does.
 
-Declared and convention items share one duplicate rule: if two discovered items have the same `(kind, name)`, discovery raises `DiscoveryCollision`. There is no precedence order or silent shadowing inside a single source.
+Hooks and bootstrap documents share one duplicate rule: if two discovered items have the same `(kind, name)`, discovery raises `DiscoveryCollision`. Two Agents or two skills with one slug are the crate's `import.duplicate-slug` error, reported by preparation. There is no precedence order or silent shadowing inside a single source.
 
 ## Rationale
 

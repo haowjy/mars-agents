@@ -101,6 +101,14 @@ warning: package `legacy` uses the pre-v1 format (3 files to upgrade); run `mars
 
 The warning names the package and how many of its files the upgrade changes, so you can ask its maintainer to migrate; nothing in your project needs to change, and the dependency's repository is not modified. The keys the upgrade dropped or moved, file by file, are listed only by `mars migrate` in the package's own repository.
 
+A tree with no `mars.toml` that carries pre-v1 Mars keys gets its own wording, because `mars migrate` needs a manifest to find the package:
+
+```text
+warning: package `legacy` has no `mars.toml` and uses pre-v1 Mars keys (1 file to upgrade); add a `mars.toml` with a `[package]` table (name and version, no `schema`) and run `mars migrate` in its repository
+```
+
+Leave `schema` out: `[package] schema = 1` declares the package already migrated, so `mars migrate` would change nothing and the old keys would be errors. `mars migrate` adds `schema = 1` itself. A tree that is already schema v1 (a `mars-native` declaration over current definitions) installs with no warning.
+
 A dependency that declares `schema = 1` and breaks its rules is different: Mars reports each error with the file and the replacement and fails `mars sync` before it writes anything. A tree with no `mars.toml` is upgraded in memory like a pre-v1 package when it is declared `dialect = "mars-native"` or carries a key only pre-v1 Mars defined (`network`, `network-allow`, `network-deny`, `fanout`, `models`, `mcp-tools`, `autocompact`, `autocompact_pct`, `permission`, `model_invocable`, `user_invocable`) or `approval: yolo`. Any other tree with no `mars.toml` is read under [Claude's rules](mars-toml.md#dialect), or the dialect it is declared as, which translate its definitions. What the translation cannot make schema v1 is moved under `harness-overrides.<dialect>` or dropped with a warning that names it, so an OpenCode agent with `tools: {write: false}` or a `permission` map installs. The same holds for a pre-v1 file: a value no schema v1 field accepts (`effort: ultra`) moves to `harness-overrides.flow`, beside the `permission` the upgrade already moves there.
 
 ## `mars migrate` and `mars upgrade`

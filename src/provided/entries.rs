@@ -1,9 +1,10 @@
 //! Discovery and validation of the skills a provider ships.
 //!
 //! `<dir>/skills/` is read one level deep. Entries are copied as authored — never normalized —
-//! so the digest describes exactly the bytes that land in `.mars/skills/` and a byte-equal
-//! directory can be adopted instead of replaced. The schema reader is here only to refuse a
-//! skill the rest of Mars would silently drop; its warnings are reported, not enforced.
+//! so the digest describes exactly what lands in `.mars/skills/` (each file's bytes and
+//! executable bit) and a byte-equal directory can be adopted instead of replaced. The schema
+//! reader is here only to refuse a skill the rest of Mars would silently drop; its warnings are
+//! reported, not enforced.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -20,15 +21,17 @@ use super::spec::ProvideSpec;
 pub(crate) struct ProvidedSkill {
     pub name: String,
     pub dir: PathBuf,
-    /// SHA-256 of this skill's tree, in the same format package skills use.
+    /// SHA-256 of this skill's tree: the manifest format package skills use, with each file's
+    /// executable bit folded in.
     pub digest: String,
 }
 
 /// Everything one `mars provide` call offers, validated and digested.
 pub(crate) struct ProvidedEntries {
     pub skills: Vec<ProvidedSkill>,
-    /// SHA-256 over `(name, skill digest)` pairs: it moves when any skill's bytes or the entry
-    /// list do, and leaves the per-skill digests as the one description of a tree's bytes.
+    /// SHA-256 over `(name, skill digest)` pairs: it moves when any skill's bytes, executable
+    /// bits or the entry list do, and leaves the per-skill digests as the one description of a
+    /// tree.
     pub digest: String,
 }
 
@@ -86,13 +89,28 @@ pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<Strin
     ))
 }
 
-/// The digest of a directory's regular files, in the format package skills use.
+/// The digest of a directory's regular files: the manifest format package skills use, with each
+/// file's executable bit folded in.
+///
+/// An install is bytes plus the mode the copy path gives them (`0o644` and the source's execute
+/// bits), so freshness must see a mode-only change: a host that fixes a script's mode needs a
+/// replacement without a dummy content edit. "Executable" is
+/// [`crate::platform::fs::is_executable`], the same notion the copy path installs by.
 ///
 /// Strict: a directory holding a symlink or a special file is not a tree Mars installed, so a
 /// caller comparing a destination reads the error as "not byte-equal" rather than failing.
 pub(crate) fn tree_digest(dir: &Path) -> Result<String, MarsError> {
-    let files = crate::hash::strict_file_hashes(dir, &[])?;
-    Ok(crate::hash::hash_file_manifest(files.into_iter().collect()))
+    let mut entries = Vec::new();
+    for (relative, hash) in crate::hash::strict_file_hashes(dir, &[])? {
+        let metadata = fs::symlink_metadata(dir.join(&relative))?;
+        let hash = if crate::platform::fs::is_executable(&metadata) {
+            format!("{hash} executable")
+        } else {
+            hash
+        };
+        entries.push((relative, hash));
+    }
+    Ok(crate::hash::hash_file_manifest(entries))
 }
 
 /// Read `SKILL.md` through the schema contract, failing on error-level diagnostics.

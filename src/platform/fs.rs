@@ -432,6 +432,27 @@ fn collect_relative_tree_entries(
     Ok(None)
 }
 
+/// The mode Mars installs for a copied file: readable and writable, plus the source's executable
+/// bits. This is the one notion of "executable" the copy path has, so anything that compares an
+/// installed tree with its source asks the same question.
+pub(crate) fn installed_mode(metadata: &fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        0o644 | (metadata.permissions().mode() & 0o111)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        0o644
+    }
+}
+
+/// Whether a copied file would land executable (any execute bit set).
+pub(crate) fn is_executable(metadata: &fs::Metadata) -> bool {
+    installed_mode(metadata) & 0o111 != 0
+}
+
 /// Recursively copy a directory, following symlinks on the source side.
 ///
 /// Uses `fs::metadata` (not `symlink_metadata`) to follow symlinks.
@@ -470,8 +491,10 @@ fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsErr
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let mode = 0o644 | (metadata.permissions().mode() & 0o111);
-                fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))?;
+                fs::set_permissions(
+                    &dest_path,
+                    fs::Permissions::from_mode(installed_mode(&metadata)),
+                )?;
             }
         } else {
             return Err(std::io::Error::new(

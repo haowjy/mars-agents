@@ -51,7 +51,10 @@ and converges — including a skill the host dropped meanwhile, which is still o
 removed. `"pending"` is deliberately not a digest: it must never compare equal to one.
 
 The tree is copied as authored (no normalization, no `prepare`), because the digest and the
-byte-equal adopt rule compare raw bytes. `mars_schema::skill::read` is used only to refuse a
+byte-equal adopt rule compare raw bytes plus the one thing the install adds: each file's executable
+bit (`0o644` and the source's execute bits). So a mode-only change is a change — it replaces the
+installed skill, and the unlocked fast path sees it because the recorded digest moves.
+`mars_schema::skill::read` is used only to refuse a
 `SKILL.md` that error-level diagnostics would make every later reader drop; warnings (schema v1's
 `mode:` on Meridian's bundle, for instance) are reported and the skill still installs.
 

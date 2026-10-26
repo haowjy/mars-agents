@@ -18,7 +18,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly. One exception:
 /// Codex lowers `network` as [`Lossiness::Dropped`], because its native artifact carries
 /// `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
-pub use crate::compiler::lossiness::{CODEX_MAX_EFFORT_NOTE, Lossiness, LossyField, LoweredOutput};
+pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
@@ -944,20 +944,8 @@ pub fn lower_to_codex(
     let lowered_skills = lower_agent_skills(eff.skills(), AgentSkillsPolicy::BodyGuidance, body);
     let mut lossy = Vec::new();
 
-    // Effort — exact (lowered to model_reasoning_effort), except `max`: Codex's levels end at `xhigh`.
-    let effort_str = match eff.effort() {
-        Some(mars_schema::agent::EffortLevel::Max) => {
-            lossy.push(LossyField {
-                field: "effort".into(),
-                target: target.into(),
-                classification: Lossiness::Approximate {
-                    note: CODEX_MAX_EFFORT_NOTE,
-                },
-            });
-            Some("xhigh")
-        }
-        other => other.map(|effort| effort.as_str()),
-    };
+    // Effort — exact (lowered to model_reasoning_effort); Codex has every level, `max` included.
+    let effort_str = eff.effort().map(|effort| effort.as_str());
 
     // Sandbox — exact
     let sandbox_str = eff.sandbox().map(|s| s.as_str());

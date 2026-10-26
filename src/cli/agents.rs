@@ -84,7 +84,7 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             }
         };
 
-        let profile = match mars_schema::agent::read(&content).into_fields() {
+        let profile = match mars_schema::read::installed_agent(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
                 eprintln!("warning: skipping {}: {why}", disk_path.display());
@@ -181,7 +181,7 @@ fn run_show(
             }
         };
 
-        let profile = match mars_schema::agent::read(&content).into_fields() {
+        let profile = match mars_schema::read::installed_agent(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
                 eprintln!("warning: skipping {}: {why}", disk_path.display());

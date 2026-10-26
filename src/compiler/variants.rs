@@ -417,7 +417,7 @@ fn lower_skill_content_for_harness(
     let Some(harness) = skill_harness_from_variant_key(harness_key) else {
         return Ok(None);
     };
-    let Some(profile) = mars_schema::skill::read(base_content).fields else {
+    let Some(profile) = mars_schema::read::installed_skill(base_content).fields else {
         return Ok(None);
     };
 

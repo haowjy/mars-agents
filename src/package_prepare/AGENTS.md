@@ -7,9 +7,10 @@ channel. Always check the latched error immediately after preparation.
 
 `prepare_rooted` runs after dependency `subpath` is applied. It keeps
 `RootedSourceRef.authored_root` immutable, reports `Prepared.diagnostics` against authored paths,
-parses binary-owned manifest sections from normalized manifest bytes, and optionally asks
-`staging` to materialize the result. Relative dependency paths use `authored_root` at every graph
-depth; `package_root` is only the current materialized content view.
+parses binary-owned manifest sections from normalized manifest bytes, and returns without
+materializing. After the complete graph and local authored packages pass their prepared-diagnostic
+gate, `staging` projects the graph. Relative dependency paths use `authored_root` at every depth;
+`package_root` is only the later materialized content view.
 
 Commands consume `Prepared` directly:
 

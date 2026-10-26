@@ -12,7 +12,8 @@ only `package_root`, the materialized content view, changes.
 For local content, `materialize_local_prepared` writes one selected definition and its crate-listed
 payload under `_local/<item>`. Flat-skill exclusions are consumer policy and apply during this copy.
 
-All scratch work completes before the diagnostic gate. Durable publication copies the scratch tree
+Graph and local-package prepared diagnostics gate before scratch materialization begins. Binary
+surface and compiler diagnostics then gate durable publication. Publication copies the scratch tree
 to `.mars/.staging.pending` and atomically replaces `.mars/staging`. The next holder of `sync.lock`
 removes that exact pending path after an interruption; no temporary-name glob is reclaimed.
 

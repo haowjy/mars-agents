@@ -45,13 +45,16 @@ locations with distinct roles:
 
 - `rooted_ref.authored_root`: immutable origin after subpath; relative manifest dependencies use it
   at every depth and diagnostics render against it.
-- `rooted_ref.package_root`: optional normalized materialization for filesystem-based compiler and
-  binary-only hook/bootstrap consumers.
+- `rooted_ref.package_root`: starts at the authored root and is replaced with normalized scratch
+  materialization only after graph and local-package prepared diagnostics pass.
 
 Binary-owned dependency declarations are parsed once from the prepared normalized manifest.
 Agent and skill graph items come from `Prepared.definitions`; consumer filters and renames follow.
 Resolver restart passes may repeat candidate preparation while selecting a version, but commands do
 not rediscover or revalidate the settled graph.
+
+`ResolveOptions.prepared_sources` seeds a package already prepared by its caller. Plugin builds use
+this for their implicit root package so graph resolution does not prepare that root twice.
 
 `ResolveOptions.source_overrides` applies local path overrides by source name while declared source
 identity remains separate. Removed hook schema state is binary-owned and recorded in

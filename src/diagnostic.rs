@@ -73,6 +73,8 @@ pub struct DiagnosticCollector {
     lossiness_mode: LossinessMode,
     /// Launch-time / meridian-enforced field mappings accumulated for summary or verbose detail.
     meridian_only_records: Vec<MeridianOnlyRecord>,
+    /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
+    unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl DiagnosticCollector {
@@ -86,6 +88,7 @@ impl DiagnosticCollector {
             engine_fallbacks: Vec::new(),
             lossiness_mode,
             meridian_only_records: Vec::new(),
+            unknown_field_sites: std::collections::HashMap::new(),
         }
     }
 
@@ -133,13 +136,32 @@ impl DiagnosticCollector {
         }
         if diagnostic.severity == Severity::Error && !errors_as_warnings {
             self.error_with_category(code, message, DiagnosticCategory::Validation);
-        } else if diagnostic.code == "field.unknown"
-            && self.diagnostics.iter().any(|existing| {
-                existing.code == code && existing.message.ends_with(&diagnostic.message)
-            })
-        {
+        } else if diagnostic.code == "field.unknown" {
+            self.warn_unknown_field(code, &diagnostic.message, context);
         } else {
             self.warn(code, message);
+        }
+    }
+
+    /// One warning per unknown field name, listing every file that carries it: the first file
+    /// is reported as an ordinary warning, and each further one extends the same warning.
+    fn warn_unknown_field(&mut self, code: &'static str, text: &str, context: &str) {
+        let sites = self.unknown_field_sites.entry(text.to_owned()).or_default();
+        if sites.iter().any(|site| site == context) {
+            return;
+        }
+        sites.push(context.to_owned());
+        if sites.len() == 1 {
+            self.warn(code, format!("{context}: {text}"));
+            return;
+        }
+        let message = format!("{text} (in {} files: {})", sites.len(), sites.join(", "));
+        let first = format!("{}: {text}", sites[0]);
+        if let Some(existing) = self.diagnostics.iter_mut().find(|existing| {
+            existing.code == code
+                && (existing.message == first || existing.message.starts_with(text))
+        }) {
+            existing.message = message;
         }
     }
 

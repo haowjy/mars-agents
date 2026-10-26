@@ -6,14 +6,18 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod agent;
 pub mod dialect;
 mod discover;
+mod dispatch;
 pub mod harness;
+pub mod inspect;
 pub mod manifest;
+pub mod normalize;
 pub mod read;
 pub mod skill;
 pub mod tree;
 
 pub use harness::HarnessId;
 
+pub mod claude;
 pub mod frontmatter;
 mod invocability;
 pub mod item;

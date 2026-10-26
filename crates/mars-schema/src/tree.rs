@@ -90,6 +90,57 @@ impl TreeSource for FileTree {
     }
 }
 
+/// A view of a tree below one directory: `prefix` becomes the root.
+pub struct SubTree<'a, T: TreeSource> {
+    inner: &'a T,
+    prefix: String,
+}
+
+impl<'a, T: TreeSource> SubTree<'a, T> {
+    /// `prefix` is a normalized directory path of `inner`.
+    pub fn new(inner: &'a T, prefix: impl Into<String>) -> Self {
+        Self {
+            inner,
+            prefix: prefix.into(),
+        }
+    }
+
+    fn full(&self, path: &str) -> String {
+        match (self.prefix.is_empty(), path.is_empty()) {
+            (true, _) => path.to_owned(),
+            (false, true) => self.prefix.clone(),
+            (false, false) => format!("{}/{path}", self.prefix),
+        }
+    }
+}
+
+impl<T: TreeSource> TreeSource for SubTree<'_, T> {
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        self.inner.read(&self.full(path))
+    }
+
+    fn is_file(&self, path: &str) -> bool {
+        self.inner.is_file(&self.full(path))
+    }
+
+    fn is_dir(&self, path: &str) -> bool {
+        self.inner.is_dir(&self.full(path))
+    }
+
+    fn children(&self, dir: &str) -> Vec<String> {
+        let skip = if self.prefix.is_empty() {
+            0
+        } else {
+            self.prefix.len() + 1
+        };
+        self.inner
+            .children(&self.full(dir))
+            .into_iter()
+            .map(|child| child[skip..].to_owned())
+            .collect()
+    }
+}
+
 fn index_children(index: &mut BTreeMap<String, BTreeSet<String>>, path: &str) {
     let components = path.split('/').collect::<Vec<_>>();
     for child_index in 0..components.len() {

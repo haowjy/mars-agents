@@ -10,6 +10,9 @@ use crate::HarnessId;
 #[serde(rename_all = "kebab-case")]
 pub enum Dialect {
     Claude,
+    /// The Agent Skills standard on its own: translation is the identity plus relocation.
+    #[serde(rename = "agent-skills")]
+    AgentSkills,
     Codex,
     OpenCode,
     Cursor,
@@ -21,6 +24,7 @@ impl Dialect {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
+            Self::AgentSkills => "agent-skills",
             Self::Codex => "codex",
             Self::OpenCode => "opencode",
             Self::Cursor => "cursor",
@@ -31,6 +35,7 @@ impl Dialect {
     pub fn parse(name: &str) -> Option<Self> {
         match name.trim().to_ascii_lowercase().as_str() {
             "claude" => Some(Self::Claude),
+            "agent-skills" | "agentskills" | "agent_skills" => Some(Self::AgentSkills),
             "codex" => Some(Self::Codex),
             "opencode" => Some(Self::OpenCode),
             "cursor" => Some(Self::Cursor),
@@ -55,7 +60,7 @@ impl Dialect {
             Self::Codex => Some(HarnessId::Codex),
             Self::OpenCode => Some(HarnessId::OpenCode),
             Self::Cursor => Some(HarnessId::Cursor),
-            Self::MarsNative => None,
+            Self::AgentSkills | Self::MarsNative => None,
         }
     }
 }

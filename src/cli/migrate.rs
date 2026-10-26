@@ -73,11 +73,13 @@ fn pending_writes(
     prepared: &Prepared,
 ) -> Vec<PendingWrite> {
     let mut pending = Vec::new();
-    if let Some(manifest) = &prepared.manifest {
+    if let Some(manifest) = &prepared.manifest
+        && let Some(source_path) = &manifest.source_path
+    {
         push_change(
             project_root,
             authored_root,
-            &manifest.source_path,
+            source_path,
             &manifest.normalized_bytes,
             &manifest.change,
             &mut pending,

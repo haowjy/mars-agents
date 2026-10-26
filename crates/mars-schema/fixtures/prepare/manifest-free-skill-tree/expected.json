@@ -1,7 +1,7 @@
 {
   "classification": {
     "kind": "foreign",
-    "dialect": "claude",
+    "dialect": "agent-skills",
     "evidence": {
       "source": "predicted",
       "paths": []

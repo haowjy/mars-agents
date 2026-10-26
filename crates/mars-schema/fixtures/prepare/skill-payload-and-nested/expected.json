@@ -4,7 +4,9 @@
     "dialect": "claude",
     "evidence": {
       "source": "predicted",
-      "paths": []
+      "paths": [
+        ".claude-plugin/plugin.json"
+      ]
     }
   },
   "definitions": [
@@ -12,7 +14,7 @@
       "kind": "skill",
       "slug": "nested",
       "source_path": "skills/outer/nested/SKILL.md",
-      "output_path": "skills/outer/nested/SKILL.md",
+      "output_path": "skills/nested/SKILL.md",
       "reading": {
         "frontmatter": [
           [
@@ -80,7 +82,7 @@
     },
     {
       "source_path": "skills/outer/nested/assets/data.bin",
-      "output_path": "skills/outer/nested/assets/data.bin"
+      "output_path": "skills/nested/assets/data.bin"
     }
   ],
   "diagnostics": {}

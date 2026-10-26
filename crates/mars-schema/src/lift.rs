@@ -2,6 +2,7 @@
 
 use serde_yaml::Value;
 
+use crate::diagnostic::SchemaDiagnostic;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::invocability::find_invocability_field;
@@ -14,7 +15,7 @@ use crate::tool_policy;
 /// it changes. The field is a scalar, a list, or a map keyed by tool name (`tools: {mcp__s__t:
 /// deny}` carries the name in the KEY, so a rewrite that skipped keys would leak foreign names
 /// into canonical `.mars/` unchanged). Map values and key order are preserved.
-fn rewrite_tool_entries(
+pub(crate) fn rewrite_tool_entries(
     fm: &mut Frontmatter,
     key: &str,
     rewrite: impl Fn(&str) -> Option<String>,
@@ -44,23 +45,6 @@ fn rewrite_tool_entries(
         fm.insert(key, lifted);
     }
     changed
-}
-
-/// A comma-separated scalar (`tools: Read, Task`, Claude's own agent-file spelling) is a list.
-/// Split it first so the per-entry lifts below see each entry, not one string.
-fn split_scalar_tool_list(fm: &mut Frontmatter, key: &str) -> bool {
-    let Some(value @ Value::String(_)) = fm.get(key) else {
-        return false;
-    };
-    let entries = tool_policy::tool_entries(value);
-    if entries.len() < 2 {
-        return false;
-    }
-    fm.insert(
-        key,
-        Value::Sequence(entries.into_iter().map(Value::String).collect()),
-    );
-    true
 }
 
 /// Rewrite a foreign scalar/list of tool names as canonical policy entries. Foreign formats use
@@ -95,9 +79,13 @@ fn lift_tool_list_to_policy_map(fm: &mut Frontmatter, restricts: bool) -> bool {
     true
 }
 
-fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Dialect) -> bool {
+pub(crate) fn lift_foreign_mcp_tokens_in_field(
+    fm: &mut Frontmatter,
+    key: &str,
+    dialect: Dialect,
+) -> bool {
     let dialect = match dialect {
-        Dialect::Claude => Some(ForeignMcpDialect::Claude),
+        Dialect::Claude | Dialect::AgentSkills => Some(ForeignMcpDialect::Claude),
         Dialect::Cursor => Some(ForeignMcpDialect::Cursor),
         Dialect::Codex | Dialect::OpenCode | Dialect::MarsNative => None,
     };
@@ -108,18 +96,22 @@ fn lift_foreign_mcp_tokens_in_field(fm: &mut Frontmatter, key: &str, dialect: Di
     })
 }
 
-/// Claude's pre-`Agent` name for the sub-agent tool. In canonical Mars `task` means the
-/// task-list tools, so a Claude-dialect `Task` entry must be renamed on the way in.
-fn claude_task_to_agent(raw: &str) -> Option<String> {
+/// Claude's names for the sub-agent tool (`Task`, now `Agent`). In canonical Mars `task` means
+/// the task-list tools, so a Claude-dialect entry must be renamed on the way in.
+pub(crate) fn claude_task_to_agent(raw: &str) -> Option<String> {
     let (head, payload) = split_tool_name(raw.trim());
-    (head.trim() == "Task").then(|| format!("agent{payload}"))
+    matches!(head.trim(), "Task" | "Agent").then(|| format!("agent{payload}"))
 }
 
-fn lift_claude_task_entries(fm: &mut Frontmatter, key: &str) -> bool {
+pub(crate) fn lift_claude_task_entries(fm: &mut Frontmatter, key: &str) -> bool {
     rewrite_tool_entries(fm, key, claude_task_to_agent)
 }
 
-fn lift_foreign_tools(fm: &mut Frontmatter, dialect: Dialect, native_tools_restrict: bool) -> bool {
+pub(crate) fn lift_foreign_tools(
+    fm: &mut Frontmatter,
+    dialect: Dialect,
+    native_tools_restrict: bool,
+) -> bool {
     let mut changed = false;
     let mut came_from_native_tools = fm.get("tools").is_some();
     if fm.get("tools").is_none() {
@@ -166,32 +158,38 @@ fn strip_non_canonical_tool_aliases(fm: &mut Frontmatter) -> bool {
     changed
 }
 
-/// Lift frontmatter, returning whether any field was rewritten.
-pub fn lift_frontmatter_with_change(
+/// A lifted definition: the new frontmatter, whether any field was rewritten, and what the
+/// dialect's translation dropped or could not convert.
+pub struct Lifted {
+    pub frontmatter: Frontmatter,
+    pub changed: bool,
+    pub diagnostics: Vec<SchemaDiagnostic>,
+}
+
+pub fn lift_frontmatter(
     dialect: Dialect,
     item_kind: ItemKind,
     frontmatter: &Frontmatter,
-) -> (Frontmatter, bool) {
+) -> Lifted {
     let mut lifted = frontmatter.clone();
+    let mut diagnostics = Vec::new();
     let mut changed = matches!(
         item_kind,
         ItemKind::Agent | ItemKind::Skill | ItemKind::BootstrapDoc
     ) && tool_policy::strip_removed_mcp_tools_fields(&mut lifted);
     changed |= match dialect {
         Dialect::MarsNative => strip_non_canonical_tool_aliases(&mut lifted),
-        Dialect::Claude => lift_claude(item_kind, &mut lifted),
+        Dialect::Claude | Dialect::AgentSkills => {
+            crate::claude::translate::lift(item_kind, &mut lifted, &mut diagnostics)
+        }
         Dialect::Codex => lift_codex(item_kind, &mut lifted),
         Dialect::Cursor => lift_cursor(item_kind, &mut lifted),
         Dialect::OpenCode => lift_opencode(item_kind, &mut lifted),
     };
-    (lifted, changed)
-}
-
-fn lift_claude(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
-    match item_kind {
-        ItemKind::Skill | ItemKind::BootstrapDoc => lift_claude_skill(fm),
-        ItemKind::Agent => lift_claude_agent(fm),
-        ItemKind::Hook | ItemKind::McpServer => false,
+    Lifted {
+        frontmatter: lifted,
+        changed,
+        diagnostics,
     }
 }
 
@@ -207,50 +205,6 @@ fn drop_skill_tool_fields(fm: &mut Frontmatter) -> bool {
     ] {
         changed |= fm.remove(field).is_some();
     }
-    changed
-}
-
-fn lift_claude_skill(fm: &mut Frontmatter) -> bool {
-    let mut changed = false;
-    if find_invocability_field(fm, "model-invocable").is_none()
-        && let Some(disable) = fm.remove("disable-model-invocation")
-    {
-        changed = true;
-        if disable.as_bool() == Some(true) {
-            fm.insert("model-invocable", Value::Bool(false));
-        }
-    } else if fm.remove("disable-model-invocation").is_some() {
-        changed = true;
-    }
-
-    for removed in ["invocation", "allow_implicit_invocation"] {
-        if fm.remove(removed).is_some() {
-            changed = true;
-        }
-    }
-    changed |= drop_skill_tool_fields(fm);
-    changed
-}
-
-fn lift_claude_agent(fm: &mut Frontmatter) -> bool {
-    let mut changed = false;
-    if let Some(tools) = fm.remove("disallowedTools") {
-        if fm.get("disallowed-tools").is_none() && fm.get("disallowed_tools").is_none() {
-            fm.insert("disallowed-tools", tools);
-        }
-        changed = true;
-    }
-
-    changed |= lift_foreign_tools(fm, Dialect::Claude, true);
-
-    if let Some(mcp) = fm.remove("mcpServers") {
-        changed |=
-            tool_policy::append_mcp_server_entries_to_tools(fm, &tool_policy::yaml_str_list(&mcp));
-    }
-
-    changed |= split_scalar_tool_list(fm, "disallowed-tools");
-    changed |= lift_foreign_mcp_tokens_in_field(fm, "disallowed-tools", Dialect::Claude);
-    changed |= lift_claude_task_entries(fm, "disallowed-tools");
     changed
 }
 

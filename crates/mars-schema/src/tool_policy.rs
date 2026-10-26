@@ -203,7 +203,8 @@ pub fn tool_entries(val: &Value) -> Vec<String> {
         match ch {
             '(' => depth += 1,
             ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
+            // Claude writes tool lists comma- or space-separated; parentheses stay whole.
+            ',' | ' ' | '\t' | '\n' if depth == 0 => {
                 entries.push(&raw[start..index]);
                 start = index + 1;
             }

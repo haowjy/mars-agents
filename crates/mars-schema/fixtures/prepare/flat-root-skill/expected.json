@@ -1,7 +1,7 @@
 {
   "classification": {
     "kind": "foreign",
-    "dialect": "claude",
+    "dialect": "agent-skills",
     "evidence": {
       "source": "predicted",
       "paths": []
@@ -12,7 +12,7 @@
       "kind": "skill",
       "slug": "flat",
       "source_path": "SKILL.md",
-      "output_path": "SKILL.md",
+      "output_path": "skills/flat/SKILL.md",
       "reading": {
         "frontmatter": [
           [
@@ -44,7 +44,7 @@
   "payload": [
     {
       "source_path": "notes.md",
-      "output_path": "notes.md"
+      "output_path": "skills/flat/notes.md"
     }
   ],
   "diagnostics": {}

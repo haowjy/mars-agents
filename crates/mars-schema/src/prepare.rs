@@ -1,14 +1,14 @@
 //! One-pass package classification, normalization, selection, and strict reading.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::dialect::Dialect;
-use crate::discover::{SelectedDefinition, discover, payload_paths};
+use crate::discover::{SelectedDefinition, payload_paths};
+use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 use crate::frontmatter::Frontmatter;
-use crate::package::{ManifestClassification, classify_manifest};
 use crate::read::DefinitionRead;
 use crate::tree::TreeSource;
 use crate::upgrade::{DefinitionKind, UpgradeResult};
@@ -34,6 +34,8 @@ pub enum Classification {
         dialect: Dialect,
         evidence: DialectEvidence,
     },
+    /// A Claude marketplace: it lists plugins and holds no definitions of its own.
+    Marketplace,
     Empty,
 }
 
@@ -54,13 +56,19 @@ pub enum DialectEvidenceSource {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ChangeRecord {
     None,
-    Edited { paths: Vec<Vec<PathSegment>> },
+    /// The file has no source: `normalize` wrote it (a package's generated `mars.toml`).
+    Generated,
+    Edited {
+        paths: Vec<Vec<PathSegment>>,
+    },
     FullyRewritten,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PreparedManifest {
-    pub source_path: String,
+    /// `None` for a generated manifest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
     pub output_path: String,
     /// The normalized file; crosses to JavaScript as a `Uint8Array`.
     #[serde(with = "serde_bytes")]
@@ -115,8 +123,10 @@ impl Prepared {
         for (path, diagnostics) in &self.diagnostics {
             all.entry(path).or_default().extend(diagnostics);
         }
-        if let Some(manifest) = &self.manifest {
-            all.entry(&manifest.source_path)
+        if let Some(manifest) = &self.manifest
+            && let Some(path) = &manifest.source_path
+        {
+            all.entry(path)
                 .or_default()
                 .extend(&manifest.reading.diagnostics);
         }
@@ -130,82 +140,88 @@ impl Prepared {
     }
 }
 
+/// What a caller adds when it reads a root as one plugin of a marketplace, or imports only some
+/// of the items.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct RootOptions<'a> {
+    pub as_plugin: Option<AsPlugin<'a>>,
+    /// Source paths of the definitions to import; `None` imports every one found.
+    pub selection: Option<&'a BTreeSet<String>>,
+    /// Names a root `SKILL.md` when its own `name` cannot.
+    pub fallback_name: Option<&'a str>,
+}
+
+/// `prepare` plus what was discovered, for `inspect` and `normalize`.
+pub(crate) struct Rooted {
+    pub prepared: Prepared,
+    pub dispatched: Dispatched,
+}
+
 /// Prepare one rooted package without reading payload bytes.
 pub fn prepare(
     source: &impl TreeSource,
     context: PrepareContext,
     declared_dialect: Option<Dialect>,
 ) -> Prepared {
-    if source
-        .read(crate::plugin_metadata::SENTINEL_FILE)
-        .is_some_and(|bytes| crate::plugin_metadata::is_valid_sentinel(&bytes))
-    {
-        let discovery = discover(source);
-        return Prepared {
-            classification: Classification::Empty,
-            manifest: None,
-            definitions: Vec::new(),
-            payload: Vec::new(),
-            diagnostics: discovery.diagnostics,
-        };
-    }
+    prepare_root(source, context, declared_dialect, RootOptions::default()).prepared
+}
+
+pub(crate) fn prepare_root(
+    source: &impl TreeSource,
+    context: PrepareContext,
+    declared_dialect: Option<Dialect>,
+    options: RootOptions<'_>,
+) -> Rooted {
+    let mut dispatched = dispatch(
+        source,
+        context,
+        declared_dialect,
+        options.as_plugin,
+        options.fallback_name,
+    );
+    let classification = dispatched.classification.clone();
     let manifest_bytes = source.read("mars.toml");
-    let manifest_classification = classify_manifest(manifest_bytes.as_deref());
-    let mut discovery = if matches!(
-        &manifest_classification,
-        ManifestClassification::Invalid { .. } | ManifestClassification::SchemaNewer { .. }
-    ) {
-        crate::discover::Discovery::empty()
-    } else {
-        discover(source)
-    };
-    let classification = match manifest_classification {
-        ManifestClassification::Schema1 => Classification::Schema1,
-        ManifestClassification::MarsLegacy => Classification::MarsLegacy,
-        ManifestClassification::SchemaNewer { schema } => Classification::SchemaNewer { schema },
-        ManifestClassification::Invalid { .. } => Classification::Invalid,
-        ManifestClassification::NoManifest if context == PrepareContext::AuthoredLocal => {
-            Classification::MarsLegacy
-        }
-        ManifestClassification::NoManifest => {
-            let (dialect, evidence) = resolve_dialect(source, declared_dialect);
-            let has_plugin_manifest = [
-                ".claude-plugin/plugin.json",
-                ".claude-plugin/marketplace.json",
-            ]
-            .into_iter()
-            .any(|path| source.is_file(path));
-            if discovery.definitions.is_empty() && evidence.paths.is_empty() && !has_plugin_manifest
-            {
-                Classification::Empty
-            } else {
-                Classification::Foreign { dialect, evidence }
-            }
-        }
-    };
+    let mut diagnostics = std::mem::take(&mut dispatched.discovery.diagnostics);
 
     let mut manifest = manifest_bytes.as_deref().map(|bytes| {
         prepare_manifest(
             bytes,
             classification == Classification::MarsLegacy,
-            &mut discovery.diagnostics,
+            &mut diagnostics,
         )
     });
 
     let can_read_definitions = !matches!(
         classification,
-        Classification::Invalid | Classification::SchemaNewer { .. } | Classification::Empty
+        Classification::Invalid
+            | Classification::SchemaNewer { .. }
+            | Classification::Empty
+            | Classification::Marketplace
     );
-    let mut definitions = if can_read_definitions {
-        discovery
-            .definitions
+    let all = &dispatched.discovery.definitions;
+    let selected = all
+        .iter()
+        .filter(|definition| {
+            options
+                .selection
+                .is_none_or(|selection| selection.contains(&definition.source_path))
+        })
+        .collect::<Vec<_>>();
+    let selected_paths = selected
+        .iter()
+        .map(|definition| definition.source_path.as_str())
+        .collect::<BTreeSet<_>>();
+    let definitions = if can_read_definitions {
+        selected
             .iter()
             .map(|definition| {
                 prepare_definition(
                     source,
                     definition,
                     &classification,
-                    &mut discovery.diagnostics,
+                    all,
+                    &selected_paths,
+                    &mut diagnostics,
                 )
             })
             .collect::<Vec<_>>()
@@ -213,25 +229,11 @@ pub fn prepare(
         Vec::new()
     };
 
-    for definition in &mut definitions {
-        if definition.source_path == "SKILL.md"
-            && definition.slug == "skill"
-            && let PreparedDefinitionRead::Skill(reading) = &definition.reading
-            && let Some(name) = reading
-                .fields
-                .as_ref()
-                .and_then(|fields| fields.name.as_deref())
-                .filter(|name| !name.is_empty())
-        {
-            definition.slug = name.to_owned();
-        }
-    }
-
     if classification == Classification::MarsLegacy {
         let changed_path = manifest
             .as_ref()
             .filter(|manifest| manifest.change != ChangeRecord::None)
-            .map(|manifest| manifest.source_path.clone())
+            .and_then(|manifest| manifest.source_path.clone())
             .or_else(|| {
                 definitions
                     .iter()
@@ -239,8 +241,7 @@ pub fn prepare(
                     .map(|definition| definition.source_path.clone())
             });
         if let Some(path) = changed_path {
-            discovery
-                .diagnostics
+            diagnostics
                 .entry(path)
                 .or_default()
                 .push(SchemaDiagnostic::new(
@@ -255,28 +256,97 @@ pub fn prepare(
     let payload = if can_read_definitions {
         payload_paths(
             source,
-            &discovery.definitions,
-            &discovery.skipped_generated_dirs,
+            all,
+            selected.iter().copied(),
+            &dispatched.discovery.skipped_generated_dirs,
+            &mut diagnostics,
         )
         .into_iter()
-        .map(|path| PayloadEntry {
-            source_path: path.clone(),
-            output_path: path,
+        .map(|(source_path, output_path)| PayloadEntry {
+            source_path,
+            output_path,
         })
         .collect()
     } else {
         Vec::new()
     };
 
-    discovery
-        .diagnostics
-        .retain(|_, diagnostics| !diagnostics.is_empty());
-    Prepared {
+    if can_read_definitions {
+        report_unconverted(source, &dispatched, &mut diagnostics);
+    }
+    diagnostics.retain(|_, diagnostics| !diagnostics.is_empty());
+    let prepared = Prepared {
         classification,
         manifest: manifest.take(),
         definitions,
         payload,
-        diagnostics: discovery.diagnostics,
+        diagnostics,
+    };
+    Rooted {
+        prepared,
+        dispatched,
+    }
+}
+
+/// Commands are dropped, and hooks and MCP servers are not converted yet.
+fn report_unconverted(
+    source: &impl TreeSource,
+    dispatched: &Dispatched,
+    diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
+) {
+    let Layout::Claude(spec) = &dispatched.layout else {
+        return;
+    };
+    let mut warn = |path: &str, code: &str, message: String| {
+        diagnostics
+            .entry(path.to_owned())
+            .or_default()
+            .push(SchemaDiagnostic::new(
+                code,
+                Severity::Warning,
+                Vec::new(),
+                message,
+            ));
+    };
+    if !dispatched.discovery.dropped.is_empty() {
+        warn(
+            "commands",
+            "import.commands-dropped",
+            format!(
+                "commands are not imported (convert one to a skill): {}",
+                dispatched
+                    .discovery
+                    .dropped
+                    .iter()
+                    .map(|command| command.source_path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
+    if source.is_file("hooks/hooks.json") || spec.hooks {
+        let path = if source.is_file("hooks/hooks.json") {
+            "hooks/hooks.json"
+        } else {
+            crate::claude::manifest::PLUGIN_MANIFEST
+        };
+        warn(
+            path,
+            "import.hooks-not-converted",
+            "hooks are not converted yet".into(),
+        );
+    }
+    if source.is_file(".mcp.json") || spec.mcp {
+        let path = if source.is_file(".mcp.json") {
+            ".mcp.json"
+        } else {
+            crate::claude::manifest::PLUGIN_MANIFEST
+        };
+        warn(
+            path,
+            "import.mcp-not-converted",
+            "MCP servers are not converted yet".into(),
+        );
     }
 }
 
@@ -327,7 +397,7 @@ fn prepare_manifest(
         crate::manifest::read,
     );
     PreparedManifest {
-        source_path: "mars.toml".to_string(),
+        source_path: Some("mars.toml".to_string()),
         output_path: "mars.toml".to_string(),
         normalized_bytes,
         reading,
@@ -339,6 +409,8 @@ fn prepare_definition(
     source: &impl TreeSource,
     selected: &SelectedDefinition,
     classification: &Classification,
+    all: &[SelectedDefinition],
+    selected_paths: &BTreeSet<&str>,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedDefinition {
     let Some(bytes) = source.read(&selected.source_path) else {
@@ -356,7 +428,7 @@ fn prepare_definition(
             kind: selected.kind,
             slug: selected.slug.clone(),
             source_path: selected.source_path.clone(),
-            output_path: selected.source_path.clone(),
+            output_path: selected.output_path.clone(),
             normalized_bytes: Vec::new(),
             reading,
             change: ChangeRecord::None,
@@ -390,29 +462,9 @@ fn prepare_definition(
                     }
                 }
             }
-            Classification::Foreign { dialect, .. } => match Frontmatter::parse(text) {
-                Ok(frontmatter) => {
-                    let item_kind = match selected.kind {
-                        DefinitionKind::Agent => crate::item::ItemKind::Agent,
-                        DefinitionKind::Skill => crate::item::ItemKind::Skill,
-                    };
-                    let (lifted, changed) = crate::lift::lift_frontmatter_with_change(
-                        *dialect,
-                        item_kind,
-                        &frontmatter,
-                    );
-                    if changed {
-                        (
-                            lifted.render().into_bytes(),
-                            ChangeRecord::FullyRewritten,
-                            Vec::new(),
-                        )
-                    } else {
-                        (bytes.clone(), ChangeRecord::None, Vec::new())
-                    }
-                }
-                Err(_) => (bytes.clone(), ChangeRecord::None, Vec::new()),
-            },
+            Classification::Foreign { dialect, .. } => {
+                translate_foreign(text, *dialect, selected, all, selected_paths, &bytes)
+            }
             _ => (bytes.clone(), ChangeRecord::None, Vec::new()),
         },
         Err(_) => (bytes.clone(), ChangeRecord::None, Vec::new()),
@@ -438,10 +490,65 @@ fn prepare_definition(
         kind: selected.kind,
         slug: selected.slug.clone(),
         source_path: selected.source_path.clone(),
-        output_path: selected.source_path.clone(),
+        output_path: selected.output_path.clone(),
         normalized_bytes,
         reading,
         change,
+    }
+}
+
+/// Lift a foreign definition's frontmatter into schema v1. Frontmatter that cannot be read
+/// stays as written, with the reader's error; only a Claude skill's unquoted `description`
+/// colon is repaired first.
+fn translate_foreign(
+    text: &str,
+    dialect: Dialect,
+    selected: &SelectedDefinition,
+    all: &[SelectedDefinition],
+    selected_paths: &BTreeSet<&str>,
+    bytes: &[u8],
+) -> (Vec<u8>, ChangeRecord, Vec<SchemaDiagnostic>) {
+    let claude = matches!(dialect, Dialect::Claude | Dialect::AgentSkills);
+    let mut diagnostics = Vec::new();
+    let mut repaired = false;
+    let frontmatter = match Frontmatter::parse(text) {
+        Ok(frontmatter) => frontmatter,
+        Err(_) if claude && selected.kind == DefinitionKind::Skill => {
+            match crate::claude::translate::repair_description(text)
+                .and_then(|fixed| Frontmatter::parse(&fixed).ok())
+            {
+                Some(frontmatter) => {
+                    repaired = true;
+                    diagnostics.push(crate::claude::translate::repaired_diagnostic());
+                    frontmatter
+                }
+                None => return (bytes.to_vec(), ChangeRecord::None, Vec::new()),
+            }
+        }
+        Err(_) => return (bytes.to_vec(), ChangeRecord::None, Vec::new()),
+    };
+    let item_kind = match selected.kind {
+        DefinitionKind::Agent => crate::item::ItemKind::Agent,
+        DefinitionKind::Skill => crate::item::ItemKind::Skill,
+    };
+    let lifted = crate::lift::lift_frontmatter(dialect, item_kind, &frontmatter);
+    diagnostics.extend(lifted.diagnostics);
+    if claude && selected.kind == DefinitionKind::Skill {
+        diagnostics.extend(crate::claude::checks::skill_checks(
+            selected,
+            &lifted.frontmatter,
+            all,
+            selected_paths,
+        ));
+    }
+    if lifted.changed || repaired {
+        (
+            lifted.frontmatter.render().into_bytes(),
+            ChangeRecord::FullyRewritten,
+            diagnostics,
+        )
+    } else {
+        (bytes.to_vec(), ChangeRecord::None, diagnostics)
     }
 }
 
@@ -477,54 +584,6 @@ fn upgrade_result(
         }
     };
     (result.text.into_bytes(), change, result.diagnostics)
-}
-
-fn resolve_dialect(
-    source: &impl TreeSource,
-    declared: Option<Dialect>,
-) -> (Dialect, DialectEvidence) {
-    if let Some(dialect) = declared {
-        return (
-            dialect,
-            DialectEvidence {
-                source: DialectEvidenceSource::Declared,
-                paths: Vec::new(),
-            },
-        );
-    }
-    let mut matches = Vec::new();
-    for (container, dialect) in [
-        (".claude", Dialect::Claude),
-        (".codex", Dialect::Codex),
-        (".opencode", Dialect::OpenCode),
-        (".cursor", Dialect::Cursor),
-    ] {
-        for kind in ["skills", "agents"] {
-            let path = format!("{container}/{kind}");
-            if source.is_dir(&path) && !source.children(&path).is_empty() {
-                matches.push((dialect, path));
-                break;
-            }
-        }
-    }
-    let dialect = if matches
-        .iter()
-        .map(|(dialect, _)| dialect)
-        .collect::<std::collections::BTreeSet<_>>()
-        .len()
-        == 1
-    {
-        matches[0].0
-    } else {
-        Dialect::Claude
-    };
-    (
-        dialect,
-        DialectEvidence {
-            source: DialectEvidenceSource::Predicted,
-            paths: matches.into_iter().map(|(_, path)| path).collect(),
-        },
-    )
 }
 
 fn push(

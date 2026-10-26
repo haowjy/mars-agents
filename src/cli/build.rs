@@ -44,6 +44,7 @@ fn parse_harness(value: &str) -> Result<HarnessId, String> {
 
 #[derive(Debug, Clone, ValueEnum)]
 enum EffortArg {
+    None,
     Low,
     Medium,
     High,
@@ -53,6 +54,7 @@ enum EffortArg {
 impl EffortArg {
     fn as_str(&self) -> &'static str {
         match self {
+            Self::None => "none",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",

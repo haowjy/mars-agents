@@ -339,7 +339,7 @@
               "code": "skill.claude-keys-moved",
               "severity": "info",
               "path": [],
-              "message": "moved Claude-only keys to harness-overrides.claude: argument-hint, model, hooks"
+              "message": "moved Claude-only keys to harness-overrides.claude: `argument-hint`, `model`, `hooks`"
             }
           ],
           "skills/mismatch/SKILL.md": [

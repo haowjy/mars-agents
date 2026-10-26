@@ -456,7 +456,7 @@
               "code": "agent.claude-keys-moved",
               "severity": "info",
               "path": [],
-              "message": "moved Claude-only keys to harness-overrides.claude: color, initialPrompt, maxTurns"
+              "message": "moved Claude-only keys to harness-overrides.claude: `color`, `initialPrompt`, `maxTurns`"
             }
           ]
         }

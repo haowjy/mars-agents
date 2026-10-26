@@ -269,6 +269,8 @@ against the project's configured managed targets.
 | `field.type` | error | A field has the wrong type, such as a non-string `metadata.type` or `model-invocable: yes` |
 | `field.unknown` | warning | An unknown field; it stays in the file and reaches no native file |
 | `skill.claude-keys-moved` | info | Import moved Claude-only keys to `harness-overrides.claude` |
+| `skill.claude-keys-conflict` | warning | A Claude-only key was dropped because `harness-overrides.claude` already sets it; the override's value wins |
+| `skill.claude-keys-unmoved` | warning | Claude-only keys stayed in place because `harness-overrides` or `harness-overrides.claude` is not a mapping |
 | `skill.no-frontmatter` | warning | A body-only skill |
 | `skill-field-dropped` | metadata | Internal lossiness metadata for fields with no native equivalent; used by verbose tooling, not a guaranteed user-visible warning |
 | `skill-variant-unknown-harness` | warning | Unknown harness key under `variants/` |

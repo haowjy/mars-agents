@@ -15,12 +15,23 @@ no-op into `busy` and a fallback read. The unlocked check reads `.mars/provided.
 `FileLock::try_acquire` reports held-ness separately from failure; treating every error as
 contention would silently disable the refresh on a broken lock file.
 
-The fast path proves the source is what the record applied (`version`, `digest`, none claimed
-by `mars.lock`) **and** that every recorded installed tree still hashes to its source skill's
-digest. Existence is not ownership: a sync that replaced a recorded directory with a package's
-copy and died before publishing `mars.lock` leaves foreign bytes under a recorded name, and the
-host would read them as its own. Hashing a host's few small skills costs milliseconds, against a
-host launch measured in hundreds.
+`up-to-date` means **a re-plan would do nothing**, and both paths decide it from the same
+`reconcile::Plan` over the files on disk, which is the only definition that keeps them from
+drifting. So the fast path checks the source is what the record applied (`version`, `digest`) and
+that every source skill — not only the recorded ones — is either claimed by `mars.lock` or recorded
+and installed with a tree that hashes to its source digest. Hashing is not redundant with existence:
+a sync that replaced a recorded directory with a package's copy and died before publishing
+`mars.lock` leaves foreign bytes under a recorded name, which only a content check can see. And
+checking unrecorded source skills is what lets a skill left out earlier (shadowed by a package, or
+collided with someone else's directory) install once its blocker is gone; the record's own
+consistency proves nothing about the names it omits. Hashing a host's few small skills costs
+milliseconds, against a host launch measured in hundreds.
+
+A locked run whose plan also writes nothing returns `up-to-date` without either `provided.lock`
+write, so a lingering shadow or collision does not rewrite the file on every launch. Shadowed names
+and collisions are state of the disk, not of the run: both are reported on every status while they
+last, and the source's schema warnings are plain-text output only for `applied` (JSON keeps them on
+every status).
 
 ## Ownership and the apply
 
@@ -48,8 +59,10 @@ byte-equal adopt rule compare raw bytes. `mars_schema::skill::read` is used only
 detection), `digest` and `skills`. No paths, no per-item checksums: `.mars/` is derived and
 gitignored, so nothing committed carries a provider, a path or a version. A corrupt file is a
 warning and an empty record (adoption recovers what the disk can prove); an unknown version is
-refused, because a newer Mars wrote it. Recorded names are validated as single path components
-before use, since the file is written by another build.
+refused, because a newer Mars wrote it. A recorded name is validated before use as a single path
+component **and** as one of that table's own `<skill>__<provider>` names: the file is written by
+another build, and a name that belongs to another provider would otherwise let a record point a
+removal at that provider's directory.
 
 ## What readers see
 

@@ -624,14 +624,16 @@ and leaves the corrupt lock untouched.
 Install a host program's own skills into `.mars/skills/`.
 
 ```bash
-mars provide <provider>@<version>=<directory> [--json]
+mars provide <provider>@<version>=<directory> [--root <dir>] [--json]
 ```
 
 A host ships skills with its binary and hands Mars the directory holding them
 (Meridian runs this on every launch). Mars copies `<directory>/skills/*` into
 `.mars/skills/` and records the names in `.mars/provided.lock`, which no other
 command writes. It never touches `mars.toml`, `mars.lock` or a managed target,
-and provided skills are never projected into targets.
+and provided skills are never projected into targets. `--root <dir>` must hold
+its own `mars.toml`; a directory without one is refused rather than walked up
+from, so a host always fills the root it named.
 
 | Field | Meaning |
 |---|---|
@@ -648,7 +650,7 @@ after the run), `installed`, `replaced`, `adopted`, `removed`, `shadowed`,
 
 | Status | Meaning |
 |---|---|
-| `up-to-date` | The record matches the source; nothing was written |
+| `up-to-date` | A re-plan would write nothing: `provided.lock` and the installed trees already match the source |
 | `applied` | Skills were installed, replaced, adopted or removed |
 | `busy` | Another Mars process holds `.mars/sync.lock`; nothing was written |
 | `sync-pending` | An interrupted sync owns canonical destinations; run `mars repair` first |
@@ -657,14 +659,21 @@ All four exit 0. Validation failures exit 2: `provided-name-invalid` (a name or
 `SKILL.md` `name` that is not `<skill>__<provider>`) and `provided-skill-invalid`
 (a missing `skills/` directory, a missing `SKILL.md`, or one the schema rejects).
 
-Mars only deletes names its own record lists, so a directory it did not create is
-adopted when its bytes match the source and reported as `collisions` otherwise. A
+Mars only deletes names its own record lists. A directory it did not create is
+adopted when its bytes match the source and reported as `collisions` otherwise; a
 provided skill whose destination a package owns is reported as `shadowed` and left
-to the package.
+to the package. Both are reported on every run while they last, from either
+status path, not only on the run that first saw them. Plain text prints source
+diagnostics (schema warnings) only for `applied`; `--json` carries them in
+`warnings` on every status.
 
 `.mars/provided.lock` is machine-local (`version = 1`, one `[providers.<name>]`
 table per provider with `version`, `digest` and `skills`). `digest` is `pending`
-while an apply is in flight; the next run replans from the files on disk.
+while an apply is in flight; the next run replans from the files on disk. The
+file is written by another build, so a recorded name must be a single path
+component ending in `__<that provider>`; anything else makes the file corrupt
+(one warning, an empty record) rather than letting a record point a removal at
+another provider's directory.
 
 Other commands only read it. `mars sync` counts the recorded names as available
 for refs from a package that declares the provider in `uses-providers` (see

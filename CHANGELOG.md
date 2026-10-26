@@ -21,10 +21,15 @@ Schema v1: one versioned format for agent definitions, skills and the `[package]
   `.mars/skills/` and records the names in `.mars/provided.lock`, a machine-local file no other
   command writes. Nothing committed changes: `mars.toml`, `mars.lock` and every managed target stay
   byte-identical, and provided skills are never projected. A fast path answers `up-to-date` without
-  the sync lock, a held lock answers `busy`, an interrupted sync answers `sync-pending`, and a crash
-  mid-apply converges on the next run. `--json` reports the status, the recorded names and per-name
-  `installed`/`replaced`/`adopted`/`removed`/`shadowed`/`collisions`. `FileLock::try_acquire` is
-  the one non-blocking lock helper now shared with the model probing caches.
+  the sync lock only when a re-plan would write nothing — the record matches the source and every
+  source skill is either claimed by a package or installed with its source bytes — so a skill left
+  out earlier (shadowed, collided) installs once the blocker is gone, and a run whose plan changes
+  nothing writes nothing. A held lock answers `busy`, an interrupted sync answers `sync-pending`,
+  and a crash mid-apply converges on the next run. `--json` reports the status, the recorded names
+  and per-name `installed`/`replaced`/`adopted`/`removed`/`shadowed`/`collisions`; shadowed names
+  and collisions are reported on every run while they last. `FileLock::try_acquire` is the one
+  non-blocking lock helper now shared with the model probing caches, which log a lock error and
+  skip the cache instead of reading it as contention.
 - `[package] uses-providers = ["meridian"]` names hosts that supply skills at sync time; each entry
   must match `[a-z0-9][a-z0-9-]*`. A dependency's agent may list `<skill>__<provider>` for a
   declared provider: the ref resolves, nothing is pulled, and sync continues with

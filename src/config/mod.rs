@@ -776,16 +776,15 @@ fn parse_manifest(
     path: &Path,
 ) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
+    let parsed: toml::Value = toml::from_str(content).map_err(crate::error::ConfigError::Parse)?;
+    if parsed.get("package").is_none() {
+        return Ok((None, Vec::new()));
+    }
     let reading = mars_schema::manifest::read(content);
     for diagnostic in &reading.diagnostics {
         diagnostics.schema(diagnostic, &format!("manifest `{}`", path.display()), false);
     }
     if reading.fields.is_none() {
-        let parsed: toml::Value =
-            toml::from_str(content).map_err(crate::error::ConfigError::Parse)?;
-        if parsed.get("package").is_none() {
-            return Ok((None, diagnostics.drain()));
-        }
         return Ok((None, diagnostics.drain()));
     }
     Ok((parse_prepared_manifest(content, path)?, diagnostics.drain()))

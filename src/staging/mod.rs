@@ -140,12 +140,25 @@ pub(crate) fn stage_canonical_source(
     fallback_skill_name: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let prepared = crate::package_prepare::prepare_authored(
-        source_root,
-        mars_schema::prepare::PrepareContext::Package,
-        Some(dialect),
-        diag,
-    )?;
+    let consumer_manifest = fs::read_to_string(source_root.join("mars.toml"))
+        .ok()
+        .and_then(|content| content.parse::<toml::Value>().ok())
+        .is_some_and(|manifest| manifest.get("package").is_none());
+    let prepared = if consumer_manifest {
+        crate::package_prepare::prepare_authored_without_manifest(
+            source_root,
+            mars_schema::prepare::PrepareContext::AuthoredLocal,
+            Some(dialect),
+            diag,
+        )?
+    } else {
+        crate::package_prepare::prepare_authored(
+            source_root,
+            mars_schema::prepare::PrepareContext::Package,
+            Some(dialect),
+            diag,
+        )?
+    };
     materialize_prepared_tree(
         source_root,
         dest_root,

@@ -124,6 +124,13 @@ impl DiagnosticCollector {
             _ => "schema-diagnostic",
         };
         let message = format!("{context}: {}", diagnostic.message);
+        if self
+            .diagnostics
+            .iter()
+            .any(|existing| existing.code == code && existing.message == message)
+        {
+            return;
+        }
         if diagnostic.severity == Severity::Error && !errors_as_warnings {
             self.error_with_category(code, message, DiagnosticCategory::Validation);
         } else if diagnostic.code == "field.unknown"

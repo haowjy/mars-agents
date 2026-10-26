@@ -12,7 +12,6 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::dialect::Dialect;
-use crate::discover;
 use crate::error::MarsError;
 
 use super::output;
@@ -67,7 +66,10 @@ pub fn run(args: &CheckArgs, json: bool) -> Result<i32, MarsError> {
             Some(Dialect::resolve_local(None, &authored_base)),
             &mut publish_diag,
         )?;
-        (prepared, None)
+        (
+            prepared,
+            Some(std::fs::read(authored_base.join("mars.toml"))?),
+        )
     } else {
         let prepared = crate::package_prepare::prepare_authored(
             &authored_base,
@@ -364,255 +366,59 @@ fn check_prepared(
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let lens = crate::resolve::PublishLens::load(base, &mut diag);
-    check_dir_with_lens(base, base, lens.as_ref(), &mut diag)
-}
-
-fn check_dir_with_lens(
-    base: &Path,
-    authored_base: &Path,
-    lens: Result<&crate::resolve::PublishLens, &MarsError>,
-    diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<CheckReport, MarsError> {
-    let skills_dir = base.join("skills");
-
-    let mut errors: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-
-    if let Ok(lens) = lens
-        && let Some(config) = lens.manifest.as_ref()
-        && let Some(package) = config.package.as_ref()
-        && let Err(error) = crate::resolve::validate_package_requirement_syntax(package)
-    {
-        errors.push(error.to_string());
-    }
-
-    let discovered = discover::discover_resolved_source(base, None, diag)?;
-
-    // ── Validate discovered agents/skills ────────────────────────────
-    let mut agent_names: HashMap<String, PathBuf> = HashMap::new();
-    let mut agent_skill_refs: Vec<(String, Vec<String>)> = Vec::new();
-    let mut skill_names: HashMap<String, PathBuf> = HashMap::new();
-
-    for item in discovered {
-        let path = base.join(&item.source_path);
-        let authored_path = authored_base.join(&item.source_path);
-        match item.id.kind {
-            mars_schema::item::ItemKind::Agent => {
-                if super::is_symlink(&authored_path) {
-                    let name = path
-                        .file_stem()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_default();
-                    warnings.push(format!(
-                        "skipping symlinked agent `{name}` — source packages should not contain symlinks"
-                    ));
-                    continue;
-                }
-
-                let filename = path
-                    .file_stem()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default()
-                    .to_string();
-
-                match std::fs::read_to_string(&path) {
-                    Ok(content) => {
-                        let reading = mars_schema::agent::read(&content);
-                        for diagnostic in &reading.diagnostics {
-                            let message = format!(
-                                "agent `{}`: [{}] {}",
-                                path.display(),
-                                diagnostic.code,
-                                diagnostic.message
-                            );
-                            if diagnostic.is_error() {
-                                errors.push(message);
-                            } else {
-                                warnings.push(message);
-                            }
-                        }
-                        if let Some(profile) = reading.fields {
-                            let name = profile.name.clone().unwrap_or_else(|| filename.clone());
-                            if profile.name.is_none() {
-                                warnings.push(format!(
-                                    "agent `{filename}` has no `name` in frontmatter"
-                                ));
-                            }
-                            if profile.description.is_none() {
-                                warnings.push(format!("agent `{name}` has no `description`"));
-                            }
-                            if profile.name.is_some() && name != filename {
-                                warnings.push(format!("agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"));
-                            }
-                            if let Some(existing) = agent_names.get(&name) {
-                                errors.push(format!(
-                                    "duplicate agent name `{name}` in {} and {}",
-                                    existing.display(),
-                                    path.display()
-                                ));
-                            } else {
-                                agent_names.insert(name.clone(), path.clone());
-                            }
-                            let skills = profile.skills.all();
-                            if !skills.is_empty() {
-                                agent_skill_refs.push((name, skills));
-                            }
-                        }
-                    }
-                    Err(e) => errors.push(format!("cannot read {}: {e}", path.display())),
-                }
-            }
-            mars_schema::item::ItemKind::Skill => {
-                let (dirname, skill_md, duplicate_path) = if item.source_path
-                    == std::path::Path::new(".")
-                {
-                    let dirname = item.id.name.to_string();
-                    (dirname, base.join("SKILL.md"), base.join("SKILL.md"))
-                } else {
-                    if super::is_symlink(&authored_path) {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or_default();
-                        warnings.push(format!(
-                            "skipping symlinked skill `{name}` — source packages should not contain symlinks"
-                        ));
-                        continue;
-                    }
-                    let dirname = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    (dirname, path.join("SKILL.md"), path.clone())
-                };
-
-                match std::fs::read_to_string(&skill_md) {
-                    Ok(content) => {
-                        let reading = mars_schema::skill::read(&content);
-                        for diagnostic in &reading.diagnostics {
-                            let message = format!(
-                                "skill `{}`: [{}] {}",
-                                skill_md.display(),
-                                diagnostic.code,
-                                diagnostic.message()
-                            );
-                            if diagnostic.is_error() {
-                                errors.push(message);
-                            } else {
-                                warnings.push(message);
-                            }
-                        }
-                        if let Some(profile) = reading.fields {
-                            let name = profile.name.clone().unwrap_or_else(|| dirname.clone());
-                            if profile.name.is_some() && name != dirname {
-                                warnings.push(format!("skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"));
-                            }
-                            if let Some(existing) = skill_names.get(&name) {
-                                errors.push(format!(
-                                    "duplicate skill name `{name}` in {} and {}",
-                                    existing.display(),
-                                    duplicate_path.display()
-                                ));
-                            } else {
-                                skill_names.insert(name, duplicate_path);
-                            }
-                        }
-                    }
-                    Err(e) => errors.push(format!("cannot read {}: {e}", skill_md.display())),
-                }
-            }
-            // New kinds not yet subject to source-package checks.
-            mars_schema::item::ItemKind::Hook
-            | mars_schema::item::ItemKind::McpServer
-            | mars_schema::item::ItemKind::BootstrapDoc => {}
+    let consumer = std::fs::read_to_string(base.join("mars.toml"))
+        .ok()
+        .and_then(|content| content.parse::<toml::Value>().ok())
+        .is_some_and(|manifest| manifest.get("package").is_none());
+    let prepared = if consumer {
+        crate::package_prepare::prepare_authored_without_manifest(
+            base,
+            mars_schema::prepare::PrepareContext::AuthoredLocal,
+            Some(Dialect::resolve_local(None, base)),
+            &mut diag,
+        )?
+    } else {
+        crate::package_prepare::prepare_authored(
+            base,
+            mars_schema::prepare::PrepareContext::Package,
+            None,
+            &mut diag,
+        )?
+    };
+    let lens = match crate::resolve::PublishLens::from_prepared_manifest(
+        base,
+        if consumer {
+            Some(std::fs::read(base.join("mars.toml"))?)
+        } else {
+            prepared
+                .manifest
+                .as_ref()
+                .map(|manifest| manifest.normalized_bytes.clone())
+        }
+        .as_deref(),
+    ) {
+        Ok(lens) => lens,
+        Err(error) => {
+            return Ok(CheckReport {
+                agents: 0,
+                skills: 0,
+                errors: vec![format!(
+                    "failed to load mars.toml for dependency checks: {error}\n  hint: fix mars.toml syntax (Windows paths in TOML must use `/` or escaped `\\\\`)"
+                )],
+                warnings: Vec::new(),
+            });
+        }
+    };
+    let mut report = check_prepared(&prepared, base, &lens, &mut diag)?;
+    for diagnostic in diag.drain() {
+        let rendered = format!("[{}] {}", diagnostic.code, diagnostic.message);
+        if diagnostic.level == crate::diagnostic::DiagnosticLevel::Error {
+            report.errors.push(rendered);
+        } else if diagnostic.level == crate::diagnostic::DiagnosticLevel::Warning {
+            report.warnings.push(rendered);
         }
     }
-
-    // Structural validation for nested skill layout:
-    // if skills/* directories exist, each must contain SKILL.md.
-    if skills_dir.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(&skills_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_dir())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let path = entry.path();
-            let dirname = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            if !path.join("SKILL.md").exists() {
-                errors.push(format!("skill `{dirname}` is missing SKILL.md"));
-            }
-        }
-    }
-
-    let agent_count = agent_names.len();
-    let skill_count = skill_names.len();
-
-    // ── Empty package check ──────────────────────────────────────────
-    if agent_count == 0 && skill_count == 0 {
-        errors.push("no agents or skills found — is this a mars source package?".to_string());
-    }
-
-    // ── Skill dependency check ───────────────────────────────────────
-    let available: HashSet<&str> = skill_names.keys().map(|s| s.as_str()).collect();
-
-    match lens {
-        Ok(lens) if has_package_dependencies(lens) => {
-            // Graph-backed validation: resolve deps fresh from constraints, check
-            // skill refs against local skills + all resolved dependency packages.
-            match resolve_available_skills(lens, diag) {
-                Ok(graph_skills) => {
-                    for (agent_name, skills) in &agent_skill_refs {
-                        for skill in skills {
-                            if !available.contains(skill.as_str())
-                                && !graph_skills.contains_key(skill)
-                            {
-                                errors.push(format!(
-                                    "agent `{agent_name}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
-                                    format_searched_packages(&graph_skills)
-                                ));
-                            }
-                        }
-                    }
-                }
-                Err(resolve_err) => {
-                    errors.push(format!(
-                        "dependency graph resolution failed: {resolve_err}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
-                    ));
-                }
-            }
-        }
-        Ok(_) => {
-            // No [dependencies] — local-only validation, emit warnings for external refs.
-            for (agent_name, skills) in &agent_skill_refs {
-                for skill in skills {
-                    if !available.contains(skill.as_str()) {
-                        warnings.push(format!(
-                            "external dependency: `{skill}` (referenced by: {agent_name})"
-                        ));
-                    }
-                }
-            }
-        }
-        Err(config_err) => {
-            errors.push(format!(
-                "failed to load mars.toml for dependency checks: {config_err}\n  hint: fix mars.toml syntax (Windows paths in TOML must use `/` or escaped `\\\\`)"
-            ));
-        }
-    }
-
-    // ── Output ───────────────────────────────────────────────────────
-    Ok(CheckReport {
-        agents: agent_count,
-        skills: skill_count,
-        errors,
-        warnings,
-    })
+    Ok(report)
 }
 
 /// Check if mars.toml has `[package]` and at least one `[dependencies]` entry.

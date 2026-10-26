@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{Config, EffectiveConfig, LocalConfig};
 use crate::diagnostic::DiagnosticCollector;
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::source::GlobalCache;
 
 use super::provider::RealSourceProvider;
@@ -24,7 +24,19 @@ pub struct PublishLens {
 
 impl PublishLens {
     pub fn load(package_root: &Path, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
-        Self::load_with_schema_root(package_root, package_root, diag)
+        let prepared = crate::package_prepare::prepare_authored(
+            package_root,
+            mars_schema::prepare::PrepareContext::Package,
+            None,
+            diag,
+        )?;
+        Self::from_prepared_manifest(
+            package_root,
+            prepared
+                .manifest
+                .as_ref()
+                .map(|manifest| manifest.normalized_bytes.as_slice()),
+        )
     }
 
     pub(crate) fn from_prepared_manifest(
@@ -55,43 +67,6 @@ impl PublishLens {
                 message: error.message,
             });
         }
-        Ok(Self {
-            package_root: package_root.to_path_buf(),
-            manifest,
-            effective,
-        })
-    }
-
-    pub(crate) fn load_with_schema_root(
-        package_root: &Path,
-        schema_root: &Path,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<Self, MarsError> {
-        let mut manifest = match crate::config::load(package_root) {
-            Ok(config) => Some(config),
-            Err(MarsError::Config(ConfigError::NotFound { .. })) => None,
-            Err(err) => return Err(err),
-        };
-        let mut config = manifest.clone().unwrap_or_default();
-        if config.package.is_some() {
-            let manifest_path = schema_root.join("mars.toml");
-            let content = std::fs::read_to_string(&manifest_path)?;
-            for diagnostic in &mars_schema::manifest::read(&content).diagnostics {
-                diag.schema(
-                    diagnostic,
-                    &format!("manifest `{}`", package_root.join("mars.toml").display()),
-                    false,
-                );
-            }
-        }
-        config.local_dependencies.clear();
-        if let Some(manifest) = &mut manifest {
-            manifest.local_dependencies.clear();
-        }
-        let (effective, diagnostics) =
-            crate::config::merge_with_root(config, LocalConfig::default(), package_root)?;
-        diag.extend(diagnostics);
-
         Ok(Self {
             package_root: package_root.to_path_buf(),
             manifest,

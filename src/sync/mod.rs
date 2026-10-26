@@ -364,18 +364,6 @@ pub(crate) fn load_config(
         },
         Err(err) => return Err(err),
     };
-    if config.package.is_some() {
-        let manifest_path = project_root.join("mars.toml");
-        let content = std::fs::read_to_string(&manifest_path)?;
-        for diagnostic in &mars_schema::manifest::read(&content).diagnostics {
-            diag.schema(
-                diagnostic,
-                &format!("manifest `{}`", manifest_path.display()),
-                false,
-            );
-        }
-    }
-
     // Apply config mutation.
     let dependency_changes = if let Some(m) = &request.mutation {
         mutation::apply_mutation(&mut config, m)?

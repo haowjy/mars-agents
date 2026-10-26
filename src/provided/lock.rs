@@ -10,6 +10,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use mars_schema::provider::provider_of;
+
 use crate::error::{ConfigError, MarsError};
 
 const PROVIDED_LOCK_FILE: &str = "provided.lock";
@@ -28,7 +30,7 @@ pub(crate) struct ProvidedLock {
 }
 
 /// What one provider installed in this project.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ProviderRecord {
     /// The host's version, opaque: host versions need not be semver (Meridian RCs are PEP 440).
     /// Recorded only for display and change detection.
@@ -108,6 +110,18 @@ impl ProvidedLock {
                     &path,
                     format!(
                         "provider `{provider}` records `{name}`, which is not a skill directory name"
+                    ),
+                ));
+            }
+            if let Some(name) = record
+                .skills
+                .iter()
+                .find(|name| provider_of(name) != Some(provider.as_str()))
+            {
+                return Ok(corrupt(
+                    &path,
+                    format!(
+                        "provider `{provider}` records `{name}`, which is not one of its own `<skill>__{provider}` names"
                     ),
                 ));
             }

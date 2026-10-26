@@ -177,7 +177,7 @@ fn normalize_root<T: TreeSource>(
         },
     );
     let mut normalized = Normalized {
-        kind: rooted.dispatched.kind,
+        kind: rooted.dispatched.kind(),
         packages: Vec::new(),
         diagnostics: BTreeMap::new(),
     };
@@ -343,7 +343,7 @@ fn finish_package<T: TreeSource>(
     };
     if prepared.manifest.is_none()
         && !refused
-        && matches!(prepared.classification, Classification::Foreign { .. })
+        && matches!(prepared.classification, Classification::Foreign(_))
     {
         let name = spec
             .and_then(|spec| spec.name.clone())
@@ -372,7 +372,7 @@ fn finish_package<T: TreeSource>(
             .map_or(manifest_name, |origin| origin.entry.name.clone()),
         provenance: Provenance {
             translator: crate::VERSION,
-            dialect: dispatched.dialect.map(|(dialect, _)| dialect),
+            dialect: dispatched.dialect().map(|choice| choice.dialect),
             source: request.source.clone(),
             marketplace: origin.as_ref().map(|origin| MarketplaceProvenance {
                 plugin: origin.entry.name.clone(),

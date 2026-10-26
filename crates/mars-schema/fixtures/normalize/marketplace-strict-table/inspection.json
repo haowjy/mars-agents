@@ -1,12 +1,5 @@
 {
   "kind": "marketplace",
-  "dialect": {
-    "dialect": "claude",
-    "source": "predicted",
-    "evidence": [
-      ".claude-plugin/marketplace.json"
-    ]
-  },
   "also_found": [],
   "plugins": [
     {

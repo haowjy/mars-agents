@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, DialectChoice};
 use crate::discover::{SelectedDefinition, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 use crate::frontmatter::Frontmatter;
@@ -27,6 +27,7 @@ pub enum PrepareContext {
     Project,
 }
 
+/// What a package root is, once its manifest, declared dialect and contents have been weighed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Classification {
@@ -37,26 +38,11 @@ pub enum Classification {
         schema: u64,
     },
     Invalid,
-    Foreign {
-        dialect: Dialect,
-        evidence: DialectEvidence,
-    },
+    /// Another harness's layout, read as the dialect chosen.
+    Foreign(DialectChoice),
     /// A Claude marketplace: it lists plugins and holds no definitions of its own.
     Marketplace,
     Empty,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DialectEvidence {
-    pub source: DialectEvidenceSource,
-    pub paths: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DialectEvidenceSource {
-    Declared,
-    Predicted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -449,8 +435,8 @@ fn prepare_definition(
                     }
                 }
             }
-            Classification::Foreign { dialect, .. } => {
-                translate_foreign(text, *dialect, selected, all, selected_paths, &bytes)
+            Classification::Foreign(choice) => {
+                translate_foreign(text, choice.dialect, selected, all, selected_paths, &bytes)
             }
             _ => (bytes.clone(), ChangeRecord::None, Vec::new()),
         },

@@ -17,15 +17,15 @@ use crate::claude::manifest::{
     PluginSpec, resolve_spec,
 };
 use crate::diagnostic::{SchemaDiagnostic, Severity};
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, DialectChoice};
 use crate::discover::{Discovery, discover};
 use crate::package::{ManifestClassification, classify_manifest};
 use crate::plugin_metadata::{SENTINEL_FILE, is_valid_sentinel};
-use crate::prepare::{Classification, DialectEvidence, DialectEvidenceSource, PrepareContext};
+use crate::prepare::{Classification, PrepareContext};
 use crate::tree::TreeSource;
 use crate::upgrade::DefinitionKind;
 
-/// What a root is, as `inspect` reports it.
+/// What a root is, as `inspect` reports it: derived from the classification and layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
@@ -66,13 +66,37 @@ pub(crate) struct Dispatched {
     /// The package manifest to prepare. Consumer configuration is not one, so it is `None`
     /// there; the root's `mars.toml` stays the consumer's to read.
     pub manifest: Option<Vec<u8>>,
-    pub kind: Kind,
     pub classification: Classification,
     pub layout: Layout,
     pub discovery: Discovery,
     pub also_found: Vec<Mirror>,
+}
+
+impl Dispatched {
+    /// What the root is, as `inspect` reports it: the classification, with a foreign root's
+    /// layout telling a plugin from a bare skill tree.
+    pub(crate) fn kind(&self) -> Kind {
+        match (&self.classification, &self.layout) {
+            (Classification::Schema1, _) => Kind::Schema1,
+            (Classification::MarsLegacy, _) => Kind::MarsLegacy,
+            (Classification::SchemaNewer { .. }, _) => Kind::SchemaNewer,
+            (Classification::Invalid, _) => Kind::Invalid,
+            (Classification::Marketplace, _) => Kind::Marketplace,
+            (Classification::Empty, _) => Kind::Empty,
+            (Classification::Foreign(_), Layout::Claude(spec)) if !spec.is_bare_tree() => {
+                Kind::Plugin
+            }
+            (Classification::Foreign(_), _) => Kind::SkillTree,
+        }
+    }
+
     /// The foreign dialect read and why; `None` for Mars packages and unreadable roots.
-    pub dialect: Option<(Dialect, DialectEvidence)>,
+    pub(crate) fn dialect(&self) -> Option<&DialectChoice> {
+        match &self.classification {
+            Classification::Foreign(choice) => Some(choice),
+            _ => None,
+        }
+    }
 }
 
 /// A marketplace entry the root is being read as, with whether the entry's source is the
@@ -145,21 +169,18 @@ fn classify(
     as_plugin: Option<AsPlugin<'_>>,
     fallback_name: Option<&str>,
 ) -> Dispatched {
-    let finished = |kind, classification, layout, discovery, also_found| Dispatched {
+    let done = |classification, layout, discovery, also_found| Dispatched {
         manifest: None,
-        kind,
         classification,
         layout,
         discovery,
         also_found,
-        dialect: None,
     };
     if source
         .read(SENTINEL_FILE)
         .is_some_and(|bytes| is_valid_sentinel(&bytes))
     {
-        return finished(
-            Kind::Empty,
+        return done(
             Classification::Empty,
             Layout::None,
             Discovery::generated_root(),
@@ -169,8 +190,7 @@ fn classify(
 
     match manifest {
         _ if consumer_tree => {
-            return finished(
-                Kind::MarsLegacy,
+            return done(
                 Classification::MarsLegacy,
                 Layout::Convention,
                 discover(source, fallback_name),
@@ -178,8 +198,7 @@ fn classify(
             );
         }
         ManifestClassification::Schema1 => {
-            return finished(
-                Kind::Schema1,
+            return done(
                 Classification::Schema1,
                 Layout::Convention,
                 discover(source, fallback_name),
@@ -187,8 +206,7 @@ fn classify(
             );
         }
         ManifestClassification::MarsLegacy => {
-            return finished(
-                Kind::MarsLegacy,
+            return done(
                 Classification::MarsLegacy,
                 Layout::Convention,
                 discover(source, fallback_name),
@@ -196,8 +214,7 @@ fn classify(
             );
         }
         ManifestClassification::SchemaNewer { schema } => {
-            return finished(
-                Kind::SchemaNewer,
+            return done(
                 Classification::SchemaNewer { schema: *schema },
                 Layout::None,
                 Discovery::empty(),
@@ -205,8 +222,7 @@ fn classify(
             );
         }
         ManifestClassification::Invalid { .. } | ManifestClassification::ConsumerConfig => {
-            return finished(
-                Kind::Invalid,
+            return done(
                 Classification::Invalid,
                 Layout::None,
                 Discovery::empty(),
@@ -219,41 +235,23 @@ fn classify(
     let evidence = collect_evidence(source);
     // Hidden containers and harness manifests decide before any item is read; frontmatter
     // evidence needs the items, which Claude's rules find for both of its dialects.
-    let mut decided = declared.map(|dialect| {
-        (
-            dialect,
-            DialectEvidence {
-                source: DialectEvidenceSource::Declared,
-                paths: Vec::new(),
-            },
-        )
+    let decided = declared.map(DialectChoice::declared).or_else(|| {
+        evidence
+            .strongest()
+            .map(|(dialect, paths)| DialectChoice::predicted(dialect, paths))
     });
-    if decided.is_none()
-        && let Some((dialect, paths)) = evidence.strongest()
-    {
-        decided = Some((
-            dialect,
-            DialectEvidence {
-                source: DialectEvidenceSource::Predicted,
-                paths,
-            },
-        ));
-    }
-    let dialect_of = |decided: &Option<(Dialect, DialectEvidence)>| decided.as_ref().map(|d| d.0);
-
     let also_found = |chosen: Dialect| evidence.mirrors(chosen, source);
 
-    if matches!(
-        dialect_of(&decided),
-        None | Some(Dialect::Claude | Dialect::AgentSkills)
-    ) {
-        let (layout, kind, mut manifest_diagnostics) = claude_layout(source, as_plugin);
-        let discovery = match &layout {
+    if decided
+        .as_ref()
+        .is_none_or(|choice| matches!(choice.dialect, Dialect::Claude | Dialect::AgentSkills))
+    {
+        let (layout, manifest_diagnostics) = claude_layout(source, as_plugin);
+        let mut discovery = match &layout {
             Layout::Claude(spec) => discover_claude(source, spec, fallback_name),
             _ => Discovery::empty(),
         };
-        let mut discovery = discovery;
-        for (path, diagnostic) in manifest_diagnostics.drain(..) {
+        for (path, diagnostic) in manifest_diagnostics {
             discovery
                 .diagnostics
                 .entry(path)
@@ -261,77 +259,42 @@ fn classify(
                 .push(diagnostic);
         }
         if matches!(layout, Layout::None) {
-            return finished(
-                Kind::Invalid,
-                Classification::Invalid,
-                layout,
-                discovery,
-                Vec::new(),
-            );
+            return done(Classification::Invalid, layout, discovery, Vec::new());
         }
-        let decided = match decided {
-            Some(decided) => decided,
+        let choice = match decided {
+            Some(choice) => choice,
             // A Claude marketplace named this root as a plugin.
-            None if as_plugin.is_some() => (
-                Dialect::Claude,
-                DialectEvidence {
-                    source: DialectEvidenceSource::Predicted,
-                    paths: Vec::new(),
-                },
-            ),
+            None if as_plugin.is_some() => DialectChoice::predicted(Dialect::Claude, Vec::new()),
             None => predict_from_items(source, &discovery),
         };
-        let dialect = decided.0;
-        let mirrors = also_found(dialect);
+        let mirrors = also_found(choice.dialect);
         let has_items = !discovery.definitions.is_empty()
             || !discovery.dropped.is_empty()
             || matches!(layout, Layout::Marketplace(_));
-        if !has_items && decided.1.paths.is_empty() && kind == Kind::SkillTree {
-            return finished(
-                Kind::Empty,
-                Classification::Empty,
-                Layout::None,
-                discovery,
-                mirrors,
-            );
+        let bare_tree = matches!(&layout, Layout::Claude(spec) if spec.is_bare_tree());
+        if !has_items && choice.evidence.paths.is_empty() && bare_tree {
+            return done(Classification::Empty, Layout::None, discovery, mirrors);
         }
-        let classification = if kind == Kind::Marketplace {
+        let classification = if matches!(layout, Layout::Marketplace(_)) {
             Classification::Marketplace
         } else {
-            Classification::Foreign {
-                dialect,
-                evidence: decided.1.clone(),
-            }
+            Classification::Foreign(choice)
         };
-        let mut dispatched = finished(kind, classification, layout, discovery, mirrors);
-        dispatched.dialect = Some((dialect, decided.1));
-        return dispatched;
+        return done(classification, layout, discovery, mirrors);
     }
 
-    let (dialect, evidence_of) = decided.expect("a non-Claude dialect was decided");
+    let choice = decided.expect("a non-Claude dialect was decided");
     let discovery = discover(source, fallback_name);
-    let mirrors = also_found(dialect);
-    if discovery.definitions.is_empty() && evidence_of.paths.is_empty() {
-        return finished(
-            Kind::Empty,
-            Classification::Empty,
-            Layout::None,
-            discovery,
-            mirrors,
-        );
+    let mirrors = also_found(choice.dialect);
+    if discovery.definitions.is_empty() && choice.evidence.paths.is_empty() {
+        return done(Classification::Empty, Layout::None, discovery, mirrors);
     }
-    let mut dispatched = finished(
-        Kind::SkillTree,
-        Classification::Foreign {
-            dialect,
-            evidence: evidence_of.clone(),
-        },
+    done(
+        Classification::Foreign(choice),
         Layout::Convention,
         discovery,
         mirrors,
-    );
-    dispatched.dialect = Some((dialect, evidence_of));
-    dispatched
+    )
 }
 
 /// Marketplace, plugin or bare tree, from the manifests in the root. A manifest that does not
@@ -339,24 +302,16 @@ fn classify(
 fn claude_layout(
     source: &impl TreeSource,
     as_plugin: Option<AsPlugin<'_>>,
-) -> (Layout, Kind, Vec<(String, SchemaDiagnostic)>) {
+) -> (Layout, Vec<(String, SchemaDiagnostic)>) {
     let mut diagnostics = Vec::new();
     let invalid = |diagnostic: SchemaDiagnostic, path: &str| {
-        (
-            Layout::None,
-            Kind::Invalid,
-            vec![(path.to_owned(), diagnostic)],
-        )
+        (Layout::None, vec![(path.to_owned(), diagnostic)])
     };
     if as_plugin.is_none()
         && let Some(bytes) = source.read(MARKETPLACE_MANIFEST)
     {
         return match Marketplace::parse(&bytes, &mut diagnostics) {
-            Ok(marketplace) => (
-                Layout::Marketplace(marketplace),
-                Kind::Marketplace,
-                diagnostics,
-            ),
+            Ok(marketplace) => (Layout::Marketplace(marketplace), diagnostics),
             Err(diagnostic) => invalid(diagnostic, MARKETPLACE_MANIFEST),
         };
     }
@@ -368,18 +323,14 @@ fn claude_layout(
         None => None,
     };
     if manifest.is_none() && as_plugin.is_none() {
-        return (
-            Layout::Claude(PluginSpec::walk()),
-            Kind::SkillTree,
-            diagnostics,
-        );
+        return (Layout::Claude(PluginSpec::walk()), diagnostics);
     }
     match resolve_spec(
         manifest.as_ref(),
         as_plugin.map(|plugin| plugin.entry),
         as_plugin.is_some_and(|plugin| plugin.at_marketplace_root),
     ) {
-        Ok(spec) => (Layout::Claude(spec), Kind::Plugin, diagnostics),
+        Ok(spec) => (Layout::Claude(spec), diagnostics),
         Err(message) => invalid(
             SchemaDiagnostic::new(
                 "plugin.conflicting-manifests",
@@ -395,10 +346,7 @@ fn claude_layout(
 /// No manifest or container decided: the discovered files do. Claude-only keys predict
 /// Claude; skills with only the standard's keys are `agent-skills`; anything else is Claude,
 /// Mars's default.
-fn predict_from_items(
-    source: &impl TreeSource,
-    discovery: &Discovery,
-) -> (Dialect, DialectEvidence) {
+fn predict_from_items(source: &impl TreeSource, discovery: &Discovery) -> DialectChoice {
     let mut claude_paths = Vec::new();
     let mut standard_only = true;
     let mut skills = 0;
@@ -427,22 +375,13 @@ fn predict_from_items(
             standard_only = false;
         }
     }
-    let predicted = |dialect, paths| {
-        (
-            dialect,
-            DialectEvidence {
-                source: DialectEvidenceSource::Predicted,
-                paths,
-            },
-        )
-    };
     if !claude_paths.is_empty() {
         claude_paths.truncate(5);
-        predicted(Dialect::Claude, claude_paths)
+        DialectChoice::predicted(Dialect::Claude, claude_paths)
     } else if skills > 0 && standard_only {
-        predicted(Dialect::AgentSkills, Vec::new())
+        DialectChoice::predicted(Dialect::AgentSkills, Vec::new())
     } else {
-        predicted(Dialect::Claude, Vec::new())
+        DialectChoice::predicted(Dialect::Claude, Vec::new())
     }
 }
 

@@ -183,16 +183,22 @@ export function vocabulary(): Vocabulary;
 
 export type Dialect = "claude" | "agent-skills" | "codex" | "opencode" | "cursor" | "mars-native";
 
+/** A foreign dialect a root is read as, and why: `prepare` classifies with it, `inspect` reports it. */
+export interface DialectChoice {
+  dialect: Dialect;
+  evidence: {
+    source: "declared" | "predicted";
+    /** The files that decided a predicted dialect; empty for a declared one. */
+    paths: string[];
+  };
+}
+
 export type Classification =
   | { kind: "schema-1" }
   | { kind: "mars-legacy" }
   | { kind: "schema-newer"; schema: number }
   | { kind: "invalid" }
-  | {
-      kind: "foreign";
-      dialect: Dialect;
-      evidence: { source: "declared" | "predicted"; paths: string[] };
-    }
+  | ({ kind: "foreign" } & DialectChoice)
   | { kind: "marketplace" }
   | { kind: "empty" };
 
@@ -319,7 +325,7 @@ export interface InspectedItem {
 export interface Inspection {
   kind: Kind;
   /** The dialect read, how it was chosen, and the files that decided it. */
-  dialect?: { dialect: Dialect; source: "declared" | "predicted"; evidence: string[] };
+  dialect?: DialectChoice;
   /** Other harnesses' copies of the package: found, not read. A `weak` one never decides. */
   also_found: { dialect: Dialect; paths: string[]; weak: boolean }[];
   name?: string;

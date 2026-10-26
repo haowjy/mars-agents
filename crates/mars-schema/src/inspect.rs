@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::claude::manifest::{MarketplaceEntry, PluginSource};
 use crate::diagnostic::SchemaDiagnostic;
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, DialectChoice};
 use crate::discover::{enclosing_generated_dir, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 pub use crate::dispatch::{Kind, Mirror};
-use crate::prepare::{DialectEvidenceSource, PrepareContext};
+use crate::prepare::PrepareContext;
 use crate::tree::{SubTree, TreeSource};
 use crate::upgrade::DefinitionKind;
 
@@ -61,13 +61,6 @@ pub struct Inspection {
     /// The items of a plugin or skill tree.
     pub items: Vec<InspectedItem>,
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DialectChoice {
-    pub dialect: Dialect,
-    pub source: DialectEvidenceSource,
-    pub evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -159,12 +152,8 @@ fn describe(
         _ => Vec::new(),
     };
     Inspection {
-        kind: dispatched.kind,
-        dialect: dispatched.dialect.map(|(dialect, evidence)| DialectChoice {
-            dialect,
-            source: evidence.source,
-            evidence: evidence.paths,
-        }),
+        kind: dispatched.kind(),
+        dialect: dispatched.dialect().cloned(),
         also_found: dispatched.also_found,
         name,
         version,
@@ -222,7 +211,7 @@ fn inspect_plugin(
                 }),
                 Some(&entry.name),
             );
-            if dispatched.kind == Kind::Invalid {
+            if dispatched.kind() == Kind::Invalid {
                 plugin.refused = dispatched
                     .discovery
                     .diagnostics

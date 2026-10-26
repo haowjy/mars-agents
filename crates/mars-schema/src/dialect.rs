@@ -66,6 +66,50 @@ impl Dialect {
     }
 }
 
+/// A foreign dialect a root is read as, and why. This one value is what `prepare` classifies a
+/// foreign root with and what `inspect` reports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DialectChoice {
+    pub dialect: Dialect,
+    pub evidence: DialectEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DialectEvidence {
+    pub source: DialectEvidenceSource,
+    /// The files that decided a predicted dialect; empty for a declared one.
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DialectEvidenceSource {
+    Declared,
+    Predicted,
+}
+
+impl DialectChoice {
+    pub(crate) fn declared(dialect: Dialect) -> Self {
+        Self {
+            dialect,
+            evidence: DialectEvidence {
+                source: DialectEvidenceSource::Declared,
+                paths: Vec::new(),
+            },
+        }
+    }
+
+    pub(crate) fn predicted(dialect: Dialect, paths: Vec<String>) -> Self {
+        Self {
+            dialect,
+            evidence: DialectEvidence {
+                source: DialectEvidenceSource::Predicted,
+                paths,
+            },
+        }
+    }
+}
+
 impl fmt::Display for Dialect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())

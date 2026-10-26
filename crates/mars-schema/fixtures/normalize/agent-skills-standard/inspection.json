@@ -2,8 +2,10 @@
   "kind": "skill-tree",
   "dialect": {
     "dialect": "agent-skills",
-    "source": "predicted",
-    "evidence": []
+    "evidence": {
+      "source": "predicted",
+      "paths": []
+    }
   },
   "also_found": [
     {

@@ -364,6 +364,11 @@ pub enum SkillSources {
 }
 
 impl PluginSpec {
+    /// The spec of a tree with no manifest, where every `SKILL.md` directory is a skill.
+    pub fn is_bare_tree(&self) -> bool {
+        self.skills == SkillSources::Walk
+    }
+
     pub fn walk() -> Self {
         Self {
             name: None,

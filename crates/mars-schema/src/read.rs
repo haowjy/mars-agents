@@ -4,8 +4,8 @@ use serde::Serialize;
 
 use crate::diagnostic::SchemaDiagnostic;
 use crate::frontmatter::Frontmatter;
+use crate::item::DefinitionKind;
 use crate::ordered::OrderedValue;
-use crate::upgrade::DefinitionKind;
 
 /// The serialized v1 reading of one schema-owned file.
 ///

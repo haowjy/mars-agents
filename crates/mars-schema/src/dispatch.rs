@@ -19,11 +19,11 @@ use crate::claude::manifest::{
 use crate::diagnostic::{SchemaDiagnostic, Severity};
 use crate::dialect::{Dialect, DialectChoice};
 use crate::discover::{Discovery, discover};
+use crate::item::DefinitionKind;
 use crate::package::{ManifestClassification, classify_manifest};
 use crate::plugin_metadata::{SENTINEL_FILE, is_valid_sentinel};
 use crate::prepare::{Classification, PrepareContext};
 use crate::tree::TreeSource;
-use crate::upgrade::DefinitionKind;
 
 /// What a root is, as `inspect` reports it: derived from the classification and layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

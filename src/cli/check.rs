@@ -245,10 +245,10 @@ fn check_prepared(
     for definition in &prepared.definitions {
         let path = authored_root.join(&definition.source_path);
         let linked_item = match definition.kind {
-            mars_schema::upgrade::DefinitionKind::Agent => path
+            mars_schema::item::DefinitionKind::Agent => path
                 .symlink_metadata()
                 .is_ok_and(|m| m.file_type().is_symlink()),
-            mars_schema::upgrade::DefinitionKind::Skill => path.parent().is_some_and(|root| {
+            mars_schema::item::DefinitionKind::Skill => path.parent().is_some_and(|root| {
                 root.symlink_metadata()
                     .is_ok_and(|m| m.file_type().is_symlink())
             }),
@@ -256,11 +256,7 @@ fn check_prepared(
         if linked_item {
             warnings.push(format!(
                 "skipping symlinked {} `{}` — source packages should not contain symlinks",
-                match definition.kind {
-                    mars_schema::upgrade::DefinitionKind::Agent => "agent",
-                    mars_schema::upgrade::DefinitionKind::Skill => "skill",
-                },
-                definition.slug
+                definition.kind, definition.slug
             ));
             continue;
         }
@@ -435,7 +431,7 @@ fn resolve_available_skills(
             continue;
         };
         for definition in &prepared.definitions {
-            if definition.kind == mars_schema::upgrade::DefinitionKind::Skill
+            if definition.kind == mars_schema::item::DefinitionKind::Skill
                 && prepared_skill_passes_filters(definition, package_filters)
             {
                 let version_str = node

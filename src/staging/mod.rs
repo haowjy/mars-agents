@@ -119,7 +119,7 @@ fn materialize_prepared_tree(
     }
     for definition in &prepared.definitions {
         let mut bytes = definition.normalized_bytes.clone();
-        if definition.kind == mars_schema::upgrade::DefinitionKind::Skill {
+        if definition.kind == mars_schema::item::DefinitionKind::Skill {
             let logical = authored_root.join(&definition.source_path);
             let installed_name =
                 skill_overlay_lookup_name(&logical, authored_root, renames, fallback_skill_name);

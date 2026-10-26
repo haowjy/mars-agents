@@ -6,7 +6,7 @@ use crate::diagnostic::SchemaDiagnostic;
 use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::invocability::find_invocability_field;
-use crate::item::ItemKind;
+use crate::item::DefinitionKind;
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
 use crate::tool_names::split_tool_name;
 use crate::tool_policy;
@@ -158,7 +158,7 @@ pub struct Lifted {
 
 pub fn lift_frontmatter(
     dialect: Dialect,
-    item_kind: ItemKind,
+    kind: DefinitionKind,
     frontmatter: &Frontmatter,
 ) -> Lifted {
     let mut lifted = frontmatter.clone();
@@ -166,11 +166,11 @@ pub fn lift_frontmatter(
     let changed = match dialect {
         Dialect::MarsNative => false,
         Dialect::Claude | Dialect::AgentSkills => {
-            crate::claude::translate::lift(item_kind, &mut lifted, &mut diagnostics)
+            crate::claude::translate::lift(kind, &mut lifted, &mut diagnostics)
         }
-        Dialect::Codex => lift_codex(item_kind, &mut lifted),
-        Dialect::Cursor => lift_cursor(item_kind, &mut lifted),
-        Dialect::OpenCode => lift_opencode(item_kind, &mut lifted),
+        Dialect::Codex => lift_codex(kind, &mut lifted),
+        Dialect::Cursor => lift_cursor(kind, &mut lifted),
+        Dialect::OpenCode => lift_opencode(kind, &mut lifted),
     };
     Lifted {
         frontmatter: lifted,
@@ -194,10 +194,10 @@ fn drop_skill_tool_fields(fm: &mut Frontmatter) -> bool {
     changed
 }
 
-fn lift_codex(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
+fn lift_codex(kind: DefinitionKind, fm: &mut Frontmatter) -> bool {
     let mut changed = false;
-    match item_kind {
-        ItemKind::Skill | ItemKind::BootstrapDoc => {
+    match kind {
+        DefinitionKind::Skill => {
             changed |= strip_foreign_keys(
                 fm,
                 &[
@@ -212,7 +212,7 @@ fn lift_codex(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
             );
             changed |= drop_skill_tool_fields(fm);
         }
-        ItemKind::Agent => {
+        DefinitionKind::Agent => {
             changed |= strip_foreign_keys(
                 fm,
                 &[
@@ -224,16 +224,14 @@ fn lift_codex(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
                 ],
             );
         }
-        ItemKind::Hook | ItemKind::McpServer => return false,
     }
     changed
 }
 
-fn lift_cursor(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
-    match item_kind {
-        ItemKind::Skill | ItemKind::BootstrapDoc => lift_cursor_rule(fm),
-        ItemKind::Agent => false,
-        ItemKind::Hook | ItemKind::McpServer => false,
+fn lift_cursor(kind: DefinitionKind, fm: &mut Frontmatter) -> bool {
+    match kind {
+        DefinitionKind::Skill => lift_cursor_rule(fm),
+        DefinitionKind::Agent => false,
     }
 }
 
@@ -268,16 +266,15 @@ fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     changed
 }
 
-fn lift_opencode(item_kind: ItemKind, fm: &mut Frontmatter) -> bool {
-    match item_kind {
-        ItemKind::Agent => lift_opencode_agent(fm),
-        ItemKind::Skill | ItemKind::BootstrapDoc => {
+fn lift_opencode(kind: DefinitionKind, fm: &mut Frontmatter) -> bool {
+    match kind {
+        DefinitionKind::Agent => lift_opencode_agent(fm),
+        DefinitionKind::Skill => {
             let mut changed = false;
             changed |= strip_foreign_keys(fm, &["mode"]);
             changed |= drop_skill_tool_fields(fm);
             changed
         }
-        ItemKind::Hook | ItemKind::McpServer => false,
     }
 }
 

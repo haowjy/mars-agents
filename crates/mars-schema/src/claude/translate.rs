@@ -6,7 +6,7 @@ use serde_yaml::{Mapping, Value};
 use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 use crate::frontmatter::Frontmatter;
 use crate::invocability::find_invocability_field;
-use crate::item::ItemKind;
+use crate::item::DefinitionKind;
 use crate::lift::{claude_task_to_agent, lift_foreign_tools};
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
 use crate::tool_policy;
@@ -48,14 +48,13 @@ pub(crate) const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
 ];
 
 pub(crate) fn lift(
-    item_kind: ItemKind,
+    kind: DefinitionKind,
     fm: &mut Frontmatter,
     diagnostics: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
-    match item_kind {
-        ItemKind::Skill | ItemKind::BootstrapDoc => lift_skill(fm, diagnostics),
-        ItemKind::Agent => lift_agent(fm, diagnostics),
-        ItemKind::Hook | ItemKind::McpServer => false,
+    match kind {
+        DefinitionKind::Skill => lift_skill(fm, diagnostics),
+        DefinitionKind::Agent => lift_agent(fm, diagnostics),
     }
 }
 

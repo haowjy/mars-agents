@@ -1,6 +1,7 @@
 use std::{fs, path::Path};
 
-use mars_schema::upgrade::{DefinitionKind, upgrade_definition, upgrade_manifest};
+use mars_schema::item::DefinitionKind;
+use mars_schema::upgrade::{upgrade_definition, upgrade_manifest};
 
 #[test]
 fn legacy_upgrade_fixtures() {

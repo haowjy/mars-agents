@@ -24,3 +24,27 @@ impl fmt::Display for ItemKind {
         })
     }
 }
+
+/// The kinds of file a package's definitions are: what `mars-schema` selects, prepares and
+/// reads, as opposed to the binary's wider [`ItemKind`].
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DefinitionKind {
+    Agent,
+    Skill,
+}
+
+impl From<DefinitionKind> for ItemKind {
+    fn from(kind: DefinitionKind) -> Self {
+        match kind {
+            DefinitionKind::Agent => Self::Agent,
+            DefinitionKind::Skill => Self::Skill,
+        }
+    }
+}
+
+impl fmt::Display for DefinitionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        ItemKind::from(*self).fmt(f)
+    }
+}

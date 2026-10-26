@@ -14,9 +14,9 @@ use crate::dialect::{Dialect, DialectChoice};
 use crate::discover::{enclosing_generated_dir, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 pub use crate::dispatch::{Kind, Mirror};
+use crate::item::DefinitionKind;
 use crate::prepare::PrepareContext;
 use crate::tree::{SubTree, TreeSource};
-use crate::upgrade::DefinitionKind;
 
 /// What the caller declares about a root; everything is optional.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -79,16 +79,25 @@ pub struct InspectedPlugin {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ItemKind {
+pub enum InspectedKind {
     Skill,
     Agent,
     /// Reported and not imported.
     Command,
 }
 
+impl From<DefinitionKind> for InspectedKind {
+    fn from(kind: DefinitionKind) -> Self {
+        match kind {
+            DefinitionKind::Skill => Self::Skill,
+            DefinitionKind::Agent => Self::Agent,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct InspectedItem {
-    pub kind: ItemKind,
+    pub kind: InspectedKind,
     pub slug: String,
     /// The definition file (`…/SKILL.md`, `agents/x.md`, `commands/x.md`).
     pub source_path: String,
@@ -254,10 +263,7 @@ pub(crate) fn list_items(
         .definitions
         .iter()
         .map(|definition| InspectedItem {
-            kind: match definition.kind {
-                DefinitionKind::Skill => ItemKind::Skill,
-                DefinitionKind::Agent => ItemKind::Agent,
-            },
+            kind: definition.kind.into(),
             slug: definition.slug.clone(),
             source_path: definition.source_path.clone(),
             skill_root: definition.skill_root.clone(),
@@ -270,7 +276,7 @@ pub(crate) fn list_items(
         })
         .collect::<Vec<_>>();
     items.extend(discovery.dropped.iter().map(|command| InspectedItem {
-        kind: ItemKind::Command,
+        kind: InspectedKind::Command,
         slug: command.slug.clone(),
         source_path: command.source_path.clone(),
         skill_root: None,

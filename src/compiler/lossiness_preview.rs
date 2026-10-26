@@ -89,7 +89,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
     for definition in &prepared.definitions {
         let content = String::from_utf8_lossy(&definition.normalized_bytes);
         match definition.kind {
-            mars_schema::upgrade::DefinitionKind::Agent => collect_agent_content_lossiness(
+            mars_schema::item::DefinitionKind::Agent => collect_agent_content_lossiness(
                 &content,
                 &definition.slug,
                 &policy,
@@ -98,7 +98,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
                 model_router.as_mut(),
                 &mut diag,
             ),
-            mars_schema::upgrade::DefinitionKind::Skill => {
+            mars_schema::item::DefinitionKind::Skill => {
                 let source_path = authored_root.join(&definition.source_path);
                 let skill_dir = source_path.parent().unwrap_or(authored_root);
                 variants::validate_skill_variants(skill_dir, &definition.slug, &mut diag);

@@ -124,11 +124,7 @@ pub(crate) fn parse_pending_item_skill_deps(
             .iter()
             .find(|definition| {
                 definition.slug == pending_item.item.as_ref()
-                    && matches!(
-                        (definition.kind, pending_item.kind),
-                        (mars_schema::upgrade::DefinitionKind::Agent, ItemKind::Agent)
-                            | (mars_schema::upgrade::DefinitionKind::Skill, ItemKind::Skill)
-                    )
+                    && ItemKind::from(definition.kind) == pending_item.kind
             })
             .map(|definition| {
                 validate::extract_skills_from_content(&String::from_utf8_lossy(

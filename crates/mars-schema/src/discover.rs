@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::diagnostic::{SchemaDiagnostic, Severity};
+use crate::item::DefinitionKind;
 use crate::plugin_metadata::{SENTINEL_FILE, is_valid_sentinel};
 use crate::tree::TreeSource;
-use crate::upgrade::DefinitionKind;
 
 /// Never walked: high-volume output that often holds docs shaped like agents or skills.
 pub(crate) const RECURSIVE_SKIP_DIRS: &[&str] =

@@ -9,9 +9,10 @@ use crate::dialect::{Dialect, DialectChoice};
 use crate::discover::{SelectedDefinition, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 use crate::frontmatter::Frontmatter;
+use crate::item::DefinitionKind;
 use crate::read::{DefinitionRead, Reading, read_definition};
 use crate::tree::TreeSource;
-use crate::upgrade::{DefinitionKind, UpgradeResult};
+use crate::upgrade::UpgradeResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -508,11 +509,7 @@ fn translate_foreign(
         }
         Err(_) => return (bytes.to_vec(), ChangeRecord::None, Vec::new()),
     };
-    let item_kind = match selected.kind {
-        DefinitionKind::Agent => crate::item::ItemKind::Agent,
-        DefinitionKind::Skill => crate::item::ItemKind::Skill,
-    };
-    let lifted = crate::lift::lift_frontmatter(dialect, item_kind, &frontmatter);
+    let lifted = crate::lift::lift_frontmatter(dialect, selected.kind, &frontmatter);
     diagnostics.extend(lifted.diagnostics);
     if claude && selected.kind == DefinitionKind::Skill {
         diagnostics.extend(crate::claude::checks::skill_checks(

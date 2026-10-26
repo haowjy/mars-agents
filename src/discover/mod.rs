@@ -338,8 +338,8 @@ pub(crate) fn definition_item(
     path: &str,
 ) -> DiscoveredItem {
     let (kind, source_path) = match definition.kind {
-        mars_schema::upgrade::DefinitionKind::Agent => (ItemKind::Agent, PathBuf::from(path)),
-        mars_schema::upgrade::DefinitionKind::Skill => (
+        mars_schema::item::DefinitionKind::Agent => (ItemKind::Agent, PathBuf::from(path)),
+        mars_schema::item::DefinitionKind::Skill => (
             ItemKind::Skill,
             match Path::new(path).parent() {
                 Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),

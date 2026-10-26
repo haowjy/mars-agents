@@ -333,23 +333,3 @@ fn permission_replace_entries(value: &Value) -> Option<&Value> {
 
 const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
 
-/// Retired top-level MCP grant field spellings (use inline `mcp(...)` in `tools:` instead).
-const REMOVED_MCP_TOOLS_FIELDS: &[&str] = &["mcp-tools", "mcp_tools"];
-
-/// Strip retired `mcp-tools` keys from canonical frontmatter during staging lift.
-pub fn strip_removed_mcp_tools_fields(fm: &mut Frontmatter) -> bool {
-    let mut changed = false;
-    for key in REMOVED_MCP_TOOLS_FIELDS {
-        if fm.remove(key).is_some() {
-            changed = true;
-        }
-    }
-    changed
-}
-
-/// Foreign tool-field keys in canonical/MarsNative profiles → canonical replacement label.
-pub const NON_CANONICAL_TOOL_FIELD_ALIASES: &[(&str, &str)] = &[
-    ("allowed-tools", "tools:"),
-    ("allowed_tools", "tools:"),
-    ("disallowed_tools", "disallowed-tools:"),
-];

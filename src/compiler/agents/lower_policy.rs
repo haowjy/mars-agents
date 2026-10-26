@@ -590,7 +590,7 @@ impl<'a> AgentLoweringCtx<'a> {
         let classification = if self.harness == HarnessId::Cursor {
             // Cursor maps approval to CLI flags — approximate, target-enforced gap.
             Lossiness::Approximate {
-                note: "auto maps to --force, yolo to --yolo; confirm has no Cursor equivalent and falls back to default",
+                note: "auto maps to --force, never to --yolo; confirm has no Cursor equivalent and falls back to default",
             }
         } else {
             // Launch-time: Meridian applies approval at spawn via harness projection.

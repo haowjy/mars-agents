@@ -7,10 +7,6 @@
 //! [`EffectiveToolPolicy::project`] spells for a harness. Native agent lowering, skill lowering
 //! and the launch bundle all read that projection; nothing else turns a rule into native
 //! permission names or unscoped harness tool names.
-//!
-//! [`NON_CANONICAL_TOOL_FIELD_ALIASES`] is the single source for foreign spellings that
-//! must not appear in canonical/MarsNative profiles. Staging strips alias keys; the skill
-//! parser warns with the canonical replacement label.
 
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use crate::config::AgentOverlayTools;

@@ -148,16 +148,6 @@ fn strip_foreign_keys(fm: &mut Frontmatter, keys: &[&str]) -> bool {
     changed
 }
 
-fn strip_non_canonical_tool_aliases(fm: &mut Frontmatter) -> bool {
-    let mut changed = false;
-    for &(key, _) in tool_policy::NON_CANONICAL_TOOL_FIELD_ALIASES {
-        if fm.remove(key).is_some() {
-            changed = true;
-        }
-    }
-    changed
-}
-
 /// A lifted definition: the new frontmatter, whether any field was rewritten, and what the
 /// dialect's translation dropped or could not convert.
 pub struct Lifted {
@@ -173,12 +163,8 @@ pub fn lift_frontmatter(
 ) -> Lifted {
     let mut lifted = frontmatter.clone();
     let mut diagnostics = Vec::new();
-    let mut changed = matches!(
-        item_kind,
-        ItemKind::Agent | ItemKind::Skill | ItemKind::BootstrapDoc
-    ) && tool_policy::strip_removed_mcp_tools_fields(&mut lifted);
-    changed |= match dialect {
-        Dialect::MarsNative => strip_non_canonical_tool_aliases(&mut lifted),
+    let changed = match dialect {
+        Dialect::MarsNative => false,
         Dialect::Claude | Dialect::AgentSkills => {
             crate::claude::translate::lift(item_kind, &mut lifted, &mut diagnostics)
         }

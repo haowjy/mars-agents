@@ -1,0 +1,59 @@
+{
+  "frontmatter": [
+    [
+      "harness-overrides",
+      {
+        "flow": {
+          "permission": "read"
+        },
+        "meridian": {
+          "resident-rearm-budget": 3
+        }
+      }
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "body\n",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "harness-overrides",
+        "flow"
+      ],
+      "message": "`harness-overrides.flow` was renamed; use `harness-overrides.meridian-flow`"
+    },
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "harness-overrides",
+        "meridian"
+      ],
+      "message": "`harness-overrides.meridian` was renamed; use `harness-overrides.meridian-cli`"
+    }
+  ]
+}

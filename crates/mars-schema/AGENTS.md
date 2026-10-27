@@ -23,7 +23,7 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 | `discover` | The one bounded walk (`walk`, `walk_dirs`, `excluded`), the Mars convention scan, payload assignment |
 | `claude/` | The Claude layout: `manifest` (plugin and marketplace manifests, merge and `strict` rules), `discover` (items and where they land), `translate` (skills and Agents tables), `checks` (warnings that depend on where a skill landed) |
 | `lift` | The Codex, Cursor and OpenCode lifts; the shared tool-name rewrite |
-| `set_aside` | The class guard: after a foreign or pre-v1 definition is translated, every key the strict reader still rejects is moved under `harness-overrides.<dialect>` or dropped, with one warning. A key Mars lowers itself (`agent::LoweredField`, `skill::LOWERED_KEYS`: the lists native lowering reads too) is never moved: a mapping or list loses only its rejected entries and a scalar is dropped; `network-allow` and `network-deny` are treated the same, though Mars does not lower them, so one bad host never takes the valid ones with it. A rejected `permission` map is OpenCode's, so its note says to declare `dialect = "open-code"`, not Flow's advice. A lost restriction is a change with its own code, `field.restriction-lost` (`Prepared::lost_restrictions` filters them, so a sync prints them every run and `mars migrate` lists them with the rest); `harness_overrides::move_keys_under` is the one mover |
+| `set_aside` | The class guard: after a foreign or pre-v1 definition is translated, every key the strict reader still rejects is moved under `harness-overrides.<dialect>` or dropped, with one warning. A key Mars lowers itself (`agent::LoweredField`, `skill::LOWERED_KEYS`: the lists native lowering reads too) is never moved: a mapping or list loses only its rejected entries and a scalar is dropped; `network-allow` and `network-deny` are treated the same, though Mars does not lower them, so one bad host never takes the valid ones with it. A rejected `permission` map is OpenCode's, so its note says to declare `dialect = "open-code"`, not Meridian Flow's advice. A lost restriction is a change with its own code, `field.restriction-lost` (`Prepared::lost_restrictions` filters them, so a sync prints them every run and `mars migrate` lists them with the rest); `harness_overrides::move_keys_under` is the one mover |
 | `inspect`, `normalize` | `dispatch` and `prepare` over a whole repository; the generated `mars.toml` and provenance |
 | `upgrade` | The pre-v1 to v1 conversion, shared by `prepare` and `mars migrate` (definitions; a manifest's `schema` and removed `visibility`; it never touches `requires-mars`), and `ensure_requires_mars_floor`, which adds a missing floor and reports an existing requirement it will not rewrite |
 | `version` | The two version grammars and the one version choice: `parse_constraint` (a dependency entry's `version`: `v1.2.3`, `v2`, `v2.1`, a semver requirement where a bare `0.20` is the caret range, else a ref pin), `parse_tag`, `satisfies`; `satisfies_requirement` (the `requires-*` grammar, where a bare `0.20` is `>=0.20.0`); `settle`, the pin a package's constraints agree on (every constraint must hold on the ref the package ends at: two pins, or a pin beside a range, refuse); `select`, the newest allowed tag or the locked one by `SelectionPolicy` (`Latest` constraints allow any tag and turn the default policy into latest-only; no tags is `None`, the default branch); `choose`, `settle` then `select` over raw tag names (non-version tags skipped) into `Chosen::{Pin, Tag, Untagged}`, which is the WASM `selectVersion`. The binary runs `settle` and `select` itself, because it replays the lock between them without listing tags; it lists the tags and maps `SelectError` to its own errors. Every error type has a `code()` the WASM package throws as `error.code`. `fixtures/version/` pins both grammars and `choose` (`select-*`, `settle-*`) |
@@ -52,17 +52,19 @@ A root with no manifest is a pre-v1 Mars package, read through the upgrade, only
 Mars wrote is never evidence for the root. `upgrade::lift_mars_only_keys` applies it per key,
 before the rules of whichever dialect reads the definition: the invocability renames, the
 discarded Agent fields (`RemovedField::discarded`), the removed values (`REMOVED_AGENT_VALUES`),
-`move_agent_fields` (a `permission` of `read` or `edit` to `harness-overrides.flow`,
-`resident-rearm-budget` and `meridian-capabilities` to `harness-overrides.meridian`, one conflict
+`move_agent_fields` (a `permission` of `read` or `edit` to `harness-overrides.meridian-flow`,
+`resident-rearm-budget` and `meridian-capabilities` to `harness-overrides.meridian-cli`, one conflict
 rule for all three: a block already set wins, and its top-level twin is dropped with a note, a
 lost restriction when the twin is `permission`) and the removed model-policy override keys.
-`permission` is not on that list as a key, because OpenCode defines it too. Flow defines one key,
+`permission` is not on that list as a key, because OpenCode defines it too. Meridian Flow defines one key,
 `permission`, and the Meridian CLI `resident-rearm-budget` and `capabilities`, so those moves are
 the only writers of the two reserved consumer namespaces; the legacy upgrade drops what it cannot
 convert.
 
 `mars migrate` prepares through `prepare_for_migration`, which runs
-`upgrade::relocate_removed_fields` — `move_agent_fields` alone — on a schema 1 definition,
+`upgrade::relocate_removed_fields` — `rename_consumer_namespaces` (the short `flow` and
+`meridian` namespaces to `meridian-flow` and `meridian-cli`, for agents and skills) and
+`move_agent_fields` — on a schema 1 definition,
 because it writes the result back. Every reading caller uses `prepare`, which reads an authored
 schema 1 file exactly as written: a removed key there is a `field.removed` error, and only
 the keys `mars migrate` can move are the ones it repairs.

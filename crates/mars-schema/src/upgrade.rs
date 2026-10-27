@@ -59,6 +59,7 @@ pub fn relocate_removed_fields(
     text: &str,
 ) -> Result<UpgradeResult, UpgradeError> {
     rewrite(text, |frontmatter, notes| {
+        rename_consumer_namespaces(frontmatter, notes);
         if kind == DefinitionKind::Agent {
             move_agent_fields(frontmatter, notes);
         }
@@ -283,8 +284,10 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
         } else if let Some(after_value) = after.get(Value::String(block.key.to_string())) {
             if before_value == after_value {
                 output.push_str(block.text);
-            } else if let Some(grown) = grown_in_place(&block, before_value, after_value) {
-                output.push_str(&grown);
+            } else if let Some(edited) = grown_in_place(&block, before_value, after_value)
+                .or_else(|| renamed_in_place(&block, before_value, after_value))
+            {
+                output.push_str(&edited);
             } else {
                 // Re-rendering a block loses what the author wrote inside it, which only a
                 // `harness-overrides` block can avoid by growing in place, so a file that fell back
@@ -354,6 +357,53 @@ fn grown_in_place(block: &SourceBlock<'_>, before: &Value, after: &Value) -> Opt
     }
     grown.push_str(tail);
     Some(with_line_ending_of(block.text, grown))
+}
+
+/// `block` with its host namespace keys renamed where they are written, so the comments, flow
+/// style and quoting around them survive. `None` when `after` is more than the renames of
+/// `before`, or a renamed key is not written as a plain key at the block's own indentation.
+fn renamed_in_place(block: &SourceBlock<'_>, before: &Value, after: &Value) -> Option<String> {
+    let (Value::Mapping(before), Value::Mapping(after)) = (before, after) else {
+        return None;
+    };
+    if before.len() != after.len() {
+        return None;
+    }
+    let mut renames = Vec::new();
+    for ((old, old_value), (new, new_value)) in before.iter().zip(after) {
+        if old_value != new_value {
+            return None;
+        }
+        if old != new {
+            let pair = (old.as_str()?, new.as_str()?);
+            if !crate::harness::RENAMED_CONSUMER_NAMESPACES.contains(&pair) {
+                return None;
+            }
+            renames.push(pair);
+        }
+    }
+    let indent = child_indent(block)?;
+    let mut done = 0;
+    let mut edited = String::with_capacity(block.text.len());
+    for line in block.text.split_inclusive('\n') {
+        let renamed = line.strip_prefix(indent).and_then(|rest| {
+            renames.iter().find_map(|&(old, new)| {
+                let after_key = rest.strip_prefix(old)?;
+                after_key
+                    .trim_start_matches(' ')
+                    .starts_with(':')
+                    .then(|| format!("{indent}{new}{after_key}"))
+            })
+        });
+        match renamed {
+            Some(line) => {
+                done += 1;
+                edited.push_str(&line);
+            }
+            None => edited.push_str(line),
+        }
+    }
+    (done == renames.len()).then_some(edited)
 }
 
 /// `text` split where an appended entry belongs: before the trailing run of blank lines and
@@ -503,6 +553,9 @@ pub(crate) fn lift_mars_only_keys(
 }
 
 fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
+    // Before `move_agent_fields`, so a top-level key lands in the block it names, not beside a
+    // block still written under the old name.
+    rename_consumer_namespaces(fm, diagnostics);
     upgrade_tools(fm);
     lift_mars_only_keys(fm, DefinitionKind::Agent, diagnostics);
     // A pre-v1 file passed unknown keys to every harness; Claude's own keep reaching Claude.
@@ -511,6 +564,7 @@ fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
 }
 
 fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
+    rename_consumer_namespaces(fm, diagnostics);
     lift_mars_only_keys(fm, DefinitionKind::Skill, diagnostics);
 
     if let Some(skill_type) = fm.get("type").cloned() {
@@ -561,8 +615,8 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
 
 /// What the rules above could not make schema v1 is dropped, with a warning naming it, so the
 /// upgrade never hands the strict reader a value it rejects. It is not kept under
-/// `harness-overrides.flow`: Flow defines one key, `permission`, and `lift_mars_only_keys` writes
-/// it there when it is `read` or `edit`. Anything else in that namespace would not be Flow's.
+/// `harness-overrides.meridian-flow`: Meridian Flow defines one key, `permission`, and `lift_mars_only_keys` writes
+/// it there when it is `read` or `edit`. Anything else in that namespace would not be Meridian Flow's.
 fn set_aside_rejected_keys(
     fm: &mut Frontmatter,
     kind: DefinitionKind,
@@ -615,13 +669,17 @@ fn upgrade_tools(fm: &mut Frontmatter) {
 /// dropped with a note naming it. `permission` moves only for the values Flow defines; see
 /// [`moves_under_namespace`].
 const MOVED_AGENT_FIELDS: &[(&str, &str, &str)] = &[
-    ("flow", "permission", "permission"),
-    ("meridian", "resident-rearm-budget", "resident-rearm-budget"),
-    ("meridian", "meridian-capabilities", "capabilities"),
+    ("meridian-flow", "permission", "permission"),
+    (
+        "meridian-cli",
+        "resident-rearm-budget",
+        "resident-rearm-budget",
+    ),
+    ("meridian-cli", "meridian-capabilities", "capabilities"),
 ];
 
-/// Whether the top-level `key` moves under its consumer namespace. Flow defines `read` and
-/// `edit` only, so any other `permission` value stays where it is for the reader to report.
+/// Whether the top-level `key` moves under its consumer namespace. Meridian Flow defines
+/// `read` and `edit` only, so any other `permission` value stays where it is for the reader to report.
 fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
     key != "permission"
         || fm
@@ -650,27 +708,144 @@ fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
         }
     }
     for (namespace, from, to) in displaced {
-        notes.push(dropped_twin(fm, namespace, from, to));
+        notes.push(dropped_twin(
+            &agent_label(fm),
+            vec![PathSegment::Key(from.to_string())],
+            from,
+            namespace,
+            to,
+        ));
     }
 }
 
-/// The note for a top-level key dropped because its namespace block already sets one. A dropped
-/// `permission` carried a restriction, which the note names as lost (`field.restriction-lost`, as
-/// the set-aside reports the same loss).
-fn dropped_twin(fm: &Frontmatter, namespace: &str, from: &str, to: &str) -> SchemaDiagnostic {
-    let path = vec![PathSegment::Key(from.to_string())];
-    if from == "permission" {
-        let agent = fm.get("name").and_then(Value::as_str).map_or_else(
-            || "this agent".to_string(),
-            |name| format!("agent `{name}`"),
-        );
+/// Rename `harness-overrides.flow` and `.meridian` to the full host names, in place. When the
+/// block under the new name exists too, the two merge key by key: a key only the old block sets
+/// moves over, and a key both set keeps the new block's value, the old one dropped with a note.
+fn rename_consumer_namespaces(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
+    let agent = agent_label(fm);
+    let Some(Value::Mapping(overrides)) = fm.get_mut("harness-overrides") else {
+        return;
+    };
+    for &(old, new) in crate::harness::RENAMED_CONSUMER_NAMESPACES {
+        let old_key = Value::String(old.to_string());
+        let new_key = Value::String(new.to_string());
+        let Some(old_block) = overrides.get(&old_key).cloned() else {
+            continue;
+        };
+        let block_path = vec![
+            PathSegment::Key("harness-overrides".to_string()),
+            PathSegment::Key(old.to_string()),
+        ];
+        let Some(new_block) = overrides.get_mut(&new_key) else {
+            // Rebuilt so the renamed block keeps its place among its siblings.
+            *overrides = std::mem::take(overrides)
+                .into_iter()
+                .map(|(key, value)| {
+                    if key == old_key {
+                        (new_key.clone(), value)
+                    } else {
+                        (key, value)
+                    }
+                })
+                .collect();
+            continue;
+        };
+        match (new_block, old_block) {
+            (Value::Mapping(new_block), Value::Mapping(old_block)) => {
+                let twin = Twin {
+                    agent: &agent,
+                    old,
+                    new,
+                };
+                merge_old_block(new_block, old_block, &twin, &[], notes);
+            }
+            _ => notes.push(SchemaDiagnostic::new(
+                "field.removed",
+                Severity::Warning,
+                block_path,
+                format!(
+                    "dropped `harness-overrides.{old}`; `harness-overrides.{new}` already sets it"
+                ),
+            )),
+        }
+        overrides.remove(&old_key);
+    }
+}
+
+fn agent_label(fm: &Frontmatter) -> String {
+    fm.get("name").and_then(Value::as_str).map_or_else(
+        || "this agent".to_string(),
+        |name| format!("agent `{name}`"),
+    )
+}
+
+/// The two namespace blocks being merged, for naming a dropped key in its note.
+struct Twin<'a> {
+    agent: &'a str,
+    old: &'a str,
+    new: &'a str,
+}
+
+/// Fold `old` into `new` key by key. A key only `old` sets moves over (a non-string key too:
+/// the reader reports it), mappings on both sides merge recursively, and any other clash keeps
+/// the `new` value and notes the dropped one.
+fn merge_old_block(
+    new: &mut Mapping,
+    old: Mapping,
+    twin: &Twin,
+    rel: &[String],
+    notes: &mut Vec<SchemaDiagnostic>,
+) {
+    for (key, value) in old {
+        let name = key
+            .as_str()
+            .map_or_else(|| format!("{key:?}"), str::to_owned);
+        let mut key_rel = rel.to_vec();
+        key_rel.push(name);
+        match new.get_mut(&key) {
+            None => {
+                new.insert(key, value);
+            }
+            Some(existing) if *existing == value => {}
+            Some(Value::Mapping(existing)) if value.is_mapping() => {
+                let Value::Mapping(value) = value else {
+                    unreachable!()
+                };
+                merge_old_block(existing, value, twin, &key_rel, notes);
+            }
+            Some(_) => {
+                let dotted = key_rel.join(".");
+                let mut path = vec![
+                    PathSegment::Key("harness-overrides".to_string()),
+                    PathSegment::Key(twin.old.to_string()),
+                ];
+                path.extend(key_rel.into_iter().map(PathSegment::Key));
+                let dropped = format!("harness-overrides.{}.{dotted}", twin.old);
+                notes.push(dropped_twin(twin.agent, path, &dropped, twin.new, &dotted));
+            }
+        }
+    }
+}
+
+/// The note for a value `dropped` (named as written) because the `namespace` block already sets
+/// `key` (dotted, relative to the block). A dropped `permission` or `capabilities` entry carried
+/// a restriction, which the note names as lost (`field.restriction-lost`, as the set-aside
+/// reports the same loss).
+fn dropped_twin(
+    agent: &str,
+    path: Vec<PathSegment>,
+    dropped: &str,
+    namespace: &str,
+    key: &str,
+) -> SchemaDiagnostic {
+    if key == "permission" || key == "capabilities" || key.starts_with("capabilities.") {
         return SchemaDiagnostic::new(
             crate::set_aside::RESTRICTION_LOST,
             Severity::Warning,
             path,
             format!(
-                "{agent} lost the restriction `permission`: it was dropped, because \
-                 `harness-overrides.{namespace}.{to}` already sets a value, and an override \
+                "{agent} lost the restriction `{key}`: it was dropped, because \
+                 `harness-overrides.{namespace}.{key}` already sets a value, and an override \
                  written wins"
             ),
         );
@@ -679,7 +854,7 @@ fn dropped_twin(fm: &Frontmatter, namespace: &str, from: &str, to: &str) -> Sche
         "field.removed",
         Severity::Warning,
         path,
-        format!("dropped `{from}`; `harness-overrides.{namespace}.{to}` already sets it"),
+        format!("dropped `{dropped}`; `harness-overrides.{namespace}.{key}` already sets it"),
     )
 }
 

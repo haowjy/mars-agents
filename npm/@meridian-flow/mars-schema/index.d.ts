@@ -117,7 +117,7 @@ export interface AgentFields {
   skills: { load: string[]; available: string[] };
   subagents: string[];
   tools: ToolRule[];
-  /** Per-namespace passthrough blocks; `flow` and `meridian` are the consumer namespaces. */
+  /** Per-namespace passthrough blocks; `meridian-flow` and `meridian-cli` are the consumer namespaces. */
   "harness-overrides": { [namespace: string]: { [key: string]: JsonValue } };
   "model-policies": ModelPolicyRule[];
 }
@@ -204,7 +204,7 @@ export type NativeEntry =
 
 export interface Vocabulary {
   capabilities: { name: string; aliases: string[] }[];
-  /** Per host (`claude`, `codex`, `opencode`, `pi`, `cursor`, `flow`): capability → native tools. */
+  /** Per host (`claude`, `codex`, `opencode`, `pi`, `cursor`, `meridian-flow`): capability → native tools. */
   natives: { [host: string]: { [capability: string]: NativeEntry } };
 }
 

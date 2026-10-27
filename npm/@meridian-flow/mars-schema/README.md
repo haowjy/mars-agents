@@ -88,10 +88,10 @@ After you splice, read the result again and check that each key's value equals t
 const { capabilities, natives } = vocabulary();
 capabilities;                      // [{ name: "bash", aliases: ["shell", ...] }, ...]
 natives.claude.edit;               // { kind: "scoped-tools", unscoped: [...], scoped: [...], note }
-natives.flow.work;                 // { kind: "tools", tools: ["work"] }
+natives["meridian-flow"].work;                 // { kind: "tools", tools: ["work"] }
 ```
 
-`natives` has one table for each of `claude`, `codex`, `opencode`, `pi`, `cursor` and `flow` (Meridian Flow's own tools, which is not a harness). An entry is the host's tool names (`tools`), file tools scoped through a permission category (`scoped-tools`), `absent` (the host has no such tool) or `no-switch` (the host can do it but has no tool to turn off). The capability table is explained in [Tool capabilities](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#tool-capabilities).
+`natives` has one table for each of `claude`, `codex`, `opencode`, `pi`, `cursor` and `meridian-flow` (Meridian Flow's own tools, which is not a harness). An entry is the host's tool names (`tools`), file tools scoped through a permission category (`scoped-tools`), `absent` (the host has no such tool) or `no-switch` (the host can do it but has no tool to turn off). The capability table is explained in [Tool capabilities](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#tool-capabilities).
 
 ### `prepare`, `inspect`, `normalize`
 

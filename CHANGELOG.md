@@ -7,6 +7,18 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-27
+
+### Upgrade notes
+- The `harness-overrides` namespaces are now `meridian-flow` and `meridian-cli`, replacing `flow` and `meridian`. Run `mars migrate` to rename them in place, comments kept. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md).
+
+### Changed
+- The two Meridian hosts are named in full everywhere: `harness-overrides.meridian-flow` and `harness-overrides.meridian-cli`, and the vocabulary row `natives.flow` is now `natives["meridian-flow"]`.
+- `mars check` and the reader report the old names as `field.removed` and name the new key.
+- `mars migrate` renames the old keys in place in pre-v1 and schema 1 agents and skills, and `mars add` installs pre-v1 packages that still use them.
+- When a file has both the old and the new block, `mars migrate` merges them key by key, including nested mappings such as `capabilities`. Where both set the same key, the new block wins and the dropped key is named in a warning. A dropped `permission` or `capabilities` entry is reported as `field.restriction-lost`.
+- A key in the old block that is not a string is carried over, so the reader reports it, and `mars migrate` no longer turns that invalid file into a valid one without saying so.
+
 ## [0.21.0] - 2026-10-27
 
 ### Upgrade notes

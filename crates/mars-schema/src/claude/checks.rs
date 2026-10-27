@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
-use crate::discover::SelectedDefinition;
+use crate::discover::{SelectedDefinition, join};
 use crate::frontmatter::Frontmatter;
 use crate::item::DefinitionKind;
 
@@ -78,12 +78,12 @@ fn reference_diagnostics(
             }
             continue;
         };
-        if root.is_empty() || resolved == root || resolved.starts_with(&format!("{root}/")) {
-            continue;
-        }
         if !seen.insert(target.clone()) {
             continue;
         }
+        // The linking skill is a candidate too, so a link into its own payload goes through the
+        // same stored-path comparison. Payload enumeration carves child skill roots out of the
+        // parent, so the longest root decides who owns a file.
         let owner = all
             .iter()
             .filter(|other| other.kind == DefinitionKind::Skill)
@@ -94,27 +94,38 @@ fn reference_diagnostics(
                     || resolved.starts_with(&format!("{other_root}/"))
             })
             .max_by_key(|(_, other_root)| other_root.len());
-        diagnostics.push(match owner {
-            Some((other, other_root)) => {
-                let inside = resolved.strip_prefix(other_root).unwrap_or("");
-                let stored = format!("{}{inside}", other.output_root()).replace("//", "/");
-                SchemaDiagnostic::new(
-                    "skill.reference-to-skill",
-                    Severity::Warning,
-                    Vec::new(),
-                    format!(
-                        "links to `{target}`, a file of skill `{}`; stored it would be `{stored}`, and that skill is {}",
-                        other.slug,
-                        if selected.contains(other.source_path.as_str()) {
-                            "imported"
-                        } else {
-                            "not imported"
-                        }
-                    ),
+        let Some((other, other_root)) = owner else {
+            diagnostics.push(outside(&target));
+            continue;
+        };
+        let inside = resolved
+            .strip_prefix(other_root)
+            .unwrap_or("")
+            .trim_start_matches('/');
+        let stored = join(other.output_root(), inside);
+        let imported = selected.contains(other.source_path.as_str());
+        // Every skill is stored under its own folder, so a link between imported skills keeps
+        // working when it lands on the target's stored path from the linking skill's stored root.
+        if imported && resolve(definition.output_root(), &target).as_deref() == Some(&stored) {
+            continue;
+        }
+        diagnostics.push(SchemaDiagnostic::new(
+            "skill.reference-to-skill",
+            Severity::Warning,
+            Vec::new(),
+            if imported {
+                format!(
+                    "links to `{target}`, a file of skill `{}`, which does not resolve after install; link `{}` instead",
+                    other.slug,
+                    relative(definition.output_root(), &stored)
                 )
-            }
-            None => outside(&target),
-        });
+            } else {
+                format!(
+                    "links to `{target}`, a file of skill `{}`, which is not imported; stored it would be `{stored}`",
+                    other.slug
+                )
+            },
+        ));
     }
     diagnostics
 }
@@ -144,6 +155,20 @@ fn resolve(root: &str, target: &str) -> Option<String> {
         }
     }
     Some(parts.join("/"))
+}
+
+/// The link from directory `from` to the file `to`, both package-relative.
+fn relative(from: &str, to: &str) -> String {
+    let from = from
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let to = to.split('/').collect::<Vec<_>>();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let ups = std::iter::repeat_n("..", from.len() - common);
+    ups.chain(to[common..].iter().copied())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Relative file links in Markdown: inline `](target)` and `[id]: target` definitions, outside

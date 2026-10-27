@@ -103,6 +103,10 @@ impl DiagnosticCollector {
     ) {
         use mars_schema::diagnostic::Severity;
 
+        // The hosted consumer cannot run scripts; every target mars installs into can.
+        if diagnostic.code == "skill.needs-scripts" {
+            return;
+        }
         let code = Cow::Owned(diagnostic.code.clone());
         let message = format!("{context}: {}", diagnostic.message);
         if self

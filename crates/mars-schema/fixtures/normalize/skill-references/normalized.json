@@ -131,12 +131,6 @@
               "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
             },
             {
-              "code": "skill.reference-to-skill",
-              "severity": "warning",
-              "path": [],
-              "message": "links to `../shared/README.md`, a file of skill `shared`; stored it would be `skills/shared/README.md`, and that skill is imported"
-            },
-            {
               "code": "skill.outside-reference",
               "severity": "warning",
               "path": [],
@@ -146,7 +140,7 @@
               "code": "skill.reference-to-skill",
               "severity": "warning",
               "path": [],
-              "message": "links to `../dropped/SKILL.md`, a file of skill `dropped`; stored it would be `skills/dropped/SKILL.md`, and that skill is not imported"
+              "message": "links to `../dropped/SKILL.md`, a file of skill `dropped`, which is not imported; stored it would be `skills/dropped/SKILL.md`"
             }
           ]
         }

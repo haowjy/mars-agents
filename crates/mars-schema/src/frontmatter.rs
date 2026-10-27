@@ -94,8 +94,7 @@ impl Frontmatter {
     pub(crate) fn parse_preserving_structure(
         content: &str,
     ) -> Result<(Self, Vec<FrontmatterError>), FrontmatterError> {
-        let regions = split_regions(content)?;
-        if !regions.has_frontmatter {
+        let Some(regions) = split_regions(content)? else {
             return Ok((
                 Self {
                     yaml: Mapping::new(),
@@ -105,7 +104,7 @@ impl Frontmatter {
                 },
                 Vec::new(),
             ));
-        }
+        };
 
         let yaml_text = regions.yaml;
         if yaml_text.trim().is_empty() {
@@ -391,29 +390,24 @@ fn exceeds_flow_depth(yaml: &str) -> bool {
     false
 }
 
-/// A document's frontmatter region: the YAML between the fences, and the Markdown after them.
-///
-/// `yaml` starts on line 2, so a line number a YAML scanner reports inside it is one less than
-/// the line the same text sits on in the document.
+/// A document's frontmatter region: the YAML between the fences, where it starts in the
+/// document, and the Markdown after the closing fence.
 struct Regions<'a> {
     has_bom: bool,
-    has_frontmatter: bool,
+    /// Byte offset of `yaml`: past a byte-order mark and the opening fence line.
+    yaml_start: usize,
     yaml: &'a str,
     body: &'a str,
 }
 
-fn split_regions(content: &str) -> Result<Regions<'_>, FrontmatterError> {
+/// The frontmatter region of `content`, and `None` when it has no frontmatter.
+fn split_regions(content: &str) -> Result<Option<Regions<'_>>, FrontmatterError> {
     let (has_bom, document) = content
         .strip_prefix('\u{feff}')
         .map_or((false, content), |document| (true, document));
     let (first_line, after_first_line) = split_first_line(document);
     if !is_delimiter_line(first_line) {
-        return Ok(Regions {
-            has_bom: false,
-            has_frontmatter: false,
-            yaml: "",
-            body: document,
-        });
+        return Ok(None);
     }
 
     let mut yaml_end = None;
@@ -437,18 +431,17 @@ fn split_regions(content: &str) -> Result<Regions<'_>, FrontmatterError> {
     if exceeds_flow_depth(yaml) {
         return Err(FrontmatterError::TooDeep);
     }
-    Ok(Regions {
+    Ok(Some(Regions {
         has_bom,
-        has_frontmatter: true,
+        yaml_start: content.len() - after_first_line.len(),
         yaml,
         body: &after_first_line[yaml_len + closing_len..],
-    })
+    }))
 }
 
-/// The YAML text between a document's frontmatter fences, when it has frontmatter.
-pub(crate) fn yaml_text(content: &str) -> Result<Option<&str>, FrontmatterError> {
-    let regions = split_regions(content)?;
-    Ok(regions.has_frontmatter.then_some(regions.yaml))
+/// The YAML text between a document's frontmatter fences, and where it starts in the document.
+pub(crate) fn yaml_text(content: &str) -> Result<Option<(&str, usize)>, FrontmatterError> {
+    Ok(split_regions(content)?.map(|regions| (regions.yaml, regions.yaml_start)))
 }
 
 fn split_first_line(content: &str) -> (&str, &str) {

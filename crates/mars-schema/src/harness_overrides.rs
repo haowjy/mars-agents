@@ -5,6 +5,8 @@
 
 use indexmap::IndexMap;
 use serde_yaml::Value;
+use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
+use yaml_rust2::scanner::Marker;
 
 use crate::HarnessId;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, key_path, push_invalid};
@@ -398,117 +400,220 @@ pub(crate) fn move_harness_only_keys(
     }
 }
 
-/// Authored markdown with every consumer-namespace entry under `harness-overrides` blanked, one
-/// line for one line.
+/// Authored markdown with every consumer-namespace entry under `harness-overrides` blanked.
 ///
 /// A consumer namespace (`flow`, `meridian`) is not a harness: Mars keeps its block for the
 /// consumer and never writes it to a tree. A caller scanning the text for what a package ships
-/// must therefore not read it, which is what this masking is for. Line numbers survive, so a
-/// location the caller reports still points at the authored file.
+/// must therefore not read it, which is what this masking is for. Only the entry's own bytes
+/// become spaces and every newline stays, so a location the caller reports still points at the
+/// authored file, and what the package ships around the entry is still read.
 pub fn mask_consumer_namespaces(content: &str) -> String {
-    let Ok(Some(yaml)) = crate::frontmatter::yaml_text(content) else {
+    let Ok(Some((yaml, yaml_start))) = crate::frontmatter::yaml_text(content) else {
         return content.to_owned();
     };
-    let blocks = consumer_namespace_lines(yaml);
-    if blocks.is_empty() {
+    let spans = consumer_namespace_spans(yaml);
+    if spans.is_empty() {
         return content.to_owned();
     }
-    // The frontmatter opens on the document's first line, so YAML line `n` is document line
-    // `n + 1` (both counted from 0).
-    let yaml_lines = yaml.matches('\n').count();
-    let mut lines: Vec<&str> = content.split_inclusive('\n').collect();
-    for (start, end) in blocks {
-        for line in lines
-            .iter_mut()
-            .take(end.min(yaml_lines) + 1)
-            .skip(start + 1)
-        {
-            *line = "\n";
+    let mut masked = content.as_bytes().to_vec();
+    for (start, end) in spans {
+        for byte in &mut masked[yaml_start + start..yaml_start + end] {
+            if !matches!(*byte, b'\n' | b'\r') {
+                *byte = b' ';
+            }
         }
     }
-    lines.concat()
+    // Replacing whole characters with spaces leaves the document's UTF-8 valid.
+    String::from_utf8(masked).expect("masking a UTF-8 document keeps it UTF-8")
 }
 
-/// The `[start, end)` lines of `yaml`, a frontmatter block, that a consumer namespace owns.
-fn consumer_namespace_lines(yaml: &str) -> Vec<(usize, usize)> {
-    use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
-    use yaml_rust2::scanner::Marker;
+/// One open collection of a frontmatter block, and where its next child sits.
+struct Frame {
+    /// A mapping's children alternate key and value; a sequence's are all values.
+    mapping: bool,
+    /// A mapping's next child is a key.
+    expect_key: bool,
+    /// This collection is the value of the mapping under it, so only its end consumes that
+    /// value: a nested key is still a key.
+    parent_value: bool,
+    /// The last key read from this mapping, for finding the block a namespace entry sits in.
+    key: Option<String>,
+}
 
-    /// One open collection, and, for a mapping, the key its next child reports.
-    struct Frame {
-        pending_key: Option<String>,
+impl Frame {
+    fn new(mapping: bool, parent_value: bool) -> Self {
+        Self {
+            mapping,
+            expect_key: mapping,
+            parent_value,
+            key: None,
+        }
+    }
+}
+
+/// Collects the byte spans of the entries a consumer namespace owns under `harness-overrides`.
+///
+/// The spans are the scanner's own: an entry starts at its key and ends where the next thing Mars
+/// reads begins, so a block mapping, a flow mapping and an alias's value are one shape here.
+#[derive(Default)]
+struct NamespaceSpans<'a> {
+    yaml: &'a str,
+    frames: Vec<Frame>,
+    /// Depth of the `harness-overrides` mapping, while one is open.
+    overrides_depth: Option<usize>,
+    /// Byte offset where the entry being read starts.
+    open: Option<usize>,
+    spans: Vec<(usize, usize)>,
+    /// Scanner positions are character indices; the spans are byte offsets.
+    char_to_byte: Vec<usize>,
+}
+
+impl NamespaceSpans<'_> {
+    fn byte_of(&self, marker: Marker) -> usize {
+        self.char_to_byte
+            .get(marker.index())
+            .copied()
+            .unwrap_or(self.yaml.len())
     }
 
-    #[derive(Default)]
-    struct NamespaceBlocks {
-        frames: Vec<Frame>,
-        /// Depth of the `harness-overrides` mapping, while one is open.
-        overrides_depth: Option<usize>,
-        /// Line the open namespace entry starts on.
-        open: Option<usize>,
-        ranges: Vec<(usize, usize)>,
+    /// Whether the node starting now is the next key of the `harness-overrides` mapping.
+    fn entry_key(&self) -> bool {
+        self.overrides_depth == Some(self.frames.len())
+            && self.frames.last().is_some_and(|frame| frame.expect_key)
     }
 
-    impl NamespaceBlocks {
-        /// The entry ended at the next thing Mars reads: close it there, and never before the
-        /// line its own key sits on.
-        fn close(&mut self, end: usize) {
-            if let Some(start) = self.open.take() {
-                self.ranges.push((start, end.max(start + 1)));
+    /// The open entry ends where the next thing Mars reads begins. The spacing and the top-level
+    /// comments past its last line are not its own.
+    fn close(&mut self, end: usize) {
+        let Some(start) = self.open.take() else {
+            return;
+        };
+        self.spans
+            .push((start, self.trimmed_end(start, end).max(start)));
+    }
+
+    fn trimmed_end(&self, start: usize, end: usize) -> usize {
+        let bytes = self.yaml.as_bytes();
+        let mut stop = end;
+        loop {
+            while stop > start && bytes[stop - 1].is_ascii_whitespace() {
+                stop -= 1;
+            }
+            let line_start = self.yaml[..stop]
+                .rfind('\n')
+                .map_or(0, |newline| newline + 1);
+            // A comment at the document's left edge never belongs to an indented entry, so it is
+            // still scanned; one indented inside the entry is the entry's own.
+            if line_start <= start || !self.yaml[line_start..stop].starts_with('#') {
+                return stop;
+            }
+            stop = line_start;
+        }
+    }
+
+    /// A scalar or an alias starts: in a mapping, either the key its frame waits for or the value
+    /// of the key just read.
+    fn node(&mut self, key: Option<String>) {
+        if let Some(parent) = self.frames.last_mut().filter(|parent| parent.mapping) {
+            let was_key = parent.expect_key;
+            parent.expect_key = !was_key;
+            if was_key {
+                parent.key = key;
             }
         }
     }
 
-    impl MarkedEventReceiver for NamespaceBlocks {
-        fn on_event(&mut self, event: Event, marker: Marker) {
-            let line = marker.line() - 1;
-            match event {
-                Event::MappingStart(..) | Event::SequenceStart(..) => {
-                    let parent_depth = self.frames.len();
-                    let under_key = self
+    /// A collection starts. A value collection consumes its mapping's value only when it ends.
+    fn start(&mut self, mapping: bool) {
+        let mut parent_value = false;
+        if let Some(parent) = self.frames.last_mut().filter(|parent| parent.mapping) {
+            parent_value = !parent.expect_key;
+            if parent.expect_key {
+                // A complex key starts here, and it names no harness.
+                parent.expect_key = false;
+                parent.key = None;
+            }
+        }
+        self.frames.push(Frame::new(mapping, parent_value));
+    }
+
+    fn pop(&mut self) {
+        let Some(frame) = self.frames.pop() else {
+            return;
+        };
+        if frame.parent_value
+            && let Some(parent) = self.frames.last_mut()
+        {
+            parent.expect_key = true;
+        }
+    }
+}
+
+impl MarkedEventReceiver for NamespaceSpans<'_> {
+    fn on_event(&mut self, event: Event, marker: Marker) {
+        let byte = self.byte_of(marker);
+        match event {
+            Event::Scalar(value, ..) => {
+                let entry = self.entry_key();
+                let namespace =
+                    entry && crate::harness::RESERVED_CONSUMER_NAMESPACES.contains(&value.as_str());
+                if entry {
+                    self.close(byte);
+                }
+                self.node(Some(value));
+                if namespace {
+                    self.open = Some(byte);
+                }
+            }
+            Event::Alias(_) => {
+                if self.entry_key() {
+                    self.close(byte);
+                }
+                self.node(None);
+            }
+            start @ (Event::MappingStart(..) | Event::SequenceStart(..)) => {
+                let mapping = matches!(start, Event::MappingStart(..));
+                // The mapping `harness-overrides` holds, whose entries name the namespaces.
+                let overrides = mapping
+                    && self.frames.len() == 1
+                    && self
                         .frames
-                        .last_mut()
-                        .and_then(|frame| frame.pending_key.take());
-                    if parent_depth == 1 && under_key.as_deref() == Some("harness-overrides") {
-                        self.overrides_depth = Some(parent_depth + 1);
-                    }
-                    self.frames.push(Frame { pending_key: None });
+                        .last()
+                        .is_some_and(|root| root.key.as_deref() == Some("harness-overrides"));
+                if self.entry_key() {
+                    self.close(byte);
                 }
-                Event::MappingEnd | Event::SequenceEnd => {
-                    let depth = self.frames.len();
-                    self.frames.pop();
-                    if self.overrides_depth == Some(depth) {
-                        self.close(line);
-                        self.overrides_depth = None;
-                    }
+                self.start(mapping);
+                if overrides {
+                    self.overrides_depth = Some(self.frames.len());
                 }
-                // Inside a mapping, scalars alternate key and value; only keys name a namespace.
-                Event::Scalar(value, ..) => {
-                    let depth = self.frames.len();
-                    let Some(frame) = self.frames.last_mut() else {
-                        return;
-                    };
-                    if frame.pending_key.take().is_some() {
-                        return;
-                    }
-                    frame.pending_key = Some(value.clone());
-                    if self.overrides_depth == Some(depth) {
-                        self.close(line);
-                        if crate::harness::RESERVED_CONSUMER_NAMESPACES.contains(&value.as_str()) {
-                            self.open = Some(line);
-                        }
-                    }
-                }
-                _ => {}
             }
+            Event::MappingEnd | Event::SequenceEnd => {
+                if self.overrides_depth == Some(self.frames.len()) {
+                    self.close(byte);
+                    self.overrides_depth = None;
+                }
+                self.pop();
+            }
+            _ => {}
         }
     }
+}
 
-    let mut blocks = NamespaceBlocks::default();
+/// The `[start, end)` byte spans of `yaml`, a frontmatter block's YAML, that a consumer namespace
+/// owns.
+fn consumer_namespace_spans(yaml: &str) -> Vec<(usize, usize)> {
+    let mut char_to_byte: Vec<usize> = yaml.char_indices().map(|(byte, _)| byte).collect();
+    char_to_byte.push(yaml.len());
+    let mut spans = NamespaceSpans {
+        yaml,
+        char_to_byte,
+        ..NamespaceSpans::default()
+    };
     // Frontmatter the schema reader already accepted can still leave here unseen; a document this
     // scanner cannot follow simply keeps its current reading.
-    if Parser::new_from_str(yaml).load(&mut blocks, true).is_err() {
+    if Parser::new_from_str(yaml).load(&mut spans, true).is_err() {
         return Vec::new();
     }
-    blocks.ranges
+    spans.spans
 }

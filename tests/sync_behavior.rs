@@ -2383,9 +2383,11 @@ fn sync_installs_only_the_token_servers_directory_and_keeps_its_entry() {
     )
     .unwrap();
     let installed = project.child(".claude/mcp/echo/server.js");
+    // Mars canonicalizes the root; on Windows the temp dir may be an 8.3 short path.
+    let canonical_installed = dunce::canonicalize(installed.path()).unwrap();
     assert_eq!(
         entry["mcpServers"]["echo"]["args"][0],
-        json!(portable_path(installed.path())),
+        json!(portable_path(&canonical_installed)),
         "the token server's entry must name the installed directory"
     );
     assert!(installed.exists());

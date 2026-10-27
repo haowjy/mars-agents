@@ -1065,7 +1065,7 @@ pub(crate) fn merged_model_aliases_for_native_agents(
     crate::models::merged_model_aliases(
         &resolved.graph,
         &resolved.loaded.effective,
-        &resolved.loaded.config,
+        &resolved.loaded.base(),
         &resolved.loaded.local,
         &mut local_diag,
     )

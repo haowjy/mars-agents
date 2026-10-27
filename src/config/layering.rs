@@ -2,7 +2,10 @@ use indexmap::IndexMap;
 
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
-use super::{AgentOverlay, AgentOverlayTools, LocalConfig, LocalSettings, Settings, SkillOverlay};
+use super::{
+    AgentOverlay, AgentOverlayTools, Config, LocalConfig, LocalSettings, Settings, SkillOverlay,
+    default_models_cache_ttl_hours,
+};
 use mars_schema::permission_set::{PermissionSet, compose_permission_sets};
 
 fn overlay_map_replace_by_key<V: Clone>(
@@ -18,17 +21,17 @@ fn overlay_map_replace_by_key<V: Clone>(
 
 pub fn overlay_models_replace_by_key(
     base: &IndexMap<String, crate::models::ModelAlias>,
-    local: &LocalConfig,
+    higher: &IndexMap<String, crate::models::ModelAlias>,
 ) -> IndexMap<String, crate::models::ModelAlias> {
-    overlay_map_replace_by_key(base, &local.models)
+    overlay_map_replace_by_key(base, higher)
 }
 
 pub fn overlay_agent_overlays(
     base: &IndexMap<String, AgentOverlay>,
-    local: &LocalConfig,
+    higher_overlays: &IndexMap<String, AgentOverlay>,
 ) -> IndexMap<String, AgentOverlay> {
     let mut merged = base.clone();
-    for (name, higher) in &local.agents {
+    for (name, higher) in higher_overlays {
         let overlay = match base.get(name) {
             Some(lower) => compose_agent_overlay(lower, higher),
             None => higher.clone(),
@@ -88,6 +91,56 @@ fn compose_optional_permission_sets<T: Clone + Eq>(
         (Some(layer), None) | (None, Some(layer)) => Some(layer.clone()),
         (None, None) => None,
     }
+}
+
+/// `mars.toml` laid over the user's `config.toml`: the bottom of the layering.
+///
+/// A read-only view for composing what applies; never save it, or the user's entries land in
+/// `mars.toml`.
+pub fn project_over_user(config: &Config, user: &LocalConfig) -> Config {
+    let mut base = config.clone();
+    base.models = overlay_models_replace_by_key(&user.models, &config.models);
+    base.agents = overlay_agent_overlays(&user.agents, &config.agents);
+    base.skills = overlay_skill_overlays(&user.skills, &config.skills);
+    base.settings = settings_over_user(&config.settings, &user.settings);
+    base
+}
+
+/// A project value wins over the user's. `models_cache_ttl_hours` has no unset state, so the
+/// user's value applies only while the project's is the default. Link targets are per project,
+/// so the user's `managed_root` and `targets` never apply.
+fn settings_over_user(project: &Settings, user: &LocalSettings) -> Settings {
+    let mut merged = project.clone();
+    if project.models_cache_ttl_hours == default_models_cache_ttl_hours()
+        && let Some(hours) = user.models_cache_ttl_hours
+    {
+        merged.models_cache_ttl_hours = hours;
+    }
+    fn first<T: Clone>(project: &Option<T>, user: &Option<T>) -> Option<T> {
+        project.clone().or_else(|| user.clone())
+    }
+    merged.min_mars_version = first(&project.min_mars_version, &user.min_mars_version);
+    merged.default_harness = first(&project.default_harness, &user.default_harness);
+    merged.default_model = first(&project.default_model, &user.default_model);
+    merged.default_network = first(&project.default_network, &user.default_network);
+    merged.harness_order = first(&project.harness_order, &user.harness_order);
+    merged.provider_order = first(&project.provider_order, &user.provider_order);
+    merged.catalog_providers = first(&project.catalog_providers, &user.catalog_providers);
+    merged.agent_emission = first(&project.agent_emission, &user.agent_emission);
+    merged.meridian.agent_copy = first(&project.meridian.agent_copy, &user.meridian.agent_copy);
+    merged.meridian.fanout = first(&project.meridian.fanout, &user.meridian.fanout);
+    if let Some(user_allow) = &user.network_allow {
+        merged.network_allow = compose_permission_sets(user_allow, &project.network_allow);
+    }
+    if let Some(user_deny) = &user.network_deny {
+        merged.network_deny = compose_permission_sets(user_deny, &project.network_deny);
+    }
+    if project.model_policies.is_empty()
+        && let Some(policies) = &user.model_policies
+    {
+        merged.model_policies = policies.clone();
+    }
+    merged
 }
 
 pub fn merged_settings(settings: &Settings, local: &LocalConfig) -> Settings {

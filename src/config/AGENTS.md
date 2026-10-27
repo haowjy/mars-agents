@@ -1,13 +1,13 @@
 # src/config/ — Config Loading & Routing Settings
 
-User network defaults plus mars.toml + mars.local.toml schemas, load/save, and merge to
+User config.toml plus mars.toml + mars.local.toml schemas, load/save, and merge to
 EffectiveConfig.
 
 ## Mental Model
 
 ```
-mars.toml (Config) + mars.local.toml (LocalConfig)
-    ↓ merge_with_root()
+user config.toml (UserConfig, a LocalConfig) < mars.toml (Config) < mars.local.toml (LocalConfig)
+    ↓ merge_with_root() / effective_project_config()
 EffectiveConfig { dependencies, settings }
     ↓
 pipeline operates on EffectiveConfig only
@@ -25,7 +25,7 @@ pipeline operates on EffectiveConfig only
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
 | `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, and `user_invocable` |
 | `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
-| `user.rs` | Restricted user `config.toml` network tier (`default_network`, host sets) and ignored-key warnings, folded under the project's settings by `apply_user_network_settings` |
+| `UserConfig` (`user.rs`) | The user `config.toml`, parsed as a `LocalConfig`; `[overrides]` is rejected. Sits beneath `mars.toml` via `project_over_user` |
 | `mars_schema::network::{NetworkPolicy, NetworkHost}` | The typed parsers behind every mode and host surface: profile, overlay, settings, user config and CLI |
 
 `load()` parses `plugin` and the plugin-only `[package]` fields `authors`, `homepage`, and
@@ -50,6 +50,11 @@ list from the raw project/local config; empty lists and replacement tables are s
 
 ## Layering (`layering.rs`)
 
+- `project_over_user(config, user)` is the bottom layer: a read-only `Config` view with the user's
+  models, agents, skills and settings beneath `mars.toml`. Never save it. Warnings are built from
+  the pristine files so each names its own file (`UserConfig.path` for the user file).
+  `merge_with_root` and `effective_project_config` apply it; readers of `config.agents` /
+  `config.models` (compiler, link, `LoadedConfig::base`) compose from the view.
 - `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
 - Network host permission sets compose across user, project, and local settings; other settings
   lists retain replacement semantics.

@@ -16,7 +16,7 @@ use mars_schema::dialect::Dialect;
 use mars_schema::model_policy::ModelPolicyRule;
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 pub use mars_schema::package::PackageMetadata as PackageInfo;
-use mars_schema::permission_set::{PermissionSet, merge_permission_set};
+use mars_schema::permission_set::PermissionSet;
 use mars_schema::tool_names::OverlayToolName;
 
 pub mod layering;
@@ -26,8 +26,11 @@ mod save;
 pub mod targets;
 mod user;
 
+pub use user::UserConfig;
+
 pub use layering::{
     merged_settings, overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays,
+    project_over_user,
 };
 
 /// Top-level mars.toml configuration.
@@ -692,6 +695,7 @@ pub struct EffectiveProjectConfig {
 pub(crate) struct LoadedProjectConfig {
     pub(crate) config: Config,
     pub(crate) local: LocalConfig,
+    pub(crate) user: UserConfig,
     pub(crate) effective: EffectiveProjectConfig,
 }
 
@@ -716,7 +720,10 @@ fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
     content: &str,
     path: &Path,
 ) -> Result<T, MarsError> {
-    let value: toml::Value = toml::from_str(content).map_err(ConfigError::Parse)?;
+    let parse_error = |error: toml::de::Error| ConfigError::Invalid {
+        message: format!("failed to parse {}: {error}", path.display()),
+    };
+    let value: toml::Value = toml::from_str(content).map_err(parse_error)?;
     if let Some(legacy) = value
         .get("settings")
         .and_then(|settings| settings.get("model_visibility"))
@@ -731,7 +738,7 @@ fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
     // Deserialize the original text, not the intermediate `toml::Value`:
     // round-tripping through Value reorders declaration-keyed tables and can
     // change the first dependency alias winner.
-    toml::from_str(content).map_err(|error| ConfigError::Parse(error).into())
+    toml::from_str(content).map_err(|error| parse_error(error).into())
 }
 
 fn visibility_migration(legacy: &toml::Value) -> String {
@@ -778,14 +785,22 @@ fn visibility_migration(legacy: &toml::Value) -> String {
     }
 }
 
+fn read_error(path: &Path, source: std::io::Error) -> MarsError {
+    MarsError::Io {
+        operation: "read config".to_string(),
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
 /// Load mars.toml from the given root directory.
 pub fn load(root: &Path) -> Result<Config, MarsError> {
     let path = root.join(CONFIG_FILE);
     let content = std::fs::read_to_string(&path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            ConfigError::NotFound { path: path.clone() }
+            ConfigError::NotFound { path: path.clone() }.into()
         } else {
-            ConfigError::Io(e)
+            read_error(&path, e)
         }
     })?;
     parse_config(&content, &path)
@@ -894,7 +909,7 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
             Ok(local)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
-        Err(e) => Err(ConfigError::Io(e).into()),
+        Err(e) => Err(read_error(&path, e)),
     }
 }
 
@@ -903,7 +918,7 @@ pub fn merged_models(
     base: &IndexMap<String, crate::models::ModelAlias>,
     local: &LocalConfig,
 ) -> IndexMap<String, crate::models::ModelAlias> {
-    overlay_models_replace_by_key(base, local)
+    overlay_models_replace_by_key(base, &local.models)
 }
 
 /// Replace project/local agent overlay entries while composing their permission sets.
@@ -911,7 +926,7 @@ pub fn merged_agent_overlays(
     base: &IndexMap<String, AgentOverlay>,
     local: &LocalConfig,
 ) -> IndexMap<String, AgentOverlay> {
-    overlay_agent_overlays(base, local)
+    overlay_agent_overlays(base, &local.agents)
 }
 
 /// Base model precedence for the overlay+profile layer shared by native emission
@@ -963,9 +978,11 @@ pub fn load_config_with_local(root: &Path) -> Result<(Config, LocalConfig), Mars
 fn effective_project_config(
     config: &Config,
     local: &LocalConfig,
+    user: &UserConfig,
     root: &Path,
 ) -> EffectiveProjectConfig {
-    let (settings, mut target_source) = local.settings.overlay_settings(&config.settings);
+    let base = project_over_user(config, &user.local);
+    let (settings, mut target_source) = local.settings.overlay_settings(&base.settings);
     target_source.path = match target_source.origin {
         targets::TargetOrigin::Project => Some(root.join("mars.toml")),
         targets::TargetOrigin::Local => Some(root.join("mars.local.toml")),
@@ -974,9 +991,9 @@ fn effective_project_config(
     EffectiveProjectConfig {
         settings,
         target_source,
-        models: overlay_models_replace_by_key(&config.models, local),
-        agents: overlay_agent_overlays(&config.agents, local),
-        warnings: project_config_warnings(config, local)
+        models: overlay_models_replace_by_key(&base.models, &local.models),
+        agents: overlay_agent_overlays(&base.agents, &local.agents),
+        warnings: project_config_warnings(config, local, user)
             .into_iter()
             .map(|warning| warning.message)
             .collect(),
@@ -1093,9 +1110,20 @@ fn validate_agent_overlays(
     Ok(())
 }
 
-fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectConfigWarning> {
+fn project_config_warnings(
+    config: &Config,
+    local: &LocalConfig,
+    user: &UserConfig,
+) -> Vec<ProjectConfigWarning> {
     let mut warnings = Vec::new();
+    let user_file = user.path.display().to_string();
     for (file, agents, skills, settings) in [
+        (
+            user_file.as_str(),
+            &user.local.agents,
+            &user.local.skills,
+            &user.local.settings.unknown,
+        ),
         (
             "mars.toml",
             &config.agents,
@@ -1168,7 +1196,7 @@ fn project_config_warnings(config: &Config, local: &LocalConfig) -> Vec<ProjectC
 }
 
 fn tool_overlay_warnings(
-    file: &'static str,
+    file: &str,
     surface: &str,
     tools: &AgentOverlayTools,
     matching_local: Option<&AgentOverlayTools>,
@@ -1210,42 +1238,32 @@ fn tool_overlay_warnings(
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
-    let mut effective = load_project_config_layers(root)?.effective;
-    apply_user_network_settings(&mut effective)?;
-    Ok(effective)
+    Ok(load_project_config_layers(root)?.effective)
 }
 
+/// The effective config outside a Mars project: the user's `config.toml` alone.
 pub fn load_user_effective_project_config() -> Result<EffectiveProjectConfig, MarsError> {
-    let mut effective = EffectiveProjectConfig::default();
-    apply_user_network_settings(&mut effective)?;
-    Ok(effective)
+    Ok(effective_project_config(
+        &Config::default(),
+        &LocalConfig::default(),
+        &user::load()?,
+        Path::new(""),
+    ))
 }
 
-/// Folds the user config's network defaults under the project's: the user mode applies only
-/// when the project sets none, and host lists merge user-first so project deny entries stay.
-fn apply_user_network_settings(effective: &mut EffectiveProjectConfig) -> Result<(), MarsError> {
-    let Some(user) = user::load()? else {
-        return Ok(());
-    };
-    effective.warnings.extend(user.warnings);
-    if effective.settings.default_network.is_none() {
-        effective.settings.default_network = user.default_network;
-    }
-    let mut allow = user.network_allow.entries().to_vec();
-    merge_permission_set(&mut allow, &effective.settings.network_allow);
-    effective.settings.network_allow = PermissionSet::Add(allow);
-    let mut deny = user.network_deny.entries().to_vec();
-    merge_permission_set(&mut deny, &effective.settings.network_deny);
-    effective.settings.network_deny = PermissionSet::Add(deny);
-    Ok(())
+/// The user's `config.toml` layer (empty when the file is absent).
+pub(crate) fn load_user_config() -> Result<UserConfig, MarsError> {
+    user::load()
 }
 
 pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {
     let (config, local) = load_config_with_local(root)?;
-    let effective = effective_project_config(&config, &local, root);
+    let user = user::load()?;
+    let effective = effective_project_config(&config, &local, &user, root);
     Ok(LoadedProjectConfig {
         config,
         local,
+        user,
         effective,
     })
 }
@@ -1260,11 +1278,13 @@ pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectCon
 pub fn merge_with_root(
     config: Config,
     local: LocalConfig,
+    user: &UserConfig,
     root: &Path,
 ) -> Result<(EffectiveConfig, Vec<Diagnostic>), MarsError> {
-    let merged_settings = merged_settings(&config.settings, &local);
+    let base = project_over_user(&config, &user.local);
+    let merged_settings = merged_settings(&base.settings, &local);
     let mut dependencies = IndexMap::new();
-    let mut diagnostics = project_config_warnings(&config, &local)
+    let mut diagnostics = project_config_warnings(&config, &local, user)
         .into_iter()
         .map(|warning| Diagnostic {
             level: DiagnosticLevel::Warning,
@@ -1369,7 +1389,7 @@ pub fn merge_with_root(
         );
     }
 
-    let skills = overlay_skill_overlays(&config.skills, &local.skills);
+    let skills = overlay_skill_overlays(&base.skills, &local.skills);
 
     Ok((
         EffectiveConfig {
@@ -1867,7 +1887,8 @@ skills = ["review"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
+        let (effective, _) =
+            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         match &source.filter {
             FilterMode::Include { agents, skills } => {
@@ -1887,7 +1908,8 @@ exclude = ["experimental", "deprecated"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
+        let (effective, _) =
+            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         match &source.filter {
             FilterMode::Exclude(items) => {
@@ -1907,7 +1929,7 @@ exclude = ["reviewer"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1924,7 +1946,7 @@ version = "v1.0"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1942,7 +1964,7 @@ path = "/local/path"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("both"), "error should mention 'both': {err}");
@@ -2807,7 +2829,8 @@ future_key = "allowed"
             ..Config::default()
         };
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
+        let (effective, _) =
+            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
         assert_eq!(effective.dependencies.len(), 1);
         let source = &effective.dependencies["base"];
         match &source.spec {
@@ -2855,7 +2878,8 @@ future_key = "allowed"
             },
             ..LocalConfig::default()
         };
-        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
+        let (effective, _) =
+            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         match &source.spec {
             SourceSpec::Path(p) => assert_eq!(p, &PathBuf::from("/home/dev/local-base")),
@@ -2907,7 +2931,8 @@ future_key = "allowed"
             ..LocalConfig::default()
         };
 
-        let (effective, _) = merge_with_root(config, local, &temp_root).unwrap();
+        let (effective, _) =
+            merge_with_root(config, local, &UserConfig::default(), &temp_root).unwrap();
         let source = &effective.dependencies["base"];
         assert_eq!(
             source.subpath.as_ref().map(SourceSubpath::as_str),
@@ -2947,8 +2972,13 @@ future_key = "allowed"
             settings: Settings::default(),
             ..Config::default()
         };
-        let (effective, _) =
-            merge_with_root(config, LocalConfig::default(), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            LocalConfig::default(),
+            &UserConfig::default(),
+            Path::new("."),
+        )
+        .unwrap();
         assert!(matches!(
             effective.dependencies["base"].filter,
             FilterMode::All
@@ -2965,8 +2995,13 @@ url = "https://github.com/org/base.git"
 old-name = "new-name"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        let (effective, _) =
-            merge_with_root(config, LocalConfig::default(), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            LocalConfig::default(),
+            &UserConfig::default(),
+            Path::new("."),
+        )
+        .unwrap();
         let source = &effective.dependencies["base"];
         assert_eq!(source.rename.get("old-name").unwrap(), "new-name");
     }
@@ -2979,7 +3014,7 @@ url = "https://github.com/org/base.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3105,7 +3140,8 @@ only_skills = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
+        let (effective, _) =
+            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         assert!(matches!(source.filter, FilterMode::OnlySkills));
     }
@@ -3119,7 +3155,8 @@ only_agents = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
+        let (effective, _) =
+            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
         let source = &effective.dependencies["base"];
         assert!(matches!(source.filter, FilterMode::OnlyAgents));
     }
@@ -3134,7 +3171,7 @@ only_agents = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3153,7 +3190,7 @@ agents = ["coder"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3172,7 +3209,7 @@ skills = ["planning"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
     }
 
@@ -3186,7 +3223,7 @@ exclude = ["deprecated"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
     }
 
@@ -3375,8 +3412,13 @@ only_skills = true
             ..Config::default()
         };
 
-        let (_, diagnostics) =
-            merge_with_root(config, LocalConfig::default(), Path::new(".")).unwrap();
+        let (_, diagnostics) = merge_with_root(
+            config,
+            LocalConfig::default(),
+            &UserConfig::default(),
+            Path::new("."),
+        )
+        .unwrap();
 
         assert!(diagnostics.iter().any(|diag| {
             diag.code == "deprecated-agents-target"
@@ -3394,8 +3436,13 @@ only_skills = true
             ..Config::default()
         };
 
-        let (_, diagnostics) =
-            merge_with_root(config, LocalConfig::default(), Path::new(".")).unwrap();
+        let (_, diagnostics) = merge_with_root(
+            config,
+            LocalConfig::default(),
+            &UserConfig::default(),
+            Path::new("."),
+        )
+        .unwrap();
 
         assert!(diagnostics.iter().any(|diag| {
             diag.code == "deprecated-agents-target"
@@ -3617,7 +3664,8 @@ url = "https://github.com/org/prompter.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, local, Path::new(".")).unwrap();
+        let (effective, _) =
+            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
 
         // Both deps should be in effective config
         assert_eq!(effective.dependencies.len(), 2);
@@ -3666,7 +3714,7 @@ url = "https://github.com/org/base-local.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, local, Path::new("."));
+        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3762,5 +3810,27 @@ skills = ["prompt-helper"]
             toml_str.contains("C:/Users/dev/local-pkg"),
             "expected forward-slash override path: {toml_str}"
         );
+    }
+
+    #[test]
+    fn user_config_ranks_below_mars_toml_below_mars_local_toml() {
+        let agent = |model: &str| format!("[agents.coder]\nmodel = \"{model}\"\n");
+        let parse = |text: String| toml::from_str::<LocalConfig>(&text).unwrap();
+        let user = UserConfig {
+            path: PathBuf::from("config.toml"),
+            local: parse(agent("user")),
+        };
+        let project: Config = toml::from_str(&agent("project")).unwrap();
+        let local = parse(agent("local"));
+        let model = |config: &Config, local: &LocalConfig, user: &UserConfig| {
+            effective_project_config(config, local, user, Path::new(".")).agents["coder"]
+                .model
+                .clone()
+        };
+        let none = LocalConfig::default();
+        let no_project = Config::default();
+        assert_eq!(model(&no_project, &none, &user).as_deref(), Some("user"));
+        assert_eq!(model(&project, &none, &user).as_deref(), Some("project"));
+        assert_eq!(model(&project, &local, &user).as_deref(), Some("local"));
     }
 }

@@ -910,6 +910,7 @@ subpath = "plugins/foo"
         let (effective, _) = merge_with_root(
             config,
             crate::config::LocalConfig::default(),
+            &crate::config::UserConfig::default(),
             std::path::Path::new("."),
         )
         .unwrap();

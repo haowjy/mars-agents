@@ -7,14 +7,14 @@
 - **Target sync**: optional copies from `.mars/` into managed target directories, configured by `settings.targets`.
 - **`--root`**: points to the project root when you need to override auto-detection.
 
-Mars uses three project files plus an optional user network-default file:
+Mars uses three project files plus an optional user file:
 
 | File | Purpose | Committed? |
 |---|---|---|
 | `mars.toml` | Dependencies, filters, settings | Yes |
 | `mars.lock` | Resolved versions, checksums, ownership | Yes |
 | `mars.local.toml` | Developer-local overrides | No (gitignored) |
-| `$MARS_CONFIG_DIR/config.toml` (otherwise the platform `mars/config.toml`) | User network defaults | User-owned |
+| `$MARS_CONFIG_DIR/config.toml` (otherwise the platform `mars/config.toml`) | Your own `[settings]`, `[models]`, `[agents]` and `[skills]` for every project, in the `mars.local.toml` schema | User-owned |
 
 ## Layering and precedence
 
@@ -407,20 +407,36 @@ Network policy keys in `[settings]` and overlays accept separator aliases: `defa
 Mars warns when another ignored key looks network-related and lists these accepted spellings.
 (A package's Agent file is stricter: only the hyphenated keys, per [schema v1](schema-v1.md#network).)
 
-### User network defaults
+### User config
 
-`$MARS_CONFIG_DIR/config.toml`, or `mars/config.toml` under the platform config directory,
-accepts only these fields for now:
+`$MARS_CONFIG_DIR/config.toml`, or `mars/config.toml` under the platform config directory, takes
+the sections of `mars.local.toml` (`[settings]`, `[models]`, `[agents]`, `[skills]`) and is read
+by every project. It is the lowest layer: `mars.toml` beats it and `mars.local.toml` beats both.
 
 ```toml
 [settings]
+provider_order = ["anthropic", "openai"]
 default_network = "allowlist"
 network-allow = ["github.com", "*.github.com"]
-network-deny = ["blocked.example"]
+
+[agents.coder]
+model = "opus"
 ```
 
-Project and local settings layer above them. Other user `[settings]` keys are ignored with a
-launch-bundle warning; Mars does not pretend they form a general user configuration tier.
+- Merging follows the usual rules: tables replace by key, an `[agents.<name>]` block replaces the
+  lower block whole, and permission sets compose (user hosts first).
+- An `[agents.x]` or `[skills.x]` entry for something a project doesn't have is skipped without a
+  diagnostic.
+- `[overrides]` is an error here: it would send every project to a local checkout. Put it in the
+  project's `mars.local.toml`.
+- `[settings].managed_root` and `targets` never apply from this file: link targets are per
+  project. `models_cache_ttl_hours` has no unset state, so the user value applies only while the
+  project's is the default.
+- Warnings and errors from the file name it by path.
+- Commands read it wherever they read the project's config. `mars build plugin` and
+  `mars check` read only `mars.toml`. Outside a Mars project, a command fails to find the
+  project before reading any config; `mars build launch-bundle` is the one command that falls
+  back to the user file alone when the project has no `mars.toml`.
 
 `[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
 

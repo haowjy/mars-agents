@@ -215,6 +215,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -277,6 +278,7 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -358,6 +360,7 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
         loaded: LoadedConfig {
             config,
             local: LocalConfig::default(),
+            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -420,6 +423,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -484,6 +488,7 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),

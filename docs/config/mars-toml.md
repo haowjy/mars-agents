@@ -31,8 +31,8 @@ Because one `local.toml` serves every project, entries naming something a projec
 (an `[overrides.x]` for a missing dependency, an `[agents.x]` or `[skills.x]` for an item that is
 not installed) are skipped without a diagnostic. In `mars.local.toml` the same entries still warn.
 A `local.toml` `[overrides.<dep>]` that does apply is reported by `mars sync`
-(`dependency <dep> overridden to <path> by the user local.toml`), since it swaps a dependency for
-a local checkout. A relative override path resolves against the Mars config directory. A project
+(`dependency <dep> overridden to <path> by <local.toml path>`), since it swaps a dependency for
+a local checkout. A relative override path resolves against the Mars config directory; `~` is not expanded. `local.toml` applies inside a Mars project only: commands run outside one (such as `mars build launch-bundle` with no `mars.toml`) read `config.toml` alone. A project
 override for the same dependency wins and is not reported.
 
 Default merge semantics:

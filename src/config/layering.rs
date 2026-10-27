@@ -1,8 +1,13 @@
 use indexmap::IndexMap;
 
+use std::path::{Path, PathBuf};
+
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
-use super::{AgentOverlay, AgentOverlayTools, LocalConfig, LocalSettings, Settings, SkillOverlay};
+use super::{
+    AgentOverlay, AgentOverlayTools, LocalConfig, LocalSettings, MeridianSettings, Settings,
+    SkillOverlay,
+};
 use mars_schema::permission_set::{PermissionSet, compose_permission_sets};
 
 fn overlay_map_replace_by_key<K: Clone + Eq + std::hash::Hash, V: Clone>(
@@ -90,16 +95,62 @@ fn compose_optional_permission_sets<T: Clone + Eq>(
     }
 }
 
-/// Layer the user `local.toml` under the project `mars.local.toml` into one `LocalConfig`, so the
-/// existing merge over `mars.toml` yields `mars.toml < user local < project local`. Keys follow
-/// the per-section rules above; the project layer wins.
-pub fn layer_local(user: &LocalConfig, project: &LocalConfig) -> LocalConfig {
-    LocalConfig {
-        overrides: overlay_map_replace_by_key(&user.overrides, &project.overrides),
-        models: overlay_map_replace_by_key(&user.models, &project.models),
-        agents: overlay_agent_overlays(&user.agents, project),
-        skills: overlay_skill_overlays(&user.skills, &project.skills),
-        settings: user.settings.layered_under(&project.settings),
+/// One local-config file with the path it was read from, so a message about a value can name
+/// the file that holds it.
+#[derive(Debug, Clone, Default)]
+pub struct LocalLayer {
+    pub path: PathBuf,
+    pub config: LocalConfig,
+}
+
+/// The local configs that sit above `mars.toml`: the user `local.toml`, then the project
+/// `mars.local.toml`. Kept apart until a reader needs the effective value, so provenance
+/// survives and only the project layer can be saved.
+#[derive(Debug, Clone, Default)]
+pub struct LocalLayers {
+    pub user: LocalLayer,
+    pub project: LocalLayer,
+}
+
+impl LocalLayers {
+    /// Only a project layer, for callers with no user file (publish lens, tests).
+    pub fn project_only(config: LocalConfig, root: &Path) -> Self {
+        Self {
+            user: LocalLayer::default(),
+            project: LocalLayer {
+                path: root.join(super::LOCAL_CONFIG_FILE),
+                config,
+            },
+        }
+    }
+
+    /// The layers in precedence order, lowest first.
+    pub fn in_order(&self) -> [&LocalLayer; 2] {
+        [&self.user, &self.project]
+    }
+
+    /// Both layers folded into one `LocalConfig`, so the merge over `mars.toml` yields
+    /// `mars.toml < user local < project local`. Keys follow the per-section rules above;
+    /// the project layer wins.
+    pub fn merged(&self) -> LocalConfig {
+        let (user, project) = (&self.user.config, &self.project.config);
+        LocalConfig {
+            overrides: overlay_map_replace_by_key(&user.overrides, &project.overrides),
+            models: overlay_map_replace_by_key(&user.models, &project.models),
+            agents: overlay_agent_overlays(&user.agents, project),
+            skills: overlay_skill_overlays(&user.skills, &project.skills),
+            settings: user.settings.layered_under(&project.settings),
+        }
+    }
+
+    /// The layer whose `[settings]` supplied the winning target field of the merged config.
+    pub fn target_layer(&self, field: LinkSource) -> &LocalLayer {
+        let in_project = match field {
+            LinkSource::Targets => self.project.config.settings.targets.is_some(),
+            LinkSource::ManagedRoot => self.project.config.settings.managed_root.is_some(),
+            LinkSource::None => false,
+        };
+        if in_project { &self.project } else { &self.user }
     }
 }
 
@@ -127,13 +178,32 @@ impl LocalSettings {
             && self.unknown.is_empty()
     }
 
-    /// `self` with every field `higher` sets replaced; network host sets compose.
+    /// `self` with every field `higher` sets replaced; network host sets compose. `higher` is
+    /// destructured exhaustively, so a new field fails to compile until it is layered here.
     fn layered_under(&self, higher: &LocalSettings) -> LocalSettings {
+        let LocalSettings {
+            managed_root,
+            targets,
+            models_cache_ttl_hours,
+            min_mars_version,
+            default_harness,
+            default_model,
+            default_network,
+            network_allow,
+            network_deny,
+            harness_order,
+            provider_order,
+            catalog_providers,
+            agent_emission,
+            meridian: MeridianSettings { agent_copy, fanout },
+            model_policies,
+            unknown,
+        } = higher;
         let mut merged = self.clone();
         macro_rules! take {
             ($($field:ident),*) => {$(
-                if higher.$field.is_some() {
-                    merged.$field = higher.$field.clone();
+                if $field.is_some() {
+                    merged.$field = $field.clone();
                 }
             )*};
         }
@@ -151,15 +221,17 @@ impl LocalSettings {
             agent_emission,
             model_policies
         );
-        merged.network_allow = compose_local_hosts(&self.network_allow, &higher.network_allow);
-        merged.network_deny = compose_local_hosts(&self.network_deny, &higher.network_deny);
-        if higher.meridian.agent_copy.is_some() {
-            merged.meridian.agent_copy = higher.meridian.agent_copy.clone();
+        merged.network_allow =
+            compose_optional_permission_sets(self.network_allow.as_ref(), network_allow.as_ref());
+        merged.network_deny =
+            compose_optional_permission_sets(self.network_deny.as_ref(), network_deny.as_ref());
+        if agent_copy.is_some() {
+            merged.meridian.agent_copy = agent_copy.clone();
         }
-        if higher.meridian.fanout.is_some() {
-            merged.meridian.fanout = higher.meridian.fanout.clone();
+        if fanout.is_some() {
+            merged.meridian.fanout = fanout.clone();
         }
-        merged.unknown.extend(higher.unknown.clone());
+        merged.unknown.extend(unknown.clone());
         merged
     }
 
@@ -233,11 +305,4 @@ impl LocalSettings {
 
         (merged, target_source)
     }
-}
-
-fn compose_local_hosts<T: Clone + Eq>(
-    lower: &Option<PermissionSet<T>>,
-    higher: &Option<PermissionSet<T>>,
-) -> Option<PermissionSet<T>> {
-    compose_optional_permission_sets(lower.as_ref(), higher.as_ref())
 }

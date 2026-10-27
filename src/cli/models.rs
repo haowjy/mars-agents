@@ -1232,11 +1232,11 @@ fn determine_source(
         return "unknown".to_string();
     };
 
-    if project_config.project_local.models.contains_key(name) {
+    if project_config.layers.project.config.models.contains_key(name) {
         return "consumer local (mars.local.toml)".to_string();
     }
 
-    if project_config.local.models.contains_key(name) {
+    if project_config.layers.user.config.models.contains_key(name) {
         return "user local (local.toml)".to_string();
     }
 

@@ -64,7 +64,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     if let Some(project_config) = &project_config {
         match crate::config::merge_with_root(
             project_config.config.clone(),
-            project_config.local.clone(),
+            &project_config.layers,
             &ctx.project_root,
         ) {
             Ok((effective, _diagnostics)) => {

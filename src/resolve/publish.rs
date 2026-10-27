@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::config::{Config, EffectiveConfig, LocalConfig};
+use crate::config::{Config, EffectiveConfig};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::source::GlobalCache;
@@ -54,7 +54,11 @@ impl PublishLens {
             manifest.local_dependencies.clear();
         }
         let (effective, diagnostics) =
-            crate::config::merge_with_root(config, LocalConfig::default(), package_root)?;
+            crate::config::merge_with_root(
+                config,
+                &crate::config::LocalLayers::default(),
+                package_root,
+            )?;
         if let Some(error) = diagnostics
             .into_iter()
             .find(|diagnostic| diagnostic.level == crate::diagnostic::DiagnosticLevel::Error)

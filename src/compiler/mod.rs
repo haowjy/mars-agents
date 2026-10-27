@@ -198,7 +198,7 @@ fn compile_inner(
     let loaded = &synced.applied.planned.targeted.resolved.loaded;
     // Per-agent overlays merged from mars.toml + mars.local.toml (loaded.effective is
     // EffectiveConfig, which does not carry the overlay map).
-    let agent_overlays = crate::config::merged_agent_overlays(&loaded.config.agents, &loaded.local);
+    let agent_overlays = crate::config::merged_agent_overlays(&loaded.config.agents, &loaded.layers.merged());
     let native_ownership_lock = if request.options.dry_run {
         old_lock
     } else {

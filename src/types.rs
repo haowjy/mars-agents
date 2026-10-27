@@ -909,7 +909,7 @@ subpath = "plugins/foo"
         let config: Config = toml::from_str(toml_str).unwrap();
         let (effective, _) = merge_with_root(
             config,
-            crate::config::LocalConfig::default(),
+            &crate::config::LocalLayers::default(),
             std::path::Path::new("."),
         )
         .unwrap();

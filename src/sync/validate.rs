@@ -165,7 +165,7 @@ pub(crate) fn warn_config_dangles_after_rename(
         .config
         .agents
         .keys()
-        .chain(loaded.project_local.agents.keys())
+        .chain(loaded.layers.project.config.agents.keys())
         .collect();
     for name in agent_overlay_names {
         check(name, ItemKind::Agent, "[agents.<name>] overlay", diag);
@@ -174,7 +174,7 @@ pub(crate) fn warn_config_dangles_after_rename(
         .config
         .skills
         .keys()
-        .chain(loaded.project_local.skills.keys())
+        .chain(loaded.layers.project.config.skills.keys())
         .collect();
     for name in skill_overlay_names {
         check(name, ItemKind::Skill, "[skills.<name>] overlay", diag);

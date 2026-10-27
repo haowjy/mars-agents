@@ -3,7 +3,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use indexmap::IndexMap;
 
-use crate::config::{Config, EffectiveConfig, LocalConfig};
+use crate::config::EffectiveConfig;
 use crate::diagnostic::DiagnosticCollector;
 use crate::resolve::ResolvedGraph;
 use crate::types::SourceName;
@@ -117,13 +117,10 @@ pub(crate) fn declaration_ordered_dep_models(
 pub(crate) fn merged_model_aliases(
     graph: &ResolvedGraph,
     effective: &EffectiveConfig,
-    config: &Config,
-    local: &LocalConfig,
     diag: &mut DiagnosticCollector,
 ) -> IndexMap<String, ModelAlias> {
-    let consumer_models = crate::config::merged_models(&config.models, local);
     let dep_models = declaration_ordered_dep_models(graph, effective);
-    super::merge_model_config(&consumer_models, &dep_models, diag, None)
+    super::merge_model_config(&effective.models, &dep_models, diag, None)
 }
 
 #[cfg(test)]
@@ -232,6 +229,8 @@ mod tests {
         EffectiveConfig {
             dependencies,
             settings: Settings::default(),
+            models: indexmap::IndexMap::new(),
+            agents: indexmap::IndexMap::new(),
             skills: indexmap::IndexMap::new(),
         }
     }

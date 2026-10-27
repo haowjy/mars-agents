@@ -25,7 +25,7 @@ pipeline operates on EffectiveConfig only
 | `EffectiveDependency` | Resolved source with override tracking (`is_overridden`, `original_git`), plus `dialect: Option<Dialect>` for inbound lift dialect |
 | `SkillOverlay` | `[skills.<name>]` overlay — `description`, `model_invocable`, and `user_invocable` |
 | `AgentOverlay` | `[agents.<name>]` overlay — launch scalars, `network-allow` / `network-deny`, invocability, tools, and model policies |
-| `UserConfig` (`user.rs`) | The user `config.toml`, parsed as a `LocalConfig`; `[overrides]` is rejected. Sits beneath `mars.toml` via `project_over_user` |
+| `UserConfig` (`user.rs`) | The user `config.toml`, parsed as a `LocalConfig`; `[overrides]` is rejected. Sits beneath `mars.toml` through `compose_layers`; `managed_root`, `targets` and `min_mars_version` are removed at load and named in `ignored_settings` |
 | `mars_schema::network::{NetworkPolicy, NetworkHost}` | The typed parsers behind every mode and host surface: profile, overlay, settings, user config and CLI |
 
 `load()` parses `plugin` and the plugin-only `[package]` fields `authors`, `homepage`, and
@@ -50,12 +50,16 @@ list from the raw project/local config; empty lists and replacement tables are s
 
 ## Layering (`layering.rs`)
 
-- `project_over_user(config, user)` is the bottom layer: a read-only `Config` view with the user's
-  models, agents, skills and settings beneath `mars.toml`. Never save it. Warnings are built from
-  the pristine files so each names its own file (`UserConfig.path` for the user file).
-  `merge_with_root` and `effective_project_config` apply it; readers of `config.agents` /
-  `config.models` (compiler, link, `LoadedConfig::base`) compose from the view.
-- `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
+- `compose_layers(config, local, user)` is the one composition of the three files, called by
+  `merge_with_root` and `effective_project_config`. `EffectiveConfig` carries the composed
+  `settings`, `models`, `agents` and `skills`; readers take those and never recompose from
+  `Config` + `LocalConfig`. Never save them. Warnings are built from the pristine files so each
+  names its own file (`UserConfig.path` for the user file).
+- Settings fold user → project → local over `Settings::default()` with `overlay_settings`, each
+  layer as a presence-preserving `LocalSettings` (`From<&Settings>` for the project). So
+  `Settings.models_cache_ttl_hours` and `model_policies` are `Option`: read them through
+  `models_cache_ttl_hours()` / `model_policies()`. A new settings field must be added to
+  `overlay_settings` and the `From` conversion; the compiler flags the latter.
 - Network host permission sets compose across user, project, and local settings; other settings
   lists retain replacement semantics.
 - Model aliases are **replace-by-key**. Agent and skill overlays also replace the whole keyed

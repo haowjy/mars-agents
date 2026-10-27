@@ -68,6 +68,8 @@ fn excluded_skill_not_reintroduced_from_frontmatter_reference() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
 

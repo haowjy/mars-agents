@@ -28,10 +28,8 @@ mod user;
 
 pub use user::UserConfig;
 
-pub use layering::{
-    merged_settings, overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays,
-    project_over_user,
-};
+use layering::{ComposedLayers, compose_layers};
+pub use layering::{overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays};
 
 /// Top-level mars.toml configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -419,7 +417,7 @@ pub struct OverrideEntry {
 }
 
 /// Global settings — extensible via additional fields.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     /// Custom managed output directory (e.g. ".claude").
     ///
@@ -434,8 +432,9 @@ pub struct Settings {
     /// are enabled by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
-    #[serde(default = "default_models_cache_ttl_hours")]
-    pub models_cache_ttl_hours: u32,
+    /// Unset means `DEFAULT_MODELS_CACHE_TTL_HOURS`; read it through `models_cache_ttl_hours()`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models_cache_ttl_hours: Option<u32>,
     /// Minimum mars binary version required to use this project.
     /// Old binary + new package with this set → compatibility error.
     /// New binary + old package without this set → succeeds with defaults.
@@ -501,9 +500,9 @@ pub struct Settings {
     #[serde(
         default,
         rename = "model-policies",
-        skip_serializing_if = "Vec::is_empty"
+        skip_serializing_if = "Option::is_none"
     )]
-    pub model_policies: Vec<ModelPolicyRule>,
+    pub model_policies: Option<Vec<ModelPolicyRule>>,
     #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
@@ -557,34 +556,18 @@ pub enum AgentEmission {
     Never,
 }
 
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            managed_root: None,
-            targets: None,
-            models_cache_ttl_hours: default_models_cache_ttl_hours(),
-            min_mars_version: None,
-            default_harness: None,
-            default_model: None,
-            default_network: None,
-            network_allow: PermissionSet::default(),
-            network_deny: PermissionSet::default(),
-            harness_order: None,
-            provider_order: None,
-            catalog_providers: None,
-            agent_emission: None,
-            meridian: MeridianSettings::default(),
-            model_policies: Vec::new(),
-            unknown: BTreeMap::new(),
-        }
-    }
-}
-
-fn default_models_cache_ttl_hours() -> u32 {
-    24
-}
+const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
 
 impl Settings {
+    pub fn models_cache_ttl_hours(&self) -> u32 {
+        self.models_cache_ttl_hours
+            .unwrap_or(DEFAULT_MODELS_CACHE_TTL_HOURS)
+    }
+
+    pub fn model_policies(&self) -> &[ModelPolicyRule] {
+        self.model_policies.as_deref().unwrap_or_default()
+    }
+
     pub fn effective_links(&self) -> targets::EffectiveLinks {
         targets::effective_links(self.targets.as_deref(), self.managed_root.as_ref())
     }
@@ -675,7 +658,11 @@ pub enum FilterMode {
 pub struct EffectiveConfig {
     pub dependencies: IndexMap<SourceName, EffectiveDependency>,
     pub settings: Settings,
-    /// Skill overlays from mars.toml / mars.local.toml (carried for staging).
+    /// Model aliases from the user config, mars.toml and mars.local.toml, composed once.
+    pub models: IndexMap<String, crate::models::ModelAlias>,
+    /// Agent overlays from the user config, mars.toml and mars.local.toml, composed once.
+    pub agents: IndexMap<String, AgentOverlay>,
+    /// Skill overlays from the user config, mars.toml and mars.local.toml (carried for staging).
     pub skills: IndexMap<String, SkillOverlay>,
 }
 
@@ -785,7 +772,7 @@ fn visibility_migration(legacy: &toml::Value) -> String {
     }
 }
 
-fn read_error(path: &Path, source: std::io::Error) -> MarsError {
+pub(super) fn read_error(path: &Path, source: std::io::Error) -> MarsError {
     MarsError::Io {
         operation: "read config".to_string(),
         path: path.to_path_buf(),
@@ -913,22 +900,6 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     }
 }
 
-/// Apply mars.local.toml model overlays as replace-by-key entries.
-pub fn merged_models(
-    base: &IndexMap<String, crate::models::ModelAlias>,
-    local: &LocalConfig,
-) -> IndexMap<String, crate::models::ModelAlias> {
-    overlay_models_replace_by_key(base, &local.models)
-}
-
-/// Replace project/local agent overlay entries while composing their permission sets.
-pub fn merged_agent_overlays(
-    base: &IndexMap<String, AgentOverlay>,
-    local: &LocalConfig,
-) -> IndexMap<String, AgentOverlay> {
-    overlay_agent_overlays(base, &local.agents)
-}
-
 /// Base model precedence for the overlay+profile layer shared by native emission
 /// and launch-bundle: `overlay.model` wins over `profile.model`. Settings-level
 /// defaults (e.g. `settings.default_model`) are layered on by launch-bundle only.
@@ -981,8 +952,13 @@ fn effective_project_config(
     user: &UserConfig,
     root: &Path,
 ) -> EffectiveProjectConfig {
-    let base = project_over_user(config, &user.local);
-    let (settings, mut target_source) = local.settings.overlay_settings(&base.settings);
+    let ComposedLayers {
+        settings,
+        mut target_source,
+        models,
+        agents,
+        ..
+    } = compose_layers(config, local, &user.local);
     target_source.path = match target_source.origin {
         targets::TargetOrigin::Project => Some(root.join("mars.toml")),
         targets::TargetOrigin::Local => Some(root.join("mars.local.toml")),
@@ -991,8 +967,8 @@ fn effective_project_config(
     EffectiveProjectConfig {
         settings,
         target_source,
-        models: overlay_models_replace_by_key(&base.models, &local.models),
-        agents: overlay_agent_overlays(&base.agents, &local.agents),
+        models,
+        agents,
         warnings: project_config_warnings(config, local, user)
             .into_iter()
             .map(|warning| warning.message)
@@ -1117,6 +1093,14 @@ fn project_config_warnings(
 ) -> Vec<ProjectConfigWarning> {
     let mut warnings = Vec::new();
     let user_file = user.path.display().to_string();
+    for key in &user.ignored_settings {
+        warnings.push(ProjectConfigWarning {
+            code: "ignored-user-setting",
+            message: format!(
+                "{user_file} [settings] `{key}` is per project and ignored in the user config; put it in the project's mars.toml"
+            ),
+        });
+    }
     for (file, agents, skills, settings) in [
         (
             user_file.as_str(),
@@ -1281,8 +1265,8 @@ pub fn merge_with_root(
     user: &UserConfig,
     root: &Path,
 ) -> Result<(EffectiveConfig, Vec<Diagnostic>), MarsError> {
-    let base = project_over_user(&config, &user.local);
-    let merged_settings = merged_settings(&base.settings, &local);
+    let layers = compose_layers(&config, &local, &user.local);
+    let merged_settings = layers.settings;
     let mut dependencies = IndexMap::new();
     let mut diagnostics = project_config_warnings(&config, &local, user)
         .into_iter()
@@ -1389,13 +1373,13 @@ pub fn merge_with_root(
         );
     }
 
-    let skills = overlay_skill_overlays(&base.skills, &local.skills);
-
     Ok((
         EffectiveConfig {
             dependencies,
             settings: merged_settings,
-            skills,
+            models: layers.models,
+            agents: layers.agents,
+            skills: layers.skills,
         },
         diagnostics,
     ))
@@ -2226,12 +2210,12 @@ override = { effort = "high" }
         assert_eq!(overlay_policies[0].match_value, "gpt55");
         assert!(overlay_policies[0].no_fallback);
 
-        assert_eq!(config.settings.model_policies.len(), 1);
+        assert_eq!(config.settings.model_policies().len(), 1);
         assert_eq!(
-            config.settings.model_policies[0].match_type,
+            config.settings.model_policies()[0].match_type,
             ModelPolicyMatchType::ModelGlob
         );
-        assert_eq!(config.settings.model_policies[0].match_value, "gpt-*");
+        assert_eq!(config.settings.model_policies()[0].match_value, "gpt-*");
     }
 
     #[test]
@@ -2294,7 +2278,7 @@ override = { effort = "high" }
             ..LocalConfig::default()
         };
 
-        let merged = merged_agent_overlays(&base_agents, &local);
+        let merged = overlay_agent_overlays(&base_agents, &local.agents);
         let replaced = merged.get("worker").expect("worker overlay");
         assert_eq!(replaced.description.as_deref(), Some("Local description"));
         assert_eq!(replaced.user_invocable, Some(false));
@@ -2361,7 +2345,7 @@ override = { effort = "high" }
             ..LocalConfig::default()
         };
 
-        let merged = merged_agent_overlays(&base_agents, &local);
+        let merged = overlay_agent_overlays(&base_agents, &local.agents);
         let replaced = merged.get("tech-lead").expect("tech-lead should exist");
         assert_eq!(replaced.description, None);
         assert_eq!(replaced.model.as_deref(), Some("gptmini"));
@@ -2401,7 +2385,7 @@ override = { effort = "high" }
 
         local.agents.get_mut("tech-lead").unwrap().model_policies = Some(Vec::new());
         assert!(
-            merged_agent_overlays(&base_agents, &local)["tech-lead"]
+            overlay_agent_overlays(&base_agents, &local.agents)["tech-lead"]
                 .model_policies
                 .as_ref()
                 .unwrap()
@@ -2440,7 +2424,7 @@ override = { effort = "high" }
             ..LocalConfig::default()
         };
 
-        let merged = merged_settings(&settings, &local);
+        let merged = local.settings.overlay_settings(&settings).0;
         assert_eq!(merged.default_harness.as_deref(), Some("cursor"));
         assert_eq!(merged.default_model.as_deref(), Some("gpt-5"));
         assert_eq!(merged.default_network, Some(NetworkPolicy::Allowlist));
@@ -2485,7 +2469,7 @@ override = { effort = "high" }
             ..LocalConfig::default()
         };
 
-        let merged = merged_settings(&settings, &local);
+        let merged = local.settings.overlay_settings(&settings).0;
         assert_eq!(
             merged.catalog_providers,
             Some(vec!["xai".to_string(), "openrouter".to_string()])
@@ -2510,9 +2494,9 @@ override = { effort = "high" }
         };
         let settings = Settings {
             targets: Some(vec![".claude".to_string(), ".codex".to_string()]),
-            models_cache_ttl_hours: 24,
+            models_cache_ttl_hours: Some(24),
             min_mars_version: Some("0.1.0".to_string()),
-            model_policies: vec![base_rule],
+            model_policies: Some(vec![base_rule]),
             ..Settings::default()
         };
         let local = LocalConfig {
@@ -2526,11 +2510,11 @@ override = { effort = "high" }
             ..LocalConfig::default()
         };
 
-        let merged = merged_settings(&settings, &local);
+        let merged = local.settings.overlay_settings(&settings).0;
         assert_eq!(merged.targets, Some(vec![".cursor".to_string()]));
-        assert_eq!(merged.models_cache_ttl_hours, 48);
+        assert_eq!(merged.models_cache_ttl_hours, Some(48));
         assert_eq!(merged.min_mars_version.as_deref(), Some("0.2.0"));
-        assert_eq!(merged.model_policies, vec![local_rule]);
+        assert_eq!(merged.model_policies, Some(vec![local_rule]));
     }
 
     #[test]
@@ -2605,7 +2589,7 @@ override = { effort = "high" }
             ..LocalConfig::default()
         };
 
-        let merged = merged_models(&base, &local);
+        let merged = overlay_models_replace_by_key(&base, &local.models);
         assert_eq!(merged.len(), 3);
         assert_eq!(merged["fast"].harness.as_deref(), Some("cursor"));
         assert_eq!(
@@ -3479,7 +3463,7 @@ models_cache_ttl_hours = 48
             ),
         ] {
             let config: Config = toml::from_str(toml).unwrap();
-            assert_eq!(config.settings.models_cache_ttl_hours, expected, "{toml}");
+            assert_eq!(config.settings.models_cache_ttl_hours(), expected, "{toml}");
         }
     }
 
@@ -3487,7 +3471,7 @@ models_cache_ttl_hours = 48
     fn settings_models_cache_ttl_roundtrip_preserves_value() {
         let original = Config {
             settings: Settings {
-                models_cache_ttl_hours: 48,
+                models_cache_ttl_hours: Some(48),
                 ..Settings::default()
             },
             ..Config::default()
@@ -3819,6 +3803,7 @@ skills = ["prompt-helper"]
         let user = UserConfig {
             path: PathBuf::from("config.toml"),
             local: parse(agent("user")),
+            ignored_settings: Vec::new(),
         };
         let project: Config = toml::from_str(&agent("project")).unwrap();
         let local = parse(agent("local"));

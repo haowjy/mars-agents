@@ -1297,13 +1297,7 @@ fn emit_all_merged_local_overlay_wins_for_description() {
             ..Default::default()
         },
     );
-    let merged = crate::config::merged_agent_overlays(
-        &base_agents,
-        &crate::config::LocalConfig {
-            agents: local_agents,
-            ..Default::default()
-        },
-    );
+    let merged = crate::config::overlay_agent_overlays(&base_agents, &local_agents);
 
     let records = compile_emit_all_with_overlays(
         dir.path(),

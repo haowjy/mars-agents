@@ -138,7 +138,6 @@ pub enum ResolutionMode {
 pub(crate) struct LoadedConfig {
     pub config: Config,
     pub local: LocalConfig,
-    pub user: crate::config::UserConfig,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
@@ -150,11 +149,6 @@ pub(crate) struct LoadedConfig {
 }
 
 impl LoadedConfig {
-    /// `mars.toml` over the user config, for read-only composition; saves use `config`.
-    pub(crate) fn base(&self) -> Config {
-        crate::config::project_over_user(&self.config, &self.user.local)
-    }
-
     /// Whether a canonical destination is Mars-owned: claimed by `mars.lock` or provided.
     pub(crate) fn ownership(&self) -> ownership::Ownership<'_> {
         ownership::Ownership::new(&self.old_lock, &self.provided)
@@ -466,7 +460,6 @@ pub(crate) fn load_config(
     Ok(LoadedConfig {
         config,
         local,
-        user,
         effective,
         old_lock,
         provided,
@@ -547,13 +540,7 @@ pub(crate) fn resolve_graph(
     }
 
     // Merge model config from dependency tree (for diagnostics side effects).
-    let _ = crate::models::merged_model_aliases(
-        &graph,
-        &loaded.effective,
-        &loaded.base(),
-        &loaded.local,
-        diag,
-    );
+    let _ = crate::models::merged_model_aliases(&graph, &loaded.effective, diag);
 
     Ok(ResolvedState {
         loaded,
@@ -1067,7 +1054,7 @@ pub(crate) fn finalize(
             .loaded
             .effective
             .settings;
-        let ttl = settings.models_cache_ttl_hours;
+        let ttl = settings.models_cache_ttl_hours();
         let providers = settings
             .catalog_providers
             .clone()

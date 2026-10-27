@@ -200,7 +200,7 @@ pub fn resolve_policy(
     let overlay = input
         .agent
         .and_then(|name| effective_config.agents.get(name));
-    let settings_model_policies = &effective_config.settings.model_policies;
+    let settings_model_policies = effective_config.settings.model_policies();
     let harness_scope = effective_config.settings.effective_links().harness_scope();
     let default_harness_order = crate::harness::registry::default_harness_order_names();
     let harness_order = effective_config
@@ -209,7 +209,7 @@ pub fn resolve_policy(
         .as_deref()
         .unwrap_or(default_harness_order.as_slice());
     let mars_dir = input.project_root.join(".mars");
-    let ttl_hours = effective_config.settings.models_cache_ttl_hours;
+    let ttl_hours = effective_config.settings.models_cache_ttl_hours();
     let providers = effective_config
         .settings
         .catalog_providers

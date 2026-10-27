@@ -161,13 +161,7 @@ pub(crate) fn warn_config_dangles_after_rename(
             diag,
         );
     }
-    let agent_overlay_names: HashSet<&String> = loaded
-        .config
-        .agents
-        .keys()
-        .chain(loaded.local.agents.keys())
-        .collect();
-    for name in agent_overlay_names {
+    for name in loaded.effective.agents.keys() {
         check(name, ItemKind::Agent, "[agents.<name>] overlay", diag);
     }
     for name in loaded.effective.skills.keys() {

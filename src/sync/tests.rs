@@ -142,6 +142,8 @@ fn make_graph_config(
         EffectiveConfig {
             dependencies: config_dependencies,
             settings: Settings::default(),
+            models: indexmap::IndexMap::new(),
+            agents: indexmap::IndexMap::new(),
             skills: indexmap::IndexMap::new(),
         },
     )
@@ -215,7 +217,6 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
-            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -278,7 +279,6 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
-            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -338,15 +338,14 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
     let mut fixture = TestFixture::new();
     let source_a = fixture.add_source(&[("coder.md", "---\nname: coder\n---\n# A\n")], &[]);
     let source_b = fixture.add_source(&[("coder.md", "---\nname: coder\n---\n# B\n")], &[]);
-    let (graph, effective) = make_graph_config(
+    let (graph, mut effective) = make_graph_config(
         &fixture,
         vec![
             ("source-a", source_a, FilterMode::All),
             ("source-b", source_b, FilterMode::All),
         ],
     );
-    let mut config = Config::default();
-    config.agents.insert(
+    effective.agents.insert(
         "coder".into(),
         crate::config::AgentOverlay {
             model: Some("gpt55".into()),
@@ -358,9 +357,8 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
         crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
     let resolved = ResolvedState {
         loaded: LoadedConfig {
-            config,
+            config: Config::default(),
             local: LocalConfig::default(),
-            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -423,7 +421,6 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
-            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -488,7 +485,6 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
-            user: crate::config::UserConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -943,6 +939,8 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
             },
         )]),
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
 

@@ -288,7 +288,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         crate::build::policy::profile_for_model(
             profile,
             overlay,
-            &self.settings.model_policies,
+            self.settings.model_policies(),
             resolved
                 .as_ref()
                 .map(|(token, resolved)| crate::build::policy::ModelRef {
@@ -1065,8 +1065,6 @@ pub(crate) fn merged_model_aliases_for_native_agents(
     crate::models::merged_model_aliases(
         &resolved.graph,
         &resolved.loaded.effective,
-        &resolved.loaded.base(),
-        &resolved.loaded.local,
         &mut local_diag,
     )
 }
@@ -1109,8 +1107,6 @@ fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
 pub(crate) struct NativeAgentLinkMaterializeCtx<'a> {
     pub mars_ctx: &'a crate::types::MarsContext,
     pub managed_targets: &'a [String],
-    pub config: &'a crate::config::Config,
-    pub local: &'a crate::config::LocalConfig,
     pub effective: &'a crate::config::EffectiveConfig,
     pub graph: &'a crate::resolve::ResolvedGraph,
     pub old_lock: &'a crate::lock::LockFile,
@@ -1221,21 +1217,12 @@ pub(crate) fn materialize_native_agents_after_link(
             models: Vec::new(),
             fetched_at: None,
         });
-    let model_aliases = crate::models::merged_model_aliases(
-        input.graph,
-        input.effective,
-        input.config,
-        input.local,
-        diag,
-    );
+    let model_aliases = crate::models::merged_model_aliases(input.graph, input.effective, diag);
     let routing_settings = ResolvedRoutingSettings::from_settings(&input.effective.settings);
     let mut model_router = (!matches!(policy, AgentSurfacePolicy::SuppressAll)).then(|| {
         NativeModelRoutingRuntime::collect(&model_aliases, &models_cache, routing_settings)
             .with_settings(input.effective.settings.clone())
     });
-    // Per-agent overlays merged from mars.toml + mars.local.toml (link path lacks the
-    // project-level effective.agents map the sync path carries).
-    let agent_overlays = crate::config::merged_agent_overlays(&input.config.agents, input.local);
     let harness_scope = Some(link_harness_scope.as_slice());
     let configured_emit_harnesses: Vec<_> = input
         .managed_targets
@@ -1272,7 +1259,7 @@ pub(crate) fn materialize_native_agents_after_link(
         &reconcile_ctx,
         &policy,
         &mars_agent_scan,
-        &agent_overlays,
+        &input.effective.agents,
         compile_ctx.as_ref(),
         model_router.as_mut(),
         diag,

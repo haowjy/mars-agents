@@ -51,7 +51,7 @@ When more than one place sets one of these lists, Mars combines them. The places
 to highest:
 
 - Network hosts: user config < `mars.toml` `[settings]` < `mars.local.toml` `[settings]` < agent profile < `[agents.<name>]` overlay < CLI flags
-- Tools: agent profile `tools` < `[agents.<name>.tools]` in `mars.toml` < `[agents.<name>.tools]` in `mars.local.toml`
+- Tools: agent profile `tools` < `[agents.<name>.tools]` in the user config < `[agents.<name>.tools]` in `mars.toml` < `[agents.<name>.tools]` in `mars.local.toml`
 
 A plain list **adds** its entries to what lower places gave:
 
@@ -429,9 +429,10 @@ model = "opus"
   diagnostic.
 - `[overrides]` is an error here: it would send every project to a local checkout. Put it in the
   project's `mars.local.toml`.
-- `[settings].managed_root` and `targets` never apply from this file: link targets are per
-  project. `models_cache_ttl_hours` has no unset state, so the user value applies only while the
-  project's is the default.
+- `[settings].managed_root`, `targets` and `min_mars_version` describe one project, so they never
+  apply from this file. A sync warns and names the file when it holds one. Every other setting
+  applies, and a value the project sets explicitly always beats the user's, including
+  `models_cache_ttl_hours = 24` and `model-policies = []`.
 - Warnings and errors from the file name it by path.
 - Commands read it wherever they read the project's config. `mars build plugin` and
   `mars check` read only `mars.toml`. Outside a Mars project, a command fails to find the

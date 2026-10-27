@@ -4,7 +4,6 @@ use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
 use super::{
     AgentOverlay, AgentOverlayTools, Config, LocalConfig, LocalSettings, Settings, SkillOverlay,
-    default_models_cache_ttl_hours,
 };
 use mars_schema::permission_set::{PermissionSet, compose_permission_sets};
 
@@ -93,58 +92,90 @@ fn compose_optional_permission_sets<T: Clone + Eq>(
     }
 }
 
-/// `mars.toml` laid over the user's `config.toml`: the bottom of the layering.
-///
-/// A read-only view for composing what applies; never save it, or the user's entries land in
-/// `mars.toml`.
-pub fn project_over_user(config: &Config, user: &LocalConfig) -> Config {
-    let mut base = config.clone();
-    base.models = overlay_models_replace_by_key(&user.models, &config.models);
-    base.agents = overlay_agent_overlays(&user.agents, &config.agents);
-    base.skills = overlay_skill_overlays(&user.skills, &config.skills);
-    base.settings = settings_over_user(&config.settings, &user.settings);
-    base
+/// Everything the three config files contribute, composed bottom to top:
+/// user `config.toml` < `mars.toml` < `mars.local.toml`.
+pub(super) struct ComposedLayers {
+    pub settings: Settings,
+    pub target_source: TargetSource,
+    pub models: IndexMap<String, crate::models::ModelAlias>,
+    pub agents: IndexMap<String, AgentOverlay>,
+    pub skills: IndexMap<String, SkillOverlay>,
 }
 
-/// A project value wins over the user's. `models_cache_ttl_hours` has no unset state, so the
-/// user's value applies only while the project's is the default. Link targets are per project,
-/// so the user's `managed_root` and `targets` never apply.
-fn settings_over_user(project: &Settings, user: &LocalSettings) -> Settings {
-    let mut merged = project.clone();
-    if project.models_cache_ttl_hours == default_models_cache_ttl_hours()
-        && let Some(hours) = user.models_cache_ttl_hours
-    {
-        merged.models_cache_ttl_hours = hours;
+pub(super) fn compose_layers(
+    config: &Config,
+    local: &LocalConfig,
+    user: &LocalConfig,
+) -> ComposedLayers {
+    let (settings, target_source) = [
+        &user.settings,
+        &LocalSettings::from(&config.settings),
+        &local.settings,
+    ]
+    .into_iter()
+    .fold(
+        (Settings::default(), TargetSource::default()),
+        |(settings, _), layer| layer.overlay_settings(&settings),
+    );
+    // The fold's target source is only right for its last step, which sees the project's targets as the base.
+    ComposedLayers {
+        settings,
+        target_source,
+        models: overlay_models_replace_by_key(
+            &overlay_models_replace_by_key(&user.models, &config.models),
+            &local.models,
+        ),
+        agents: overlay_agent_overlays(
+            &overlay_agent_overlays(&user.agents, &config.agents),
+            &local.agents,
+        ),
+        skills: overlay_skill_overlays(
+            &overlay_skill_overlays(&user.skills, &config.skills),
+            &local.skills,
+        ),
     }
-    fn first<T: Clone>(project: &Option<T>, user: &Option<T>) -> Option<T> {
-        project.clone().or_else(|| user.clone())
-    }
-    merged.min_mars_version = first(&project.min_mars_version, &user.min_mars_version);
-    merged.default_harness = first(&project.default_harness, &user.default_harness);
-    merged.default_model = first(&project.default_model, &user.default_model);
-    merged.default_network = first(&project.default_network, &user.default_network);
-    merged.harness_order = first(&project.harness_order, &user.harness_order);
-    merged.provider_order = first(&project.provider_order, &user.provider_order);
-    merged.catalog_providers = first(&project.catalog_providers, &user.catalog_providers);
-    merged.agent_emission = first(&project.agent_emission, &user.agent_emission);
-    merged.meridian.agent_copy = first(&project.meridian.agent_copy, &user.meridian.agent_copy);
-    merged.meridian.fanout = first(&project.meridian.fanout, &user.meridian.fanout);
-    if let Some(user_allow) = &user.network_allow {
-        merged.network_allow = compose_permission_sets(user_allow, &project.network_allow);
-    }
-    if let Some(user_deny) = &user.network_deny {
-        merged.network_deny = compose_permission_sets(user_deny, &project.network_deny);
-    }
-    if project.model_policies.is_empty()
-        && let Some(policies) = &user.model_policies
-    {
-        merged.model_policies = policies.clone();
-    }
-    merged
 }
 
-pub fn merged_settings(settings: &Settings, local: &LocalConfig) -> Settings {
-    local.settings.overlay_settings(settings).0
+impl From<&Settings> for LocalSettings {
+    /// A project's `[settings]` as a layer: every field it sets, no more.
+    fn from(project: &Settings) -> Self {
+        let Settings {
+            managed_root,
+            targets,
+            models_cache_ttl_hours,
+            min_mars_version,
+            default_harness,
+            default_model,
+            default_network,
+            network_allow,
+            network_deny,
+            harness_order,
+            provider_order,
+            catalog_providers,
+            agent_emission,
+            meridian,
+            model_policies,
+            unknown,
+        } = project.clone();
+        LocalSettings {
+            managed_root,
+            targets,
+            models_cache_ttl_hours,
+            min_mars_version,
+            default_harness,
+            default_model,
+            default_network,
+            network_allow: Some(network_allow),
+            network_deny: Some(network_deny),
+            harness_order,
+            provider_order,
+            catalog_providers,
+            agent_emission,
+            meridian,
+            model_policies,
+            unknown,
+        }
+    }
 }
 
 impl LocalSettings {
@@ -193,7 +224,7 @@ impl LocalSettings {
             target_source.origin = TargetOrigin::Local;
         }
         if let Some(value) = self.models_cache_ttl_hours {
-            merged.models_cache_ttl_hours = value;
+            merged.models_cache_ttl_hours = Some(value);
         }
         if let Some(value) = &self.min_mars_version {
             merged.min_mars_version = Some(value.clone());
@@ -232,7 +263,7 @@ impl LocalSettings {
             merged.meridian.fanout = Some(value.clone());
         }
         if let Some(value) = &self.model_policies {
-            merged.model_policies = value.clone();
+            merged.model_policies = Some(value.clone());
         }
 
         (merged, target_source)

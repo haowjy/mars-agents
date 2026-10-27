@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-10-27
+
 ### Added
 - `${MARS_MCP_DIR}` in an MCP server's `command` or `args` names its own `mcp/<name>/` files.
   `mars sync` installs that directory beside each target that writes MCP and substitutes the

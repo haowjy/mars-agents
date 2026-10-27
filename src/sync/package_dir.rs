@@ -87,7 +87,9 @@ impl PackageDir {
         self.kind
     }
 
-    /// The target this copy belongs to, as the constructing caller named it.
+    /// The target this copy belongs to. A selection record builds it from the
+    /// managed target root, so it is the target directory name (`.claude`); a
+    /// copy parsed from a `.mars` path carries the canonical form.
     pub(crate) fn target(&self) -> &str {
         &self.target
     }

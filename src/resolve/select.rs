@@ -94,7 +94,7 @@ fn consumer_requests(config: &crate::config::EffectiveConfig) -> Vec<Request> {
         .collect()
 }
 
-fn package_view(prepared: &Prepared, extra_items: Vec<Item>) -> PackageView<'_> {
+fn package_view(prepared: &Prepared, extra_items: Vec<Item>) -> PackageView {
     let mut view = PackageView::from_prepared(prepared, extra_items);
     for edge in &mut view.edges {
         edge.filter = portable_filter(&edge.filter);

@@ -150,7 +150,11 @@ impl LocalLayers {
             LinkSource::ManagedRoot => self.project.config.settings.managed_root.is_some(),
             LinkSource::None => false,
         };
-        if in_project { &self.project } else { &self.user }
+        if in_project {
+            &self.project
+        } else {
+            &self.user
+        }
     }
 }
 

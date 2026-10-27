@@ -53,12 +53,11 @@ impl PublishLens {
         if let Some(manifest) = &mut manifest {
             manifest.local_dependencies.clear();
         }
-        let (effective, diagnostics) =
-            crate::config::merge_with_root(
-                config,
-                &crate::config::LocalLayers::default(),
-                package_root,
-            )?;
+        let (effective, diagnostics) = crate::config::merge_with_root(
+            config,
+            &crate::config::LocalLayers::default(),
+            package_root,
+        )?;
         if let Some(error) = diagnostics
             .into_iter()
             .find(|diagnostic| diagnostic.level == crate::diagnostic::DiagnosticLevel::Error)

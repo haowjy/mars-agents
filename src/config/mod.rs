@@ -1925,7 +1925,12 @@ skills = ["review"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
         let source = &effective.dependencies["base"];
         match &source.filter {
             FilterMode::Include { agents, skills } => {
@@ -1945,7 +1950,12 @@ exclude = ["experimental", "deprecated"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
         let source = &effective.dependencies["base"];
         match &source.filter {
             FilterMode::Exclude(items) => {
@@ -1965,7 +1975,11 @@ exclude = ["reviewer"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1982,7 +1996,11 @@ version = "v1.0"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -2000,7 +2018,11 @@ path = "/local/path"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("both"), "error should mention 'both': {err}");
@@ -2905,7 +2927,12 @@ future_key = "allowed"
             ..Config::default()
         };
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
         assert_eq!(effective.dependencies.len(), 1);
         let source = &effective.dependencies["base"];
         match &source.spec {
@@ -2953,7 +2980,12 @@ future_key = "allowed"
             },
             ..LocalConfig::default()
         };
-        let (effective, _) = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
         let source = &effective.dependencies["base"];
         match &source.spec {
             SourceSpec::Path(p) => assert_eq!(p, &PathBuf::from("/home/dev/local-base")),
@@ -3005,7 +3037,12 @@ future_key = "allowed"
             ..LocalConfig::default()
         };
 
-        let (effective, _) = merge_with_root(config, &LocalLayers::project_only(local, &temp_root), &temp_root).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, &temp_root),
+            &temp_root,
+        )
+        .unwrap();
         let source = &effective.dependencies["base"];
         assert_eq!(
             source.subpath.as_ref().map(SourceSubpath::as_str),
@@ -3045,8 +3082,12 @@ future_key = "allowed"
             settings: Settings::default(),
             ..Config::default()
         };
-        let (effective, _) =
-            merge_with_root(config, &LocalLayers::project_only(LocalConfig::default(), Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(LocalConfig::default(), Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
         assert!(matches!(
             effective.dependencies["base"].filter,
             FilterMode::All
@@ -3063,8 +3104,12 @@ url = "https://github.com/org/base.git"
 old-name = "new-name"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        let (effective, _) =
-            merge_with_root(config, &LocalLayers::project_only(LocalConfig::default(), Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(LocalConfig::default(), Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
         let source = &effective.dependencies["base"];
         assert_eq!(source.rename.get("old-name").unwrap(), "new-name");
     }
@@ -3077,7 +3122,11 @@ url = "https://github.com/org/base.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3203,7 +3252,12 @@ only_skills = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
         let source = &effective.dependencies["base"];
         assert!(matches!(source.filter, FilterMode::OnlySkills));
     }
@@ -3217,7 +3271,12 @@ only_agents = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
         let source = &effective.dependencies["base"];
         assert!(matches!(source.filter, FilterMode::OnlyAgents));
     }
@@ -3232,7 +3291,11 @@ only_agents = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3251,7 +3314,11 @@ agents = ["coder"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3270,7 +3337,11 @@ skills = ["planning"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
     }
 
@@ -3284,7 +3355,11 @@ exclude = ["deprecated"]
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
     }
 
@@ -3473,8 +3548,12 @@ only_skills = true
             ..Config::default()
         };
 
-        let (_, diagnostics) =
-            merge_with_root(config, &LocalLayers::project_only(LocalConfig::default(), Path::new(".")), Path::new(".")).unwrap();
+        let (_, diagnostics) = merge_with_root(
+            config,
+            &LocalLayers::project_only(LocalConfig::default(), Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
 
         assert!(diagnostics.iter().any(|diag| {
             diag.code == "deprecated-agents-target"
@@ -3492,8 +3571,12 @@ only_skills = true
             ..Config::default()
         };
 
-        let (_, diagnostics) =
-            merge_with_root(config, &LocalLayers::project_only(LocalConfig::default(), Path::new(".")), Path::new(".")).unwrap();
+        let (_, diagnostics) = merge_with_root(
+            config,
+            &LocalLayers::project_only(LocalConfig::default(), Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
 
         assert!(diagnostics.iter().any(|diag| {
             diag.code == "deprecated-agents-target"
@@ -3715,7 +3798,12 @@ url = "https://github.com/org/prompter.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let (effective, _) = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new(".")).unwrap();
+        let (effective, _) = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        )
+        .unwrap();
 
         // Both deps should be in effective config
         assert_eq!(effective.dependencies.len(), 2);
@@ -3764,7 +3852,11 @@ url = "https://github.com/org/base-local.git"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let local = LocalConfig::default();
-        let result = merge_with_root(config, &LocalLayers::project_only(local, Path::new(".")), Path::new("."));
+        let result = merge_with_root(
+            config,
+            &LocalLayers::project_only(local, Path::new(".")),
+            Path::new("."),
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(

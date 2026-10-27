@@ -292,33 +292,10 @@ pub fn resolve(
         }
         .into());
     }
-    {
-        let settled: HashMap<SourceName, version::SettledPackage> = ctx
-            .registry()
-            .iter()
-            .map(|(name, package)| {
-                (
-                    name.clone(),
-                    version::SettledPackage {
-                        version: package.node.resolved_ref.version.as_ref(),
-                        tag: package.node.resolved_ref.version_tag.as_deref(),
-                        is_local: package.is_local,
-                    },
-                )
-            })
-            .collect();
-        version::check_selecting_requests_agree(
-            &selection,
-            ctx.version_constraints(),
-            &settled,
-            diag,
-        )?;
-    }
-
     let version_constraints = ctx.version_constraints().clone();
     let graph = ctx.into_graph(selection);
 
-    validate_all_constraints(&graph.nodes, &version_constraints)?;
+    validate_all_constraints(&graph.nodes, &version_constraints, diag)?;
     diag.reconcile_engine_fallbacks(&graph);
 
     Ok(graph)

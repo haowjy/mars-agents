@@ -1,6 +1,5 @@
 #![cfg(test)]
 
-mod agreement_tests;
 mod filter_tests;
 mod integration_tests;
 mod skill_tests;

@@ -82,15 +82,6 @@ pub enum ResolutionError {
     VersionConflict { name: String, message: String },
 
     #[error(
-        "package version conflict for `{package}`: resolved to {existing}, but {requested}; every request that installs items from `{package}` must agree on its version"
-    )]
-    PackageVersionConflict {
-        package: String,
-        existing: String,
-        requested: String,
-    },
-
-    #[error(
         "skill `{skill}` not found (required by {required_by}; searched packages: {searched:?}){}",
         hint.as_ref().map(|hint| format!("\n  hint: {hint}")).unwrap_or_default()
     )]

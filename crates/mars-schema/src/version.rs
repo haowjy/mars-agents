@@ -144,6 +144,66 @@ fn no_satisfying_message(constraints: &[(String, VersionReq)], available: &[Vers
     )
 }
 
+/// Constraints that cannot both hold on one ref.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SettleError {
+    #[error("`{first}` requires ref:{first_ref}, but `{second}` requires ref:{second_ref}")]
+    PinsDiffer {
+        first: String,
+        first_ref: String,
+        second: String,
+        second_ref: String,
+    },
+    /// A pin names no version, so no range holds at it.
+    #[error("`{pinned_by}` requires ref:{reference}, but `{ranged_by}` requires {range}")]
+    PinBesideRange {
+        pinned_by: String,
+        reference: String,
+        ranged_by: String,
+        range: VersionReq,
+    },
+}
+
+/// Settle every `(requester, constraint)` on a package: each must hold on the ref it ends at,
+/// whether or not it selects anything. A [`Constraint::RefPin`] holds only at that ref, a
+/// [`Constraint::Semver`] never at a pin, and [`Constraint::Latest`] anywhere. So the package
+/// ends at the one pin if there is one (returned; `None` means [`select`] chooses among the
+/// tags), and two pins, or a pin beside a range, refuse. A `Latest` beside a pin holds but
+/// drifts: it asked for the newest and gets a fixed ref.
+pub fn settle<'a>(constraints: &[(&str, &'a Constraint)]) -> Result<Option<&'a str>, SettleError> {
+    let mut pin: Option<(&str, &'a str)> = None;
+    for &(requester, constraint) in constraints {
+        if let Constraint::RefPin(reference) = constraint {
+            match pin {
+                Some((first, first_ref)) if first_ref != reference => {
+                    return Err(SettleError::PinsDiffer {
+                        first: first.to_string(),
+                        first_ref: first_ref.to_string(),
+                        second: requester.to_string(),
+                        second_ref: reference.clone(),
+                    });
+                }
+                Some(_) => {}
+                None => pin = Some((requester, reference)),
+            }
+        }
+    }
+    let Some((pinned_by, reference)) = pin else {
+        return Ok(None);
+    };
+    for &(requester, constraint) in constraints {
+        if let Constraint::Semver(range) = constraint {
+            return Err(SettleError::PinBesideRange {
+                pinned_by: pinned_by.to_string(),
+                reference: reference.to_string(),
+                ranged_by: requester.to_string(),
+                range: range.clone(),
+            });
+        }
+    }
+    Ok(Some(reference))
+}
+
 /// Choose one of `available` that meets every constraint and is not in `excluded`, and return
 /// its index. The newest allowed wins whatever the order of `available`; of equal versions the
 /// later one does.

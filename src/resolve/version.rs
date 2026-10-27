@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
-use mars_schema::selection::{Requester, Selection};
-use mars_schema::version::{Constraint, SelectError, SelectionPolicy, select};
+use mars_schema::version::{Constraint, SelectError, SelectionPolicy, select, settle};
 use semver::{Version, VersionReq};
 
 use crate::diagnostic::DiagnosticCollector;
@@ -360,19 +359,20 @@ pub(crate) fn resolve_git_source(
         .iter()
         .any(|(_, constraint)| matches!(constraint, Constraint::Latest));
 
-    // If any constraint is a ref pin, use the first pin encountered
-    // (multiple ref pins for the same source is likely an error, but we'll use first).
-    if let Some(ref_name) = constraints
+    let requests: Vec<(&str, &Constraint)> = constraints
         .iter()
-        .find_map(|(_, constraint)| match constraint {
-            Constraint::RefPin(ref_name) => Some(ref_name.as_str()),
-            _ => None,
-        })
+        .map(|(requester, constraint)| (requester.as_str(), constraint))
+        .collect();
+    if let Some(reference) =
+        settle(&requests).map_err(|error| ResolutionError::VersionConflict {
+            name: name.to_string(),
+            message: error.to_string(),
+        })?
     {
         return resolve_ref_pin_source(
             name,
             url,
-            ref_name,
+            reference,
             provider,
             locked_source,
             selection_policy,
@@ -601,115 +601,45 @@ pub(crate) fn select_version<'a>(
     }
 }
 
-/// Validate that all constraints are satisfied by the resolved versions.
-///
-/// This catches cases where a source was resolved before all constraints
-/// were known (e.g., a later transitive dep adds a new constraint on an
-/// already-resolved source).
+/// The settled graph's last word on version agreement: every constraint holds on the ref its
+/// package ended at. `settle` and the re-resolution keep that true as constraints arrive, so a
+/// failure here would be a resolver bug. A `Latest` beside a pin holds but drifts, and warns once
+/// here, not per resolution pass.
 pub(crate) fn validate_all_constraints(
     nodes: &IndexMap<SourceName, ResolvedNode>,
     constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     for (name, constraint_list) in constraints {
-        let node = match nodes.get(name) {
-            Some(n) => n,
-            None => continue, // Should not happen, but be safe
+        let Some(node) = nodes.get(name) else {
+            continue;
         };
+        let resolved = &node.resolved_ref;
+        let pinned = resolved
+            .version
+            .is_none()
+            .then_some(resolved.version_tag.as_deref())
+            .flatten();
 
-        // Only validate semver constraints against resolved versions
-        if let Some(ref resolved_ver) = node.resolved_ref.version {
-            for (requester, constraint) in constraint_list {
-                if let Constraint::Semver(req) = constraint
-                    && !req.matches(resolved_ver)
-                {
+        for (requester, constraint) in constraint_list {
+            match (constraint, &resolved.version, pinned) {
+                (Constraint::Semver(req), Some(version), _) if !req.matches(version) => {
                     return Err(ResolutionError::VersionConflict {
                         name: name.to_string(),
                         message: format!(
-                            "resolved version {resolved_ver} does not satisfy \
+                            "resolved version {version} does not satisfy \
                              constraint {req} (required by `{requester}`)"
                         ),
                     }
                     .into());
                 }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// What a settled package is, for the one check that needs it.
-pub(crate) struct SettledPackage<'a> {
-    pub(crate) version: Option<&'a Version>,
-    /// The tag or ref the package settled at: a ref pin's name, or a release's tag.
-    pub(crate) tag: Option<&'a str>,
-    /// A path source: its requests never disagree about a version.
-    pub(crate) is_local: bool,
-}
-
-impl SettledPackage<'_> {
-    /// Settled at a ref pin, which selects no version.
-    fn is_pinned(&self) -> bool {
-        self.version.is_none() && self.tag.is_some()
-    }
-}
-
-/// Every request that selected items from a package must agree with the ref the package settled at.
-///
-/// `validate_all_constraints` checks each semver requirement against the version that settled; a
-/// ref pin settles no version, so a pin that differs from the settled ref (or a semver range, when
-/// the package settled at a pin) only conflicts here. A request that selected nothing from the
-/// package does not count: a manifest's filtered entry selects nothing and only has to resolve.
-/// A skill ref's pull counts as a request of the Agent's package. `Latest` beside a pin is not a
-/// conflict but may drift, which warns.
-pub(crate) fn check_selecting_requests_agree(
-    selection: &Selection,
-    constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
-    packages: &HashMap<SourceName, SettledPackage>,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), ResolutionError> {
-    // The label a request records its constraint under: `mars.toml`, or the requesting package.
-    let mut selecting: IndexMap<&str, HashSet<&str>> = IndexMap::new();
-    for item in &selection.items {
-        let labels = selecting.entry(item.package.as_str()).or_default();
-        for requester in &item.required_by {
-            match requester {
-                Requester::Consumer => labels.insert("mars.toml"),
-                Requester::Package { package } | Requester::Item { package, .. } => {
-                    labels.insert(package.as_str())
-                }
-            };
-        }
-    }
-
-    for (package, labels) in selecting {
-        let name = SourceName::from(package);
-        let Some(settled) = packages.get(&name).filter(|settled| !settled.is_local) else {
-            continue;
-        };
-        let Some(tag) = settled.tag.filter(|_| settled.is_pinned()) else {
-            continue;
-        };
-        for (by, constraint) in constraints
-            .get(&name)
-            .into_iter()
-            .flatten()
-            .filter(|(label, _)| labels.contains(label.as_str()))
-        {
-            match constraint {
-                Constraint::RefPin(requested) if requested == tag => {}
-                Constraint::RefPin(_) | Constraint::Semver(_) => {
-                    return Err(ResolutionError::PackageVersionConflict {
-                        package: package.to_string(),
-                        existing: format!("ref:{tag}"),
-                        requested: format!("`{by}` requires {constraint}"),
-                    });
-                }
-                Constraint::Latest => diag.warn(
+                (Constraint::Latest, _, Some(pin)) => diag.warn(
                     "potential-version-drift",
                     format!(
-                        "potential version drift: package '{package}' requested as {constraint} by {by} but pinned to ref:{tag}"
+                        "potential version drift: package '{name}' requested as latest by {requester} but pinned to ref:{pin}"
                     ),
                 ),
+                _ => {}
             }
         }
     }

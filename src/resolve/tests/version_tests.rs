@@ -1772,9 +1772,9 @@ fn r5_frozen_replays_transitive_from_lock() {
 // R12: RefPin overrides semver version selection.
 // Covered by `branch_ref_resolves_without_semver` above.
 
-// R13: Multiple RefPins for the same source → first wins.
+// R13: Multiple different RefPins for the same source conflict.
 #[test]
-fn r13_multiple_refpins_use_first() {
+fn r13_multiple_refpins_conflict() {
     // Two direct deps that both depend on `shared` via different RefPin constraints.
     // Because resolve_git_source short-circuits on first RefPin, the first encountered wins.
     let dir = TempDir::new().unwrap();
@@ -1809,20 +1809,12 @@ fn r13_multiple_refpins_use_first() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    // Resolution should succeed (first RefPin wins); result has no semver version.
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+    // Two different pins on one package are a conflict, whichever declaration meets them first.
+    let error = resolve(&config, &provider, None, &default_options()).unwrap_err();
+    let message = error.to_string();
     assert!(
-        graph.nodes.contains_key("shared"),
-        "shared must be resolved"
-    );
-    assert!(
-        graph.nodes["shared"].resolved_ref.version.is_none(),
-        "RefPin sources have no semver version"
-    );
-    assert_eq!(
-        graph.nodes["shared"].resolved_ref.commit.as_deref(),
-        Some("ref:main"),
-        "first RefPin constraint should determine the fetched ref"
+        message.contains("ref:main") && message.contains("ref:dev"),
+        "conflict must name both pins: {message}"
     );
 }
 

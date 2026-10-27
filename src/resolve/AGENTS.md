@@ -141,7 +141,7 @@ otherwise (`resolve()` turns the selection's first `missing_skills` entry into t
 never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator
 reports what is actually provided. Source items come from `Prepared.definitions` and, for the kinds
 the crate does not prepare (bootstrap documents, hooks), from `src/discover/`'s convention walk.
-Two requests that select items from one package must agree on its version (`check_selecting_requests_agree`; `validate_all_constraints` cannot see ref pins, which settle no version); a path package skips the check, and a manifest's filtered entry, which selects nothing, only has to resolve.
+Every constraint on a package must hold on the ref it settles at, whether or not it selects anything: a ref pin holds only at that ref, a range never at a pin, `latest` anywhere (and warns beside a pin). `mars_schema::version::settle` refuses two pins, or a pin beside a range, before any fetch; a constraint arriving after the package resolved re-runs resolution (path sources aside). `validate_all_constraints` re-checks the settled graph and emits the drift warning.
 
 ## Patterns
 

@@ -48,7 +48,6 @@ pub(crate) struct RegisteredPackage {
     pub(crate) node: ResolvedNode,
     pub(crate) declared_source_id: SourceId,
     pub(crate) items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem>,
-    pub(crate) is_local: bool,
 }
 
 impl RegisteredPackage {
@@ -128,11 +127,11 @@ pub(crate) fn resolve_package_bottom_up(
         //
         // Fast paths that skip the check:
         //   Path sources — no version selection, never change.
-        //   RefPin constraints — fixed refs, semver re-selection doesn't apply.
         //   Semver(req) where existing version already satisfies req — adding that
         //     requirement cannot invalidate the currently selected version.
-        let needs_check = matches!(pending_src.spec, SourceSpec::Git(_))
-            && !matches!(pending_src.constraint, Constraint::RefPin(_));
+        // A pin that differs from the settled ref, or a range beside a pin, is refused by
+        // `settle` in the re-resolution.
+        let needs_check = matches!(pending_src.spec, SourceSpec::Git(_));
 
         if needs_check {
             let existing_ref = ctx
@@ -448,7 +447,6 @@ pub(crate) fn resolve_package_bottom_up(
             },
             declared_source_id: pending_src.declared_source_id.clone(),
             items,
-            is_local: matches!(pending_src.spec, SourceSpec::Path(_)),
         },
     );
     ctx.id_index_mut()

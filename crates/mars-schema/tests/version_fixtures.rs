@@ -5,7 +5,7 @@ use std::{collections::HashSet, fs};
 
 use mars_schema::version::{
     Constraint, SelectionPolicy, parse_constraint, parse_tag, satisfies, satisfies_requirement,
-    select,
+    select, settle,
 };
 use semver::Version;
 use serde_json::{Value, json};
@@ -79,6 +79,24 @@ fn run(input: &Value) -> Value {
                 .collect();
             match select(&versions, &constraints, locked.as_ref(), policy, &excluded) {
                 Ok(index) => json!({ "tag": tags[index] }),
+                Err(error) => json!({ "error": error.to_string() }),
+            }
+        }
+        "settle" => {
+            let parsed: Vec<(String, Constraint)> = input["constraints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| {
+                    let who = entry[0].as_str().unwrap().to_owned();
+                    (who, parse_constraint(entry[1].as_str()))
+                })
+                .collect();
+            let constraints: Vec<(&str, &Constraint)> =
+                parsed.iter().map(|(who, c)| (who.as_str(), c)).collect();
+            match settle(&constraints) {
+                Ok(Some(reference)) => json!({ "pin": reference }),
+                Ok(None) => json!({ "unpinned": true }),
                 Err(error) => json!({ "error": error.to_string() }),
             }
         }

@@ -18,10 +18,15 @@
 //!    slug or path; `only_skills` and `only_agents` take one kind. Hooks are taken by `All` and
 //!    `Exclude` only.
 //! 3. **Skill refs.** Every selected Agent's `skills` resolve to a package: its own, then its
-//!    dependencies breadth first, then any package in registry order. The skill is selected unless
-//!    the consumer excluded it, and a package it lands in also selects its bootstrap documents.
-//!    A ref `<skill>__<provider>` that no package ships is skipped when the requester declares the
-//!    provider, and is a [`MissingSkill`] otherwise.
+//!    dependencies breadth first, then any other package in registry order. The skill is selected
+//!    unless the consumer excluded it, and a package it lands in also selects its bootstrap
+//!    documents. A ref `<skill>__<provider>` that no package ships is skipped when the requester
+//!    declares the provider, and is a [`MissingSkill`] otherwise.
+//!
+//! **Registry order** is computed here, not supplied: a depth-first walk from the root package
+//! (if any), then each request in order, descending each package's manifest entries in
+//! declaration order. [`GraphView::packages`] is a set. A package no request reaches is never
+//! selected from and never supplies a skill.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -58,7 +63,8 @@ pub struct PackageView<'a> {
     /// The package's manifest entries, in declaration order.
     pub edges: Vec<Request>,
     pub uses_providers: Vec<String>,
-    /// Bootstrap documents and hooks.
+    /// Bootstrap documents and hooks. They never change which Agents and skills are selected:
+    /// only Agents and skills are followed, so a caller with none to give passes `[]`.
     pub extra_items: Vec<Item>,
 }
 
@@ -95,15 +101,21 @@ impl<'a> PackageView<'a> {
 pub struct GraphView<'a> {
     /// The consumer's own entries.
     pub requests: Vec<Request>,
-    /// Every package of the graph, in registry order: the last place a skill ref is looked up.
-    pub packages: IndexMap<String, PackageView<'a>>,
+    /// The package being selected for, such as a project's own package: it is requested whole,
+    /// as the first request, and its manifest entries are its edges. Its Agents' skill refs
+    /// resolve like any package's, but its own items are not in the result.
+    pub root: Option<PackageView<'a>>,
+    /// Every package of the graph, in no particular order: [`select`] orders them (see the module
+    /// documentation).
+    pub packages: HashMap<String, PackageView<'a>>,
 }
 
 /// Why an item is selected.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "by", rename_all = "kebab-case")]
 pub enum Requester {
-    /// An entry of the consumer.
+    /// An entry of the consumer, or of the root package: the root's manifest entries and its
+    /// Agents' skill refs are the consumer's own.
     Consumer,
     /// An unfiltered entry of this package's manifest, reached through unfiltered entries only.
     Package { package: String },
@@ -130,15 +142,18 @@ pub struct SelectedItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MissingSkill {
     pub skill: String,
-    /// `<package>/<slug>` of the Agent or skill that names it.
-    pub required_by: String,
+    /// The Agent that names it.
+    pub agent: String,
+    /// The package of that Agent; `None` for the root.
+    pub package: Option<String>,
+    /// The packages looked in, sorted; the root is not among them.
     pub searched: Vec<String>,
     /// For a name shaped like a provider's, when no package declares that provider.
     pub hint: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
-pub struct Selection {
+pub struct SelectionResult {
     /// In package order of the graph, then the package's own item order.
     pub items: Vec<SelectedItem>,
     pub missing_skills: Vec<MissingSkill>,
@@ -155,14 +170,59 @@ struct Entry<'a> {
 
 type Key<'a> = (&'a str, ItemKind, &'a str);
 
-pub fn select(view: &GraphView) -> Selection {
-    let entries: HashMap<&str, Vec<Entry>> = view
-        .packages
+/// The root's key among the packages. No dependency has an empty name.
+const ROOT: &str = "";
+
+/// The packages in registry order, the root among them.
+struct Graph<'v, 'p> {
+    packages: HashMap<&'v str, &'v PackageView<'p>>,
+    order: Vec<&'v str>,
+}
+
+impl<'v, 'p> Graph<'v, 'p> {
+    fn new(view: &'v GraphView<'p>) -> Self {
+        let mut packages: HashMap<&str, &PackageView> = view
+            .packages
+            .iter()
+            .map(|(name, package)| (name.as_str(), package))
+            .collect();
+        if let Some(root) = &view.root {
+            packages.insert(ROOT, root);
+        }
+        // Depth first, a package before its entries; a stack pops the first entry first.
+        let mut order = Vec::new();
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut stack: Vec<&str> = Vec::new();
+        let starts = view
+            .root
+            .iter()
+            .map(|_| ROOT)
+            .chain(view.requests.iter().map(|request| request.name.as_str()));
+        for start in starts {
+            stack.push(start);
+            while let Some(name) = stack.pop() {
+                let Some((&name, package)) = packages.get_key_value(name) else {
+                    continue;
+                };
+                if seen.insert(name) {
+                    order.push(name);
+                    stack.extend(package.edges.iter().rev().map(|edge| edge.name.as_str()));
+                }
+            }
+        }
+        Self { packages, order }
+    }
+}
+
+pub fn select(view: &GraphView) -> SelectionResult {
+    let graph = Graph::new(view);
+    let entries: HashMap<&str, Vec<Entry>> = graph
+        .order
         .iter()
-        .map(|(name, package)| (name.as_str(), package_entries(package)))
+        .map(|&name| (name, package_entries(graph.packages[name])))
         .collect();
 
-    let seeds = seeds(view);
+    let seeds = seeds(view, &graph);
     let excluded: HashMap<&str, Vec<&FilterMode>> = {
         let mut excluded: HashMap<&str, Vec<&FilterMode>> = HashMap::new();
         for seed in &seeds {
@@ -207,15 +267,21 @@ pub fn select(view: &GraphView) -> Selection {
         else {
             continue;
         };
-        let requester = Requester::Item {
-            package: package.to_string(),
-            kind,
-            slug: slug.to_string(),
+        let requester = if package == ROOT {
+            Requester::Consumer
+        } else {
+            Requester::Item {
+                package: package.to_string(),
+                kind,
+                slug: slug.to_string(),
+            }
         };
         for skill in &skill_refs(entry.definition) {
-            match resolve_skill(view, &entries, package, skill) {
+            match resolve_skill(&graph, &entries, package, skill) {
                 Resolved::Deferred => {}
-                Resolved::Missing => missing_skills.push(missing_skill(view, package, slug, skill)),
+                Resolved::Missing => {
+                    missing_skills.push(missing_skill(&graph, package, slug, skill))
+                }
                 Resolved::In(target) => {
                     let target_entry = entries[target]
                         .iter()
@@ -252,12 +318,12 @@ pub fn select(view: &GraphView) -> Selection {
     }
 
     let mut items = Vec::with_capacity(selected.len());
-    for (package, _) in &view.packages {
-        for entry in &entries[package.as_str()] {
-            let key = (package.as_str(), entry.item.kind, entry.item.slug.as_str());
+    for &package in graph.order.iter().filter(|&&package| package != ROOT) {
+        for entry in &entries[package] {
+            let key = (package, entry.item.kind, entry.item.slug.as_str());
             if let Some(required_by) = selected.get(&key) {
                 items.push(SelectedItem {
-                    package: package.clone(),
+                    package: package.to_string(),
                     kind: entry.item.kind,
                     slug: entry.item.slug.clone(),
                     path: entry.item.path.clone(),
@@ -267,7 +333,7 @@ pub fn select(view: &GraphView) -> Selection {
         }
     }
     let diagnostics = duplicate_slugs(&items);
-    Selection {
+    SelectionResult {
         items,
         missing_skills,
         diagnostics,
@@ -305,43 +371,57 @@ struct Seed<'a> {
     requester: Requester,
 }
 
-/// The requests that seed items: the consumer's own, and each unfiltered manifest entry of a
-/// package reached through unfiltered requests only. A filtered entry of a manifest seeds
-/// nothing, and its `exclude` blocks nothing.
-fn seeds<'a>(view: &'a GraphView) -> Vec<Seed<'a>> {
+/// The requests that seed items: the root and the consumer's own, and each unfiltered manifest
+/// entry of a package reached through unfiltered requests only. A filtered entry of a manifest
+/// seeds nothing, and its `exclude` blocks nothing.
+fn seeds<'a>(view: &'a GraphView, graph: &Graph<'a, '_>) -> Vec<Seed<'a>> {
+    static ALL: FilterMode = FilterMode::All;
     let mut seeds = Vec::new();
     let mut open: HashSet<&str> = HashSet::new();
     let mut queue: VecDeque<&str> = VecDeque::new();
+    if view.root.is_some() {
+        seeds.push(Seed {
+            package: ROOT,
+            filter: &ALL,
+            requester: Requester::Consumer,
+        });
+        open.insert(ROOT);
+        queue.push_back(ROOT);
+    }
     for request in &view.requests {
-        let Some((package, _)) = view.packages.get_key_value(&request.name) else {
+        let Some((&package, _)) = graph.packages.get_key_value(request.name.as_str()) else {
             continue;
         };
         seeds.push(Seed {
-            package: package.as_str(),
+            package,
             filter: &request.filter,
             requester: Requester::Consumer,
         });
-        if request.filter == FilterMode::All && open.insert(package.as_str()) {
-            queue.push_back(package.as_str());
+        if request.filter == FilterMode::All && open.insert(package) {
+            queue.push_back(package);
         }
     }
     while let Some(from) = queue.pop_front() {
-        for edge in &view.packages[from].edges {
-            let Some((package, _)) = view.packages.get_key_value(&edge.name) else {
+        for edge in &graph.packages[from].edges {
+            let Some((&package, _)) = graph.packages.get_key_value(edge.name.as_str()) else {
                 continue;
             };
             if edge.filter != FilterMode::All {
                 continue;
             }
             seeds.push(Seed {
-                package: package.as_str(),
+                package,
                 filter: &edge.filter,
-                requester: Requester::Package {
-                    package: from.to_string(),
+                requester: if from == ROOT {
+                    Requester::Consumer
+                } else {
+                    Requester::Package {
+                        package: from.to_string(),
+                    }
                 },
             });
-            if open.insert(package.as_str()) {
-                queue.push_back(package.as_str());
+            if open.insert(package) {
+                queue.push_back(package);
             }
         }
     }
@@ -430,9 +510,9 @@ enum Resolved<'a> {
 }
 
 /// The package that supplies a skill ref: the requester's own, then its dependencies breadth
-/// first, then any package in registry order.
+/// first, then any other package in registry order.
 fn resolve_skill<'a>(
-    view: &'a GraphView,
+    graph: &Graph<'a, '_>,
     entries: &HashMap<&str, Vec<Entry>>,
     requester: &'a str,
     skill: &str,
@@ -454,24 +534,24 @@ fn resolve_skill<'a>(
         if package != requester {
             closure.push(package);
         }
-        for edge in &view.packages[package].edges {
-            if let Some((name, _)) = view.packages.get_key_value(&edge.name)
-                && seen.insert(name.as_str())
+        for edge in &graph.packages[package].edges {
+            if let Some((&name, _)) = graph.packages.get_key_value(edge.name.as_str())
+                && seen.insert(name)
             {
-                queue.push_back(name.as_str());
+                queue.push_back(name);
             }
         }
     }
     if let Some(package) = closure.into_iter().find(|package| has_skill(package)) {
         return Resolved::In(package);
     }
-    for name in view.packages.keys() {
-        if !seen.contains(name.as_str()) && has_skill(name) {
+    for &name in &graph.order {
+        if !seen.contains(name) && has_skill(name) {
             return Resolved::In(name);
         }
     }
 
-    if crate::provider::deferred_provider(skill, Some(&view.packages[requester].uses_providers))
+    if crate::provider::deferred_provider(skill, Some(&graph.packages[requester].uses_providers))
         .is_some()
     {
         return Resolved::Deferred;
@@ -479,12 +559,18 @@ fn resolve_skill<'a>(
     Resolved::Missing
 }
 
-fn missing_skill(view: &GraphView, package: &str, slug: &str, skill: &str) -> MissingSkill {
-    let mut searched: Vec<String> = view.packages.keys().cloned().collect();
+fn missing_skill(graph: &Graph, package: &str, agent: &str, skill: &str) -> MissingSkill {
+    let mut searched: Vec<String> = graph
+        .order
+        .iter()
+        .filter(|&&name| name != ROOT)
+        .map(|name| name.to_string())
+        .collect();
     searched.sort();
     MissingSkill {
         skill: skill.to_string(),
-        required_by: format!("{package}/{slug}"),
+        agent: agent.to_string(),
+        package: (package != ROOT).then(|| package.to_string()),
         searched,
         hint: crate::provider::provider_of(skill).map(crate::provider::undeclared_provider_hint),
     }

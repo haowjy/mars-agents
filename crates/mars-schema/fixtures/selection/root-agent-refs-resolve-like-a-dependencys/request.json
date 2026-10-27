@@ -1,0 +1,8 @@
+{
+  "root": "project",
+  "requests": [
+    {
+      "name": "lib"
+    }
+  ]
+}

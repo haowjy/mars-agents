@@ -411,24 +411,13 @@ fn check_skill_refs(
     } else {
         None
     };
-    let declared = lens
+    let has_package = lens
         .manifest
         .as_ref()
-        .and_then(|config| config.package.as_ref())
-        .map(|package| package.uses_providers.clone());
-    let has_package = declared.is_some();
-    let selection = crate::resolve::select_published(
-        prepared,
-        &lens.effective,
-        declared.unwrap_or_default(),
-        graph.as_ref(),
-    );
-    let own_prefix = format!("{}/", crate::resolve::PUBLISHED_PACKAGE);
+        .is_some_and(|config| config.package.is_some());
+    let selection = crate::resolve::select_published(prepared, graph.as_ref());
     for missing in selection.missing_skills {
-        let agent = missing
-            .required_by
-            .strip_prefix(&own_prefix)
-            .unwrap_or(&missing.required_by);
+        let agent = &missing.agent;
         let skill = &missing.skill;
         match missing.hint {
             Some(hint) if has_package => errors.push(format!(
@@ -445,14 +434,13 @@ fn check_skill_refs(
     }
 }
 
-/// The packages a ref was looked up in, with the versions that resolved.
+/// The packages a ref was looked up in (this package first), with the versions that resolved.
 fn format_searched_packages(
     searched: &[String],
     graph: Option<&crate::resolve::ResolvedGraph>,
 ) -> String {
-    searched
-        .iter()
-        .map(|name| {
+    std::iter::once("(this package)".to_string())
+        .chain(searched.iter().map(|name| {
             let version = graph
                 .and_then(|graph| graph.nodes.get(name.as_str()))
                 .and_then(|node| node.resolved_ref.version.as_ref());
@@ -460,7 +448,7 @@ fn format_searched_packages(
                 Some(version) => format!("{name}@{version}"),
                 None => name.clone(),
             }
-        })
+        }))
         .collect::<Vec<_>>()
         .join(", ")
 }

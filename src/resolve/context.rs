@@ -8,7 +8,7 @@ use super::{
 };
 use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName};
-use mars_schema::selection::Selection;
+use mars_schema::selection::SelectionResult;
 
 /// Mutable resolver state threaded through bottom-up resolution.
 pub struct ResolverContext {
@@ -195,7 +195,7 @@ impl ResolverContext {
             .push((requester.to_string(), constraint));
     }
 
-    pub fn into_graph(self, selection: Selection) -> ResolvedGraph {
+    pub fn into_graph(self, selection: SelectionResult) -> ResolvedGraph {
         let mut nodes: IndexMap<SourceName, ResolvedNode> = IndexMap::new();
         for (name, package) in self.registry {
             nodes.insert(name, package.node);

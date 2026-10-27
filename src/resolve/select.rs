@@ -2,11 +2,13 @@
 //! for the parts only the binary knows: the bootstrap documents and hooks found in each
 //! package's tree, and the `\` an exclude entry may spell on Windows.
 
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 use mars_schema::filter::FilterMode;
 use mars_schema::item::ItemKind;
 use mars_schema::prepare::Prepared;
-use mars_schema::selection::{GraphView, Item, PackageView, Request, Selection, select};
+use mars_schema::selection::{GraphView, Item, PackageView, Request, SelectionResult, select};
 
 use crate::discover::DiscoveredItem;
 use crate::types::SourceName;
@@ -15,7 +17,7 @@ use crate::types::SourceName;
 pub(super) fn select_registry(
     config: &crate::config::EffectiveConfig,
     registry: &IndexMap<SourceName, super::RegisteredPackage>,
-) -> Selection {
+) -> SelectionResult {
     let packages = registry
         .iter()
         .map(|(name, package)| (name, &package.node, extra_items(package.items())))
@@ -28,7 +30,7 @@ pub(super) fn select_registry(
 pub(crate) fn select_for_test(
     config: &crate::config::EffectiveConfig,
     nodes: &IndexMap<SourceName, super::ResolvedNode>,
-) -> Selection {
+) -> SelectionResult {
     let packages = nodes
         .iter()
         .map(|(name, node)| {
@@ -46,51 +48,39 @@ pub(crate) fn select_for_test(
     select_packages(consumer_requests(config), packages)
 }
 
-/// The name the package being published goes by in its own selection; it is no dependency's name.
-pub(crate) const PUBLISHED_PACKAGE: &str = "(this package)";
-
 /// What installing the package being published would select, for `mars check`.
 ///
-/// The package is a consumer's only request, taken whole, and its `[dependencies]` are its manifest
-/// entries, so its Agents' skill refs resolve as they will on a consumer's machine. Bootstrap
-/// documents and hooks of the dependencies are not found: only the refs matter here.
+/// The package is the root: selected whole as a consumer's only request, with its `[dependencies]`
+/// as its manifest entries, so its Agents' skill refs resolve as they will on a consumer's machine.
+/// Bootstrap documents and hooks of the dependencies are not found: only the refs matter here.
 pub(crate) fn select_published(
     prepared: &Prepared,
-    effective: &crate::config::EffectiveConfig,
-    uses_providers: Vec<String>,
     graph: Option<&super::ResolvedGraph>,
-) -> Selection {
-    let mut packages: IndexMap<String, PackageView> = IndexMap::new();
-    packages.insert(
-        PUBLISHED_PACKAGE.to_string(),
-        PackageView {
-            prepared,
-            edges: consumer_requests(effective),
-            uses_providers,
-            extra_items: Vec::new(),
-        },
-    );
-    for (name, node) in graph.iter().flat_map(|graph| &graph.nodes) {
-        packages.insert(name.to_string(), node_view(node, Vec::new()));
-    }
+) -> SelectionResult {
     select(&GraphView {
-        requests: vec![Request {
-            name: PUBLISHED_PACKAGE.to_string(),
-            filter: FilterMode::All,
-        }],
-        packages,
+        requests: Vec::new(),
+        root: Some(package_view(prepared, Vec::new())),
+        packages: graph
+            .iter()
+            .flat_map(|graph| &graph.nodes)
+            .map(|(name, node)| (name.to_string(), package_view(&node.prepared, Vec::new())))
+            .collect(),
     })
 }
 
 fn select_packages(
     requests: Vec<Request>,
     packages: Vec<(&SourceName, &super::ResolvedNode, Vec<Item>)>,
-) -> Selection {
-    let packages = packages
+) -> SelectionResult {
+    let packages: HashMap<_, _> = packages
         .into_iter()
-        .map(|(name, node, extras)| (name.to_string(), node_view(node, extras)))
+        .map(|(name, node, extras)| (name.to_string(), package_view(&node.prepared, extras)))
         .collect();
-    select(&GraphView { requests, packages })
+    select(&GraphView {
+        requests,
+        root: None,
+        packages,
+    })
 }
 
 fn consumer_requests(config: &crate::config::EffectiveConfig) -> Vec<Request> {
@@ -104,8 +94,8 @@ fn consumer_requests(config: &crate::config::EffectiveConfig) -> Vec<Request> {
         .collect()
 }
 
-fn node_view(node: &super::ResolvedNode, extra_items: Vec<Item>) -> PackageView<'_> {
-    let mut view = PackageView::from_prepared(&node.prepared, extra_items);
+fn package_view(prepared: &Prepared, extra_items: Vec<Item>) -> PackageView<'_> {
+    let mut view = PackageView::from_prepared(prepared, extra_items);
     for edge in &mut view.edges {
         edge.filter = portable_filter(&edge.filter);
     }

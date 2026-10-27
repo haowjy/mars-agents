@@ -1,0 +1,27 @@
+{
+  "items": [
+    {
+      "package": "lib",
+      "kind": "skill",
+      "slug": "planning",
+      "path": "skills/planning",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [
+    {
+      "skill": "nowhere",
+      "agent": "coder",
+      "package": null,
+      "searched": [
+        "lib"
+      ],
+      "hint": null
+    }
+  ],
+  "diagnostics": []
+}

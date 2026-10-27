@@ -134,7 +134,7 @@ resolution use the same source provider and prepared-node path as sync.
 Selection is `mars_schema::selection::select`; the rule is documented there. In short: the consumer's
 requests, and the unfiltered entries reached from an unfiltered request through unfiltered entries,
 seed items; a transitive manifest's filtered entry seeds nothing and its `exclude` blocks nothing;
-the skills a selected Agent names resolve requester-first. A skill ref `x__p` that no package ships
+the skills a selected Agent names resolve requester-first, then through its dependencies, then in the crate's depth-first registry order (the binary hands over a set). A skill ref `x__p` that no package ships
 is skipped when the requesting package's `uses-providers` lists `p`, and is `SkillNotFound`
 otherwise (`resolve()` turns the selection's first `missing_skills` entry into that error); selection
 never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator

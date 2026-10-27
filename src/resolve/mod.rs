@@ -33,7 +33,7 @@ pub(crate) use requires::{
 };
 #[cfg(test)]
 pub(crate) use select::select_for_test;
-pub(crate) use select::{PUBLISHED_PACKAGE, select_published};
+pub(crate) use select::select_published;
 pub use types::*;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
@@ -264,7 +264,10 @@ pub fn resolve(
     if let Some(missing) = selection.missing_skills.first() {
         return Err(ResolutionError::SkillNotFound {
             skill: missing.skill.clone(),
-            required_by: missing.required_by.clone(),
+            required_by: match &missing.package {
+                Some(package) => format!("{package}/{}", missing.agent),
+                None => missing.agent.clone(),
+            },
             searched: missing.searched.clone(),
             hint: missing.hint.clone(),
         }

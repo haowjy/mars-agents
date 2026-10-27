@@ -15,7 +15,8 @@
   "missing_skills": [
     {
       "skill": "nowhere",
-      "required_by": "a/coder",
+      "agent": "coder",
+      "package": "a",
       "searched": [
         "a"
       ],
@@ -23,7 +24,8 @@
     },
     {
       "skill": "notify__meridian",
-      "required_by": "a/coder",
+      "agent": "coder",
+      "package": "a",
       "searched": [
         "a"
       ],

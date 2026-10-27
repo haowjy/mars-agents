@@ -12,9 +12,8 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct Case {
     requests: Vec<RequestSpec>,
-    /// Registry order, when it is not the sorted package names.
-    #[serde(default)]
-    registry: Vec<String>,
+    /// The package under `packages/` that is the root: selected whole, and not a dependency.
+    root: Option<String>,
     /// Bootstrap documents and hooks, which preparation does not read.
     #[serde(default)]
     extra_items: BTreeMap<String, Vec<Item>>,
@@ -46,10 +45,9 @@ fn selection_fixtures_match() {
                 (name.as_str(), prepare(&tree, PrepareContext::Package, None))
             })
             .collect();
-        let order = if case.registry.is_empty() {
-            names.clone()
-        } else {
-            case.registry.clone()
+        let package_view = |name: &String| {
+            let extra = case.extra_items.get(name).cloned().unwrap_or_default();
+            PackageView::from_prepared(&prepared[name.as_str()], extra)
         };
         let view = GraphView {
             requests: case
@@ -60,15 +58,11 @@ fn selection_fixtures_match() {
                     filter: request.filter.to_mode(),
                 })
                 .collect(),
-            packages: order
+            root: case.root.as_ref().map(package_view),
+            packages: names
                 .iter()
-                .map(|name| {
-                    let extra = case.extra_items.get(name).cloned().unwrap_or_default();
-                    (
-                        name.clone(),
-                        PackageView::from_prepared(&prepared[name.as_str()], extra),
-                    )
-                })
+                .filter(|name| case.root.as_ref() != Some(name))
+                .map(|name| (name.clone(), package_view(name)))
                 .collect(),
         };
         common::assert_file(

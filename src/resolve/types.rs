@@ -19,7 +19,7 @@ pub struct ResolvedGraph {
     /// Deterministic alphabetical order (prompt packages don't require dependency ordering).
     pub order: Vec<SourceName>,
     /// The Agents, skills and documents the consumer installs, chosen once the graph settled.
-    pub selection: mars_schema::selection::Selection,
+    pub selection: mars_schema::selection::SelectionResult,
     /// All version constraints collected for each source (direct + transitive).
     pub version_constraints: HashMap<SourceName, Vec<(String, Constraint)>>,
     /// Hook surfaces that cannot be compiled because they use a removed schema.

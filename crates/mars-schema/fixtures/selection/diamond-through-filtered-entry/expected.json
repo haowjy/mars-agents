@@ -24,18 +24,6 @@
       ]
     },
     {
-      "package": "d2",
-      "kind": "agent",
-      "slug": "d2",
-      "path": "agents/d2.md",
-      "required_by": [
-        {
-          "by": "package",
-          "package": "a"
-        }
-      ]
-    },
-    {
       "package": "x",
       "kind": "agent",
       "slug": "x1",
@@ -56,6 +44,18 @@
         {
           "by": "package",
           "package": "x"
+        }
+      ]
+    },
+    {
+      "package": "d2",
+      "kind": "agent",
+      "slug": "d2",
+      "path": "agents/d2.md",
+      "required_by": [
+        {
+          "by": "package",
+          "package": "a"
         }
       ]
     }

@@ -588,10 +588,9 @@ impl MarkedEventReceiver for NamespaceSpans<'_> {
                 // The mapping `harness-overrides` holds, whose entries name the namespaces.
                 let overrides = mapping
                     && self.frames.len() == 1
-                    && self
-                        .frames
-                        .last()
-                        .is_some_and(|root| root.key.as_deref() == Some("harness-overrides"));
+                    && self.frames.last().is_some_and(|root| {
+                        !root.expect_key && root.key.as_deref() == Some("harness-overrides")
+                    });
                 if self.entry_key() {
                     self.close(byte);
                 }
@@ -613,7 +612,8 @@ impl MarkedEventReceiver for NamespaceSpans<'_> {
 }
 
 /// The `[start, end)` byte spans of `yaml`, a frontmatter block's YAML, that a consumer namespace
-/// owns.
+/// owns. An anchor defined inside an entry and aliased from a shipped one still hides that text;
+/// the reader rejects anchors (`yaml.anchor`) before what it hides is reported.
 fn consumer_namespace_spans(yaml: &str) -> Vec<(usize, usize)> {
     let mut char_to_byte: Vec<usize> = yaml.char_indices().map(|(byte, _)| byte).collect();
     char_to_byte.push(yaml.len());

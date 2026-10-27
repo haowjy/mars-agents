@@ -7,6 +7,25 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-27
+
+### Upgrade notes
+- A top-level `resident-rearm-budget` or `meridian-capabilities` in an Agent is now a `field.removed` error, where v0.20.7 only warned about the unknown key; package authors run `mars migrate`, which moves both, values and order unchanged, under `harness-overrides.meridian`. See [what the migration changes](https://github.com/haowjy/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md#what-it-changes).
+
+### Added
+- `harness-overrides.meridian` is a reserved consumer namespace, as `harness-overrides.flow` is for Flow: Mars keeps the block in `.mars/agents/` and never writes it to a native file, a plugin tree or a launch bundle. Its keys belong to the Meridian CLI: `resident-rearm-budget` (an integer) and `capabilities` (a map). See [the consumer namespaces](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#harness-overrides-and-the-consumer-namespaces).
+- `@meridian-flow/mars-schema`'s `prepare` takes `migrate`, the repair `mars migrate` makes to a schema 1 file: a removed Agent key whose replacement is a `harness-overrides` key moves there. Left off, a schema 1 file is read exactly as written.
+
+### Changed
+- `mars migrate` repairs a schema 1 package that still carries a key schema 1 moved under a `harness-overrides` namespace (`permission`, `resident-rearm-budget`, `meridian-capabilities`) instead of failing the run on it, with one conflict rule: a block already written wins and the top-level twin is dropped with a note, which says a restriction was lost when the twin is `permission`. Any other removed key still fails and names the file and the key.
+- Adding an entry to an existing `harness-overrides` block keeps the comments, flow style and indentation you wrote in the entries beside it; when the block has to be re-rendered instead, the file is reported `fully rewrote`. See [editing minimally](https://github.com/haowjy/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md#it-edits-minimally).
+- The docs no longer describe `.agents/` as a default target: with nothing linked, a sync writes only to `.mars/`, `mars link DIR` adds `settings.targets`, and `mars init` creates no target directory.
+
+### Fixed
+- `mars build plugin`'s term scan reads only what a package ships: a `harness-overrides` block owned by a consumer namespace (`flow`, `meridian`) no longer warns that the Agent "mentions meridian" in a package without `requires-meridian`, and text the package does ship (a harness entry sharing a line with one of those blocks, a comment after it) stays scanned.
+- `mars migrate` no longer reports a schema 1 definition's YAML parse error twice (`definition.upgrade-failed` beside `yaml.invalid`): the reader names it once.
+- `permission` advice for a value Flow does not define no longer sends the author back to `harness-overrides.flow.permission`, which would reject it again: a `write` grant is pointed at `tools`, and a permission map at `harness-overrides.opencode.permission`.
+
 ## [0.20.7] - 2026-10-27
 
 ### Upgrade notes

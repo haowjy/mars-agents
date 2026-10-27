@@ -41,18 +41,13 @@ pub(crate) fn file_hook_output_preserve_paths(
             let Some(adapter) = registry.get(&output.target_root) else {
                 continue;
             };
-            let owner_prefix = format!(
-                "{}/",
-                crate::sync::package_dir::canonical_dir(ItemKind::Hook, &output.target_root)
-                    .expect("a hook installs one directory per target")
-            );
+            // The canonical record of a hook installed as one file names its
+            // package directory; the file that directory projects must stay.
             let is_file_fragment = item.outputs.iter().any(|canonical| {
                 canonical.target_root == crate::lock::CANONICAL_TARGET_ROOT
-                    && canonical
-                        .dest_path
-                        .as_str()
-                        .strip_prefix(&owner_prefix)
-                        .and_then(|name| adapter.hook_file_dest_path(name))
+                    && PackageDir::parse_canonical(ItemKind::Hook, &canonical.dest_path)
+                        .filter(|dir| dir.belongs_to(&output.target_root))
+                        .and_then(|dir| adapter.hook_file_dest_path(dir.name()))
                         .is_some_and(|path| {
                             crate::target::dest_paths_equivalent(
                                 path.to_string_lossy().as_ref(),

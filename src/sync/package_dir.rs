@@ -23,12 +23,6 @@ pub(crate) fn installs_per_target(kind: ItemKind) -> bool {
     surface(kind).is_some()
 }
 
-/// `hooks/claude`: the canonical `.mars` directory holding `kind`'s copies for
-/// `target`, or `None` for a kind installed once for the whole project.
-pub(crate) fn canonical_dir(kind: ItemKind, target: &str) -> Option<String> {
-    Some(format!("{}/{}", surface(kind)?, canonical_target(target)))
-}
-
 /// A target name without the leading dot its target directory carries.
 fn canonical_target(target: &str) -> &str {
     target.trim_start_matches('.')
@@ -36,10 +30,9 @@ fn canonical_target(target: &str) -> &str {
 
 /// One package-owned directory installed for one target.
 ///
-/// The target keeps the spelling the constructing caller used: the target
-/// directory (`.claude`) when built from a target root, the canonical form
-/// (`claude`) when parsed from a `.mars` path. Canonical paths and lock keys
-/// trim the dot; comparisons accept either.
+/// The target is always the target directory name (`.claude`), whichever
+/// spelling the constructing caller used. Canonical paths and lock keys trim
+/// the dot back off.
 #[derive(Debug, Clone)]
 pub(crate) struct PackageDir {
     kind: ItemKind,
@@ -57,7 +50,7 @@ impl PackageDir {
         Some(Self {
             kind,
             surface: surface(kind)?,
-            target: target.to_string(),
+            target: format!(".{}", canonical_target(target)),
             name: name.to_string(),
         })
     }
@@ -87,9 +80,7 @@ impl PackageDir {
         self.kind
     }
 
-    /// The target this copy belongs to. A selection record builds it from the
-    /// managed target root, so it is the target directory name (`.claude`); a
-    /// copy parsed from a `.mars` path carries the canonical form.
+    /// The target directory this copy belongs to: `.claude`.
     pub(crate) fn target(&self) -> &str {
         &self.target
     }
@@ -98,9 +89,9 @@ impl PackageDir {
         &self.name
     }
 
-    /// Whether this copy belongs to `target`, which may keep its leading dot.
+    /// Whether this copy belongs to `target`, spelled as its target directory.
     pub(crate) fn belongs_to(&self, target: &str) -> bool {
-        canonical_target(&self.target) == canonical_target(target)
+        self.target == target
     }
 
     /// `mcp/claude/echo`: where the copy lives under `.mars/`.
@@ -128,7 +119,9 @@ impl PackageDir {
     pub(crate) fn not_installed_label(&self) -> (&'static str, &'static str) {
         match self.kind {
             ItemKind::McpServer => ("mcp-not-installed", "MCP server"),
-            _ => ("hook-not-installed", "hook"),
+            ItemKind::Hook => ("hook-not-installed", "hook"),
+            // `surface` rejects every kind without a package-owned directory.
+            other => unreachable!("{other:?} installs no package-owned directory"),
         }
     }
 }

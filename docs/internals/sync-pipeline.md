@@ -111,9 +111,9 @@ Fetches sources, resolves concrete versions, and prepares each package.
 **Algorithm (src/resolve/mod.rs):**
 1. Fetch dependencies from EffectiveConfig
 2. Read `mars.toml` manifests in source trees to discover transitive dependencies (including transitive skill dependencies pulled in through agent declarations)
-3. Intersect version constraints across dependents
-4. Select concrete versions
-5. Select the items the consumer installs (`mars_schema::selection::select`, one pass over the settled graph), then order packages alphabetically
+3. Settle each package's constraints (`mars_schema::version::settle`: one pin, or a pin beside a range refuses)
+4. Select concrete versions (`mars_schema::version::select`, the rule below)
+5. Select the items the consumer installs (`mars_schema::selection::select`, one pass over the settled graph; it computes the registry order skill refs resolve in)
 
 **Version selection strategy:**
 

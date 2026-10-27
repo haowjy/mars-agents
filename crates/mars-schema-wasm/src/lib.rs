@@ -165,3 +165,158 @@ pub fn normalize(input: JsValue) -> Result<JsValue, JsError> {
         },
     ))
 }
+
+fn parse_version(text: &str) -> Result<semver::Version, JsError> {
+    semver::Version::parse(text).map_err(|error| JsError::new(&format!("`{text}`: {error}")))
+}
+
+fn parse_tags(tags: &[String]) -> Result<Vec<semver::Version>, JsError> {
+    tags.iter()
+        .map(|tag| {
+            mars_schema::version::parse_tag(tag)
+                .ok_or_else(|| JsError::new(&format!("`{tag}` is not a version tag")))
+        })
+        .collect()
+}
+
+/// Whether `version` meets a dependency entry's `version` text (`null` or `"latest"` is any
+/// version; a branch or commit pin is met by none). A `version` that is not semver throws.
+#[wasm_bindgen]
+pub fn satisfies(constraint: Option<String>, version: &str) -> Result<bool, JsError> {
+    let constraint = mars_schema::version::parse_constraint(constraint.as_deref());
+    Ok(mars_schema::version::satisfies(
+        &constraint,
+        &parse_version(version)?,
+    ))
+}
+
+/// Whether `version` meets a package's `requires-mars` / `requires-meridian`. A requirement that
+/// is not one, or a `version` that is not semver, throws.
+#[wasm_bindgen(js_name = satisfiesRequirement)]
+pub fn satisfies_requirement(requirement: &str, version: &str) -> Result<bool, JsError> {
+    Ok(mars_schema::version::satisfies_requirement(
+        requirement,
+        &parse_version(version)?,
+    )?)
+}
+
+/// The ref a package ends at, from `[requester, version][]`: the one pin if there is one, `null`
+/// if `selectVersion` should choose among the tags. Constraints that cannot all hold throw.
+#[wasm_bindgen]
+pub fn settle(constraints: JsValue) -> Result<JsValue, JsError> {
+    let constraints: Vec<(String, Option<String>)> = serde_wasm_bindgen::from_value(constraints)?;
+    let parsed: Vec<_> = constraints
+        .iter()
+        .map(|(requester, version)| {
+            (
+                requester.as_str(),
+                mars_schema::version::parse_constraint(version.as_deref()),
+            )
+        })
+        .collect();
+    let borrowed: Vec<_> = parsed
+        .iter()
+        .map(|(requester, constraint)| (*requester, constraint))
+        .collect();
+    to_js(&mars_schema::version::settle(&borrowed)?)
+}
+
+/// Choose a tag: `{available, constraints, locked?, policy?, excluded?}` to one of `available`.
+/// `constraints` is `[requester, version][]` of semver ranges; `policy` is `prefer-lock-then-latest`
+/// (the default), `latest-only` or `lock-only`. No tag meeting every constraint throws, with the
+/// message naming each requirement and the versions there are.
+#[wasm_bindgen(js_name = selectVersion)]
+pub fn select_version(input: JsValue) -> Result<String, JsError> {
+    use mars_schema::version::{Constraint, SelectionPolicy};
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        available: Vec<String>,
+        constraints: Vec<(String, String)>,
+        locked: Option<String>,
+        policy: Option<Policy>,
+        excluded: Option<Vec<String>>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    enum Policy {
+        PreferLockThenLatest,
+        LatestOnly,
+        LockOnly,
+    }
+    let input: Input = serde_wasm_bindgen::from_value(input)?;
+    let versions = parse_tags(&input.available)?;
+    let requirements = input
+        .constraints
+        .iter()
+        .map(
+            |(requester, text)| match mars_schema::version::parse_constraint(Some(text)) {
+                Constraint::Semver(req) => Ok((requester.as_str(), req)),
+                other => Err(JsError::new(&format!(
+                    "`{requester}`: `{other}` is not a semver range"
+                ))),
+            },
+        )
+        .collect::<Result<Vec<_>, _>>()?;
+    let constraints: Vec<_> = requirements
+        .iter()
+        .map(|(requester, req)| (*requester, req))
+        .collect();
+    let locked = input
+        .locked
+        .as_deref()
+        .map(|tag| parse_tags(&[tag.to_owned()]).map(|mut versions| versions.remove(0)))
+        .transpose()?;
+    let excluded = parse_tags(&input.excluded.unwrap_or_default())?
+        .into_iter()
+        .collect();
+    let policy = match input.policy.unwrap_or(Policy::PreferLockThenLatest) {
+        Policy::PreferLockThenLatest => SelectionPolicy::PreferLockThenLatest,
+        Policy::LatestOnly => SelectionPolicy::LatestOnly,
+        Policy::LockOnly => SelectionPolicy::LockOnly,
+    };
+    let index =
+        mars_schema::version::select(&versions, &constraints, locked.as_ref(), policy, &excluded)?;
+    Ok(input.available[index].clone())
+}
+
+/// The items a consumer installs from a settled graph:
+/// `{requests, packages, root?}` to a `SelectionResult`. `packages` is `{name: {prepared,
+/// extraItems?}}` with each `prepared` the result of `prepare` as it returned it; edges and
+/// `uses-providers` come from its manifest reading, so nothing is re-derived. `requests` are the
+/// consumer's entries (`{name, agents?, skills?, exclude?, only_skills?, only_agents?}`); `root`
+/// is a package selected whole as the first request (see `mars_schema::selection`).
+#[wasm_bindgen(js_name = selectItems)]
+pub fn select_items(input: JsValue) -> Result<JsValue, JsError> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        requests: Vec<RequestInput>,
+        packages: BTreeMap<String, mars_schema::selection::PackageInput>,
+        root: Option<mars_schema::selection::PackageInput>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RequestInput {
+        name: String,
+        #[serde(flatten)]
+        filter: mars_schema::filter::FilterConfig,
+    }
+    let input: Input = serde_wasm_bindgen::from_value(input)?;
+    let view = mars_schema::selection::GraphView {
+        requests: input
+            .requests
+            .into_iter()
+            .map(|request| mars_schema::selection::Request {
+                name: request.name,
+                filter: request.filter.to_mode(),
+            })
+            .collect(),
+        root: input.root.map(Into::into),
+        packages: input
+            .packages
+            .into_iter()
+            .map(|(name, package)| (name, package.into()))
+            .collect(),
+    };
+    to_js(&mars_schema::selection::select(&view))
+}

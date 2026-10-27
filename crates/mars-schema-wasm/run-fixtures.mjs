@@ -140,6 +140,42 @@ for (const name of cases("upgrade")) {
   checked++;
 }
 
+// version: the ops the package exports (`parse-constraint` and `parse-tag` are Rust-only)
+const attempt = (run) => { try { return run(); } catch (error) { return { error: error.message }; } };
+for (const name of cases("version")) {
+  const input = json("version", name, "input.json");
+  const actual = {
+    "satisfies": () => ({ satisfied: wasm.satisfies(input.constraint ?? null, input.version) }),
+    "satisfies-requirement": () => {
+      try { return { satisfied: wasm.satisfiesRequirement(input.requirement, input.version) }; }
+      catch { return { error: "not a requirement" }; }
+    },
+    "select": () => attempt(() => ({ tag: wasm.selectVersion({
+      available: input.tags,
+      constraints: (input.constraints ?? []).map((text, i) => [`requester-${i}`, text]),
+      locked: input.locked, policy: input.policy, excluded: input.excluded,
+    }) })),
+    "settle": () => attempt(() => {
+      const pin = wasm.settle(input.constraints);
+      return pin === null ? { unpinned: true } : { pin };
+    }),
+  }[input.op];
+  if (actual) check(actual(), json("version", name, "expected.json"), `version/${name}`);
+}
+
+// selection: each package is prepared, then the results go to selectItems as prepare returned them
+for (const name of cases("selection")) {
+  const dir = join(fixtures, "selection", name);
+  const request = json("selection", name, "request.json");
+  const packages = {};
+  for (const pkg of cases(join("selection", name, "packages"))) {
+    packages[pkg] = { prepared: wasm.prepare({ files: tree(join(dir, "packages", pkg)), context: "package" }), extraItems: request.extra_items?.[pkg] };
+  }
+  const root = request.root ? packages[request.root] : undefined;
+  if (request.root) delete packages[request.root];
+  check(wasm.selectItems({ requests: request.requests, packages, root }), json("selection", name, "expected.json"), `selection/${name}`);
+}
+
 // vocabulary
 check(wasm.vocabulary(), json("vocabulary", "expected.json"), "vocabulary");
 

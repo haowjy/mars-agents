@@ -27,7 +27,7 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 | `inspect`, `normalize` | `dispatch` and `prepare` over a whole repository; the generated `mars.toml` and provenance |
 | `upgrade` | The pre-v1 to v1 conversion, shared by `prepare` and `mars migrate` (definitions; a manifest's `schema` and removed `visibility`; it never touches `requires-mars`), and `ensure_requires_mars_floor`, which adds a missing floor and reports an existing requirement it will not rewrite |
 | `version` | The two version grammars and the one version choice: `parse_constraint` (a dependency entry's `version`: `v1.2.3`, `v2`, `v2.1`, a semver requirement where a bare `0.20` is the caret range, else a ref pin), `parse_tag`, `satisfies`; `satisfies_requirement` (the `requires-*` grammar, where a bare `0.20` is `>=0.20.0`); `select`, the newest allowed tag or the locked one by `SelectionPolicy`, whatever the order of the tags; `settle`, the pin a package's constraints agree on (every constraint must hold on the ref the package ends at: two pins, or a pin beside a range, refuse; `fixtures/version/settle-*`). The binary lists the tags, replays the lock and maps `SelectError` to its own errors. `fixtures/version/` pins both grammars |
-| `selection` | `select`: the one pass that chooses a settled graph's installed items from the consumer's requests, each package's prepared result and its manifest entries (`GraphView`, `PackageView::from_prepared`; `GraphView.packages` is a set, `select` computes the registry order depth first from the requests, and `GraphView.root` is the package being selected for, such as a project's own); `SelectionResult` holds the items by package, kind and slug with why each is selected, the skill refs no package ships, and `selection.duplicate-slug` warnings. The binary builds the view (it adds bootstrap documents and hooks, which `prepare` does not read) and sync, `mars check` and the plugin build consume the result without re-applying a filter. Installed names (renames, collision suffixes) stay with the caller. `fixtures/selection/` pins the rule, including the CWS v0.6.1 plugin graph |
+| `selection` | `select`: the one pass that chooses a settled graph's installed items from the consumer's requests, each package's prepared result and its manifest entries (`GraphView`; `PackageView` owns plain data, built by `PackageView::from_prepared` or, across the WASM boundary, from `PackageInput`, which reads only the parts of a serialized `Prepared` that selection uses (`Prepared` itself is `Serialize` only: it holds the whole `AgentProfile` tree, which has no `Deserialize`), so a JS caller passes `prepare`'s result whole and re-derives nothing; the Node fixture leg runs every selection case through `prepare` then `selectItems`, which catches the two readers drifting apart; `GraphView.packages` is a set, `select` computes the registry order depth first from the requests, and `GraphView.root` is the package being selected for, such as a project's own); `SelectionResult` holds the items by package, kind and slug with why each is selected, the skill refs no package ships, and `selection.duplicate-slug` warnings. The binary builds the view (it adds bootstrap documents and hooks, which `prepare` does not read) and sync, `mars check` and the plugin build consume the result without re-applying a filter. Installed names (renames, collision suffixes) stay with the caller. `fixtures/selection/` pins the rule, including the CWS v0.6.1 plugin graph |
 | `package` | Versioned package metadata, `classify_manifest`, `parse_requirement` and `requirement_has_floor`: the `requires-mars` floor rule, and the advice `mars check` and `mars migrate` share |
 | `item` | `ItemKind` and `DefinitionKind` (Agent, Skill) |
 | `provider` | The provider-name grammar and `provider_of`; `deferred_provider` and `undeclared_provider_hint`, the package-only half of a `<skill>__<provider>` ref's validity that selection and `mars check` share |
@@ -206,7 +206,8 @@ is converted to `serde_json::Map` at the boundary.
 ## WASM and fixtures
 
 `mars-schema-wasm` serializes with `Serializer::json_compatible()` (plain objects, `null`) and
-exposes `read`, `emitValue`, `rewriteBlock`, `vocabulary`, `prepare`, `inspect` and `normalize`
+exposes `read`, `emitValue`, `rewriteBlock`, `vocabulary`, `prepare`, `inspect`, `normalize`,
+`satisfies`, `satisfiesRequirement`, `settle`, `selectVersion` and `selectItems`
 as `@meridian-flow/mars-schema` (trees are `Map<path, Uint8Array>`). `prepare` is a supported
 export on its own: the way to read one root without choosing items. The npm `node/`, `web/` and
 `fixtures/` are built by `scripts/build-schema-wasm.sh`, never committed. The script builds the
@@ -214,7 +215,7 @@ export on its own: the way to read one root without choosing items. The npm `nod
 `release` and about 60% slower to parse); the native `release` profile is untouched.
 
 `fixtures/<suite>/<case>/` are the published contract: `read`, `emit`, `upgrade`, `prepare`,
-`normalize` and `vocabulary`. Fixtures are checked in Rust (`tests/`) and in Node
+`normalize`, `vocabulary`, `version` and `selection`. Fixtures are checked in Rust (`tests/`) and in Node
 (`crates/mars-schema-wasm/run-fixtures.mjs`, deep equality on every suite; emit cases are
 spliced into a frontmatter and read back by `read` and the `yaml` library). Regenerate expected
 output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff.

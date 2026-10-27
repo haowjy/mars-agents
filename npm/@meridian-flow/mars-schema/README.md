@@ -32,6 +32,11 @@ await init();
 | `prepare({files, context?, declaredDialect?, migrate?})` | Reads one root held in memory: classifies it, upgrades or translates it, and returns each definition's normalized bytes, typed reading and change record. `migrate` adds `mars migrate`'s repair: a removed Agent key whose replacement is a `harness-overrides` key moves there. |
 | `inspect({tree, hint?})` | Reports what a repository is: a marketplace's plugins, a plugin's or skill tree's items, the dialect and the evidence for it. |
 | `normalize({tree, source?, hint?, selection?})` | Turns a selection into schema v1 packages with a generated `mars.toml` and provenance. |
+| `satisfies(constraint, version)` | Whether a version meets a dependency entry's `version` (`^1.2`, `v2`, a bare `0.20` as `^0.20`, `latest`; a branch or commit pin is met by none). |
+| `satisfiesRequirement(requirement, version)` | Whether a version meets a package's `requires-mars` or `requires-meridian`, where a bare `0.20` means `>=0.20.0`. |
+| `settle([[requester, version], ...])` | The one ref every constraint on a package can end at (`null` when `selectVersion` chooses among the tags); throws for two different pins or a pin beside a range. |
+| `selectVersion({available, constraints, locked?, policy?, excluded?})` | The tag Mars would pick: the newest that meets every semver range, or the locked one when `policy` allows. Throws when none qualifies. |
+| `selectItems({requests, packages, root?})` | Which Agents, skills and package documents a consumer installs from a settled graph, and why. Takes each package's `prepare` result. |
 | `version()` | The version of the schema crate this build was made from. |
 
 A tree is a `Map<string, Uint8Array>` from `/`-separated relative paths to bytes. `prepare`, `inspect` and `normalize` read manifests, definitions and directory listings, never the bytes of a skill's other files.
@@ -97,6 +102,22 @@ natives.flow.work;                 // { kind: "tools", tools: ["work"] }
 
 Marketplace fields are untrusted input: a marketplace is third-party text, and an entry's repository and ref reach `git` as arguments. The crate checks them when it reads the entry, and an entry that fails comes back as `source.kind === "unsupported"` with a `reason` (and `refused` on the plugin), never as `remote`. A repository must be an `https://` or `ssh://` URL or a `user@host:path` address; a local repository (`file://`, an absolute path), `ext::`, `git://`, `http://` and the like are refused. A repository or ref that is empty, starts with `-` or holds whitespace or a control character is refused, and so is a `sha` that is not a full 40-character commit (it is never read as an unpinned checkout). A plugin name must be letters, digits, `-`, `_` and `.`, starting with a letter or digit (`is_plugin_name`); an entry that fails it is left out with `marketplace.plugin-name-invalid`, and a `plugin.json` name that fails it is ignored with `plugin.name-invalid`. The crate does not check that a repository exists, is reachable, or is on a host you allow: restricting hosts (GitHub only, say) is the caller's policy. The Claude rules (a plugin's `skills` list adds to the default folder, its `agents` list replaces it, commands are reported and not imported) are applied here; see [Dialect](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#dialect).
 
+### Versions and selection
+
+The version functions are the rules `mars sync` applies, so a caller that resolves its own dependencies agrees with it. Tags are strings (`v1.2.3` or `1.2.3`); A tag that is not a version (`latest`, `nightly-2024`) makes `selectVersion` throw, so drop those first. Settle a package's constraints first (`settle`), then choose a tag among those that meet the semver ranges (`selectVersion`).
+
+`selectItems` runs the pass that decides what a consumer installs. Prepare each package of the graph, then pass the results unchanged:
+
+```ts
+const result = selectItems({
+  requests: [{ name: "base" }, { name: "extras", skills: ["lint"] }],
+  packages: { base: { prepared: prepare({ files: baseFiles }) }, extras: { prepared: prepare({ files: extraFiles }) } },
+});
+// result.items: [{package, kind, slug, path, required_by}], result.missing_skills, result.diagnostics
+```
+
+Each package's edges and `uses-providers` are read from its prepared manifest, so nothing is derived twice. A filtered entry of a manifest seeds nothing; only the consumer's own `exclude` blocks. A skill an Agent names resolves to a package in its own, then its dependencies, then any other package in registry order, which `selectItems` computes from `root` and `requests`; `packages` is a set. `missing_skills` lists refs no package ships. `kind` values are `agent`, `skill`, `hook`, `mcpserver` and `bootstrapdoc`.
+
 ## Fixtures
 
 `fixtures/` holds the cases the package is tested with, one directory per case:
@@ -109,6 +130,8 @@ Marketplace fields are untrusted input: a marketplace is third-party text, and a
 | `prepare` | `input/`, `request.json`, `expected.json` | classifying and reading one root, and with `"migrate": true` the repair `mars migrate` writes back |
 | `normalize` | `input/`, `request.json`, `inspection.json`, `normalized.json`, `expected/` | reading a foreign repository |
 | `vocabulary` | `expected.json` | the capabilities, aliases and native tools |
+| `version` | `input.json`, `expected.json` | `satisfies`, `satisfiesRequirement`, `settle` and `selectVersion` (the Rust leg also pins `parse-constraint` and `parse-tag`, which are not exported) |
+| `selection` | `request.json`, `packages/`, `expected.json` | `selectItems` over packages prepared from `packages/` |
 
 `node crates/mars-schema-wasm/run-fixtures.mjs` in the Mars repository runs every case against this package and compares results deeply, key order included. Run the same cases against the version you pin; a change to a pinned reader that changes a result is a change to the contract.
 

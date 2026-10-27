@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "package": "p3",
+      "kind": "agent",
+      "slug": "top",
+      "path": "agents/top.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "q",
+      "kind": "skill",
+      "slug": "qx",
+      "path": "skills/qx",
+      "required_by": [
+        {
+          "by": "item",
+          "package": "p3",
+          "kind": "agent",
+          "slug": "top"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

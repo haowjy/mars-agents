@@ -1,0 +1,4 @@
+[package]
+name = "b"
+version = "1.0.0"
+schema = 1

@@ -1,0 +1,10 @@
+{
+  "requests": [
+    {
+      "name": "requester",
+      "agents": [
+        "coder"
+      ]
+    }
+  ]
+}

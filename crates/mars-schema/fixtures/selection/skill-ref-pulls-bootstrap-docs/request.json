@@ -1,0 +1,16 @@
+{
+  "requests": [
+    {
+      "name": "a"
+    }
+  ],
+  "extra_items": {
+    "b": [
+      {
+        "kind": "bootstrapdoc",
+        "slug": "intro",
+        "path": "bootstrap/intro"
+      }
+    ]
+  }
+}

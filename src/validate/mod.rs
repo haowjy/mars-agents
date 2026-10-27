@@ -84,32 +84,16 @@ impl ValidationWarning {
 
 /// Parse skill dependencies from an Agent file.
 ///
-/// The callers read files Mars or a provider wrote — an installed Agent under `.mars/`, or the
-/// staged copy a sync filters — so the read tolerates a pre-v1 spelling. Returns the `skills`
-/// list, or an empty vec if there is no frontmatter, no `skills` field, or malformed YAML, and
-/// reads only the frontmatter block between `---` delimiters, not the full markdown body.
-pub fn parse_item_skill_deps(item_path: &Path) -> Result<Vec<String>, MarsError> {
-    let content = std::fs::read_to_string(item_path)?;
+/// The callers read files Mars or a provider wrote — an installed Agent under `.mars/` — so the
+/// read tolerates a pre-v1 spelling. Returns the `skills` list, or an empty vec if there is no
+/// frontmatter, no `skills` field, or malformed YAML, and reads only the frontmatter block
+/// between `---` delimiters, not the full markdown body.
+pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
+    let content = std::fs::read_to_string(agent_path)?;
     Ok(mars_schema::read::installed_agent(&content)
         .fields
         .map(|profile| profile.skills.all())
         .unwrap_or_default())
-}
-
-/// Parse skill dependencies from an agent's frontmatter.
-///
-/// Returns a list of skill names from the `skills:` YAML field.
-pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
-    parse_item_skill_deps(agent_path)
-}
-/// Extract skills list from prepared package content, which is already schema v1.
-///
-/// Defensive: returns empty vec on any parse failure.
-pub(crate) fn extract_skills_from_content(content: &str) -> Vec<String> {
-    mars_schema::agent::read(content)
-        .fields
-        .map(|profile| profile.skills.all())
-        .unwrap_or_default()
 }
 
 /// Check that agent→skill references resolve.

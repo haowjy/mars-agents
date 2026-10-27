@@ -1,0 +1,11 @@
+{
+  "requests": [
+    {
+      "name": "p",
+      "exclude": [
+        "reviewer",
+        "skills/planning"
+      ]
+    }
+  ]
+}

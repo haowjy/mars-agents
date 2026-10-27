@@ -1,0 +1,35 @@
+{
+  "items": [
+    {
+      "package": "a",
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "b",
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": [
+    {
+      "code": "selection.duplicate-slug",
+      "severity": "warning",
+      "path": [],
+      "message": "agent `coder` is installed from a, b"
+    }
+  ]
+}

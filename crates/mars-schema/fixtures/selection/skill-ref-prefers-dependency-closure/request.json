@@ -1,0 +1,15 @@
+{
+  "requests": [
+    {
+      "name": "sibling"
+    },
+    {
+      "name": "requester"
+    }
+  ],
+  "registry": [
+    "sibling",
+    "requester",
+    "my-dep"
+  ]
+}

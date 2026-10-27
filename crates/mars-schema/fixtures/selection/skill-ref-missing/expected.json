@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "package": "a",
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [
+    {
+      "skill": "nowhere",
+      "required_by": "a/coder",
+      "searched": [
+        "a"
+      ],
+      "hint": null
+    },
+    {
+      "skill": "notify__meridian",
+      "required_by": "a/coder",
+      "searched": [
+        "a"
+      ],
+      "hint": "if `meridian` is a host that provides this skill, declare it in `[package] uses-providers`; otherwise check the name"
+    }
+  ],
+  "diagnostics": []
+}

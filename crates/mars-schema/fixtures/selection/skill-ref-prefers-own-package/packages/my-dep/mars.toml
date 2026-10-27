@@ -1,0 +1,4 @@
+[package]
+name = "my-dep"
+version = "1.0.0"
+schema = 1

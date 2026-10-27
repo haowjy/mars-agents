@@ -1,18 +1,25 @@
 # src/resolve/ — Package Resolution
 
-Dependency resolution with semver constraints (the grammar and the version choice are `mars_schema::version`). 14 source files + tests, ~9700 lines.
+Dependency resolution with semver constraints (the grammar and the version choice are `mars_schema::version`). the resolver plus `select`, the adapter to the pure selection pass.
 
 ## Mental Model
 
-Two-phase algorithm:
+Two phases. The resolver chooses versions and records each package's manifest entries with their
+filters (`ResolvedNode.edges`); it never chooses items. Once the graph settles, selection runs
+once over it:
 
 ```
 Phase 1: Bottom-up package resolution (with restart loop)
   mars.toml dependencies → resolve_package_bottom_up() → registry
 
-Phase 2: DFS item traversal
-  seeded items → parse skill deps → resolve skill refs → graph
+Phase 2: selection (pure, no restarts)
+  settled graph → mars_schema::selection::select → ResolvedGraph.selection
 ```
+
+`select.rs` is the adapter: it builds the `GraphView` (requests, packages in registry order, each
+package's prepared result and edges, and the bootstrap documents and hooks found in its tree) and
+passes it to the crate, which owns the rule. Sync, `mars check` and the plugin build read
+`graph.selection`; none of them re-applies a filter.
 
 ### Restart Algorithm
 
@@ -103,9 +110,10 @@ resolver fixtures that inject manifests without authored files.
 ## Types
 
 - `PendingSource` — unresolved dependency request and its declared/effective identities
-- `PendingItem` — selected Agent or skill waiting for DFS traversal
+- `Edge` — one manifest entry of a package: the package it names and its filter
+- `PendingItem` — an item with the version request that selected it, for the item version check
 - `ResolvedNode` — source identity, immutable authored origin, prepared result and parsed manifest
-- `ResolvedGraph` — final nodes, filters and deterministic order
+- `ResolvedGraph` — final nodes, `selection` and deterministic order
 - `ResolverContext` — restart, constraint and traversal state
 
 `ResolvedGraph::dependency_depths()` and `dependency_decl_orders()` derive traversal properties
@@ -125,7 +133,16 @@ resolution use the same source provider and prepared-node path as sync.
 
 ## Item Resolution
 
-Resolved item traversal is DFS from seeded agent/skill requests. A skill ref `x__p` that no package ships is deferred (`resolve_skill_ref` returns `None`) when the requesting package's `uses-providers` lists `p`, and is `SkillNotFound` otherwise; the resolver never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator reports what is actually provided. Source items themselves come from `src/discover/`'s convention walk; this phase parses skill frontmatter deps and resolves those references transitively. Version conflicts between packages produce errors (local items skip conflicts).
+Selection is `mars_schema::selection::select`; the rule is documented there. In short: the consumer's
+requests, and the unfiltered entries reached from an unfiltered request through unfiltered entries,
+seed items; a transitive manifest's filtered entry seeds nothing and its `exclude` blocks nothing;
+the skills a selected Agent names resolve requester-first. A skill ref `x__p` that no package ships
+is skipped when the requesting package's `uses-providers` lists `p`, and is `SkillNotFound`
+otherwise (`resolve()` turns the selection's first `missing_skills` entry into that error); selection
+never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator
+reports what is actually provided. Source items come from `Prepared.definitions` and, for the kinds
+the crate does not prepare (bootstrap documents, hooks), from `src/discover/`'s convention walk.
+Version conflicts between packages produce errors (local items skip conflicts).
 
 ## Patterns
 

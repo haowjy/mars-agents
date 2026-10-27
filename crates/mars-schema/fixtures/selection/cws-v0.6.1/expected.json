@@ -1,0 +1,917 @@
+{
+  "items": [
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "brainstormer",
+      "path": "agents/brainstormer.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "character-sim",
+      "path": "agents/character-sim.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "continuity-checker",
+      "path": "agents/continuity-checker.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "critic",
+      "path": "agents/critic.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "editor",
+      "path": "agents/editor.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "muse",
+      "path": "agents/muse.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "outliner",
+      "path": "agents/outliner.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "reader-sim",
+      "path": "agents/reader-sim.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "style-creator",
+      "path": "agents/style-creator.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "web-researcher",
+      "path": "agents/web-researcher.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "agent",
+      "slug": "writer",
+      "path": "agents/writer.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "character-sim",
+      "path": "skills/character-sim",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "character-sim"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "creative-research",
+      "path": "skills/creative-research",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "web-researcher"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "creative-writing-craft",
+      "path": "skills/creative-writing-craft",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "editor"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "style-creator"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "writer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "creative-writing-modes",
+      "path": "skills/creative-writing-modes",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "writer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "creative-writing-muse",
+      "path": "skills/creative-writing-muse",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "project-setup",
+      "path": "skills/project-setup",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "reader-sim",
+      "path": "skills/reader-sim",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "reader-sim"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "story-memory",
+      "path": "skills/story-memory",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "brainstormer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "character-sim"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "continuity-checker"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "critic"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "editor"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "outliner"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "style-creator"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "writer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "story-planning",
+      "path": "skills/story-planning",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "brainstormer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "outliner"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "story-review",
+      "path": "skills/story-review",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "continuity-checker"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "critic"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "editor"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "writing-principles",
+      "path": "skills/writing-principles",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "character-sim"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "critic"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "editor"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "reader-sim"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "style-creator"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "writer"
+        }
+      ]
+    },
+    {
+      "package": "creative-writing-skills",
+      "kind": "skill",
+      "slug": "writing-staffing",
+      "path": "skills/writing-staffing",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "agent",
+      "slug": "cold-reader",
+      "path": "agents/cold-reader.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "agent",
+      "slug": "explorer",
+      "path": "agents/explorer.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "agent",
+      "slug": "kb-lead",
+      "path": "agents/kb-lead.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "agent",
+      "slug": "kb-maintainer",
+      "path": "agents/kb-maintainer.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "agent",
+      "slug": "session-miner",
+      "path": "agents/session-miner.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "correct",
+      "path": "skills/correct",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "grill",
+      "path": "skills/grill",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "grill-with-docs",
+      "path": "skills/grill-with-docs",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "information-hierarchy",
+      "path": "skills/information-hierarchy",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "cold-reader"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-lead"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-maintainer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "intent-modeling",
+      "path": "skills/intent-modeling",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "brainstormer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "cold-reader"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-lead"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "session-miner"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "knowledge-layers",
+      "path": "skills/knowledge-layers",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-lead"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-maintainer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "llm-writing",
+      "path": "skills/llm-writing",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "brainstormer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "character-sim"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "critic"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "editor"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "reader-sim"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "style-creator"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "writer"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "cold-reader"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-lead"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-maintainer"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "session-miner"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "md-validation",
+      "path": "skills/md-validation",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "continuity-checker"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "outliner"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-lead"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-maintainer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "qi-layer",
+      "path": "skills/qi-layer",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-lead"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-maintainer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "qi-maintenance",
+      "path": "skills/qi-maintenance",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "reflect",
+      "path": "skills/reflect",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "shared-dao",
+      "path": "skills/shared-dao",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "continuity-checker"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-lead"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-maintainer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "shared-workspace",
+      "path": "skills/shared-workspace",
+      "required_by": [
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-lead"
+        },
+        {
+          "by": "item",
+          "package": "meridian-base",
+          "kind": "agent",
+          "slug": "kb-maintainer"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "structured-artifact",
+      "path": "skills/structured-artifact",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "item",
+          "package": "creative-writing-skills",
+          "kind": "agent",
+          "slug": "muse"
+        }
+      ]
+    },
+    {
+      "package": "meridian-base",
+      "kind": "skill",
+      "slug": "zoom-out",
+      "path": "skills/zoom-out",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "writing-sync",
+      "kind": "skill",
+      "slug": "writing-sync",
+      "path": "skills/writing-sync",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "package",
+          "package": "creative-writing-skills"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

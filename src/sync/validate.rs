@@ -29,7 +29,7 @@ pub(crate) fn validate_skill_refs(
     provided: Option<&ProvidedNames>,
     local_declared: Option<&[String]>,
 ) -> Vec<ValidationWarning> {
-    use crate::validate::{extract_skills_from_content, find_suggestion};
+    use crate::validate::find_suggestion;
 
     let available_skills: HashSet<String> = target
         .items
@@ -63,7 +63,12 @@ pub(crate) fn validate_skill_refs(
             Some(content) => content.clone(),
             None => std::fs::read_to_string(&item.source_path).unwrap_or_default(),
         };
-        for skill_name in extract_skills_from_content(&content) {
+        // An Agent already in schema v1: it was prepared, then possibly rewritten.
+        let skills = mars_schema::agent::read(&content)
+            .fields
+            .map(|profile| profile.skills.all())
+            .unwrap_or_default();
+        for skill_name in skills {
             if available_skills.contains(&skill_name) {
                 continue;
             }

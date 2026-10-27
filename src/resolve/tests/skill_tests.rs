@@ -129,7 +129,7 @@ fn skill_resolution_prefers_dependency_closure_over_insertion_order() {
                 && item
                     .required_by
                     .iter()
-                    .any(|requester| matches!(requester, Requester::Item { slug, .. } if slug == "coder"))
+                    .any(|requester| matches!(requester, mars_schema::selection::Requester::Item { slug, .. } if slug == "coder"))
         })
     };
     assert!(pulled_by_coder("my-dep"), "{:?}", graph.selection.items);

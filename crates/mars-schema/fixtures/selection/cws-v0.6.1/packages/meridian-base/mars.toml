@@ -1,0 +1,147 @@
+[package]
+name = "meridian-base"
+version = "0.13.0"
+description = "Core coordination primitives for Meridian — agent profiles and skills for spawning, state tracking, and session context."
+requires-mars = ">=0.20.0"
+requires-meridian = ">=0.15.0"
+schema = 1
+
+[dependencies]
+
+[local-dependencies.meridian-prompter]
+url = "https://github.com/meridian-flow/meridian-prompter"
+
+[settings]
+models_cache_ttl_hours = 24
+
+[models.composer]
+harness = "cursor"
+description = "Coding for bounded edits, scaffolding, tests, and implementing a settled plan. Unreliable on long-horizon, ambiguous, or high-risk work; plan and review with a stronger model. Value 10, intelligence 6, taste 3."
+model = "composer-2.5"
+provider = "cursor"
+
+[models.deepseek]
+description = "Coding and agent work: concrete repo changes, tool loops, bulk drafting from focused briefs; takes image input. Review its ambiguous or high-stakes work. Value 9, intelligence 6, taste 3."
+prompting = "Give the desired outcome, relevant source/design context, constraints, acceptance criteria, and concrete verification evidence. Define a coherent objective rather than prescribing each edit."
+default_effort = "high"
+match = ["deepseek*flash*"]
+exclude = [
+    "*/*",
+    "*:*",
+    "*vision*",
+    "*exp*",
+]
+
+[models.deepseekpro]
+description = "Legacy alias. Until DeepSeek ships a new Pro model, it routes Pro requests to Flash at Flash pricing, so this is `deepseek` under another name. Value 9, intelligence 6, taste 3."
+default_effort = "high"
+match = ["deepseek*pro*"]
+exclude = [
+    "*/*",
+    "*:*",
+    "*flash*",
+]
+
+[models.opus]
+harness = "claude"
+description = "Orchestration and interactive primaries, conversation, frontend, prompt and prose writing, deep sustained work. Best judge of code quality and long-term direction: structure, taste, refactoring, thermo-nuclear review, and what should be deleted. Can over-delegate. Value 5, intelligence 9, taste 9."
+default_effort = "high"
+match = ["claude*opus*"]
+exclude = ["*:*"]
+
+[models.sonnet]
+harness = "claude"
+description = "Daily implementation: bug fixes, multi-file coding, frontend polish, documents, bounded review. Opus is better for ambiguous architecture and open-ended judgment. Value 7, intelligence 8, taste 5."
+default_effort = "high"
+match = ["claude*sonnet*"]
+exclude = ["*:*"]
+
+[models.haiku]
+harness = "claude"
+description = "Summaries, compaction, classification, notes, cold reads, lightweight review, parallel subagents; not ambiguous architecture or complex autonomous implementation. Value 9, intelligence 6."
+match = ["claude*haiku*"]
+exclude = ["*:*"]
+
+[models.fable]
+harness = "claude"
+description = "Escalation only, never a default or fallback: when a strong model has run out of depth on long-horizon planning, architecture, critique, or bug-finding, a second opinion on work that can be verified. Slow and the most expensive; Opus is the better general orchestrator. Value 2, intelligence 10, taste 8."
+default_effort = "high"
+match = ["claude*fable*"]
+exclude = ["*:*"]
+
+[models.glm]
+harness = "opencode"
+description = "Open-weight coder for backend, repository-scale implementation, and code review. Slow to start and verbose; makes confident assumptions and stops following steering late in long runs. No image input; weak at UI. Value 7, intelligence 7, taste 3."
+default_effort = "high"
+model = "opencode-go/glm-5.2"
+provider = "opencode-go"
+
+[models.kimi]
+harness = "opencode"
+description = "Long-running coding and research over large inputs; native multimodal, good at frontend and web apps. Slow and token-heavy; avoid bulk work. Value 4, intelligence 7, taste 5."
+default_effort = "high"
+model = "kimi-k3"
+
+[models.muse]
+harness = "opencode"
+description = "Coding and agent or computer-use work; does well on simpler and UI tasks, loops on hard ones. Prompts and completions are not used for training. Value 6, intelligence 8, taste 4."
+model = "muse-spark-1.3"
+
+[models.muse-contributor]
+harness = "opencode"
+description = "Same model as `muse` on a free endpoint that may train on submitted prompts and completions; select it only when that is acceptable. Suits inexpensive visual probing."
+model = "opencode-go/muse-spark-1.3-contributor"
+provider = "opencode-go"
+
+[models.grok]
+harness = "opencode"
+description = "Long-horizon coding and knowledge work. Verbose and slow. Value 3, intelligence 8, taste 5."
+default_effort = "high"
+provider = "xai"
+match = ["grok-*"]
+exclude = [
+    "*-imagine-*",
+    "*-image*",
+    "*-video*",
+    "grok-build-*",
+]
+
+[models.argon]
+description = "Creative writing and long-form fiction: a second voice for drafting and revision, and a strong structural editor of long manuscripts. Drafts can run dense and verbose. Tool calling is unreliable: send it the text inline and take text back."
+match = ["*gemini*argon*"]
+exclude = [
+    "*image*",
+    "*tts*",
+    "*live*",
+    "*contributor*",
+]
+
+[models.argon-contributor]
+harness = "opencode"
+description = "Same model as `argon` on a free endpoint that may train on submitted prompts and completions; select it only when that is acceptable, never for unpublished manuscripts the author hasn't cleared."
+model = "opencode-go/gemini-4-argon-contributor"
+provider = "opencode-go"
+
+[models.sol]
+harness = "codex"
+description = "Difficult technical analysis, complex coding, computer use, long-horizon implementation. Slow to stream and output-heavy; a review benchmark on the previous version found many of its findings unactionable. Less sure-footed on ambiguous architecture. Value 8, intelligence 8, taste 5."
+prompting = "Outcome-first executor. Include the north-star goal, success criteria, relevant high-level context, constraints, expected output shape, and concrete verification: how to prove the goal is met and what evidence to report."
+match = ["gpt-*-sol"]
+
+[models.terra]
+harness = "codex"
+description = "Scoped, repeatable implementation, triage, and lower-risk review; clear and less prone to overthinking than Sol. Emits several times Sol's output per task and passes fewer long tasks. Value 9, intelligence 8, taste 4."
+prompting = "Outcome-first executor. Include the north-star goal, success criteria, relevant high-level context, constraints, expected output shape, and concrete verification: how to prove the goal is met and what evidence to report."
+match = ["gpt-*-terra"]
+
+[models.luna]
+harness = "codex"
+description = "General worker for implementation, exploration, summaries, and bounded execution; can own substantial coherent objectives given clear context and verification criteria. Can stall or report done early, so check its claims. Fine for quick, low-risk checks; not for ambiguous architecture or subtle cross-module debugging. Value 10, intelligence 6, taste 4."
+prompting = "Outcome-first executor. Include the north-star goal, success criteria, relevant high-level context, constraints, expected output shape, and concrete verification: how to prove the goal is met and what evidence to report."
+match = ["gpt-*-luna"]
+
+[models.astra]
+harness = "codex"
+description = "The hardest cross-system decisions, computer use and browser work, software engineering, important communication. Best judge of correctness: bugs, security, regressions. Slow; cyber-safety checks can pause legitimate security work. Value 5, intelligence 8, taste 6."
+default_effort = "high"
+match = ["gpt-*-astra"]

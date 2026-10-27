@@ -35,7 +35,8 @@ pub use publish::{PublishLens, resolve_publish_graph};
 pub(crate) use requires::{
     check_consumer_package_requirements, validate_package_requirement_syntax,
 };
-pub use select::*;
+#[cfg(test)]
+pub(crate) use select::select_for_test;
 pub use types::*;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
@@ -52,6 +53,7 @@ use crate::source::{AvailableVersion, ResolvedRef};
 use crate::types::SourceName;
 use crate::types::SourceUrl;
 use mars_schema::item::ItemKind;
+use mars_schema::selection::{Requester, Selection};
 use package::resolve_package_bottom_up;
 use version::validate_all_constraints;
 
@@ -369,7 +371,7 @@ fn check_item_versions(
             // package's first.
             let (required_by, recorded) = match requester {
                 Requester::Consumer => ("mars.toml".to_string(), Some("mars.toml")),
-                Requester::Package(from) => (from.clone(), Some(from.as_str())),
+                Requester::Package { package: from } => (from.clone(), Some(from.as_str())),
                 Requester::Item { package, slug, .. } => (format!("{package}/{slug}"), None),
             };
             let constraint = constraints

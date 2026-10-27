@@ -5,10 +5,10 @@ use mars_schema::version::Constraint;
 
 use super::{
     PackageResolutionState, RegisteredPackage, ResolvedGraph, ResolvedNode, RootedSourceRef,
-    Selection,
 };
 use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName};
+use mars_schema::selection::Selection;
 
 /// Mutable resolver state threaded through bottom-up resolution.
 pub struct ResolverContext {

@@ -1,0 +1,8 @@
+{
+  "requests": [
+    {
+      "name": "p",
+      "only_skills": true
+    }
+  ]
+}

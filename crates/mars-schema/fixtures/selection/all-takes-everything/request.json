@@ -1,0 +1,16 @@
+{
+  "requests": [
+    {
+      "name": "p"
+    }
+  ],
+  "extra_items": {
+    "p": [
+      {
+        "kind": "hook",
+        "slug": "autosync",
+        "path": "hooks/autosync"
+      }
+    ]
+  }
+}

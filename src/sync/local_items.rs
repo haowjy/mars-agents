@@ -16,7 +16,7 @@ use crate::error::MarsError;
 use crate::hash;
 use crate::local_source::{LocalDiscoveredItem, LocalItemContent};
 use crate::lock::ItemId;
-use crate::sync::target::{self, TargetItem, TargetState, default_dest_path};
+use crate::sync::target::{self, RenamableKind, TargetItem, TargetState, default_dest_path};
 use crate::types::{ContentHash, MarsContext, SourceName, SourceOrigin, managed_cmd};
 
 /// Fold every discovered local item into `target_state`.
@@ -160,7 +160,10 @@ impl LocalMerge<'_> {
             );
             return Ok(());
         }
-        let dest_path = default_dest_path(kind, item.discovered.id.name.as_str());
+        let dest_path = default_dest_path(
+            RenamableKind::of(kind).expect("local items are agents, skills or bootstrap docs"),
+            item.discovered.id.name.as_str(),
+        );
 
         if let Some(existing) = target_state.items.shift_remove(&dest_path)
             && existing.source_hash != source_hash

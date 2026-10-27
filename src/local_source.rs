@@ -123,7 +123,7 @@ fn binary_items(
             }),
     );
     items.extend(
-        crate::compiler::mcp::discover_mcp_items(root, "_self", 0, diag)?
+        crate::compiler::mcp::discover_mcp_items(root, "_self", 0, 0, diag)?
             .into_iter()
             .map(|mcp| {
                 let source_path = mcp

@@ -110,9 +110,10 @@ mod tests {
         make_mcp(dep.path(), "context7", "dep-cmd", None);
 
         let mut items =
-            discover_mcp_items(local.path(), "_self", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(local.path(), "_self", 0, 0, &mut DiagnosticCollector::new())
+                .unwrap();
         items.extend(
-            discover_mcp_items(dep.path(), "dep", 1, &mut DiagnosticCollector::new()).unwrap(),
+            discover_mcp_items(dep.path(), "dep", 1, 1, &mut DiagnosticCollector::new()).unwrap(),
         );
         let mut diag = DiagnosticCollector::new();
 
@@ -130,10 +131,17 @@ mod tests {
         make_mcp(first.path(), "context7", "first-cmd", None);
         make_mcp(second.path(), "context7", "second-cmd", None);
 
-        let mut items =
-            discover_mcp_items(second.path(), "_self", 2, &mut DiagnosticCollector::new()).unwrap();
+        let mut items = discover_mcp_items(
+            second.path(),
+            "_self",
+            0,
+            2,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         items.extend(
-            discover_mcp_items(first.path(), "_self", 1, &mut DiagnosticCollector::new()).unwrap(),
+            discover_mcp_items(first.path(), "_self", 0, 1, &mut DiagnosticCollector::new())
+                .unwrap(),
         );
         let mut diag = DiagnosticCollector::new();
 
@@ -155,9 +163,10 @@ mod tests {
         make_mcp(late.path(), "context7", "late-cmd", None);
 
         let mut items =
-            discover_mcp_items(late.path(), "late", 2, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(late.path(), "late", 1, 2, &mut DiagnosticCollector::new()).unwrap();
         items.extend(
-            discover_mcp_items(early.path(), "early", 1, &mut DiagnosticCollector::new()).unwrap(),
+            discover_mcp_items(early.path(), "early", 1, 1, &mut DiagnosticCollector::new())
+                .unwrap(),
         );
         let mut diag = DiagnosticCollector::new();
 
@@ -179,9 +188,10 @@ mod tests {
         make_mcp(zed.path(), "context7", "zed-cmd", None);
 
         let mut items =
-            discover_mcp_items(zed.path(), "zed", 1, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(zed.path(), "zed", 1, 1, &mut DiagnosticCollector::new()).unwrap();
         items.extend(
-            discover_mcp_items(alpha.path(), "alpha", 1, &mut DiagnosticCollector::new()).unwrap(),
+            discover_mcp_items(alpha.path(), "alpha", 1, 1, &mut DiagnosticCollector::new())
+                .unwrap(),
         );
         let mut diag = DiagnosticCollector::new();
 
@@ -202,11 +212,17 @@ mod tests {
         make_mcp(claude.path(), "context7", "claude-cmd", Some(".claude"));
         make_mcp(codex.path(), "context7", "codex-cmd", Some(".codex"));
 
-        let mut items =
-            discover_mcp_items(claude.path(), "claude", 1, &mut DiagnosticCollector::new())
-                .unwrap();
+        let mut items = discover_mcp_items(
+            claude.path(),
+            "claude",
+            1,
+            1,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         items.extend(
-            discover_mcp_items(codex.path(), "codex", 2, &mut DiagnosticCollector::new()).unwrap(),
+            discover_mcp_items(codex.path(), "codex", 1, 2, &mut DiagnosticCollector::new())
+                .unwrap(),
         );
         let mut diag = DiagnosticCollector::new();
 

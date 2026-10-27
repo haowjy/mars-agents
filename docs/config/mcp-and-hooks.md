@@ -98,6 +98,12 @@ name    = "custom-name"
 command = "node"
 ```
 
+**Dependency filters** — a dependency's include filter (`agents`, `skills`,
+`only_skills`, `only_agents`) narrows its agents, skills and hooks, never its
+MCP servers: every exported server of a dependency is registered. `exclude`
+matches agents and skills only, so there is currently no way to drop one
+server from a dependency.
+
 ### Server files (`${MARS_MCP_DIR}`)
 
 An MCP server directory may ship the program it launches, not just `mcp.toml`:

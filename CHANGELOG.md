@@ -23,6 +23,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already sets the destination key wins and the dropped top-level key is named, and any other
   removed key still fails and names the file and the key.
 
+## [0.20.6] - 2026-10-27
+
 ### Fixed
 - `mars build plugin` clears the sentinel's `root_files_previous` recovery record once the root
   files are written, so a package whose root `package.json` changes (every version bump) is

@@ -64,8 +64,7 @@ fn link_target(
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
-    let config = crate::config::load(&ctx.project_root)?;
-    let local = crate::config::load_local(&ctx.project_root)?;
+    let (config, local, _) = crate::config::load_config_with_local(&ctx.project_root)?;
     let (effective, _) =
         crate::config::merge_with_root(config.clone(), local.clone(), &ctx.project_root)?;
     let mut runtime_targets = effective.settings.managed_targets();

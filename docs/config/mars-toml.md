@@ -7,7 +7,7 @@
 - **Target sync**: optional copies from `.mars/` into managed target directories, configured by `settings.targets`.
 - **`--root`**: points to the project root when you need to override auto-detection.
 
-Mars uses three project files plus an optional user network-default file:
+Mars uses three project files plus two optional user files:
 
 | File | Purpose | Committed? |
 |---|---|---|
@@ -15,12 +15,25 @@ Mars uses three project files plus an optional user network-default file:
 | `mars.lock` | Resolved versions, checksums, ownership | Yes |
 | `mars.local.toml` | Developer-local overrides | No (gitignored) |
 | `$MARS_CONFIG_DIR/config.toml` (otherwise the platform `mars/config.toml`) | User network defaults | User-owned |
+| `$MARS_CONFIG_DIR/local.toml` (otherwise the platform `mars/local.toml`) | Your `mars.local.toml` for every project: same schema, applied under each project's own `mars.local.toml` | User-owned |
 
 ## Layering and precedence
 
 Mars applies configuration layers in this precedence order:
 
-`user config < mars.toml < mars.local.toml < CLI/command inputs`
+`user config.toml < mars.toml < user local.toml < mars.local.toml < CLI/command inputs`
+
+Your personal choices in `local.toml` beat a project's committed `mars.toml`; the project's own
+`mars.local.toml` still wins over them. `config.toml` accepts only network defaults; `local.toml`
+takes `[settings]`, `[models]`, `[agents]`, `[skills]` and `[overrides]`, merged by the rules below.
+
+Because one `local.toml` serves every project, entries naming something a project does not have
+(an `[overrides.x]` for a missing dependency, an `[agents.x]` or `[skills.x]` for an item that is
+not installed) are skipped without a diagnostic. In `mars.local.toml` the same entries still warn.
+A `local.toml` `[overrides.<dep>]` that does apply is reported by `mars sync`
+(`dependency <dep> overridden to <path> by the user local.toml`), since it swaps a dependency for
+a local checkout. A relative override path resolves against the Mars config directory. A project
+override for the same dependency wins and is not reported.
 
 Default merge semantics:
 
@@ -50,8 +63,8 @@ Four lists are permission lists:
 When more than one place sets one of these lists, Mars combines them. The places, from lowest
 to highest:
 
-- Network hosts: user config < `mars.toml` `[settings]` < `mars.local.toml` `[settings]` < agent profile < `[agents.<name>]` overlay < CLI flags
-- Tools: agent profile `tools` < `[agents.<name>.tools]` in `mars.toml` < `[agents.<name>.tools]` in `mars.local.toml`
+- Network hosts: user config < `mars.toml` `[settings]` < user `local.toml` `[settings]` < `mars.local.toml` `[settings]` < agent profile < `[agents.<name>]` overlay < CLI flags
+- Tools: agent profile `tools` < `[agents.<name>.tools]` in `mars.toml` < `[agents.<name>.tools]` in user `local.toml` < `[agents.<name>.tools]` in `mars.local.toml`
 
 A plain list **adds** its entries to what lower places gave:
 

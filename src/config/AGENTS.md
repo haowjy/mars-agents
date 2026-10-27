@@ -6,7 +6,7 @@ EffectiveConfig.
 ## Mental Model
 
 ```
-mars.toml (Config) + mars.local.toml (LocalConfig)
+mars.toml (Config) + layer_local(user local.toml, mars.local.toml) (LocalConfig)
     ↓ merge_with_root()
 EffectiveConfig { dependencies, settings }
     ↓
@@ -49,6 +49,17 @@ the compatibility release, `project_config_warnings` warns once for each non-emp
 list from the raw project/local config; empty lists and replacement tables are silent.
 
 ## Layering (`layering.rs`)
+
+- Precedence: `user config.toml < mars.toml < user local.toml < mars.local.toml`. The user
+  `local.toml` (`load_user_local`, Mars config dir) has `mars.local.toml`'s schema and parser.
+  `layer_local(user, project)` folds the two into one `LocalConfig` so every existing merge over
+  `mars.toml` sees the whole stack; `load_config_with_local` and sync's `LoadedConfig` return it
+  as `local` beside `project_local` (the project file alone). Save and diagnose from
+  `project_local`: saving the merged value would copy user entries into `mars.local.toml`, and a
+  user file serves every project, so its entries for absent dependencies, agents or skills must
+  never warn (`override-missing-dep`, `config-rename-dangle`). Applied user overrides are reported
+  by sync (`user-override-applied`). Stale-key warnings in `project_config_warnings` read the
+  merged value and name `mars.local.toml`.
 
 - `merged_settings()` applies `mars.local.toml [settings]` over already-loaded project settings.
 - Network host permission sets compose across user, project, and local settings; other settings

@@ -165,12 +165,18 @@ pub(crate) fn warn_config_dangles_after_rename(
         .config
         .agents
         .keys()
-        .chain(loaded.local.agents.keys())
+        .chain(loaded.project_local.agents.keys())
         .collect();
     for name in agent_overlay_names {
         check(name, ItemKind::Agent, "[agents.<name>] overlay", diag);
     }
-    for name in loaded.effective.skills.keys() {
+    let skill_overlay_names: HashSet<&String> = loaded
+        .config
+        .skills
+        .keys()
+        .chain(loaded.project_local.skills.keys())
+        .collect();
+    for name in skill_overlay_names {
         check(name, ItemKind::Skill, "[skills.<name>] overlay", diag);
     }
 }

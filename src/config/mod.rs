@@ -27,7 +27,8 @@ pub mod targets;
 mod user;
 
 pub use layering::{
-    merged_settings, overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays,
+    layer_local, merged_settings, overlay_agent_overlays, overlay_models_replace_by_key,
+    overlay_skill_overlays,
 };
 
 /// Top-level mars.toml configuration.
@@ -678,7 +679,7 @@ pub struct EffectiveConfig {
 
 /// Layered project-level config used by routing and policy consumers.
 ///
-/// Precedence: project config < project-local overrides.
+/// Precedence: project config < user `local.toml` < project `mars.local.toml`.
 #[derive(Debug, Clone, Default)]
 pub struct EffectiveProjectConfig {
     pub settings: Settings,
@@ -691,7 +692,10 @@ pub struct EffectiveProjectConfig {
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedProjectConfig {
     pub(crate) config: Config,
+    /// User `local.toml` layered under `mars.local.toml`.
     pub(crate) local: LocalConfig,
+    /// `mars.local.toml` alone.
+    pub(crate) project_local: LocalConfig,
     pub(crate) effective: EffectiveProjectConfig,
 }
 
@@ -711,6 +715,7 @@ pub struct EffectiveDependency {
 
 const CONFIG_FILE: &str = "mars.toml";
 const LOCAL_CONFIG_FILE: &str = "mars.local.toml";
+const USER_LOCAL_CONFIG_FILE: &str = "local.toml";
 
 fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
     content: &str,
@@ -886,7 +891,28 @@ fn parse_manifest(
 
 /// Load mars.local.toml (returns Default if absent).
 pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
-    let path = root.join(LOCAL_CONFIG_FILE);
+    read_local_file(&root.join(LOCAL_CONFIG_FILE))
+}
+
+/// Load the user-level `local.toml` from the Mars config directory (Default if absent).
+///
+/// Same schema as `mars.local.toml`. A relative `[overrides]` path has no project to be relative
+/// to, so it resolves against the config directory.
+pub fn load_user_local() -> Result<LocalConfig, MarsError> {
+    let Some(directory) = crate::platform::config::mars_config_dir() else {
+        return Ok(LocalConfig::default());
+    };
+    let mut local = read_local_file(&directory.join(USER_LOCAL_CONFIG_FILE))?;
+    for entry in local.overrides.values_mut() {
+        if entry.path.is_relative() {
+            entry.path = directory.join(&entry.path);
+        }
+    }
+    Ok(local)
+}
+
+fn read_local_file(path: &Path) -> Result<LocalConfig, MarsError> {
+    let path = path.to_path_buf();
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let local: LocalConfig = parse_without_removed_visibility(&content, &path)?;
@@ -954,10 +980,16 @@ pub fn overlay_then_profile_policies<'a>(
         )
 }
 
-pub fn load_config_with_local(root: &Path) -> Result<(Config, LocalConfig), MarsError> {
+/// Load `mars.toml` and the local layers. The returned `LocalConfig` is the user `local.toml`
+/// layered under the project `mars.local.toml`, which is what readers of the effective config see;
+/// the project file alone comes back second, for the commands that save or diagnose it.
+pub fn load_config_with_local(
+    root: &Path,
+) -> Result<(Config, LocalConfig, LocalConfig), MarsError> {
     let config = load(root)?;
-    let local = load_local(root)?;
-    Ok((config, local))
+    let project_local = load_local(root)?;
+    let local = layer_local(&load_user_local()?, &project_local);
+    Ok((config, local, project_local))
 }
 
 fn effective_project_config(
@@ -1241,11 +1273,12 @@ fn apply_user_network_settings(effective: &mut EffectiveProjectConfig) -> Result
 }
 
 pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {
-    let (config, local) = load_config_with_local(root)?;
+    let (config, local, project_local) = load_config_with_local(root)?;
     let effective = effective_project_config(&config, &local, root);
     Ok(LoadedProjectConfig {
         config,
         local,
+        project_local,
         effective,
     })
 }
@@ -2447,6 +2480,37 @@ override = { effort = "high" }
             Some(vec!["cursor".to_string(), "pi".to_string()])
         );
         assert_eq!(merged.provider_order, Some(vec!["openai".to_string()]));
+    }
+
+    #[test]
+    fn user_local_layers_between_mars_toml_and_project_local() {
+        let agent = |model: &str| AgentOverlay {
+            model: Some(model.to_string()),
+            ..AgentOverlay::default()
+        };
+        let config = Config {
+            agents: IndexMap::from([
+                ("a".to_string(), agent("project")),
+                ("b".to_string(), agent("project")),
+            ]),
+            ..Config::default()
+        };
+        let user = LocalConfig {
+            agents: IndexMap::from([
+                ("a".to_string(), agent("user")),
+                ("b".to_string(), agent("user")),
+            ]),
+            ..LocalConfig::default()
+        };
+        let project_local = LocalConfig {
+            agents: IndexMap::from([("b".to_string(), agent("local"))]),
+            ..LocalConfig::default()
+        };
+
+        let layered = layer_local(&user, &project_local);
+        let agents = merged_agent_overlays(&config.agents, &layered);
+        assert_eq!(agents["a"].model.as_deref(), Some("user"));
+        assert_eq!(agents["b"].model.as_deref(), Some("local"));
     }
 
     #[test]

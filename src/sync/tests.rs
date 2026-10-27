@@ -215,6 +215,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            project_local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -277,6 +278,7 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            project_local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -358,6 +360,7 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
         loaded: LoadedConfig {
             config,
             local: LocalConfig::default(),
+            project_local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -406,20 +409,21 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         .unwrap()
         .rename
         .insert("planning".into(), "strategy".into());
-    effective.skills.insert(
-        "planning".into(),
-        crate::config::SkillOverlay {
-            model_invocable: Some(false),
-            ..Default::default()
-        },
-    );
+    let overlay = crate::config::SkillOverlay {
+        model_invocable: Some(false),
+        ..Default::default()
+    };
+    effective.skills.insert("planning".into(), overlay.clone());
+    let mut config = Config::default();
+    config.skills.insert("planning".into(), overlay);
 
     let sync_lock =
         crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
     let resolved = ResolvedState {
         loaded: LoadedConfig {
-            config: Config::default(),
+            config,
             local: LocalConfig::default(),
+            project_local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
@@ -484,6 +488,7 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            project_local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),

@@ -137,7 +137,10 @@ pub enum ResolutionMode {
 /// Phase 1: Load and validate configuration under sync lock.
 pub(crate) struct LoadedConfig {
     pub config: Config,
+    /// User `local.toml` layered under `mars.local.toml`: what the effective config is built from.
     pub local: LocalConfig,
+    /// `mars.local.toml` alone: the part sync saves and diagnoses.
+    pub project_local: LocalConfig,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
@@ -397,10 +400,11 @@ pub(crate) fn load_config(
     };
 
     // Load/mutate local overrides under the same lock.
-    let mut local = crate::config::load_local(project_root)?;
+    let mut project_local = crate::config::load_local(project_root)?;
     if let Some(m) = &request.mutation {
-        mutation::apply_local_mutation(&mut local, m);
+        mutation::apply_local_mutation(&mut project_local, m);
     }
+    let local = crate::config::layer_local(&crate::config::load_user_local()?, &project_local);
 
     // Build effective config.
     let (effective, config_diagnostics) =
@@ -459,6 +463,7 @@ pub(crate) fn load_config(
     Ok(LoadedConfig {
         config,
         local,
+        project_local,
         effective,
         old_lock,
         provided,
@@ -513,12 +518,25 @@ pub(crate) fn resolve_graph(
             message: format!("dependency `{source_name}` not found in the resolved project graph"),
         });
     }
-    for override_name in loaded.local.overrides.keys() {
+    for override_name in loaded.project_local.overrides.keys() {
         if !graph.nodes.contains_key(override_name) {
             diag.warn(
                 "override-missing-dep",
                 format!(
                     "override `{override_name}` references a dependency not in the resolved project graph"
+                ),
+            );
+        }
+    }
+    // The user file serves every project, so its overrides for absent dependencies are normal;
+    // the ones that apply are reported because they swap a dependency for a local checkout.
+    for (name, entry) in &loaded.local.overrides {
+        if !loaded.project_local.overrides.contains_key(name) && graph.nodes.contains_key(name) {
+            diag.info(
+                "user-override-applied",
+                format!(
+                    "dependency `{name}` overridden to `{}` by the user local.toml",
+                    entry.path.display()
                 ),
             );
         }
@@ -833,7 +851,7 @@ fn persist_pending_config_mutation(
     let bump_changed = has_bump_version_changes(loaded, request);
     match &request.mutation {
         Some(ConfigMutation::SetOverride { .. }) => {
-            crate::config::save_local(&ctx.project_root, &loaded.local)?;
+            crate::config::save_local(&ctx.project_root, &loaded.project_local)?;
         }
         Some(
             ConfigMutation::UpsertDependency { .. }

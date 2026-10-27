@@ -396,10 +396,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Run shared preflight
-        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
-        run: scripts/preflight.sh full
-
       - name: Compute next release version
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         id: next_version
@@ -500,6 +496,26 @@ jobs:
           echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
           echo "Computed next ${RELEASE_KIND} ${bump_kind} version ${next_version} (python=${python_version}) from base ${base_version}."
 
+      - name: Collect and check release notes
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TRIGGER_SHA: ${{ github.sha }}
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+        run: |
+          notes_json="${RUNNER_TEMP}/prs.json"
+          scripts/collect-release-notes.sh "${notes_json}" --trigger-sha "${TRIGGER_SHA}"
+          python3 scripts/changelog-notes.py render \
+            --notes-json "${notes_json}" \
+            --version "${NEXT_VERSION}" \
+            --date "$(date -u +%Y-%m-%d)" \
+            --dry-run >/dev/null
+
+      - name: Run shared preflight
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        run: scripts/preflight.sh full
+
       - name: Update release files
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         env:
@@ -536,25 +552,12 @@ jobs:
 
           cargo check --quiet
 
-          if grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
-            today="$(date -u +%Y-%m-%d)"
-            tmp_file="$(mktemp)"
-            awk -v version="${NEXT_VERSION}" -v date="${today}" '
-              BEGIN { promoted = 0 }
-              {
-                if (!promoted && $0 == "## [Unreleased]") {
-                  print "## [Unreleased]"
-                  print ""
-                  print "## [" version "] - " date
-                  promoted = 1
-                  next
-                }
-                print
-              }
-            ' CHANGELOG.md > "${tmp_file}"
-            mv "${tmp_file}" CHANGELOG.md
-          else
-            echo "::warning::CHANGELOG.md missing '## [Unreleased]'; skipping changelog promotion."
+          if ! python3 scripts/changelog-notes.py render \
+            --notes-json "${RUNNER_TEMP}/prs.json" \
+            --version "${NEXT_VERSION}" \
+            --date "$(date -u +%Y-%m-%d)"; then
+            echo "::error::A merged PR body's '## Changelog' section is missing or invalid (the error above names it), or CHANGELOG.md has content under '## [Unreleased]'. Edit the named PR body and/or move stale [Unreleased] entries out of CHANGELOG.md, then re-run this workflow."
+            exit 1
           fi
 
       - name: Commit release changes

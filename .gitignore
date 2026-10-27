@@ -18,3 +18,7 @@ meridian.toml
 
 # Fixture inputs hold hidden harness directories (.codex, .opencode, ...) that the ignores above would drop.
 !/crates/mars-schema/fixtures/**
+
+# Python bytecode from scripts/
+__pycache__/
+*.pyc

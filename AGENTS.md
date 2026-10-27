@@ -83,6 +83,14 @@ Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once afte
 
 Read `.github/PULL_REQUEST_TEMPLATE.md` and fill every section. **Always set a `release:*` label before merging** — no label = no release.
 
+**Write the changelog entry in the PR body's `## Changelog` section, never in
+`CHANGELOG.md`.** The release job renders that section into `CHANGELOG.md` under the new
+version heading and publishes it as the GitHub Release body; one writer is what keeps two
+branches from conflicting on the file. CI validates the section when the body or branch
+changes, and `pr-body.yml` refuses a PR that adds content under `## [Unreleased]` or a
+release heading to `CHANGELOG.md`. Check it locally with
+`python3 scripts/changelog-notes.py validate --notes-file pr-body.md`.
+
 | Label | Effect |
 |---|---|
 | `release:patch` / `release:stable` | Stable patch bump |
@@ -98,7 +106,9 @@ breaks behaviour in several PRs, plan this when you split it:
    `main` early, as a draft. It carries the release label, the combined changelog and
    upgrade notes, and the whole-change review.
 2. Point each part's PR at the integration branch. Merging there releases nothing, so those
-   PRs need no label.
+   PRs need no label. Copy their changelog sections into the integration PR's `## Changelog`:
+   only commits on `main`'s first-parent history reach the renderer, so a part PR merged into
+   the integration branch never renders on its own.
 3. When the last part lands and the full gate passes, merge the integration PR once.
 
 Work that must release on its own (e.g. a Mars release a Meridian change waits on) gets its
@@ -106,10 +116,10 @@ own release; decide that when planning, not at merge time.
 
 ## Releasing
 
-CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, promotes changelog, commits, tags, and publishes to PyPI/npm/crates.io.
+CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, renders changelog, commits, tags, and publishes to PyPI/npm/crates.io.
 
 **Direct push ≠ release.** A push to `main` triggers a release only when the pushed commit is the merge of a PR labeled `release:*`. `release-on-main.yml` looks up the trigger commit's PR (`/commits/{sha}/pulls`); finding none, it sets `should_release=false` and runs CI only — no bump, no tag. Docs and other no-ceremony work can go straight to `main`.
 
-**Update CHANGELOG.md `[Unreleased]` as you work** — CI promotes it during release.
+**`CHANGELOG.md` `[Unreleased]` is only an empty anchor.** Never write entries there: the release walks the merged PRs' `## Changelog` sections since the last `release: v` commit and renders them under the new version heading. A `release:skip` merge, a failed or cancelled run, and two merges in one push keep their notes — the next release, automatic or manual, collects them.
 
-**Note:** `mars version` is for prompt packages only. For mars-agents itself, use the CI release flow.
+**Note:** `mars version` is for prompt packages only. For mars-agents itself, use the CI release flow. See `.github/workflows/README.md` for the step order, the manual backfill path, and the remedy when a merged PR body fails the notes gate.

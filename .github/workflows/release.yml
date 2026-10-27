@@ -332,12 +332,20 @@ jobs:
           path: artifacts/
           merge-multiple: true
 
+      - name: Extract release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          TAG_VERSION="${RELEASE_TAG#v}"
+          python3 scripts/changelog-notes.py extract \
+            --version "${TAG_VERSION}" > "${RUNNER_TEMP}/release-notes.md"
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           prerelease: ${{ steps.release_meta.outputs.prerelease }}
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/release-notes.md
           files: artifacts/mars-*
 
   npm-publish:

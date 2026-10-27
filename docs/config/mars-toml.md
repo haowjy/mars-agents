@@ -103,8 +103,8 @@ description = "Core agents and skills for meridian"  # optional
 authors = ["Example Maintainer <maintainer@example.com>"] # optional; table form also accepted
 homepage = "https://github.com/example/meridian-base" # optional
 license = "Apache-2.0"                                # optional
-requires-mars = ">=0.11.0"                           # optional
-requires-meridian = ">=0.20.0"                       # optional
+requires-mars = ">=0.20.0"                           # optional
+requires-meridian = ">=0.15.0"                       # optional
 ```
 
 | Field | Type | Required | Description |

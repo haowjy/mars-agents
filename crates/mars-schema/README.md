@@ -50,7 +50,7 @@ Unknown keys are kept and reported as `field.unknown` warnings. Removed keys are
 `prepare::prepare(&source, context, declared_dialect)` classifies one package root and returns a `Prepared`:
 
 - the classification (`Schema1`, `MarsLegacy`, `SchemaNewer`, `Foreign`, `Marketplace`, `Invalid`, `Empty`) and the evidence for a dialect;
-- the manifest reading, normalized to schema 1 (a pre-v1 manifest gains `schema = 1` and a `requires-mars` floor of `0.20.0`);
+- the manifest reading, normalized to schema 1 (a pre-v1 manifest gains `schema = 1`);
 - one entry per selected definition: kind, slug, source and output paths, normalized bytes, the typed reading and a `ChangeRecord` (`None`, `Generated`, `Edited` with the changed key paths, or `FullyRewritten`);
 - payload files as source-to-output paths, never bytes;
 - findings by source path (`diagnostics`) and what preparing changed in each file (`changes`: keys dropped, moved or repaired), with `Prepared::changed_files` for the count.

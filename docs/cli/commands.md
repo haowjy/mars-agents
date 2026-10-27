@@ -4,10 +4,10 @@ All commands support two global flags:
 
 | Flag | Description |
 |---|---|
-| `--root <PATH>` | Explicit managed root (default: auto-detect from cwd) |
+| `--root <PATH>` | Explicit project root (default: auto-detect from cwd) |
 | `--json` | Machine-readable JSON output |
 
-The managed root's parent directory is the project root (where `mars.toml` and `mars.lock` live).
+The project root is the directory holding `mars.toml` and `mars.lock`.
 
 ## Exit Codes
 
@@ -120,7 +120,7 @@ A dependency added with `--subpath`, `--plugin` or a path in the specifier is na
 
 ## `mars sync`
 
-Resolve dependencies and make the managed root match config.
+Resolve dependencies, install into `.mars/`, and copy managed content into each target.
 
 ```bash
 mars sync [--force] [--diff] [--frozen]

@@ -97,7 +97,9 @@ and sentinel first — a rename swap that either completes or restores the previ
 failure there leaves package root files untouched — then rewrites the root files. The sentinel
 records the root hashes that step replaces (`root_files_previous`), and only for paths whose bytes
 it actually replaces or deletes, so a build that dies between the two steps is resumed by the next
-build instead of refused. Root publication accepts an absent path, a file matching the sentinel's
+build instead of refused. Once the root files are written, publication rewrites the sentinel without
+the record, so a no-change rebuild reproduces the published bytes. Root publication accepts an absent
+path, a file matching the sentinel's
 current hash, a file still matching the previous build's output (classified `PreviousBuild`, which
 the build may replace or delete and `mars check` reports as an unfinished publication), or bytes
 identical to the new build; it removes recorded files plus owned, now-empty catalog directories

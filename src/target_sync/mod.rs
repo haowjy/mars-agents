@@ -197,17 +197,30 @@ fn sync_one_target(
                         == mars_schema::item::ItemKind::Skill
                         && native_skill_variant_key.is_some();
                     let dest_exists = surface_ownership::target_dest_exists(&dest);
+                    // Hash the existing destination once: it decides whether the
+                    // managed copy is current, becomes the recorded checksum when
+                    // the copy is byte-identical, and tells a preserved copy apart
+                    // from user edits. A native skill is compared through its
+                    // projection instead.
+                    let dest_hash = (dest_exists && !should_refresh_native_skill).then(|| {
+                        crate::hash::compute_hash(&dest, outcome.item_id.kind)
+                            .map(ContentHash::from)
+                    });
                     let managed_dest_is_current_or_stale = dest_exists
                         && old_lock.contains_output(target_name, dest_rel)
                         && (should_refresh_native_skill
-                            || disk_matches_recorded_or_desired(
-                                &dest,
-                                outcome.item_id.kind,
-                                target_name,
-                                dest_rel,
-                                old_lock,
-                                outcome.installed_checksum.as_ref(),
-                            ));
+                            || dest_hash
+                                .as_ref()
+                                .and_then(|hash| hash.as_ref().ok())
+                                .is_some_and(|actual| {
+                                    dest_matches_recorded_or_desired(
+                                        actual,
+                                        target_name,
+                                        dest_rel,
+                                        old_lock,
+                                        outcome.installed_checksum.as_ref(),
+                                    )
+                                }));
                     let wants_copy = force
                         || !dest_exists
                         || should_refresh_native_skill
@@ -291,19 +304,21 @@ fn sync_one_target(
                                     items_synced += 1;
                                     record_synced_output(
                                         &mut synced_outputs,
-                                        &dest,
                                         dest_rel,
-                                        outcome.item_id.kind,
+                                        hash_target_dest(&dest, outcome.item_id.kind).ok(),
                                     );
                                 }
                                 Ok(false) => {
                                     // Byte-identical tracked content is still an installation
-                                    // outcome even though no bytes moved.
+                                    // outcome even though no bytes moved; reuse the hash that
+                                    // proved it.
                                     record_synced_output(
                                         &mut synced_outputs,
-                                        &dest,
                                         dest_rel,
-                                        outcome.item_id.kind,
+                                        dest_hash
+                                            .as_ref()
+                                            .and_then(|hash| hash.as_ref().ok())
+                                            .cloned(),
                                     );
                                 }
                                 Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
@@ -325,21 +340,21 @@ fn sync_one_target(
                                 diag,
                             );
                         } else if let Some(expected_checksum) = &outcome.installed_checksum {
-                            match crate::hash::compute_hash(&dest, outcome.item_id.kind) {
-                                Ok(actual) => {
-                                    let actual = ContentHash::from(actual);
-                                    if &actual != expected_checksum {
-                                        diag.warn(
-                                            "target-divergent",
-                                            format!(
-                                                "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
-                                                dest_rel,
-                                                cmd1 = managed_cmd("mars sync --force"),
-                                                cmd2 = managed_cmd("mars repair"),
-                                            ),
-                                        );
-                                    }
+                            let hash =
+                                dest_hash.expect("a present destination has a checksum result");
+                            match hash {
+                                Ok(actual) if &actual != expected_checksum => {
+                                    diag.warn(
+                                        "target-divergent",
+                                        format!(
+                                            "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
+                                            dest_rel,
+                                            cmd1 = managed_cmd("mars sync --force"),
+                                            cmd2 = managed_cmd("mars repair"),
+                                        ),
+                                    );
                                 }
+                                Ok(_) => {}
                                 Err(e) => errors
                                     .push(format!("failed to verify {dest_rel} checksum: {e}")),
                             }
@@ -366,9 +381,8 @@ fn sync_one_target(
                             items_synced += 1;
                             record_synced_output(
                                 &mut synced_outputs,
-                                &dest,
                                 dest_rel,
-                                outcome.item_id.kind,
+                                hash_target_dest(&dest, outcome.item_id.kind).ok(),
                             );
                         }
                         Ok(false) => {
@@ -376,9 +390,8 @@ fn sync_one_target(
                             // ownership semantics.
                             record_synced_output(
                                 &mut synced_outputs,
-                                &dest,
                                 dest_rel,
-                                outcome.item_id.kind,
+                                hash_target_dest(&dest, outcome.item_id.kind).ok(),
                             );
                         }
                         Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
@@ -457,25 +470,22 @@ fn should_copy_to_target(
     }
 }
 
-fn disk_matches_recorded_or_desired(
-    dest: &Path,
-    kind: mars_schema::item::ItemKind,
+/// Whether `actual` is what the recorded lock entry or the plan expects.
+fn dest_matches_recorded_or_desired(
+    actual: &ContentHash,
     target_name: &str,
     dest_rel: &str,
     old_lock: &LockFile,
     desired_checksum: Option<&ContentHash>,
 ) -> bool {
-    let Ok(actual) = crate::hash::compute_hash(dest, kind).map(ContentHash::from) else {
-        return false;
-    };
-    if desired_checksum.is_some_and(|desired| desired == &actual) {
+    if desired_checksum.is_some_and(|desired| desired == actual) {
         return true;
     }
     old_lock.items.values().any(|item| {
         item.outputs.iter().any(|recorded| {
             recorded.target_root == target_name
                 && crate::target::dest_paths_equivalent(recorded.dest_path.as_str(), dest_rel)
-                && recorded.installed_checksum() == Some(&actual)
+                && recorded.installed_checksum() == Some(actual)
         })
     })
 }
@@ -502,16 +512,23 @@ fn remove_target_path_if_managed(
     }
 }
 
+fn hash_target_dest(
+    dest: &Path,
+    kind: mars_schema::item::ItemKind,
+) -> Result<ContentHash, MarsError> {
+    crate::hash::compute_hash(dest, kind).map(ContentHash::from)
+}
+
+/// Record an installed destination whose checksum could be read.
 fn record_synced_output(
     synced_outputs: &mut Vec<TargetSyncedOutput>,
-    dest: &Path,
     dest_rel: &str,
-    kind: mars_schema::item::ItemKind,
+    installed_checksum: Option<ContentHash>,
 ) {
-    if let Ok(checksum) = crate::hash::compute_hash(dest, kind) {
+    if let Some(installed_checksum) = installed_checksum {
         synced_outputs.push(TargetSyncedOutput {
             dest_path: dest_rel.to_string(),
-            installed_checksum: ContentHash::from(checksum),
+            installed_checksum,
         });
     }
 }

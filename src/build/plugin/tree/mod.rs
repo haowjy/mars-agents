@@ -190,7 +190,7 @@ pub(super) fn check_sources(
     let mut seen_mcp = std::collections::BTreeSet::new();
     let mut selected_mcp = Vec::new();
     for profile in profiles {
-        for (item, _) in input
+        for item in input
             .target
             .selected_mcp_for_target(profile.descriptor().target_dir)
         {
@@ -208,7 +208,7 @@ pub(super) fn check_sources(
     }
     warn_relative_mcp_args(&selected_mcp, diag);
     for profile in profiles {
-        for (hook, _) in input
+        for hook in input
             .target
             .selected_hooks_for_target(profile.descriptor().target_dir)
         {
@@ -288,7 +288,6 @@ pub(super) fn write_tree(
     let hooks: Vec<_> = input
         .target
         .selected_hooks_for_target(descriptor.target_dir)
-        .map(|(hook, _)| hook)
         .collect();
     for hook in &hooks {
         let destination = root.join("hooks").join(&hook.def.name);
@@ -298,7 +297,6 @@ pub(super) fn write_tree(
     let mcp: Vec<_> = input
         .target
         .selected_mcp_for_target(descriptor.target_dir)
-        .map(|(item, _)| item)
         .collect();
     for item in mcp.iter().filter(|item| item.uses_dir_token()) {
         let destination = root.join("mcp").join(&item.name);

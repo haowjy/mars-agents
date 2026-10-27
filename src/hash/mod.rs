@@ -20,7 +20,7 @@ use mars_schema::item::ItemKind;
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     match kind {
         ItemKind::Agent => {
-            let content = fs::read(path)?;
+            let content = fs::read(path).map_err(|error| MarsError::io("read", path, error))?;
             Ok(hash_bytes(&content))
         }
         ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => compute_dir_hash(path),
@@ -147,10 +147,14 @@ fn collect_file_hashes(
     entries: &mut Vec<(String, String)>,
     excluded_top_level: &[&str],
 ) -> Result<(), MarsError> {
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
+    for entry in
+        fs::read_dir(current).map_err(|error| MarsError::io("read directory", current, error))?
+    {
+        let entry = entry.map_err(|error| MarsError::io("read directory", current, error))?;
         let path = entry.path();
-        let file_type = entry.file_type()?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| MarsError::io("inspect", &path, error))?;
 
         let rel_path = path.strip_prefix(root).expect("path is always under root");
         if is_excluded_top_level(rel_path, excluded_top_level) {
@@ -159,10 +163,23 @@ fn collect_file_hashes(
         if file_type.is_dir() {
             collect_file_hashes(root, &path, entries, excluded_top_level)?;
         } else {
+            // Follow symlinks so a linked file keeps hashing like the file it
+            // names, but never open what is not a file: reading a FIFO blocks.
+            let target_type = fs::metadata(&path)
+                .map_err(|error| MarsError::io("inspect", &path, error))?
+                .file_type();
+            if !target_type.is_file() {
+                return Err(MarsError::InvalidRequest {
+                    message: format!(
+                        "`{}` is not a regular file; a skill, hook or MCP server tree may contain only directories and regular files",
+                        path.display()
+                    ),
+                });
+            }
             // Build forward-slash relative path from components for cross-platform determinism
             let rel_path = portable_relative(root, &path)
                 .unwrap_or_else(|| rel_path.to_string_lossy().replace('\\', "/"));
-            let content = fs::read(&path)?;
+            let content = fs::read(&path).map_err(|error| MarsError::io("read", &path, error))?;
             let hash = hash_bytes(&content);
             entries.push((rel_path, hash));
         }

@@ -1251,11 +1251,15 @@ fn upsert_target_output(
     let dest = DestPath::from(dest_path);
     for item in lock.items.values_mut() {
         let scoped_owner =
-            crate::sync::target::package_dir_canonical_owner(item.kind, target_root, dest_path);
-        let owns_output = if let Some(owner) = scoped_owner.as_deref() {
+            crate::sync::package_dir::PackageDir::from_native(item.kind, target_root, dest_path)
+                .map(|dir| dir.canonical());
+        let owns_output = if let Some(owner) = scoped_owner.as_ref() {
             item.outputs.iter().any(|output| {
                 output.target_root == CANONICAL_TARGET_ROOT
-                    && crate::target::dest_paths_equivalent(output.dest_path.as_str(), owner)
+                    && crate::target::dest_paths_equivalent(
+                        output.dest_path.as_str(),
+                        owner.as_str(),
+                    )
             })
         } else {
             item.outputs.iter().any(|output| {

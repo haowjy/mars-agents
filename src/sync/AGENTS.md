@@ -134,20 +134,21 @@ self items (only `.mars-src`'s are), as in v0.19.0.
   ask only `deferred_provider`, because they judge a ref by its package alone and must give the same
   verdict on every machine.
 
-`TargetState` also carries parsed hooks and MCP servers selected for each managed target. Filtering,
-visibility, dependency collisions, and local shadowing therefore choose config entries once for
-both installation and config lowering. Only a target whose adapter writes an MCP config selects a
-server, and a selected server becomes a target-scoped directory item after collisions resolve only
-when its `command` or `args` name `${MARS_MCP_DIR}`; a token-free server is a config entry alone.
-Its files, config entry, lock ownership, and pruning then all name the same winner. It separately
+`TargetState` also carries parsed hooks and MCP servers selected for each managed target, one
+record per target. Filtering, visibility, dependency collisions, and local shadowing therefore
+choose config entries once for both installation and config lowering. Only a target whose adapter
+writes an MCP config selects a server, and a winner becomes a target-scoped directory item when
+its `command` or `args` name `${MARS_MCP_DIR}`; a token-free server is a config entry alone. Its
+files, config entry, lock ownership, and pruning then all name the same winner, and
+`sync/package_dir.rs` owns every path and identifier for that copy. It separately
 retains every filtered, exported graph hook, selected or
 not; plugin builds read that list for omission diagnostics, and sync never reads it. Hook and MCP
-selections survive an install skip so post-target-sync lowering can issue the genuine not-installed
-warning; each carries the selected `TargetItem` hash so the installed check does not re-hash the
-source. Config lowering must not rediscover items.
+selections survive an install skip; post-target-sync lowering asks target sync's own
+`synced_outputs` whether this target installed the directory, and withholds the entry with a
+path-bearing warning when it did not. Config lowering must not rediscover items.
 
 Plugin builds and sync both call `build_target_state` (graph collection, optional local extension,
-MCP collision resolution, MCP directory materialization) and then `apply_target_renames`. Between
+MCP collision resolution and the winning servers' directory items) and then `apply_target_renames`. Between
 the two, sync drops items that would overwrite unmanaged content, so the rename view and the
 references it rewrites only see surviving items. The plugin root source name is the local package
 for collision precedence, as `_self` is in sync. Skill-ref validation is the caller's: sync passes

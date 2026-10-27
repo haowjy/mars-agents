@@ -144,16 +144,12 @@ fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
 
 fn logical_key(item: &PendingWrite) -> Result<String, MarsError> {
     let dest = &item.dest_path;
-    let name = dest.item_name(item.kind);
-    if matches!(item.kind, ItemKind::Hook | ItemKind::McpServer) {
-        let Some((target, _)) = super::target::package_dir_target_dest_path(item.kind, dest) else {
-            return Err(invalid(
-                "invalid target-scoped package directory destination",
-            ));
-        };
-        Ok(format!("{}/{name}@{target}", item.kind))
-    } else {
-        Ok(format!("{}/{name}", item.kind))
+    match crate::sync::package_dir::PackageDir::parse_canonical(item.kind, dest) {
+        Some(dir) => Ok(format!("{}/{}", item.kind, dir.lock_name())),
+        None if crate::sync::package_dir::PackageDirKind::of(item.kind).is_some() => Err(invalid(
+            "invalid target-scoped package directory destination",
+        )),
+        None => Ok(format!("{}/{}", item.kind, dest.item_name(item.kind))),
     }
 }
 

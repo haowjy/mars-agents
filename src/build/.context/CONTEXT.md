@@ -51,7 +51,8 @@ an npm-shaped package with a fixed `index.mjs`; at runtime it registers the buil
 servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
 default-export check warns but never removes a hook; hook-directory substitution is JavaScript-string
 encoded before import, and each hook's load and setup are isolated so a failure does not block later
-hooks.
+hooks. Both authored directory tokens travel in the tree's generated `DATA` block, so `index.mjs`
+carries no token literal of its own and Rust stays the only owner of the strings.
 `tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
 selected MCP union once; per-tree writers report only lowering behavior.
 `TargetState::exported_hooks` retains filtered exported graph hooks even when no requested tree

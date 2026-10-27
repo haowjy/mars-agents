@@ -144,15 +144,14 @@ fn sync_one_target(
         }
         let canonical_dest_rel = outcome.dest_path.as_str();
         let scoped_dest;
-        let dest_rel = if let Some((item_target, target_dest)) =
-            crate::sync::target::package_dir_target_dest_path(
-                outcome.item_id.kind,
-                &outcome.dest_path,
-            ) {
-            if item_target != target_name.trim_start_matches('.') {
+        let dest_rel = if let Some(dir) = crate::sync::package_dir::PackageDir::parse_canonical(
+            outcome.item_id.kind,
+            &outcome.dest_path,
+        ) {
+            if !dir.belongs_to(target_name) {
                 continue;
             }
-            scoped_dest = target_dest;
+            scoped_dest = dir.native();
             scoped_dest.as_str()
         } else {
             canonical_dest_rel
@@ -310,7 +309,11 @@ fn sync_one_target(
                                 Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                             }
                         }
-                    } else if native_skill_variant_key.is_none() && dest_exists {
+                    } else if !should_refresh_native_skill && dest_exists {
+                        // A skill this target projects a variant of is compared through
+                        // its projection, not the canonical tree; every other item that
+                        // kept local content is either unclaimed or user-edited, and the
+                        // user needs to hear which.
                         if old_lock
                             .installed_checksum_for_output(target_name, dest_rel)
                             .is_none()

@@ -18,6 +18,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - README plugin support table: cells are generated from what each plugin tree actually does. Grok
   agents now list the Claude agent fields that are dropped; Codex and Grok hooks state the `claude`
   fragment rule. Generated plugin output is unchanged.
+- An unmanaged directory at `<target>/hooks/<name>/` no longer fails `mars sync`. It warns, survives
+  untouched, and withholds that target's hook entry, as an MCP server's unmanaged `mcp/<name>/`
+  already did; `mars sync --force` adopts and overwrites it.
+
+### Fixed
+- A FIFO, socket or device inside a skill, hook or MCP server directory is rejected with an error
+  naming it, instead of hanging `mars sync` while hashing the tree. File errors from that hash walk
+  now name the path instead of `<unknown>`.
+- Editing an installed hook or MCP server directory under `.claude`, `.codex`, `.opencode`, `.pi`
+  or `.cursor` now reports `target-divergent` with the `mars sync --force` / `mars repair` hint, as
+  skills already did on targets without skill variants; the edited copy is kept and its config
+  entry is withheld.
 
 ## [0.20.1] - 2026-10-26
 

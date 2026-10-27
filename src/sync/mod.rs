@@ -5,6 +5,7 @@ pub mod filter;
 mod local_items;
 pub mod mutation;
 pub(crate) mod ownership;
+pub(crate) mod package_dir;
 pub mod plan;
 pub(crate) mod recovery;
 pub mod rewrite;
@@ -600,7 +601,6 @@ pub(crate) fn build_target_state(
         local_source.as_str(),
         diag,
     )?;
-    materialize_mcp_directories(&mut target)?;
     Ok(BuiltTarget {
         target,
         explicit_renames,
@@ -1178,30 +1178,6 @@ fn retry_tombstone_removals(
         }
     }
     removed
-}
-
-/// Package-owned MCP directories are installed beside each target's config,
-/// exactly like hook directories, and tracked as ordinary canonical items so
-/// removal prunes them.
-fn materialize_mcp_directories(target_state: &mut TargetState) -> Result<(), MarsError> {
-    let groups = target_state
-        .selected_mcp_dirs()
-        .map(|(item, source_hash, targets)| (item.clone(), source_hash.clone(), targets.to_vec()))
-        .collect::<Vec<_>>();
-    for (item, source_hash, target_roots) in groups {
-        let source_name = SourceName::from(item.source_name.clone());
-        for (_, dest_path, target_item) in target::package_dir_target_items(
-            ItemKind::McpServer,
-            item.server_dir(),
-            &item.name,
-            &source_name,
-            &source_hash,
-            &target_roots,
-        ) {
-            target_state.items.insert(dest_path, target_item);
-        }
-    }
-    Ok(())
 }
 
 fn validate_request(request: &SyncRequest) -> Result<(), MarsError> {

@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url"
 
 const DATA = /*__MARS_PLUGIN_DATA__*/
 const ROOT = dirname(fileURLToPath(import.meta.url))
-const HOOK_DIR_TOKEN = "${MARS_HOOK_DIR}"
-const MCP_DIR_TOKEN = "${MARS_MCP_DIR}"
+const HOOK_DIR_TOKEN = DATA.tokens.hookDir
+const MCP_DIR_TOKEN = DATA.tokens.mcpDir
 
 function substituteMcpDir(value, mcpDirectory) {
   if (typeof value === "string") return value.replaceAll(MCP_DIR_TOKEN, () => mcpDirectory)

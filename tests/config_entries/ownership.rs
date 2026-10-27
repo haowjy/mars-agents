@@ -121,7 +121,7 @@ fn same_name_hooks_keep_target_scoped_ownership_when_removed_independently() {
 }
 
 #[test]
-fn unmanaged_target_hook_directory_fails_before_emission_or_canonical_mutation() {
+fn unmanaged_target_hook_directory_warns_and_withholds_entry() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -150,16 +150,17 @@ fn unmanaged_target_hook_directory_fails_before_emission_or_canonical_mutation()
         .unwrap();
 
     sync(&project)
-        .failure()
-        .stderr(predicate::str::contains("unmanaged"))
-        .stderr(contains_path(".claude/hooks/audit"));
+        .success()
+        .stderr(predicate::str::contains("no installed-content claim"))
+        .stderr(contains_path(".claude/hooks/audit"))
+        .stderr(predicate::str::contains("not emitting hook `audit`"));
     project
         .child(".claude/settings.local.json")
         .assert(r#"{"sentinel":true}"#);
     project.child(".claude/hooks/audit/user.sh").assert("user");
     project
         .child(".mars/hooks/claude/audit")
-        .assert(predicate::path::missing());
+        .assert(predicate::path::is_dir());
 }
 
 #[test]
@@ -226,9 +227,10 @@ fn identical_unmanaged_hook_is_preserved_through_sync_and_removal() {
         .unwrap();
 
     sync(&project)
-        .failure()
-        .stderr(predicate::str::contains("unmanaged"))
-        .stderr(contains_path(".claude/hooks/audit"));
+        .success()
+        .stderr(predicate::str::contains("no installed-content claim"))
+        .stderr(contains_path(".claude/hooks/audit"))
+        .stderr(predicate::str::contains("not emitting hook `audit`"));
     installed.child("run.sh").assert("#!/bin/sh\n");
     project
         .child(".claude/settings.local.json")

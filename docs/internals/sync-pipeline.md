@@ -257,11 +257,13 @@ In `--diff` (dry run) mode, actions are computed but not executed.
 Runs after target sync, so a server's installed directory exists before the
 config entry that points at it is written. Compiles MCP server
 registrations and lifecycle hooks from all packages in the resolved graph and
-writes them to per-target config files. Target construction resolves MCP name collisions and
-materializes a token-using winner's directory as a target-scoped item, the same way a hook
-directory is installed and pruned; this phase consumes that selection. An entry whose
-`${MARS_MCP_DIR}` directory is not installed is withheld with a `mcp-not-installed` warning;
-a server that never names the token has no directory and needs none.
+writes them to per-target config files. Target construction resolves MCP name collisions per
+target and makes a token-using winner's directory a target-scoped item, the same way a hook
+directory is installed and pruned; this phase consumes that selection. A hook's or token-using
+server's entry is withheld with a `hook-not-installed` / `mcp-not-installed` warning naming the
+path when target sync did not install that directory: an unmanaged directory (preserved without a
+claim) and a user-edited copy (preserved as `target-divergent`) both leave the entry out. A server
+that never names the token has no directory and needs none.
 
 **Steps:**
 

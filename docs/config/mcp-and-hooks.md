@@ -133,7 +133,9 @@ any name.
 If something Mars does not own already occupies an installed path, sync warns,
 leaves that content untouched, and withholds the target's config entry so
 nothing points at files Mars did not install. `mars sync --force` overwrites
-instead.
+instead. A directory Mars installed but which was edited afterwards is kept
+with a `target-divergent` warning and also withholds the entry until
+`mars sync --force` or `mars repair` resets it.
 
 `mars build plugin` copies a token-using server's `mcp/<name>/` into each
 generated tree and maps the token to the tree's own root:
@@ -244,6 +246,13 @@ Only declared target tables receive the hook. Mars copies the whole authored
 directory to `<target>/hooks/<name>/`; `hook.toml` and fragment files remain
 there as inert package metadata. Merge-mode destinations are Claude
 `settings.local.json`, Codex `hooks.json`, and Cursor `hooks.json`.
+
+If something Mars does not own already occupies `<target>/hooks/<name>/`, sync
+warns, leaves that content untouched, and withholds the target's hook entry so
+nothing points at files Mars did not install. `mars sync --force` overwrites
+instead. A directory Mars installed but which was edited afterwards is kept
+with a `target-divergent` warning and also withholds the entry until
+`mars sync --force` or `mars repair` resets it.
 
 Mars validates only the merge contract:
 

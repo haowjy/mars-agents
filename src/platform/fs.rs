@@ -436,10 +436,14 @@ fn collect_relative_tree_entries(
     excluded_top_level: &[&str],
     snapshot: &mut DirectoryTreeSnapshot,
 ) -> Result<Option<PathBuf>, MarsError> {
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
+    for entry in
+        fs::read_dir(current).map_err(|error| MarsError::io("read directory", current, error))?
+    {
+        let entry = entry.map_err(|error| MarsError::io("read directory", current, error))?;
         let path = entry.path();
-        let file_type = entry.file_type()?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| MarsError::io("inspect", &path, error))?;
         let rel = path.strip_prefix(root).expect("path is always under root");
         if rel.components().next().is_some_and(|component| {
             excluded_top_level
@@ -464,7 +468,8 @@ fn collect_relative_tree_entries(
                 return Ok(Some(path));
             }
         } else if file_type.is_file() {
-            snapshot.insert_file_hash(rel_path, crate::hash::hash_bytes(&fs::read(path)?));
+            let content = fs::read(&path).map_err(|error| MarsError::io("read", &path, error))?;
+            snapshot.insert_file_hash(rel_path, crate::hash::hash_bytes(&content));
         } else {
             snapshot
                 .entries

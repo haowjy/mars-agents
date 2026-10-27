@@ -31,7 +31,9 @@ have their own tree identities. The OpenCode tree is an npm-shaped package whose
 registers skills and MCP servers and imports every targeted hook fragment as an in-memory TypeScript
 data URL. A build warning reports fragments with no recognizable default export, but runtime
 isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
-and one fragment's load or setup failure does not block later hooks.
+and one fragment's load or setup failure does not block later hooks. The OpenCode tree's generated
+`DATA` block carries both authored directory tokens, so `index.mjs` has no token literal of its
+own; Rust remains the only owner of the strings.
 
 Publication staging materializes each graph node's prepared package — manifest, definitions and
 listed payload — then copies the binary-owned hook, MCP, bootstrap and source-manifest surfaces. A

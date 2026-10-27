@@ -20,7 +20,9 @@ section, then compares the branch's `CHANGELOG.md` with the base branch's copy:
 - The PR adding a release heading (`## [X]`, including a second
   `## [Unreleased]`) fails; a typo fix inside a released section passes.
 
-The gate is advisory until it is a required status check on `main`.
+The gate is a PR lint: `main` has no required checks, by the owner's choice, so a
+red gate warns and doesn't block the merge. A bad body that merges anyway fails
+the release's collect step, which names the PR (see the remedy below).
 
 ## Auto-Release
 

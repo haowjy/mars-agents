@@ -502,6 +502,9 @@ fn prepare_definition(
                     notes = upgrade_notes;
                     (rewritten, change)
                 }
+                // The reader reports a file that does not parse; the upgrade only met its
+                // error, so a second diagnostic would say the same thing twice.
+                Err(UpgradeError::Frontmatter(_)) => (bytes.clone(), ChangeRecord::None),
                 Err(error) => {
                     push(
                         diagnostics,

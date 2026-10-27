@@ -3,6 +3,11 @@
   "version": "0.20.2",
   "description": "Mars agent schema reader and lossless editor",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haowjy/mars-agents.git",
+    "directory": "npm/@meridian-flow/mars-schema"
+  },
   "type": "commonjs",
   "types": "./index.d.ts",
   "exports": {

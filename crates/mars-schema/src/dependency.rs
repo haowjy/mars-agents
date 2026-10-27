@@ -289,8 +289,8 @@ pub struct Dependencies {
 
 impl Dependencies {
     /// Read both tables of a `mars.toml` that parses as TOML, entries in declaration order. An
-    /// entry that breaks a rule is left out and reported as an error at `[<table>.<name>]`; a
-    /// table that is not a table leaves both out with one error.
+    /// entry that breaks a rule is left out and reported as an error at `[<table>.<name>]`, and a
+    /// filter conflict is a warning on an entry that is kept; a table that is not a table leaves both out with one error.
     pub fn read(content: &str, diagnostics: &mut Vec<SchemaDiagnostic>) -> Self {
         #[derive(Deserialize)]
         struct Tables {
@@ -338,6 +338,17 @@ fn read_table(
             });
         match parsed {
             Ok(entry) => {
+                // A package's entry is read as written, and its dependents' syncs must not
+                // break on it: a conflicting filter warns, and `FilterConfig::to_mode` picks the
+                // mode it always has.
+                if let Err(conflict) = entry.filter.validate(&name) {
+                    diagnostics.push(SchemaDiagnostic::new(
+                        "dependency.filter-conflict",
+                        Severity::Warning,
+                        path,
+                        conflict.to_string(),
+                    ));
+                }
                 entries.insert(name, entry);
             }
             Err((code, message)) => {

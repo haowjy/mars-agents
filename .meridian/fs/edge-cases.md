@@ -57,11 +57,11 @@ When `list_versions()` returns empty (no semver tags):
 - `mars upgrade`: fetch HEAD without preferred commit (force fresh)
 - `--frozen` with unreachable locked commit: hard error
 
-## Target Builder (`src/sync/target.rs`, `src/discover/mod.rs`)
+## Target Builder (`src/sync/target.rs`, `src/discover/mod.rs`, `crates/mars-schema/src/discover.rs`)
 
 ### Discovery Rules
 
-`discover_source()` in `src/discover/mod.rs`:
+Agents and skills are selected by `mars_schema::prepare` (convention scan in `crates/mars-schema/src/discover.rs`, `discover()`); `discover::package_items()` in `src/discover/mod.rs` turns that result into `DiscoveredItem`s and adds hooks and bootstrap docs:
 
 | Convention | Discovered as |
 |---|---|
@@ -75,7 +75,7 @@ When `list_versions()` returns empty (no semver tags):
 
 **Flat skill precedence:** If both `skills/foo/SKILL.md` and root `SKILL.md` exist, the nested structure wins — root `SKILL.md` is only used as a fallback when no conventional items are discovered.
 
-**Flat skill naming:** Uses `fallback_name` parameter (source name), or directory name if no fallback, or `"unknown-skill"` as last resort.
+**Flat skill naming:** `root_skill_slug()`: the `SKILL.md` frontmatter `name` if it is a valid slug, else the slugified source name, else `"skill"`.
 
 ### Directory Hashing
 

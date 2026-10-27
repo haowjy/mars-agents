@@ -15,7 +15,7 @@ src/
 │   ├── plan.rs         Convert diff entries → executable actions
 │   └── apply.rs        Execute actions against filesystem
 ├── lock/mod.rs         Lock file schema, load/save, build from outcomes
-├── discover/mod.rs     Filesystem-convention item discovery
+├── discover/mod.rs     Binary-owned item discovery (hooks, bootstrap docs) + `package_items`
 ├── frontmatter/mod.rs  YAML frontmatter parse/rewrite for .md files
 ├── hash/mod.rs         SHA-256 hashing for files and directories
 ├── merge/mod.rs        Three-way merge via git merge-file
@@ -148,7 +148,7 @@ Config → Mutate → Merge → Resolve → Target → Diff → Plan → Apply �
 **Entry point:** `target::build_with_collisions()`
 
 **Algorithm (4 phases):**
-1. **Discover & collect**: For each source in topological order, call `discover::discover_source()`, apply filter, apply config renames, compute source hash → `Vec<TargetItem>`
+1. **Discover & collect**: For each source in topological order, call `discover::package_items()` (agents and skills from the node's `Prepared` result, hooks and bootstrap docs from the tree), apply filter, apply config renames, compute source hash → `Vec<TargetItem>`
 2. **Detect collisions**: Group items by `dest_path`, find groups with >1 item
 3. **Auto-rename collisions**: Suffix all colliding items with `__{owner}_{repo}` derived from `SourceId`
 4. **Build TargetState**: Insert (possibly renamed) items into `IndexMap<DestPath, TargetItem>`
@@ -159,7 +159,7 @@ Config → Mutate → Merge → Resolve → Target → Diff → Plan → Apply �
 - `validate::validate_skill_refs()` / `validate_skill_frontmatter_in_target()` / `validate::warn_config_dangles_after_rename()` — check skill references, frontmatter schema, and config-side dangles after renames
 
 **Invariants:**
-- Discovery uses `src/discover/mod.rs` — agents: `agents/*.md`, skills: `skills/*/SKILL.md`, flat skill fallback: root `SKILL.md` when no conventional items found
+- Agent and skill selection is owned by `crates/mars-schema` (`discover.rs`, via `prepare`) — agents: `agents/*.md`, skills: `skills/*/SKILL.md`, flat skill fallback: root `SKILL.md` when no conventional items found; `src/discover/mod.rs` adds hooks and bootstrap docs
 - Items sorted by `(kind, name)` — `Agent < Skill`, then lexicographic
 - Hash computation: agents use `hash::hash_bytes()` on file content; skills use `hash::compute_dir_hash()` on sorted `(relative_path, file_hash)` pairs; flat skills exclude `.git`, `.mars`, `mars.toml`, etc.
 

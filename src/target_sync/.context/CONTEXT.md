@@ -1,7 +1,7 @@
 # src/target_sync/
 
 Copies compiled content from `.mars/` to configured target directories and performs
-per-target orphan cleanup. Ownership rules live in `src/surface_ownership.rs` and
+per-target orphan cleanup. Ownership rules live in `src/surface_ownership/` (`mod.rs`: gating functions; `retention.rs`: retention of owned surfaces) and
 are shared with native reconcile (`src/compiler/mod.rs`) and `mars link`.
 
 ## Contracts
@@ -64,7 +64,7 @@ state). Do not use bare `dest_path` iterators for linked-target ownership checks
 ## Consumers
 
 ```
-surface_ownership.rs  ←── single rule set
+surface_ownership/    ←── single rule set
         ↑
 target_sync/mod.rs    ← orphan cleanup, Removed, copy/install
 compiler/mod.rs       ← reconcile_native_agent_surfaces, dual_surface_compile

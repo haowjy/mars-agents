@@ -4,15 +4,18 @@ How to add new capabilities to mars. Each section lists the files you need to to
 
 ## Adding a New Item Kind
 
-Currently mars has two item kinds: `Agent` (single `.md` file) and `Skill` (directory with `SKILL.md`). Adding a third kind (e.g., `Tool`, `Prompt`) touches these files:
+`ItemKind` currently has `Agent` (single `.md` file), `Skill` (directory with `SKILL.md`), `Hook`, `McpServer` and `BootstrapDoc`. Only agents and skills are *definitions* (`DefinitionKind`) that `mars-schema` selects and reads; the other kinds are binary-owned. Adding another kind (e.g., `Tool`, `Prompt`) touches these files:
 
 ### 1. Type definition
 
-**`src/lock/mod.rs`** — Add variant to `ItemKind` enum:
+**`crates/mars-schema/src/item.rs`** — Add variant to `ItemKind` enum (`src/lock/mod.rs` consumes it):
 ```rust
 pub enum ItemKind {
     Agent,
     Skill,
+    Hook,
+    McpServer,
+    BootstrapDoc,
     Tool,  // new
 }
 ```
@@ -20,13 +23,12 @@ Update the `Display` impl. The `#[serde(rename_all = "lowercase")]` attribute ha
 
 ### 2. Discovery
 
-**`src/discover/mod.rs`** — Add discovery logic to `discover_source()`:
-- Define the filesystem convention (e.g., `tools/*.yaml`)
-- Add a scan block alongside the agent and skill scan blocks
-- Items must produce `DiscoveredItem { id: ItemId { kind: ItemKind::Tool, name }, source_path }`
-- Update the flat-skill fallback logic if the new kind should participate in it
+Pick the owner by what the kind is:
 
-Also update `discover_installed()` if the new kind needs to be scanned in the managed root.
+- **A binary-owned kind** (like hooks, bootstrap docs, MCP servers): add a scan to `src/discover/mod.rs`. `discover_binary_owned_items()` is the place: it already calls `discover_bootstrap_surfaces()` and takes hooks pre-parsed by the compiler. Add your scan there (reuse `mars_schema::discover::walk_dirs` for the bounded walk; do not keep a second skip list), then `package_items()` merges it with agents and skills. MCP servers are discovered separately (`compiler::mcp::discover_mcp_items`, called from `src/sync/target.rs`).
+- **An authored definition** (selected, read and validated like agents and skills): extend `mars-schema` instead: `DefinitionKind` in `item.rs`, the convention scan in `crates/mars-schema/src/discover.rs` (`discover()`), and `prepare`. `discover::definition_item()` / `package_items()` then map `Prepared.definitions` to items.
+
+Either way, items must produce `DiscoveredItem { id: ItemId { kind: ItemKind::Tool, name }, source_path }`; `finalize_items()` dedupes by path and rejects duplicate names. Local (`_self`) items go through `discover_local_items()` in `src/local_source.rs`; update it if the kind can live in the project root.
 
 ### 3. Hashing
 
@@ -35,7 +37,8 @@ Also update `discover_installed()` if the new kind needs to be scanned in the ma
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     match kind {
         ItemKind::Agent => { /* file hash */ }
-        ItemKind::Skill => compute_dir_hash(path),
+        ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => compute_dir_hash(path),
+        ItemKind::BootstrapDoc => { /* hashes the BOOTSTRAP.md's directory */ }
         ItemKind::Tool => { /* your hash logic */ }
     }
 }
@@ -48,8 +51,7 @@ Agents use file content SHA-256. Skills use deterministic directory hash. Choose
 **`src/sync/target.rs`** — Likely no changes needed if discovery produces standard `DiscoveredItem` structs. The target builder is kind-agnostic after discovery.
 
 If the new kind needs special destination paths (not `agents/` or `skills/`), update:
-- `default_dest_path()` — maps kind → destination directory
-- `dest_name_from_path()` — extracts name from destination path
+- `default_dest_path()` — maps `RenamableKind` → destination path (only kinds a rename can name; hooks and MCP servers have paths owned by `src/sync/package_dir.rs`)
 - `parse_rename_dest()` — handles rename value parsing
 
 ### 5. Apply
@@ -58,32 +60,17 @@ If the new kind needs special destination paths (not `agents/` or `skills/`), up
 ```rust
 fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsError> {
     match target.id.kind {
-        ItemKind::Agent => { /* atomic_write */ }
-        ItemKind::Skill => { /* atomic_install_dir */ }
+        ItemKind::Agent => { /* write_file_and_verify */ }
+        ItemKind::BootstrapDoc => { /* atomic_install_dir on the doc directory */ }
+        ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => { /* atomic_install_dir */ }
         ItemKind::Tool => { /* your install logic */ }
     }
 }
 ```
 
-Also update:
-- `read_item_content()` — for merge support
-- `cache_base_content()` — what to cache for future merges
-- `extract_name_from_dest()` — name extraction from dest path
+Also check the removal path in `src/fs/mod.rs`/`src/platform/fs.rs` and the merge-base caching in `apply.rs` if the kind participates in three-way merge.
 
-### 6. Filesystem operations
-
-**`src/fs/mod.rs`** — Update `remove_item()`:
-```rust
-pub fn remove_item(path: &Path, kind: ItemKind) -> Result<(), MarsError> {
-    match kind {
-        ItemKind::Agent => fs::remove_file(path)?,
-        ItemKind::Skill => fs::remove_dir_all(path)?,
-        ItemKind::Tool => { /* your removal logic */ }
-    }
-}
-```
-
-### 7. Filter config
+### 6. Filter config
 
 **`src/config/mod.rs`** — If the new kind should be filterable, add a field to `FilterConfig`:
 ```rust
@@ -95,30 +82,29 @@ pub struct FilterConfig {
 }
 ```
 
-Update `FilterMode` derivation in `merge_with_root()` and `apply_filter()` in `src/sync/target.rs`.
+Update `FilterMode` derivation in `merge_with_root()` and `apply_filter()` in `src/sync/filter.rs`.
 
-### 8. CLI output
+### 7. CLI output
 
 **`src/cli/output.rs`**, **`src/cli/list.rs`** — Update display and listing logic to show the new kind.
 
-### 9. Validation
+### 8. Validation
 
-**`src/validate/mod.rs`** — If the new kind has cross-reference semantics (like agents referencing skills), add validation logic.
+**`src/sync/validate.rs`**, **`src/cli/validate.rs`** — If the new kind has cross-reference semantics (like agents referencing skills), add validation logic.
 
 ### Summary: files touched
 
 | File | Change |
 |---|---|
-| `src/lock/mod.rs` | `ItemKind` variant + Display |
-| `src/discover/mod.rs` | Discovery convention |
+| `crates/mars-schema/src/item.rs` | `ItemKind` variant + Display |
+| `src/discover/mod.rs` (binary-owned kinds) or `crates/mars-schema/src/discover.rs` (authored definitions) | Discovery convention |
 | `src/hash/mod.rs` | `compute_hash()` match arm |
-| `src/sync/target.rs` | `default_dest_path()`, `dest_name_from_path()`, `parse_rename_dest()` |
-| `src/sync/apply.rs` | `install_item()`, `read_item_content()`, `cache_base_content()`, `extract_name_from_dest()` |
-| `src/fs/mod.rs` | `remove_item()` |
-| `src/config/mod.rs` | `FilterConfig` field (optional) |
+| `src/sync/target.rs` | `default_dest_path()`, `parse_rename_dest()` |
+| `src/sync/apply.rs` | `install_item()`, merge-base caching |
+| `src/config/mod.rs`, `src/sync/filter.rs` | `FilterConfig` field, `apply_filter()` (optional) |
 | `src/cli/output.rs` | Display formatting |
 | `src/cli/list.rs` | List output |
-| `src/validate/mod.rs` | Cross-reference validation (if applicable) |
+| `src/sync/validate.rs` | Cross-reference validation (if applicable) |
 
 ## Adding a New Source Type
 

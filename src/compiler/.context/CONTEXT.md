@@ -5,8 +5,12 @@ User-facing summary: [docs/config/agent-compilation.md](../../../docs/config/age
 
 ## Module
 
-`mcp_ref.rs` — `McpRef`, `parse_mcp_ref`, `try_parse_mcp_tool_name`, `parse_foreign_mcp_token`,
-`project_mcp_ref`.
+`crates/mars-schema/src/mcp.rs` — the grammar: `McpRef`, `parse_mcp_ref`,
+`try_parse_mcp_tool_name`, `parse_foreign_mcp_token`.
+
+`mcp_ref.rs` — the projection only: `project_mcp_ref` (dispatching on the harness
+descriptor's `McpProjectionPolicy`), `McpProjection`, `McpUnsupportedReason`. It imports
+`McpRef` from `mars_schema::mcp`.
 
 `tool_policy.rs` — turns `tools:` / `disallowed-tools:` into typed [`ToolRule`]s
 (`EffectiveToolPolicy`); an MCP entry is a rule whose `Capability::Mcp` holds the parsed
@@ -65,6 +69,8 @@ stale artifacts after dependency removal or rename.
 
 ## Inbound lift
 
-`staging/lift.rs` calls `parse_foreign_mcp_token` to convert Claude `mcp__…` and Cursor
-`Mcp(...)` wire forms to canonical `mcp(...)` before compilation. Claude `mcpServers`
-appends whole-server `mcp(server)` via `append_mcp_server_entries_to_tools`.
+`crates/mars-schema/src/lift.rs` calls `parse_foreign_mcp_token` (with `ForeignMcpDialect`
+Claude or Cursor) to convert `mcp__…` and `Mcp(...)` wire forms to canonical `mcp(...)`
+before compilation; the Claude layout does the same for denied entries in
+`crates/mars-schema/src/claude/translate.rs`. Claude `mcpServers` appends whole-server
+`mcp(server)` via `append_mcp_server_entries_to_tools` (`crates/mars-schema/src/tool_policy.rs`).

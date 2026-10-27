@@ -118,9 +118,7 @@ pub(super) fn warn_agent_field_dropped(
 ) {
     diag.warn(
         "plugin-agent-field-dropped",
-        format!(
-            "agent `{agent}`: `{field}` is ignored by {harness} plugin agents and was dropped"
-        ),
+        format!("agent `{agent}`: `{field}` is ignored by {harness} plugin agents and was dropped"),
     );
 }
 

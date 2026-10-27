@@ -12,10 +12,10 @@ use mars_schema::HarnessId;
 use mars_schema::frontmatter::Frontmatter;
 use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
 
-use crate::sync::target::TargetItem;
 use super::super::metadata::PackageMetadata;
 use super::super::spec::{Finish, PluginRoot, RootFile, TreeProfile};
 use super::{LoweredAgent, WrittenTreeContents};
+use crate::sync::target::TargetItem;
 
 const TARGET_ROOT: &str = ".opencode";
 const INDEX_TEMPLATE: &str = include_str!("../opencode/index.mjs");

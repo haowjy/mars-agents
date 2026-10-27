@@ -512,63 +512,87 @@ fn upgrade_tools(fm: &mut Frontmatter) {
     fm.remove("disallowed-tools");
 }
 
-/// The Agent keys the Meridian CLI reads from a profile (an agent's re-arm budget, the
-/// capabilities it grants) under their new name. Mars has no meaning for either value, so the
-/// move carries them as authored.
-const MERIDIAN_AGENT_FIELDS: &[(&str, &str)] = &[
-    ("resident-rearm-budget", "resident-rearm-budget"),
-    ("meridian-capabilities", "capabilities"),
+/// The Agent keys schema 1 replaced with a `harness-overrides` key: the consumer namespace that
+/// owns it, and the name it takes there.
+///
+/// One conflict rule covers all three: a block already written wins, and its top-level twin is
+/// dropped with a note naming it. `permission` moves only for the values Flow defines; see
+/// [`moves_under_namespace`].
+const MOVED_AGENT_FIELDS: &[(&str, &str, &str)] = &[
+    ("flow", "permission", "permission"),
+    ("meridian", "resident-rearm-budget", "resident-rearm-budget"),
+    ("meridian", "meridian-capabilities", "capabilities"),
 ];
 
-/// Move the Agent keys schema 1 replaced with a `harness-overrides` key. `permission` is
-/// separate: only the values Flow defines move, while an override already written wins, which
-/// the set-aside then reports as the restriction it loses.
+/// The namespaces `MOVED_AGENT_FIELDS` moves keys into.
+const CONSUMER_NAMESPACES: [&str; 2] = ["flow", "meridian"];
+
+/// Whether the top-level `key` moves under its consumer namespace. Flow defines `read` and
+/// `edit` only, so any other `permission` value stays where it is for the reader to report.
+fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
+    key != "permission"
+        || fm
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|permission| matches!(permission, "read" | "edit"))
+}
+
+/// Move the Agent keys schema 1 replaced with a `harness-overrides` key. An existing block wins,
+/// and the top-level twin it displaces is dropped with a note: the reader would otherwise report
+/// the key `mars migrate` left behind.
 fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
-    move_permission(fm);
-    let Moved::Done { displaced, .. } = move_keys_under(fm, "meridian", MERIDIAN_AGENT_FIELDS)
-    else {
-        return;
-    };
-    for (from, to) in MERIDIAN_AGENT_FIELDS {
-        if displaced.iter().any(|key| key == from) {
-            notes.push(SchemaDiagnostic::new(
-                "field.removed",
-                Severity::Warning,
-                vec![PathSegment::Key((*from).to_string())],
-                format!("dropped `{from}`; `harness-overrides.meridian.{to}` already sets it"),
-            ));
+    let mut displaced = Vec::new();
+    for namespace in CONSUMER_NAMESPACES {
+        let keys = MOVED_AGENT_FIELDS
+            .iter()
+            .filter_map(|(owner, from, to)| {
+                (*owner == namespace && moves_under_namespace(fm, from)).then_some((*from, *to))
+            })
+            .collect::<Vec<_>>();
+        if let Moved::Done {
+            displaced: dropped, ..
+        } = move_keys_under(fm, namespace, &keys)
+        {
+            displaced.extend(dropped.into_iter().map(|key| (namespace, key)));
         }
+    }
+    for (namespace, from) in displaced {
+        let to = MOVED_AGENT_FIELDS
+            .iter()
+            .find(|(owner, key, _)| *owner == namespace && *key == from)
+            .map(|(_, _, to)| *to)
+            .expect("a displaced key comes from the table");
+        notes.push(dropped_twin(fm, namespace, &from, to));
     }
 }
 
-fn move_permission(fm: &mut Frontmatter) {
-    let Some(permission @ ("read" | "edit")) = fm.get("permission").and_then(Value::as_str) else {
-        return;
-    };
-    let permission = permission.to_string();
-    let overrides = fm
-        .get("harness-overrides")
-        .cloned()
-        .unwrap_or_else(|| Value::Mapping(Mapping::new()));
-    let Value::Mapping(mut overrides) = overrides else {
-        return;
-    };
-    let flow_key = Value::String("flow".to_string());
-    let flow = overrides
-        .get(&flow_key)
-        .cloned()
-        .unwrap_or_else(|| Value::Mapping(Mapping::new()));
-    let Value::Mapping(mut flow) = flow else {
-        return;
-    };
-    let permission_key = Value::String("permission".to_string());
-    if flow.contains_key(&permission_key) {
-        return;
+/// The note for a top-level key dropped because its namespace block already sets one. A dropped
+/// `permission` carried a restriction, which the note names as lost (`field.restriction-lost`, as
+/// the set-aside reports the same loss).
+fn dropped_twin(fm: &Frontmatter, namespace: &str, from: &str, to: &str) -> SchemaDiagnostic {
+    let path = vec![PathSegment::Key(from.to_string())];
+    if from == "permission" {
+        let agent = fm.get("name").and_then(Value::as_str).map_or_else(
+            || "this agent".to_string(),
+            |name| format!("agent `{name}`"),
+        );
+        return SchemaDiagnostic::new(
+            crate::set_aside::RESTRICTION_LOST,
+            Severity::Warning,
+            path,
+            format!(
+                "{agent} lost the restriction `permission`: it was dropped, because \
+                 `harness-overrides.{namespace}.{to}` already sets a value, and an override \
+                 written wins"
+            ),
+        );
     }
-    flow.insert(permission_key, Value::String(permission));
-    overrides.insert(flow_key, Value::Mapping(flow));
-    fm.insert("harness-overrides", Value::Mapping(overrides));
-    fm.remove("permission");
+    SchemaDiagnostic::new(
+        "field.removed",
+        Severity::Warning,
+        path,
+        format!("dropped `{from}`; `harness-overrides.{namespace}.{to}` already sets it"),
+    )
 }
 
 fn strip_model_policy_overrides(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {

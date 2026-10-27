@@ -331,31 +331,30 @@ pub fn build_with_collisions_and_diag(
             diag,
         )?;
 
-        if source_may_emit_mcp(graph, source_name) {
-            let decl_order = decl_orders
-                .get(source_name)
-                .copied()
-                .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
-            match crate::compiler::mcp::discover_mcp_items(
-                &node.rooted_ref.package_root,
-                source_name.as_str(),
-                dependency_depths.get(source_name).copied().unwrap_or(1),
-                decl_order,
-                diag,
-            ) {
-                Ok(items) => {
-                    for item in items {
-                        if item.def.visibility == crate::compiler::visibility::Visibility::Exported
-                        {
-                            target.select_mcp(item, &mcp_target_roots);
-                        }
+        // Filters select agents, skills and bootstrap docs; a dependency's MCP
+        // servers stay visible to a consumer that includes nothing else.
+        let decl_order = decl_orders
+            .get(source_name)
+            .copied()
+            .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
+        match crate::compiler::mcp::discover_mcp_items(
+            &node.rooted_ref.package_root,
+            source_name.as_str(),
+            dependency_depths.get(source_name).copied().unwrap_or(1),
+            decl_order,
+            diag,
+        ) {
+            Ok(items) => {
+                for item in items {
+                    if item.def.visibility == crate::compiler::visibility::Visibility::Exported {
+                        target.select_mcp(item, &mcp_target_roots);
                     }
                 }
-                Err(error) => diag.warn(
-                    "mcp-discover",
-                    format!("failed to scan MCP items in `{source_name}`: {error}"),
-                ),
             }
+            Err(error) => diag.warn(
+                "mcp-discover",
+                format!("failed to scan MCP items in `{source_name}`: {error}"),
+            ),
         }
 
         let Some(filtered) = apply_source_filters(
@@ -483,14 +482,6 @@ pub(crate) fn mcp_config_targets(managed_targets: &[String]) -> Vec<String> {
         })
         .cloned()
         .collect()
-}
-
-pub(crate) fn source_may_emit_mcp(graph: &ResolvedGraph, source_name: &SourceName) -> bool {
-    graph.filters.get(source_name).is_none_or(|filters| {
-        filters
-            .iter()
-            .any(|filter| matches!(filter, FilterMode::All | FilterMode::Exclude(_)))
-    })
 }
 
 pub(crate) fn apply_source_filters(

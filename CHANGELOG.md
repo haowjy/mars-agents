@@ -23,6 +23,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already did; `mars sync --force` adopts and overwrites it.
 
 ### Fixed
+- A dependency filtered with `agents`/`skills` now still contributes its MCP servers: an include
+  filter selects agents and skills, as the docs say, instead of silently dropping every server the
+  dependency declares.
 - `mars build plugin` keeps the names of the building package's own agents and skills when a
   dependency defines the same name, as `mars sync` already did: the root installs `rev.md` and
   the dependency `rev__adep.md`, instead of renaming both to `rev__pkg.md` and `rev__adep.md`.

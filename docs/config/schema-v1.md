@@ -15,7 +15,7 @@ schema = 1
 
 - **Not frozen before Mars 1.0.** While Mars is 0.x, a minor release may still change or remove a schema 1 key; the CHANGELOG lists each change, and `mars migrate` rewrites what it can. From Mars 1.0, schema 1 is fixed: the same bytes mean the same thing, a minor release only adds optional keys, and a change in meaning needs `schema = 2` with an upgrade path from 1.
 - **Strict.** A package that declares `schema = 1` is read as written. A key schema 1 removed, a value it does not allow, and a malformed file are errors that name the file and the replacement; there is no silent fallback. Unknown keys are preserved and reported as warnings.
-- **Published as data.** The key tables below, the tool vocabulary, and a corpus of input files with their expected readings are fixtures that Mars's tests and Flow's tests run. See [The contract as data](#the-contract-as-data).
+- **Published as data.** The key tables below, the tool vocabulary, and a corpus of input files with their expected readings are fixtures that Mars's tests and Meridian Flow's tests run. See [The contract as data](#the-contract-as-data).
 
 ## How Mars reads a package
 
@@ -203,7 +203,7 @@ harness-overrides:
     model_reasoning_summary: concise                  # a Codex config key, carried as written
   meridian-flow:
     permission: read                                  # Meridian Flow's own key
-  meridian:
+  meridian-cli:
     resident-rearm-budget: 3                          # the Meridian CLI's own keys
     capabilities: {spawn: true}
 ```
@@ -254,14 +254,14 @@ The vocabulary also records, per host, which native tools a capability becomes. 
 
 - the host's tool names;
 - *scoped tools*: Claude spells a scoped file rule through a permission category, such as `Edit(path)`;
-- *absent*: the host has no such tool, so a deny is already met (`ls` on Claude, Codex and Cursor; `work` everywhere but Flow);
+- *absent*: the host has no such tool, so a deny is already met (`ls` on Claude, Codex and Cursor; `work` everywhere but Meridian Flow);
 - *no switch*: the host can do it but has no tool to turn off (Codex reads files through its shell).
 
-The per-harness names are in [Agent compilation](agent-compilation.md#tool-name-projection). Flow is not a harness; its tools are `read`, `write`, `glob`, `grep`, `ls`, `skill`, `ask`, `work`, and `spawn` with the `thread_*` family.
+The per-harness names are in [Agent compilation](agent-compilation.md#tool-name-projection). Meridian Flow is not a harness; its tools are `read`, `write`, `glob`, `grep`, `ls`, `skill`, `ask`, `work`, and `spawn` with the `thread_*` family.
 
 ## The contract as data
 
-The reader is exercised by fixtures in [`crates/mars-schema/fixtures/`](../../crates/mars-schema/fixtures/), a directory of cases per suite. Mars's tests (`cargo test -p mars-schema`) and the npm package (`node crates/mars-schema-wasm/run-fixtures.mjs`) both run them, and Flow runs the same corpus against the version of `@meridian-flow/mars-schema` it pins. A change to a pinned reader that changes a fixture's reading is a change to the contract.
+The reader is exercised by fixtures in [`crates/mars-schema/fixtures/`](../../crates/mars-schema/fixtures/), a directory of cases per suite. Mars's tests (`cargo test -p mars-schema`) and the npm package (`node crates/mars-schema-wasm/run-fixtures.mjs`) both run them, and Meridian Flow runs the same corpus against the version of `@meridian-flow/mars-schema` it pins. A change to a pinned reader that changes a fixture's reading is a change to the contract.
 
 | Suite | Pins |
 |---|---|

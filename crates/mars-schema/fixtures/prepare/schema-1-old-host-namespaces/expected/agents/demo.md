@@ -2,10 +2,10 @@
 name: demo
 description: Demo
 harness-overrides:
-  meridian-flow:
+  meridian-flow:   # host block
     permission: read
   claude:
-    x: 1
+    x: 1   # kept
   meridian-cli:
     capabilities:
       spawn: true

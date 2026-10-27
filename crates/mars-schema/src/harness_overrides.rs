@@ -197,16 +197,6 @@ pub(crate) fn parse_harness_overrides(
         if push_unholdable_key(diags, &harness_path, harness_name) {
             continue;
         }
-        let Some(sub_mapping) = v.as_mapping() else {
-            push_invalid(
-                kind,
-                diags,
-                harness_path,
-                crate::ordered::plain(v),
-                "mapping of target-native keys",
-            );
-            continue;
-        };
         if let Some((_, new)) = crate::harness::RENAMED_CONSUMER_NAMESPACES
             .iter()
             .find(|(old, _)| *old == harness_name)
@@ -221,6 +211,16 @@ pub(crate) fn parse_harness_overrides(
             ));
             continue;
         }
+        let Some(sub_mapping) = v.as_mapping() else {
+            push_invalid(
+                kind,
+                diags,
+                harness_path,
+                crate::ordered::plain(v),
+                "mapping of target-native keys",
+            );
+            continue;
+        };
         if !crate::harness::RESERVED_CONSUMER_NAMESPACES.contains(&harness_name)
             && crate::harness::parse(harness_name).is_none()
         {

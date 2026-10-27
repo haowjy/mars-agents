@@ -104,7 +104,12 @@
         "diagnostics": []
       },
       "change": {
-        "kind": "fully-rewritten"
+        "kind": "edited",
+        "paths": [
+          [
+            "harness-overrides"
+          ]
+        ]
       }
     }
   ],

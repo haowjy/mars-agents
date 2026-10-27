@@ -466,7 +466,7 @@ harness-overrides:
     model_reasoning_summary: concise   # a Codex config key, carried as written
   meridian-flow:
     permission: read          # Meridian Flow's own keys; reserved namespace
-  meridian:
+  meridian-cli:
     resident-rearm-budget: 3  # the Meridian CLI's own keys; reserved namespace
 ```
 

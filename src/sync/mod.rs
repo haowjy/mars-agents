@@ -1,7 +1,6 @@
 use mars_schema::item::ItemKind;
 pub mod apply;
 pub mod diff;
-pub mod filter;
 mod local_items;
 pub mod mutation;
 pub(crate) mod ownership;
@@ -268,7 +267,7 @@ fn build_recovery_halt(
                 .graph
                 .nodes
                 .values()
-                .filter(|candidate| candidate.deps.contains(source_name))
+                .filter(|candidate| candidate.deps().any(|dep| dep == source_name))
                 .map(|candidate| candidate.source_name.to_string())
                 .collect();
             let upgrade_cmd =

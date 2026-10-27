@@ -11,8 +11,9 @@ use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::types::{SourceName, SourceOrigin};
-use crate::validate::{ValidationWarning, deferred_provider};
+use crate::validate::ValidationWarning;
 use mars_schema::item::ItemKind;
+use mars_schema::provider::deferred_provider;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
 /// reference skills that exist in the target state.

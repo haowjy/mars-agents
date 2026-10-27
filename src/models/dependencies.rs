@@ -27,7 +27,7 @@ pub(crate) fn declaration_ordered_dep_models(
             continue;
         };
 
-        let mut queue: VecDeque<SourceName> = sponsor_node.deps.iter().cloned().collect();
+        let mut queue: VecDeque<SourceName> = sponsor_node.deps().cloned().collect();
         let mut visited: HashSet<SourceName> = HashSet::new();
 
         while let Some(dep) = queue.pop_front() {
@@ -41,7 +41,7 @@ pub(crate) fn declaration_ordered_dep_models(
                 .or_insert(idx);
 
             if let Some(dep_node) = graph.nodes.get(&dep) {
-                queue.extend(dep_node.deps.iter().cloned());
+                queue.extend(dep_node.deps().cloned());
             }
         }
     }
@@ -57,7 +57,7 @@ pub(crate) fn declaration_ordered_dep_models(
     }
 
     for (name, node) in &graph.nodes {
-        for dep in &node.deps {
+        for dep in node.deps() {
             if graph.nodes.contains_key(dep) {
                 *in_degree.entry(name.clone()).or_insert(0) += 1;
                 adjacency.entry(dep.clone()).or_default().push(name.clone());
@@ -200,7 +200,10 @@ mod tests {
                 tree_path: canonical,
             },
             manifest: with_models.then(|| manifest_with_models(name)),
-            deps: deps.iter().map(|dep| (*dep).into()).collect(),
+            edges: deps
+                .iter()
+                .map(|dep| crate::resolve::Edge::unfiltered(*dep))
+                .collect(),
         }
     }
 
@@ -249,7 +252,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["a".into(), "b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -270,7 +273,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "a".into(), "b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -291,7 +294,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -310,7 +313,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "a".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -332,7 +335,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };

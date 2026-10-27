@@ -1,96 +1,82 @@
 use super::*;
 use mars_schema::item::ItemKind;
+use std::path::Path;
 
-#[test]
-fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
-    let mut package_items = IndexMap::new();
-    let discovered = [
-        (ItemKind::Agent, "runner", PathBuf::from("agents/runner.md")),
-        (
-            ItemKind::Skill,
-            "planning",
-            PathBuf::from("skills/planning"),
-        ),
-        (
-            ItemKind::BootstrapDoc,
-            "global-auth",
-            PathBuf::from("bootstrap/global-auth"),
-        ),
-        (ItemKind::Hook, "hook", PathBuf::from("hooks/hook")),
-        (ItemKind::McpServer, "server", PathBuf::from("mcp/server")),
-    ];
-
-    for (kind, name, source_path) in discovered {
-        let item_name = ItemName::from(name);
-        package_items.insert(
-            (kind, item_name.clone()),
-            crate::discover::DiscoveredItem {
-                id: crate::lock::ItemId {
-                    kind,
-                    name: item_name,
-                },
-                source_path,
-            },
-        );
-    }
-
-    let package = RegisteredPackage {
-        node: ResolvedNode {
-            source_name: "dep".into(),
-            source_id: SourceId::git_with_subpath(
-                SourceUrl::from("https://example.com/dep.git"),
-                None,
-            ),
-            rooted_ref: dummy_rooted_ref(),
-            prepared: None,
-            resolved_ref: dummy_ref("dep"),
-            manifest: None,
-            deps: Vec::new(),
-        },
-        declared_source_id: SourceId::git_with_subpath(
-            SourceUrl::from("https://example.com/dep.git"),
-            None,
-        ),
-        items: package_items,
-        constraint: Constraint::Latest,
-        is_local: false,
-    };
-    let pending = PendingSource {
-        name: "dep".into(),
-        declared_source_id: SourceId::git_with_subpath(
-            SourceUrl::from("https://example.com/dep.git"),
-            None,
-        ),
-        source_id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/dep.git"), None),
-        spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
-        subpath: None,
-        constraint: Constraint::Latest,
-        filter: FilterMode::Include {
-            agents: vec!["runner".into()],
-            skills: vec![],
-        },
-        required_by: "root".to_string(),
-    };
-
-    let seeded = super::package::seed_items_for_request(&pending, &package);
-    let seeded_kinds: Vec<_> = seeded
+/// What `graph.selection` installs, as `(package, kind, slug)`.
+fn selected(graph: &ResolvedGraph) -> Vec<(String, ItemKind, String)> {
+    graph
+        .selection
+        .items
         .iter()
-        .map(|item| (item.kind, item.item.as_str().to_string()))
-        .collect();
+        .map(|item| (item.package.clone(), item.kind, item.slug.clone()))
+        .collect()
+}
 
-    assert!(seeded_kinds.contains(&(ItemKind::Agent, "runner".to_string())));
-    assert!(seeded_kinds.contains(&(ItemKind::BootstrapDoc, "global-auth".to_string())));
-    assert!(!seeded_kinds.contains(&(ItemKind::Hook, "hook".to_string())));
-    assert!(!seeded_kinds.contains(&(ItemKind::McpServer, "server".to_string())));
+fn write_bootstrap_doc(tree: &Path, name: &str) {
+    let dir = tree.join("bootstrap").join(name);
+    std::fs::create_dir_all(&dir).expect("create bootstrap dir");
+    std::fs::write(dir.join("BOOTSTRAP.md"), "# hi\n").expect("write BOOTSTRAP.md");
 }
 
 #[test]
-fn filtered_transitive_dep_without_seed_request_does_not_collect_materialization_filter() {
+fn include_selects_bootstrap_docs_with_the_requested_items() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("dep");
+    std::fs::create_dir_all(&tree).unwrap();
+    write_minimal_package_marker(&tree);
+    write_agent(&tree, "runner", &[]);
+    write_skill(&tree, "planning");
+    write_bootstrap_doc(&tree, "global-auth");
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
+    provider.add_source("dep", tree, None);
+    let dep_spec = git_spec("https://example.com/dep.git", Some("v1.0.0"));
+    let mut dependencies = IndexMap::new();
+    dependencies.insert(
+        SourceName::from("dep"),
+        EffectiveDependency {
+            declared_source_id: source_id_for_spec(&dep_spec, None),
+            source_id: source_id_for_spec(&dep_spec, None),
+            spec: dep_spec,
+            subpath: None,
+            filter: FilterMode::Include {
+                agents: vec!["runner".into()],
+                skills: vec![],
+            },
+            rename: RenameMap::new(),
+            dialect: None,
+        },
+    );
+    let config = EffectiveConfig {
+        dependencies,
+        settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
+    };
+
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+    assert_eq!(
+        selected(&graph),
+        vec![
+            ("dep".to_string(), ItemKind::Agent, "runner".to_string()),
+            (
+                "dep".to_string(),
+                ItemKind::BootstrapDoc,
+                "global-auth".to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn filtered_transitive_entry_selects_nothing() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_dep = dir.path().join("dep");
     std::fs::create_dir_all(&tree_a).unwrap();
     std::fs::create_dir_all(&tree_dep).unwrap();
+    write_minimal_package_marker(&tree_dep);
+    write_skill(&tree_dep, "frontend-design");
 
     let manifest_a = make_manifest_with_filters(
         "a",
@@ -118,16 +104,21 @@ fn filtered_transitive_dep_without_seed_request_does_not_collect_materialization
     )]);
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    assert!(!graph.filters.contains_key(&SourceName::from("dep")));
+    assert!(graph.nodes.contains_key("dep"));
+    assert!(selected(&graph).is_empty());
 }
 
 #[test]
-fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep() {
+fn direct_filter_selects_when_same_source_is_also_a_filtered_transitive_dep() {
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_dep = dir.path().join("dep");
     std::fs::create_dir_all(&tree_a).unwrap();
     std::fs::create_dir_all(&tree_dep).unwrap();
+    write_minimal_package_marker(&tree_dep);
+    for skill in ["skill-a", "skill-b", "skill-c"] {
+        write_skill(&tree_dep, skill);
+    }
 
     let manifest_a = make_manifest_with_filters(
         "a",
@@ -186,12 +177,14 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
     };
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    let filters = graph.filters.get(&SourceName::from("dep")).unwrap();
-    assert_eq!(filters.len(), 1);
-    assert!(filters.contains(&FilterMode::Include {
-        agents: vec![],
-        skills: vec!["skill-a".into(), "skill-b".into()],
-    }));
+    // `a`'s filtered entry for `dep` adds nothing to the consumer's own request.
+    assert_eq!(
+        selected(&graph),
+        vec![
+            ("dep".to_string(), ItemKind::Skill, "skill-a".to_string()),
+            ("dep".to_string(), ItemKind::Skill, "skill-b".to_string()),
+        ]
+    );
 }
 
 #[test]
@@ -385,16 +378,14 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
-    let child_filters = graph.filters.get(&SourceName::from("child")).unwrap();
-    assert!(
-        !child_filters
-            .iter()
-            .any(|filter| matches!(filter, FilterMode::All))
+    // The child contributes only the skill the selected Agent names.
+    assert_eq!(
+        selected(&graph),
+        vec![
+            ("parent".to_string(), ItemKind::Agent, "runner".to_string()),
+            ("child".to_string(), ItemKind::Skill, "planning".to_string()),
+        ]
     );
-    assert!(child_filters.contains(&FilterMode::Include {
-        agents: vec![],
-        skills: vec!["planning".into()],
-    }));
 
     let (target, renames, _) = crate::sync::target::build_with_collisions_and_diag(
         &graph,

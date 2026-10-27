@@ -82,34 +82,6 @@ impl ValidationWarning {
     }
 }
 
-/// The provider a ref is deferred to, when the requesting package declares it.
-///
-/// The package-only half of a ref's validity: `<x>__<p>` is valid wherever `p` supplies it when
-/// the package lists `p` in `[package] uses-providers`. The resolver and `mars check` ask only
-/// this question, so a package resolves the same on every machine; sync's validator is the one
-/// reporter that also knows what this machine installed.
-///
-/// `declared` is the requesting package's `uses-providers`: `Some` for a package (a dependency,
-/// or a package repository's own items), `None` for a consumer project's local items, which need
-/// no declaration.
-pub(crate) fn deferred_provider<'a>(name: &'a str, declared: Option<&[String]>) -> Option<&'a str> {
-    let provider = mars_schema::provider::provider_of(name)?;
-    declared?
-        .iter()
-        .any(|declared| declared == provider)
-        .then_some(provider)
-}
-
-/// The hint for a `<skill>__<provider>` ref that no package ships and no package declares.
-///
-/// A name can look exactly like a host provider's and still be a typo, so the hint is
-/// conditional. `mars check` and the resolver's `SkillNotFound` print this one text.
-pub(crate) fn undeclared_provider_hint(provider: &str) -> String {
-    format!(
-        "if `{provider}` is a host that provides this skill, declare it in `[package] uses-providers`; otherwise check the name"
-    )
-}
-
 /// Parse skill dependencies from an Agent file.
 ///
 /// The callers read files Mars or a provider wrote — an installed Agent under `.mars/`, or the

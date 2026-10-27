@@ -3,25 +3,19 @@ use std::collections::{BTreeMap, HashMap};
 use indexmap::IndexMap;
 use mars_schema::version::Constraint;
 
-use super::filter::push_filter_constraint;
 use super::{
-    PackageResolutionState, PackageVersions, PendingItem, RegisteredPackage, ResolvedGraph,
-    ResolvedNode, RootedSourceRef, VisitedSet,
+    PackageResolutionState, RegisteredPackage, ResolvedGraph, ResolvedNode, RootedSourceRef,
+    Selection,
 };
 use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName};
-use mars_schema::filter::FilterMode;
 
-/// Mutable resolver state threaded through bottom-up resolution and DFS traversal.
+/// Mutable resolver state threaded through bottom-up resolution.
 pub struct ResolverContext {
     registry: IndexMap<SourceName, RegisteredPackage>,
     package_states: HashMap<SourceName, PackageResolutionState>,
     id_index: HashMap<SourceId, SourceName>,
     version_constraints: HashMap<SourceName, Vec<(String, Constraint)>>,
-    materialization_filters: HashMap<SourceName, Vec<FilterMode>>,
-    stack: Vec<PendingItem>,
-    visited: VisitedSet,
-    package_versions: PackageVersions,
     /// Version overrides carried from a prior restart pass.
     ///
     /// When a restart is triggered because package X would resolve to a different
@@ -62,10 +56,6 @@ impl ResolverContext {
             package_states: HashMap::new(),
             id_index: HashMap::new(),
             version_constraints: HashMap::new(),
-            materialization_filters: HashMap::new(),
-            stack: Vec::new(),
-            visited: VisitedSet::new(),
-            package_versions: PackageVersions::new(),
             version_overrides: HashMap::new(),
             pending_restart: None,
             unreadable_hook_surfaces: BTreeMap::new(),
@@ -193,22 +183,6 @@ impl ResolverContext {
         &self.version_constraints
     }
 
-    pub(super) fn materialization_filters(&self) -> &HashMap<SourceName, Vec<FilterMode>> {
-        &self.materialization_filters
-    }
-
-    pub(super) fn visited(&self) -> &VisitedSet {
-        &self.visited
-    }
-
-    pub(super) fn visited_mut(&mut self) -> &mut VisitedSet {
-        &mut self.visited
-    }
-
-    pub(super) fn package_versions_mut(&mut self) -> &mut PackageVersions {
-        &mut self.package_versions
-    }
-
     pub fn add_version_constraint(
         &mut self,
         package: &SourceName,
@@ -221,19 +195,7 @@ impl ResolverContext {
             .push((requester.to_string(), constraint));
     }
 
-    pub fn add_filter(&mut self, package: &SourceName, filter: FilterMode) {
-        push_filter_constraint(&mut self.materialization_filters, package, &filter);
-    }
-
-    pub fn push_pending(&mut self, item: PendingItem) {
-        self.stack.push(item);
-    }
-
-    pub fn pop_pending(&mut self) -> Option<PendingItem> {
-        self.stack.pop()
-    }
-
-    pub fn into_graph(self) -> ResolvedGraph {
+    pub fn into_graph(self, selection: Selection) -> ResolvedGraph {
         let mut nodes: IndexMap<SourceName, ResolvedNode> = IndexMap::new();
         for (name, package) in self.registry {
             nodes.insert(name, package.node);
@@ -245,7 +207,7 @@ impl ResolverContext {
         ResolvedGraph {
             nodes,
             order,
-            filters: self.materialization_filters,
+            selection,
             version_constraints: self.version_constraints,
             unreadable_hook_surfaces: self.unreadable_hook_surfaces,
         }

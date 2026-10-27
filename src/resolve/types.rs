@@ -24,8 +24,8 @@ pub struct ResolvedGraph {
     pub nodes: IndexMap<SourceName, ResolvedNode>,
     /// Deterministic alphabetical order (prompt packages don't require dependency ordering).
     pub order: Vec<SourceName>,
-    /// All filter constraints collected for each source (direct + transitive).
-    pub filters: HashMap<SourceName, Vec<FilterMode>>,
+    /// The Agents, skills and documents the consumer installs, chosen once the graph settled.
+    pub selection: super::select::Selection,
     /// All version constraints collected for each source (direct + transitive).
     pub version_constraints: HashMap<SourceName, Vec<(String, Constraint)>>,
     /// Hook surfaces that cannot be compiled because they use a removed schema.
@@ -54,7 +54,7 @@ impl ResolvedGraph {
         while let Some(current) = queue.pop_front() {
             let current_depth = depths[&current];
             if let Some(node) = self.nodes.get(&current) {
-                for dep in &node.deps {
+                for dep in node.deps() {
                     if !self.nodes.contains_key(dep) {
                         continue;
                     }
@@ -90,7 +90,7 @@ impl ResolvedGraph {
                 continue;
             };
 
-            for dep in &node.deps {
+            for dep in node.deps() {
                 if !self.nodes.contains_key(dep) {
                     continue;
                 }
@@ -143,8 +143,31 @@ pub struct ResolvedNode {
     pub resolved_ref: ResolvedRef,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
+    /// This package's manifest entries, in declaration order.
+    pub edges: Vec<Edge>,
+}
+
+impl ResolvedNode {
     /// Source names this depends on.
-    pub deps: Vec<SourceName>,
+    pub fn deps(&self) -> impl Iterator<Item = &SourceName> {
+        self.edges.iter().map(|edge| &edge.name)
+    }
+}
+
+/// One entry of a package's manifest: the package it names and the items it asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Edge {
+    pub name: SourceName,
+    pub filter: FilterMode,
+}
+
+impl Edge {
+    pub fn unfiltered(name: impl Into<SourceName>) -> Self {
+        Self {
+            name: name.into(),
+            filter: FilterMode::All,
+        }
+    }
 }
 
 /// Source checkout provenance and rooted package boundary.

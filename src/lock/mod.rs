@@ -1402,7 +1402,6 @@ pub fn item_key(id: &ItemId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use crate::resolve::{ResolvedGraph, ResolvedNode};
@@ -2062,7 +2061,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2171,7 +2170,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2251,7 +2250,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2553,7 +2552,7 @@ installed_checksum = "sha256:222"
                     tree_path: PathBuf::from("/tmp/cache/base"),
                 },
                 manifest: None,
-                deps: vec![],
+                edges: vec![],
             },
         );
         nodes.insert(
@@ -2580,14 +2579,14 @@ installed_checksum = "sha256:222"
                     tree_path: PathBuf::from("/tmp/cache/local"),
                 },
                 manifest: None,
-                deps: vec![],
+                edges: vec![],
             },
         );
 
         let graph = ResolvedGraph {
             nodes,
             order: vec![git_name.clone(), path_name.clone()],
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2672,14 +2671,14 @@ installed_checksum = "sha256:222"
                     tree_path: PathBuf::from("/tmp/cache/base"),
                 },
                 manifest: None,
-                deps: vec![],
+                edges: vec![],
             },
         );
 
         let graph = ResolvedGraph {
             nodes,
             order: vec![source_name.clone()],
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2702,7 +2701,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2782,7 +2781,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2818,7 +2817,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };

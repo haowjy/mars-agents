@@ -2,22 +2,21 @@
 //!
 //! Algorithm:
 //! 1. Resolve package refs/versions (lock-preferred latest-compatible for git sources)
-//! 2. Resolve package manifests bottom-up (deps before item seeds)
-//! 3. Traverse items with DFS from seeded requests and frontmatter skill deps
+//! 2. Resolve package manifests bottom-up, recording each package's manifest entries
+//! 3. Once the graph settles, select the items it installs (`select`, a pure pass)
 //! 4. Emit deterministic alphabetical package order
 //!
 //! Uses `semver` crate for all version parsing. No custom version logic.
 
 pub mod compat;
 mod context;
-mod filter;
 mod package;
 mod path;
 mod plugin;
 mod provider;
 mod publish;
 mod requires;
-mod skill;
+mod select;
 mod types;
 mod version;
 
@@ -36,6 +35,7 @@ pub use publish::{PublishLens, resolve_publish_graph};
 pub(crate) use requires::{
     check_consumer_package_requirements, validate_package_requirement_syntax,
 };
+pub use select::*;
 pub use types::*;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
@@ -51,9 +51,8 @@ use crate::lock::LockFile;
 use crate::source::{AvailableVersion, ResolvedRef};
 use crate::types::SourceName;
 use crate::types::SourceUrl;
-use filter::is_item_excluded;
+use mars_schema::item::ItemKind;
 use package::resolve_package_bottom_up;
-use skill::{parse_pending_item_skill_deps, resolve_skill_ref};
 use version::validate_all_constraints;
 
 type EngineExclusions =
@@ -272,31 +271,11 @@ pub fn resolve(
         let mut ctx = ResolverContext::new();
         ctx.set_version_overrides(version_overrides.clone());
 
-        // Bottom-up phase: resolve all packages (with version selection) and seed items.
+        // Bottom-up phase: resolve all packages, with version selection.
         let bottom_up_result = (|| -> Result<(), MarsError> {
-            for request in direct_requests
-                .iter()
-                .filter(|request| filter::is_unfiltered_request(&request.filter))
-            {
+            for request in &direct_requests {
                 resolve_package_bottom_up(
                     request,
-                    true,
-                    provider,
-                    locked,
-                    options,
-                    config,
-                    diag,
-                    &mut ctx,
-                    &mut exclusions,
-                )?;
-            }
-            for request in direct_requests
-                .iter()
-                .filter(|request| !filter::is_unfiltered_request(&request.filter))
-            {
-                resolve_package_bottom_up(
-                    request,
-                    true,
                     provider,
                     locked,
                     options,
@@ -348,97 +327,99 @@ pub fn resolve(
         }
     };
 
-    // Item DFS phase: traverse seeded items, resolve skill deps.
-    let mut ctx = ctx;
-    while let Some(pending_item) = ctx.pop_pending() {
-        let (resolved_ref, skill_deps) = {
-            let Some(package) = ctx.registry().get(&pending_item.package) else {
-                return Err(ResolutionError::SourceNotFound {
-                    name: pending_item.package.to_string(),
-                }
-                .into());
-            };
-
-            if package
-                .item(pending_item.kind, &pending_item.item)
-                .is_none()
-            {
-                continue;
-            }
-
-            let skill_deps = parse_pending_item_skill_deps(&pending_item, package)?;
-            (package.node.resolved_ref.clone(), skill_deps)
-        };
-
-        match apply_item_version_policy(
-            &pending_item,
-            ctx.visited().check_version(
-                &pending_item.package,
-                &pending_item.item,
-                &pending_item.constraint,
-            ),
-            diag,
-        )
-        .map_err(MarsError::from)?
-        {
-            VersionAction::Process => {}
-            VersionAction::Skip => continue,
+    let selection = select::select_registry(config, ctx.registry());
+    if let Some(missing) = selection.missing_skills.first() {
+        return Err(ResolutionError::SkillNotFound {
+            skill: missing.skill.clone(),
+            required_by: missing.required_by.clone(),
+            searched: missing.searched.clone(),
+            hint: missing.hint.clone(),
         }
-
-        ctx.package_versions_mut()
-            .check_or_insert(
-                &pending_item.package,
-                &resolved_ref,
-                &pending_item.constraint,
-                &pending_item.required_by,
-                pending_item.is_local,
-            )
-            .map_err(MarsError::from)?;
-
-        ctx.visited_mut().insert(
-            pending_item.package.clone(),
-            pending_item.item.clone(),
-            pending_item.constraint.clone(),
-            resolved_ref,
-        );
-
-        for skill_dep in skill_deps {
-            let Some(resolved_skill) = resolve_skill_ref(
-                &skill_dep,
-                &pending_item,
-                ctx.registry(),
-                ctx.version_constraints(),
-            )?
-            else {
-                continue;
-            };
-            if is_item_excluded(
-                ctx.materialization_filters(),
-                ctx.registry(),
-                &resolved_skill.package,
-                resolved_skill.kind,
-                &resolved_skill.item,
-            ) {
-                continue;
-            }
-            ctx.add_filter(
-                &resolved_skill.package,
-                mars_schema::filter::FilterMode::Include {
-                    agents: Vec::new(),
-                    skills: vec![resolved_skill.item.clone()],
-                },
-            );
-            ctx.push_pending(resolved_skill);
-        }
+        .into());
     }
+    check_item_versions(&selection, &ctx, diag)?;
 
     let version_constraints = ctx.version_constraints().clone();
-    let graph = ctx.into_graph();
+    let graph = ctx.into_graph(selection);
 
     validate_all_constraints(&graph.nodes, &version_constraints)?;
     diag.reconcile_engine_fallbacks(&graph);
 
     Ok(graph)
+}
+
+/// Checks each selected item's version request against the first one seen for its package.
+fn check_item_versions(
+    selection: &Selection,
+    ctx: &ResolverContext,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let mut visited = VisitedSet::new();
+    let mut package_versions = PackageVersions::new();
+    for item in &selection.items {
+        if !matches!(item.kind, ItemKind::Agent | ItemKind::Skill) {
+            continue;
+        }
+        let Some(package) = ctx.registry().get(item.package.as_str()) else {
+            continue;
+        };
+        let constraints = ctx.version_constraints().get(item.package.as_str());
+        for requester in &item.required_by {
+            // A request's constraint is the one its requester recorded; a skill ref takes the
+            // package's first.
+            let (required_by, recorded) = match requester {
+                Requester::Consumer => ("mars.toml".to_string(), Some("mars.toml")),
+                Requester::Package(from) => (from.clone(), Some(from.as_str())),
+                Requester::Item { package, slug, .. } => (format!("{package}/{slug}"), None),
+            };
+            let constraint = constraints
+                .and_then(|entries| match recorded {
+                    Some(label) => entries.iter().find(|(from, _)| from == label),
+                    None => entries.first(),
+                })
+                .map(|(_, constraint)| constraint)
+                .unwrap_or(&package.constraint)
+                .clone();
+            let pending_item = PendingItem {
+                package: item.package.as_str().into(),
+                item: item.slug.as_str().into(),
+                kind: item.kind,
+                constraint,
+                required_by,
+                is_local: package.is_local,
+            };
+            match apply_item_version_policy(
+                &pending_item,
+                visited.check_version(
+                    &pending_item.package,
+                    &pending_item.item,
+                    &pending_item.constraint,
+                ),
+                diag,
+            )
+            .map_err(MarsError::from)?
+            {
+                VersionAction::Process => {}
+                VersionAction::Skip => continue,
+            }
+            package_versions
+                .check_or_insert(
+                    &pending_item.package,
+                    &package.node.resolved_ref,
+                    &pending_item.constraint,
+                    &pending_item.required_by,
+                    pending_item.is_local,
+                )
+                .map_err(MarsError::from)?;
+            visited.insert(
+                pending_item.package.clone(),
+                pending_item.item.clone(),
+                pending_item.constraint.clone(),
+                package.node.resolved_ref.clone(),
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

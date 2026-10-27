@@ -317,11 +317,11 @@ fn ordered_agent_deps(
 
     let mut ordered = Vec::new();
     for dep in dep_precedence {
-        if node.deps.contains(dep) {
+        if node.deps().any(|candidate| candidate == dep) {
             ordered.push(dep.clone());
         }
     }
-    for dep in &node.deps {
+    for dep in node.deps() {
         if !ordered.contains(dep) {
             ordered.push(dep.clone());
         }
@@ -487,13 +487,16 @@ mod tests {
                     tree_path: root.to_path_buf(),
                 },
                 manifest: None,
-                deps: deps.into_iter().map(SourceName::from).collect(),
+                edges: deps
+                    .into_iter()
+                    .map(crate::resolve::Edge::unfiltered)
+                    .collect(),
             },
         );
         ResolvedGraph {
             nodes,
             order: vec![source_name.into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         }
@@ -569,7 +572,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec![],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -618,7 +621,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec![],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -734,13 +737,13 @@ mod tests {
                     tree_path: dir.path().to_path_buf(),
                 },
                 manifest: None,
-                deps: vec!["source-b".into()],
+                edges: vec![crate::resolve::Edge::unfiltered("source-b")],
             },
         );
         let graph = ResolvedGraph {
             nodes,
             order: vec!["source-a".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -823,7 +826,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec![],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -909,7 +912,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec![],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -994,7 +997,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec![],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -1079,7 +1082,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec!["source-a".into(), "source-b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -1164,7 +1167,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: vec!["source-a".into(), "source-b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };

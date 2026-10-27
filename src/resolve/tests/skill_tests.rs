@@ -119,24 +119,19 @@ fn skill_resolution_prefers_dependency_closure_over_insertion_order() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
-    let planning_include = FilterMode::Include {
-        agents: Vec::new(),
-        skills: vec![ItemName::from("planning")],
+    // The agent's `planning` ref lands in its own dependency, not in a sibling the consumer
+    // happens to list first. (The sibling installs its own `planning` because the consumer
+    // asked for everything in it.)
+    let pulled_by_coder = |package: &str| {
+        graph.selection.items.iter().any(|item| {
+            item.package == package
+                && item.slug == "planning"
+                && item
+                    .required_by
+                    .iter()
+                    .any(|requester| matches!(requester, Requester::Item { slug, .. } if slug == "coder"))
+        })
     };
-    assert!(
-        graph
-            .filters
-            .get("my-dep")
-            .is_some_and(|filters| filters.contains(&planning_include)),
-        "expected planning include filter on my-dep; got {:?}",
-        graph.filters.get("my-dep")
-    );
-    assert!(
-        !graph
-            .filters
-            .get("sibling")
-            .is_some_and(|filters| filters.contains(&planning_include)),
-        "did not expect planning include filter on sibling; got {:?}",
-        graph.filters.get("sibling")
-    );
+    assert!(pulled_by_coder("my-dep"), "{:?}", graph.selection.items);
+    assert!(!pulled_by_coder("sibling"), "{:?}", graph.selection.items);
 }

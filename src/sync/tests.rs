@@ -106,7 +106,7 @@ fn make_graph_config(
                     tree_path: tree_path.clone(),
                 },
                 manifest: None,
-                deps: vec![],
+                edges: vec![],
             },
         );
         order.push(name.into());
@@ -133,19 +133,20 @@ fn make_graph_config(
         );
     }
 
+    let config = EffectiveConfig {
+        dependencies: config_dependencies,
+        settings: Settings::default(),
+        skills: indexmap::IndexMap::new(),
+    };
     (
         ResolvedGraph {
+            selection: crate::resolve::select_for_test(&config, &nodes),
             nodes,
             order,
-            filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         },
-        EffectiveConfig {
-            dependencies: config_dependencies,
-            settings: Settings::default(),
-            skills: indexmap::IndexMap::new(),
-        },
+        config,
     )
 }
 
@@ -190,7 +191,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         .nodes
         .get_mut(&SourceName::from("source-a"))
         .unwrap()
-        .deps = vec!["source-b".into()];
+        .edges = vec![crate::resolve::Edge::unfiltered("source-b")];
     effective
         .dependencies
         .get_mut(&SourceName::from("source-b"))
@@ -542,7 +543,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     tree_path: PathBuf::from(format!("/tmp/{name}")),
                 },
                 manifest: None,
-                deps: vec![],
+                edges: vec![],
             },
         );
         order.push((*name).into());
@@ -551,7 +552,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
     ResolvedGraph {
         nodes,
         order,
-        filters: std::collections::HashMap::new(),
+        selection: Default::default(),
         version_constraints: std::collections::HashMap::new(),
         unreadable_hook_surfaces: std::collections::BTreeMap::new(),
     }

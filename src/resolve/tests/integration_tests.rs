@@ -878,7 +878,7 @@ fn source_without_manifest_has_no_transitive_deps() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     assert_eq!(graph.nodes.len(), 1);
-    assert!(graph.nodes["a"].deps.is_empty());
+    assert!(graph.nodes["a"].edges.is_empty());
 }
 
 #[test]
@@ -950,7 +950,7 @@ fn alphabetical_order_linear_chain() {
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec!["b".into()],
+            edges: vec![Edge::unfiltered("b")],
         },
     );
     nodes.insert(
@@ -962,7 +962,7 @@ fn alphabetical_order_linear_chain() {
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec!["a".into()],
+            edges: vec![Edge::unfiltered("a")],
         },
     );
     nodes.insert(
@@ -974,7 +974,7 @@ fn alphabetical_order_linear_chain() {
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec![],
+            edges: vec![],
         },
     );
 
@@ -995,7 +995,7 @@ fn alphabetical_order_ignores_dependency_shape() {
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec!["b".into(), "c".into()],
+            edges: vec![Edge::unfiltered("b"), Edge::unfiltered("c")],
         },
     );
     nodes.insert(
@@ -1007,7 +1007,7 @@ fn alphabetical_order_ignores_dependency_shape() {
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec!["d".into()],
+            edges: vec![Edge::unfiltered("d")],
         },
     );
     nodes.insert(
@@ -1019,7 +1019,7 @@ fn alphabetical_order_ignores_dependency_shape() {
             resolved_ref: dummy_ref("c"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec!["d".into()],
+            edges: vec![Edge::unfiltered("d")],
         },
     );
     nodes.insert(
@@ -1031,7 +1031,7 @@ fn alphabetical_order_ignores_dependency_shape() {
             resolved_ref: dummy_ref("d"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec![],
+            edges: vec![],
         },
     );
 
@@ -1051,7 +1051,7 @@ fn alphabetical_order_no_deps() {
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec![],
+            edges: vec![],
         },
     );
     nodes.insert(
@@ -1063,7 +1063,7 @@ fn alphabetical_order_no_deps() {
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec![],
+            edges: vec![],
         },
     );
 
@@ -1085,7 +1085,7 @@ fn alphabetical_order_is_stable_for_cycles() {
             resolved_ref: dummy_ref("a"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec!["b".into()],
+            edges: vec![Edge::unfiltered("b")],
         },
     );
     nodes.insert(
@@ -1097,7 +1097,7 @@ fn alphabetical_order_is_stable_for_cycles() {
             resolved_ref: dummy_ref("b"),
             rooted_ref: dummy_rooted_ref(),
             manifest: None,
-            deps: vec!["a".into()],
+            edges: vec![Edge::unfiltered("a")],
         },
     );
 
@@ -1834,7 +1834,7 @@ fn restart_fresh_context_drops_removed_transitive_engine_fallback() {
 }
 
 #[test]
-fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
+fn restart_fresh_context_selects_new_transitive_dependency_items() {
     let dir = TempDir::new().unwrap();
     let tree_a_v1 = dir.path().join("a-v1");
     let tree_a_v2 = dir.path().join("a-v2");
@@ -1844,6 +1844,8 @@ fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
     std::fs::create_dir_all(&tree_a_v2).unwrap();
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_y).unwrap();
+    write_minimal_package_marker(&tree_y);
+    write_agent(&tree_y, "y-agent", &[]);
 
     // A@v1 has no deps; A@v2 introduces Y.
     let manifest_a_v1 = make_manifest("a", "1.0.0", vec![]);
@@ -1878,15 +1880,13 @@ fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
         "Y should be present after A re-resolves to v2"
     );
 
-    let y_filters = graph
-        .filters
-        .get("y")
-        .expect("Y must receive materialization filters on restart");
     assert!(
-        y_filters
+        graph
+            .selection
+            .items
             .iter()
-            .any(|filter| matches!(filter, FilterMode::All)),
-        "Y should receive an unfiltered materialization request so sync includes it"
+            .any(|item| item.package == "y" && item.slug == "y-agent"),
+        "Y is reached through unfiltered entries, so its items are installed"
     );
 }
 

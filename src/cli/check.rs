@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::error::MarsError;
-use crate::validate::{deferred_provider, undeclared_provider_hint};
+use mars_schema::provider::{deferred_provider, undeclared_provider_hint};
 
 use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
@@ -447,7 +447,7 @@ fn has_package_dependencies(lens: &crate::resolve::PublishLens) -> bool {
         .is_some_and(|manifest| manifest.package.is_some() && !manifest.dependencies.is_empty())
 }
 
-/// Resolve the dependency graph and collect available skills, respecting package filters.
+/// Resolve the dependency graph and collect the skills it installs.
 ///
 /// Returns a map of `skill_name → (source_name, version_string)`.
 /// Fails closed — if resolution cannot complete, returns an error.
@@ -464,76 +464,21 @@ fn resolve_available_skills(
         crate::resolve::resolve_publish_graph_from_config(lens, &lens.effective, &options, diag)?;
 
     let mut skills: HashMap<String, (String, String)> = HashMap::new();
-    for (source_name, node) in &graph.nodes {
-        let package_filters = graph.filters.get(source_name);
-        let Some(prepared) = &node.prepared else {
-            continue;
-        };
-        for definition in &prepared.definitions {
-            if definition.kind == mars_schema::item::DefinitionKind::Skill
-                && prepared_skill_passes_filters(definition, package_filters)
-            {
-                let version_str = node
-                    .resolved_ref
-                    .version
-                    .as_ref()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                skills.insert(
-                    definition.slug.clone(),
-                    (source_name.to_string(), version_str),
-                );
-            }
-        }
+    for item in graph
+        .selection
+        .items
+        .iter()
+        .filter(|item| item.kind == mars_schema::item::ItemKind::Skill)
+    {
+        let version = graph
+            .nodes
+            .get(item.package.as_str())
+            .and_then(|node| node.resolved_ref.version.as_ref())
+            .map_or_else(|| "unknown".to_string(), ToString::to_string);
+        skills.insert(item.slug.clone(), (item.package.clone(), version));
     }
 
     Ok(skills)
-}
-
-fn prepared_skill_passes_filters(
-    definition: &mars_schema::prepare::PreparedDefinition,
-    filters: Option<&Vec<mars_schema::filter::FilterMode>>,
-) -> bool {
-    let item = crate::discover::DiscoveredItem {
-        id: crate::lock::ItemId {
-            kind: mars_schema::item::ItemKind::Skill,
-            name: definition.slug.clone().into(),
-        },
-        source_path: PathBuf::from(&definition.source_path)
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf(),
-    };
-    item_passes_filters(&item, filters)
-}
-
-/// Returns true if a skill item would be installed given the accumulated filter constraints.
-///
-/// Filters are accumulated with OR semantics: an item passes if ANY filter in the list
-/// would include it (multiple requests for the same package may each install different
-/// subsets, and a skill available from any of them is usable).
-///
-/// Matches real install semantics from `seed_items_for_request`: `Exclude` checks both
-/// skill name and source path so path-based excludes are honoured in the publish gate.
-fn item_passes_filters(
-    item: &crate::discover::DiscoveredItem,
-    filters: Option<&Vec<mars_schema::filter::FilterMode>>,
-) -> bool {
-    let Some(filters) = filters else {
-        return true; // no filter constraint → all items pass
-    };
-    filters.iter().any(|filter| match filter {
-        mars_schema::filter::FilterMode::All => true,
-        mars_schema::filter::FilterMode::Include { skills, .. } => skills.contains(&item.id.name),
-        mars_schema::filter::FilterMode::Exclude(excluded) => {
-            let source_path = item.source_path.to_string_lossy();
-            !excluded.iter().any(|e| {
-                *e == item.id.name || crate::target::paths_equivalent(e.as_ref(), &source_path)
-            })
-        }
-        mars_schema::filter::FilterMode::OnlySkills => true,
-        mars_schema::filter::FilterMode::OnlyAgents => false,
-    })
 }
 
 fn format_searched_packages(graph_skills: &HashMap<String, (String, String)>) -> String {

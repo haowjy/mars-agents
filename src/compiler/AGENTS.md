@@ -165,8 +165,8 @@ warning naming the path; target sync's `target-unmanaged-collision` or `target-d
 says why. A token-free server has no directory to check. `lower_config_entries_for_target` owns
 native merge-fragment loading and hook ordering. MCP collisions resolve once per target in
 `TargetState`, so the winning server's directory and config entry come from the same selection.
-Callers supply the `${MARS_HOOK_DIR}` and `${MARS_MCP_DIR}` replacements through its directory
-callbacks.
+Each selected item arrives with its directory token, the `${MARS_HOOK_DIR}` /
+`${MARS_MCP_DIR}` replacement, so installed copies and plugin trees share one lowering path.
 
 ## MCP Compilation (`mcp/`)
 

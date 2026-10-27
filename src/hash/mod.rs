@@ -320,9 +320,19 @@ mod tests {
                 .success()
         );
 
-        let error = compute_dir_hash(&skill_dir).unwrap_err();
+        // Opening a FIFO blocks until something writes to it, so a walk that
+        // stops rejecting special files would hang the suite instead of failing
+        // it. Hashing gets its own thread and a deadline.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(compute_dir_hash(&skill_dir).map_err(|error| error.to_string()));
+        });
+        let error = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("hashing a tree with a FIFO must finish instead of blocking")
+            .expect_err("a FIFO is not a regular file");
         assert!(
-            error.to_string().contains(&fifo.display().to_string()),
+            error.contains(&fifo.display().to_string()),
             "error must name the FIFO, got: {error}"
         );
     }

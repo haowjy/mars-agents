@@ -37,17 +37,15 @@ pub(crate) struct CheckReport {
     warnings: Vec<String>,
 }
 
-/// Run `mars check`. `--root` names the directory like `PATH` does, and naming both is an error.
+/// Run `mars check`. `PATH` names the directory to check; without it, `--root` does.
+///
+/// `PATH` wins when both are given, because a host such as Meridian appends `--root <project>`
+/// to every command it forwards, and `meridian mars check <package>` must check the package.
 pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
-    let authored_base = match (args.path.as_deref(), root) {
-        (Some(_), Some(_)) => {
-            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-                message: "`mars check` takes a PATH or --root, not both".to_string(),
-            }));
-        }
-        (Some(path), None) | (None, Some(path)) if path.is_absolute() => path.to_path_buf(),
-        (Some(path), None) | (None, Some(path)) => std::env::current_dir()?.join(path),
-        (None, None) => std::env::current_dir()?,
+    let authored_base = match args.path.as_deref().or(root) {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => std::env::current_dir()?.join(path),
+        None => std::env::current_dir()?,
     };
 
     if !authored_base.is_dir() {

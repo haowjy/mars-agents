@@ -33,7 +33,7 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 | `network`, `permission_set` | `NetworkPolicy` and `NetworkHost` (the host grammar), which the Agent reader, a model-policy override and the binary's configuration layers all parse; `PermissionSet`, one layer of an additive set (a list adds, `{replace: [...]}` clears the lower layers), which `network-allow` and `network-deny` use here and the binary's tool and host layering use there |
 | `frontmatter`, `ordered`, `edit`, `markdown` | The structure-preserving frontmatter parse, `OrderedValue`, `emit_value` and `rewrite_block`, fenced-block recognition |
 | `tree` | `TreeSource`; `FileTree` (WASM and fixtures) and `SubTree` |
-| `diagnostic`, `plugin_metadata` | `SchemaDiagnostic` and its codes; validation of a generated-plugin marker |
+| `diagnostic`, `plugin_metadata` | `SchemaDiagnostic` and its codes; the generated root-file table, `PluginSentinel::validate` with the `SentinelError` naming the entry that failed, and the generated-plugin marker check |
 
 ## Preparation and classification
 

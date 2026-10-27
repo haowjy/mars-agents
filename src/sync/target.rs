@@ -13,7 +13,7 @@ use crate::lock::ItemId;
 use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
 use crate::sync::ownership::Ownership;
-use crate::sync::package_dir::{PackageDir, PackageDirKind};
+use crate::sync::package_dir::PackageDir;
 use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};
 
 /// What the `.mars/` canonical store should look like after sync.
@@ -34,7 +34,7 @@ pub struct TargetState {
 
 #[derive(Debug, Clone)]
 struct SelectedHook {
-    target_root: String,
+    dir: PackageDir,
     item: crate::compiler::hooks::ParsedHookItem,
 }
 
@@ -42,7 +42,7 @@ struct SelectedHook {
 /// has a target-scoped directory item in `TargetState::items`.
 #[derive(Debug, Clone)]
 struct SelectedMcp {
-    target_root: String,
+    dir: PackageDir,
     item: crate::compiler::mcp::ParsedMcpItem,
 }
 
@@ -74,20 +74,20 @@ impl TargetState {
 
     pub(crate) fn selected_hooks(
         &self,
-    ) -> impl Iterator<Item = (&str, &crate::compiler::hooks::ParsedHookItem)> {
+    ) -> impl Iterator<Item = (&PackageDir, &crate::compiler::hooks::ParsedHookItem)> {
         self.selected_hooks
             .values()
-            .map(|hook| (hook.target_root.as_str(), &hook.item))
+            .map(|hook| (&hook.dir, &hook.item))
     }
 
     pub(crate) fn selected_hooks_for_target(
         &self,
         target_root: &str,
-    ) -> impl Iterator<Item = &crate::compiler::hooks::ParsedHookItem> {
+    ) -> impl Iterator<Item = (&PackageDir, &crate::compiler::hooks::ParsedHookItem)> {
         self.selected_hooks
             .values()
-            .filter(move |hook| hook.target_root == target_root)
-            .map(|hook| &hook.item)
+            .filter(move |hook| hook.dir.belongs_to(target_root))
+            .map(|hook| (&hook.dir, &hook.item))
     }
 
     pub(crate) fn select_hook(
@@ -98,12 +98,11 @@ impl TargetState {
     ) {
         debug_assert_eq!(target_item.id.kind, ItemKind::Hook);
         debug_assert_eq!(target_item.source_name.as_str(), parsed.source_name);
+        let dir = PackageDir::new(ItemKind::Hook, target_root, &parsed.def.name)
+            .expect("a hook installs one directory per target");
         self.selected_hooks.insert(
             target_item.dest_path.clone(),
-            SelectedHook {
-                target_root: target_root.to_string(),
-                item: parsed,
-            },
+            SelectedHook { dir, item: parsed },
         );
     }
 
@@ -111,24 +110,26 @@ impl TargetState {
     /// report something about the server itself must deduplicate.
     pub(crate) fn selected_mcp(
         &self,
-    ) -> impl Iterator<Item = &crate::compiler::mcp::ParsedMcpItem> {
-        self.selected_mcp.iter().map(|selected| &selected.item)
+    ) -> impl Iterator<Item = (&PackageDir, &crate::compiler::mcp::ParsedMcpItem)> {
+        self.selected_mcp
+            .iter()
+            .map(|selected| (&selected.dir, &selected.item))
     }
 
     pub(crate) fn selected_mcp_targets(&self) -> impl Iterator<Item = &str> {
         self.selected_mcp
             .iter()
-            .map(|selected| selected.target_root.as_str())
+            .map(|selected| selected.dir.target())
     }
 
     pub(crate) fn selected_mcp_for_target(
         &self,
         target_root: &str,
-    ) -> impl Iterator<Item = &crate::compiler::mcp::ParsedMcpItem> {
+    ) -> impl Iterator<Item = (&PackageDir, &crate::compiler::mcp::ParsedMcpItem)> {
         self.selected_mcp
             .iter()
-            .filter(move |selected| selected.target_root == target_root)
-            .map(|selected| &selected.item)
+            .filter(move |selected| selected.dir.belongs_to(target_root))
+            .map(|selected| (&selected.dir, &selected.item))
     }
 
     /// Resolve MCP name collisions once per target, before installation and
@@ -151,15 +152,16 @@ impl TargetState {
             let winners = resolve_mcp_collisions_for_target(
                 candidates
                     .iter()
-                    .filter(|selected| selected.target_root == *target_root)
+                    .filter(|selected| selected.dir.belongs_to(target_root))
                     .map(|selected| &selected.item),
                 target_root,
                 local_source,
                 diag,
             );
             for winner in winners {
+                let dir = PackageDir::new(ItemKind::McpServer, target_root, &winner.name)
+                    .expect("an MCP server installs one directory per target");
                 if winner.uses_dir_token() {
-                    let dir = PackageDir::new(PackageDirKind::McpServer, target_root, &winner.name);
                     let source_hash = match source_hashes.get(winner.server_dir()) {
                         Some(hash) => hash.clone(),
                         None => {
@@ -181,7 +183,7 @@ impl TargetState {
                     self.items.insert(dir.canonical(), item);
                 }
                 resolved.push(SelectedMcp {
-                    target_root: target_root.clone(),
+                    dir,
                     item: winner.clone(),
                 });
             }
@@ -201,8 +203,10 @@ impl TargetState {
             if !item.def.targets.is_empty() && !item.def.targets.contains(target_root) {
                 continue;
             }
+            let dir = PackageDir::new(ItemKind::McpServer, target_root, &item.name)
+                .expect("an MCP server installs one directory per target");
             self.selected_mcp.push(SelectedMcp {
-                target_root: target_root.clone(),
+                dir,
                 item: item.clone(),
             });
         }
@@ -521,7 +525,8 @@ pub(crate) fn hook_target_items(
     Ok(target_roots
         .into_iter()
         .map(|target_root| {
-            let dir = PackageDir::new(PackageDirKind::Hook, &target_root, &parsed.def.name);
+            let dir = PackageDir::new(ItemKind::Hook, &target_root, &parsed.def.name)
+                .expect("a hook installs one directory per target");
             let dest_path = dir.canonical();
             let target_item =
                 package_dir_target_item(&dir, &parsed.hook_dir, source_name, &source_hash);
@@ -541,7 +546,7 @@ pub(crate) fn package_dir_target_item(
 ) -> TargetItem {
     TargetItem {
         id: ItemId {
-            kind: dir.item_kind(),
+            kind: dir.kind(),
             name: dir.lock_name().into(),
         },
         source_name: source_name.clone(),

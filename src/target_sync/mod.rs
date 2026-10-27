@@ -561,11 +561,13 @@ fn copy_item_to_target(
 
     // Ensure parent directories exist
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| MarsError::io("create copy parent", parent, error))?;
     }
 
     // Follow symlinks to determine if source is a file or directory
-    let metadata = std::fs::metadata(source)?;
+    let metadata = std::fs::metadata(source)
+        .map_err(|error| MarsError::io("read metadata for", source, error))?;
 
     if metadata.is_dir() {
         if dest.exists() && fs_ops::directory_trees_content_equal(source, dest)? {

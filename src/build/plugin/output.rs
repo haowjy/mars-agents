@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
+use mars_schema::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
 /// Stage a Mars-owned plugin output directory without changing the live output.
 ///

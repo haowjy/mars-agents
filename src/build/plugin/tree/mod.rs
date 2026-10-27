@@ -190,7 +190,7 @@ pub(super) fn check_sources(
     let mut seen_mcp = std::collections::BTreeSet::new();
     let mut selected_mcp = Vec::new();
     for profile in profiles {
-        for item in input
+        for (_, item) in input
             .target
             .selected_mcp_for_target(profile.descriptor().target_dir)
         {
@@ -208,7 +208,7 @@ pub(super) fn check_sources(
     }
     warn_relative_mcp_args(&selected_mcp, diag);
     for profile in profiles {
-        for hook in input
+        for (_, hook) in input
             .target
             .selected_hooks_for_target(profile.descriptor().target_dir)
         {
@@ -285,49 +285,50 @@ pub(super) fn write_tree(
     }
     model_fallbacks.emit(profile, diag);
 
-    let hooks: Vec<_> = input
+    // One pass per kind: copy the package-owned directory, then record where
+    // the generated config points at this tree's copy.
+    let hooks = input
         .target
         .selected_hooks_for_target(descriptor.target_dir)
-        .collect();
-    for hook in &hooks {
-        let destination = root.join("hooks").join(&hook.def.name);
-        let excluded = other_hook_fragments(hook, descriptor.target_dir);
-        crate::fs::copy_dir_filtered(&hook.hook_dir, &destination, &excluded)?;
-    }
-    let mcp: Vec<_> = input
+        .map(|(dir, hook)| {
+            let excluded = other_hook_fragments(hook, descriptor.target_dir);
+            crate::fs::copy_dir_filtered(&hook.hook_dir, &root.join(dir.native()), &excluded)?;
+            Ok((
+                profile
+                    .plugin_root
+                    .resolve(crate::compiler::hooks::HOOK_DIR_TOKEN, &dir.native()),
+                hook,
+            ))
+        })
+        .collect::<Result<Vec<_>, MarsError>>()?;
+    // A server whose `command`/`args` name no directory ships no copy.
+    let mcp = input
         .target
         .selected_mcp_for_target(descriptor.target_dir)
-        .collect();
-    for item in mcp.iter().filter(|item| item.uses_dir_token()) {
-        let destination = root.join("mcp").join(&item.name);
-        crate::fs::copy_dir_filtered(item.server_dir(), &destination, &[])?;
-    }
+        .map(|(dir, item)| {
+            if item.uses_dir_token() {
+                crate::fs::copy_dir_filtered(item.server_dir(), &root.join(dir.native()), &[])?;
+            }
+            Ok((
+                profile
+                    .plugin_root
+                    .resolve(crate::compiler::mcp::MCP_DIR_TOKEN, &dir.native()),
+                item,
+            ))
+        })
+        .collect::<Result<Vec<_>, MarsError>>()?;
     let registry = crate::target::TargetRegistry::new();
     let adapter = registry
         .get(descriptor.target_dir)
         .expect("compiler harness descriptor names a registered target");
     let entries = crate::compiler::config_entries::lower_config_entries_for_target(
-        &hooks,
-        &mcp,
-        adapter,
-        |hook| {
-            profile.plugin_root.resolve(
-                crate::compiler::hooks::HOOK_DIR_TOKEN,
-                &format!("hooks/{}", hook.def.name),
-            )
-        },
-        |item| {
-            profile.plugin_root.resolve(
-                crate::compiler::mcp::MCP_DIR_TOKEN,
-                &format!("mcp/{}", item.name),
-            )
-        },
-        diag,
+        &hooks, &mcp, adapter, diag,
     );
     (profile.write_config)(profile, root, &entries, input.harnesses, diag)?;
+    let hook_items = hooks.iter().map(|(_, hook)| *hook).collect::<Vec<_>>();
     let contents = WrittenTreeContents {
         skills: &skill_names,
-        hooks: &hooks,
+        hooks: &hook_items,
         config_entries: &entries,
     };
     summary.skills = contents.skills.len();

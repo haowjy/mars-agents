@@ -106,7 +106,6 @@ fn make_graph_config(
                     tree_path: tree_path.clone(),
                 },
                 manifest: None,
-                edges: vec![],
             },
         );
         order.push(name.into());
@@ -180,18 +179,18 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         &[("planning", "# Planning A")],
     );
     let source_b = fixture.add_source(&[], &[("planning", "# Planning B")]);
-    let (mut graph, mut effective) = make_graph_config(
+    fs::write(
+        fixture.tree_path(source_a).join("mars.toml"),
+        "[package]\nname = \"source-a\"\nversion = \"1.0.0\"\n\n[dependencies.source-b]\npath = \"../source-b\"\n",
+    )
+    .unwrap();
+    let (graph, mut effective) = make_graph_config(
         &fixture,
         vec![
             ("source-a", source_a, FilterMode::All),
             ("source-b", source_b, FilterMode::All),
         ],
     );
-    graph
-        .nodes
-        .get_mut(&SourceName::from("source-a"))
-        .unwrap()
-        .edges = vec![crate::resolve::Edge::unfiltered("source-b")];
     effective
         .dependencies
         .get_mut(&SourceName::from("source-b"))
@@ -534,7 +533,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     package_root: PathBuf::from(format!("/tmp/{name}")),
                     plugin: None,
                 },
-                prepared: crate::resolve::empty_prepared(),
+                prepared: crate::resolve::prepared_with_deps(&[]),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: (*name).into(),
                     version: Some(version),
@@ -543,7 +542,6 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     tree_path: PathBuf::from(format!("/tmp/{name}")),
                 },
                 manifest: None,
-                edges: vec![],
             },
         );
         order.push((*name).into());

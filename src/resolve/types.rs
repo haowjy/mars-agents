@@ -8,7 +8,6 @@ use crate::config::{EffectiveDependency, Manifest};
 use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName};
 use mars_schema::claude::manifest::PluginSource;
-use mars_schema::filter::FilterMode;
 
 /// The resolved dependency graph — all sources with concrete versions.
 ///
@@ -50,13 +49,13 @@ impl ResolvedGraph {
             let current_depth = depths[&current];
             if let Some(node) = self.nodes.get(&current) {
                 for dep in node.deps() {
-                    if !self.nodes.contains_key(dep) {
+                    if !self.nodes.contains_key(&dep) {
                         continue;
                     }
                     let candidate = current_depth + 1;
-                    if depths.get(dep).is_none_or(|depth| candidate < *depth) {
-                        depths.insert(dep.clone(), candidate);
+                    if depths.get(&dep).is_none_or(|depth| candidate < *depth) {
                         queue.push_back(dep.clone());
+                        depths.insert(dep, candidate);
                     }
                 }
             }
@@ -86,10 +85,10 @@ impl ResolvedGraph {
             };
 
             for dep in node.deps() {
-                if !self.nodes.contains_key(dep) {
+                if !self.nodes.contains_key(&dep) {
                     continue;
                 }
-                match orders.get_mut(dep) {
+                match orders.get_mut(&dep) {
                     Some(existing) if current_order < *existing => {
                         *existing = current_order;
                         queue.push_back(dep.clone());
@@ -138,30 +137,17 @@ pub struct ResolvedNode {
     pub resolved_ref: ResolvedRef,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
-    /// This package's manifest entries, in declaration order.
-    pub edges: Vec<Edge>,
 }
 
 impl ResolvedNode {
-    /// Source names this depends on.
-    pub fn deps(&self) -> impl Iterator<Item = &SourceName> {
-        self.edges.iter().map(|edge| &edge.name)
-    }
-}
-
-/// One entry of a package's manifest: the package it names and the items it asks for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Edge {
-    pub name: SourceName,
-    pub filter: FilterMode,
-}
-
-impl Edge {
-    pub fn unfiltered(name: impl Into<SourceName>) -> Self {
-        Self {
-            name: name.into(),
-            filter: FilterMode::All,
-        }
+    /// Source names this depends on: the `[dependencies]` its prepared manifest reads, in
+    /// declaration order.
+    pub fn deps(&self) -> impl Iterator<Item = SourceName> + '_ {
+        self.prepared
+            .manifest
+            .iter()
+            .flat_map(|manifest| manifest.reading.dependencies.dependencies.keys())
+            .map(|name| SourceName::from(name.as_str()))
     }
 }
 
@@ -354,12 +340,26 @@ impl ResolveOptions {
     }
 }
 
-/// A prepared package with nothing in it, for tests that build a `ResolvedNode` by hand.
+/// A prepared package whose manifest depends on `deps` (path entries, unfiltered; no manifest when
+/// there are none), for tests that build a `ResolvedNode` by hand.
 #[cfg(test)]
-pub(crate) fn empty_prepared() -> std::sync::Arc<mars_schema::prepare::Prepared> {
+pub(crate) fn prepared_with_deps(deps: &[&str]) -> std::sync::Arc<mars_schema::prepare::Prepared> {
+    let manifest = (!deps.is_empty()).then(|| {
+        let mut text = String::from("[package]\nname = \"p\"\nversion = \"1.0.0\"\n");
+        for dep in deps {
+            text.push_str(&format!("\n[dependencies.{dep}]\npath = \"/{dep}\"\n"));
+        }
+        mars_schema::prepare::PreparedManifest {
+            source_path: Some("mars.toml".to_string()),
+            output_path: "mars.toml".to_string(),
+            reading: mars_schema::manifest::read(&text),
+            normalized_bytes: text.into_bytes(),
+            change: mars_schema::prepare::ChangeRecord::None,
+        }
+    });
     std::sync::Arc::new(mars_schema::prepare::Prepared {
         classification: mars_schema::prepare::Classification::Empty,
-        manifest: None,
+        manifest,
         definitions: Vec::new(),
         payload: Vec::new(),
         diagnostics: Default::default(),

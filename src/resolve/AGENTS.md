@@ -4,8 +4,8 @@ Dependency resolution with semver constraints (the grammar and the version choic
 
 ## Mental Model
 
-Two phases. The resolver chooses versions and records each package's manifest entries with their
-filters (`ResolvedNode.edges`); it never chooses items. Once the graph settles, selection runs
+Two phases. The resolver chooses versions and prepares each package (a package's manifest entries and filters
+are read from `ResolvedNode.prepared`, once); it never chooses items. Once the graph settles, selection runs
 once over it:
 
 ```
@@ -103,14 +103,13 @@ the same plugin again without fetching, and the lock builder reads `plugin` and 
 
 ## Provider traits
 
-`VersionLister` lists remote versions and `SourceFetcher` obtains concrete checkouts. Production
-manifest semantics do not use `ManifestReader`; its implementation remains test scaffolding for
-resolver fixtures that inject manifests without authored files.
+`VersionLister` lists remote versions and `SourceFetcher` obtains concrete checkouts. A package's
+manifest is read from its tree like any other file; resolver test fixtures write a `mars.toml` into
+the tree (`write_manifest` in `tests/mod.rs`).
 
 ## Types
 
 - `PendingSource` — unresolved dependency request and its declared/effective identities
-- `Edge` — one manifest entry of a package: the package it names and its filter
 - `ResolvedNode` — source identity, immutable authored origin, prepared result and parsed manifest
 - `ResolvedGraph` — final nodes, `selection` and deterministic order
 - `ResolverContext` — registry, package states, id index, version constraints and overrides
@@ -150,7 +149,6 @@ Every constraint on a package must hold on the ref it settles at, whether or not
 struct FakeProvider;
 impl VersionLister for FakeProvider { ... }
 impl SourceFetcher for FakeProvider { ... }
-impl ManifestReader for FakeProvider { ... }
 let graph = resolve(&config, &FakeProvider, Some(&lock), &options, &mut diag)?;
 ```
 

@@ -40,8 +40,6 @@ pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackag
 #[cfg(test)]
 pub(crate) use path::apply_subpath;
 
-#[cfg(test)]
-use crate::config::Manifest;
 use crate::config::{EffectiveConfig, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
@@ -117,28 +115,9 @@ pub trait SourceFetcher {
     ) -> Result<ResolvedRef, MarsError>;
 }
 
-/// Reads source manifests for transitive dependency discovery.
-#[cfg(test)]
-pub trait ManifestReader {
-    fn read_manifest(
-        &self,
-        source_tree: &Path,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<Option<Manifest>, MarsError>;
-}
-
-/// Composite trait used by `resolve()`.
-#[cfg(not(test))]
+/// What `resolve()` needs from the outside world.
 pub trait SourceProvider: VersionLister + SourceFetcher {}
-#[cfg(not(test))]
 impl<T> SourceProvider for T where T: VersionLister + SourceFetcher {}
-
-/// Unit-test providers may inject manifests without writing fixture files.
-#[cfg(test)]
-pub trait SourceProvider: VersionLister + SourceFetcher + ManifestReader {}
-
-#[cfg(test)]
-impl<T> SourceProvider for T where T: VersionLister + SourceFetcher + ManifestReader {}
 
 /// Resolve the full dependency graph from config.
 ///
@@ -195,7 +174,6 @@ pub fn resolve(
                 spec: source.spec.clone(),
                 subpath: source.subpath.clone(),
                 constraint,
-                filter: source.filter.clone(),
                 required_by: "mars.toml".to_string(),
             });
         }

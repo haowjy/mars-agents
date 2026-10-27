@@ -34,8 +34,6 @@ pub(crate) struct MockProvider {
     trees: HashMap<String, PathBuf>,
     /// Optional source tree overrides keyed by (source name, version tag).
     versioned_trees: HashMap<(String, String), PathBuf>,
-    /// Manifests to return for specific source trees
-    manifests: HashMap<PathBuf, Option<Manifest>>,
     /// Optional commit sequences keyed by source name.
     /// When set, each `fetch_git_version` call without preferred_commit rotates
     /// through the sequence to simulate ref drift for restart-cap tests.
@@ -59,7 +57,6 @@ impl MockProvider {
             list_versions_failures: HashSet::new(),
             trees: HashMap::new(),
             versioned_trees: HashMap::new(),
-            manifests: HashMap::new(),
             commit_sequences: HashMap::new(),
             commit_sequence_indices: RefCell::new(HashMap::new()),
             unreachable_preferred_commits: HashSet::new(),
@@ -82,12 +79,10 @@ impl MockProvider {
         self.versions.insert(url.to_string(), avs);
     }
 
-    /// Register a source tree for a source name, with optional manifest.
+    /// Register a source tree for a source name; a manifest is written to the tree's `mars.toml`.
     fn add_source(&mut self, name: &str, tree_path: PathBuf, manifest: Option<Manifest>) {
-        if let Some(ref m) = manifest {
-            self.manifests.insert(tree_path.clone(), Some(m.clone()));
-        } else {
-            self.manifests.insert(tree_path.clone(), None);
+        if let Some(manifest) = &manifest {
+            write_manifest(&tree_path, manifest);
         }
         self.trees.insert(name.to_string(), tree_path);
     }
@@ -99,10 +94,8 @@ impl MockProvider {
         tree_path: PathBuf,
         manifest: Option<Manifest>,
     ) {
-        if let Some(ref m) = manifest {
-            self.manifests.insert(tree_path.clone(), Some(m.clone()));
-        } else {
-            self.manifests.insert(tree_path.clone(), None);
+        if let Some(manifest) = &manifest {
+            write_manifest(&tree_path, manifest);
         }
         self.versioned_trees
             .insert((name.to_string(), version_tag.to_string()), tree_path);
@@ -304,23 +297,6 @@ impl SourceFetcher for MockProvider {
     }
 }
 
-impl ManifestReader for MockProvider {
-    fn read_manifest(
-        &self,
-        source_tree: &Path,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<Option<Manifest>, MarsError> {
-        // If manifest is pre-populated, return it
-        if let Some(manifest) = self.manifests.get(source_tree) {
-            return Ok(manifest.clone());
-        }
-        // Otherwise, read from disk (for path sources in integration tests)
-        let (manifest, diagnostics) = crate::config::load_manifest(source_tree)?;
-        diag.extend(diagnostics);
-        Ok(manifest)
-    }
-}
-
 // ========== Helper functions ==========
 
 fn make_config(sources: Vec<(&str, SourceSpec)>) -> EffectiveConfig {
@@ -467,6 +443,21 @@ fn resolve_with_report_details(
     let mut diag = DiagnosticCollector::new();
     let result = super::resolve(config, provider, locked, options, &mut diag);
     (result, diag.take_engine_fallbacks())
+}
+
+/// The tree's `mars.toml`, as a package author would write it.
+fn write_manifest(tree: &Path, manifest: &Manifest) {
+    #[derive(serde::Serialize)]
+    struct File<'a> {
+        package: &'a PackageInfo,
+        dependencies: &'a IndexMap<String, Entry>,
+    }
+    let text = toml::to_string(&File {
+        package: &manifest.package,
+        dependencies: &manifest.dependencies,
+    })
+    .expect("serialize manifest");
+    std::fs::write(tree.join("mars.toml"), text).expect("write mars.toml");
 }
 
 fn write_minimal_package_marker(tree: &Path) {

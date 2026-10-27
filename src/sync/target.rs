@@ -897,7 +897,6 @@ mod tests {
                         tree_path: tree.path().to_path_buf(),
                     },
                     manifest: None,
-                    edges: vec![],
                 },
             );
             order.push(name.into());
@@ -971,7 +970,7 @@ mod tests {
                 package_root: root.clone(),
                 plugin: None,
             },
-            prepared: crate::resolve::empty_prepared(),
+            prepared: crate::resolve::prepared_with_deps(deps),
             resolved_ref: ResolvedRef {
                 source_name: name.into(),
                 version: None,
@@ -980,10 +979,6 @@ mod tests {
                 tree_path: root,
             },
             manifest: None,
-            edges: deps
-                .iter()
-                .map(|dep| crate::resolve::Edge::unfiltered(*dep))
-                .collect(),
         }
     }
 

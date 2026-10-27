@@ -27,7 +27,7 @@ pub(crate) fn declaration_ordered_dep_models(
             continue;
         };
 
-        let mut queue: VecDeque<SourceName> = sponsor_node.deps().cloned().collect();
+        let mut queue: VecDeque<SourceName> = sponsor_node.deps().collect();
         let mut visited: HashSet<SourceName> = HashSet::new();
 
         while let Some(dep) = queue.pop_front() {
@@ -41,7 +41,7 @@ pub(crate) fn declaration_ordered_dep_models(
                 .or_insert(idx);
 
             if let Some(dep_node) = graph.nodes.get(&dep) {
-                queue.extend(dep_node.deps().cloned());
+                queue.extend(dep_node.deps());
             }
         }
     }
@@ -58,7 +58,7 @@ pub(crate) fn declaration_ordered_dep_models(
 
     for (name, node) in &graph.nodes {
         for dep in node.deps() {
-            if graph.nodes.contains_key(dep) {
+            if graph.nodes.contains_key(&dep) {
                 *in_degree.entry(name.clone()).or_insert(0) += 1;
                 adjacency.entry(dep.clone()).or_default().push(name.clone());
             }
@@ -191,7 +191,7 @@ mod tests {
                 package_root: canonical.clone(),
                 plugin: None,
             },
-            prepared: crate::resolve::empty_prepared(),
+            prepared: crate::resolve::prepared_with_deps(deps),
             resolved_ref: crate::source::ResolvedRef {
                 source_name: name.into(),
                 version: None,
@@ -200,10 +200,6 @@ mod tests {
                 tree_path: canonical,
             },
             manifest: with_models.then(|| manifest_with_models(name)),
-            edges: deps
-                .iter()
-                .map(|dep| crate::resolve::Edge::unfiltered(*dep))
-                .collect(),
         }
     }
 

@@ -105,23 +105,11 @@ fn consumer_requests(config: &crate::config::EffectiveConfig) -> Vec<Request> {
 }
 
 fn node_view(node: &super::ResolvedNode, extra_items: Vec<Item>) -> PackageView<'_> {
-    PackageView {
-        prepared: &node.prepared,
-        edges: node
-            .edges
-            .iter()
-            .map(|edge| Request {
-                name: edge.name.to_string(),
-                filter: portable_filter(&edge.filter),
-            })
-            .collect(),
-        uses_providers: node
-            .manifest
-            .as_ref()
-            .map(|manifest| manifest.package.uses_providers.clone())
-            .unwrap_or_default(),
-        extra_items,
+    let mut view = PackageView::from_prepared(&node.prepared, extra_items);
+    for edge in &mut view.edges {
+        edge.filter = portable_filter(&edge.filter);
     }
+    view
 }
 
 /// The items preparation does not read: everything but Agents and skills.

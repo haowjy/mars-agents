@@ -11,14 +11,13 @@ use crate::lock::LockFile;
 use crate::types::{SourceId, SourceName, SourceUrl};
 use indexmap::IndexMap;
 use mars_schema::dependency::Source;
-use mars_schema::filter::FilterMode;
 use mars_schema::names::{ItemName, SourceSubpath};
 
 use super::EngineExclusions;
 use super::SourceProvider;
 use super::context::ResolverContext;
 use super::requires::{EngineRequirementFailure, check_package_requirements};
-use super::types::{Edge, ResolveOptions, ResolvedNode};
+use super::types::{ResolveOptions, ResolvedNode};
 use super::version::resolve_single_source;
 
 /// Internal: a source waiting to be resolved.
@@ -32,7 +31,6 @@ pub(crate) struct PendingSource {
     pub(crate) spec: SourceSpec,
     pub(crate) subpath: Option<SourceSubpath>,
     pub(crate) constraint: Constraint,
-    pub(crate) filter: FilterMode,
     pub(crate) required_by: String,
 }
 
@@ -241,18 +239,12 @@ pub(crate) fn resolve_package_bottom_up(
         let candidate = if let Some((resolved, rooted, _hook_surface)) = override_candidate.take() {
             let prepared =
                 prepare_package(&pending_src.name, rooted, effective_config, options, diag)?;
-            let manifest = test_manifest_fallback(
-                provider,
-                &prepared.rooted.authored_root,
-                prepared.manifest,
-                diag,
-            )?;
             (
                 resolved,
                 prepared.rooted,
                 prepared.hook_surface,
                 prepared.prepared,
-                manifest,
+                prepared.manifest,
             )
         } else {
             match resolve_single_source(
@@ -280,18 +272,12 @@ pub(crate) fn resolve_package_bottom_up(
                         options,
                         diag,
                     )?;
-                    let manifest = test_manifest_fallback(
-                        provider,
-                        &staged.rooted.authored_root,
-                        staged.manifest,
-                        diag,
-                    )?;
                     (
                         ref_,
                         staged.rooted,
                         staged.hook_surface,
                         staged.prepared,
-                        manifest,
+                        staged.manifest,
                     )
                 }
                 Err(MarsError::Resolution(ResolutionError::VersionConflict { .. }))
@@ -413,13 +399,6 @@ pub(crate) fn resolve_package_bottom_up(
     }
     let manifest_requests =
         collect_manifest_requests(pending_src, &rooted_ref.authored_root, &manifest, options)?;
-    let edges = manifest_requests
-        .iter()
-        .map(|request| Edge {
-            name: request.name.clone(),
-            filter: request.filter.clone(),
-        })
-        .collect();
 
     let discovered = discover::package_items(
         &rooted_ref.authored_root,
@@ -443,7 +422,6 @@ pub(crate) fn resolve_package_bottom_up(
                 prepared,
                 resolved_ref,
                 manifest,
-                edges,
             },
             declared_source_id: pending_src.declared_source_id.clone(),
             items,
@@ -469,26 +447,6 @@ pub(crate) fn resolve_package_bottom_up(
         .insert(pending_src.name.clone(), PackageResolutionState::Resolved);
 
     Ok(())
-}
-
-#[cfg(test)]
-fn test_manifest_fallback(
-    provider: &dyn SourceProvider,
-    authored_root: &Path,
-    manifest: Option<Manifest>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Option<Manifest>, MarsError> {
-    Ok(provider.read_manifest(authored_root, diag)?.or(manifest))
-}
-
-#[cfg(not(test))]
-fn test_manifest_fallback(
-    _provider: &dyn SourceProvider,
-    _authored_root: &Path,
-    manifest: Option<Manifest>,
-    _diag: &mut DiagnosticCollector,
-) -> Result<Option<Manifest>, MarsError> {
-    Ok(manifest)
 }
 
 fn candidate_version_label(resolved: &crate::source::ResolvedRef) -> String {
@@ -562,7 +520,6 @@ pub(crate) fn collect_manifest_requests(
     for (dep_name, dep_spec) in &manifest_data.dependencies {
         let dep_name_typed = SourceName::from(dep_name.clone());
         let dep_subpath = dep_spec.subpath.clone();
-        let dep_filter = dep_spec.filter.to_mode();
 
         let (declared_spec, declared_constraint) = match &dep_spec.source {
             Source::Git { url } => (
@@ -606,7 +563,6 @@ pub(crate) fn collect_manifest_requests(
             spec: dep_spec_resolved,
             subpath: dep_subpath,
             constraint: dep_constraint,
-            filter: dep_filter,
             required_by: pending_src.name.to_string(),
         });
     }

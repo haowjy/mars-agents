@@ -878,7 +878,7 @@ fn source_without_manifest_has_no_transitive_deps() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     assert_eq!(graph.nodes.len(), 1);
-    assert!(graph.nodes["a"].edges.is_empty());
+    assert_eq!(graph.nodes["a"].deps().count(), 0);
 }
 
 #[test]
@@ -963,10 +963,8 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     let package_root = checkout.join("plugins/foo");
     std::fs::create_dir_all(&package_root).unwrap();
 
-    // The manifest is associated with package_root, NOT the checkout root.
-    // MockProvider keyed by tree_path: we register the manifest under
-    // package_root so that a read from checkout_root would return None
-    // while a read from package_root returns the manifest.
+    // The manifest sits in package_root, NOT the checkout root, so a read from
+    // checkout_root finds none.
     let manifest = Manifest {
         package: PackageInfo {
             name: "foo".to_string(),
@@ -988,12 +986,8 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
 
     let mut provider = MockProvider::new();
     provider.add_versions("https://example.com/repo.git", vec![(1, 0, 0)]);
-    // Register tree at checkout but map manifest only for package_root
     provider.trees.insert("dep".to_string(), checkout.clone());
-    provider
-        .manifests
-        .insert(package_root.clone(), Some(manifest.clone()));
-    provider.manifests.insert(checkout.clone(), None);
+    write_manifest(&package_root, &manifest);
 
     let mut dependencies = IndexMap::new();
     dependencies.insert(

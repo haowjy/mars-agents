@@ -317,13 +317,13 @@ fn ordered_agent_deps(
 
     let mut ordered = Vec::new();
     for dep in dep_precedence {
-        if node.deps().any(|candidate| candidate == dep) {
+        if node.deps().any(|candidate| candidate == *dep) {
             ordered.push(dep.clone());
         }
     }
     for dep in node.deps() {
-        if !ordered.contains(dep) {
-            ordered.push(dep.clone());
+        if !ordered.contains(&dep) {
+            ordered.push(dep);
         }
     }
     ordered
@@ -478,7 +478,7 @@ mod tests {
                     package_root: root.to_path_buf(),
                     plugin: None,
                 },
-                prepared: crate::resolve::empty_prepared(),
+                prepared: crate::resolve::prepared_with_deps(&deps),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: source_name.into(),
                     version: None,
@@ -487,10 +487,6 @@ mod tests {
                     tree_path: root.to_path_buf(),
                 },
                 manifest: None,
-                edges: deps
-                    .into_iter()
-                    .map(crate::resolve::Edge::unfiltered)
-                    .collect(),
             },
         );
         ResolvedGraph {
@@ -728,7 +724,7 @@ mod tests {
                     package_root: dir.path().to_path_buf(),
                     plugin: None,
                 },
-                prepared: crate::resolve::empty_prepared(),
+                prepared: crate::resolve::prepared_with_deps(&["source-b"]),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: "source-a".into(),
                     version: None,
@@ -737,7 +733,6 @@ mod tests {
                     tree_path: dir.path().to_path_buf(),
                 },
                 manifest: None,
-                edges: vec![crate::resolve::Edge::unfiltered("source-b")],
             },
         );
         let graph = ResolvedGraph {

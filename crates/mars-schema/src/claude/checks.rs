@@ -8,12 +8,9 @@ use crate::discover::{SelectedDefinition, join};
 use crate::frontmatter::Frontmatter;
 use crate::item::DefinitionKind;
 
-/// `selected` are the source paths of the definitions being imported.
 pub(crate) fn skill_checks(
     definition: &SelectedDefinition,
     frontmatter: &Frontmatter,
-    all: &[SelectedDefinition],
-    selected: &BTreeSet<&str>,
 ) -> Vec<SchemaDiagnostic> {
     let mut diagnostics = Vec::new();
     let warn = |code: &str, path, message: String| {
@@ -51,16 +48,12 @@ pub(crate) fn skill_checks(
             "description is over 1024 characters".into(),
         ));
     }
-    diagnostics.extend(reference_diagnostics(
-        definition,
-        frontmatter.body(),
-        all,
-        selected,
-    ));
     diagnostics
 }
 
-fn reference_diagnostics(
+/// Body links that leave the skill's payload and will not resolve after install. `selected`
+/// are the source paths of the definitions being imported.
+pub(crate) fn reference_diagnostics(
     definition: &SelectedDefinition,
     body: &str,
     all: &[SelectedDefinition],
@@ -72,15 +65,13 @@ fn reference_diagnostics(
     let mut seen = BTreeSet::new();
     let mut diagnostics = Vec::new();
     for target in link_targets(body) {
-        let Some(resolved) = resolve(root, &target) else {
-            if seen.insert(target.clone()) {
-                diagnostics.push(outside(&target));
-            }
-            continue;
-        };
         if !seen.insert(target.clone()) {
             continue;
         }
+        let Some(resolved) = resolve(root, &target) else {
+            diagnostics.push(outside(&target));
+            continue;
+        };
         // The linking skill is a candidate too, so a link into its own payload goes through the
         // same stored-path comparison. Payload enumeration carves child skill roots out of the
         // parent, so the longest root decides who owns a file.

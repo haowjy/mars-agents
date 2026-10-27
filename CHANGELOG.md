@@ -2,6 +2,9 @@
 
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+Entries are rendered by CI from the merged PR bodies' `## Changelog` sections. Do not edit this
+file in a PR; `## [Unreleased]` is an empty anchor.
+
 ## [Unreleased]
 
 ## [0.20.6] - 2026-10-27
@@ -13,6 +16,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   between the tree swap and the root-file rewrite is still resumed by the next build.
 
 ## [0.20.5] - 2026-10-27
+
+### Fixed
+- A dependency narrowed by any include filter (`agents`, `skills`, `only_skills`, `only_agents`)
+  now still contributes its exported MCP servers, instead of silently dropping every server it
+  declares. Filters select agents, skills and hooks; they never named servers. Upgrading: a
+  newly visible server whose name matches an entry you wrote by hand in that target's MCP config
+  replaces that entry.
+- `mars build plugin` keeps the building package's own agent and skill names when a dependency
+  defines the same name: the root ships `rev.md` and the dependency `rev__adep.md`, instead of
+  both being renamed to `rev__pkg.md` and `rev__adep.md`.
 
 ## [0.20.4] - 2026-10-27
 
@@ -33,14 +46,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `mars sync --force` adopts and overwrites it.
 
 ### Fixed
-- A dependency narrowed by any include filter (`agents`, `skills`, `only_skills`, `only_agents`)
-  now still contributes its exported MCP servers, instead of silently dropping every server it
-  declares. Filters select agents, skills and hooks; they never named servers. Upgrading: a
-  newly visible server whose name matches an entry you wrote by hand in that target's MCP config
-  replaces that entry.
-- `mars build plugin` keeps the building package's own agent and skill names when a dependency
-  defines the same name: the root ships `rev.md` and the dependency `rev__adep.md`, instead of
-  both being renamed to `rev__pkg.md` and `rev__adep.md`.
 - A FIFO, socket or device inside a skill, hook or MCP server directory is rejected with an error
   naming it, instead of hanging `mars sync` while hashing the tree. File errors from that hash walk
   now name the path instead of `<unknown>`.

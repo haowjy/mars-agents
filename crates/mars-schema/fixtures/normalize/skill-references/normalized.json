@@ -122,6 +122,24 @@
             "output_path": "skills/shared/README.md"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "main",
+              "output_path": "skills/main/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "shared",
+              "output_path": "skills/shared/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           "skills/main/SKILL.md": [
             {

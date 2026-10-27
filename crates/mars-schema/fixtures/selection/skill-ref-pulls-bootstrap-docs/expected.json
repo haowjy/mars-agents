@@ -27,7 +27,7 @@
     },
     {
       "package": "b",
-      "kind": "bootstrapdoc",
+      "kind": "bootstrap-doc",
       "slug": "intro",
       "path": "bootstrap/intro",
       "required_by": [

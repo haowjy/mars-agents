@@ -1,3 +1,6 @@
 {
-  "error": "`mars.toml` requires ref:dev, but `a` requires ref:main"
+  "error": {
+    "code": "version.pins-differ",
+    "message": "`mars.toml` requires ref:dev, but `a` requires ref:main"
+  }
 }

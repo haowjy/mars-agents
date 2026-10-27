@@ -1,1 +1,1 @@
-{"op":"select","tags":["1.0.0","v1.0.0"],"constraints":[]}
+{"op":"select-version","tags":["1.0.0","v1.0.0"],"constraints":[]}

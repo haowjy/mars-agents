@@ -9,10 +9,11 @@
 //!
 //! The rule, in three steps:
 //!
-//! 1. **Seeds.** Each of the consumer's requests seeds its package. A request that takes
-//!    everything also opens its package: every unfiltered entry of an open package's manifest
-//!    seeds its target in turn and opens it. A filtered entry of a manifest seeds nothing, and its
-//!    `exclude` blocks nothing; only the consumer's own `exclude` does.
+//! 1. **Seeds.** Each of the consumer's requests seeds its package, and so does each entry of
+//!    the root package's manifest, as the consumer's own request. The root package itself is
+//!    selected whole. A request that takes everything also opens its package: every unfiltered
+//!    entry of an open package's manifest seeds its target in turn and opens it. A filtered entry
+//!    of a dependency's manifest seeds nothing, and its `exclude` blocks nothing; only the consumer's own `exclude` (or the root's) does.
 //! 2. **Items per request.** `All` takes every item; `Include` takes Agents and skills by kind and
 //!    slug, and the package's bootstrap documents; `Exclude` takes all but the items it names by
 //!    slug or path; `only_skills` and `only_agents` take one kind. Hooks are taken by `All` and
@@ -34,15 +35,12 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{SchemaDiagnostic, Severity};
-use crate::filter::{FilterConfig, FilterMode};
-use crate::frontmatter::SkillsSpec;
+use crate::filter::FilterMode;
 use crate::item::{DefinitionKind, ItemKind};
 use crate::names::ItemName;
-use crate::prepare::Prepared;
-use crate::read::Reading;
 
 /// A dependency entry as selection sees it: the package it names and the items it asks for.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Request {
     pub name: String,
     pub filter: FilterMode,
@@ -51,6 +49,7 @@ pub struct Request {
 /// An item of a package, found by the caller: what the crate does not prepare (bootstrap
 /// documents, hooks).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Item {
     pub kind: ItemKind,
     pub slug: String,
@@ -59,171 +58,53 @@ pub struct Item {
 }
 
 /// An Agent or skill of a package, with the skills an Agent names.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Definition {
     pub kind: DefinitionKind,
     pub slug: String,
     pub output_path: String,
     /// The skills the Agent names; empty for a skill.
-    #[serde(default)]
     pub skills: Vec<String>,
+}
+
+/// What selection reads of a prepared package. `prepare` computes it (`Prepared::selection`), so
+/// a caller on the other side of the JSON boundary passes `prepare`'s result and derives nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionFacts {
+    pub definitions: Vec<Definition>,
+    /// The package's manifest entries, in declaration order: the `[dependencies]` table, never
+    /// `[local-dependencies]`.
+    pub edges: Vec<Request>,
+    pub uses_providers: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PackageView {
-    pub definitions: Vec<Definition>,
-    /// The package's manifest entries, in declaration order.
-    pub edges: Vec<Request>,
-    pub uses_providers: Vec<String>,
+    pub facts: SelectionFacts,
     /// Bootstrap documents and hooks. They never change which Agents and skills are selected:
     /// only Agents and skills are followed, so a caller with none to give passes `[]`.
     pub extra_items: Vec<Item>,
 }
 
-impl PackageView {
-    /// A package whose edges and `uses-providers` are those its prepared manifest reads: the
-    /// `[dependencies]` table, never `[local-dependencies]`.
-    pub fn from_prepared(prepared: &Prepared, extra_items: Vec<Item>) -> Self {
-        let reading = prepared.manifest.as_ref().map(|manifest| &manifest.reading);
-        Self {
-            definitions: prepared
-                .definitions
-                .iter()
-                .map(|definition| Definition {
-                    kind: definition.kind,
-                    slug: definition.slug.clone(),
-                    output_path: definition.output_path.clone(),
-                    skills: match &definition.reading {
-                        Reading::Agent(read) => read
-                            .fields
-                            .as_ref()
-                            .map(|profile| profile.skills.all())
-                            .unwrap_or_default(),
-                        _ => Vec::new(),
-                    },
-                })
-                .collect(),
-            edges: reading
-                .map(|reading| {
-                    reading
-                        .dependencies
-                        .dependencies
-                        .iter()
-                        .map(|(name, entry)| Request {
-                            name: name.clone(),
-                            filter: entry.filter.to_mode(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            uses_providers: reading
-                .and_then(|reading| reading.package.fields.as_ref())
-                .map(|package| package.uses_providers.clone())
-                .unwrap_or_default(),
-            extra_items,
-        }
-    }
-}
-
-/// A package as a caller holds it across the JSON boundary: the [`Prepared`] it got earlier
-/// (`prepare`'s result, as serialized) and the items preparation does not read. Only the parts
-/// of `prepared` that [`PackageView::from_prepared`] reads are read here; the rest is ignored, so
-/// a caller passes the result whole and re-derives nothing.
+/// A package as a caller holds it across the JSON boundary: the [`crate::prepare::Prepared`] it
+/// got earlier (`prepare`'s result, as serialized) and the items preparation does not read. Only
+/// `prepared.selection` is read; the rest is ignored.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct PackageInput {
-    prepared: PreparedFacts,
+    prepared: PreparedInput,
     extra_items: Option<Vec<Item>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct PreparedFacts {
-    manifest: Option<ManifestFacts>,
-    definitions: Vec<DefinitionFacts>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ManifestFacts {
-    reading: ManifestReadingFacts,
-}
-
-#[derive(Debug, Deserialize)]
-struct ManifestReadingFacts {
-    #[serde(default)]
-    fields: Option<PackageFacts>,
-    #[serde(default)]
-    dependencies: IndexMap<String, DependencyFacts>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PackageFacts {
-    #[serde(default, rename = "uses-providers")]
-    uses_providers: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DependencyFacts {
-    #[serde(flatten)]
-    filter: FilterConfig,
-}
-
-#[derive(Debug, Deserialize)]
-struct DefinitionFacts {
-    kind: DefinitionKind,
-    slug: String,
-    output_path: String,
-    reading: DefinitionReadingFacts,
-}
-
-#[derive(Debug, Deserialize)]
-struct DefinitionReadingFacts {
-    #[serde(default)]
-    fields: Option<DefinitionFieldsFacts>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DefinitionFieldsFacts {
-    #[serde(default)]
-    skills: SkillsSpec,
+struct PreparedInput {
+    selection: SelectionFacts,
 }
 
 impl From<PackageInput> for PackageView {
     fn from(input: PackageInput) -> Self {
-        let PreparedFacts {
-            manifest,
-            definitions,
-        } = input.prepared;
-        let (fields, dependencies) = manifest
-            .map(|manifest| (manifest.reading.fields, manifest.reading.dependencies))
-            .unwrap_or_default();
         Self {
-            definitions: definitions
-                .into_iter()
-                .map(|definition| Definition {
-                    kind: definition.kind,
-                    slug: definition.slug,
-                    output_path: definition.output_path,
-                    // A skill's reading has no `skills`.
-                    skills: match definition.kind {
-                        DefinitionKind::Agent => definition
-                            .reading
-                            .fields
-                            .map(|fields| fields.skills.all())
-                            .unwrap_or_default(),
-                        DefinitionKind::Skill => Vec::new(),
-                    },
-                })
-                .collect(),
-            edges: dependencies
-                .into_iter()
-                .map(|(name, entry)| Request {
-                    name,
-                    filter: entry.filter.to_mode(),
-                })
-                .collect(),
-            uses_providers: fields
-                .map(|fields| fields.uses_providers)
-                .unwrap_or_default(),
+            facts: input.prepared.selection,
             extra_items: input.extra_items.unwrap_or_default(),
         }
     }
@@ -233,9 +114,9 @@ impl From<PackageInput> for PackageView {
 pub struct GraphView {
     /// The consumer's own entries.
     pub requests: Vec<Request>,
-    /// The package being selected for, such as a project's own package: it is requested whole,
-    /// as the first request, and its manifest entries are its edges. Its Agents' skill refs
-    /// resolve like any package's, but its own items are not in the result.
+    /// The package being selected for, such as a project's own package: it is selected whole and
+    /// its items are in the result with no package. Its manifest entries are the consumer's own
+    /// requests, so its filters and `exclude` apply as in a project's own `mars.toml`. Its Agents' skill refs resolve like any package's.
     pub root: Option<PackageView>,
     /// Every package of the graph, in no particular order: [`select`] orders them (see the module
     /// documentation).
@@ -246,10 +127,10 @@ pub struct GraphView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "by", rename_all = "kebab-case")]
 pub enum Requester {
-    /// An entry of the consumer, or of the root package: the root's manifest entries and its
-    /// Agents' skill refs are the consumer's own.
+    /// An entry of the consumer, or of the root package: the root's manifest entries, its items
+    /// and its Agents' skill refs are the consumer's own.
     Consumer,
-    /// An unfiltered entry of this package's manifest, reached through unfiltered entries only.
+    /// An unfiltered entry of this dependency's manifest, reached through unfiltered entries only.
     Package { package: String },
     /// A skill ref of this Agent.
     Item {
@@ -261,7 +142,8 @@ pub enum Requester {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SelectedItem {
-    pub package: String,
+    /// `None` for the root's own item.
+    pub package: Option<String>,
     pub kind: ItemKind,
     pub slug: String,
     /// Location in the prepared package: an Agent's file, a skill's directory (`.` for a flat
@@ -338,7 +220,14 @@ impl<'v> Graph<'v> {
                 };
                 if seen.insert(name) {
                     order.push(name);
-                    stack.extend(package.edges.iter().rev().map(|edge| edge.name.as_str()));
+                    stack.extend(
+                        package
+                            .facts
+                            .edges
+                            .iter()
+                            .rev()
+                            .map(|edge| edge.name.as_str()),
+                    );
                 }
             }
         }
@@ -453,12 +342,12 @@ pub fn select(view: &GraphView) -> SelectionResult {
     }
 
     let mut items = Vec::with_capacity(selected.len());
-    for &package in graph.order.iter().filter(|&&package| package != ROOT) {
+    for &package in &graph.order {
         for entry in &entries[package] {
             let key = (package, entry.item.kind, entry.item.slug.as_str());
             if let Some(required_by) = selected.get(&key) {
                 items.push(SelectedItem {
-                    package: package.to_string(),
+                    package: (package != ROOT).then(|| package.to_string()),
                     kind: entry.item.kind,
                     slug: entry.item.slug.clone(),
                     path: entry.item.path.clone(),
@@ -484,7 +373,7 @@ fn duplicate_slugs(items: &[SelectedItem]) -> Vec<SchemaDiagnostic> {
         packages
             .entry((item.kind, item.slug.as_str()))
             .or_default()
-            .push(item.package.as_str());
+            .push(item.package.as_deref().unwrap_or("the root package"));
     }
     packages
         .into_iter()
@@ -506,9 +395,10 @@ struct Seed<'a> {
     requester: Requester,
 }
 
-/// The requests that seed items: the root and the consumer's own, and each unfiltered manifest
-/// entry of a package reached through unfiltered requests only. A filtered entry of a manifest
-/// seeds nothing, and its `exclude` blocks nothing.
+/// The requests that seed items: the root and its manifest entries, the consumer's own, and each
+/// unfiltered manifest entry of a package reached through unfiltered requests only. A filtered
+/// entry of a dependency's manifest seeds nothing, and its `exclude` blocks nothing. The root's
+/// entries are the consumer's own requests, filters and `exclude` included.
 fn seeds<'a>(view: &'a GraphView, graph: &Graph<'a>) -> Vec<Seed<'a>> {
     static ALL: FilterMode = FilterMode::All;
     let mut seeds = Vec::new();
@@ -520,10 +410,9 @@ fn seeds<'a>(view: &'a GraphView, graph: &Graph<'a>) -> Vec<Seed<'a>> {
             filter: &ALL,
             requester: Requester::Consumer,
         });
-        open.insert(ROOT);
-        queue.push_back(ROOT);
     }
-    for request in &view.requests {
+    let root_edges = view.root.iter().flat_map(|root| &root.facts.edges);
+    for request in root_edges.chain(&view.requests) {
         let Some((&package, _)) = graph.packages.get_key_value(request.name.as_str()) else {
             continue;
         };
@@ -537,7 +426,7 @@ fn seeds<'a>(view: &'a GraphView, graph: &Graph<'a>) -> Vec<Seed<'a>> {
         }
     }
     while let Some(from) = queue.pop_front() {
-        for edge in &graph.packages[from].edges {
+        for edge in &graph.packages[from].facts.edges {
             let Some((&package, _)) = graph.packages.get_key_value(edge.name.as_str()) else {
                 continue;
             };
@@ -547,12 +436,8 @@ fn seeds<'a>(view: &'a GraphView, graph: &Graph<'a>) -> Vec<Seed<'a>> {
             seeds.push(Seed {
                 package,
                 filter: &edge.filter,
-                requester: if from == ROOT {
-                    Requester::Consumer
-                } else {
-                    Requester::Package {
-                        package: from.to_string(),
-                    }
+                requester: Requester::Package {
+                    package: from.to_string(),
                 },
             });
             if open.insert(package) {
@@ -564,7 +449,7 @@ fn seeds<'a>(view: &'a GraphView, graph: &Graph<'a>) -> Vec<Seed<'a>> {
 }
 
 fn package_entries<'a>(package: &'a PackageView) -> Vec<Entry<'a>> {
-    let definitions = package.definitions.iter().map(|definition| {
+    let definitions = package.facts.definitions.iter().map(|definition| {
         let (kind, path) = match definition.kind {
             DefinitionKind::Agent => (ItemKind::Agent, definition.output_path.clone()),
             DefinitionKind::Skill => (
@@ -657,7 +542,7 @@ fn resolve_skill<'a>(
         if package != requester {
             closure.push(package);
         }
-        for edge in &graph.packages[package].edges {
+        for edge in &graph.packages[package].facts.edges {
             if let Some((&name, _)) = graph.packages.get_key_value(edge.name.as_str())
                 && seen.insert(name)
             {
@@ -674,8 +559,11 @@ fn resolve_skill<'a>(
         }
     }
 
-    if crate::provider::deferred_provider(skill, Some(&graph.packages[requester].uses_providers))
-        .is_some()
+    if crate::provider::deferred_provider(
+        skill,
+        Some(&graph.packages[requester].facts.uses_providers),
+    )
+    .is_some()
     {
         return Resolved::Deferred;
     }

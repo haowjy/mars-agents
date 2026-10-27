@@ -28,7 +28,8 @@ pub struct FilterConfig {
 }
 
 /// How items are filtered from a source.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FilterMode {
     /// Install everything from the source.
     All,
@@ -56,6 +57,13 @@ pub enum FilterError {
     CategoryWithExclude { name: String },
     #[error("source `{name}` uses both agents/skills and exclude — pick one")]
     IncludeWithExclude { name: String },
+}
+
+impl FilterError {
+    /// A stable identifier for callers that map failures to their own codes.
+    pub fn code(&self) -> &'static str {
+        "filter.inconsistent"
+    }
 }
 
 impl FilterConfig {

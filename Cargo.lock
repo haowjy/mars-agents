@@ -1369,7 +1369,6 @@ version = "0.21.0"
 dependencies = [
  "js-sys",
  "mars-schema",
- "semver",
  "serde",
  "serde-wasm-bindgen",
  "serde_bytes",

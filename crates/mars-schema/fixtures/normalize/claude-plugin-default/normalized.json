@@ -256,6 +256,36 @@
             "output_path": "skills/review/checklist.md"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "helper",
+              "output_path": "agents/helper.md",
+              "skills": []
+            },
+            {
+              "kind": "agent",
+              "slug": "plan",
+              "output_path": "agents/plan.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "plan",
+              "output_path": "skills/plan/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "review",
+              "output_path": "skills/review/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           ".mcp.json": [
             {

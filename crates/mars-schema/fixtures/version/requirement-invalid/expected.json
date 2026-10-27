@@ -1,3 +1,6 @@
 {
-  "error": "not a requirement"
+  "error": {
+    "code": "version.invalid-requirement",
+    "message": "`definitely-not-semver` is not a version requirement: unexpected character 'd' while parsing major version number"
+  }
 }

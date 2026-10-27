@@ -14,6 +14,8 @@ struct Case {
     requests: Vec<RequestSpec>,
     /// The package under `packages/` that is the root: selected whole, and not a dependency.
     root: Option<String>,
+    /// A sibling case whose `packages/` this case uses.
+    packages_from: Option<String>,
     /// Bootstrap documents and hooks, which preparation does not read.
     #[serde(default)]
     extra_items: BTreeMap<String, Vec<Item>>,
@@ -33,7 +35,11 @@ fn selection_fixtures_match() {
     for case_dir in common::cases("selection") {
         let case: Case =
             serde_json::from_slice(&fs::read(case_dir.join("request.json")).unwrap()).unwrap();
-        let mut names: Vec<String> = fs::read_dir(case_dir.join("packages"))
+        let packages_dir = match &case.packages_from {
+            Some(from) => case_dir.with_file_name(from).join("packages"),
+            None => case_dir.join("packages"),
+        };
+        let mut names: Vec<String> = fs::read_dir(&packages_dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
@@ -41,13 +47,16 @@ fn selection_fixtures_match() {
         let prepared: BTreeMap<&str, Prepared> = names
             .iter()
             .map(|name| {
-                let tree = common::load_tree(&case_dir.join("packages").join(name));
+                let tree = common::load_tree(&packages_dir.join(name));
                 (name.as_str(), prepare(&tree, PrepareContext::Package, None))
             })
             .collect();
         let package_view = |name: &String| {
             let extra = case.extra_items.get(name).cloned().unwrap_or_default();
-            PackageView::from_prepared(&prepared[name.as_str()], extra)
+            PackageView {
+                facts: prepared[name.as_str()].selection.clone(),
+                extra_items: extra,
+            }
         };
         let view = GraphView {
             requests: case

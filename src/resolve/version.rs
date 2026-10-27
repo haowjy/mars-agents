@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
-use mars_schema::version::{Constraint, SelectError, SelectionPolicy, select, settle};
+use mars_schema::version::{
+    Constraint, SelectError, SelectionPolicy, effective_policy, select, settle,
+};
 use semver::{Version, VersionReq};
 
 use crate::diagnostic::DiagnosticCollector;
@@ -355,10 +357,6 @@ pub(crate) fn resolve_git_source(
     exclusions: &EngineExclusions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let has_latest_constraint = constraints
-        .iter()
-        .any(|(_, constraint)| matches!(constraint, Constraint::Latest));
-
     let requests: Vec<(&str, &Constraint)> = constraints
         .iter()
         .map(|(requester, constraint)| (requester.as_str(), constraint))
@@ -465,8 +463,8 @@ pub(crate) fn resolve_git_source(
     }
 
     let mut locked_commit_unreachable = false;
-    if selection_policy == SelectionPolicy::PreferLockThenLatest
-        && !has_latest_constraint
+    let select_policy = effective_policy(selection_policy, &requests);
+    if select_policy == SelectionPolicy::PreferLockThenLatest
         && !locked_is_excluded
         && let (Some(locked_version), Some(locked_commit)) =
             (locked_version.as_ref(), locked_commit)
@@ -500,7 +498,15 @@ pub(crate) fn resolve_git_source(
 
     // List available versions
     let available = provider.list_versions(url)?;
-    if available.is_empty() {
+    let Some(selected) = select_version(
+        name,
+        &available,
+        &requests,
+        locked_version.as_ref(),
+        selection_policy,
+        exclusions,
+    )?
+    else {
         return resolve_untagged_source(
             name,
             url,
@@ -510,23 +516,7 @@ pub(crate) fn resolve_git_source(
             selection_policy,
             diag,
         );
-    }
-
-    // Select version
-    let select_policy =
-        if selection_policy == SelectionPolicy::PreferLockThenLatest && has_latest_constraint {
-            SelectionPolicy::LatestOnly
-        } else {
-            selection_policy
-        };
-    let selected = select_version(
-        name,
-        &available,
-        &semver_reqs,
-        locked_version.as_ref(),
-        select_policy,
-        exclusions,
-    )?;
+    };
 
     let should_try_locked_commit = !locked_commit_unreachable
         && select_policy != SelectionPolicy::LatestOnly
@@ -566,15 +556,15 @@ pub(crate) fn resolve_git_source(
 
 /// Select a concrete version from available versions, respecting constraints and the sources'
 /// engine exclusions; the rule is `mars_schema::version::select`, this maps its refusals to
-/// the resolver's errors.
+/// the resolver's errors. `None` is a repository with no version tags.
 pub(crate) fn select_version<'a>(
     source_name: &SourceName,
     available: &'a [AvailableVersion],
-    constraints: &[(&str, &VersionReq)],
+    constraints: &[(&str, &Constraint)],
     locked: Option<&Version>,
     selection_policy: SelectionPolicy,
     exclusions: &EngineExclusions,
-) -> Result<&'a AvailableVersion, MarsError> {
+) -> Result<Option<&'a AvailableVersion>, MarsError> {
     let versions: Vec<Version> = available.iter().map(|av| av.version.clone()).collect();
     let excluded: HashSet<Version> = exclusions
         .keys()
@@ -582,7 +572,7 @@ pub(crate) fn select_version<'a>(
         .map(|(_, version)| version.clone())
         .collect();
     match select(&versions, constraints, locked, selection_policy, &excluded) {
-        Ok(index) => Ok(&available[index]),
+        Ok(index) => Ok(index.map(|index| &available[index])),
         Err(error @ SelectError::NoSatisfying { .. }) => Err(ResolutionError::VersionConflict {
             name: source_name.to_string(),
             message: error.to_string(),

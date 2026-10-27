@@ -1,11 +1,12 @@
 //! Published version-rule contract (`fixtures/version/<case>/{input,expected}.json`): constraint
-//! text, tag names and requirement text in, the choice or the refusal out.
+//! text, tag names and requirement text in, the choice or the refusal (`{error: {code, message}}`)
+//! out.
 
 use std::{collections::HashSet, fs};
 
 use mars_schema::version::{
-    Constraint, SelectionPolicy, parse_constraint, parse_tag, satisfies, satisfies_requirement,
-    select, settle,
+    Chosen, Constraint, SelectionPolicy, choose, parse_constraint, parse_tag, satisfies,
+    satisfies_requirement,
 };
 use semver::Version;
 use serde_json::{Value, json};
@@ -32,6 +33,10 @@ fn constraint_json(constraint: &Constraint) -> Value {
     }
 }
 
+fn error_json(code: &str, error: &impl std::fmt::Display) -> Value {
+    json!({ "error": { "code": code, "message": error.to_string() } })
+}
+
 fn run(input: &Value) -> Value {
     match input["op"].as_str().unwrap() {
         "parse-constraint" => constraint_json(&parse_constraint(input["input"].as_str())),
@@ -48,22 +53,24 @@ fn run(input: &Value) -> Value {
             let version = Version::parse(input["version"].as_str().unwrap()).unwrap();
             match satisfies_requirement(input["requirement"].as_str().unwrap(), &version) {
                 Ok(satisfied) => json!({ "satisfied": satisfied }),
-                Err(_) => json!({ "error": "not a requirement" }),
+                Err(error) => error_json(error.code(), &error),
             }
         }
-        "select" => {
+        "select-version" => {
             let tags = strings(input, "tags");
-            let versions: Vec<Version> = tags.iter().map(|tag| parse_tag(tag).unwrap()).collect();
-            let reqs: Vec<(String, semver::VersionReq)> = strings(input, "constraints")
+            let parsed: Vec<(String, Constraint)> = input["constraints"]
+                .as_array()
+                .unwrap()
                 .iter()
-                .enumerate()
-                .map(|(i, text)| match parse_constraint(Some(text)) {
-                    Constraint::Semver(req) => (format!("requester-{i}"), req),
-                    other => panic!("select takes semver constraints, got {other}"),
+                .map(|entry| {
+                    (
+                        entry[0].as_str().unwrap().to_owned(),
+                        parse_constraint(entry[1].as_str()),
+                    )
                 })
                 .collect();
-            let constraints: Vec<(&str, &semver::VersionReq)> =
-                reqs.iter().map(|(who, req)| (who.as_str(), req)).collect();
+            let constraints: Vec<(&str, &Constraint)> =
+                parsed.iter().map(|(who, c)| (who.as_str(), c)).collect();
             let locked = input["locked"].as_str().map(|tag| parse_tag(tag).unwrap());
             let policy = match input["policy"]
                 .as_str()
@@ -77,27 +84,11 @@ fn run(input: &Value) -> Value {
                 .iter()
                 .map(|tag| parse_tag(tag).unwrap())
                 .collect();
-            match select(&versions, &constraints, locked.as_ref(), policy, &excluded) {
-                Ok(index) => json!({ "tag": tags[index] }),
-                Err(error) => json!({ "error": error.to_string() }),
-            }
-        }
-        "settle" => {
-            let parsed: Vec<(String, Constraint)> = input["constraints"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|entry| {
-                    let who = entry[0].as_str().unwrap().to_owned();
-                    (who, parse_constraint(entry[1].as_str()))
-                })
-                .collect();
-            let constraints: Vec<(&str, &Constraint)> =
-                parsed.iter().map(|(who, c)| (who.as_str(), c)).collect();
-            match settle(&constraints) {
-                Ok(Some(reference)) => json!({ "pin": reference }),
-                Ok(None) => json!({ "unpinned": true }),
-                Err(error) => json!({ "error": error.to_string() }),
+            match choose(&tags, &constraints, locked.as_ref(), policy, &excluded) {
+                Ok(Chosen::Pin(reference)) => json!({ "pin": reference }),
+                Ok(Chosen::Tag(tag)) => json!({ "tag": tag }),
+                Ok(Chosen::Untagged) => json!({ "untagged": true }),
+                Err(error) => error_json(error.code(), &error),
             }
         }
         op => panic!("unknown op {op}"),

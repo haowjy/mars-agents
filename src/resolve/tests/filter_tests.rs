@@ -8,7 +8,7 @@ fn selected(graph: &ResolvedGraph) -> Vec<(String, ItemKind, String)> {
         .selection
         .items
         .iter()
-        .map(|item| (item.package.clone(), item.kind, item.slug.clone()))
+        .map(|item| (item.package.clone().unwrap(), item.kind, item.slug.clone()))
         .collect()
 }
 

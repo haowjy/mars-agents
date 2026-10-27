@@ -1,6 +1,17 @@
 {
   "items": [
     {
+      "package": null,
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
       "package": "lib",
       "kind": "skill",
       "slug": "planning",

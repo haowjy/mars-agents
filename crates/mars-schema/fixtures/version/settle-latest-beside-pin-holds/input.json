@@ -1,1 +1,1 @@
-{"op":"settle","constraints":[["a","latest"],["mars.toml","dev"]]}
+{"op":"select-version","tags":[],"constraints":[["a","latest"],["mars.toml","dev"]]}

@@ -36,6 +36,13 @@ impl Reading {
 )]
 pub struct UnrecognizedPath(pub String);
 
+impl UnrecognizedPath {
+    /// A stable identifier for callers that map failures to their own codes.
+    pub fn code(&self) -> &'static str {
+        "read.unrecognized-path"
+    }
+}
+
 /// Read an Agent from an installed `.mars` tree.
 ///
 /// The bytes are what the Mars that installed them wrote, not an authored schema v1 file: a tree

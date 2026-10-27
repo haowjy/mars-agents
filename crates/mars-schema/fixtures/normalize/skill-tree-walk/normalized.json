@@ -122,6 +122,24 @@
             "output_path": "skills/tdd/notes.md"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "shallow",
+              "output_path": "skills/shallow/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "tdd",
+              "output_path": "skills/tdd/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           "skills/engineering/tdd/examples/SKILL.md": [
             {

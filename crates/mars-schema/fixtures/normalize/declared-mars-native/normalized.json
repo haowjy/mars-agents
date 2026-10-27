@@ -155,6 +155,24 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "planner",
+              "output_path": "agents/planner.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "plan",
+              "output_path": "skills/plan/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

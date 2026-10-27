@@ -1,3 +1,6 @@
 {
-  "error": "no version satisfies all constraints:\n  `requester-0` requires >=3\navailable versions: [0.5.0, 1.0.0, 2.0.0]"
+  "error": {
+    "code": "version.no-satisfying",
+    "message": "no version satisfies all constraints:\n  `requester-0` requires >=3\navailable versions: [0.5.0, 1.0.0, 2.0.0]"
+  }
 }

@@ -50,9 +50,10 @@ pub(crate) fn select_for_test(
 
 /// What installing the package being published would select, for `mars check`.
 ///
-/// The package is the root: selected whole as a consumer's only request, with its `[dependencies]`
-/// as its manifest entries, so its Agents' skill refs resolve as they will on a consumer's machine.
-/// Bootstrap documents and hooks of the dependencies are not found: only the refs matter here.
+/// The package is the root: selected whole, with its `[dependencies]` entries as the consumer's
+/// requests, so its filters apply and its Agents' skill refs resolve as they will on a
+/// consumer's machine. Bootstrap documents and hooks of the dependencies are not found: only the
+/// refs matter here.
 pub(crate) fn select_published(
     prepared: &Prepared,
     graph: Option<&super::ResolvedGraph>,
@@ -95,8 +96,11 @@ fn consumer_requests(config: &crate::config::EffectiveConfig) -> Vec<Request> {
 }
 
 fn package_view(prepared: &Prepared, extra_items: Vec<Item>) -> PackageView {
-    let mut view = PackageView::from_prepared(prepared, extra_items);
-    for edge in &mut view.edges {
+    let mut view = PackageView {
+        facts: prepared.selection.clone(),
+        extra_items,
+    };
+    for edge in &mut view.facts.edges {
         edge.filter = portable_filter(&edge.filter);
     }
     view

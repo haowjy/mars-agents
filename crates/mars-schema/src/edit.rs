@@ -20,6 +20,17 @@ pub enum EmitError {
     KeyTooLong(usize),
 }
 
+impl EmitError {
+    /// A stable identifier for callers that map failures to their own codes.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::IntegerTooLarge(_) => "edit.integer-too-large",
+            Self::DuplicateKey(_) => "edit.duplicate-key",
+            Self::KeyTooLong(_) => "edit.key-too-long",
+        }
+    }
+}
+
 /// Longest implicit mapping key (as written, quotes included) YAML parsers accept.
 const MAX_KEY_CHARS: usize = 1024;
 

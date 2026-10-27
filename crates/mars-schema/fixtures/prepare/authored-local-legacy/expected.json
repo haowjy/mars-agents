@@ -63,5 +63,17 @@
     }
   ],
   "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "local",
+        "output_path": "agents/local.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {}
 }

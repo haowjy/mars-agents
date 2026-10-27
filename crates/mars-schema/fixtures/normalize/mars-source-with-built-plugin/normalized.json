@@ -126,6 +126,24 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "helper",
+              "output_path": "agents/helper.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "authored",
+              "output_path": "skills/authored/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

@@ -163,6 +163,24 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "reader",
+              "output_path": "agents/reader.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "notes",
+              "output_path": "skills/notes/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

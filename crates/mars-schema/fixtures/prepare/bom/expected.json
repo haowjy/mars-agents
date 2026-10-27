@@ -81,5 +81,17 @@
     }
   ],
   "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "bom",
+        "output_path": "agents/bom.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {}
 }

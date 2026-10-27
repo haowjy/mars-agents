@@ -1,3 +1,6 @@
 {
-  "error": "no lock version was found"
+  "error": {
+    "code": "version.no-lock",
+    "message": "no lock version was found"
+  }
 }

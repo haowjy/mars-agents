@@ -10,7 +10,7 @@
   "extra_items": {
     "p": [
       {
-        "kind": "bootstrapdoc",
+        "kind": "bootstrap-doc",
         "slug": "intro",
         "path": "bootstrap/intro"
       },

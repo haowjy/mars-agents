@@ -91,6 +91,18 @@
             "output_path": "skills/my-skill/scripts/run.sh"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "my-skill",
+              "output_path": "skills/my-skill/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

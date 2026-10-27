@@ -80,6 +80,18 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "authored",
+              "output_path": "skills/authored/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           "dist-plugin/.mars-plugin.json": [
             {

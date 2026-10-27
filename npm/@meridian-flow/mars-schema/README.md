@@ -25,7 +25,7 @@ await init();
 
 | Function | Does |
 |---|---|
-| `read(path, text)` | Reads one file. The package-relative `path` picks the reader: `mars.toml`, `agents/<slug>.md` or `skills/<slug>/SKILL.md`. Any other path throws. |
+| `read(path, text)` | Reads one file. The package-relative `path` picks the reader: `mars.toml`, `agents/<slug>.md` or `skills/<slug>/SKILL.md`. Any other path throws `read.unrecognized-path`. |
 | `emitValue(value, indent)` | YAML for one value, to splice after a key. |
 | `rewriteBlock(frontmatter)` | The whole frontmatter block between the `---` fences for ordered `[key, value]` pairs. |
 | `vocabulary()` | The tool capabilities, their aliases, and the native tools of each host. |
@@ -34,9 +34,8 @@ await init();
 | `normalize({tree, source?, hint?, selection?})` | Turns a selection into schema v1 packages with a generated `mars.toml` and provenance. |
 | `satisfies(constraint, version)` | Whether a version meets a dependency entry's `version` (`^1.2`, `v2`, a bare `0.20` as `^0.20`, `latest`; a branch or commit pin is met by none). |
 | `satisfiesRequirement(requirement, version)` | Whether a version meets a package's `requires-mars` or `requires-meridian`, where a bare `0.20` means `>=0.20.0`. |
-| `settle([[requester, version], ...])` | The one ref every constraint on a package can end at (`null` when `selectVersion` chooses among the tags); throws for two different pins or a pin beside a range. |
-| `selectVersion({available, constraints, locked?, policy?, excluded?})` | The tag Mars would pick: the newest that meets every semver range, or the locked one when `policy` allows. Throws when none qualifies. |
-| `selectItems({requests, packages, root?})` | Which Agents, skills and package documents a consumer installs from a settled graph, and why. Takes each package's `prepare` result. |
+| `selectVersion({available, constraints, locked?, policy?, excluded?})` | Which ref a package ends at, from every `[requester, version \| null]` on it and the repository's tags: `{pin}` (a branch or commit), `{tag}` (the newest that meets every semver range, or the locked one when `policy` allows) or `{untagged: true}` (no version tags). Throws when none qualifies. |
+| `selectItems({requests, packages, root?})` | Which Agents, skills and package documents an install of `root` and its dependencies yields, and why. Takes each package's `prepare` result. |
 | `version()` | The version of the schema crate this build was made from. |
 
 A tree is a `Map<string, Uint8Array>` from `/`-separated relative paths to bytes. `prepare`, `inspect` and `normalize` read manifests, definitions and directory listings, never the bytes of a skill's other files.
@@ -104,19 +103,22 @@ Marketplace fields are untrusted input: a marketplace is third-party text, and a
 
 ### Versions and selection
 
-The version functions are the rules `mars sync` applies, so a caller that resolves its own dependencies agrees with it. Tags are strings (`v1.2.3` or `1.2.3`); A tag that is not a version (`latest`, `nightly-2024`) makes `selectVersion` throw, so drop those first. Settle a package's constraints first (`settle`), then choose a tag among those that meet the semver ranges (`selectVersion`).
+The version functions are the rules `mars sync` applies, so a caller that resolves its own dependencies agrees with it. `selectVersion` is the whole decision for one package: it settles the constraints first (one pin wins; two pins, or a pin beside a range, throw), ignores tags that are not versions (`latest`, `nightly-2024`), treats `latest` and `null` constraints as any version, and with no version tag left answers `{untagged: true}`. Tags are strings (`v1.2.3` or `1.2.3`).
 
-`selectItems` runs the pass that decides what a consumer installs. Prepare each package of the graph, then pass the results unchanged:
+Every export throws an `Error` with a `code` (`MarsSchemaError` in `index.d.ts`), so a caller maps failures by code and never by message.
+
+`selectItems` runs the pass that decides what an install yields. Prepare each package of the graph, then pass the results unchanged. For a package you import, `root` is the package and `packages` its dependencies; the root's `[dependencies]` entries apply with their filters and `exclude`, as the consumer's own requests:
 
 ```ts
 const result = selectItems({
-  requests: [{ name: "base" }, { name: "extras", skills: ["lint"] }],
-  packages: { base: { prepared: prepare({ files: baseFiles }) }, extras: { prepared: prepare({ files: extraFiles }) } },
+  requests: [],
+  root: { prepared: prepare({ files: rootFiles, migrate: true }) },
+  packages: { base: { prepared: prepare({ files: baseFiles, migrate: true }) } },
 });
 // result.items: [{package, kind, slug, path, required_by}], result.missing_skills, result.diagnostics
 ```
 
-Each package's edges and `uses-providers` are read from its prepared manifest, so nothing is derived twice. A filtered entry of a manifest seeds nothing; only the consumer's own `exclude` blocks. A skill an Agent names resolves to a package in its own, then its dependencies, then any other package in registry order, which `selectItems` computes from `root` and `requests`; `packages` is a set. `missing_skills` lists refs no package ships. `kind` values are `agent`, `skill`, `hook`, `mcpserver` and `bootstrapdoc`.
+Each package's edges and `uses-providers` are read from `prepared.selection`, so nothing is derived twice. A filtered entry of a dependency's manifest seeds nothing; only the root's or the consumer's own `exclude` blocks. A skill an Agent names resolves to a package in its own, then its dependencies, then any other package in registry order, which `selectItems` computes from `root` and `requests`; `packages` is a set. Items of `root` have `package: null`, and a slug that `root` and a dependency both install is a `selection.duplicate-slug` diagnostic. `missing_skills` lists refs no package ships. `kind` values are `agent`, `skill`, `hook`, `mcp-server` and `bootstrap-doc`. Input keys are snake_case; an unknown key (a misspelled filter, `rename`) throws `input.invalid`.
 
 ## Fixtures
 
@@ -130,8 +132,8 @@ Each package's edges and `uses-providers` are read from its prepared manifest, s
 | `prepare` | `input/`, `request.json`, `expected.json` | classifying and reading one root, and with `"migrate": true` the repair `mars migrate` writes back |
 | `normalize` | `input/`, `request.json`, `inspection.json`, `normalized.json`, `expected/` | reading a foreign repository |
 | `vocabulary` | `expected.json` | the capabilities, aliases and native tools |
-| `version` | `input.json`, `expected.json` | `satisfies`, `satisfiesRequirement`, `settle` and `selectVersion` (the Rust leg also pins `parse-constraint` and `parse-tag`, which are not exported) |
-| `selection` | `request.json`, `packages/`, `expected.json` | `selectItems` over packages prepared from `packages/` |
+| `version` | `input.json`, `expected.json` | `satisfies`, `satisfiesRequirement` and `selectVersion`, with the `code` of each refusal (the Rust leg also pins `parse-constraint` and `parse-tag`, which are not exported) |
+| `selection` | `request.json`, `packages/` (or `packages_from`: a sibling case's), `expected.json` | `selectItems` over packages prepared from `packages/` |
 
 `node crates/mars-schema-wasm/run-fixtures.mjs` in the Mars repository runs every case against this package and compares results deeply, key order included. Run the same cases against the version you pin; a change to a pinned reader that changes a result is a change to the contract.
 

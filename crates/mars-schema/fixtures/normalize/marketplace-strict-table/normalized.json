@@ -155,6 +155,30 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "default",
+              "output_path": "skills/default/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "more",
+              "output_path": "skills/more/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "own",
+              "output_path": "skills/own/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     },
@@ -246,6 +270,18 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "solo",
+              "output_path": "skills/solo/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     },
@@ -269,6 +305,11 @@
         },
         "definitions": [],
         "payload": [],
+        "selection": {
+          "definitions": [],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           ".claude-plugin/plugin.json": [
             {
@@ -447,6 +488,30 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "one",
+              "output_path": "agents/one.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "default",
+              "output_path": "skills/default/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "listed",
+              "output_path": "skills/listed/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

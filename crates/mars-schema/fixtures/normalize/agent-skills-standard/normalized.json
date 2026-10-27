@@ -134,6 +134,24 @@
             "output_path": "skills/pdf/agents/openai.yaml"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "notes",
+              "output_path": "skills/notes/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "pdf",
+              "output_path": "skills/pdf/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

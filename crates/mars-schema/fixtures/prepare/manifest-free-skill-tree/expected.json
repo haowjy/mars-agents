@@ -47,5 +47,17 @@
       "output_path": "skills/demo/script.py"
     }
   ],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "skill",
+        "slug": "demo",
+        "output_path": "skills/demo/SKILL.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {}
 }

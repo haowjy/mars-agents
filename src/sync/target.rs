@@ -308,7 +308,7 @@ pub fn build_with_collisions_and_diag(
         .selection
         .items
         .iter()
-        .map(|item| (item.package.as_str(), item.kind, item.slug.as_str()))
+        .filter_map(|item| Some((item.package.as_deref()?, item.kind, item.slug.as_str())))
         .collect();
 
     for source_name in &graph.order {

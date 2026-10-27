@@ -85,5 +85,23 @@
       "output_path": "skills/nested/assets/data.bin"
     }
   ],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "skill",
+        "slug": "nested",
+        "output_path": "skills/nested/SKILL.md",
+        "skills": []
+      },
+      {
+        "kind": "skill",
+        "slug": "outer",
+        "output_path": "skills/outer/SKILL.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {}
 }

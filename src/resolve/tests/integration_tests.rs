@@ -1710,7 +1710,7 @@ fn restart_fresh_context_selects_new_transitive_dependency_items() {
             .selection
             .items
             .iter()
-            .any(|item| item.package == "y" && item.slug == "y-agent"),
+            .any(|item| item.package.as_deref() == Some("y") && item.slug == "y-agent"),
         "Y is reached through unfiltered entries, so its items are installed"
     );
 }

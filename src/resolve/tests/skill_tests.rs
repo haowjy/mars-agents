@@ -82,7 +82,7 @@ fn skill_resolution_prefers_dependency_closure_over_insertion_order() {
     // asked for everything in it.)
     let pulled_by_coder = |package: &str| {
         graph.selection.items.iter().any(|item| {
-            item.package == package
+            item.package.as_deref() == Some(package)
                 && item.slug == "planning"
                 && item
                     .required_by

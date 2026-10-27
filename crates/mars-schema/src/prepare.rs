@@ -12,6 +12,7 @@ use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 use crate::frontmatter::Frontmatter;
 use crate::item::DefinitionKind;
 use crate::read::{DefinitionRead, Reading, read_definition};
+use crate::selection::{Definition, Request, SelectionFacts};
 use crate::tree::TreeSource;
 use crate::upgrade::{UpgradeError, UpgradeResult};
 
@@ -116,6 +117,8 @@ pub struct Prepared {
     pub manifest: Option<PreparedManifest>,
     pub definitions: Vec<PreparedDefinition>,
     pub payload: Vec<PayloadEntry>,
+    /// What item selection reads of this package (see [`selection_facts`]).
+    pub selection: SelectionFacts,
     /// Package-level findings by source path: what discovery and translation met and could not
     /// convert. A definition's own reading diagnostics live on its `reading` only; see
     /// [`Prepared::all_diagnostics`].
@@ -125,6 +128,50 @@ pub struct Prepared {
     /// reports [`Prepared::changed_files`]; `mars migrate` lists these.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub changes: BTreeMap<String, Vec<SchemaDiagnostic>>,
+}
+
+/// What item selection reads of a prepared package: its Agents' and skills' skill refs, and the
+/// `[dependencies]` entries and `uses-providers` its manifest reads.
+pub fn selection_facts(
+    manifest: Option<&PreparedManifest>,
+    definitions: &[PreparedDefinition],
+) -> SelectionFacts {
+    let reading = manifest.map(|manifest| &manifest.reading);
+    SelectionFacts {
+        definitions: definitions
+            .iter()
+            .map(|definition| Definition {
+                kind: definition.kind,
+                slug: definition.slug.clone(),
+                output_path: definition.output_path.clone(),
+                skills: match &definition.reading {
+                    Reading::Agent(read) => read
+                        .fields
+                        .as_ref()
+                        .map(|profile| profile.skills.all())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                },
+            })
+            .collect(),
+        edges: reading
+            .map(|reading| {
+                reading
+                    .dependencies
+                    .dependencies
+                    .iter()
+                    .map(|(name, entry)| Request {
+                        name: name.clone(),
+                        filter: entry.filter.to_mode(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        uses_providers: reading
+            .and_then(|reading| reading.package.fields.as_ref())
+            .map(|package| package.uses_providers.clone())
+            .unwrap_or_default(),
+    }
 }
 
 impl Prepared {
@@ -310,9 +357,11 @@ pub(crate) fn prepare_root(
     }
     diagnostics.retain(|_, diagnostics| !diagnostics.is_empty());
     changes.retain(|_, diagnostics| !diagnostics.is_empty());
+    let manifest = manifest.take();
     let prepared = Prepared {
         classification,
-        manifest: manifest.take(),
+        selection: selection_facts(manifest.as_ref(), &definitions),
+        manifest,
         definitions,
         payload,
         diagnostics,

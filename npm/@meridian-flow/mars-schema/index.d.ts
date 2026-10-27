@@ -10,6 +10,37 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+/**
+ * What every export throws: an `Error` whose `code` says which failure, so a caller maps codes
+ * and never reads messages. `input.invalid` is an argument that is not the shape the export
+ * documents (a missing, misspelled or unknown key included). The rest come from the crate's
+ * error types: `read.unrecognized-path`, `tree.invalid-path`, `edit.*`
+ * (`integer-too-large`, `duplicate-key`, `key-too-long`), `input.lone-surrogate`,
+ * `filter.inconsistent`, and `VersionErrorCode`.
+ */
+export interface MarsSchemaError extends Error {
+  code: string;
+}
+
+/** Codes of the version exports: `selectVersion`, `satisfies` and `satisfiesRequirement`. */
+export type VersionErrorCode =
+  /** No tag meets every constraint; the message names each requirement and the versions there are. */
+  | "version.no-satisfying"
+  /** `policy: "lock-only"`, and `locked` is excluded, absent from `available` or fails a constraint. */
+  | "version.lock-incompatible"
+  /** `policy: "lock-only"` with no `locked`. */
+  | "version.no-lock"
+  /** Two different branch or commit pins. */
+  | "version.pins-differ"
+  /** A branch or commit pin beside a semver range. */
+  | "version.pin-beside-range"
+  /** A `version` argument that is not semver. */
+  | "version.invalid-version"
+  /** A `requires-mars` that is not a requirement. */
+  | "version.invalid-requirement"
+  /** A `locked` or `excluded` entry that is not a version tag. */
+  | "version.invalid-tag";
+
 /** Build-time version of the schema crate. */
 export function version(): string;
 
@@ -241,6 +272,8 @@ export interface Prepared {
   manifest?: PreparedManifest;
   definitions: PreparedDefinition[];
   payload: { source_path: string; output_path: string }[];
+  /** What `selectItems` reads of this package; pass this result to it whole. */
+  selection: SelectionFacts;
   /**
    * Package-level findings by source path: what discovery and translation met and could not
    * convert (`skill.*`, `agent.*`, `import.*`). A file's own reading diagnostics are on its
@@ -438,67 +471,78 @@ export function satisfies(constraint: string | null, version: string): boolean;
 export function satisfiesRequirement(requirement: string, version: string): boolean;
 
 /**
- * The ref a package ends at, from every `[requester, version]` on it, whether or not the entry
- * selects anything: the one branch or commit pin if there is one, `null` if `selectVersion`
- * should choose among the tags. Two different pins, or a pin beside a semver range, throw
- * (`Settle` in the crate: the message names both requesters).
- */
-export function settle(constraints: [requester: string, version: string | null][]): string | null;
-
-/**
- * Chooses one of `available` (tags: one leading `v` allowed, the rest strict semver) that meets
- * every constraint and is not in `excluded`. The newest allowed wins whatever the order of
- * `available`. `policy` defaults to `"prefer-lock-then-latest"`: `locked` when allowed, else
- * the newest. `"lock-only"` returns `locked` or throws. Nothing allowed throws, with a message
- * naming each requirement and the versions there are.
+ * Which ref a package ends at, from every constraint on it and the repository's tags. Settles
+ * first (one branch or commit pin wins; two pins, or a pin beside a semver range, throw), then
+ * chooses among `available`: the newest tag meeting every range and not in `excluded`, where
+ * `policy` (default `"prefer-lock-then-latest"`) prefers `locked` when allowed,
+ * `"latest-only"` ignores it and `"lock-only"` returns `locked` or throws. A `latest` (or
+ * `null`) constraint allows any tag and turns the default policy into `"latest-only"`. A tag
+ * that is not a version (`nightly`) is ignored, and with none left the result is `untagged`:
+ * the default branch. Constraints are `[requester, version | null]` as the manifests spell them
+ * (`v2`, `^1.2`, `>=0.5`, a branch, `latest`); see `satisfies` for the grammar.
  */
 export function selectVersion(input: {
   available: string[];
-  /** `[requester, version]` semver ranges; a pin or `latest` throws (settle those first). */
-  constraints: [requester: string, version: string][];
+  constraints: [requester: string, version: string | null][];
   locked?: string;
   policy?: "prefer-lock-then-latest" | "latest-only" | "lock-only";
   excluded?: string[];
-}): string;
+}): { pin: string } | { tag: string } | { untagged: true };
 
-/** An entry's filter as the manifest or `mars.toml` spells it. */
+/** An entry's filter, as `requests` take it. `rename` is not here: selection ignores it, so it is refused. */
 export interface FilterConfig {
   agents?: string[];
   skills?: string[];
   exclude?: string[];
-  rename?: { [from: string]: string };
   only_skills?: boolean;
   only_agents?: boolean;
 }
 
+export type ItemKind = "agent" | "skill" | "hook" | "mcp-server" | "bootstrap-doc";
+
 /**
- * An item `prepare` does not read (a bootstrap document, a hook), found by the caller. `kind`
- * is `"agent"`, `"skill"`, `"hook"`, `"mcpserver"` or `"bootstrapdoc"`.
+ * An item `prepare` does not read (a bootstrap document, a hook), found by the caller.
  */
 export interface ExtraItem {
-  kind: SelectedItem["kind"];
+  kind: ItemKind;
   slug: string;
   /** Package-relative, `/`-separated. */
   path: string;
 }
 
+/** The part of a prepared package that selection reads (`Prepared.selection`). */
+export interface SelectionFacts {
+  definitions: { kind: "agent" | "skill"; slug: string; output_path: string; skills: string[] }[];
+  /** The manifest's `[dependencies]` entries in declaration order, never `[local-dependencies]`. */
+  edges: { name: string; filter: SelectionFilter }[];
+  uses_providers: string[];
+}
+
+export type SelectionFilter =
+  | "all"
+  | { include: { agents: string[]; skills: string[] } }
+  | { exclude: string[] }
+  | "only-skills"
+  | "only-agents";
+
 export interface SelectionPackage {
   /** The result of `prepare` for this package, as it returned it. */
   prepared: Prepared;
-  extraItems?: ExtraItem[];
+  extra_items?: ExtraItem[];
 }
 
 export type Requester =
-  /** An entry of the consumer or of `root`, or one of the root's Agents' skill refs. */
+  /** An entry of the consumer or of `root`, an item of `root`, or one of the root's Agents' skill refs. */
   | { by: "consumer" }
-  /** An unfiltered entry of this package's manifest, reached through unfiltered entries only. */
+  /** An unfiltered entry of this dependency's manifest, reached through unfiltered entries only. */
   | { by: "package"; package: string }
   /** A skill ref of this Agent. */
-  | { by: "item"; package: string; kind: SelectedItem["kind"]; slug: string };
+  | { by: "item"; package: string; kind: ItemKind; slug: string };
 
 export interface SelectedItem {
-  package: string;
-  kind: "agent" | "skill" | "hook" | "mcpserver" | "bootstrapdoc";
+  /** The package it is from; `null` for an item of `root`. */
+  package: string | null;
+  kind: ItemKind;
   slug: string;
   /** An Agent's file, a skill's directory (`.` for a flat skill), a document's or hook's directory. */
   path: string;
@@ -519,25 +563,29 @@ export interface MissingSkill {
 }
 
 export interface SelectionResult {
-  /** In registry order (below), then each package's own item order. */
+  /** In registry order (below), the root first, then each package's own item order. */
   items: SelectedItem[];
   missing_skills: MissingSkill[];
-  /** `selection.duplicate-slug`: two packages install the same Agent or skill slug. */
+  /** `selection.duplicate-slug`: two packages (the root counts) install the same Agent or skill slug. */
   diagnostics: Diagnostic[];
 }
 
 /**
- * The Agents, skills and package-level documents a consumer installs from a settled graph, and
- * why each is selected. Pass each package's `prepare` result whole: its edges (the manifest's
- * `[dependencies]` entries) and `uses-providers` are read from it. `packages` holds the graph's
- * packages by name in any order; the registry order that skill refs resolve in is computed here
- * (depth first from `root`, then each request, descending manifest entries in declaration
- * order). A package no request reaches is never selected from.
+ * The Agents, skills and package-level documents an install of `root` and its dependencies
+ * yields, and why each is selected. `{ root, packages, requests: [] }` is the whole call for an
+ * imported package: `root` is selected whole, and its manifest entries (`[dependencies]`, with
+ * their filters and `exclude`) are applied as the consumer's own requests, so a filtered
+ * dependency contributes what its filter names plus the skills the selected Agents name.
+ * `requests` holds further consumer entries, in order, for a project whose configuration is not
+ * in `root`'s manifest.
  *
- * `requests` are the consumer's own entries, in order. `root` is the package being selected for
- * (a project's own package): it is requested whole as the first request and its own items are
- * not in the result, but its Agents' skill refs resolve like any package's. Installed names
- * (renames, collision suffixes) are the caller's.
+ * Pass each package's `prepare` result whole (selection reads `selection`). `packages` holds the
+ * dependencies by name in any order; the registry order that skill refs resolve in is computed
+ * here (depth first from `root`, then each request, descending manifest entries in declaration
+ * order). A package nothing reaches is never selected from. Installed names (renames, collision
+ * suffixes) are the caller's.
+ *
+ * Unknown keys throw `input.invalid`, at the top level, in a package and in a request.
  */
 export function selectItems(input: {
   requests: ({ name: string } & FilterConfig)[];

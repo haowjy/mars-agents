@@ -3,7 +3,9 @@
 //! A dependency entry's `version` (see [`parse_constraint`]) and a package's `requires-mars` /
 //! `requires-meridian` ([`satisfies_requirement`]) are different grammars: a bare `0.20` is the
 //! caret range `^0.20` in the first and `>=0.20.0` in the second. Everything here is pure; the
-//! binary supplies the tag list and acts on the choice.
+//! caller supplies the tag list and acts on the choice. [`choose`] is the whole decision: the
+//! binary runs its two stages ([`settle`], then [`select`]) around its lock replay, and
+//! `selectVersion` of the WASM package runs both at once.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -99,8 +101,42 @@ pub fn satisfies(constraint: &Constraint, version: &Version) -> bool {
 
 /// Whether `version` meets a package's `requires-mars` / `requires-meridian` (a bare `0.20` means
 /// `>=0.20.0`). An error is a requirement that is not one.
-pub fn satisfies_requirement(requirement: &str, version: &Version) -> Result<bool, semver::Error> {
-    Ok(crate::package::parse_requirement(requirement)?.matches(version))
+pub fn satisfies_requirement(requirement: &str, version: &Version) -> Result<bool, ParseError> {
+    let requirement = crate::package::parse_requirement(requirement)
+        .map_err(|error| ParseError::Requirement(requirement.to_owned(), error.to_string()))?;
+    Ok(requirement.matches(version))
+}
+
+/// Version text that is not the kind of version the caller said it was.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ParseError {
+    #[error("`{0}` is not a semver version: {1}")]
+    Version(String, String),
+    #[error("`{0}` is not a version requirement: {1}")]
+    Requirement(String, String),
+    #[error("`{0}` is not a version tag")]
+    Tag(String),
+}
+
+impl ParseError {
+    /// A stable identifier for callers that map failures to their own codes.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Version(..) => "version.invalid-version",
+            Self::Requirement(..) => "version.invalid-requirement",
+            Self::Tag(_) => "version.invalid-tag",
+        }
+    }
+}
+
+/// Parse strict semver (no leading `v`).
+pub fn parse_version(text: &str) -> Result<Version, ParseError> {
+    Version::parse(text).map_err(|error| ParseError::Version(text.to_owned(), error.to_string()))
+}
+
+/// [`parse_tag`], where a tag that is not a version is the caller's mistake.
+pub fn require_tag(tag: &str) -> Result<Version, ParseError> {
+    parse_tag(tag).ok_or_else(|| ParseError::Tag(tag.to_owned()))
 }
 
 /// How a chosen version relates to the lock.
@@ -129,6 +165,17 @@ pub enum SelectError {
     /// [`SelectionPolicy::LockOnly`] with no locked version.
     #[error("no lock version was found")]
     NoLock,
+}
+
+impl SelectError {
+    /// A stable identifier for callers that map failures to their own codes.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NoSatisfying { .. } => "version.no-satisfying",
+            Self::LockIncompatible { .. } => "version.lock-incompatible",
+            Self::NoLock => "version.no-lock",
+        }
+    }
 }
 
 fn no_satisfying_message(constraints: &[(String, VersionReq)], available: &[Version]) -> String {
@@ -162,6 +209,16 @@ pub enum SettleError {
         ranged_by: String,
         range: VersionReq,
     },
+}
+
+impl SettleError {
+    /// A stable identifier for callers that map failures to their own codes.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::PinsDiffer { .. } => "version.pins-differ",
+            Self::PinBesideRange { .. } => "version.pin-beside-range",
+        }
+    }
 }
 
 /// Settle every `(requester, constraint)` on a package: each must hold on the ref it ends at,
@@ -204,20 +261,49 @@ pub fn settle<'a>(constraints: &[(&str, &'a Constraint)]) -> Result<Option<&'a s
     Ok(Some(reference))
 }
 
-/// Choose one of `available` that meets every constraint and is not in `excluded`, and return
-/// its index. The newest allowed wins whatever the order of `available`; of equal versions the
-/// later one does.
+/// The policy [`select`] applies: a [`Constraint::Latest`] asks for the newest, so beside it
+/// `PreferLockThenLatest` becomes `LatestOnly`.
+pub fn effective_policy(
+    policy: SelectionPolicy,
+    constraints: &[(&str, &Constraint)],
+) -> SelectionPolicy {
+    let asks_latest = constraints
+        .iter()
+        .any(|(_, constraint)| matches!(constraint, Constraint::Latest));
+    if policy == SelectionPolicy::PreferLockThenLatest && asks_latest {
+        SelectionPolicy::LatestOnly
+    } else {
+        policy
+    }
+}
+
+/// Choose one of `available` that meets every semver constraint and is not in `excluded`, and
+/// return its index. The newest allowed wins whatever the order of `available`; of equal
+/// versions the later one does. `Ok(None)` is a repository with no version tags: the caller
+/// takes its default branch. [`Constraint::Latest`] allows any version (see [`effective_policy`]),
+/// and a [`Constraint::RefPin`] must have been [settled](settle) already, so it is not read here.
 pub fn select(
     available: &[Version],
-    constraints: &[(&str, &VersionReq)],
+    constraints: &[(&str, &Constraint)],
     locked: Option<&Version>,
     policy: SelectionPolicy,
     excluded: &HashSet<Version>,
-) -> Result<usize, SelectError> {
+) -> Result<Option<usize>, SelectError> {
+    if available.is_empty() {
+        return Ok(None);
+    }
+    let policy = effective_policy(policy, constraints);
+    let requirements: Vec<(&str, &VersionReq)> = constraints
+        .iter()
+        .filter_map(|&(requester, constraint)| match constraint {
+            Constraint::Semver(req) => Some((requester, req)),
+            _ => None,
+        })
+        .collect();
     let allowed: Vec<usize> = (0..available.len())
         .filter(|&i| {
             !excluded.contains(&available[i])
-                && constraints
+                && requirements
                     .iter()
                     .all(|(_, req)| req.matches(&available[i]))
         })
@@ -227,7 +313,7 @@ pub fn select(
         let mut ascending = available.to_vec();
         ascending.sort();
         return Err(SelectError::NoSatisfying {
-            constraints: constraints
+            constraints: requirements
                 .iter()
                 .map(|(requester, req)| ((*requester).to_string(), (*req).clone()))
                 .collect(),
@@ -238,14 +324,65 @@ pub fn select(
     let locked_allowed =
         locked.and_then(|locked| allowed.iter().copied().find(|&i| available[i] == *locked));
     match policy {
-        SelectionPolicy::PreferLockThenLatest => Ok(locked_allowed.unwrap_or(newest)),
-        SelectionPolicy::LatestOnly => Ok(newest),
+        SelectionPolicy::PreferLockThenLatest => Ok(Some(locked_allowed.unwrap_or(newest))),
+        SelectionPolicy::LatestOnly => Ok(Some(newest)),
         SelectionPolicy::LockOnly => match (locked_allowed, locked) {
-            (Some(index), _) => Ok(index),
+            (Some(index), _) => Ok(Some(index)),
             (None, Some(locked)) => Err(SelectError::LockIncompatible {
                 locked: locked.clone(),
             }),
             (None, None) => Err(SelectError::NoLock),
         },
     }
+}
+
+/// What a package ends at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Chosen<'a> {
+    /// A branch or commit every constraint holds at.
+    Pin(&'a str),
+    /// One of the tags offered.
+    Tag(&'a str),
+    /// No version tags: the default branch.
+    Untagged,
+}
+
+/// Why no ref could be chosen.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ChooseError {
+    #[error(transparent)]
+    Settle(#[from] SettleError),
+    #[error(transparent)]
+    Select(#[from] SelectError),
+}
+
+impl ChooseError {
+    /// A stable identifier for callers that map failures to their own codes.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Settle(error) => error.code(),
+            Self::Select(error) => error.code(),
+        }
+    }
+}
+
+/// The whole decision for one package, from every constraint on it and the tags the repository
+/// has: [`settle`] first (a pin ends it), then [`select`] among the tags that are versions. A tag
+/// that is not one (`nightly`) is ignored, as the binary ignores it when it lists a repository.
+pub fn choose<'a>(
+    tags: &'a [String],
+    constraints: &[(&str, &'a Constraint)],
+    locked: Option<&Version>,
+    policy: SelectionPolicy,
+    excluded: &HashSet<Version>,
+) -> Result<Chosen<'a>, ChooseError> {
+    if let Some(reference) = settle(constraints)? {
+        return Ok(Chosen::Pin(reference));
+    }
+    let (names, versions): (Vec<&str>, Vec<Version>) = tags
+        .iter()
+        .filter_map(|tag| Some((tag.as_str(), parse_tag(tag)?)))
+        .unzip();
+    Ok(select(&versions, constraints, locked, policy, excluded)?
+        .map_or(Chosen::Untagged, |index| Chosen::Tag(names[index])))
 }

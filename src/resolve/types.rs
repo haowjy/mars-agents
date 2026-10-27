@@ -12,11 +12,12 @@ use mars_schema::claude::manifest::PluginSource;
 /// The resolved dependency graph — all sources with concrete versions.
 ///
 /// Produced by the resolver after fetching sources, reading manifests,
-/// intersecting version constraints, and deterministic ordering.
+/// intersecting version constraints, and sorting the packages by name.
 #[derive(Debug, Clone)]
 pub struct ResolvedGraph {
     pub nodes: IndexMap<SourceName, ResolvedNode>,
-    /// Deterministic alphabetical order (prompt packages don't require dependency ordering).
+    /// Alphabetical, for the order sync walks the packages in. The order skill refs resolve in is
+    /// not this one; `selection` computes it.
     pub order: Vec<SourceName>,
     /// The Agents, skills and documents the consumer installs, chosen once the graph settled.
     pub selection: mars_schema::selection::SelectionResult,
@@ -359,6 +360,7 @@ pub(crate) fn prepared_with_deps(deps: &[&str]) -> std::sync::Arc<mars_schema::p
     });
     std::sync::Arc::new(mars_schema::prepare::Prepared {
         classification: mars_schema::prepare::Classification::Empty,
+        selection: mars_schema::prepare::selection_facts(manifest.as_ref(), &[]),
         manifest,
         definitions: Vec::new(),
         payload: Vec::new(),

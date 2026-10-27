@@ -154,7 +154,7 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
             for outcome in &report.applied.outcomes {
                 let action = action_label(&outcome.action);
                 let name = outcome.item_id.name.to_string();
-                let kind = kind_label(&outcome.item_id.kind);
+                let kind = outcome.item_id.kind.to_string();
                 let source = outcome.source_name.to_string();
                 let dest_path = outcome.dest_path.to_string();
 
@@ -220,17 +220,6 @@ fn action_label(action: &crate::sync::apply::ActionTaken) -> &'static str {
         ActionTaken::Removed => "remove",
         ActionTaken::Skipped => "skip",
         ActionTaken::Kept => "skip",
-    }
-}
-
-fn kind_label(kind: &mars_schema::item::ItemKind) -> String {
-    use mars_schema::item::ItemKind;
-    match kind {
-        ItemKind::Agent => "agent".to_string(),
-        ItemKind::Skill => "skill".to_string(),
-        ItemKind::Hook => "hook".to_string(),
-        ItemKind::McpServer => "mcp-server".to_string(),
-        ItemKind::BootstrapDoc => "bootstrap-doc".to_string(),
     }
 }
 

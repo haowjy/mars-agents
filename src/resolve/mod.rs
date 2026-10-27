@@ -4,7 +4,7 @@
 //! 1. Resolve package refs/versions (lock-preferred latest-compatible for git sources)
 //! 2. Resolve package manifests bottom-up, recording each package's manifest entries
 //! 3. Once the graph settles, select the items it installs (`select`, a pure pass)
-//! 4. Emit deterministic alphabetical package order
+//! 4. Order the packages alphabetically for sync (`selection` orders its own registry)
 //!
 //! Uses `semver` crate for all version parsing. No custom version logic.
 

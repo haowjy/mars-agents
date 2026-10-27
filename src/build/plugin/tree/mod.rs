@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 
 use crate::compiler::agents::lower::lower_for_harness_with_model;
-use crate::compiler::harness_descriptor::{CompilerHarnessDescriptor, descriptor};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 use crate::resolve::ResolvedGraph;
@@ -11,68 +10,17 @@ use crate::sync::rewrite::RenameIndex;
 use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry};
 use crate::types::SourceName;
-use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 
+use super::PluginComponents;
 use super::metadata::PackageMetadata;
 use super::model::{ModelFallbackReason, resolve_model};
 use super::references::qualify_body_references;
-use super::{PluginComponents, PluginTree};
+use super::spec::{AgentPolicy, Finish, TreeProfile};
 
-pub(super) mod claude;
-mod cursor;
-mod opencode;
-
-pub(super) type AgentPolicy = fn(
-    &str,
-    &mars_schema::frontmatter::Frontmatter,
-    &TargetItem,
-    &mut DiagnosticCollector,
-) -> Result<String, MarsError>;
-
-pub(super) type ConfigWriter = fn(
-    &TreeProfile,
-    &Path,
-    &[ConfigEntry],
-    &[&'static crate::plugin::PluginHarnessSpec],
-    &mut DiagnosticCollector,
-) -> Result<(), MarsError>;
-
-pub(super) type FinishWriter = for<'a> fn(
-    &TreeProfile,
-    &Path,
-    &PackageMetadata,
-    &WrittenTreeContents<'a>,
-    &mut DiagnosticCollector,
-) -> Result<(), MarsError>;
-
-pub(super) type HookCheck = fn(&crate::compiler::hooks::ParsedHookItem, &mut DiagnosticCollector);
-
-pub(super) struct TreeProfile {
-    format: &'static crate::plugin::PluginTreeSpec,
-    harness: HarnessId,
-    pub(super) agents: Option<AgentPolicy>,
-    native_model_aliases: &'static [&'static str],
-    plugin_root_token: Option<&'static str>,
-    check_hook: HookCheck,
-    standard_output: Option<StandardTreeOutput>,
-    write_config: ConfigWriter,
-    finish: FinishWriter,
-}
-
-impl TreeProfile {
-    pub(super) fn descriptor(&self) -> &'static CompilerHarnessDescriptor {
-        descriptor(self.harness)
-    }
-
-    pub(super) fn tree(&self) -> PluginTree {
-        self.format.tree
-    }
-
-    pub(super) fn dropped_agent_fields(&self) -> &'static [&'static str] {
-        self.format.dropped_agent_fields
-    }
-}
+pub(in crate::build::plugin) mod claude;
+pub(in crate::build::plugin) mod cursor;
+pub(in crate::build::plugin) mod opencode;
 
 pub(super) struct WrittenTreeContents<'a> {
     pub skills: &'a [String],
@@ -81,26 +29,8 @@ pub(super) struct WrittenTreeContents<'a> {
 }
 
 pub(super) struct BuiltTree {
-    profile: &'static TreeProfile,
+    pub(super) profile: &'static TreeProfile,
     pub components: PluginComponents,
-}
-
-impl BuiltTree {
-    pub(super) fn tree(&self) -> PluginTree {
-        self.profile.tree()
-    }
-}
-
-static PROFILES: [&TreeProfile; 3] = [&claude::PROFILE, &cursor::PROFILE, &opencode::PROFILE];
-
-pub(super) fn profiles() -> impl Iterator<Item = &'static TreeProfile> {
-    PROFILES.into_iter()
-}
-
-pub(super) fn profile(tree: PluginTree) -> &'static TreeProfile {
-    profiles()
-        .find(|profile| profile.tree() == tree)
-        .expect("every plugin tree has a writer profile")
 }
 
 #[derive(serde::Serialize)]
@@ -136,18 +66,14 @@ pub(super) fn write_pretty_json(
     crate::fs::atomic_write(path, &pretty_json_bytes(value, description)?)
 }
 
-pub(super) fn finish_standard_tree(
-    profile: &TreeProfile,
+pub(super) fn write_standard_manifest(
     root: &Path,
+    manifest_path: &str,
+    manifest_description: &str,
     metadata: &PackageMetadata,
-    _contents: &WrittenTreeContents<'_>,
-    _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let output = profile
-        .standard_output
-        .expect("standard tree has output policy");
     write_pretty_json(
-        &root.join(output.manifest_path),
+        &root.join(manifest_path),
         &StandardPluginManifest {
             name: &metadata.name,
             version: &metadata.version,
@@ -156,14 +82,8 @@ pub(super) fn finish_standard_tree(
             homepage: metadata.homepage.as_deref(),
             license: metadata.license.as_deref(),
         },
-        output.manifest_description,
+        manifest_description,
     )
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct StandardTreeOutput {
-    manifest_path: &'static str,
-    manifest_description: &'static str,
 }
 
 pub(super) fn standard_config_entries(
@@ -178,6 +98,24 @@ pub(super) fn standard_config_entries(
         }
     }
     (mcp, hooks)
+}
+
+/// Run a tree's finish step. The standard manifest path and a custom writer are
+/// both tree facts, so the dispatch lives with the writers and `spec` stays
+/// declarative.
+pub(super) fn finish(
+    profile: &TreeProfile,
+    root: &Path,
+    metadata: &PackageMetadata,
+    contents: &WrittenTreeContents<'_>,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    match profile.finish {
+        Finish::StandardManifest { path, description } => {
+            write_standard_manifest(root, path, description, metadata)
+        }
+        Finish::Custom(writer) => writer(profile, root, metadata, contents, diag),
+    }
 }
 
 pub(super) struct TermSet {
@@ -211,7 +149,7 @@ pub(super) struct TreeInput<'a> {
     pub collision_renames: &'a [CollisionRename],
     pub dep_precedence: &'a [SourceName],
     pub terms: &'a TermSet,
-    pub harnesses: &'a [&'static crate::plugin::PluginHarnessSpec],
+    pub harnesses: &'a [&'static super::spec::PluginHarnessSpec],
 }
 
 pub(super) fn check_sources(
@@ -370,12 +308,9 @@ pub(super) fn write_tree(
         &mcp,
         adapter,
         |hook| {
-            format!(
-                "{}/hooks/{}",
-                profile
-                    .plugin_root_token
-                    .expect("merged hook config needs a plugin root token"),
-                hook.def.name
+            profile.plugin_root.resolve(
+                crate::compiler::hooks::HOOK_DIR_TOKEN,
+                &format!("hooks/{}", hook.def.name),
             )
         },
         diag,
@@ -394,7 +329,7 @@ pub(super) fn write_tree(
         .filter(|entry| matches!(entry, ConfigEntry::McpServer(_)))
         .count();
 
-    (profile.finish)(profile, root, input.metadata, &contents, diag)?;
+    finish(profile, root, input.metadata, &contents, diag)?;
 
     normalize_text_tree(root)?;
     Ok(BuiltTree {
@@ -511,7 +446,7 @@ fn write_agent(
     let lowered =
         lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
     let plugin_lossy_fields;
-    let lossy_fields = if tree_profile.format.approximate_lowers_to_dropped {
+    let lossy_fields = if tree_profile.approximate_lowers_to_dropped {
         plugin_lossy_fields = lowered
             .lossy_fields
             .iter()

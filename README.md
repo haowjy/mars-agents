@@ -31,8 +31,8 @@ where a cell explicitly says docs-only.
 |---|---|---|---|---|---|
 | Tree | claude | claude | claude | cursor | opencode |
 | Skills | supported | supported | supported | supported | supported (registered by `index.mjs`) |
-| Agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning | **impossible**: Codex plugins don't load agents | supported (same file as Claude) | supported | **impossible**: no API adds an agent |
-| Hooks | supported for hooks with a `claude` fragment; others dropped with warning | as Claude (reads the Claude tree's `hooks/hooks.json`) | as Claude | supported for hooks with a `cursor` fragment; others dropped with warning | supported for hooks with an `opencode` fragment that has a default `{id, setup}` export; others dropped with warning |
+| Agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning | **impossible**: Codex plugins don't load agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning (same file as Claude) | supported | **impossible**: OpenCode plugins don't load agents |
+| Hooks | supported for hooks with the `claude` fragment; others dropped with warning | supported for hooks with the `claude` fragment; others dropped with warning (reads the Claude tree's `hooks/hooks.json`) | supported for hooks with the `claude` fragment; others dropped with warning | supported for hooks with the `cursor` fragment; others dropped with warning | supported for hooks with the `opencode` fragment; others dropped with warning (each fragment needs a default `{id, setup}` export) |
 | MCP | supported | supported (same file as Claude) | supported (same file as Claude) | supported | supported (registered by `index.mjs`) |
 | Bootstrap docs | impossible | impossible | impossible | impossible | impossible |
 

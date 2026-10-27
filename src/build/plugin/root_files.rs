@@ -13,6 +13,7 @@ use crate::plugin_metadata::SENTINEL_FILE;
 use super::PluginBuildDestination;
 use super::inspect::{self, PluginRootFileState};
 use super::metadata::PackageMetadata;
+use super::spec::{self, PluginHarnessSpec, RootFile};
 
 pub(super) struct RootFilePlan {
     pub(super) root_files: BTreeMap<String, String>,
@@ -56,7 +57,7 @@ pub(super) fn plan(
     staging: &Path,
     destination: &PluginBuildDestination,
     metadata: &PackageMetadata,
-    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
+    harnesses: &[&'static PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<RootFilePlan, MarsError> {
     let package_root = dunce::canonicalize(package_root).map_err(|source| MarsError::Io {
@@ -91,29 +92,20 @@ pub(super) fn plan(
 
     let expected = inspect::expected_root_paths(harnesses);
     let mut writes = BTreeMap::new();
-    for tree in crate::plugin::PLUGIN_TREE_SPECS {
-        let Some(root_file) = tree.root_file else {
-            continue;
-        };
-        if !expected.contains(root_file.path) {
+    for tree in spec::trees() {
+        let root_file = tree.root_file;
+        if !expected.contains(root_file.path()) {
             continue;
         }
         writes.insert(
-            root_file.path.to_string(),
+            root_file.path().to_string(),
             render_root_file(root_file, tree.key, &output_relative, metadata)?,
         );
     }
 
     if metadata.author().is_none()
-        && crate::plugin::PLUGIN_TREE_SPECS.iter().any(|tree| {
-            tree.root_file.is_some_and(|root| {
-                expected.contains(root.path)
-                    && matches!(
-                        root.renderer,
-                        crate::plugin::RootFileRenderer::Marketplace { .. }
-                    )
-            })
-        })
+        && spec::trees()
+            .any(|tree| tree.root_file.is_marketplace() && expected.contains(tree.root_file.path()))
     {
         diag.warn(
             "plugin-catalog-owner-fallback",
@@ -290,11 +282,7 @@ fn remove_empty_catalog_directory(package_root: &Path, relative: &str) -> Result
 }
 
 fn catalog_directory(path: &str) -> Option<&'static str> {
-    crate::plugin::PLUGIN_TREE_SPECS
-        .iter()
-        .filter_map(|tree| tree.root_file)
-        .find(|root| root.path == path)
-        .and_then(|root| root.catalog_directory)
+    spec::tree_for_root_file(Path::new(path)).and_then(|tree| tree.root_file.catalog_directory())
 }
 
 fn path_exists(path: &Path) -> Result<bool, MarsError> {
@@ -332,13 +320,13 @@ struct CatalogPlugin<'a> {
 }
 
 fn render_root_file(
-    spec: crate::plugin::RootFileSpec,
+    root_file: RootFile,
     tree_key: &str,
     output_relative: &str,
     metadata: &PackageMetadata,
 ) -> Result<Vec<u8>, MarsError> {
-    match spec.renderer {
-        crate::plugin::RootFileRenderer::Marketplace { source_prefix } => {
+    match root_file {
+        RootFile::Marketplace { source_prefix, .. } => {
             let owner = metadata.author();
             let source = format!("{source_prefix}{output_relative}/{tree_key}");
             super::tree::pretty_json_bytes(
@@ -357,7 +345,7 @@ fn render_root_file(
                 "plugin marketplace",
             )
         }
-        crate::plugin::RootFileRenderer::OpenCodePackage => {
+        RootFile::NpmPackage { .. } => {
             let tree = format!("{output_relative}/{tree_key}");
             super::tree::pretty_json_bytes(
                 &RootPackage {

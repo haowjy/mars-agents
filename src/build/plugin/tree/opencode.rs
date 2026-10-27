@@ -11,22 +11,28 @@ use crate::target::{ConfigEntry, TargetAdapter};
 use mars_schema::HarnessId;
 
 use super::super::metadata::PackageMetadata;
-use super::{TreeProfile, WrittenTreeContents};
+use super::super::spec::{Finish, PluginRoot, RootFile, TreeProfile};
+use super::WrittenTreeContents;
+use crate::plugin_metadata::OPENCODE_ROOT_FILE;
 
 const TARGET_ROOT: &str = ".opencode";
 const INDEX_TEMPLATE: &str = include_str!("../opencode/index.mjs");
 const DATA_PLACEHOLDER: &str = "/*__MARS_PLUGIN_DATA__*/";
 
-pub(super) static PROFILE: TreeProfile = TreeProfile {
-    format: &crate::plugin::OPENCODE_TREE_SPEC,
+pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
+    key: "opencode",
     harness: HarnessId::OpenCode,
+    root_file: RootFile::NpmPackage {
+        file: OPENCODE_ROOT_FILE,
+    },
+    dropped_agent_fields: &[],
+    approximate_lowers_to_dropped: false,
     agents: None,
     native_model_aliases: &[],
-    plugin_root_token: None,
+    plugin_root: PluginRoot::RuntimeResolved,
     check_hook,
-    standard_output: None,
     write_config: write_config_entries,
-    finish: write_package,
+    finish: Finish::Custom(write_package),
 };
 
 fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
@@ -60,7 +66,7 @@ fn write_config_entries(
     _profile: &TreeProfile,
     root: &Path,
     entries: &[ConfigEntry],
-    _harnesses: &[&'static crate::plugin::PluginHarnessSpec],
+    _harnesses: &[&'static super::super::spec::PluginHarnessSpec],
     _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let servers = entries

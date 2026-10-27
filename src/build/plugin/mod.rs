@@ -6,7 +6,8 @@ mod model;
 pub mod output;
 mod references;
 mod root_files;
-pub mod support;
+mod spec;
+mod support;
 mod tree;
 
 pub(crate) use inspect::inspect_validated;
@@ -25,7 +26,6 @@ use crate::config::{
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, LossinessMode};
 use crate::error::{ConfigError, MarsError};
-pub use crate::plugin::PluginTree;
 use crate::resolve::{PublishLens, ResolveOptions};
 use crate::types::{RenameMap, SourceId, SourceName};
 
@@ -117,7 +117,8 @@ pub struct PluginBuildReport {
 
 #[derive(Debug, Serialize)]
 pub struct PluginTreeReport {
-    pub tree: PluginTree,
+    /// Generated tree key: the stage directory name and report identity.
+    pub tree: &'static str,
     pub output: PathBuf,
     #[serde(flatten)]
     pub components: PluginComponents,
@@ -292,7 +293,7 @@ fn stage_plugin_inner(
             let inputs_hash = plugin_inputs_hash_from_prepared(&package_root, &authored)?;
             let mut built_trees = Vec::with_capacity(profiles.len());
             for profile in &profiles {
-                let tree_root = staging.join(profile.tree().as_str());
+                let tree_root = staging.join(profile.key);
                 built_trees.push(tree::write_tree(&tree_root, &tree_input, profile, diag)?);
             }
             support::emit(
@@ -334,13 +335,10 @@ fn stage_plugin_inner(
 
     let trees = built_trees
         .into_iter()
-        .map(|built| {
-            let tree = built.tree();
-            PluginTreeReport {
-                tree,
-                output: out_dir.join(tree.as_str()),
-                components: built.components,
-            }
+        .map(|built| PluginTreeReport {
+            tree: built.profile.key,
+            output: out_dir.join(built.profile.key),
+            components: built.components,
         })
         .collect();
 
@@ -380,13 +378,13 @@ fn materialize_rewritten_skills(
 }
 
 fn requested_tree_profiles(
-    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
-) -> Vec<&'static tree::TreeProfile> {
-    tree::profiles()
+    harnesses: &[&'static spec::PluginHarnessSpec],
+) -> Vec<&'static spec::TreeProfile> {
+    spec::trees()
         .filter(|profile| {
             harnesses
                 .iter()
-                .any(|harness| harness.tree == profile.tree())
+                .any(|harness| harness.tree.key == profile.key)
         })
         .collect()
 }
@@ -394,7 +392,7 @@ fn requested_tree_profiles(
 fn implicit_consumer_config(
     lens: &PublishLens,
     root_source: &SourceName,
-    profiles: &[&tree::TreeProfile],
+    profiles: &[&'static spec::TreeProfile],
 ) -> Result<EffectiveConfig, MarsError> {
     let package_root = dunce::canonicalize(lens.package_root())?;
     let source_id = SourceId::path_with_subpath(lens.package_root(), &package_root, None)?;

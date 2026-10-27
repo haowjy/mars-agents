@@ -203,7 +203,7 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
             crate::cli::output::print_success(&format!(
                 "built plugin `{}` tree `{}` at {} ({} agents, {} skills, {} hooks, {} MCP servers)",
                 report.plugin_name,
-                tree.tree.as_str(),
+                tree.tree,
                 tree.output.display(),
                 tree.components.agents,
                 tree.components.skills,

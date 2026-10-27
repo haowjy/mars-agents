@@ -7,47 +7,57 @@ package distribution.
 
 `plugin/` builds selected harness trees matching what `mars sync` installs in the package's own
 checkout: its items plus dependencies under its own filters, renames, and visibility rules. It
-resolves through `PublishLens`, stages every package, collects the flattened target once with
-sync's shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
-`TreeProfile`. `plugin.rs` owns the two declarative format tables: one row per consumer harness and one per
-published tree. Harness rows select a tree and carry naming, loader capability, display, and
-verification policy; tree rows carry the directory key, generated root-file renderer, marketplace
-naming, dropped agent fields, and lossiness adjustment. Writer `TreeProfile`s reference those tree
-rows and add only compiler and emission functions. Harness identity, variant key, and sync root come
-from `compiler::harness_descriptor`; authored-hook checks run once before copying. `PluginTree::as_str()` is
-the single key for both staged directory names and reported output paths. Claude, Codex, and Grok
-share the Claude tree; Cursor and OpenCode have their own tree identities. The OpenCode tree is an
-npm-shaped package whose fixed `index.mjs` registers skills and MCP servers and imports every
-targeted hook fragment as an in-memory TypeScript data URL. A build warning reports fragments with
-no recognizable default export, but runtime isolation decides whether each hook loads.
-Hook-directory substitution is JavaScript-string encoded, and one fragment's load or setup failure
-does not block later hooks.
+resolves through `PublishLens`, stages every package, collects the flattened target once with sync's
+shared collect/rename/validate pipeline, then runs the one `tree::write_tree` loop for each
+`TreeProfile`. `spec.rs` owns both declarative registries: `PLUGIN_HARNESS_SPECS`, one row per
+consumer harness (tree, naming rule, display, README note, verification evidence), and
+`TREE_PROFILES`, one row per published tree defined beside its writer in `tree/`. A harness row
+points straight at its `TreeProfile`, which carries the directory key, root file, dropped agent
+fields, lossiness adjustment, the plugin-root mapping, and the agent/config/finish writers, so a
+harness and its tree cannot disagree and adding a harness is one row. `TreeProfile.key` is the
+single key for both staged directory names and reported output paths. `RootFile` and `Finish` are
+enums: a marketplace cannot be declared without its catalog directory and name rule, and the
+standard finish owns its manifest path. `GENERATED_ROOT_FILES` in `plugin_metadata.rs` is the one
+declared list of generated root files; staging and sentinel validation read it, and a tree row names
+its constant directly, with `spec`'s test failing if a tree's root file or catalog directory is not
+in that list. `PluginRoot` is an enum: a tree either writes a harness token literally or keeps the
+Mars token for its own runtime to substitute, so the merged-hook path mapping matches on it instead
+of unwrapping an optional token.
+Harness identity, variant key, and sync root come from `compiler::harness_descriptor`; authored-hook
+checks run once before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode
+have their own tree identities. The OpenCode tree is an npm-shaped package whose fixed `index.mjs`
+registers skills and MCP servers and imports every targeted hook fragment as an in-memory TypeScript
+data URL. A build warning reports fragments with no recognizable default export, but runtime
+isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
+and one fragment's load or setup failure does not block later hooks.
 
-Publication staging and input fingerprinting share a typed inventory of item roots and MCP
-definitions. Graph filters narrow each staged dependency to what target collection can publish,
-except that every hook root remains available for the strict pre-filter compatibility check. A
-single authored walker takes the policy: publication confines links to the package and rejects
-special files, while sync retains its historical follow behavior. Manifestless foreign sources
-separately copy manifest metadata with declarations rewritten to the selected typed inventory, so
-rediscovery does not require excluded paths. The root-package input fingerprint includes inventory
-kinds and authored bytes, but never Mars-generated catalog metadata. Repo tooling and filtered-out
-non-hook items are not staged. A flat-root skill retains authored root resources but its publication
-inventory excludes standard tooling directories and top-level special filesystem nodes. Installed
-skill frontmatter is written once into graph staging before every tree projects it; derived skill
-and hook trees then use the plain copier, with other-target hook fragments excluded.
+Publication staging materializes each graph node's prepared package — manifest, definitions and
+listed payload — then copies the binary-owned hook, MCP, bootstrap and source-manifest surfaces. A
+manifestless foreign source materializes in the schema v1 layout `normalize` gave it, so rediscovery
+does not require excluded paths. Target collection applies the graph filters, except that every hook
+root remains available for the strict pre-filter compatibility check. The input fingerprint walks
+the root package's discovered item and MCP inventory separately; the single authored walker confines
+links to the package and rejects special files there, while sync and staging's binary-owned subtree
+copies retain sync's historical follow behavior. The fingerprint includes inventory kinds and
+authored bytes, but never Mars-generated catalog metadata. A flat-root skill retains authored root
+resources but its publication inventory excludes standard tooling directories and top-level special
+filesystem nodes. Installed skill frontmatter is written once into graph staging before every tree
+projects it; derived skill and hook trees then use the plain copier, with other-target hook fragments
+excluded.
 
-Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading
-project config, a lockfile, `.mars/`, or host model state. The implicit target selection is the
-set of built trees' sync roots. `TargetState` also retains every filtered exported graph hook,
-including hooks no built root selected. A source check before the tree loop emits authored-content
-diagnostics, including skill-schema findings, once; tree writing emits only lowering diagnostics.
-Support diagnostics consume the full `TargetState` for graph-wide counts rather than inferring
-them from one tree. `support.rs` derives component support from each listed harness's tree profile
-plus Codex's agent-loader gap; per-harness display copy and verification evidence live on the
-harness spec rows, and the same data renders the README tables. The Claude plugin MCP writer emits
-same-name environment pass-throughs as `env_vars` for Claude/Codex/Grok compatibility; renamed
-references retain Claude's `${VAR}` form and warn that Codex passes it literally. Sync continues to
-use the native Claude writer.
+Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading project
+config, a lockfile, `.mars/`, or host model state. The implicit target selection is the set of built
+trees' sync roots. `TargetState` also retains every filtered exported graph hook, including hooks no
+built root selected. A source check before the tree loop emits authored-content diagnostics,
+including skill-schema findings, once; tree writing emits only lowering diagnostics. Support
+diagnostics consume the full `TargetState` for graph-wide counts rather than inferring them from one
+tree. `support.rs` derives component support from each listed harness's tree profile and the harness
+row's agent evidence, so a row without evidence has no agent surface; verification evidence and an
+optional prose note live on the harness spec rows. Each README support cell is that computed state
+plus the note, so the prose can qualify a finding but never contradict it, and the README freshness
+test renders the same tables. The Claude plugin MCP writer emits same-name environment pass-throughs
+as `env_vars` for Claude/Codex/Grok compatibility; renamed references retain Claude's `${VAR}` form
+and warn that Codex passes it literally. Sync continues to use the native Claude writer.
 
 The Cursor profile lowers native Cursor agents without an additional plugin field filter, uses no
 native model aliases, and writes `.cursor-plugin/plugin.json`, `mcp.json`, and versioned

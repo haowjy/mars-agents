@@ -5,6 +5,6 @@
 - **p9434 Low 3:** `src/build/plugin/output.rs:393` writes `.mars-plugin.json` outside the format
   owner. Move sentinel serialization and writing into `plugin_metadata` so read, write, validate,
   and format constants change together; keep the output module responsible only for tree swaps.
-- **F3 / p9433 note:** `src/build/plugin/mod.rs:294` fingerprints and ships author-gitignored files
+- **F3 / p9433 note:** `src/build/plugin/mod.rs:556` fingerprints and ships author-gitignored files
   inside skill directories, so a clean clone can disagree with the sentinel. Define an exclusion
   policy or emit a build warning before F3's clean-clone freshness check is implemented.

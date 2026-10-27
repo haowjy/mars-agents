@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::plugin_metadata::{MARS_VERSION, PluginSentinel, SENTINEL_FILE};
 
+use super::spec::{PluginHarnessSpec, harness_specs, tree_for_root_file};
 use super::{configured_output_path, plugin_inputs_hash};
 
 /// Offline state of a configured plugin build and the repo-root files it owns.
@@ -287,12 +288,11 @@ pub(crate) fn inspect_validated(
 }
 
 pub(super) fn expected_root_paths(
-    harnesses: &[&'static crate::plugin::PluginHarnessSpec],
+    harnesses: &[&'static PluginHarnessSpec],
 ) -> BTreeSet<&'static str> {
     harnesses
         .iter()
-        .filter_map(|harness| harness.tree.spec().root_file)
-        .map(|root| root.path)
+        .map(|harness| harness.tree.root_file.path())
         .collect()
 }
 
@@ -593,14 +593,11 @@ fn root_file_conflict_message(path: &Path, reason: &str) -> String {
 }
 
 fn root_file_harness(path: &Path) -> String {
-    let Some(tree) = crate::plugin::PLUGIN_TREE_SPECS.iter().find(|tree| {
-        tree.root_file
-            .is_some_and(|root| Path::new(root.path) == path)
-    }) else {
+    let Some(tree) = tree_for_root_file(path) else {
         return "requested".to_string();
     };
-    crate::plugin::harness_specs()
-        .filter(|harness| harness.tree == tree.tree)
+    harness_specs()
+        .filter(|harness| harness.tree.key == tree.key)
         .map(|harness| harness.display_name)
         .collect::<Vec<_>>()
         .join("/")

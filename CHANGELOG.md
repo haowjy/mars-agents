@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- README plugin support table: cells are generated from what each plugin tree actually does. Grok
+  agents now list the Claude agent fields that are dropped; Codex and Grok hooks state the `claude`
+  fragment rule. Generated plugin output is unchanged.
+
 ## [0.20.1] - 2026-10-26
 
 ### Fixed

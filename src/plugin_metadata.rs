@@ -8,18 +8,59 @@ use crate::error::MarsError;
 
 pub(crate) const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub(crate) const SENTINEL_SCHEMA_VERSION: u32 = 1;
+
 /// The Mars that writes a sentinel's `mars_version`, and the one `mars check` compares it with.
 pub(crate) const MARS_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub(crate) fn generated_root_files() -> impl Iterator<Item = &'static str> {
-    crate::plugin::PLUGIN_TREE_SPECS
-        .iter()
-        .filter_map(|tree| tree.root_file.map(|root| root.path))
+
+// Generated root files live here, below `build::plugin`'s tree rows, because
+// sentinel validation and staging read them from a lower layer.
+
+/// A package-root file Mars generates and owns.
+///
+/// `GENERATED_ROOT_FILES` is the only list of them: publishing excludes these
+/// paths from authored-source walks, and sentinel validation accepts only them.
+/// A tree row names one of these constants directly; `build::plugin::spec`'s test
+/// keeps the tree rows and this list in agreement, so a tree cannot generate a
+/// root file the list does not cover.
+#[derive(Clone, Copy)]
+pub(crate) struct GeneratedRootFile {
+    path: &'static str,
+    /// The catalog directory holding a marketplace file; `None` for a package
+    /// manifest at the package root.
+    catalog_directory: Option<&'static str>,
 }
 
-pub(crate) fn generated_root_directories() -> impl Iterator<Item = &'static str> {
-    crate::plugin::PLUGIN_TREE_SPECS
+pub(crate) const CLAUDE_ROOT_FILE: GeneratedRootFile = GeneratedRootFile {
+    path: ".claude-plugin/marketplace.json",
+    catalog_directory: Some(".claude-plugin"),
+};
+pub(crate) const CURSOR_ROOT_FILE: GeneratedRootFile = GeneratedRootFile {
+    path: ".cursor-plugin/marketplace.json",
+    catalog_directory: Some(".cursor-plugin"),
+};
+pub(crate) const OPENCODE_ROOT_FILE: GeneratedRootFile = GeneratedRootFile {
+    path: "package.json",
+    catalog_directory: None,
+};
+
+pub(crate) const GENERATED_ROOT_FILES: &[GeneratedRootFile] =
+    &[CLAUDE_ROOT_FILE, CURSOR_ROOT_FILE, OPENCODE_ROOT_FILE];
+
+impl GeneratedRootFile {
+    pub(crate) fn path(self) -> &'static str {
+        self.path
+    }
+
+    pub(crate) fn catalog_directory(self) -> Option<&'static str> {
+        self.catalog_directory
+    }
+}
+
+/// Every package-root path Mars generates: the root files and their catalog directories.
+pub(crate) fn generated_root_paths() -> impl Iterator<Item = &'static str> {
+    GENERATED_ROOT_FILES
         .iter()
-        .filter_map(|tree| tree.root_file.and_then(|root| root.catalog_directory))
+        .flat_map(|file| std::iter::once(file.path()).chain(file.catalog_directory()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,8 +127,18 @@ impl PluginSentinel {
             && self
                 .root_directories
                 .iter()
-                .all(|path| generated_root_directories().any(|allowed| allowed == path))
+                .all(|path| is_generated_root_directory(path))
     }
+}
+
+fn is_generated_root_file(path: &str) -> bool {
+    GENERATED_ROOT_FILES.iter().any(|file| file.path() == path)
+}
+
+fn is_generated_root_directory(path: &str) -> bool {
+    GENERATED_ROOT_FILES
+        .iter()
+        .any(|file| file.catalog_directory() == Some(path))
 }
 
 fn valid_entry(path: &str, hash: &str) -> bool {
@@ -102,7 +153,7 @@ pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), Mar
         .root_files
         .keys()
         .chain(sentinel.root_files_previous.keys())
-        .find(|recorded| !generated_root_files().any(|allowed| allowed == recorded.as_str()))
+        .find(|recorded| !is_generated_root_file(recorded))
     {
         return Err(invalid(format!(
             "plugin sentinel records unsupported generated root file `{unsupported}`: {}",
@@ -112,7 +163,7 @@ pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), Mar
     if let Some(unsupported) = sentinel
         .root_directories
         .iter()
-        .find(|recorded| !generated_root_directories().any(|allowed| allowed == recorded.as_str()))
+        .find(|recorded| !is_generated_root_directory(recorded))
     {
         return Err(invalid(format!(
             "plugin sentinel records unsupported generated root directory `{unsupported}`: {}",

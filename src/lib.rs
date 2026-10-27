@@ -18,7 +18,6 @@ pub(crate) mod model;
 pub mod models;
 pub(crate) mod package_prepare;
 pub mod platform;
-pub(crate) mod plugin;
 pub(crate) mod plugin_metadata;
 pub(crate) mod provided;
 pub(crate) mod reader;

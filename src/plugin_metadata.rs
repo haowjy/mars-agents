@@ -2,9 +2,7 @@
 
 use std::path::Path;
 
-use mars_schema::plugin_metadata::{
-    PluginSentinel, SENTINEL_FILE, is_generated_root_directory, is_generated_root_file,
-};
+use mars_schema::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
 use crate::error::MarsError;
 
@@ -12,36 +10,9 @@ use crate::error::MarsError;
 pub(crate) const MARS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) fn validate(sentinel: &PluginSentinel, path: &Path) -> Result<(), MarsError> {
-    if let Some(unsupported) = sentinel
-        .root_files
-        .keys()
-        .chain(sentinel.root_files_previous.keys())
-        .find(|recorded| !is_generated_root_file(recorded))
-    {
-        return Err(invalid(format!(
-            "plugin sentinel records unsupported generated root file `{unsupported}`: {}",
-            path.display()
-        )));
-    }
-    if let Some(unsupported) = sentinel
-        .root_directories
-        .iter()
-        .find(|recorded| !is_generated_root_directory(recorded))
-    {
-        return Err(invalid(format!(
-            "plugin sentinel records unsupported generated root directory `{unsupported}`: {}",
-            path.display()
-        )));
-    }
-    if sentinel.is_valid() {
-        Ok(())
-    } else {
-        Err(invalid(format!(
-            "plugin sentinel has invalid metadata or unsupported schema {}: {}",
-            sentinel.schema_version,
-            path.display()
-        )))
-    }
+    sentinel
+        .validate()
+        .map_err(|error| invalid(format!("{error}: {}", path.display())))
 }
 
 /// Read and validate a generated plugin output directory's root sentinel.

@@ -96,46 +96,102 @@ pub struct ResolvedDependency {
     pub commit: Option<String>,
 }
 
+/// Why a sentinel is not a marker for a generated plugin output directory.
+///
+/// Each variant names the value that failed, so a caller reports which entry is wrong
+/// without repeating the rule to find it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SentinelError {
+    #[error(
+        "plugin sentinel schema version {recorded} is not supported (this build reads {})",
+        SENTINEL_SCHEMA_VERSION
+    )]
+    UnsupportedSchemaVersion { recorded: u32 },
+    #[error("plugin sentinel records an empty `{field}`")]
+    EmptyField { field: &'static str },
+    #[error("plugin sentinel dependency `{name}` records neither a version nor a commit")]
+    DependencyWithoutVersionOrCommit { name: String },
+    #[error("plugin sentinel records no generated files")]
+    NoFiles,
+    #[error("plugin sentinel entry `{path}` is not a relative path with a sha256 hash")]
+    InvalidEntry { path: String },
+    #[error("plugin sentinel records unsupported generated root file `{path}`")]
+    UnsupportedRootFile { path: String },
+    #[error("plugin sentinel records unsupported generated root directory `{path}`")]
+    UnsupportedRootDirectory { path: String },
+}
+
 impl PluginSentinel {
+    /// Why this sentinel does not describe a tree this build may treat as generated output.
+    pub fn validate(&self) -> Result<(), SentinelError> {
+        if self.schema_version != SENTINEL_SCHEMA_VERSION {
+            return Err(SentinelError::UnsupportedSchemaVersion {
+                recorded: self.schema_version,
+            });
+        }
+        let required = [
+            ("mars_version", &self.mars_version),
+            ("plugin_name", &self.plugin_name),
+            ("version", &self.version),
+            ("inputs_hash", &self.inputs_hash),
+        ];
+        if let Some((field, _)) = required
+            .into_iter()
+            .find(|(_, value)| value.trim().is_empty())
+        {
+            return Err(SentinelError::EmptyField { field });
+        }
+        for (name, dependency) in &self.dependencies {
+            if !records_revision(&dependency.version) && !records_revision(&dependency.commit) {
+                return Err(SentinelError::DependencyWithoutVersionOrCommit { name: name.clone() });
+            }
+        }
+        if self.files.is_empty() {
+            return Err(SentinelError::NoFiles);
+        }
+        for (path, hash) in &self.files {
+            validate_entry(path, hash)?;
+        }
+        for (path, hash) in self.root_files.iter().chain(&self.root_files_previous) {
+            if !is_generated_root_file(path) {
+                return Err(SentinelError::UnsupportedRootFile { path: path.clone() });
+            }
+            validate_entry(path, hash)?;
+        }
+        if let Some(path) = self
+            .root_directories
+            .iter()
+            .find(|path| !is_generated_root_directory(path))
+        {
+            return Err(SentinelError::UnsupportedRootDirectory { path: path.clone() });
+        }
+        Ok(())
+    }
+
     pub fn is_valid(&self) -> bool {
-        self.schema_version == SENTINEL_SCHEMA_VERSION
-            && !self.mars_version.trim().is_empty()
-            && !self.plugin_name.trim().is_empty()
-            && !self.version.trim().is_empty()
-            && !self.inputs_hash.trim().is_empty()
-            && self.dependencies.values().all(|dependency| {
-                dependency
-                    .version
-                    .as_deref()
-                    .is_some_and(|value| !value.trim().is_empty())
-                    || dependency
-                        .commit
-                        .as_deref()
-                        .is_some_and(|value| !value.trim().is_empty())
-            })
-            && !self.files.is_empty()
-            && self
-                .files
-                .iter()
-                .all(|(path, hash)| valid_entry(path, hash))
-            && self
-                .root_files
-                .iter()
-                .all(|(path, hash)| is_generated_root_file(path) && valid_entry(path, hash))
-            && self
-                .root_files_previous
-                .iter()
-                .all(|(path, hash)| is_generated_root_file(path) && valid_entry(path, hash))
-            && self
-                .root_directories
-                .iter()
-                .all(|path| is_generated_root_directory(path))
+        self.validate().is_ok()
     }
 }
 
 /// Whether bytes are a valid marker for a generated plugin output directory.
 pub fn is_valid_sentinel(bytes: &[u8]) -> bool {
     serde_json::from_slice::<PluginSentinel>(bytes).is_ok_and(|sentinel| sentinel.is_valid())
+}
+
+fn validate_entry(path: &str, hash: &str) -> Result<(), SentinelError> {
+    if valid_entry(path, hash) {
+        return Ok(());
+    }
+    Err(SentinelError::InvalidEntry {
+        path: path.to_string(),
+    })
+}
+
+/// Whether a dependency pins the build to something: a version, a commit, or both.
+fn records_revision(value: &Option<String>) -> bool {
+    value
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
 }
 
 /// Whether a sentinel entry names a package-relative path and a sha256 hash.

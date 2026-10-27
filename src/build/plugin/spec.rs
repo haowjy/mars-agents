@@ -63,12 +63,12 @@ impl NameRule {
 
 /// The root file a tree owns in the package, and the format facts that come with it.
 ///
-/// A marketplace catalog has a marketplace-name rule and a source prefix, and its
-/// catalog directory comes from the `GeneratedRootFile` table; an npm package manifest
-/// has neither. Keeping them in the variant means a tree cannot declare one without the
-/// other, and the file itself names a `mars_schema::plugin_metadata::GENERATED_ROOT_FILES`
-/// constant, which the test below checks covers every tree, so staging and sentinel
-/// validation know each generated root file.
+/// The variant names a `mars_schema::plugin_metadata::GENERATED_ROOT_FILES` constant, which
+/// supplies the path and, for a catalog, the directory holding it; the test below checks the
+/// table covers every tree, so staging and sentinel validation know each generated root file.
+/// What the variant adds is what only that format has: a marketplace catalog's marketplace-name
+/// rule and source prefix, which a tree writing a catalog must state, and nothing for an npm
+/// package manifest.
 #[derive(Clone, Copy)]
 pub(super) enum RootFile {
     Marketplace {

@@ -276,9 +276,13 @@ pub struct CollisionRename {
     pub source_name: SourceName,
     pub kind: ItemKind,
 }
+/// `local_source` names the consumer's own package. It keeps its installed name
+/// when a dependency lands on the same destination; sync's local package is
+/// `_self`, a plugin build's is its root package.
 pub fn build_with_collisions_and_diag(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
+    local_source: &SourceName,
     diag: &mut DiagnosticCollector,
 ) -> Result<(TargetState, Vec<ExplicitRename>, Vec<CollisionRename>), MarsError> {
     let mut collected_items = Vec::new();
@@ -332,7 +336,7 @@ pub fn build_with_collisions_and_diag(
                 .get(source_name)
                 .copied()
                 .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
-            match crate::compiler::mcp::discover_mcp_items_at_depth(
+            match crate::compiler::mcp::discover_mcp_items(
                 &node.rooted_ref.package_root,
                 source_name.as_str(),
                 dependency_depths.get(source_name).copied().unwrap_or(1),
@@ -442,7 +446,8 @@ pub fn build_with_collisions_and_diag(
         }
     }
 
-    let collision_renames = rename_destination_collisions(&mut collected_items, diag)?;
+    let collision_renames =
+        rename_destination_collisions(&mut collected_items, local_source, diag)?;
 
     let mut items: IndexMap<DestPath, TargetItem> = IndexMap::new();
     for target_item in collected_items {
@@ -557,6 +562,7 @@ pub(crate) fn package_dir_target_item(
 
 fn rename_destination_collisions(
     items: &mut [TargetItem],
+    local_source: &SourceName,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<CollisionRename>, MarsError> {
     let mut groups: IndexMap<DestPath, Vec<usize>> = IndexMap::new();
@@ -590,6 +596,11 @@ fn rename_destination_collisions(
 
         for &index in indices {
             let item = &mut items[index];
+            // The consumer's own package keeps the destination it declares; every
+            // dependency that landed on it takes the suffix instead.
+            if item.source_name == *local_source {
+                continue;
+            }
             let original_name = item.id.name.clone();
             let new_dest_path =
                 suffixed_collision_dest_path(&item.dest_path, item.id.kind, &item.source_name)?;
@@ -857,6 +868,11 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// The consumer's own package in a dependency-only test graph.
+    fn test_local_source() -> SourceName {
+        crate::types::SourceOrigin::LocalPackage.to_string().into()
+    }
+
     /// Helper: create a source tree with agents and skills
     fn make_source_tree(agents: &[(&str, &str)], skills: &[(&str, &str)]) -> TempDir {
         let dir = TempDir::new().unwrap();
@@ -1093,9 +1109,13 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -1117,7 +1137,9 @@ mod tests {
         )]);
         let mut diag = DiagnosticCollector::new();
 
-        let (target, _, _) = build_with_collisions_and_diag(&graph, &config, &mut diag).unwrap();
+        let (target, _, _) =
+            build_with_collisions_and_diag(&graph, &config, &test_local_source(), &mut diag)
+                .unwrap();
         let diagnostics = diag.drain();
 
         assert!(!target.items.contains_key("agents/bad:name.md"));
@@ -1145,9 +1167,13 @@ mod tests {
             .rename
             .insert("agents/old-name.md".into(), "agents/new-name.md".into());
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert_eq!(renames.len(), 1);
         assert_eq!(renames[0].kind, ItemKind::Agent);
         assert_eq!(renames[0].original_name.as_str(), "old-name");
@@ -1210,8 +1236,13 @@ mod tests {
             .rename
             .insert("agents/old-name.md".into(), "../escape.md".into());
 
-        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-            .unwrap_err();
+        let err = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap_err();
         assert!(matches!(err, MarsError::Source { .. }));
     }
 
@@ -1239,7 +1270,8 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
 
         let (target, explicit_renames, collision_renames) =
-            build_with_collisions_and_diag(&graph, &config, &mut diag).unwrap();
+            build_with_collisions_and_diag(&graph, &config, &test_local_source(), &mut diag)
+                .unwrap();
         let diagnostics = diag.drain();
 
         assert!(explicit_renames.is_empty());
@@ -1274,9 +1306,13 @@ mod tests {
             ("source-b", &tree2, None, FilterMode::All),
         ]);
 
-        let (target, explicit_renames, collision_renames) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, explicit_renames, collision_renames) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
 
         assert!(explicit_renames.is_empty());
         assert_eq!(collision_renames.len(), 2);
@@ -1305,9 +1341,13 @@ mod tests {
             ("source-c", &tree3, None, FilterMode::All),
         ]);
 
-        let (target, _, collision_renames) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, _, collision_renames) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
 
         assert_eq!(collision_renames.len(), 3);
         assert!(target.items.contains_key("agents/coder__source-a.md"));
@@ -1332,9 +1372,13 @@ mod tests {
             .rename
             .insert("agents/coder.md".into(), "agents/source-a-coder.md".into());
 
-        let (target, _, collision_renames) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, _, collision_renames) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
 
         assert!(collision_renames.is_empty());
         assert!(target.items.contains_key("agents/source-a-coder.md"));
@@ -1361,8 +1405,13 @@ mod tests {
             .rename
             .insert("agents/reviewer.md".into(), "agents/coder.md".into());
 
-        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-            .unwrap_err();
+        let err = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap_err();
 
         assert!(matches!(err, MarsError::Collision { .. }));
     }
@@ -1379,8 +1428,13 @@ mod tests {
             .rename
             .insert("agents/coder.md".into(), "skills/planning".into());
 
-        let err = build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-            .unwrap_err();
+        let err = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap_err();
 
         assert!(matches!(err, MarsError::Collision { .. }));
     }
@@ -1407,7 +1461,8 @@ mod tests {
             .insert("agents/reviewer.md".into(), "agents/coder.md".into());
         let mut diag = DiagnosticCollector::new();
 
-        let err = build_with_collisions_and_diag(&graph, &config, &mut diag).unwrap_err();
+        let err = build_with_collisions_and_diag(&graph, &config, &test_local_source(), &mut diag)
+            .unwrap_err();
         let diagnostics = diag.drain();
 
         assert!(matches!(err, MarsError::Collision { .. }));
@@ -1438,9 +1493,13 @@ mod tests {
             ),
         ]);
 
-        let (target, renames, collision_renames) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, collision_renames) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         assert!(collision_renames.is_empty());
         assert_eq!(target.items.len(), 2);
@@ -1465,9 +1524,13 @@ mod tests {
             },
         )]);
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 2); // coder + planning
         assert!(target.items.contains_key("agents/coder.md"));
@@ -1487,9 +1550,13 @@ mod tests {
             FilterMode::Exclude(vec!["deprecated".into()]),
         )]);
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/coder.md"));
@@ -1522,9 +1589,13 @@ mod tests {
             ],
         );
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 3);
         assert!(target.items.contains_key("skills/skill-a"));
@@ -1539,9 +1610,13 @@ mod tests {
 
         let (graph, config) = make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         let item = &target.items["agents/test.md"];
         let expected_hash = hash::hash_bytes(content.as_bytes());
@@ -1558,9 +1633,13 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1591,9 +1670,13 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1622,9 +1705,13 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 
@@ -1654,9 +1741,13 @@ mod tests {
             FilterMode::All,
         )]);
 
-        let (target, renames, _) =
-            build_with_collisions_and_diag(&graph, &config, &mut DiagnosticCollector::new())
-                .unwrap();
+        let (target, renames, _) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert!(renames.is_empty());
         let install_root = TempDir::new().unwrap();
 

@@ -23,6 +23,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already did; `mars sync --force` adopts and overwrites it.
 
 ### Fixed
+- `mars build plugin` keeps the names of the building package's own agents and skills when a
+  dependency defines the same name, as `mars sync` already did: the root installs `rev.md` and
+  the dependency `rev__adep.md`, instead of renaming both to `rev__pkg.md` and `rev__adep.md`.
 - A FIFO, socket or device inside a skill, hook or MCP server directory is rejected with an error
   naming it, instead of hanging `mars sync` while hashing the tree. File errors from that hash walk
   now name the path instead of `<unknown>`.

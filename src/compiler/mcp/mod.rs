@@ -115,18 +115,11 @@ impl ParsedMcpItem {
 ///
 /// Scans `<package_root>/mcp/<name>/mcp.toml` for each subdirectory.
 /// Returns the parsed items in directory-sorted order.
-pub fn discover_mcp_items(
-    package_root: &Path,
-    source_name: &str,
-    decl_order: usize,
-    diag: &mut DiagnosticCollector,
-) -> Result<Vec<ParsedMcpItem>, MarsError> {
-    let depth = usize::from(source_name != "_self");
-    discover_mcp_items_at_depth(package_root, source_name, depth, decl_order, diag)
-}
-
-/// Discover MCP items with graph precedence supplied by the target builder.
-pub(crate) fn discover_mcp_items_at_depth(
+///
+/// `depth` is the source's shortest graph distance from the consumer; the local
+/// package is 0, so the caller supplies the precedence rather than inferring it
+/// from `source_name`.
+pub(crate) fn discover_mcp_items(
     package_root: &Path,
     source_name: &str,
     depth: usize,
@@ -356,7 +349,7 @@ args = ["-y", "@upstash/context7-mcp@latest"]
         );
 
         let items =
-            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "context7");
         assert_eq!(items[0].def.command, "npx");
@@ -367,7 +360,7 @@ args = ["-y", "@upstash/context7-mcp@latest"]
     fn discover_empty_when_no_mcp_dir() {
         let tmp = TempDir::new().unwrap();
         let items =
-            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         assert!(items.is_empty());
     }
 
@@ -376,7 +369,7 @@ args = ["-y", "@upstash/context7-mcp@latest"]
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("mcp/no-toml")).unwrap();
         let items =
-            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         assert!(items.is_empty());
     }
 
@@ -392,7 +385,7 @@ command = "node"
 "#,
         );
         let items =
-            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items[0].name, "custom-name");
     }
 
@@ -409,7 +402,7 @@ API_KEY = { from = "env", var = "MY_API_KEY" }
 "#,
         );
         let items =
-            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items[0].def.env.len(), 1);
         let env_ref = &items[0].def.env["API_KEY"];
         assert_eq!(env_ref.var_name(), "MY_API_KEY");
@@ -428,7 +421,7 @@ KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ123" }
 "#,
         );
         let items =
-            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         let mut diag = DiagnosticCollector::new();
         check_env_refs(&items, false, &mut diag).unwrap();
         let collected = diag.drain();
@@ -453,7 +446,7 @@ KEY = { from = "env", var = "MARS_TEST_DEFINITELY_NOT_SET_XYZ456" }
 "#,
         );
         let items =
-            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         let mut diag = DiagnosticCollector::new();
         let result = check_env_refs(&items, true, &mut diag);
         assert!(result.is_err());
@@ -472,7 +465,7 @@ TOKEN = { from = "env", var = "SECRET_TOKEN" }
 "#,
         );
         let items =
-            discover_mcp_items(tmp.path(), "base", 0, &mut DiagnosticCollector::new()).unwrap();
+            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         let entry = TargetMcpEntry::from_parsed(&items[0], "/installed/mcp/server");
         // The env map carries the variable name, not the resolved value.
         assert_eq!(entry.env["TOKEN"], "SECRET_TOKEN");

@@ -308,12 +308,10 @@ fn ordered_agent_deps(
     source_name: &SourceName,
     dep_precedence: &[SourceName],
 ) -> Vec<SourceName> {
-    if source_name.as_str() == "_self" {
-        return dep_precedence.to_vec();
-    }
-
+    // The consumer's own package has no resolved node: its items may reference
+    // every declared dependency, in declaration order.
     let Some(node) = graph.nodes.get(source_name) else {
-        return Vec::new();
+        return dep_precedence.to_vec();
     };
 
     let mut ordered = Vec::new();

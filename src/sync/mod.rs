@@ -594,7 +594,7 @@ pub(crate) fn build_target_state(
     extend: impl FnOnce(&mut target::TargetState, &mut DiagnosticCollector) -> Result<(), MarsError>,
 ) -> Result<BuiltTarget, MarsError> {
     let (mut target, explicit_renames, collision_renames) =
-        target::build_with_collisions_and_diag(graph, effective, diag)?;
+        target::build_with_collisions_and_diag(graph, effective, local_source, diag)?;
     extend(&mut target, diag)?;
     target.resolve_mcp_collisions(
         &effective.settings.managed_targets(),

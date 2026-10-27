@@ -111,7 +111,6 @@ resolver fixtures that inject manifests without authored files.
 
 - `PendingSource` — unresolved dependency request and its declared/effective identities
 - `Edge` — one manifest entry of a package: the package it names and its filter
-- `PendingItem` — an item with the version request that selected it, for the item version check
 - `ResolvedNode` — source identity, immutable authored origin, prepared result and parsed manifest
 - `ResolvedGraph` — final nodes, `selection` and deterministic order
 - `ResolverContext` — restart, constraint and traversal state
@@ -142,7 +141,7 @@ otherwise (`resolve()` turns the selection's first `missing_skills` entry into t
 never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator
 reports what is actually provided. Source items come from `Prepared.definitions` and, for the kinds
 the crate does not prepare (bootstrap documents, hooks), from `src/discover/`'s convention walk.
-Version conflicts between packages produce errors (local items skip conflicts).
+Two requests that select items from one package must agree on its version (`check_selecting_requests_agree`; `validate_all_constraints` cannot see ref pins, which settle no version); a path package skips the check, and a manifest's filtered entry, which selects nothing, only has to resolve.
 
 ## Patterns
 

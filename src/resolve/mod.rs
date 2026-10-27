@@ -52,58 +52,11 @@ use crate::lock::LockFile;
 use crate::source::{AvailableVersion, ResolvedRef};
 use crate::types::SourceName;
 use crate::types::SourceUrl;
-use mars_schema::item::ItemKind;
-use mars_schema::selection::{Requester, Selection};
 use package::resolve_package_bottom_up;
 use version::validate_all_constraints;
 
 type EngineExclusions =
     HashMap<(SourceName, semver::Version), Vec<requires::EngineRequirementFailure>>;
-
-#[derive(Debug)]
-enum VersionAction {
-    Process,
-    Skip,
-}
-
-fn apply_item_version_policy(
-    pending_item: &PendingItem,
-    check: VersionCheckResult,
-    diag: &mut DiagnosticCollector,
-) -> Result<VersionAction, ResolutionError> {
-    match check {
-        VersionCheckResult::NotSeen => Ok(VersionAction::Process),
-        VersionCheckResult::SameVersion => Ok(VersionAction::Skip),
-        VersionCheckResult::PotentiallyConflicting {
-            existing,
-            requested,
-        } => {
-            diag.warn(
-                "potential-version-drift",
-                format!(
-                    "potential version drift: item '{}' from '{}' requested as {} but already seen as {}",
-                    pending_item.item, pending_item.package, requested, existing
-                ),
-            );
-            Ok(VersionAction::Skip)
-        }
-        VersionCheckResult::DifferentVersion {
-            existing,
-            requested,
-        } => {
-            if pending_item.is_local {
-                return Ok(VersionAction::Skip);
-            }
-            Err(ResolutionError::ItemVersionConflict {
-                item: pending_item.item.to_string(),
-                package: pending_item.package.to_string(),
-                existing: existing.to_string(),
-                requested: requested.to_string(),
-                chain: pending_item.required_by.clone(),
-            })
-        }
-    }
-}
 
 fn same_resolved_ref(a: &ResolvedRef, b: &ResolvedRef) -> bool {
     a.version == b.version
@@ -339,7 +292,27 @@ pub fn resolve(
         }
         .into());
     }
-    check_item_versions(&selection, &ctx, diag)?;
+    {
+        let settled: HashMap<SourceName, version::SettledPackage> = ctx
+            .registry()
+            .iter()
+            .map(|(name, package)| {
+                (
+                    name.clone(),
+                    version::SettledPackage {
+                        version: package.node.resolved_ref.version.as_ref(),
+                        is_local: package.is_local,
+                    },
+                )
+            })
+            .collect();
+        version::check_selecting_requests_agree(
+            &selection,
+            ctx.version_constraints(),
+            &settled,
+            diag,
+        )?;
+    }
 
     let version_constraints = ctx.version_constraints().clone();
     let graph = ctx.into_graph(selection);
@@ -348,80 +321,6 @@ pub fn resolve(
     diag.reconcile_engine_fallbacks(&graph);
 
     Ok(graph)
-}
-
-/// Checks each selected item's version request against the first one seen for its package.
-fn check_item_versions(
-    selection: &Selection,
-    ctx: &ResolverContext,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), MarsError> {
-    let mut visited = VisitedSet::new();
-    let mut package_versions = PackageVersions::new();
-    for item in &selection.items {
-        if !matches!(item.kind, ItemKind::Agent | ItemKind::Skill) {
-            continue;
-        }
-        let Some(package) = ctx.registry().get(item.package.as_str()) else {
-            continue;
-        };
-        let constraints = ctx.version_constraints().get(item.package.as_str());
-        for requester in &item.required_by {
-            // A request's constraint is the one its requester recorded; a skill ref takes the
-            // package's first.
-            let (required_by, recorded) = match requester {
-                Requester::Consumer => ("mars.toml".to_string(), Some("mars.toml")),
-                Requester::Package { package: from } => (from.clone(), Some(from.as_str())),
-                Requester::Item { package, slug, .. } => (format!("{package}/{slug}"), None),
-            };
-            let constraint = constraints
-                .and_then(|entries| match recorded {
-                    Some(label) => entries.iter().find(|(from, _)| from == label),
-                    None => entries.first(),
-                })
-                .map(|(_, constraint)| constraint)
-                .unwrap_or(&package.constraint)
-                .clone();
-            let pending_item = PendingItem {
-                package: item.package.as_str().into(),
-                item: item.slug.as_str().into(),
-                kind: item.kind,
-                constraint,
-                required_by,
-                is_local: package.is_local,
-            };
-            match apply_item_version_policy(
-                &pending_item,
-                visited.check_version(
-                    &pending_item.package,
-                    &pending_item.item,
-                    &pending_item.constraint,
-                ),
-                diag,
-            )
-            .map_err(MarsError::from)?
-            {
-                VersionAction::Process => {}
-                VersionAction::Skip => continue,
-            }
-            package_versions
-                .check_or_insert(
-                    &pending_item.package,
-                    &package.node.resolved_ref,
-                    &pending_item.constraint,
-                    &pending_item.required_by,
-                    pending_item.is_local,
-                )
-                .map_err(MarsError::from)?;
-            visited.insert(
-                pending_item.package.clone(),
-                pending_item.item.clone(),
-                pending_item.constraint.clone(),
-                package.node.resolved_ref.clone(),
-            );
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

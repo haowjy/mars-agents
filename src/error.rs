@@ -82,17 +82,6 @@ pub enum ResolutionError {
     VersionConflict { name: String, message: String },
 
     #[error(
-        "version conflict for item `{item}` from package `{package}`: {existing} vs {requested} (requester chain: {chain})"
-    )]
-    ItemVersionConflict {
-        item: String,
-        package: String,
-        existing: String,
-        requested: String,
-        chain: String,
-    },
-
-    #[error(
         "package version conflict for `{package}`: {existing} vs {requested} (requester chain: {chain})"
     )]
     PackageVersionConflict {

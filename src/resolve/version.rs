@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
+use mars_schema::selection::{Requester, Selection};
 use mars_schema::version::{Constraint, SelectError, SelectionPolicy, select};
 use semver::{Version, VersionReq};
 
@@ -12,6 +13,7 @@ use crate::types::{SourceId, SourceName, SourceUrl};
 
 use super::EngineExclusions;
 use super::SourceProvider;
+use super::compat::{CompatibilityResult, compatible_with_resolved};
 use super::package::PendingSource;
 use super::types::{ResolveOptions, ResolvedNode};
 
@@ -629,6 +631,75 @@ pub(crate) fn validate_all_constraints(
                         ),
                     }
                     .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// What a settled package is, for the one check that needs it.
+pub(crate) struct SettledPackage<'a> {
+    pub(crate) version: Option<&'a Version>,
+    /// A path source: its requests never disagree about a version.
+    pub(crate) is_local: bool,
+}
+
+/// The requests that selected items from one package must agree on its version.
+///
+/// `validate_all_constraints` checks each semver requirement against the version that settled; a
+/// ref pin settles no version, so two requests that pin different refs (or a ref and a semver
+/// range) of one package only conflict here. A request that selected nothing from the package
+/// does not count: a manifest's filtered entry selects nothing and only has to resolve.
+/// `Latest` beside a pin is not a conflict but may drift, which warns.
+pub(crate) fn check_selecting_requests_agree(
+    selection: &Selection,
+    constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
+    packages: &HashMap<SourceName, SettledPackage>,
+    diag: &mut DiagnosticCollector,
+) -> Result<(), ResolutionError> {
+    // The label a request records its constraint under: `mars.toml`, or the requesting package.
+    let mut selecting: IndexMap<&str, HashSet<&str>> = IndexMap::new();
+    for item in &selection.items {
+        let labels = selecting.entry(item.package.as_str()).or_default();
+        for requester in &item.required_by {
+            match requester {
+                Requester::Consumer => labels.insert("mars.toml"),
+                Requester::Package { package } => labels.insert(package.as_str()),
+                Requester::Item { .. } => continue,
+            };
+        }
+    }
+
+    for (package, labels) in selecting {
+        let name = SourceName::from(package);
+        let Some(settled) = packages.get(&name).filter(|settled| !settled.is_local) else {
+            continue;
+        };
+        let mut requests = constraints
+            .get(&name)
+            .into_iter()
+            .flatten()
+            .filter(|(label, _)| labels.contains(label.as_str()));
+        let Some((first_by, first)) = requests.next() else {
+            continue;
+        };
+        for (by, constraint) in requests {
+            match compatible_with_resolved(first, constraint, settled.version) {
+                CompatibilityResult::Compatible => {}
+                CompatibilityResult::PotentiallyConflicting => diag.warn(
+                    "potential-version-drift",
+                    format!(
+                        "potential version drift: package '{package}' requested as {constraint} by {by} but already seen as {first} by {first_by}"
+                    ),
+                ),
+                CompatibilityResult::Conflicting => {
+                    return Err(ResolutionError::PackageVersionConflict {
+                        package: package.to_string(),
+                        existing: format!("{first} (required by {first_by})"),
+                        requested: format!("{constraint} (required by {by})"),
+                        chain: by.clone(),
+                    });
                 }
             }
         }

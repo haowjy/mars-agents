@@ -1,9 +1,9 @@
 #![cfg(test)]
 
+mod agreement_tests;
 mod filter_tests;
 mod integration_tests;
 mod skill_tests;
-mod tracker_tests;
 mod version_tests;
 
 use super::*;
@@ -14,7 +14,7 @@ use crate::types::{SourceId, SourceName, SourceUrl};
 use indexmap::IndexMap;
 use mars_schema::dependency::Entry;
 use mars_schema::filter::{FilterConfig, FilterMode};
-use mars_schema::names::{ItemName, RenameMap, SourceSubpath};
+use mars_schema::names::{RenameMap, SourceSubpath};
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

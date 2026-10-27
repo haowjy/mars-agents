@@ -48,7 +48,6 @@ pub(crate) struct RegisteredPackage {
     pub(crate) node: ResolvedNode,
     pub(crate) declared_source_id: SourceId,
     pub(crate) items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem>,
-    pub(crate) constraint: Constraint,
     pub(crate) is_local: bool,
 }
 
@@ -449,7 +448,6 @@ pub(crate) fn resolve_package_bottom_up(
             },
             declared_source_id: pending_src.declared_source_id.clone(),
             items,
-            constraint: pending_src.constraint.clone(),
             is_local: matches!(pending_src.spec, SourceSpec::Path(_)),
         },
     );

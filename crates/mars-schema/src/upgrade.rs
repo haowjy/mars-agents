@@ -18,7 +18,8 @@ pub struct UpgradeResult {
     pub text: String,
     /// What the upgrade changed, one note per key it dropped or moved.
     pub diagnostics: Vec<SchemaDiagnostic>,
-    /// A changed definition whose source shape prevented top-level block editing.
+    /// A changed definition whose text was re-rendered rather than edited minimally: the whole
+    /// frontmatter, or a `harness-overrides` block that could not be grown in place.
     pub fully_rewritten: bool,
     /// Authored key paths whose values or presence changed.
     pub edited_paths: Vec<Vec<PathSegment>>,
@@ -285,10 +286,10 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
             } else if let Some(grown) = grown_in_place(&block, before_value, after_value) {
                 output.push_str(&grown);
             } else {
-                // Re-rendering the block loses what the author wrote inside it, which only a
-                // consumer namespace entry's own repair needs to say.
-                re_rendered |= block.key == "harness-overrides"
-                    && changes_namespace_entry(before_value, after_value);
+                // Re-rendering a block loses what the author wrote inside it, which only a
+                // `harness-overrides` block can avoid by growing in place, so a file that fell back
+                // here is reported.
+                re_rendered |= block.key == "harness-overrides";
                 output.push_str(&render(block.key, after_value));
             }
             emitted.push(block.key);
@@ -309,19 +310,6 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
     Some(Edited {
         text: output,
         re_rendered,
-    })
-}
-
-/// Whether `after` adds or changes an entry a consumer namespace owns: the entries `mars migrate`
-/// writes, whose repair re-renders the block when it cannot be grown in place.
-fn changes_namespace_entry(before: &Value, after: &Value) -> bool {
-    let (Value::Mapping(before), Value::Mapping(after)) = (before, after) else {
-        return false;
-    };
-    after.iter().any(|(key, value)| {
-        key.as_str()
-            .is_some_and(|key| crate::harness::RESERVED_CONSUMER_NAMESPACES.contains(&key))
-            && before.get(key) != Some(value)
     })
 }
 

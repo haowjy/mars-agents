@@ -2,7 +2,7 @@
 
 Mars is a package manager for AI agent profiles. Install agents and skills from git and local sources into Claude Code, Cursor, Codex, OpenCode — any tool that reads from a config directory.
 
-Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, and copies managed content into the configured managed root (`.agents/` by default). Use `mars link` to add additional tool directories (`.claude/`, `.cursor/`, etc.) as managed targets.
+Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, and copies managed content from `.mars/` into the tool directories you link (`.claude/`, `.codex/`, and so on). With nothing linked it writes only to `.mars/`; `.agents` is a target older versions created and Mars now only warns about.
 
 ## Core Concepts
 
@@ -12,7 +12,7 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **Canonical store** (`.mars/`) is where Mars installs resolved content. Gitignored. Rebuilt by `mars sync` from sources + lock.
 
-**Managed root** is the directory Mars copies content into from `.mars/` (default: `.agents/`, configurable via `settings.managed_root`). The managed root may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. Additional tool directories (`.claude/`, `.cursor/`) can be added as targets via `mars link`.
+**Targets** (`[settings] targets`) are the tool directories Mars copies managed content into from `.mars/`, such as `.claude/` or `.codex/`. `mars link` adds one, and Mars creates none by default. A target may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. `settings.managed_root` is the older spelling of a single target, and `.agents` is a deprecated one.
 
 **`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
 
@@ -62,10 +62,7 @@ project/
     agents/              # Resolved agent profiles
     skills/              # Resolved skills
     models-cache.json    # Cached model catalog
-  .agents/               # Managed root — files copied here (committed)
-    agents/
-    skills/
-  .claude/               # Additional managed target — content copied from .mars/ (committed)
+  .claude/               # Linked target — content copied from .mars/ (committed)
     agents/
     skills/
 ```

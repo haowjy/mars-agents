@@ -22,7 +22,7 @@ The managed root's parent directory is the project root (where `mars.toml` and `
 
 ## `mars init`
 
-Initialize a mars project. Creates `mars.toml` and the managed output directory.
+Initialize a mars project. Creates `mars.toml` and `.mars/`.
 
 ```bash
 mars init [TARGET] [--link DIR...]
@@ -30,15 +30,14 @@ mars init [TARGET] [--link DIR...]
 
 | Argument/Flag | Description |
 |---|---|
-| `TARGET` | Directory name for managed output (default: `.agents`) |
+| `TARGET` | Optional managed output directory to create (default: none) |
 | `--link DIR` | Directories to link after init (repeatable) |
 
 **Behavior:**
 - Creates `<project-root>/mars.toml` with `[dependencies]` section
-- Creates the managed directory (default `.agents/`)
 - Creates `.mars/` internal state directory
+- Creates `TARGET`, when given, and records it as `settings.managed_root`
 - Adds `mars.local.toml` and `.mars/` to `.gitignore`
-- Persists non-default `managed_root` in `[settings]`
 - Idempotent: re-running is a no-op for init, but still processes `--link`
 - When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
   against configured managed targets, reporting what each target cannot express
@@ -46,9 +45,9 @@ mars init [TARGET] [--link DIR...]
   project has no package to publish, so it gets no preview
 
 ```bash
-mars init                    # Default: .agents/
-mars init .claude            # Custom managed root
-mars init --link .claude     # Init + link in one step
+mars init                    # No target directory; link one with `mars link`
+mars init .claude            # Create .claude/ as the single managed target
+mars init --link .claude     # No extra directory; add `.claude` to settings.targets
 ```
 
 ---
@@ -279,9 +278,9 @@ mars adopt <path> [--dry-run]
 `mars adopt` works in any project — `[package]` in `mars.toml` is not required.
 
 ```bash
-mars adopt .agents/agents/my-agent.md        # adopt an agent
-mars adopt .agents/skills/my-skill           # adopt a skill
-mars adopt .agents/agents/my-agent.md --dry-run  # preview only
+mars adopt .claude/agents/my-agent.md        # adopt an agent
+mars adopt .claude/skills/my-skill           # adopt a skill
+mars adopt .claude/agents/my-agent.md --dry-run  # preview only
 ```
 
 After adoption, the item lives in `.mars-src/` (your editable source) and is tracked in `mars.lock`. Edit it there and run `mars sync` to propagate changes.

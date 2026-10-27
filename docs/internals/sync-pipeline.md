@@ -302,9 +302,9 @@ See [mcp-and-hooks.md](../config/mcp-and-hooks.md) for the full reference.
 
 ### 6. Sync Targets (`sync_targets`)
 
-Copies content from `.mars/` canonical store to each configured target directory (`.agents/`, `.claude/`, etc.). Implemented in `src/target_sync/mod.rs`.
+Copies content from `.mars/` canonical store to each configured target directory (`.claude/`, `.codex/`, etc.). Implemented in `src/target_sync/mod.rs`.
 
-- Targets include the managed root (default: `.agents/`) plus any additional directories added via `mars link` (`settings.targets`)
+- Targets are the directories in `settings.targets`, which `mars link` writes, or the legacy single `settings.managed_root`. Mars creates none by default: with neither set, a sync copies nothing outside `.mars/`
 - All targets get file copies
 - Uses `platform::fs` for atomic operations (tmp+rename)
 - Orphan cleanup: scoped per target via `output_dest_paths_for_target(target_root)` — only removes paths Mars previously managed **in that target** (`target_root` + `dest_path` on lock `OutputRecord`). A `.mars`-only record does not authorize deletes under `.cursor` or other targets. Untracked collisions are preserved unless `mars sync --force` adopts them (see `src/target_sync/.context/CONTEXT.md`)
@@ -321,7 +321,7 @@ Writes lock and constructs the final `SyncReport`.
 
 ## Project-Local Items (`_self`)
 
-Project-local agents and skills are discovered, hashed, and installed into the managed root via the normal sync pipeline — the same install/copy path as dependency items.
+Project-local agents and skills are discovered, hashed, and installed into `.mars/` via the normal sync pipeline — the same install/copy path as dependency items.
 
 **Discovery sources:**
 

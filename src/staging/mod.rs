@@ -75,10 +75,7 @@ pub(crate) fn materialize_prepared_graph(
 ) -> Result<(), MarsError> {
     let empty_renames = RenameMap::new();
     for (source_name, node) in &mut graph.nodes {
-        let prepared = node
-            .prepared
-            .as_ref()
-            .expect("production graph nodes retain prepared packages");
+        let prepared = &node.prepared;
         let renames = effective
             .dependencies
             .get(source_name)

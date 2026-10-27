@@ -35,7 +35,7 @@ mars.toml + mars.local.toml
          │ continue
          ▼
 ┌─────────────────┐
-│  3. Build Target│  Select the prepared definitions, apply filters, detect
+│  3. Build Target│  Take the selected items from the graph, apply renames, detect
 │                 │  collisions. Local (_self) items are projected before
 │                 │  hashing, so the diff compares the installed form.
 └────────┬────────┘
@@ -113,16 +113,17 @@ Fetches sources, resolves concrete versions, and prepares each package.
 2. Read `mars.toml` manifests in source trees to discover transitive dependencies (including transitive skill dependencies pulled in through agent declarations)
 3. Intersect version constraints across dependents
 4. Select concrete versions
-5. Topological sort (Kahn's algorithm: deps before dependents)
+5. Select the items the consumer installs (`mars_schema::selection::select`, one pass over the settled graph), then order packages alphabetically
 
 **Version selection strategy:**
 
 | Mode | Strategy | Used by |
 |---|---|---|
-| Normal | Minimum Version Selection (MVS) | `mars sync`, `mars add` |
-| Maximize | Newest compatible version | `mars upgrade` |
+| Normal | The locked version when it still satisfies every constraint, otherwise the newest compatible version | `mars sync`, `mars add` |
+| Maximize | The newest compatible version, ignoring the lock | `mars upgrade` |
+| Frozen | The locked version, or an error | `--frozen` |
 
-**MVS** picks the minimum version satisfying all constraints. This is deterministic and conservative: you get exactly what you asked for, not the newest thing available. `mars upgrade` switches to maximize mode to find the newest compatible version.
+Mars never picks the oldest version that satisfies the constraints. A sync keeps what the lock recorded, so versions move only when a constraint stops allowing the locked one or `mars upgrade` asks.
 
 **Lock replay:** When a lock file exists, the resolver tries to reuse locked commits for sources whose version constraints haven't changed. This makes `mars sync` deterministic after the first install. Normal sync runs a post-resolution compatible-upgrade check; `--no-upgrade-hint` skips that lookup. In `--frozen` mode, lock replay failures become hard errors (the lock must fully reproduce the previous state).
 
@@ -193,11 +194,11 @@ this branch; it enters the compiler and reports the schema error.
 
 Constructs the desired target state from the resolved graph.
 
-For each source in topological order:
+For each source in alphabetical order:
 
-Agents and skills come from each package's `Prepared` result, so no walk selects them here. For project-local (`_self`) items, `staging::materialize_local_prepared` projects the selected definition and its crate-listed payload into the scratch generation before hashing, so the sync diff compares the installed form, not the raw source.
+The graph already carries the selection: which Agents, skills and bootstrap documents the consumer's entries install. Agents and skills come from each package's `Prepared` result, and this step only checks membership in that selection. For project-local (`_self`) items, `staging::materialize_local_prepared` projects the selected definition and its crate-listed payload into the scratch generation before hashing, so the sync diff compares the installed form, not the raw source.
 1. **Select** the prepared Agents and skills; the binary discovers only hooks, MCP servers and bootstrap documents itself (`bootstrap/` directories at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`)
-2. **Apply filter** (All, Include, Exclude, OnlySkills, OnlyAgents)
+2. **Keep the selected items** (the filter ran earlier, inside `select`)
 3. **Apply rename** mappings from config
 4. **Compute source hash** (SHA-256 of source content)
 

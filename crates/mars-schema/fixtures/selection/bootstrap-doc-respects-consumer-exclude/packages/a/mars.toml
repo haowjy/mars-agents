@@ -1,0 +1,8 @@
+[package]
+name = "a"
+version = "1.0.0"
+schema = 1
+
+[dependencies.b]
+path = "../b"
+skills = ["other"]

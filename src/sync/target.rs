@@ -18,7 +18,7 @@ use mars_schema::names::{ItemName, RenameMap};
 
 /// What the `.mars/` canonical store should look like after sync.
 ///
-/// Built from the resolved graph with intent-based filtering applied.
+/// Built from the resolved graph's selection.
 #[derive(Debug, Clone)]
 pub struct TargetState {
     /// Keyed by dest_path (relative to `.mars/`).
@@ -335,9 +335,7 @@ pub fn build_with_collisions_and_diag(
         let discovered = discover::package_items(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
-            node.prepared
-                .as_ref()
-                .expect("production graph nodes retain prepared packages"),
+            &node.prepared,
             Some(&discovered_hooks),
             diag,
         )?;
@@ -973,7 +971,7 @@ mod tests {
                 package_root: root.clone(),
                 plugin: None,
             },
-            prepared: None,
+            prepared: crate::resolve::empty_prepared(),
             resolved_ref: ResolvedRef {
                 source_name: name.into(),
                 version: None,

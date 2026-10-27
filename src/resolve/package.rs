@@ -441,7 +441,7 @@ pub(crate) fn resolve_package_bottom_up(
                 source_name: pending_src.name.clone(),
                 source_id: pending_src.source_id.clone(),
                 rooted_ref,
-                prepared: Some(prepared),
+                prepared,
                 resolved_ref,
                 manifest,
                 edges,

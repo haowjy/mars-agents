@@ -191,7 +191,7 @@ mod tests {
                 package_root: canonical.clone(),
                 plugin: None,
             },
-            prepared: None,
+            prepared: crate::resolve::empty_prepared(),
             resolved_ref: crate::source::ResolvedRef {
                 source_name: name.into(),
                 version: None,

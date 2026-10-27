@@ -164,7 +164,7 @@ pub(crate) struct ResolvedState {
     pub preparation: crate::platform::fs::PendingStagingGeneration,
 }
 
-/// Phase 3: Desired target state after discovery + filtering.
+/// Phase 3: Desired target state after discovery; the graph's selection already applied the filters.
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,

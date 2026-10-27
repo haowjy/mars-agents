@@ -13,7 +13,6 @@ use crate::types::{SourceId, SourceName, SourceUrl};
 
 use super::EngineExclusions;
 use super::SourceProvider;
-use super::compat::{CompatibilityResult, compatible_with_resolved};
 use super::package::PendingSource;
 use super::types::{ResolveOptions, ResolvedNode};
 
@@ -641,17 +640,27 @@ pub(crate) fn validate_all_constraints(
 /// What a settled package is, for the one check that needs it.
 pub(crate) struct SettledPackage<'a> {
     pub(crate) version: Option<&'a Version>,
+    /// The tag or ref the package settled at: a ref pin's name, or a release's tag.
+    pub(crate) tag: Option<&'a str>,
     /// A path source: its requests never disagree about a version.
     pub(crate) is_local: bool,
 }
 
-/// The requests that selected items from one package must agree on its version.
+impl SettledPackage<'_> {
+    /// Settled at a ref pin, which selects no version.
+    fn is_pinned(&self) -> bool {
+        self.version.is_none() && self.tag.is_some()
+    }
+}
+
+/// Every request that selected items from a package must agree with the ref the package settled at.
 ///
 /// `validate_all_constraints` checks each semver requirement against the version that settled; a
-/// ref pin settles no version, so two requests that pin different refs (or a ref and a semver
-/// range) of one package only conflict here. A request that selected nothing from the package
-/// does not count: a manifest's filtered entry selects nothing and only has to resolve.
-/// `Latest` beside a pin is not a conflict but may drift, which warns.
+/// ref pin settles no version, so a pin that differs from the settled ref (or a semver range, when
+/// the package settled at a pin) only conflicts here. A request that selected nothing from the
+/// package does not count: a manifest's filtered entry selects nothing and only has to resolve.
+/// A skill ref's pull counts as a request of the Agent's package. `Latest` beside a pin is not a
+/// conflict but may drift, which warns.
 pub(crate) fn check_selecting_requests_agree(
     selection: &Selection,
     constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
@@ -665,8 +674,9 @@ pub(crate) fn check_selecting_requests_agree(
         for requester in &item.required_by {
             match requester {
                 Requester::Consumer => labels.insert("mars.toml"),
-                Requester::Package { package } => labels.insert(package.as_str()),
-                Requester::Item { .. } => continue,
+                Requester::Package { package } | Requester::Item { package, .. } => {
+                    labels.insert(package.as_str())
+                }
             };
         }
     }
@@ -676,31 +686,30 @@ pub(crate) fn check_selecting_requests_agree(
         let Some(settled) = packages.get(&name).filter(|settled| !settled.is_local) else {
             continue;
         };
-        let mut requests = constraints
+        let Some(tag) = settled.tag.filter(|_| settled.is_pinned()) else {
+            continue;
+        };
+        for (by, constraint) in constraints
             .get(&name)
             .into_iter()
             .flatten()
-            .filter(|(label, _)| labels.contains(label.as_str()));
-        let Some((first_by, first)) = requests.next() else {
-            continue;
-        };
-        for (by, constraint) in requests {
-            match compatible_with_resolved(first, constraint, settled.version) {
-                CompatibilityResult::Compatible => {}
-                CompatibilityResult::PotentiallyConflicting => diag.warn(
-                    "potential-version-drift",
-                    format!(
-                        "potential version drift: package '{package}' requested as {constraint} by {by} but already seen as {first} by {first_by}"
-                    ),
-                ),
-                CompatibilityResult::Conflicting => {
+            .filter(|(label, _)| labels.contains(label.as_str()))
+        {
+            match constraint {
+                Constraint::RefPin(requested) if requested == tag => {}
+                Constraint::RefPin(_) | Constraint::Semver(_) => {
                     return Err(ResolutionError::PackageVersionConflict {
                         package: package.to_string(),
-                        existing: format!("{first} (required by {first_by})"),
-                        requested: format!("{constraint} (required by {by})"),
-                        chain: by.clone(),
+                        existing: format!("ref:{tag}"),
+                        requested: format!("`{by}` requires {constraint}"),
                     });
                 }
+                Constraint::Latest => diag.warn(
+                    "potential-version-drift",
+                    format!(
+                        "potential version drift: package '{package}' requested as {constraint} by {by} but pinned to ref:{tag}"
+                    ),
+                ),
             }
         }
     }

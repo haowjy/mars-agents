@@ -1,6 +1,6 @@
 # src/resolve/ — Package Resolution
 
-Dependency resolution with semver constraints (the grammar and the version choice are `mars_schema::version`). the resolver plus `select`, the adapter to the pure selection pass.
+Dependency resolution with semver constraints (the grammar and the version choice are `mars_schema::version`). `select` adapts the settled graph to the pure selection pass in `mars_schema::selection`.
 
 ## Mental Model
 
@@ -113,7 +113,7 @@ resolver fixtures that inject manifests without authored files.
 - `Edge` — one manifest entry of a package: the package it names and its filter
 - `ResolvedNode` — source identity, immutable authored origin, prepared result and parsed manifest
 - `ResolvedGraph` — final nodes, `selection` and deterministic order
-- `ResolverContext` — restart, constraint and traversal state
+- `ResolverContext` — registry, package states, id index, version constraints and overrides
 
 `ResolvedGraph::dependency_depths()` and `dependency_decl_orders()` derive traversal properties
 from the graph plus direct dependency order.

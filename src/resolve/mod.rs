@@ -8,7 +8,6 @@
 //!
 //! Uses `semver` crate for all version parsing. No custom version logic.
 
-pub mod compat;
 mod context;
 mod package;
 mod path;
@@ -24,19 +23,17 @@ use mars_schema::version::{Constraint, parse_constraint};
 use std::collections::HashMap;
 use std::path::Path;
 
-#[cfg(test)]
-use indexmap::IndexMap;
-
 pub use context::ResolverContext;
 pub(crate) use plugin::plugin_list;
 pub(crate) use provider::RealSourceProvider;
+pub use publish::PublishLens;
 pub(crate) use publish::resolve_publish_graph_from_config;
-pub use publish::{PublishLens, resolve_publish_graph};
 pub(crate) use requires::{
     check_consumer_package_requirements, validate_package_requirement_syntax,
 };
 #[cfg(test)]
 pub(crate) use select::select_for_test;
+pub(crate) use select::{PUBLISHED_PACKAGE, select_published};
 pub use types::*;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
@@ -283,6 +280,9 @@ pub fn resolve(
     };
 
     let selection = select::select_registry(config, ctx.registry());
+    for diagnostic in &selection.diagnostics {
+        diag.schema(diagnostic, "selection", false);
+    }
     if let Some(missing) = selection.missing_skills.first() {
         return Err(ResolutionError::SkillNotFound {
             skill: missing.skill.clone(),
@@ -301,6 +301,7 @@ pub fn resolve(
                     name.clone(),
                     version::SettledPackage {
                         version: package.node.resolved_ref.version.as_ref(),
+                        tag: package.node.resolved_ref.version_tag.as_deref(),
                         is_local: package.is_local,
                     },
                 )
@@ -321,13 +322,6 @@ pub fn resolve(
     diag.reconcile_engine_fallbacks(&graph);
 
     Ok(graph)
-}
-
-#[cfg(test)]
-fn alphabetical_order(nodes: &IndexMap<SourceName, ResolvedNode>) -> Vec<SourceName> {
-    let mut order: Vec<SourceName> = nodes.keys().cloned().collect();
-    order.sort();
-    order
 }
 
 #[cfg(test)]

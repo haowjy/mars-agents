@@ -478,7 +478,7 @@ mod tests {
                     package_root: root.to_path_buf(),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::empty_prepared(),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: source_name.into(),
                     version: None,
@@ -728,7 +728,7 @@ mod tests {
                     package_root: dir.path().to_path_buf(),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::empty_prepared(),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: "source-a".into(),
                     version: None,

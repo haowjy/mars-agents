@@ -484,17 +484,6 @@ fn write_skill(tree: &Path, name: &str) {
     std::fs::write(dir.join("SKILL.md"), "---\n---\n").expect("write SKILL.md");
 }
 
-fn write_skill_with_deps(tree: &Path, name: &str, skills: &[&str]) {
-    let dir = tree.join("skills").join(name);
-    std::fs::create_dir_all(&dir).expect("create skill dir");
-    let frontmatter = if skills.is_empty() {
-        "---\n---\n".to_string()
-    } else {
-        format!("---\nskills: [{}]\n---\n", skills.join(", "))
-    };
-    std::fs::write(dir.join("SKILL.md"), frontmatter).expect("write SKILL.md");
-}
-
 fn write_agent(tree: &Path, name: &str, skills: &[&str]) {
     let agents = tree.join("agents");
     std::fs::create_dir_all(&agents).expect("create agents dir");
@@ -518,24 +507,5 @@ fn source_id_for_spec(spec: &SourceSpec, subpath: Option<SourceSubpath>) -> Sour
             subpath,
             plugin: None,
         },
-    }
-}
-
-fn dummy_ref(name: &str) -> ResolvedRef {
-    ResolvedRef {
-        source_name: name.into(),
-        version: None,
-        version_tag: None,
-        commit: None,
-        tree_path: PathBuf::new(),
-    }
-}
-
-fn dummy_rooted_ref() -> RootedSourceRef {
-    RootedSourceRef {
-        checkout_root: PathBuf::new(),
-        authored_root: PathBuf::new(),
-        package_root: PathBuf::new(),
-        plugin: None,
     }
 }

@@ -534,7 +534,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     package_root: PathBuf::from(format!("/tmp/{name}")),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::empty_prepared(),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: (*name).into(),
                     version: Some(version),

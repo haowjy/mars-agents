@@ -82,13 +82,12 @@ pub enum ResolutionError {
     VersionConflict { name: String, message: String },
 
     #[error(
-        "package version conflict for `{package}`: {existing} vs {requested} (requester chain: {chain})"
+        "package version conflict for `{package}`: resolved to {existing}, but {requested}; every request that installs items from `{package}` must agree on its version"
     )]
     PackageVersionConflict {
         package: String,
         existing: String,
         requested: String,
-        chain: String,
     },
 
     #[error(
@@ -120,9 +119,6 @@ pub enum ResolutionError {
         existing: String,
         incoming: String,
     },
-
-    #[error("source not found: {name}")]
-    SourceNotFound { name: String },
 }
 
 /// Top-level error type aggregating all module errors
@@ -376,12 +372,6 @@ mod tests {
             (
                 MarsError::Lock(LockError::Corrupt {
                     message: "bad lock".to_string(),
-                }),
-                2,
-            ),
-            (
-                MarsError::Resolution(ResolutionError::SourceNotFound {
-                    name: "missing".to_string(),
                 }),
                 2,
             ),

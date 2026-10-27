@@ -501,7 +501,7 @@ fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
 
 /// Prepare a real on-disk tree for graph fixtures, with no dependency entry (so no dialect hint).
 #[cfg(test)]
-pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Option<Arc<Prepared>> {
+pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<Prepared> {
     let config = crate::config::EffectiveConfig {
         dependencies: indexmap::IndexMap::new(),
         settings: crate::config::Settings::default(),
@@ -520,5 +520,5 @@ pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Optio
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
-    Some(prepared.prepared)
+    prepared.prepared
 }

@@ -2543,7 +2543,7 @@ installed_checksum = "sha256:222"
                     package_root: PathBuf::from("/tmp/cache/base/plugins/base"),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::empty_prepared(),
                 resolved_ref: ResolvedRef {
                     source_name: git_name.clone(),
                     version: Some(semver::Version::new(1, 2, 3)),
@@ -2570,7 +2570,7 @@ installed_checksum = "sha256:222"
                     package_root: PathBuf::from("/tmp/cache/local/plugins/local"),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::empty_prepared(),
                 resolved_ref: ResolvedRef {
                     source_name: path_name.clone(),
                     version: None,
@@ -2662,7 +2662,7 @@ installed_checksum = "sha256:222"
                     package_root: PathBuf::from("/tmp/cache/base"),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::empty_prepared(),
                 resolved_ref: ResolvedRef {
                     source_name: source_name.clone(),
                     version: None,

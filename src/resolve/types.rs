@@ -134,7 +134,7 @@ pub struct ResolvedNode {
     pub source_id: SourceId,
     pub rooted_ref: RootedSourceRef,
     /// Crate-owned semantic preparation result for this authored package.
-    pub prepared: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
+    pub prepared: std::sync::Arc<mars_schema::prepare::Prepared>,
     pub resolved_ref: ResolvedRef,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
@@ -352,4 +352,17 @@ impl ResolveOptions {
             }
         }
     }
+}
+
+/// A prepared package with nothing in it, for tests that build a `ResolvedNode` by hand.
+#[cfg(test)]
+pub(crate) fn empty_prepared() -> std::sync::Arc<mars_schema::prepare::Prepared> {
+    std::sync::Arc::new(mars_schema::prepare::Prepared {
+        classification: mars_schema::prepare::Classification::Empty,
+        manifest: None,
+        definitions: Vec::new(),
+        payload: Vec::new(),
+        diagnostics: Default::default(),
+        changes: Default::default(),
+    })
 }

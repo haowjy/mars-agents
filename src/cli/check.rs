@@ -5,13 +5,12 @@
 //! and validates structure, frontmatter, and internal skill dependencies.
 //! No config or lock file needed — works on raw source directories.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use crate::error::MarsError;
-use mars_schema::provider::{deferred_provider, undeclared_provider_hint};
 
 use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
@@ -256,7 +255,6 @@ fn check_prepared(
 
     let mut agent_names = HashMap::<String, PathBuf>::new();
     let mut skill_names = HashMap::<String, PathBuf>::new();
-    let mut agent_skill_refs = Vec::<(String, Vec<String>)>::new();
     for definition in &prepared.definitions {
         let path = authored_root.join(&definition.source_path);
         let linked_item = match definition.kind {
@@ -302,10 +300,6 @@ fn check_prepared(
                             path.display()
                         ));
                     }
-                    let skills = profile.skills.all();
-                    if !skills.is_empty() {
-                        agent_skill_refs.push((name, skills));
-                    }
                 }
             }
             Reading::Skill(reading) => {
@@ -347,72 +341,7 @@ fn check_prepared(
     if readable && agent_names.is_empty() && skill_names.is_empty() {
         errors.push("no agents or skills found — is this a mars source package?".to_string());
     }
-    let available = skill_names
-        .keys()
-        .map(String::as_str)
-        .collect::<HashSet<_>>();
-    // Check is the publish gate: it judges a ref by the package alone and ignores
-    // `.mars/provided.lock`, so a package passes or fails the same on every machine.
-    let declared = lens
-        .manifest
-        .as_ref()
-        .and_then(|config| config.package.as_ref())
-        .map(|package| package.uses_providers.as_slice());
-    let undeclared_provider_error = |agent: &str, skill: &str, provider: &str| {
-        format!(
-            "agent `{agent}` references skill `{skill}`, which is not in this package or its dependencies; {}",
-            undeclared_provider_hint(provider)
-        )
-    };
-    if has_package_dependencies(lens) {
-        match resolve_available_skills(lens, diag) {
-            Ok(graph_skills) => {
-                for (agent, refs) in &agent_skill_refs {
-                    for skill in refs {
-                        if available.contains(skill.as_str()) || graph_skills.contains_key(skill) {
-                            continue;
-                        }
-                        // A declared provider is valid wherever it supplies the skill.
-                        if deferred_provider(skill, declared).is_some() {
-                            continue;
-                        }
-                        match mars_schema::provider::provider_of(skill) {
-                            Some(provider) if declared.is_some() => {
-                                errors.push(undeclared_provider_error(agent, skill, provider));
-                            }
-                            _ => errors.push(format!(
-                                "agent `{agent}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
-                                format_searched_packages(&graph_skills)
-                            )),
-                        }
-                    }
-                }
-            }
-            Err(error) => errors.push(format!(
-                "dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
-            )),
-        }
-    } else {
-        for (agent, refs) in &agent_skill_refs {
-            for skill in refs {
-                if available.contains(skill.as_str()) {
-                    continue;
-                }
-                // A declared provider is valid wherever it supplies the skill.
-                if deferred_provider(skill, declared).is_some() {
-                    continue;
-                }
-                match mars_schema::provider::provider_of(skill) {
-                    Some(provider) if declared.is_some() => {
-                        errors.push(undeclared_provider_error(agent, skill, provider));
-                    }
-                    _ => warnings.push(format!(
-                        "external dependency: `{skill}` (referenced by: {agent})"
-                    )),
-                }
-            }
-        }
-    }
+    check_skill_refs(prepared, lens, &mut errors, &mut warnings, diag);
     Ok(CheckReport {
         agents: agent_names.len(),
         skills: skill_names.len(),
@@ -447,56 +376,93 @@ fn has_package_dependencies(lens: &crate::resolve::PublishLens) -> bool {
         .is_some_and(|manifest| manifest.package.is_some() && !manifest.dependencies.is_empty())
 }
 
-/// Resolve the dependency graph and collect the skills it installs.
+/// Report the skill refs of the package's Agents that installing it would not find.
 ///
-/// Returns a map of `skill_name → (source_name, version_string)`.
-/// Fails closed — if resolution cannot complete, returns an error.
-///
-/// Uses only `[dependencies]` from mars.toml — excludes `[local-dependencies]` (dev-only)
-/// and ignores mars.local.toml overrides (local dev paths). This matches what consumers
-/// see when they depend on this package.
-fn resolve_available_skills(
+/// Check answers with install's rule: the package is selected whole as a consumer's only request,
+/// and its Agents' refs resolve through the package, its dependencies and the rest of the graph.
+/// It judges a ref by the package alone and ignores `.mars/provided.lock`, so a package passes or
+/// fails the same on every machine. A package with `[dependencies]` resolves them first and fails
+/// closed; a package without them cannot know what the consumer adds, so an unknown skill is a
+/// warning.
+fn check_skill_refs(
+    prepared: &mars_schema::prepare::Prepared,
     lens: &crate::resolve::PublishLens,
+    errors: &mut Vec<String>,
+    warnings: &mut Vec<String>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<HashMap<String, (String, String)>, MarsError> {
-    let options = crate::resolve::ResolveOptions::default();
-    let graph =
-        crate::resolve::resolve_publish_graph_from_config(lens, &lens.effective, &options, diag)?;
-
-    let mut skills: HashMap<String, (String, String)> = HashMap::new();
-    for item in graph
-        .selection
-        .items
-        .iter()
-        .filter(|item| item.kind == mars_schema::item::ItemKind::Skill)
-    {
-        let version = graph
-            .nodes
-            .get(item.package.as_str())
-            .and_then(|node| node.resolved_ref.version.as_ref())
-            .map_or_else(|| "unknown".to_string(), ToString::to_string);
-        skills.insert(item.slug.clone(), (item.package.clone(), version));
+) {
+    let graph = if has_package_dependencies(lens) {
+        // Uses only `[dependencies]`: the lens drops `[local-dependencies]` and `mars.local.toml`.
+        let options = crate::resolve::ResolveOptions::default();
+        match crate::resolve::resolve_publish_graph_from_config(
+            lens,
+            &lens.effective,
+            &options,
+            diag,
+        ) {
+            Ok(graph) => Some(graph),
+            Err(error) => {
+                errors.push(format!(
+                    "dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
+                ));
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let declared = lens
+        .manifest
+        .as_ref()
+        .and_then(|config| config.package.as_ref())
+        .map(|package| package.uses_providers.clone());
+    let has_package = declared.is_some();
+    let selection = crate::resolve::select_published(
+        prepared,
+        &lens.effective,
+        declared.unwrap_or_default(),
+        graph.as_ref(),
+    );
+    let own_prefix = format!("{}/", crate::resolve::PUBLISHED_PACKAGE);
+    for missing in selection.missing_skills {
+        let agent = missing
+            .required_by
+            .strip_prefix(&own_prefix)
+            .unwrap_or(&missing.required_by);
+        let skill = &missing.skill;
+        match missing.hint {
+            Some(hint) if has_package => errors.push(format!(
+                "agent `{agent}` references skill `{skill}`, which is not in this package or its dependencies; {hint}"
+            )),
+            _ if graph.is_some() => errors.push(format!(
+                "agent `{agent}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
+                format_searched_packages(&missing.searched, graph.as_ref())
+            )),
+            _ => warnings.push(format!(
+                "external dependency: `{skill}` (referenced by: {agent})"
+            )),
+        }
     }
-
-    Ok(skills)
 }
 
-fn format_searched_packages(graph_skills: &HashMap<String, (String, String)>) -> String {
-    let mut packages: Vec<(&str, &str)> = graph_skills
-        .values()
-        .map(|(name, ver)| (name.as_str(), ver.as_str()))
-        .collect();
-    packages.sort();
-    packages.dedup();
-    if packages.is_empty() {
-        "no dependency packages resolved".to_string()
-    } else {
-        packages
-            .iter()
-            .map(|(name, ver)| format!("{name}@{ver}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
+/// The packages a ref was looked up in, with the versions that resolved.
+fn format_searched_packages(
+    searched: &[String],
+    graph: Option<&crate::resolve::ResolvedGraph>,
+) -> String {
+    searched
+        .iter()
+        .map(|name| {
+            let version = graph
+                .and_then(|graph| graph.nodes.get(name.as_str()))
+                .and_then(|node| node.resolved_ref.version.as_ref());
+            match version {
+                Some(version) => format!("{name}@{version}"),
+                None => name.clone(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -778,70 +744,6 @@ mod tests {
         );
     }
 
-    // ── Fix 1: Filter bypass — excluded skill must not satisfy a ref ──────────────
-
-    #[test]
-    fn check_excluded_skill_in_dep_is_not_available() {
-        // A skill that exists in the dep package but is excluded via filter
-        // must not satisfy an agent skill reference — the filter bypass is the bug.
-        let dir = TempDir::new().unwrap();
-        let dep_dir = TempDir::new().unwrap();
-
-        // Dep provides "ext-skill" and "other-skill", but consumer excludes "ext-skill".
-        write_dep_package(
-            dep_dir.path(),
-            "dep-pkg",
-            "0.1.0",
-            &["ext-skill", "other-skill"],
-        );
-        write_agent(dir.path(), "coder", &["ext-skill"]);
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\", exclude = [\"ext-skill\"] }}\n",
-                toml_path(dep_dir.path())
-            ),
-        )
-        .unwrap();
-
-        let report = super::check_dir(dir.path()).unwrap();
-        assert!(
-            !report.errors.is_empty(),
-            "excluded skill must not satisfy ref — expected error, got none: {:?}",
-            report.errors
-        );
-        let joined = report.errors.join("\n");
-        assert!(
-            joined.contains("ext-skill"),
-            "error must mention the missing skill: {joined}"
-        );
-    }
-
-    #[test]
-    fn check_only_agents_filter_makes_skills_unavailable() {
-        // only_agents = true means skills are NOT installed from the dep.
-        let dir = TempDir::new().unwrap();
-        let dep_dir = TempDir::new().unwrap();
-
-        write_dep_package(dep_dir.path(), "dep-pkg", "0.1.0", &["ext-skill"]);
-        write_agent(dir.path(), "coder", &["ext-skill"]);
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\", only_agents = true }}\n",
-                toml_path(dep_dir.path())
-            ),
-        )
-        .unwrap();
-
-        let report = super::check_dir(dir.path()).unwrap();
-        assert!(
-            !report.errors.is_empty(),
-            "only_agents filter must make skills unavailable — expected error: {:?}",
-            report.errors
-        );
-    }
-
     // ── Fix 2: Local config leakage — local-dependencies must not satisfy refs ────
 
     #[test]
@@ -879,7 +781,7 @@ mod tests {
 
     #[test]
     fn check_local_dep_skill_not_available_when_regular_dep_present() {
-        // Fix 2 code path: [dependencies] is non-empty (triggers resolve_available_skills),
+        // Fix 2 code path: [dependencies] is non-empty (triggers graph resolution),
         // skill is only in [local-dependencies]. Before the fix, local-deps were included
         // in the resolved graph and could silently satisfy refs. After the fix, they are
         // stripped and the missing skill is correctly flagged as an error.

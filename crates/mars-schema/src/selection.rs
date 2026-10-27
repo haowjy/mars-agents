@@ -239,7 +239,9 @@ pub fn select(view: &GraphView) -> Selection {
     }
     for (package, requester) in &pulled {
         for entry in &entries[package] {
-            if entry.item.kind == ItemKind::BootstrapDoc {
+            if entry.item.kind == ItemKind::BootstrapDoc
+                && !is_excluded(&excluded, package, &entry.item)
+            {
                 let key = (*package, entry.item.kind, entry.item.slug.as_str());
                 let requesters = selected.entry(key).or_default();
                 if !requesters.contains(requester) {

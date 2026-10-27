@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `@meridian-flow/mars-schema` publishes to npm again: its `package.json` names the source repository, which npm needs to verify provenance.
+
 ## [0.20.2] - 2026-10-27
 
 ### Fixed

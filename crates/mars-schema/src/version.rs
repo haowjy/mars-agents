@@ -54,8 +54,11 @@ pub fn parse_constraint(version: Option<&str>) -> Constraint {
             return Constraint::Semver(req);
         }
 
-        if let Ok(major) = stripped.parse::<u64>() {
-            let req = VersionReq::parse(&format!(">={major}.0.0, <{}.0.0", major + 1))
+        // A bound past `u64::MAX` is no range; it falls through to a ref pin.
+        if let Ok(major) = stripped.parse::<u64>()
+            && let Some(next) = major.checked_add(1)
+        {
+            let req = VersionReq::parse(&format!(">={major}.0.0, <{next}.0.0"))
                 .expect("valid major range req");
             return Constraint::Semver(req);
         }
@@ -63,8 +66,9 @@ pub fn parse_constraint(version: Option<&str>) -> Constraint {
         let parts: Vec<&str> = stripped.split('.').collect();
         if parts.len() == 2
             && let (Ok(major), Ok(minor)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>())
+            && let Some(next) = minor.checked_add(1)
         {
-            let req = VersionReq::parse(&format!(">={major}.{minor}.0, <{major}.{}.0", minor + 1))
+            let req = VersionReq::parse(&format!(">={major}.{minor}.0, <{major}.{next}.0"))
                 .expect("valid minor range req");
             return Constraint::Semver(req);
         }

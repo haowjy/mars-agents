@@ -631,11 +631,9 @@ fn engine_unsatisfiable_error(
         .filter(|((source, version), _)| {
             source == name
                 && constraints.get(name).is_none_or(|constraints| {
-                    constraints.iter().all(|(_, constraint)| match constraint {
-                        Constraint::Semver(requirement) => requirement.matches(version),
-                        Constraint::Latest => true,
-                        Constraint::RefPin(_) => false,
-                    })
+                    constraints
+                        .iter()
+                        .all(|(_, constraint)| mars_schema::version::satisfies(constraint, version))
                 })
         })
         .map(|((_, version), failures)| (version, failures))

@@ -40,7 +40,7 @@ that has a `release:*` label.
 - PR selection is deterministic: prefer merged PRs targeting `main` whose `merge_commit_sha` equals the trigger SHA; if none, fall back to merged PRs targeting `main`.
 - If PR selection remains ambiguous (more than one merged candidate), the workflow fails instead of guessing labels.
 - Labels are read only from the selected merged PR.
-- Duplicate guard is release-kind aware: RC skips when this trigger already has RC or stable tag; stable skips only when a stable tag exists (so RC can still be promoted to stable).
+- Duplicate guard is release-kind aware: a trigger skips when an RC or stable release already carries it, either through its `Release-Trigger` trailer or as an ancestor of a later first-parent `release: v` commit; stable skips only when a stable release carries it (so an RC can still be promoted to stable).
 - Release commits include `Release-Trigger: <trigger-sha>` in the commit body for exact trigger tracking.
 
 When release is enabled, the workflow:
@@ -83,6 +83,15 @@ that carries the notes itself:
 ```bash
 scripts/manually-release.sh patch --no-collect --notes-file notes.md --push
 ```
+
+A missing or empty `## [X.Y.Z]` section fails only the `GitHub Release` job:
+npm, PyPI, and crates.io publish from the build artifacts in their own jobs, so
+they can be live already while the GitHub Release and its binaries are missing.
+Fix the section with a direct push to `main` (direct pushes release nothing),
+then re-run only the failed `GitHub Release` job; its release upsert is
+idempotent. That job reads the tag's `CHANGELOG.md`, so the tagged commit must
+carry the fix: a tag left on a sectionless release commit needs a new release,
+not a re-run.
 
 ## Manual Backfill
 

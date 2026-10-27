@@ -184,11 +184,10 @@ main() {
     esac
   done
 
-  cd "$ROOT_DIR"
-
   if [[ "$command" == "tag-current" ]]; then
     [[ -z "$notes_file" ]] || die "tag-current does not take --notes-file"
     [[ "$collect" -eq 1 ]] || die "tag-current does not take --no-collect"
+    cd "$ROOT_DIR"
     require_clean_tree
     tag="$(validate_current_release)"
     create_tag "$tag"
@@ -210,6 +209,8 @@ main() {
       notes_file="$(cd "$(dirname "$notes_file")" && pwd)/$(basename "$notes_file")"
     fi
   fi
+
+  cd "$ROOT_DIR"
 
   require_clean_tree
   validate_versions_match
@@ -241,8 +242,8 @@ main() {
 
   today="$(date -u +%Y-%m-%d)"
   render_notes "$version" "$today" "${notes_args[@]}" --dry-run >/dev/null
-  write_versions "$version"
   scripts/preflight.sh full
+  write_versions "$version"
   render_notes "$version" "$today" "${notes_args[@]}"
 
   git add Cargo.toml crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/*/package.json npm/@meridian-flow/*/package-lock.json

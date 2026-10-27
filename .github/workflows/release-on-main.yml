@@ -255,6 +255,42 @@ jobs:
             fi
           done < <(git log --format=$'%H\t%s' main)
 
+          # A merge queued behind a release can already be shipped by it: run 1
+          # anchors on a main tip that contains a later merge, renders both PRs,
+          # and records only its own trigger. Run 2's trigger then has no trailer
+          # to find, and without this check it cuts a second release that repeats
+          # the later PR's notes. A release newer than the trigger on main's
+          # first-parent chain covers it when its kind is the same or higher; an
+          # rc still leaves a stable promotion due.
+          if (( best_rank >= 99 )); then
+            requested_rank=0
+            [[ "${release_kind}" == "stable" ]] && requested_rank=1
+
+            while IFS= read -r later_commit; do
+              later_subject="$(git show -s --format=%s "${later_commit}")"
+              [[ "${later_subject}" =~ ^release:\ (v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$ ]] || continue
+              later_tag="${BASH_REMATCH[1]}"
+
+              later_rank=0
+              if is_stable_tag "${later_tag}"; then
+                later_rank=1
+              fi
+              (( later_rank >= requested_rank )) || continue
+
+              selected_mode="missing"
+              selected_tag="${later_tag}"
+              while IFS= read -r tag_at_commit; do
+                if [[ "${tag_at_commit}" == "${later_tag}" ]]; then
+                  selected_mode="existing"
+                  break
+                fi
+              done < <(git tag --points-at "${later_commit}" --list "${later_tag}")
+              selected_commit="${later_commit}"
+              best_rank=1
+              break
+            done < <(git rev-list --first-parent --ancestry-path "${TRIGGER_SHA}..main")
+          fi
+
           if (( best_rank < 99 )); then
             echo "already_released=true" >> "$GITHUB_OUTPUT"
             if [[ "${selected_mode}" == "existing" ]]; then

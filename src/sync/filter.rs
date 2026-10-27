@@ -39,23 +39,18 @@ pub(crate) fn apply_filter(
             .collect()),
 
         FilterMode::Include { agents, skills } => {
-            // Start with explicitly requested items
-            let mut include_set: HashSet<ItemName> = HashSet::new();
-
-            // Add explicitly requested agents and skills
-            for a in agents {
-                include_set.insert(a.clone());
-            }
-            for s in skills {
-                include_set.insert(s.clone());
-            }
-
-            // Resolve transitive skill deps from agent frontmatter
-            resolve_agent_skill_deps(discovered, agents, package_root, &mut include_set);
+            // Skills the requested agents name join the requested skills.
+            let mut wanted_skills: HashSet<ItemName> = skills.iter().cloned().collect();
+            resolve_agent_skill_deps(discovered, agents, package_root, &mut wanted_skills);
 
             Ok(discovered
                 .iter()
-                .filter(|item| include_set.contains(&item.id.name))
+                .filter(|item| match item.id.kind {
+                    ItemKind::Agent => agents.contains(&item.id.name),
+                    ItemKind::Skill => wanted_skills.contains(&item.id.name),
+                    // Not selectable through Include.
+                    ItemKind::BootstrapDoc | ItemKind::Hook | ItemKind::McpServer => false,
+                })
                 .cloned()
                 .collect())
         }

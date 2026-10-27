@@ -33,7 +33,7 @@ that has a `release:*` label.
 - `release:skip` skips release.
 - Any other `release:*` label defaults to RC release (safe default) and logs a notice.
 - If labels conflict (for example `release:stable` + `release:rc`, or stable + unknown `release:*`), RC wins as the safe default.
-- Missing `release:*` label skips release.
+- Missing `release:*` label defaults to a prerelease (RC).
 - Direct pushes to `main` skip release because there is no PR label to inspect.
 - `release:skip` in the pushed head commit message also skips release.
 - The workflow queries associated PRs via GitHub API and fails immediately if that API call fails.

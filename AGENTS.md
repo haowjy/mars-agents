@@ -81,7 +81,7 @@ Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once afte
 
 ## Pull Requests
 
-Read `.github/PULL_REQUEST_TEMPLATE.md` and fill every section. **Always set a `release:*` label before merging** — no label = no release.
+Read `.github/PULL_REQUEST_TEMPLATE.md` and fill every section. **Always set a `release:*` label before merging** — no label defaults to a prerelease (RC).
 
 **Write the changelog entry in the PR body's `## Changelog` section, never in
 `CHANGELOG.md`.** The release job renders that section into `CHANGELOG.md` under the new

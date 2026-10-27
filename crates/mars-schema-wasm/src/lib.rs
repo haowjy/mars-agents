@@ -92,9 +92,10 @@ fn file_tree(files: BTreeMap<String, ByteBuf>) -> Result<mars_schema::tree::File
     )?)
 }
 
-/// Prepare one root from `{files: Map<path, Uint8Array>, context?, declaredDialect?}`. A supported
-/// export in its own right: `normalize` is this plus a selection, a generated manifest and
-/// provenance. An unrecognized `context` or `declaredDialect` throws.
+/// Prepare one root from
+/// `{files: Map<path, Uint8Array>, context?, declaredDialect?, migrate?}`. A supported export in
+/// its own right: `normalize` is this plus a selection, a generated manifest and provenance. An
+/// unrecognized `context` or `declaredDialect` throws.
 #[wasm_bindgen]
 pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
     #[derive(serde::Deserialize)]
@@ -103,17 +104,20 @@ pub fn prepare(input: JsValue) -> Result<JsValue, JsError> {
         files: BTreeMap<String, ByteBuf>,
         context: Option<mars_schema::prepare::PrepareContext>,
         declared_dialect: Option<mars_schema::dialect::Dialect>,
+        #[serde(default)]
+        migrate: bool,
     }
     let input: Input = serde_wasm_bindgen::from_value(input)?;
     let tree = file_tree(input.files)?;
     let context = input
         .context
         .unwrap_or(mars_schema::prepare::PrepareContext::Package);
-    to_js(&mars_schema::prepare::prepare(
-        &tree,
-        context,
-        input.declared_dialect,
-    ))
+    let prepared = if input.migrate {
+        mars_schema::prepare::prepare_for_migration(&tree, context, input.declared_dialect)
+    } else {
+        mars_schema::prepare::prepare(&tree, context, input.declared_dialect)
+    };
+    to_js(&prepared)
 }
 
 /// What a repository is: `{tree: Map<path, Uint8Array>, hint?}` to an `Inspection`. Reads

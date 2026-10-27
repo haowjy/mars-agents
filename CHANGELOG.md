@@ -9,6 +9,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Flow. Mars keeps the block in `.mars/agents/` and never writes it to a native file, a plugin tree
   or a launch bundle; its keys belong to the Meridian CLI: `resident-rearm-budget` (an integer) and
   `capabilities` (a map).
+- `@meridian-flow/mars-schema`'s `prepare` takes `migrate`, the shaping `mars migrate` writes back:
+  a schema 1 definition it can repair (a removed Agent key whose replacement is a
+  `harness-overrides` key) reports the moved bytes in `normalized_bytes`. Left off — a reader's
+  choice — a schema 1 file is read exactly as written.
 
 ### Changed
 - Agent `resident-rearm-budget` and `meridian-capabilities` are removed top-level keys: a schema 1

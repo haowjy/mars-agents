@@ -272,6 +272,12 @@ export function prepare(input: {
   files: Map<string, Uint8Array>;
   context?: "package" | "authored-local" | "project";
   declaredDialect?: Dialect;
+  /**
+   * Repair a schema 1 definition the way `mars migrate` writes it back: a removed Agent key
+   * whose replacement is a `harness-overrides` key moves there. A reader leaves it off, because
+   * an authored schema 1 file is read exactly as written.
+   */
+  migrate?: boolean;
 }): Prepared;
 
 export type Tree = Map<string, Uint8Array>;

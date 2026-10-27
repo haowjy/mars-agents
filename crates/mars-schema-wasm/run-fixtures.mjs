@@ -65,7 +65,7 @@ const checkBytes = (item, input, expectedFiles, label) => {
 for (const name of cases("prepare")) {
   const request = json("prepare", name, "request.json");
   const input = tree(join(fixtures, "prepare", name, "input"));
-  const result = wasm.prepare({ files: input, context: request.context, declaredDialect: request.declared_dialect ?? undefined });
+  const result = wasm.prepare({ files: input, context: request.context, declaredDialect: request.declared_dialect ?? undefined, migrate: request.migrate ?? false });
   const expectedDir = join(fixtures, "prepare", name, "expected");
   const expectedFiles = existsSync(expectedDir) ? tree(expectedDir) : new Map();
   for (const item of [result.manifest, ...result.definitions].filter(Boolean)) checkBytes(item, input, expectedFiles, `prepare/${name}`);

@@ -1630,12 +1630,13 @@ pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
     save::save_document(&path, config, |text| parse_config(text, &path))
 }
 
-/// Write mars.local.toml, changing only what differs from the file as it stands.
-pub fn save_local(root: &Path, local: &LocalConfig) -> Result<(), MarsError> {
-    let path = root.join(LOCAL_CONFIG_FILE);
-    save::save_document(&path, local, |text| {
-        let local: LocalConfig = parse_without_removed_visibility(text, &path)?;
-        validate_agent_overlays(&path, &local.agents)?;
+/// Write the project layer to `mars.local.toml`, changing only what differs from the file as
+/// it stands. Takes the layers, not a `LocalConfig`, so a merged or user value cannot be saved.
+pub fn save_local(layers: &LocalLayers) -> Result<(), MarsError> {
+    let LocalLayer { path, config } = &layers.project;
+    save::save_document(path, config, |text| {
+        let local: LocalConfig = parse_without_removed_visibility(text, path)?;
+        validate_agent_overlays(path, &local.agents)?;
         Ok(local)
     })
 }

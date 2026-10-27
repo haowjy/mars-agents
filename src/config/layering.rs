@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
@@ -113,8 +113,9 @@ pub struct LocalLayers {
 }
 
 impl LocalLayers {
-    /// Only a project layer, for callers with no user file (publish lens, tests).
-    pub fn project_only(config: LocalConfig, root: &Path) -> Self {
+    /// Only a project layer, for tests.
+    #[cfg(test)]
+    pub fn project_only(config: LocalConfig, root: &std::path::Path) -> Self {
         Self {
             user: LocalLayer::default(),
             project: LocalLayer {

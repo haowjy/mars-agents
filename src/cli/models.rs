@@ -1243,7 +1243,7 @@ fn determine_source(
     }
 
     if project_config.layers.user.config.models.contains_key(name) {
-        return "user local (local.toml)".to_string();
+        return format!("user local ({})", project_config.layers.user.path.display());
     }
 
     if project_config.config.models.contains_key(name) {

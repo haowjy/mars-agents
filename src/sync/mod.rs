@@ -851,7 +851,7 @@ fn persist_pending_config_mutation(
     let bump_changed = has_bump_version_changes(loaded, request);
     match &request.mutation {
         Some(ConfigMutation::SetOverride { .. }) => {
-            crate::config::save_local(&ctx.project_root, &loaded.layers.project.config)?;
+            crate::config::save_local(&loaded.layers)?;
         }
         Some(
             ConfigMutation::UpsertDependency { .. }

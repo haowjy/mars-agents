@@ -343,7 +343,10 @@ fn grown_in_place(block: &SourceBlock<'_>, before: &Value, after: &Value) -> Opt
         .filter(|(key, _)| before.get(key).is_none())
         .collect::<Vec<_>>();
     let indent = (!added.is_empty()).then(|| child_indent(block)).flatten()?;
-    let mut grown = block.text.to_string();
+    // The block's text runs up to the next top-level key, so it ends with whatever blank lines and
+    // comments were written above that key; the new entries go before them.
+    let (body, tail) = split_trailing_run(block.text);
+    let mut grown = body.to_string();
     if !grown.ends_with('\n') {
         grown.push('\n');
     }
@@ -361,7 +364,22 @@ fn grown_in_place(block: &SourceBlock<'_>, before: &Value, after: &Value) -> Opt
         grown.push_str(&indented);
         grown.push('\n');
     }
+    grown.push_str(tail);
     Some(with_line_ending_of(block.text, grown))
+}
+
+/// `text` split where an appended entry belongs: before the trailing run of blank lines and
+/// comments at the document's left edge, which belong to the key below the block.
+fn split_trailing_run(text: &str) -> (&str, &str) {
+    let mut split = text.len();
+    for line in text.split_inclusive('\n').rev() {
+        let content = line.trim_end_matches(['\r', '\n']);
+        if !content.trim().is_empty() && !content.starts_with('#') {
+            break;
+        }
+        split -= line.len();
+    }
+    text.split_at(split)
 }
 
 /// The indentation of `block`'s own children in its source text, and `None` when it has none to

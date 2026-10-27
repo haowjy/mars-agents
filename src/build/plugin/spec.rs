@@ -334,14 +334,19 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         display_name: "OpenCode",
         notes: SupportNotes {
             skills: Some("registered by `index.mjs`"),
+            agents: Some(
+                "registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance",
+            ),
             hooks: Some("each fragment needs a default `{id, setup}` export"),
             mcp: Some("registered by `index.mjs`"),
-            ..SupportNotes::none()
         },
         verification: VerificationRow {
             install: verification(VerificationLevel::Live, " (`git+file://`)"),
             skills: verification(VerificationLevel::Live, ", with `resources/`"),
-            agents: None,
+            agents: Some(verification(
+                VerificationLevel::Live,
+                " (`<plugin>:<agent>` spawned as a subagent)",
+            )),
             hooks: verification(VerificationLevel::Live, " (git install, CommonJS script)"),
             mcp: verification(VerificationLevel::Live, " (`<plugin>:<server>`)"),
         },

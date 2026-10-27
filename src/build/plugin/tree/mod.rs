@@ -100,6 +100,16 @@ pub(super) fn standard_config_entries(
     (mcp, hooks)
 }
 
+/// Agent policy for a tree whose native lowering needs no plugin-specific rewrite.
+pub(super) fn keep_lowered(
+    lowered: &str,
+    _source: &mars_schema::frontmatter::Frontmatter,
+    _item: &TargetItem,
+    _diag: &mut DiagnosticCollector,
+) -> Result<String, MarsError> {
+    Ok(lowered.to_string())
+}
+
 /// Run a tree's finish step. The standard manifest path and a custom writer are
 /// both tree facts, so the dispatch lives with the writers and `spec` stays
 /// declarative.

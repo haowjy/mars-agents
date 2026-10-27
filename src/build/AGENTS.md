@@ -29,10 +29,14 @@ tree, and `${MARS_HOOK_DIR}` / `${MARS_MCP_DIR}` map through that same plugin ro
 Harness identity, variant key, and sync root come from `compiler::harness_descriptor`; authored-hook
 checks run once before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode
 have their own tree identities. The OpenCode tree is an npm-shaped package whose fixed `index.mjs`
-registers skills and MCP servers and imports every targeted hook fragment as an in-memory TypeScript
+registers skills, agents, and MCP servers and imports every targeted hook fragment as an in-memory TypeScript
 data URL. A build warning reports fragments with no recognizable default export, but runtime
 isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
-and one fragment's load or setup failure does not block later hooks. The OpenCode tree's generated
+and one fragment's load or setup failure does not block later hooks. OpenCode loads no agent files from a
+plugin, so the tree's OpenCode-lowered `agents/<name>.md` (the same lowering sync uses) is read back
+into `DATA.agents` and the directory deleted; `index.mjs` registers each as `<plugin>:<agent>` through
+`ctx.agent`. `Agent.Info` has no skills field, so preloaded skills stay body guidance and the agent gets
+an `allow` rule for the plugin's `skill` resources. The OpenCode tree's generated
 `DATA` block carries both authored directory tokens, so `index.mjs` has no token literal of its
 own; Rust remains the only owner of the strings.
 

@@ -107,8 +107,8 @@ breaks behaviour in several PRs, plan this when you split it:
    upgrade notes, and the whole-change review.
 2. Point each part's PR at the integration branch. Merging there releases nothing, so those
    PRs need no label. Copy their changelog sections into the integration PR's `## Changelog`:
-   only commits on `main`'s first-parent history reach the renderer, so a part PR merged into
-   the integration branch never renders on its own.
+   a release reads only the bodies of PRs merged into `main`, so a part PR's notes never reach
+   `CHANGELOG.md` on their own.
 3. When the last part lands and the full gate passes, merge the integration PR once.
 
 Work that must release on its own (e.g. a Mars release a Meridian change waits on) gets its

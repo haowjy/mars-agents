@@ -620,9 +620,6 @@ const MOVED_AGENT_FIELDS: &[(&str, &str, &str)] = &[
     ("meridian", "meridian-capabilities", "capabilities"),
 ];
 
-/// The namespaces `MOVED_AGENT_FIELDS` moves keys into.
-const CONSUMER_NAMESPACES: [&str; 2] = ["flow", "meridian"];
-
 /// Whether the top-level `key` moves under its consumer namespace. Flow defines `read` and
 /// `edit` only, so any other `permission` value stays where it is for the reader to report.
 fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
@@ -638,7 +635,7 @@ fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
 /// the key `mars migrate` left behind.
 fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
     let mut displaced = Vec::new();
-    for namespace in CONSUMER_NAMESPACES {
+    for &namespace in crate::harness::RESERVED_CONSUMER_NAMESPACES {
         let keys = MOVED_AGENT_FIELDS
             .iter()
             .filter_map(|(owner, from, to)| {
@@ -649,16 +646,11 @@ fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
             displaced: dropped, ..
         } = move_keys_under(fm, namespace, &keys)
         {
-            displaced.extend(dropped.into_iter().map(|key| (namespace, key)));
+            displaced.extend(dropped.into_iter().map(|(from, to)| (namespace, from, to)));
         }
     }
-    for (namespace, from) in displaced {
-        let to = MOVED_AGENT_FIELDS
-            .iter()
-            .find(|(owner, key, _)| *owner == namespace && *key == from)
-            .map(|(_, _, to)| *to)
-            .expect("a displaced key comes from the table");
-        notes.push(dropped_twin(fm, namespace, &from, to));
+    for (namespace, from, to) in displaced {
+        notes.push(dropped_twin(fm, namespace, from, to));
     }
 }
 

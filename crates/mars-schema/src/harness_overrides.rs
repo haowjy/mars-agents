@@ -242,20 +242,26 @@ pub(crate) fn parse_harness_overrides(
 }
 
 /// How a move of top-level keys under `harness-overrides.<harness>` ended.
-pub(crate) enum Moved {
+pub(crate) enum Moved<'a> {
     /// `harness-overrides` or its `<harness>` entry is not a mapping; nothing moved.
     Blocked,
-    /// `moved` keys are under the override now; `displaced` keys were dropped because the
-    /// override already sets that key, and an override already written wins.
+    /// Keys are under the override now, or were dropped because the override already sets that
+    /// key and an override already written wins.
     Done {
-        moved: Vec<String>,
-        displaced: Vec<String>,
+        /// The keys that moved, under the names they have at the top level.
+        moved: Vec<&'a str>,
+        /// Each displaced key with the name the block knows it by.
+        displaced: Vec<(&'a str, &'a str)>,
     },
 }
 
 /// Move the top-level `keys` of `fm`, in the order given and unchanged, under
 /// `harness-overrides.<harness>`; each `(from, to)` pair renames the key as it moves.
-pub(crate) fn move_keys_under(fm: &mut Frontmatter, harness: &str, keys: &[(&str, &str)]) -> Moved {
+pub(crate) fn move_keys_under<'a>(
+    fm: &mut Frontmatter,
+    harness: &str,
+    keys: &[(&'a str, &'a str)],
+) -> Moved<'a> {
     let harness_key = Value::String(harness.to_owned());
     let mut overrides = match fm.get("harness-overrides") {
         None => serde_yaml::Mapping::new(),
@@ -276,17 +282,17 @@ pub(crate) fn move_keys_under(fm: &mut Frontmatter, harness: &str, keys: &[(&str
             .cloned()
     };
     let (mut moved, mut displaced, mut carried) = (Vec::new(), Vec::new(), Vec::new());
-    for (from, to) in keys {
+    for &(from, to) in keys {
         let Some(value) = fm.get(from).cloned() else {
             continue;
         };
         match destination(&overrides, to) {
             // An override already written wins, and its top-level twin is dropped.
-            Some(existing) if existing != value => displaced.push((*from).to_owned()),
-            Some(_) => moved.push((*from).to_owned()),
+            Some(existing) if existing != value => displaced.push((from, to)),
+            Some(_) => moved.push(from),
             None => {
-                moved.push((*from).to_owned());
-                carried.push(((*to).to_owned(), value));
+                moved.push(from);
+                carried.push((to.to_owned(), value));
             }
         }
     }
@@ -310,14 +316,14 @@ pub(crate) fn move_keys_under(fm: &mut Frontmatter, harness: &str, keys: &[(&str
         Some(block) => *block = Value::Mapping(overrides),
         None => fm.insert("harness-overrides", Value::Mapping(overrides)),
     }
-    for key in moved.iter().chain(&displaced) {
+    for key in moved.iter().chain(displaced.iter().map(|(from, _)| from)) {
         fm.remove(key);
     }
     Moved::Done { moved, displaced }
 }
 
-fn backticked(keys: &[String]) -> String {
-    keys.iter()
+fn backticked(keys: impl IntoIterator<Item = impl std::fmt::Display>) -> String {
+    keys.into_iter()
         .map(|key| format!("`{key}`"))
         .collect::<Vec<_>>()
         .join(", ")
@@ -391,7 +397,7 @@ pub(crate) fn move_harness_only_keys(
                     "conflict",
                     format!(
                         "dropped {title}-only keys that harness-overrides.{harness_name} already sets, whose values win: {}",
-                        backticked(&displaced)
+                        backticked(displaced.iter().map(|(from, _)| from))
                     ),
                 );
             }

@@ -149,7 +149,7 @@ fn transitive_override_does_not_collapse_conflicting_declared_identities() {
                 path: Some(relative_path.into()),
                 subpath: None,
                 version: None,
-                filter: crate::config::FilterConfig::default(),
+                filter: mars_schema::filter::FilterConfig::default(),
                 plugin: None,
             },
         )]),
@@ -1385,13 +1385,13 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
 #[test]
 fn ssh_and_https_url_forms_have_same_canonical_source_id() {
     let ssh_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "git@example.com:org/repo.git",
         )),
         None,
     );
     let https_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://example.com/org/repo.git",
         )),
         None,
@@ -1419,7 +1419,7 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     provider.add_source("dep-b", tree, None);
 
     // Both deps canonicalize to the same SourceId
-    let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+    let canonical_url = SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
         "https://example.com/org/shared.git",
     ));
     let mut deps = IndexMap::new();
@@ -1490,7 +1490,7 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     // SSH form: git@example.com:org/shared.git → canonical: example.com/org/shared
     // HTTPS form: https://example.com/org/shared.git → canonical: example.com/org/shared
     // Both are the same canonical, so the resolver should not raise SourceIdentityMismatch.
-    let ssh_canonical = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+    let ssh_canonical = SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
         "git@example.com:org/shared.git",
     ));
     let mut deps = IndexMap::new();
@@ -1498,13 +1498,13 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
         SourceName::from("a"),
         EffectiveDependency {
             declared_source_id: SourceId::git_with_subpath(
-                SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
                     "https://example.com/a.git",
                 )),
                 None,
             ),
             source_id: SourceId::git_with_subpath(
-                SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
                     "https://example.com/a.git",
                 )),
                 None,
@@ -1549,13 +1549,13 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
 fn different_host_or_path_does_not_produce_false_convergence() {
     // Different hosts → different SourceIds
     let github_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo.git",
         )),
         None,
     );
     let gitlab_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://gitlab.com/org/repo.git",
         )),
         None,
@@ -1567,13 +1567,13 @@ fn different_host_or_path_does_not_produce_false_convergence() {
 
     // Different paths on the same host → different SourceIds
     let repo_a_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo-a.git",
         )),
         None,
     );
     let repo_b_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo-b.git",
         )),
         None,

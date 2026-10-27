@@ -129,8 +129,8 @@ pub(super) fn locked_source_matches_pending(
 }
 
 fn git_urls_equivalent(locked_url: &SourceUrl, pending_url: &SourceUrl) -> bool {
-    crate::source::canonical::canonicalize_git_url(locked_url.as_ref())
-        == crate::source::canonical::canonicalize_git_url(pending_url.as_ref())
+    mars_schema::git_url::canonicalize_git_url(locked_url.as_ref())
+        == mars_schema::git_url::canonicalize_git_url(pending_url.as_ref())
 }
 
 fn locked_source_identity_string(locked_source: &LockedSource) -> String {

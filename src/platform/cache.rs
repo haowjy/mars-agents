@@ -94,7 +94,7 @@ pub fn safe_component_with_hash(raw: &str) -> String {
 /// Generate a cache directory component for a git clone URL.
 pub fn git_cache_component(url: &str) -> Result<String, MarsError> {
     Ok(safe_component_with_hash(
-        &crate::source::canonical::canonicalize_git_url(url),
+        &mars_schema::git_url::canonicalize_git_url(url),
     ))
 }
 

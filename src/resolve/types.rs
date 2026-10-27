@@ -6,12 +6,14 @@ use indexmap::IndexMap;
 use semver::VersionReq;
 
 use super::compat::CompatibilityResult;
-use crate::config::{EffectiveDependency, FilterMode, Manifest};
+use crate::config::{EffectiveDependency, Manifest};
 use crate::error::ResolutionError;
 use crate::source::ResolvedRef;
-use crate::types::{ItemName, SourceId, SourceName};
+use crate::types::{SourceId, SourceName};
 use mars_schema::claude::manifest::PluginSource;
+use mars_schema::filter::FilterMode;
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 /// The resolved dependency graph — all sources with concrete versions.
 ///

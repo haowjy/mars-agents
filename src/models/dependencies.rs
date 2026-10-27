@@ -130,11 +130,11 @@ pub(crate) fn merged_model_aliases(
 mod tests {
     use super::*;
     use crate::config::{
-        EffectiveConfig, EffectiveDependency, FilterMode, Manifest, PackageInfo, Settings,
-        SourceSpec,
+        EffectiveConfig, EffectiveDependency, Manifest, PackageInfo, Settings, SourceSpec,
     };
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::types::SourceId;
+    use mars_schema::filter::FilterMode;
     use std::path::PathBuf;
 
     fn model_alias(model: &str) -> ModelAlias {
@@ -224,7 +224,7 @@ mod tests {
                     spec: SourceSpec::Path(canonical),
                     subpath: None,
                     filter: FilterMode::All,
-                    rename: crate::types::RenameMap::new(),
+                    rename: mars_schema::names::RenameMap::new(),
                     dialect: None,
                 },
             );

@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::platform::path_syntax::classify_local_source;
-use crate::types::{SourceSubpath, SourceUrl};
+use crate::types::SourceUrl;
+use mars_schema::names::SourceSubpath;
 
 /// Classification of source input syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

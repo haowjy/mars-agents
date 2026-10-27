@@ -19,7 +19,7 @@
 /// canonicalize_git_url("ssh://git@github.com/foo/bar") → "github.com/foo/bar"
 /// canonicalize_git_url("GITHUB.COM/Foo/Bar")           → "github.com/Foo/Bar"
 /// ```
-pub(crate) fn canonicalize_git_url(url: &str) -> String {
+pub fn canonicalize_git_url(url: &str) -> String {
     let mut s = url.to_string();
 
     // 1. Strip protocol prefixes

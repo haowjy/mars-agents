@@ -1,12 +1,14 @@
 //! `mars add <dependency>` — add or update a dependency, then sync.
 
-use crate::config::{DependencyEntry, FilterConfig};
+use crate::config::DependencyEntry;
 use crate::error::{ConfigError, MarsError};
 use crate::source::parse;
 use crate::sync::{
     ConfigMutation, DependencyUpsertChange, ResolutionMode, SyncOptions, SyncRequest,
 };
-use crate::types::{ItemName, SourceName, SourceSubpath};
+use crate::types::SourceName;
+use mars_schema::filter::FilterConfig;
+use mars_schema::names::{ItemName, SourceSubpath};
 
 use super::output;
 
@@ -88,7 +90,9 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
 
     // Validate filter flag combinations early
     let filter_config = build_filter_config(args);
-    crate::config::validate_filter(&filter_config, "cli")?;
+    filter_config
+        .validate("cli")
+        .map_err(crate::error::ConfigError::from)?;
 
     // Build mutations for all sources
     let mutations: Vec<(SourceName, DependencyEntry)> = args
@@ -236,7 +240,8 @@ fn parse_dependency_specifier(
         .transpose()?;
     let subpath = merge_subpath(parsed.subpath.clone(), explicit_subpath)?;
     let name = derive_dependency_name(&parsed, subpath.as_ref(), plugin)?;
-    crate::config::validate_plugin_selector(&name, plugin, subpath.as_ref(), None)?;
+    mars_schema::dependency::validate_plugin_selector(&name, plugin, subpath.as_ref(), None)
+        .map_err(crate::error::ConfigError::from)?;
 
     Ok(ParsedDependency {
         name: SourceName::from(name),

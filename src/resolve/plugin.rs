@@ -21,8 +21,9 @@ use crate::error::MarsError;
 use crate::lock::{LockFile, LockedContent, LockedSource};
 use crate::package_prepare::DiskTreeSource;
 use crate::source::ResolvedRef;
-use crate::source::canonical::canonicalize_git_url;
-use crate::types::{CommitHash, SourceId, SourceSubpath, SourceUrl};
+use crate::types::{CommitHash, SourceId, SourceUrl};
+use mars_schema::git_url::canonicalize_git_url;
+use mars_schema::names::SourceSubpath;
 
 /// Root `pending`'s package in the resolved source `marketplace`: at the plugin it names in the
 /// marketplace the source holds, or at the source below its `subpath`. A dependency that names no

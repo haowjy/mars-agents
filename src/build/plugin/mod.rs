@@ -22,12 +22,14 @@ use indexmap::IndexMap;
 use serde::Serialize;
 
 use crate::config::{
-    Config, EffectiveConfig, EffectiveDependency, FilterMode, LocalConfig, Settings, SourceSpec,
+    Config, EffectiveConfig, EffectiveDependency, LocalConfig, Settings, SourceSpec,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, LossinessMode};
 use crate::error::{ConfigError, MarsError};
 use crate::resolve::{PublishLens, ResolveOptions};
-use crate::types::{RenameMap, SourceId, SourceName};
+use crate::types::{SourceId, SourceName};
+use mars_schema::filter::FilterMode;
+use mars_schema::names::RenameMap;
 use mars_schema::plugin_metadata::{PluginSentinel, ResolvedDependency, SENTINEL_SCHEMA_VERSION};
 
 use metadata::PackageMetadata;

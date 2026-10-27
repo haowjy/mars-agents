@@ -13,9 +13,10 @@ use indexmap::IndexMap;
 use crate::error::MarsError;
 use crate::resolve::ResolvedGraph;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
-use crate::types::{DestPath, ItemName, SourceName};
+use crate::types::{DestPath, SourceName};
 use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 type ContentRewriteFn =
     fn(&str, &IndexMap<String, String>) -> Result<Option<String>, frontmatter::FrontmatterError>;

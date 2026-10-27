@@ -9,9 +9,9 @@ use crate::error::MarsError;
 use crate::lock::{ItemId, LockFile};
 use crate::surface_ownership::CollisionAdoptHint;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
-use crate::types::ItemName;
 use crate::types::managed_cmd;
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 use super::output;
 

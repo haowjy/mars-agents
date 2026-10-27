@@ -7,6 +7,7 @@ use crate::resolve::{ResolvedGraph, ResolvedNode};
 use crate::sync::target::TargetItem;
 use crate::types::{ContentHash, DestPath};
 use indexmap::IndexMap;
+use mars_schema::filter::{FilterConfig, FilterMode};
 use mars_schema::item::ItemKind;
 use std::fs;
 use std::path::PathBuf;
@@ -125,7 +126,7 @@ fn make_graph_config(
                 spec: SourceSpec::Path(tree_path),
                 subpath: None,
                 filter,
-                rename: crate::types::RenameMap::new(),
+                rename: mars_schema::names::RenameMap::new(),
                 dialect: None,
             },
         );
@@ -713,7 +714,7 @@ fn planned_bump_entries_noop_when_already_latest() {
 
 #[test]
 fn planned_bump_entries_preserve_filters_and_renames() {
-    let mut rename = crate::types::RenameMap::new();
+    let mut rename = mars_schema::names::RenameMap::new();
     rename.insert("coder".into(), "coder-v2".into());
 
     let mut config = Config::default();
@@ -933,7 +934,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 spec: SourceSpec::Path(tree_path.clone()),
                 subpath: None,
                 filter: FilterMode::All,
-                rename: crate::types::RenameMap::new(),
+                rename: mars_schema::names::RenameMap::new(),
                 dialect: Some(mars_schema::dialect::Dialect::Claude),
             },
         )]),
@@ -960,7 +961,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
             prepared.rooted,
             prepared.prepared,
             &cfg.skills,
-            &crate::types::RenameMap::new(),
+            &mars_schema::names::RenameMap::new(),
             &staging_root,
             &mut diag,
         )

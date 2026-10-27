@@ -6,8 +6,8 @@ use serde_yaml::Value;
 
 use crate::config::SkillOverlay;
 use crate::skill_source_name::flat_root_skill_source_name;
-use crate::types::RenameMap;
 use mars_schema::frontmatter::Frontmatter;
+use mars_schema::names::RenameMap;
 
 /// Installed skill name for `[skills.<name>]` overlay lookup.
 ///
@@ -125,7 +125,7 @@ fn set_bool_field(fm: &mut Frontmatter, key: &str, value: bool, aliases: &[&str]
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ItemName;
+    use mars_schema::names::ItemName;
 
     fn fm(yaml: &str) -> Frontmatter {
         Frontmatter::parse(&format!("---\n{yaml}---\n# Body\n")).unwrap()

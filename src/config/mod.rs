@@ -9,11 +9,12 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
-use crate::types::{
-    ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
-};
+use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
+use mars_schema::dependency::validate_plugin_selector;
 use mars_schema::dialect::Dialect;
+use mars_schema::filter::{FilterConfig, FilterMode};
 use mars_schema::model_policy::ModelPolicyRule;
+use mars_schema::names::{RenameMap, SourceSubpath};
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 pub use mars_schema::package::PackageMetadata as PackageInfo;
 use mars_schema::permission_set::{PermissionSet, merge_permission_set};
@@ -212,23 +213,6 @@ struct SourceManifestSections {
     models: IndexMap<String, crate::models::ModelAlias>,
 }
 
-/// Shared include/exclude/rename filter configuration for a source.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct FilterConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agents: Option<Vec<ItemName>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skills: Option<Vec<ItemName>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<Vec<ItemName>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rename: Option<RenameMap>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub only_skills: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub only_agents: bool,
-}
-
 /// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed`).
 ///
 /// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
@@ -333,10 +317,6 @@ impl SkillOverlay {
             && self.model_invocable.is_none()
             && self.user_invocable.is_none()
     }
-}
-
-fn is_false(v: &bool) -> bool {
-    !v
 }
 
 /// Dev override config (mars.local.toml).
@@ -645,24 +625,6 @@ pub enum SourceSpec {
 pub struct GitSpec {
     pub url: SourceUrl,
     pub version: Option<String>,
-}
-
-/// How items are filtered from a source.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FilterMode {
-    /// Install everything from the source.
-    All,
-    /// Only install specific agents and/or skills.
-    Include {
-        agents: Vec<ItemName>,
-        skills: Vec<ItemName>,
-    },
-    /// Install everything except these items.
-    Exclude(Vec<ItemName>),
-    /// Install only skills, no agents.
-    OnlySkills,
-    /// Install only agents plus their transitive skill dependencies.
-    OnlyAgents,
 }
 
 /// Effective configuration after merging mars.toml and mars.local.toml.
@@ -1332,10 +1294,14 @@ pub fn merge_with_root(
             entry.plugin.as_deref(),
             entry.subpath.as_ref(),
             entry.dialect,
-        )?;
+        )
+        .map_err(ConfigError::from)?;
 
         // Validate filter combinations
-        validate_filter(&entry.filter, name.as_ref())?;
+        entry
+            .filter
+            .validate(name.as_ref())
+            .map_err(ConfigError::from)?;
 
         let filter = entry.filter.to_mode();
 
@@ -1412,80 +1378,6 @@ fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
     }
 }
 
-/// Validate filter configuration for consistency.
-///
-/// Rejects invalid combinations:
-/// - `only_skills` and `only_agents` together
-/// - category-only flags with include lists
-/// - category-only flags with exclude
-/// - include lists with exclude
-pub fn validate_filter(filter: &FilterConfig, dep_name: &str) -> Result<(), MarsError> {
-    let has_include = filter.agents.is_some() || filter.skills.is_some();
-    let has_exclude = filter.exclude.is_some();
-    let has_category = filter.only_skills || filter.only_agents;
-
-    if filter.only_skills && filter.only_agents {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "dependency `{dep_name}`: only_skills and only_agents are mutually exclusive"
-            ),
-        }
-        .into());
-    }
-    if has_category && has_include {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "dependency `{dep_name}`: only_skills/only_agents cannot combine with agents/skills lists"
-            ),
-        }
-        .into());
-    }
-    if has_category && has_exclude {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "dependency `{dep_name}`: only_skills/only_agents cannot combine with exclude"
-            ),
-        }
-        .into());
-    }
-    if has_include && has_exclude {
-        return Err(ConfigError::ConflictingFilters {
-            name: dep_name.to_string(),
-        }
-        .into());
-    }
-    Ok(())
-}
-
-impl FilterConfig {
-    /// Convert to the resolved FilterMode enum.
-    pub fn to_mode(&self) -> FilterMode {
-        if self.only_skills {
-            FilterMode::OnlySkills
-        } else if self.only_agents {
-            FilterMode::OnlyAgents
-        } else if self.agents.is_some() || self.skills.is_some() {
-            FilterMode::Include {
-                agents: self.agents.clone().unwrap_or_default(),
-                skills: self.skills.clone().unwrap_or_default(),
-            }
-        } else if self.exclude.is_some() {
-            FilterMode::Exclude(self.exclude.clone().unwrap_or_default())
-        } else {
-            FilterMode::All
-        }
-    }
-
-    /// Returns true if any filter field is set (not default).
-    pub fn has_any_filter(&self) -> bool {
-        self.agents.is_some()
-            || self.skills.is_some()
-            || self.exclude.is_some()
-            || self.only_skills
-            || self.only_agents
-    }
-}
-
 pub(crate) fn source_id_for_spec(
     root: &Path,
     spec: &SourceSpec,
@@ -1494,9 +1386,8 @@ pub(crate) fn source_id_for_spec(
 ) -> SourceId {
     let id = match spec {
         SourceSpec::Git(git) => {
-            let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
-                git.url.as_ref(),
-            ));
+            let canonical_url =
+                SourceUrl::from(mars_schema::git_url::canonicalize_git_url(git.url.as_ref()));
             SourceId::git_with_subpath(canonical_url, subpath)
         }
         SourceSpec::Path(path) => SourceId::path_with_subpath(root, path, subpath.clone())
@@ -1514,37 +1405,6 @@ pub(crate) fn source_id_for_spec(
             }),
     };
     id.with_plugin(plugin.map(str::to_owned))
-}
-
-/// `plugin` picks one plugin of the marketplace at the source's root, read as a Claude
-/// marketplace; a `subpath` or `dialect` would name a different root or reading.
-pub(crate) fn validate_plugin_selector(
-    name: &str,
-    plugin: Option<&str>,
-    subpath: Option<&SourceSubpath>,
-    dialect: Option<Dialect>,
-) -> Result<(), ConfigError> {
-    let Some(plugin) = plugin else {
-        return Ok(());
-    };
-    let invalid = |message: String| ConfigError::Invalid { message };
-    if !mars_schema::claude::manifest::is_plugin_name(plugin) {
-        return Err(invalid(format!(
-            "source `{name}` has `plugin = \"{plugin}\"`; a plugin name is {}",
-            mars_schema::claude::manifest::PLUGIN_NAME_RULE
-        )));
-    }
-    if subpath.is_some() {
-        return Err(invalid(format!(
-            "source `{name}` has both `plugin` and `subpath` — a marketplace is read at the root of its source, and the marketplace entry says where the plugin is"
-        )));
-    }
-    if dialect.is_some() {
-        return Err(invalid(format!(
-            "source `{name}` has both `plugin` and `dialect` — a marketplace plugin is read as a Claude plugin"
-        )));
-    }
-    Ok(())
 }
 
 fn migrate_legacy_source_urls(config: &mut Config) {
@@ -1587,6 +1447,7 @@ mod tests {
     use super::*;
     use crate::models::{ModelAlias, ModelSpec};
     use mars_schema::model_policy::ModelPolicyMatchType;
+    use mars_schema::names::ItemName;
     use tempfile::TempDir;
 
     #[test]
@@ -3238,62 +3099,6 @@ only_skills = true
         let serialized = toml::to_string_pretty(&config).unwrap();
         let reloaded: Config = toml::from_str(&serialized).unwrap();
         assert!(reloaded.dependencies["base"].filter.only_skills);
-    }
-
-    #[test]
-    fn filter_config_has_any_filter() {
-        assert!(!FilterConfig::default().has_any_filter());
-        assert!(
-            FilterConfig {
-                only_skills: true,
-                ..FilterConfig::default()
-            }
-            .has_any_filter()
-        );
-        assert!(
-            FilterConfig {
-                agents: Some(vec!["coder".into()]),
-                ..FilterConfig::default()
-            }
-            .has_any_filter()
-        );
-    }
-
-    #[test]
-    fn filter_config_to_mode() {
-        assert!(matches!(FilterConfig::default().to_mode(), FilterMode::All));
-        assert!(matches!(
-            FilterConfig {
-                only_skills: true,
-                ..FilterConfig::default()
-            }
-            .to_mode(),
-            FilterMode::OnlySkills
-        ));
-        assert!(matches!(
-            FilterConfig {
-                only_agents: true,
-                ..FilterConfig::default()
-            }
-            .to_mode(),
-            FilterMode::OnlyAgents
-        ));
-        assert!(matches!(
-            FilterConfig {
-                agents: Some(vec!["coder".into()]),
-                ..FilterConfig::default()
-            }
-            .to_mode(),
-            FilterMode::Include { .. }
-        ));
-        assert!(matches!(
-            FilterConfig {
-                exclude: Some(vec!["old".into()]),
-                ..FilterConfig::default()
-            }
-            .to_mode(),
-            FilterMode::Exclude(_)
-        ));
     }
 
     // === managed_targets tests ===

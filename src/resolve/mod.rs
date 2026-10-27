@@ -423,7 +423,7 @@ pub fn resolve(
             }
             ctx.add_filter(
                 &resolved_skill.package,
-                crate::config::FilterMode::Include {
+                mars_schema::filter::FilterMode::Include {
                     agents: Vec::new(),
                     skills: vec![resolved_skill.item.clone()],
                 },

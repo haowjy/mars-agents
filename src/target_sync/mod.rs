@@ -645,7 +645,8 @@ mod tests {
     use crate::lock::{LockFile, LockedItemV2, OutputRecord};
     use crate::surface_ownership::CollisionAdoptHint;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
-    use crate::types::{DestPath, ItemName};
+    use crate::types::DestPath;
+    use mars_schema::names::ItemName;
     use tempfile::TempDir;
 
     fn make_outcome(dest: &str, action: ActionTaken) -> ActionOutcome {

@@ -7,9 +7,10 @@ use indexmap::IndexMap;
 #[cfg(test)]
 use crate::discover;
 use crate::error::{MarsError, ResolutionError};
-use crate::types::{ItemName, SourceName};
+use crate::types::SourceName;
 use crate::validate;
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 use super::package::RegisteredPackage;
 use super::types::{PendingItem, VersionConstraint};

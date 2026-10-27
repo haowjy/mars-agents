@@ -10,8 +10,9 @@ use crate::diagnostic::Diagnostic;
 use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
 use crate::types::{
-    CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
+    CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceOrigin, SourceUrl,
 };
+use mars_schema::names::SourceSubpath;
 
 /// The complete lock file — ownership registry for all managed items.
 ///
@@ -1407,7 +1408,8 @@ mod tests {
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
     use crate::sync::apply::{ActionOutcome, ActionTaken, ApplyResult};
-    use crate::types::{ItemName, SourceId, SourceUrl};
+    use crate::types::{SourceId, SourceUrl};
+    use mars_schema::names::ItemName;
     use tempfile::TempDir;
 
     fn sample_lock() -> LockFile {
@@ -1740,7 +1742,7 @@ installed_checksum = "sha256:bbb"
     fn roundtrip_lock_file() {
         let mut lock = sample_lock();
         let mut nested = lock.dependencies["base"].clone();
-        nested.subpath = Some(crate::types::SourceSubpath::new(r"plugins\foo").unwrap());
+        nested.subpath = Some(mars_schema::names::SourceSubpath::new(r"plugins\foo").unwrap());
         lock.dependencies.insert("nested".into(), nested);
         let dir = TempDir::new().unwrap();
         write(dir.path(), &lock).unwrap();
@@ -2534,7 +2536,7 @@ installed_checksum = "sha256:222"
                 source_name: git_name.clone(),
                 source_id: SourceId::git_with_subpath(
                     git_url.clone(),
-                    Some(crate::types::SourceSubpath::new("plugins/base").unwrap()),
+                    Some(mars_schema::names::SourceSubpath::new("plugins/base").unwrap()),
                 ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/base"),
@@ -2560,7 +2562,7 @@ installed_checksum = "sha256:222"
                 source_name: path_name.clone(),
                 source_id: SourceId::Path {
                     canonical: path_canonical.clone(),
-                    subpath: Some(crate::types::SourceSubpath::new("plugins/local").unwrap()),
+                    subpath: Some(mars_schema::names::SourceSubpath::new("plugins/local").unwrap()),
                     plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
@@ -2625,7 +2627,7 @@ installed_checksum = "sha256:222"
         assert_eq!(
             base.subpath
                 .as_ref()
-                .map(crate::types::SourceSubpath::as_str),
+                .map(mars_schema::names::SourceSubpath::as_str),
             Some("plugins/base")
         );
         assert_eq!(base.version.as_deref(), Some("v1.2.3"));
@@ -2637,7 +2639,7 @@ installed_checksum = "sha256:222"
             local
                 .subpath
                 .as_ref()
-                .map(crate::types::SourceSubpath::as_str),
+                .map(mars_schema::names::SourceSubpath::as_str),
             Some("plugins/local")
         );
         assert_eq!(

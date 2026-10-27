@@ -2,16 +2,16 @@ use mars_schema::item::ItemKind;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::config::{
-    EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec, source_id_for_spec,
-    validate_plugin_selector,
-};
+use crate::config::{EffectiveConfig, GitSpec, Manifest, SourceSpec, source_id_for_spec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
 use crate::error::{ConfigError, MarsError, ResolutionError};
 use crate::lock::LockFile;
-use crate::types::{ItemName, SourceId, SourceName, SourceSubpath};
+use crate::types::{SourceId, SourceName};
 use indexmap::IndexMap;
+use mars_schema::dependency::validate_plugin_selector;
+use mars_schema::filter::FilterMode;
+use mars_schema::names::{ItemName, SourceSubpath};
 
 use super::EngineExclusions;
 use super::SourceProvider;
@@ -744,7 +744,8 @@ pub(crate) fn collect_manifest_requests(
             dep_spec.plugin.as_deref(),
             dep_subpath.as_ref(),
             None,
-        )?;
+        )
+        .map_err(crate::error::ConfigError::from)?;
 
         let (declared_spec, declared_constraint) = match (&dep_spec.url, &dep_spec.path) {
             (Some(url), None) => (

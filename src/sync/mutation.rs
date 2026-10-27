@@ -4,9 +4,11 @@
 
 use std::path::PathBuf;
 
-use crate::config::{Config, DependencyEntry, FilterConfig, LocalConfig, OverrideEntry};
+use crate::config::{Config, DependencyEntry, LocalConfig, OverrideEntry};
 use crate::error::{ConfigError, MarsError};
-use crate::types::{ItemName, RenameMap, SourceName};
+use crate::types::SourceName;
+use mars_schema::filter::FilterConfig;
+use mars_schema::names::{ItemName, RenameMap};
 
 /// Config mutation to apply atomically under flock.
 #[derive(Debug, Clone)]

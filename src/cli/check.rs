@@ -492,7 +492,7 @@ fn resolve_available_skills(
 
 fn prepared_skill_passes_filters(
     definition: &mars_schema::prepare::PreparedDefinition,
-    filters: Option<&Vec<crate::config::FilterMode>>,
+    filters: Option<&Vec<mars_schema::filter::FilterMode>>,
 ) -> bool {
     let item = crate::discover::DiscoveredItem {
         id: crate::lock::ItemId {
@@ -517,22 +517,22 @@ fn prepared_skill_passes_filters(
 /// skill name and source path so path-based excludes are honoured in the publish gate.
 fn item_passes_filters(
     item: &crate::discover::DiscoveredItem,
-    filters: Option<&Vec<crate::config::FilterMode>>,
+    filters: Option<&Vec<mars_schema::filter::FilterMode>>,
 ) -> bool {
     let Some(filters) = filters else {
         return true; // no filter constraint → all items pass
     };
     filters.iter().any(|filter| match filter {
-        crate::config::FilterMode::All => true,
-        crate::config::FilterMode::Include { skills, .. } => skills.contains(&item.id.name),
-        crate::config::FilterMode::Exclude(excluded) => {
+        mars_schema::filter::FilterMode::All => true,
+        mars_schema::filter::FilterMode::Include { skills, .. } => skills.contains(&item.id.name),
+        mars_schema::filter::FilterMode::Exclude(excluded) => {
             let source_path = item.source_path.to_string_lossy();
             !excluded.iter().any(|e| {
                 *e == item.id.name || crate::target::paths_equivalent(e.as_ref(), &source_path)
             })
         }
-        crate::config::FilterMode::OnlySkills => true,
-        crate::config::FilterMode::OnlyAgents => false,
+        mars_schema::filter::FilterMode::OnlySkills => true,
+        mars_schema::filter::FilterMode::OnlyAgents => false,
     })
 }
 

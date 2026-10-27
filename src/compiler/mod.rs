@@ -306,9 +306,10 @@ mod skill_surface_tests {
     use crate::config::AgentEmission;
     use crate::lock::ItemId;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
-    use crate::types::{DestPath, ItemName};
+    use crate::types::DestPath;
     use mars_schema::HarnessId;
     use mars_schema::item::ItemKind;
+    use mars_schema::names::ItemName;
 
     #[test]
     fn native_agent_emission_defaults_to_standalone_auto() {

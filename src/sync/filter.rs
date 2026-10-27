@@ -7,12 +7,12 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::config::FilterMode;
 use crate::discover;
 use crate::error::MarsError;
-use crate::types::ItemName;
 use crate::validate;
+use mars_schema::filter::FilterMode;
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 /// Apply filter mode to discovered items.
 ///

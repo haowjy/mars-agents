@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::error::MarsError;
-use crate::types::{SourceName, SourceSubpath};
+use crate::types::SourceName;
+use mars_schema::names::SourceSubpath;
 
 use super::types::RootedSourceRef;
 

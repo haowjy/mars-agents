@@ -7,9 +7,9 @@ use super::{
     PackageResolutionState, PackageVersions, PendingItem, RegisteredPackage, ResolvedGraph,
     ResolvedNode, RootedSourceRef, VersionConstraint, VisitedSet,
 };
-use crate::config::FilterMode;
 use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName};
+use mars_schema::filter::FilterMode;
 
 /// Mutable resolver state threaded through bottom-up resolution and DFS traversal.
 pub struct ResolverContext {

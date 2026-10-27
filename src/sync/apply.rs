@@ -7,8 +7,9 @@ use crate::platform::fs as fs_ops;
 use crate::sync::plan::{PlannedAction, SyncPlan};
 use crate::sync::target::TargetItem;
 pub use crate::sync::types::SyncOptions;
-use crate::types::{ContentHash, DestPath, ItemName, SourceName};
+use crate::types::{ContentHash, DestPath, SourceName};
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 /// The result of applying the sync plan.
 #[derive(Debug, Clone)]

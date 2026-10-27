@@ -150,8 +150,9 @@ mod tests {
     use super::*;
     use crate::hash;
     use crate::lock::{ItemId, LockedItemV2, OutputRecord};
-    use crate::types::{ItemName, SourceName};
+    use crate::types::SourceName;
     use indexmap::IndexMap;
+    use mars_schema::names::ItemName;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::TempDir;

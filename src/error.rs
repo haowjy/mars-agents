@@ -23,8 +23,11 @@ pub enum ConfigError {
         message: &'static str,
     },
 
-    #[error("source `{name}` uses both agents/skills and exclude — pick one")]
-    ConflictingFilters { name: String },
+    #[error(transparent)]
+    Filter(#[from] mars_schema::filter::FilterError),
+
+    #[error(transparent)]
+    PluginSelector(#[from] mars_schema::dependency::PluginSelectorError),
 
     #[error("parse error: {0}")]
     Parse(#[from] toml::de::Error),

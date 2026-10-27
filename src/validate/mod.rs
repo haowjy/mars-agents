@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::lock::ItemId;
-use crate::types::ItemName;
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 /// Warning from dependency validation.
 ///

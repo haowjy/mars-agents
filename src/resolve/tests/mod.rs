@@ -8,11 +8,13 @@ mod version_tests;
 
 use super::*;
 use crate::config::{
-    EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec, Manifest, ManifestDep,
-    PackageInfo, Settings, SourceSpec,
+    EffectiveConfig, EffectiveDependency, GitSpec, Manifest, ManifestDep, PackageInfo, Settings,
+    SourceSpec,
 };
-use crate::types::{ItemName, RenameMap, SourceId, SourceName, SourceSubpath, SourceUrl};
+use crate::types::{SourceId, SourceName, SourceUrl};
 use indexmap::IndexMap;
+use mars_schema::filter::{FilterConfig, FilterMode};
+use mars_schema::names::{ItemName, RenameMap, SourceSubpath};
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -362,7 +364,7 @@ fn make_manifest(name: &str, version: &str, deps: Vec<(&str, &str, &str)>) -> Ma
                 path: None,
                 subpath: None,
                 version: Some(dep_ver.to_string()),
-                filter: crate::config::FilterConfig::default(),
+                filter: mars_schema::filter::FilterConfig::default(),
                 plugin: None,
             },
         );
@@ -514,9 +516,8 @@ fn write_agent(tree: &Path, name: &str, skills: &[&str]) {
 fn source_id_for_spec(spec: &SourceSpec, subpath: Option<SourceSubpath>) -> SourceId {
     match spec {
         SourceSpec::Git(g) => {
-            let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
-                g.url.as_ref(),
-            ));
+            let canonical_url =
+                SourceUrl::from(mars_schema::git_url::canonicalize_git_url(g.url.as_ref()));
             SourceId::git_with_subpath(canonical_url, subpath)
         }
         SourceSpec::Path(path) => SourceId::Path {

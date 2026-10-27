@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
-use crate::config::{EffectiveConfig, FilterMode};
+use crate::config::EffectiveConfig;
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::discover;
 use crate::error::MarsError;
@@ -14,7 +14,9 @@ use crate::resolve::ResolvedGraph;
 use crate::sync::filter::apply_filter;
 use crate::sync::ownership::Ownership;
 use crate::sync::package_dir::PackageDir;
-use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};
+use crate::types::{ContentHash, DestPath, SourceName};
+use mars_schema::filter::FilterMode;
+use mars_schema::names::{ItemName, RenameMap};
 
 /// What the `.mars/` canonical store should look like after sync.
 ///

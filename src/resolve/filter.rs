@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 
-use crate::config::FilterMode;
-use crate::types::{ItemName, SourceName};
+use crate::types::SourceName;
+use mars_schema::filter::FilterMode;
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 use super::package::RegisteredPackage;
 

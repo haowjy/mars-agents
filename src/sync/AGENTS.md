@@ -136,8 +136,8 @@ self items (only `.mars-src`'s are), as in v0.19.0.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target, one
 record per target, each holding the `PackageDir` its copy installs at. A dependency's
-`agents`/`skills` filter narrows its agents, skills and hooks but never its MCP servers: the
-filter names no server. Visibility, dependency collisions and local shadowing then choose the
+include filter (`agents`, `skills`, `only_skills`, `only_agents`) narrows its agents, skills and
+hooks but never its MCP servers: the filter names no server. Visibility, dependency collisions and local shadowing then choose the
 server's config entry once for both installation and config lowering. Only a target whose adapter
 writes an MCP config selects a server, and a winner becomes a target-scoped directory item when
 its `command` or `args` name `${MARS_MCP_DIR}`; a token-free server is a config entry alone. Its

@@ -1,6 +1,96 @@
 //! Versioned package metadata and manifest classification.
 
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
+
+/// The first Mars release that reads schema 1. An older one reads a `schema = 1` package as
+/// pre-v1, so a schema v1 package's `requires-mars` may not admit one.
+pub const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
+
+/// Parse a `requires-mars` or `requires-meridian` requirement. A bare version means `>=` it
+/// (`0.19.0` is `>=0.19.0`), as `mars.toml` documents both fields.
+pub fn parse_requirement(raw: &str) -> Result<VersionReq, semver::Error> {
+    let raw = raw.trim();
+    let parts: Vec<&str> = raw.split('.').collect();
+    let normalized = if (1..=3).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+    {
+        let mut parts = parts;
+        while parts.len() < 3 {
+            parts.push("0");
+        }
+        format!(">={}", parts.join("."))
+    } else {
+        raw.to_string()
+    };
+    VersionReq::parse(&normalized)
+}
+
+/// Whether `requirement` demands at least `floor`, so a Mars older than one floor cannot read
+/// the package. A range with no lower bound (`<0.25`) does not; an unparseable one cannot say.
+pub fn requirement_has_floor(requirement: Option<&str>, floor: &Version) -> bool {
+    let Some(raw) = requirement else {
+        return false;
+    };
+    let Ok(requirement) = parse_requirement(raw) else {
+        return false;
+    };
+    requirement
+        .comparators
+        .iter()
+        .any(|comparator| comparator_floor(comparator).is_some_and(|minimum| minimum >= *floor))
+}
+
+fn comparator_floor(comparator: &semver::Comparator) -> Option<Version> {
+    use semver::Op;
+
+    // Partial strict bounds advance to the next specified component: `>0.18`
+    // means `>=0.19.0`, unlike the fully specified `>0.18.0`.
+    let (major, minor, patch) = match comparator.op {
+        Op::Greater if comparator.minor.is_none() => (comparator.major.checked_add(1)?, 0, 0),
+        Op::Greater if comparator.patch.is_none() => {
+            (comparator.major, comparator.minor?.checked_add(1)?, 0)
+        }
+        Op::Exact | Op::Greater | Op::GreaterEq | Op::Tilde | Op::Caret | Op::Wildcard => (
+            comparator.major,
+            comparator.minor.unwrap_or(0),
+            comparator.patch.unwrap_or(0),
+        ),
+        _ => return None,
+    };
+    let mut version = Version::new(major, minor, patch);
+    version.pre = comparator.pre.clone();
+    Some(version)
+}
+
+/// The advice `mars check` prints for a schema v1 package's `requires-mars`, which `mars migrate`
+/// prints with it when it leaves an authored requirement alone.
+pub fn schema_1_requires_mars_warning(requirement: Option<&str>) -> Option<String> {
+    requires_mars_floor_warning(
+        requirement,
+        SCHEMA_1_MARS_FLOOR,
+        "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
+    )
+}
+
+/// The advice for a requirement that is missing or admits a Mars older than `floor`. `None` when
+/// it does not, or when it is not a requirement this Mars can read: a broken requirement is its
+/// own error.
+pub fn requires_mars_floor_warning(
+    requirement: Option<&str>,
+    floor: &str,
+    reason: &str,
+) -> Option<String> {
+    if let Some(raw) = requirement {
+        parse_requirement(raw).ok()?;
+    }
+    let floor = Version::parse(floor).expect("a Mars floor is valid semver");
+    (!requirement_has_floor(requirement, &floor)).then(|| {
+        format!("[package] `requires-mars` should be `\">={floor}\"` or a higher floor; {reason}")
+    })
+}
 
 /// Package metadata carried by `mars.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -8,7 +8,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use semver::Version;
 use serde::Serialize;
 
 use crate::error::MarsError;
@@ -150,8 +149,6 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     if clean { Ok(0) } else { Ok(1) }
 }
 
-/// The first Mars that reads schema 1: older ones read a `schema = 1` package as pre-v1.
-const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
 /// The first Mars whose `mars version` keeps `[plugin]`.
 const PLUGIN_MARS_FLOOR: &str = "0.19.0";
 
@@ -164,26 +161,19 @@ fn requires_mars_warning(
     let config = lens.manifest.as_ref()?;
     let package = config.package.as_ref()?;
     crate::resolve::validate_package_requirement_syntax(package).ok()?;
-    let (floor, reason) = if prepared.classification == Classification::Schema1 {
-        (
-            SCHEMA_1_MARS_FLOOR,
-            "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
-        )
-    } else if config.plugin.is_some() {
-        (
+    if prepared.classification == Classification::Schema1 {
+        return mars_schema::package::schema_1_requires_mars_warning(
+            package.requires_mars.as_deref(),
+        );
+    }
+    if config.plugin.is_some() {
+        return mars_schema::package::requires_mars_floor_warning(
+            package.requires_mars.as_deref(),
             PLUGIN_MARS_FLOOR,
             "older Mars versions may drop [plugin] during `mars version`",
-        )
-    } else {
-        return None;
-    };
-    let has_floor = crate::resolve::requirement_has_floor(
-        package.requires_mars.as_deref(),
-        &Version::parse(floor).expect("Mars floor is valid semver"),
-    );
-    (!has_floor).then(|| {
-        format!("[package] `requires-mars` should be `\">={floor}\"` or a higher floor; {reason}")
-    })
+        );
+    }
+    None
 }
 
 fn plugin_warnings(

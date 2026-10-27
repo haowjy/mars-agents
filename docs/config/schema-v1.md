@@ -30,6 +30,8 @@ Mars classifies a package root before it reads any definition:
 
 The same classification runs for dependencies, the local package, `.mars-src/`, `mars check`, `mars validate`, `mars migrate` and plugin builds. Reading finishes for the whole dependency graph before any content is written; see [the sync pipeline](../internals/sync-pipeline.md#preparation-and-the-gate).
 
+An installed `.mars/` tree is not an authored package. Those files are whatever Mars version wrote them, so when an installed Agent or skill reports a pre-v1 spelling (a removed key or value, or a `tools` list) it is upgraded in memory and read again: a tree an older Mars installed keeps loading until the next `mars sync` rewrites it, instead of losing the definitions the strict reader refuses. Schema v1 text reads exactly as before, and so does a file that is invalid rather than pre-v1. A package that declares `schema = 1` is still read strictly, because that rule is about what an author wrote.
+
 ### File rules
 
 - **Frontmatter** is the block between a first line that is exactly `---` (after an optional byte-order mark) and the next line that is exactly `---`. Lines end in LF or CRLF. A file whose first line is not `---` has no frontmatter and is all body. A fence that opens and never closes is an error (`frontmatter.unclosed`).
@@ -123,7 +125,7 @@ Removed: `package.visibility`, with nothing to replace it.
 
 ## Effort
 
-`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high`, `xhigh` or `max`, in rising order; values are case-insensitive. `xhigh` and `max` are two levels. Claude Code has both. Codex's highest is `xhigh`, so Mars writes `max` there as `xhigh`, in the native file and in the launch bundle, and warns that it approximated. On Cursor the model's slug carries the effort: `max` selects the model's `-max` variant, else its `-xhigh`, else its `-high`, and warns when it used a lower one.
+`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high`, `xhigh` or `max`, in rising order; values are case-insensitive. `xhigh` and `max` are two levels. Claude Code and Codex have both. On Cursor the model's slug carries the effort: `max` selects the model's `-max` variant, else its `-xhigh`, else its `-high`, and warns when it used a lower one.
 
 **`none` means reasoning off.** It is a value of its own: an absent `effort` means "the model's default", and `none` asks for no reasoning. Mars keeps the distinction end to end. The launch bundle carries `"effort": "none"`, and each harness's native file spells it as that harness does:
 
@@ -134,7 +136,7 @@ Removed: `package.visibility`, with nothing to replace it.
 | OpenCode, Pi | no effort field is written for any value |
 | Cursor | no effort field is written; the model slug is chosen by effort, and `none` selects Cursor's default tier |
 
-The launcher reads the bundle's `effort` and maps it for its harness. The bundle never carries an effort the harness refuses: Codex gets `xhigh` for `max`, and Cursor gets none, because the effort is already in `harness_model`. `mars build launch-bundle --effort none` overrides the Agent from the command line.
+The launcher reads the bundle's `effort` and maps it for its harness. The bundle carries the Agent's effort for every harness but Cursor, which gets none because the effort is already in `harness_model`. `mars build launch-bundle --effort none` overrides the Agent from the command line.
 
 `adaptive` and `disabled` are not values. `mars migrate` rewrites them to `medium` and `none`.
 

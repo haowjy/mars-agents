@@ -110,14 +110,18 @@ pub(crate) fn undeclared_provider_hint(provider: &str) -> String {
     )
 }
 
-/// Generic: parse skill dependencies from any item's frontmatter.
+/// Parse skill dependencies from an Agent file.
 ///
-/// Returns the `skills` list, or empty vec if no frontmatter, no skills
-/// field, or malformed YAML. Only reads the frontmatter block between
-/// `---` delimiters, not the full markdown body.
+/// The callers read files Mars or a provider wrote — an installed Agent under `.mars/`, or the
+/// staged copy a sync filters — so the read tolerates a pre-v1 spelling. Returns the `skills`
+/// list, or an empty vec if there is no frontmatter, no `skills` field, or malformed YAML, and
+/// reads only the frontmatter block between `---` delimiters, not the full markdown body.
 pub fn parse_item_skill_deps(item_path: &Path) -> Result<Vec<String>, MarsError> {
     let content = std::fs::read_to_string(item_path)?;
-    Ok(extract_skills_from_content(&content))
+    Ok(mars_schema::read::installed_agent(&content)
+        .fields
+        .map(|profile| profile.skills.all())
+        .unwrap_or_default())
 }
 
 /// Parse skill dependencies from an agent's frontmatter.
@@ -126,7 +130,7 @@ pub fn parse_item_skill_deps(item_path: &Path) -> Result<Vec<String>, MarsError>
 pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
     parse_item_skill_deps(agent_path)
 }
-/// Extract skills list from markdown content with YAML frontmatter.
+/// Extract skills list from prepared package content, which is already schema v1.
 ///
 /// Defensive: returns empty vec on any parse failure.
 pub(crate) fn extract_skills_from_content(content: &str) -> Vec<String> {

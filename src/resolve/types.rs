@@ -1,4 +1,4 @@
-use mars_schema::version::{Constraint, SelectionPolicy};
+use mars_schema::version::Constraint;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
@@ -239,6 +239,27 @@ impl Default for ResolveOptions {
             ignore_requires_meridian: false,
             source_overrides: indexmap::IndexMap::new(),
             prepared_sources: indexmap::IndexMap::new(),
+        }
+    }
+}
+
+/// How a source's version relates to the lock: the schema crate's choices, plus `--frozen`,
+/// which replays the lock exactly and is the resolver's own rule, not a way of choosing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectionPolicy {
+    PreferLockThenLatest,
+    LatestOnly,
+    LockOnly,
+}
+
+impl SelectionPolicy {
+    /// The crate's policy; `None` under `--frozen`, which never chooses.
+    pub(crate) fn choosing(self) -> Option<mars_schema::version::SelectionPolicy> {
+        use mars_schema::version::SelectionPolicy as Choosing;
+        match self {
+            Self::PreferLockThenLatest => Some(Choosing::PreferLockThenLatest),
+            Self::LatestOnly => Some(Choosing::LatestOnly),
+            Self::LockOnly => None,
         }
     }
 }

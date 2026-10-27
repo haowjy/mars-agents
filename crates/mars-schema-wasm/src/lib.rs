@@ -6,7 +6,7 @@
 //! Every failure is a thrown `Error` with a `code` property: the crate error's own `code()`, or
 //! `input.invalid` for an argument that is not the shape the export documents.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use mars_schema::ordered::OrderedValue;
 use serde::Serialize;
@@ -273,11 +273,11 @@ pub fn satisfies_requirement(requirement: &str, version: &str) -> Result<bool, J
         .map_err(|error| fail(error.code(), error))
 }
 
-/// Which ref a package ends at: `{available, constraints, locked?, policy?, excluded?}` to
+/// Which ref a package ends at: `{available, constraints, locked?}` to
 /// `{pin} | {tag} | {untagged: true}`. `available` is the repository's tags; one that is not a
 /// version (`nightly`) is ignored. `constraints` is every `[requester, version | null]` on the
-/// package, as the manifests spell them. `policy` is `prefer-lock-then-latest` (the default),
-/// `latest-only` or `lock-only`. A refusal throws with a `version.*` code.
+/// package, as the manifests spell them; `locked` is kept when it is allowed, else the newest
+/// allowed version is chosen. A refusal throws with a `version.*` code.
 #[wasm_bindgen(js_name = selectVersion)]
 pub fn select_version(argument: JsValue) -> Result<JsValue, JsValue> {
     use mars_schema::version::{Chosen, SelectionPolicy, require_tag};
@@ -286,15 +286,6 @@ pub fn select_version(argument: JsValue) -> Result<JsValue, JsValue> {
         available: Vec<String>,
         constraints: Vec<(String, Option<String>)>,
         locked: Option<String>,
-        policy: Option<Policy>,
-        excluded: Option<Vec<String>>,
-    }
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "kebab-case")]
-    enum Policy {
-        PreferLockThenLatest,
-        LatestOnly,
-        LockOnly,
     }
     #[derive(Serialize)]
     #[serde(rename_all = "lowercase")]
@@ -324,24 +315,12 @@ pub fn select_version(argument: JsValue) -> Result<JsValue, JsValue> {
         .map(require_tag)
         .transpose()
         .map_err(|error| fail(error.code(), error))?;
-    let excluded = input
-        .excluded
-        .unwrap_or_default()
-        .iter()
-        .map(|tag| require_tag(tag))
-        .collect::<Result<_, _>>()
-        .map_err(|error| fail(error.code(), error))?;
-    let policy = match input.policy.unwrap_or(Policy::PreferLockThenLatest) {
-        Policy::PreferLockThenLatest => SelectionPolicy::PreferLockThenLatest,
-        Policy::LatestOnly => SelectionPolicy::LatestOnly,
-        Policy::LockOnly => SelectionPolicy::LockOnly,
-    };
     let chosen = mars_schema::version::choose(
         &input.available,
         &constraints,
         locked.as_ref(),
-        policy,
-        &excluded,
+        SelectionPolicy::PreferLockThenLatest,
+        &HashSet::new(),
     )
     .map_err(|error| fail(error.code(), error))?;
     to_js(&match chosen {
@@ -353,6 +332,7 @@ pub fn select_version(argument: JsValue) -> Result<JsValue, JsValue> {
 
 #[derive(serde::Deserialize)]
 struct SelectItemsInput {
+    #[serde(default)]
     requests: Vec<RequestInput>,
     packages: BTreeMap<String, mars_schema::selection::PackageInput>,
     root: Option<mars_schema::selection::PackageInput>,

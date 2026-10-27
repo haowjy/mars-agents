@@ -1,6 +1,0 @@
-{
-  "error": {
-    "code": "version.no-lock",
-    "message": "no lock version was found"
-  }
-}

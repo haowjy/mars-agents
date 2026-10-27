@@ -146,8 +146,6 @@ pub enum SelectionPolicy {
     PreferLockThenLatest,
     /// The newest allowed version, ignoring the lock.
     LatestOnly,
-    /// The locked version, or an error.
-    LockOnly,
 }
 
 /// Why no version could be chosen.
@@ -159,12 +157,6 @@ pub enum SelectError {
         constraints: Vec<(String, VersionReq)>,
         available: Vec<Version>,
     },
-    /// [`SelectionPolicy::LockOnly`], and the locked version is excluded, unavailable or fails a constraint.
-    #[error("lock version {locked} is incompatible with current constraints or unavailable")]
-    LockIncompatible { locked: Version },
-    /// [`SelectionPolicy::LockOnly`] with no locked version.
-    #[error("no lock version was found")]
-    NoLock,
 }
 
 impl SelectError {
@@ -172,8 +164,6 @@ impl SelectError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::NoSatisfying { .. } => "version.no-satisfying",
-            Self::LockIncompatible { .. } => "version.lock-incompatible",
-            Self::NoLock => "version.no-lock",
         }
     }
 }
@@ -326,13 +316,6 @@ pub fn select(
     match policy {
         SelectionPolicy::PreferLockThenLatest => Ok(Some(locked_allowed.unwrap_or(newest))),
         SelectionPolicy::LatestOnly => Ok(Some(newest)),
-        SelectionPolicy::LockOnly => match (locked_allowed, locked) {
-            (Some(index), _) => Ok(Some(index)),
-            (None, Some(locked)) => Err(SelectError::LockIncompatible {
-                locked: locked.clone(),
-            }),
-            (None, None) => Err(SelectError::NoLock),
-        },
     }
 }
 

@@ -9,10 +9,7 @@ pub enum ItemKind {
     Agent,
     Skill,
     Hook,
-    // The aliases are the spellings before kebab-case, which locks written by older builds hold.
-    #[serde(alias = "mcpserver")]
     McpServer,
-    #[serde(alias = "bootstrapdoc")]
     BootstrapDoc,
 }
 

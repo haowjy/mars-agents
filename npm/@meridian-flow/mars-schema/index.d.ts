@@ -26,10 +26,6 @@ export interface MarsSchemaError extends Error {
 export type VersionErrorCode =
   /** No tag meets every constraint; the message names each requirement and the versions there are. */
   | "version.no-satisfying"
-  /** `policy: "lock-only"`, and `locked` is excluded, absent from `available` or fails a constraint. */
-  | "version.lock-incompatible"
-  /** `policy: "lock-only"` with no `locked`. */
-  | "version.no-lock"
   /** Two different branch or commit pins. */
   | "version.pins-differ"
   /** A branch or commit pin beside a semver range. */
@@ -473,10 +469,8 @@ export function satisfiesRequirement(requirement: string, version: string): bool
 /**
  * Which ref a package ends at, from every constraint on it and the repository's tags. Settles
  * first (one branch or commit pin wins; two pins, or a pin beside a semver range, throw), then
- * chooses among `available`: the newest tag meeting every range and not in `excluded`, where
- * `policy` (default `"prefer-lock-then-latest"`) prefers `locked` when allowed,
- * `"latest-only"` ignores it and `"lock-only"` returns `locked` or throws. A `latest` (or
- * `null`) constraint allows any tag and turns the default policy into `"latest-only"`. A tag
+ * chooses among `available`: `locked` when it meets every range, else the newest tag that does.
+ * A `latest` (or `null`) constraint allows any tag and makes the newest win over `locked`. A tag
  * that is not a version (`nightly`) is ignored, and with none left the result is `untagged`:
  * the default branch. Constraints are `[requester, version | null]` as the manifests spell them
  * (`v2`, `^1.2`, `>=0.5`, a branch, `latest`); see `satisfies` for the grammar.
@@ -485,8 +479,6 @@ export function selectVersion(input: {
   available: string[];
   constraints: [requester: string, version: string | null][];
   locked?: string;
-  policy?: "prefer-lock-then-latest" | "latest-only" | "lock-only";
-  excluded?: string[];
 }): { pin: string } | { tag: string } | { untagged: true };
 
 /** An entry's filter, as `requests` take it. `rename` is not here: selection ignores it, so it is refused. */
@@ -572,7 +564,7 @@ export interface SelectionResult {
 
 /**
  * The Agents, skills and package-level documents an install of `root` and its dependencies
- * yields, and why each is selected. `{ root, packages, requests: [] }` is the whole call for an
+ * yields, and why each is selected. `{ root, packages }` is the whole call for an
  * imported package: `root` is selected whole, and its manifest entries (`[dependencies]`, with
  * their filters and `exclude`) are applied as the consumer's own requests, so a filtered
  * dependency contributes what its filter names plus the skills the selected Agents name.
@@ -588,7 +580,7 @@ export interface SelectionResult {
  * Unknown keys throw `input.invalid`, at the top level, in a package and in a request.
  */
 export function selectItems(input: {
-  requests: ({ name: string } & FilterConfig)[];
+  requests?: ({ name: string } & FilterConfig)[];
   packages: { [name: string]: SelectionPackage };
   root?: SelectionPackage;
 }): SelectionResult;

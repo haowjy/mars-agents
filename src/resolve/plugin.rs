@@ -10,12 +10,11 @@
 
 use mars_schema::claude::manifest::{Checkout, MARKETPLACE_MANIFEST, PluginSource};
 use mars_schema::inspect::{Hint, InspectedPlugin, Kind, PluginHint, inspect};
-use mars_schema::version::SelectionPolicy;
 
 use super::SourceProvider;
 use super::package::PendingSource;
 use super::path::apply_subpath;
-use super::types::{PluginRoot, ResolveOptions, RootedSourceRef};
+use super::types::{PluginRoot, ResolveOptions, RootedSourceRef, SelectionPolicy};
 use super::version::locked_source_matches_pending;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;

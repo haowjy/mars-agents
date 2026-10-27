@@ -1,6 +1,0 @@
-{
-  "error": {
-    "code": "version.lock-incompatible",
-    "message": "lock version 1.0.0 is incompatible with current constraints or unavailable"
-  }
-}

@@ -34,8 +34,8 @@ await init();
 | `normalize({tree, source?, hint?, selection?})` | Turns a selection into schema v1 packages with a generated `mars.toml` and provenance. |
 | `satisfies(constraint, version)` | Whether a version meets a dependency entry's `version` (`^1.2`, `v2`, a bare `0.20` as `^0.20`, `latest`; a branch or commit pin is met by none). |
 | `satisfiesRequirement(requirement, version)` | Whether a version meets a package's `requires-mars` or `requires-meridian`, where a bare `0.20` means `>=0.20.0`. |
-| `selectVersion({available, constraints, locked?, policy?, excluded?})` | Which ref a package ends at, from every `[requester, version \| null]` on it and the repository's tags: `{pin}` (a branch or commit), `{tag}` (the newest that meets every semver range, or the locked one when `policy` allows) or `{untagged: true}` (no version tags). Throws when none qualifies. |
-| `selectItems({requests, packages, root?})` | Which Agents, skills and package documents an install of `root` and its dependencies yields, and why. Takes each package's `prepare` result. |
+| `selectVersion({available, constraints, locked?})` | Which ref a package ends at, from every `[requester, version \| null]` on it and the repository's tags: `{pin}` (a branch or commit), `{tag}` (the newest that meets every semver range, or the locked one when it still meets them) or `{untagged: true}` (no version tags). Throws when none qualifies. |
+| `selectItems({packages, root?, requests?})` | Which Agents, skills and package documents an install of `root` and its dependencies yields, and why. Takes each package's `prepare` result. |
 | `version()` | The version of the schema crate this build was made from. |
 
 A tree is a `Map<string, Uint8Array>` from `/`-separated relative paths to bytes. `prepare`, `inspect` and `normalize` read manifests, definitions and directory listings, never the bytes of a skill's other files.

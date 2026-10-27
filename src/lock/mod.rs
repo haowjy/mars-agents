@@ -309,6 +309,7 @@ pub struct LockedContent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedItemV2 {
     pub source: SourceName,
+    #[serde(with = "lock_kind")]
     pub kind: ItemKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
@@ -397,6 +398,7 @@ pub struct ConfigEntryRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedItem {
     pub source: SourceName,
+    #[serde(with = "lock_kind")]
     pub kind: ItemKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
@@ -408,6 +410,28 @@ pub struct LockedItem {
 // Re-export ItemKind and ItemId from types — they're shared vocabulary,
 // not lock-specific. This preserves `use mars_schema::item::ItemKind` compatibility.
 pub use crate::types::ItemId;
+
+/// `kind` as `mars.lock` spells it. Mars ≤0.21 reads lowercase kinds only (`bootstrapdoc`,
+/// `mcpserver`), so those stay what this version writes; it reads both spellings.
+mod lock_kind {
+    use mars_schema::item::ItemKind;
+    use serde::de::IntoDeserializer;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(kind: &ItemKind, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&kind.to_string().replace('-', ""))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ItemKind, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let kebab = match text.as_str() {
+            "mcpserver" => "mcp-server",
+            "bootstrapdoc" => "bootstrap-doc",
+            other => other,
+        };
+        ItemKind::deserialize(kebab.into_deserializer())
+    }
+}
 
 const LOCK_FILE: &str = "mars.lock";
 /// Current lock file schema version.
@@ -444,6 +468,7 @@ struct OutputRecordV2 {
 #[derive(Deserialize)]
 struct LockedItemV2Wire {
     source: SourceName,
+    #[serde(with = "lock_kind")]
     kind: ItemKind,
     #[serde(default)]
     version: Option<String>,

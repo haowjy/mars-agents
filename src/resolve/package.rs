@@ -306,7 +306,7 @@ pub(crate) fn resolve_package_bottom_up(
 
         let label = candidate_version_label(&candidate.0);
         if options.version_selection_policy(&pending_src.name)
-            == mars_schema::version::SelectionPolicy::LockOnly
+            == super::types::SelectionPolicy::LockOnly
         {
             return Err(MarsError::FrozenViolation {
                 message: format!(

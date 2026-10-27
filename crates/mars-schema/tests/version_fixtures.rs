@@ -77,7 +77,6 @@ fn run(input: &Value) -> Value {
                 .unwrap_or("prefer-lock-then-latest")
             {
                 "latest-only" => SelectionPolicy::LatestOnly,
-                "lock-only" => SelectionPolicy::LockOnly,
                 _ => SelectionPolicy::PreferLockThenLatest,
             };
             let excluded: HashSet<Version> = strings(input, "excluded")

@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-27
+
+### Added
+- `mars build plugin` now registers the package's agents in the OpenCode plugin. OpenCode lists each as `<plugin>:<agent>` and can spawn it as a subagent. See [plugin authoring](https://github.com/haowjy/mars-agents/blob/main/docs/plugin-authoring.md#opencode-agents).
+
 ## [0.22.0] - 2026-10-27
 
 ### Upgrade notes

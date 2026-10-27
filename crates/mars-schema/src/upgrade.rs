@@ -752,23 +752,12 @@ fn rename_consumer_namespaces(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagno
         };
         match (new_block, old_block) {
             (Value::Mapping(new_block), Value::Mapping(old_block)) => {
-                for (key, value) in old_block {
-                    let Some(name) = key.as_str().map(str::to_owned) else {
-                        continue;
-                    };
-                    match new_block.get(&key) {
-                        None => {
-                            new_block.insert(key, value);
-                        }
-                        Some(existing) if *existing == value => {}
-                        Some(_) => {
-                            let mut path = block_path.clone();
-                            path.push(PathSegment::Key(name.clone()));
-                            let dropped = format!("harness-overrides.{old}.{name}");
-                            notes.push(dropped_twin(&agent, path, &dropped, new, &name));
-                        }
-                    }
-                }
+                let twin = Twin {
+                    agent: &agent,
+                    old,
+                    new,
+                };
+                merge_old_block(new_block, old_block, &twin, &[], notes);
             }
             _ => notes.push(SchemaDiagnostic::new(
                 "field.removed",
@@ -790,9 +779,58 @@ fn agent_label(fm: &Frontmatter) -> String {
     )
 }
 
-/// The note for a key `dropped` (named as written) because the `namespace` block already sets
-/// `key`. A dropped `permission` carried a restriction, which the note names as lost
-/// (`field.restriction-lost`, as the set-aside reports the same loss).
+/// The two namespace blocks being merged, for naming a dropped key in its note.
+struct Twin<'a> {
+    agent: &'a str,
+    old: &'a str,
+    new: &'a str,
+}
+
+/// Fold `old` into `new` key by key. A key only `old` sets moves over (a non-string key too:
+/// the reader reports it), mappings on both sides merge recursively, and any other clash keeps
+/// the `new` value and notes the dropped one.
+fn merge_old_block(
+    new: &mut Mapping,
+    old: Mapping,
+    twin: &Twin,
+    rel: &[String],
+    notes: &mut Vec<SchemaDiagnostic>,
+) {
+    for (key, value) in old {
+        let name = key
+            .as_str()
+            .map_or_else(|| format!("{key:?}"), str::to_owned);
+        let mut key_rel = rel.to_vec();
+        key_rel.push(name);
+        match new.get_mut(&key) {
+            None => {
+                new.insert(key, value);
+            }
+            Some(existing) if *existing == value => {}
+            Some(Value::Mapping(existing)) if value.is_mapping() => {
+                let Value::Mapping(value) = value else {
+                    unreachable!()
+                };
+                merge_old_block(existing, value, twin, &key_rel, notes);
+            }
+            Some(_) => {
+                let dotted = key_rel.join(".");
+                let mut path = vec![
+                    PathSegment::Key("harness-overrides".to_string()),
+                    PathSegment::Key(twin.old.to_string()),
+                ];
+                path.extend(key_rel.into_iter().map(PathSegment::Key));
+                let dropped = format!("harness-overrides.{}.{dotted}", twin.old);
+                notes.push(dropped_twin(twin.agent, path, &dropped, twin.new, &dotted));
+            }
+        }
+    }
+}
+
+/// The note for a value `dropped` (named as written) because the `namespace` block already sets
+/// `key` (dotted, relative to the block). A dropped `permission` or `capabilities` entry carried
+/// a restriction, which the note names as lost (`field.restriction-lost`, as the set-aside
+/// reports the same loss).
 fn dropped_twin(
     agent: &str,
     path: Vec<PathSegment>,
@@ -800,13 +838,13 @@ fn dropped_twin(
     namespace: &str,
     key: &str,
 ) -> SchemaDiagnostic {
-    if key == "permission" {
+    if key == "permission" || key == "capabilities" || key.starts_with("capabilities.") {
         return SchemaDiagnostic::new(
             crate::set_aside::RESTRICTION_LOST,
             Severity::Warning,
             path,
             format!(
-                "{agent} lost the restriction `permission`: it was dropped, because \
+                "{agent} lost the restriction `{key}`: it was dropped, because \
                  `harness-overrides.{namespace}.{key}` already sets a value, and an override \
                  written wins"
             ),

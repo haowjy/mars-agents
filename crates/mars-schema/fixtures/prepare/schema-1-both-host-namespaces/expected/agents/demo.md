@@ -5,8 +5,10 @@ harness-overrides:
   meridian-flow:
     permission: edit
   meridian-cli:
-    resident-rearm-budget: 2
     capabilities:
-      spawn: false
+      spawn: true
+      extra: true
+      other: false
+    resident-rearm-budget: 2
 ---
 body

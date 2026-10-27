@@ -55,10 +55,12 @@
                 "permission": "edit"
               },
               "meridian-cli": {
-                "resident-rearm-budget": 2,
                 "capabilities": {
-                  "spawn": false
-                }
+                  "spawn": true,
+                  "extra": true,
+                  "other": false
+                },
+                "resident-rearm-budget": 2
               }
             }
           ]
@@ -88,10 +90,12 @@
               "permission": "edit"
             },
             "meridian-cli": {
-              "resident-rearm-budget": 2,
               "capabilities": {
-                "spawn": false
-              }
+                "spawn": true,
+                "extra": true,
+                "other": false
+              },
+              "resident-rearm-budget": 2
             }
           },
           "model-policies": []
@@ -117,6 +121,17 @@
           "permission"
         ],
         "message": "agent `demo` lost the restriction `permission`: it was dropped, because `harness-overrides.meridian-flow.permission` already sets a value, and an override written wins"
+      },
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "harness-overrides",
+          "meridian",
+          "capabilities",
+          "spawn"
+        ],
+        "message": "agent `demo` lost the restriction `capabilities.spawn`: it was dropped, because `harness-overrides.meridian-cli.capabilities.spawn` already sets a value, and an override written wins"
       },
       {
         "code": "field.removed",

@@ -182,11 +182,12 @@ fn write_package(
         .collect::<Result<Vec<_>, _>>()?;
     skills.sort_by(|left, right| left.directory.cmp(&right.directory));
 
-    let agents = contents
+    let mut agents = contents
         .agents
         .iter()
         .map(|agent| agent_data(&metadata.name, agent, diag))
         .collect::<Result<Vec<_>, _>>()?;
+    agents.sort_by(|left, right| left.id.cmp(&right.id));
 
     let mut mcp = contents
         .config_entries

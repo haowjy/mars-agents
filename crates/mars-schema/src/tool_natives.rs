@@ -316,6 +316,7 @@ const CODEX: Table = &[
 
 /// OpenCode, in the v1.19.3 permission vocabulary. Meridian knows the running version and
 /// translates to v2 spellings (`bash` → `shell`, `task` → `subagent`, `write` → `edit`).
+/// Mars does the same for plugin agents in [`opencode_v2_action`], so keep the two in step.
 ///
 /// Source: opencode.ai/docs/permissions, the provider tool lists captured from v1.19.3 and
 /// v2.0.29 (`opencode-matrix.md`), and strings from both binaries. `edit` is the permission

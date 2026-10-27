@@ -609,7 +609,7 @@
         ]
       }
     },
-    "flow": {
+    "meridian-flow": {
       "agent": {
         "kind": "tools",
         "tools": [

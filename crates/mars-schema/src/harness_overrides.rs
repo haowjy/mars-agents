@@ -197,6 +197,20 @@ pub(crate) fn parse_harness_overrides(
         if push_unholdable_key(diags, &harness_path, harness_name) {
             continue;
         }
+        if let Some((_, new)) = crate::harness::RENAMED_CONSUMER_NAMESPACES
+            .iter()
+            .find(|(old, _)| *old == harness_name)
+        {
+            diags.push(SchemaDiagnostic::new(
+                "field.removed",
+                Severity::Error,
+                harness_path,
+                format!(
+                    "`harness-overrides.{harness_name}` was renamed; use `harness-overrides.{new}`"
+                ),
+            ));
+            continue;
+        }
         let Some(sub_mapping) = v.as_mapping() else {
             push_invalid(
                 kind,
@@ -408,7 +422,7 @@ pub(crate) fn move_harness_only_keys(
 
 /// Authored markdown with every consumer-namespace entry under `harness-overrides` blanked.
 ///
-/// A consumer namespace (`flow`, `meridian`) is not a harness: Mars keeps its block for the
+/// A consumer namespace (`meridian-flow`, `meridian-cli`) is not a harness: Mars keeps its block for the
 /// consumer and never writes it to a tree. A caller scanning the text for what a package ships
 /// must therefore not read it, which is what this masking is for. Only the entry's own bytes
 /// become spaces and every newline stays, so a location the caller reports still points at the

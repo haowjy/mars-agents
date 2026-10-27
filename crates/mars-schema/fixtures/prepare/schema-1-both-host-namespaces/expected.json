@@ -1,0 +1,148 @@
+{
+  "classification": {
+    "kind": "schema-1"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "version",
+          "1.0.0"
+        ],
+        [
+          "schema",
+          1
+        ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "demo",
+      "source_path": "agents/demo.md",
+      "output_path": "agents/demo.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "demo"
+          ],
+          [
+            "description",
+            "Demo"
+          ],
+          [
+            "harness-overrides",
+            {
+              "meridian-flow": {
+                "permission": "edit"
+              },
+              "meridian-cli": {
+                "capabilities": {
+                  "spawn": true,
+                  "extra": true,
+                  "other": false
+                },
+                "resident-rearm-budget": 2
+              }
+            }
+          ]
+        ],
+        "fields": {
+          "name": "demo",
+          "description": "Demo",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {
+            "meridian-flow": {
+              "permission": "edit"
+            },
+            "meridian-cli": {
+              "capabilities": {
+                "spawn": true,
+                "extra": true,
+                "other": false
+              },
+              "resident-rearm-budget": 2
+            }
+          },
+          "model-policies": []
+        },
+        "body": "body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "fully-rewritten"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {},
+  "changes": {
+    "agents/demo.md": [
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "harness-overrides",
+          "flow",
+          "permission"
+        ],
+        "message": "agent `demo` lost the restriction `permission`: it was dropped, because `harness-overrides.meridian-flow.permission` already sets a value, and an override written wins"
+      },
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "harness-overrides",
+          "meridian",
+          "capabilities",
+          "spawn"
+        ],
+        "message": "agent `demo` lost the restriction `capabilities.spawn`: it was dropped, because `harness-overrides.meridian-cli.capabilities.spawn` already sets a value, and an override written wins"
+      },
+      {
+        "code": "field.removed",
+        "severity": "warning",
+        "path": [
+          "harness-overrides",
+          "meridian",
+          "resident-rearm-budget"
+        ],
+        "message": "dropped `harness-overrides.meridian.resident-rearm-budget`; `harness-overrides.meridian-cli.resident-rearm-budget` already sets it"
+      }
+    ]
+  }
+}

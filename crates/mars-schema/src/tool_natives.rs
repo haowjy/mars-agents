@@ -124,7 +124,7 @@ pub fn vocabulary() -> Vocabulary {
         .iter()
         .map(|host| (host.as_str(), rows(table(*host))))
         .collect();
-    natives.insert("flow", rows(FLOW));
+    natives.insert("meridian-flow", rows(FLOW));
     Vocabulary {
         capabilities: crate::tool_names::capabilities(),
         natives,

@@ -464,9 +464,9 @@ harness-overrides:
     color: red                # written to .claude/agents/<name>.md only
   codex:
     model_reasoning_summary: concise   # a Codex config key, carried as written
-  flow:
+  meridian-flow:
     permission: read          # Meridian Flow's own keys; reserved namespace
-  meridian:
+  meridian-cli:
     resident-rearm-budget: 3  # the Meridian CLI's own keys; reserved namespace
 ```
 
@@ -474,7 +474,7 @@ The block also reaches the launch bundle as `execution_policy.native_config`; th
 
 A Claude plugin's Claude-only keys (`color`, `maxTurns`, `permissionMode`, `memory`, `background`, `isolation`, `initialPrompt`, `hooks`) arrive here: importing the plugin moves them, unchanged and in file order, to `harness-overrides.claude`, so `.claude/` keeps them and no other harness sees them.
 
-Use top-level fields for Mars semantics. Use `harness-overrides` for harness-specific config Mars should carry without interpreting. `flow` and `meridian` are reserved consumer namespaces, not harnesses: Mars keeps them, never interprets their keys, and routing never selects them. Any other unknown name is a warning, and its block is kept. See [Schema v1](schema-v1.md#harness-overrides-and-the-consumer-namespaces).
+Use top-level fields for Mars semantics. Use `harness-overrides` for harness-specific config Mars should carry without interpreting. `meridian-flow` and `meridian-cli` are reserved consumer namespaces, not harnesses: Mars keeps them, never interprets their keys, and routing never selects them. Any other unknown name is a warning, and its block is kept. See [Schema v1](schema-v1.md#harness-overrides-and-the-consumer-namespaces).
 
 ---
 
@@ -538,7 +538,7 @@ Mars reads every profile with the schema reader and reports diagnostics, each wi
 | A removed key (`disallowed-tools`, `fanout`, ...), a list-form `tools`, an invalid value (`effort: ultra`, `approval: yolo`), malformed `model-policies`, an unclosed or non-mapping frontmatter, a duplicate key | Error |
 | An unknown harness name in `harness:` | Error |
 | An unknown top-level field | Warning — the field stays in the file but reaches no native file; put harness-specific keys under `harness-overrides.<harness>` |
-| An unknown name in `harness-overrides` (other than `flow` and `meridian`) | Warning — the block is preserved |
+| An unknown name in `harness-overrides` (other than `meridian-flow` and `meridian-cli`) | Warning — the block is preserved |
 
 Errors fail `mars sync`, `mars check` and `mars validate` for the package that carries them, before any content is written. `mars check` exits 1 when it finds errors; `mars sync` exits 2. A profile of a package without `schema = 1` is upgraded in memory first, with one warning that names `mars migrate`; see [Migrating to schema v1](migrating-to-schema-v1.md).
 

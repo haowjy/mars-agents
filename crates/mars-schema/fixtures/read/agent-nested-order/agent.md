@@ -5,7 +5,7 @@ tools:
   "*": deny
   bash: ask
 harness-overrides:
-  flow:
+  meridian-flow:
     zeta: {b: 1, a: 2}
     alpha: [{m: 1, k: 2}]
   claude:

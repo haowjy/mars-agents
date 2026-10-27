@@ -5,7 +5,7 @@ resident-rearm-budget: 3
 meridian-capabilities:
   spawn: true
 harness-overrides:
-  flow:
+  meridian-flow:
     permission: read
 ---
 body

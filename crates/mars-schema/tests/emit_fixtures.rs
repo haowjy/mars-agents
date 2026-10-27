@@ -112,12 +112,12 @@ fn rewrite_block_refuses_duplicate_keys() {
 /// Nested mapping order survives read → rewrite_block → read, and emission.
 #[test]
 fn nested_key_order_survives() {
-    let source = "---\nz: 1\ntools:\n  write: allow\n  \"*\": deny\n  bash: ask\nharness-overrides:\n  flow:\n    zeta: {b: 1, a: 2}\n    alpha: [{y: 1, x: 2}]\n---\nb\n";
+    let source = "---\nz: 1\ntools:\n  write: allow\n  \"*\": deny\n  bash: ask\nharness-overrides:\n  meridian-flow:\n    zeta: {b: 1, a: 2}\n    alpha: [{y: 1, x: 2}]\n---\nb\n";
     let first = mars_schema::agent::read(source);
     let block = mars_schema::edit::rewrite_block(&first.frontmatter).unwrap();
     assert_eq!(
         block,
-        "z: 1\ntools:\n  write: allow\n  \"*\": deny\n  bash: ask\nharness-overrides:\n  flow:\n    zeta:\n      b: 1\n      a: 2\n    alpha:\n      - \"y\": 1\n        x: 2\n"
+        "z: 1\ntools:\n  write: allow\n  \"*\": deny\n  bash: ask\nharness-overrides:\n  meridian-flow:\n    zeta:\n      b: 1\n      a: 2\n    alpha:\n      - \"y\": 1\n        x: 2\n"
     );
     let serialized = serde_json::to_string(&first.frontmatter).unwrap();
     assert!(
@@ -127,7 +127,7 @@ fn nested_key_order_survives() {
     let fields = serde_json::to_string(&first.fields).unwrap();
     assert!(
         fields.contains(
-            r#""harness-overrides":{"flow":{"zeta":{"b":1,"a":2},"alpha":[{"y":1,"x":2}]}}"#
+            r#""harness-overrides":{"meridian-flow":{"zeta":{"b":1,"a":2},"alpha":[{"y":1,"x":2}]}}"#
         ),
         "{fields}"
     );

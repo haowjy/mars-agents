@@ -1,7 +1,7 @@
 ---
 harness-overrides:
-  flow: {permission: read}
-  meridian:
+  meridian-flow: {permission: read}
+  meridian-cli:
     resident-rearm-budget: 3
     capabilities: {spawn: true}
 ---

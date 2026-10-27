@@ -36,7 +36,7 @@
       "path": [
         "permission"
       ],
-      "message": "`permission` was removed; move it under `harness-overrides.flow.permission`"
+      "message": "`permission` was removed; move it under `harness-overrides.meridian-flow.permission`"
     }
   ]
 }

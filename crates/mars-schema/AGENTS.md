@@ -17,7 +17,7 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 |---|---|
 | `read` | `read(path, text)` and `read_definition(kind, text)`: the one way an authored definition is read; `installed_agent`/`installed_skill`, the upgrade-then-read every reader of an installed `.mars/` tree uses when the strict reading reports a pre-v1 spelling; `Reading`, `DefinitionRead`, `Valid` |
 | `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; the removed-field and removed-value tables (`RemovedField`, `RemovedValue`, in `diagnostic`); `agent::LoweredField` and `skill::LOWERED_KEYS`, the Agent and skill keys Mars lowers itself, which set-aside and native lowering both read |
-| `harness_overrides` | `harness-overrides` parsing and `HarnessOverrides`, shared by the Agent and skill readers |
+| `harness_overrides` | `harness-overrides` parsing and `HarnessOverrides`, shared by the Agent and skill readers; `mask_consumer_namespaces`, the authored text with each consumer-namespace block blanked line for line, for a caller that scans what a package ships |
 | `prepare` | `prepare`: classify one root, select, upgrade or translate, read; `Prepared`, `PrepareContext`, `Classification` |
 | `dispatch` | Classification order, layout choice, consumer-configuration detection, the dialect prediction (`DialectChoice` in `dialect`) |
 | `discover` | The one bounded walk (`walk`, `walk_dirs`, `excluded`), the Mars convention scan, payload assignment |

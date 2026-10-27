@@ -699,6 +699,9 @@ fn warn_terms_in_content(
     terms: &TermSet,
     diag: &mut DiagnosticCollector,
 ) {
+    // A consumer namespace is kept for its own consumer and never reaches a tree, so the scan
+    // reads only what the package ships.
+    let content = mars_schema::harness_overrides::mask_consumer_namespaces(content);
     for (index, line) in content.lines().enumerate() {
         let lower = line.to_lowercase();
         if let Some((position, _)) = terms

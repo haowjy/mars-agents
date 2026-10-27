@@ -23,6 +23,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already sets the destination key wins and the dropped top-level key is named, and any other
   removed key still fails and names the file and the key.
 
+### Fixed
+- `mars build plugin`'s term scan no longer reads a `harness-overrides` block owned by a consumer
+  namespace (`flow`, `meridian`). Those blocks never reach a tree, so an Agent with
+  `harness-overrides.meridian` in a package without `requires-meridian` stops warning that it
+  "mentions meridian". A term in a harness block that does ship, in a skill or hook, or elsewhere
+  in the file still warns, at the same line.
+
 ## [0.20.6] - 2026-10-27
 
 ### Fixed

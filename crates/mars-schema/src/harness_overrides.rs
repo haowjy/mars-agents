@@ -397,3 +397,118 @@ pub(crate) fn move_harness_only_keys(
         }
     }
 }
+
+/// Authored markdown with every consumer-namespace entry under `harness-overrides` blanked, one
+/// line for one line.
+///
+/// A consumer namespace (`flow`, `meridian`) is not a harness: Mars keeps its block for the
+/// consumer and never writes it to a tree. A caller scanning the text for what a package ships
+/// must therefore not read it, which is what this masking is for. Line numbers survive, so a
+/// location the caller reports still points at the authored file.
+pub fn mask_consumer_namespaces(content: &str) -> String {
+    let Ok(Some(yaml)) = crate::frontmatter::yaml_text(content) else {
+        return content.to_owned();
+    };
+    let blocks = consumer_namespace_lines(yaml);
+    if blocks.is_empty() {
+        return content.to_owned();
+    }
+    // The frontmatter opens on the document's first line, so YAML line `n` is document line
+    // `n + 1` (both counted from 0).
+    let yaml_lines = yaml.matches('\n').count();
+    let mut lines: Vec<&str> = content.split_inclusive('\n').collect();
+    for (start, end) in blocks {
+        for line in lines
+            .iter_mut()
+            .take(end.min(yaml_lines) + 1)
+            .skip(start + 1)
+        {
+            *line = "\n";
+        }
+    }
+    lines.concat()
+}
+
+/// The `[start, end)` lines of `yaml`, a frontmatter block, that a consumer namespace owns.
+fn consumer_namespace_lines(yaml: &str) -> Vec<(usize, usize)> {
+    use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
+    use yaml_rust2::scanner::Marker;
+
+    /// One open collection, and, for a mapping, the key its next child reports.
+    struct Frame {
+        pending_key: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct NamespaceBlocks {
+        frames: Vec<Frame>,
+        /// Depth of the `harness-overrides` mapping, while one is open.
+        overrides_depth: Option<usize>,
+        /// Line the open namespace entry starts on.
+        open: Option<usize>,
+        ranges: Vec<(usize, usize)>,
+    }
+
+    impl NamespaceBlocks {
+        /// The entry ended at the next thing Mars reads: close it there, and never before the
+        /// line its own key sits on.
+        fn close(&mut self, end: usize) {
+            if let Some(start) = self.open.take() {
+                self.ranges.push((start, end.max(start + 1)));
+            }
+        }
+    }
+
+    impl MarkedEventReceiver for NamespaceBlocks {
+        fn on_event(&mut self, event: Event, marker: Marker) {
+            let line = marker.line() - 1;
+            match event {
+                Event::MappingStart(..) | Event::SequenceStart(..) => {
+                    let parent_depth = self.frames.len();
+                    let under_key = self
+                        .frames
+                        .last_mut()
+                        .and_then(|frame| frame.pending_key.take());
+                    if parent_depth == 1 && under_key.as_deref() == Some("harness-overrides") {
+                        self.overrides_depth = Some(parent_depth + 1);
+                    }
+                    self.frames.push(Frame { pending_key: None });
+                }
+                Event::MappingEnd | Event::SequenceEnd => {
+                    let depth = self.frames.len();
+                    self.frames.pop();
+                    if self.overrides_depth == Some(depth) {
+                        self.close(line);
+                        self.overrides_depth = None;
+                    }
+                }
+                // Inside a mapping, scalars alternate key and value; only keys name a namespace.
+                Event::Scalar(value, ..) => {
+                    let depth = self.frames.len();
+                    let Some(frame) = self.frames.last_mut() else {
+                        return;
+                    };
+                    if frame.pending_key.take().is_some() {
+                        return;
+                    }
+                    frame.pending_key = Some(value.clone());
+                    if self.overrides_depth == Some(depth) {
+                        self.close(line);
+                        if crate::harness::RESERVED_CONSUMER_NAMESPACES.contains(&value.as_str()) {
+                            self.open = Some(line);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut blocks = NamespaceBlocks::default();
+    // Frontmatter the schema reader already accepted can still leave here unseen; a document this
+    // scanner cannot follow simply keeps its current reading.
+    if Parser::new_from_str(yaml).load(&mut blocks, true).is_err() {
+        return Vec::new();
+    }
+    blocks.ranges
+}

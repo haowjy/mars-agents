@@ -1,5 +1,5 @@
 use crate::types::managed_cmd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Config-level errors
 #[derive(Debug, thiserror::Error)]
@@ -349,6 +349,17 @@ impl From<std::io::Error> for MarsError {
         MarsError::Io {
             operation: "I/O operation".to_string(),
             path: PathBuf::from("<unknown>"),
+            source,
+        }
+    }
+}
+
+impl MarsError {
+    /// An I/O error whose message names the path the operation was working on.
+    pub(crate) fn io(operation: &str, path: &Path, source: std::io::Error) -> Self {
+        MarsError::Io {
+            operation: operation.to_string(),
+            path: path.to_path_buf(),
             source,
         }
     }

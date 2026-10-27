@@ -60,6 +60,29 @@ For CI or inspection, `mars build plugin PATH --out <dir>` writes only the owned
 tree and sentinel. It does not write package-root catalogs or `package.json`, and it can
 build a package without `[plugin]`.
 
+## MCP server files
+
+A server may ship its own files beside `mcp.toml` and name them with
+`${MARS_MCP_DIR}`:
+
+```toml
+# mcp/echo/mcp.toml
+visibility = "exported"
+command = "node"
+args    = ["${MARS_MCP_DIR}/server.js"]
+```
+
+As with hooks, only an `exported` server reaches consumers, so a plugin build
+ships nothing for a `local` one.
+
+Each tree receives the whole `mcp/echo/` directory for a server that names the
+token. The Claude/Codex/Grok tree writes
+`${CLAUDE_PLUGIN_ROOT}/mcp/echo/server.js`, the Cursor tree writes
+`${CURSOR_PLUGIN_ROOT}/mcp/echo/server.js`, and the OpenCode tree keeps
+`${MARS_MCP_DIR}` in `mcp.json` so its `index.mjs` can resolve the path at
+runtime. Entries that do not use the token are written unchanged and ship no
+directory.
+
 ## MCP environment variables
 
 The shared Claude tree is consumed by Claude, Codex, and Grok. A same-name pass-through:

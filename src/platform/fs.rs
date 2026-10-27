@@ -126,7 +126,7 @@ fn io_context(operation: &str, path: &Path, source: std::io::Error) -> MarsError
 
 /// Atomic file copy: read source (following symlinks), write to tmp, rename to dest.
 pub fn atomic_copy_file(source: &Path, dest: &Path) -> Result<(), MarsError> {
-    let content = fs::read(source)?;
+    let content = fs::read(source).map_err(|e| io_context("read source file", source, e))?;
     #[cfg(windows)]
     if dest.exists() {
         crate::fs::clear_readonly(dest)?;
@@ -142,9 +142,12 @@ pub fn atomic_write_file(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
 /// Atomic directory copy: deep copy source tree (following symlinks) to tmp, rename to dest.
 pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(parent)?;
+    // A file where the destination's parent belongs (an unmanaged `.claude/mcp`,
+    // say) fails here, so the error has to name that path.
+    fs::create_dir_all(parent).map_err(|e| io_context("create copy parent", parent, e))?;
 
-    let tmp_dir = tempfile::TempDir::new_in(parent)?;
+    let tmp_dir = tempfile::TempDir::new_in(parent)
+        .map_err(|e| io_context("create copy staging directory in", parent, e))?;
     copy_dir_following_symlinks(source, tmp_dir.path())?;
     let tmp_path = tmp_dir.keep();
 
@@ -436,10 +439,14 @@ fn collect_relative_tree_entries(
     excluded_top_level: &[&str],
     snapshot: &mut DirectoryTreeSnapshot,
 ) -> Result<Option<PathBuf>, MarsError> {
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
+    for entry in
+        fs::read_dir(current).map_err(|error| MarsError::io("read directory", current, error))?
+    {
+        let entry = entry.map_err(|error| MarsError::io("read directory", current, error))?;
         let path = entry.path();
-        let file_type = entry.file_type()?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| MarsError::io("inspect", &path, error))?;
         let rel = path.strip_prefix(root).expect("path is always under root");
         if rel.components().next().is_some_and(|component| {
             excluded_top_level
@@ -464,7 +471,8 @@ fn collect_relative_tree_entries(
                 return Ok(Some(path));
             }
         } else if file_type.is_file() {
-            snapshot.insert_file_hash(rel_path, crate::hash::hash_bytes(&fs::read(path)?));
+            let content = fs::read(&path).map_err(|error| MarsError::io("read", &path, error))?;
+            snapshot.insert_file_hash(rel_path, crate::hash::hash_bytes(&content));
         } else {
             snapshot
                 .entries
@@ -502,10 +510,10 @@ pub(crate) fn is_executable(metadata: &fs::Metadata) -> bool {
 /// is inside a temp dir — the atomicity guarantee comes from the final rename
 /// of the enclosing temp dir, not from per-file atomics.
 fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsError> {
-    fs::create_dir_all(dest)?;
+    fs::create_dir_all(dest).map_err(|e| io_context("create directory", dest, e))?;
 
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
+    for entry in fs::read_dir(source).map_err(|e| io_context("read directory", source, e))? {
+        let entry = entry.map_err(|e| io_context("read directory", source, e))?;
         let source_path = entry.path();
         let dest_path = dest.join(entry.file_name());
 
@@ -514,29 +522,35 @@ fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsErr
             Ok(m) => m,
             Err(e) => {
                 // If it's a broken symlink, give a descriptive error
-                if entry.file_type()?.is_symlink() {
+                if entry
+                    .file_type()
+                    .map_err(|error| io_context("inspect", &source_path, error))?
+                    .is_symlink()
+                {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
                         format!("broken symlink in source tree: {}", source_path.display()),
                     )
                     .into());
                 }
-                return Err(e.into());
+                return Err(io_context("read metadata for", &source_path, e));
             }
         };
 
         if metadata.is_dir() {
             copy_dir_following_symlinks(&source_path, &dest_path)?;
         } else if metadata.is_file() {
-            let content = fs::read(&source_path)?;
-            fs::write(&dest_path, &content)?;
+            let content =
+                fs::read(&source_path).map_err(|e| io_context("read", &source_path, e))?;
+            fs::write(&dest_path, &content).map_err(|e| io_context("write", &dest_path, e))?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 fs::set_permissions(
                     &dest_path,
                     fs::Permissions::from_mode(installed_mode(&metadata)),
-                )?;
+                )
+                .map_err(|e| io_context("set permissions on", &dest_path, e))?;
             }
         } else {
             return Err(std::io::Error::new(

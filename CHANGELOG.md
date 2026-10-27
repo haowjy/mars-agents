@@ -4,6 +4,31 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `${MARS_MCP_DIR}` in an MCP server's `command` or `args` names its own `mcp/<name>/` files.
+  `mars sync` installs that directory beside each target that writes MCP and substitutes the
+  installed absolute path; `mars build plugin` copies it into each tree and maps the token to
+  the harness plugin root (or resolves it at runtime in the OpenCode tree). A server that never
+  names the token registers and copies exactly as before, and a target that writes no MCP
+  config receives no directory. Executable bits are preserved and a removed server prunes its
+  installed directories. A token-using server's name must be a single path component; other
+  names skip that one server with a warning.
+
+### Changed
+- Anything unmanaged at `<target>/hooks/<name>/` no longer fails `mars sync`, whether it is a
+  directory or a file where that directory belongs. It warns, survives untouched, and withholds
+  that target's hook entry, as an MCP server's unmanaged `mcp/<name>/` already did;
+  `mars sync --force` adopts and overwrites it.
+
+### Fixed
+- A FIFO, socket or device inside a skill, hook or MCP server directory is rejected with an error
+  naming it, instead of hanging `mars sync` while hashing the tree. File errors from that hash walk
+  now name the path instead of `<unknown>`.
+- Editing an installed hook or MCP server directory under `.claude`, `.codex`, `.opencode`, `.pi`
+  or `.cursor` now reports `target-divergent` with the `mars sync --force` / `mars repair` hint, as
+  skills already did on targets without skill variants; the edited copy is kept and its config
+  entry is withheld.
+
 ## [0.20.3] - 2026-10-27
 
 ### Fixed

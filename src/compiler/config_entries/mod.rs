@@ -5,15 +5,17 @@
 
 pub mod resolve;
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::compiler::hooks::ParsedHookItem;
 use crate::compiler::mcp::{ParsedMcpItem, TargetMcpEntry};
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ConfigEntryRecord;
 use crate::sync::AppliedState;
+use crate::sync::package_dir::PackageDir;
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry, TargetAdapter};
 use crate::types::MarsContext;
+use mars_schema::item::ItemKind;
 
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
@@ -29,7 +31,7 @@ pub(crate) fn file_hook_output_preserve_paths(
     for item in lock
         .items
         .values()
-        .filter(|item| item.kind == mars_schema::item::ItemKind::Hook)
+        .filter(|item| item.kind == ItemKind::Hook)
     {
         for output in item
             .outputs
@@ -39,14 +41,13 @@ pub(crate) fn file_hook_output_preserve_paths(
             let Some(adapter) = registry.get(&output.target_root) else {
                 continue;
             };
-            let owner_prefix = format!("hooks/{}/", output.target_root.trim_start_matches('.'));
+            // The canonical record of a hook installed as one file names its
+            // package directory; the file that directory projects must stay.
             let is_file_fragment = item.outputs.iter().any(|canonical| {
                 canonical.target_root == crate::lock::CANONICAL_TARGET_ROOT
-                    && canonical
-                        .dest_path
-                        .as_str()
-                        .strip_prefix(&owner_prefix)
-                        .and_then(|name| adapter.hook_file_dest_path(name))
+                    && PackageDir::parse_canonical(ItemKind::Hook, &canonical.dest_path)
+                        .filter(|dir| dir.belongs_to(&output.target_root))
+                        .and_then(|dir| adapter.hook_file_dest_path(dir.name()))
                         .is_some_and(|path| {
                             crate::target::dest_paths_equivalent(
                                 path.to_string_lossy().as_ref(),
@@ -72,7 +73,6 @@ pub(crate) fn file_hook_output_preserve_paths(
 pub(crate) fn preflight_config_entries(
     ctx: &MarsContext,
     targeted: &crate::sync::TargetedState,
-    force: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<(), crate::error::MarsError> {
     use crate::compiler::hooks::{load_file_fragment, load_merge_fragment};
@@ -88,8 +88,11 @@ pub(crate) fn preflight_config_entries(
         touch.0 |= records.keys().any(|key| key.starts_with("mcp:"));
         touch.1 |= records.keys().any(|key| key.starts_with("hook"));
     }
-    for (target, _) in targeted.target.selected_hooks() {
-        touched_targets.entry(target.to_string()).or_default().1 = true;
+    for (dir, _) in targeted.target.selected_hooks() {
+        touched_targets
+            .entry(dir.target().to_string())
+            .or_default()
+            .1 = true;
     }
     for target in targeted.target.selected_mcp_targets() {
         touched_targets.entry(target.to_string()).or_default().0 = true;
@@ -136,29 +139,11 @@ pub(crate) fn preflight_config_entries(
             }
         }
     }
-    for (target_name, item) in targeted.target.selected_hooks() {
+    for (dir, item) in targeted.target.selected_hooks() {
+        let target_name = dir.target();
         let adapter = registry.get(target_name);
         let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
-        let installed = installed_hook_dir(&ctx.project_root, target_name, &item.def.name);
-        let hook_dir = portable_installed_hook_dir(&installed);
-        if let Err(error) = validate_destination_path(&ctx.project_root, &installed, true) {
-            errors.push(error);
-            continue;
-        }
-        if !force
-            && installed.symlink_metadata().is_ok()
-            && !resolved
-                .loaded
-                .old_lock
-                .contains_output(target_name, &format!("hooks/{}", item.def.name))
-        {
-            errors.push(format!(
-                "unmanaged target hook directory `{}` blocks hook `{}`",
-                installed.display(),
-                item.def.name
-            ));
-            continue;
-        }
+        let hook_dir = installed_token(ctx, dir);
         let result = match mode {
             Some(HookFragmentMode::MergeJson { events }) => {
                 load_merge_fragment(item, target_name, events, &hook_dir, diag, true).map(|_| ())
@@ -199,22 +184,21 @@ pub(crate) fn preflight_config_entries(
 
 /// Lower the mergeable MCP and hook entries for one target.
 ///
-/// The caller owns target-specific eligibility checks, including whether a
-/// project-installed hook directory is current. `hook_dir` supplies the
-/// replacement for `${MARS_HOOK_DIR}` in each hook's native fragment.
+/// The caller owns target-specific eligibility checks, including whether an
+/// installed hook or MCP directory is current, and supplies each item's
+/// directory token with it: the replacement for `${MARS_HOOK_DIR}` in a hook's
+/// native fragment and for `${MARS_MCP_DIR}` in a server's command and
+/// arguments.
 pub(crate) fn lower_config_entries_for_target(
-    hooks: &[&ParsedHookItem],
-    mcp: &[&ParsedMcpItem],
+    hooks: &[(String, &ParsedHookItem)],
+    mcp: &[(String, &ParsedMcpItem)],
     adapter: &dyn TargetAdapter,
-    hook_dir: impl Fn(&ParsedHookItem) -> String,
     diag: &mut DiagnosticCollector,
 ) -> Vec<ConfigEntry> {
-    use crate::compiler::config_entries::resolve::resolve_mcp_collisions_for_target;
-
     let target_root = adapter.name();
     let mut entries = Vec::new();
-    for parsed in resolve_mcp_collisions_for_target(mcp.iter().copied(), target_root, diag) {
-        let entry = TargetMcpEntry::from_parsed(parsed);
+    for (dir, parsed) in mcp {
+        let entry = TargetMcpEntry::from_parsed(parsed, dir);
         entries.push(ConfigEntry::McpServer(McpServerEntry {
             name: entry.name,
             command: entry.command,
@@ -230,12 +214,12 @@ pub(crate) fn lower_config_entries_for_target(
         return entries;
     };
     let mut contributions = Vec::new();
-    for item in hooks.iter().copied() {
+    for (dir, item) in hooks {
         match crate::compiler::hooks::load_merge_fragment(
             item,
             target_root,
             known_events,
-            &hook_dir(item),
+            dir,
             diag,
             false,
         ) {
@@ -326,6 +310,7 @@ pub(crate) fn compile_config_entries(
     ctx: &MarsContext,
     applied: &AppliedState,
     ownership_lock: &mut crate::lock::LockFile,
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
     dry_run: bool,
     force: bool,
     diag: &mut DiagnosticCollector,
@@ -337,12 +322,16 @@ pub(crate) fn compile_config_entries(
     let target_roots: Vec<String> = effective.settings.managed_targets();
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
-    // Env ref preflight (non-strict by default).
+    // Env ref preflight (non-strict by default). A server selected for several
+    // targets is one server to check.
+    let mut checked_mcp = std::collections::HashSet::new();
     let selected_mcp = applied
         .planned
         .targeted
         .target
         .selected_mcp()
+        .map(|(_, item)| item)
+        .filter(|item| checked_mcp.insert((&item.source_name, &item.source_path, &item.name)))
         .cloned()
         .collect::<Vec<_>>();
     if let Err(e) = check_env_refs(&selected_mcp, false, diag) {
@@ -375,56 +364,35 @@ pub(crate) fn compile_config_entries(
             .targeted
             .target
             .selected_hooks_for_target(target_root)
-            .filter(|(item, source_hash)| {
-                let installed =
-                    installed_hook_dir(&ctx.project_root, target_root, &item.def.name);
-                if mode.is_some()
-                    && !dry_run
-                    && !hook_directory_is_installed(source_hash, &installed)
-                {
-                    diag.warn(
-                        "hook-not-installed",
-                        format!(
-                            "not emitting hook `{}` for `{target_root}` because `{}` is not installed",
-                            item.def.name,
-                            installed.display()
-                        ),
-                    );
-                    return false;
-                }
-                true
-            })
-            .map(|(item, _)| item)
+            .filter(|(dir, _)| emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag))
             .collect::<Vec<_>>();
         let selected_mcp = applied
             .planned
             .targeted
             .target
             .selected_mcp_for_target(target_root)
+            .filter(|(dir, item)| {
+                // A server whose `command`/`args` name no directory has nothing
+                // to wait for: its entry is all it installs.
+                !item.uses_dir_token()
+                    || emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag)
+            })
             .collect::<Vec<_>>();
-        let entries = lower_config_entries_for_target(
-            &installed_hooks,
-            &selected_mcp,
-            adapter,
-            |item| {
-                portable_installed_hook_dir(&installed_hook_dir(
-                    &ctx.project_root,
-                    target_root,
-                    &item.def.name,
-                ))
-            },
-            diag,
-        );
+        let hook_entries = installed_hooks
+            .iter()
+            .map(|(dir, item)| (installed_token(ctx, dir), *item))
+            .collect::<Vec<_>>();
+        let mcp_entries = selected_mcp
+            .iter()
+            .map(|(dir, item)| (installed_token(ctx, dir), *item))
+            .collect::<Vec<_>>();
+        let entries = lower_config_entries_for_target(&hook_entries, &mcp_entries, adapter, diag);
 
         // Resolve and load whole-file hooks independently of merge ordering.
         let mut file_writes = Vec::new();
         if mode == Some(crate::target::HookFragmentMode::File) {
-            for item in &installed_hooks {
-                let hook_dir = portable_installed_hook_dir(&installed_hook_dir(
-                    &ctx.project_root,
-                    target_root,
-                    &item.def.name,
-                ));
+            for (dir, item) in &installed_hooks {
+                let hook_dir = installed_token(ctx, dir);
                 let Some(relative_dest) = adapter.hook_file_dest_path(&item.def.name) else {
                     diag.error(
                         "hook-fragment",
@@ -450,11 +418,7 @@ pub(crate) fn compile_config_entries(
                         let relative_dest = relative_dest.to_string_lossy().into_owned();
                         desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
                         file_writes.push((
-                            format!(
-                                "hooks/{}/{}",
-                                target_root.trim_start_matches('.'),
-                                item.def.name
-                            ),
+                            dir.canonical().as_str().to_string(),
                             relative_dest,
                             content,
                         ));
@@ -827,19 +791,50 @@ fn write_file_hook_outputs(
     }
 }
 
-fn hook_directory_is_installed(
-    source_hash: &crate::types::ContentHash,
-    installed: &std::path::Path,
+/// Whether target sync installed `dir`'s copy, warning when it did not so the
+/// caller withholds the config entry that would name a missing path. An
+/// unmanaged path (preserved without an installed claim) and a user-edited copy
+/// (preserved as `target-divergent`) both leave no install record.
+fn emits_installed_copy(
+    ctx: &MarsContext,
+    dir: &PackageDir,
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+    dry_run: bool,
+    diag: &mut DiagnosticCollector,
 ) -> bool {
-    crate::hash::compute_hash(installed, mars_schema::item::ItemKind::Hook)
-        .ok()
-        .is_some_and(|installed| installed == source_hash.as_str())
+    // A dry run performs no target sync, so there is no install record to read.
+    if dry_run {
+        return true;
+    }
+    let installed = target_outcomes.iter().any(|outcome| {
+        outcome.target == dir.target()
+            && outcome.synced_outputs.iter().any(|output| {
+                crate::target::dest_paths_equivalent(&output.dest_path, &dir.native())
+            })
+    });
+    if !installed {
+        let (code, noun) = dir.not_installed_label();
+        diag.warn(
+            code,
+            format!(
+                "not emitting {noun} `{}` for `{}`: `{}` did not sync from `.mars`",
+                dir.name(),
+                dir.target(),
+                installed_path(ctx, dir).display()
+            ),
+        );
+    }
+    installed
 }
 
-fn installed_hook_dir(project_root: &Path, target_root: &str, hook_name: &str) -> PathBuf {
-    project_root.join(target_root).join("hooks").join(hook_name)
+/// The path target sync installs `dir`'s copy at.
+fn installed_path(ctx: &MarsContext, dir: &PackageDir) -> PathBuf {
+    ctx.project_root.join(dir.target()).join(dir.native())
 }
 
-fn portable_installed_hook_dir(installed: &std::path::Path) -> String {
-    installed.to_string_lossy().replace('\\', "/")
+/// The `${MARS_HOOK_DIR}` or `${MARS_MCP_DIR}` replacement for a native entry.
+fn installed_token(ctx: &MarsContext, dir: &PackageDir) -> String {
+    installed_path(ctx, dir)
+        .to_string_lossy()
+        .replace('\\', "/")
 }

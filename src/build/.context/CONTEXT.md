@@ -20,12 +20,12 @@ Plugin staging materializes each graph node's prepared package — its manifest,
 listed payload — then copies the binary-owned hook, MCP, bootstrap and source-manifest surfaces. It
 does not walk the checkout for definitions, and a manifestless foreign source materializes in the
 schema v1 layout `normalize` gave it. The input fingerprint is separate: it walks the root package's
-discovered item and MCP inventory, confines links to the package, rejects special files, and includes
-inventory kinds but not generated catalog metadata. Staging's binary-owned subtree copies use sync's
-historical follow behavior. Flat-root skills keep authored resources but exclude standard repo
-tooling and top-level special filesystem nodes from their publication inventory. Skill rename content
-is written once into graph staging before native projection, and plain derived-tree copies omit hook
-fragment paths belonging only to other targets.
+discovered item and MCP server-directory inventory, confines links to the package, rejects special
+files, and includes inventory kinds but not generated catalog metadata. Staging's binary-owned
+subtree copies use sync's historical follow behavior. Flat-root skills keep authored resources but
+exclude standard repo tooling and top-level special filesystem nodes from their publication
+inventory. Skill rename content is written once into graph staging before native projection, and
+plain derived-tree copies omit hook fragment paths belonging only to other targets.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three tree
 identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. `build/plugin/spec.rs`
@@ -43,12 +43,16 @@ that list or its catalog directory disagrees, so tree rows and the list cannot d
 is an enum, so a tree states whether its generated files write a harness token literally or keep the
 Mars token for its own runtime to substitute, and the hook-path mapping matches on it instead of
 unwrapping an optional token. Their authored-hook check runs once before the item loop; every
-selected hook is copied. `tree::write_tree` is the sole item loop. The OpenCode finish writer emits
+selected hook directory and every token-using MCP server directory is copied. The same mapping
+resolves `${MARS_MCP_DIR}` to `{token}/mcp/<name>` for a token tree and leaves it for the
+runtime-resolved tree.
+`tree::write_tree` is the sole item loop. The OpenCode finish writer emits
 an npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
 servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
 default-export check warns but never removes a hook; hook-directory substitution is JavaScript-string
 encoded before import, and each hook's load and setup are isolated so a failure does not block later
-hooks.
+hooks. Both authored directory tokens travel in the tree's generated `DATA` block, so `index.mjs`
+carries no token literal of its own and Rust stays the only owner of the strings.
 `tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
 selected MCP union once; per-tree writers report only lowering behavior.
 `TargetState::exported_hooks` retains filtered exported graph hooks even when no requested tree

@@ -1249,20 +1249,17 @@ fn upsert_target_output(
     installed_checksum: &ContentHash,
 ) {
     let dest = DestPath::from(dest_path);
-    let scoped_hook_owner = dest_path.strip_prefix("hooks/").map(|hook_name| {
-        format!(
-            "hooks/{}/{}",
-            target_root.trim_start_matches('.'),
-            hook_name
-        )
-    });
     for item in lock.items.values_mut() {
-        let owns_output = if item.kind == ItemKind::Hook {
+        let scoped_owner =
+            crate::sync::package_dir::PackageDir::from_native(item.kind, target_root, dest_path)
+                .map(|dir| dir.canonical());
+        let owns_output = if let Some(owner) = scoped_owner.as_ref() {
             item.outputs.iter().any(|output| {
-                scoped_hook_owner.as_deref().is_some_and(|owner| {
-                    output.target_root == CANONICAL_TARGET_ROOT
-                        && crate::target::dest_paths_equivalent(output.dest_path.as_str(), owner)
-                })
+                output.target_root == CANONICAL_TARGET_ROOT
+                    && crate::target::dest_paths_equivalent(
+                        output.dest_path.as_str(),
+                        owner.as_str(),
+                    )
             })
         } else {
             item.outputs.iter().any(|output| {

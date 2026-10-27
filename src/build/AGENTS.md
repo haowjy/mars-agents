@@ -23,28 +23,32 @@ is the one declared list of generated root files; staging and sentinel validatio
 tree row names its constant directly, with `spec`'s test failing if a tree's root file or catalog
 directory is not in that list. `PluginRoot` is an enum: a tree either writes a harness token
 literally or keeps the Mars token for its own runtime to substitute, so the merged-hook path
-mapping matches on it instead of unwrapping an optional token.
+mapping matches on it instead of unwrapping an optional token. Every selected hook directory, and
+every MCP server directory whose command or args name `${MARS_MCP_DIR}`, is copied whole into the
+tree, and `${MARS_HOOK_DIR}` / `${MARS_MCP_DIR}` map through that same plugin root.
 Harness identity, variant key, and sync root come from `compiler::harness_descriptor`; authored-hook
 checks run once before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode
 have their own tree identities. The OpenCode tree is an npm-shaped package whose fixed `index.mjs`
 registers skills and MCP servers and imports every targeted hook fragment as an in-memory TypeScript
 data URL. A build warning reports fragments with no recognizable default export, but runtime
 isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
-and one fragment's load or setup failure does not block later hooks.
+and one fragment's load or setup failure does not block later hooks. The OpenCode tree's generated
+`DATA` block carries both authored directory tokens, so `index.mjs` has no token literal of its
+own; Rust remains the only owner of the strings.
 
 Publication staging materializes each graph node's prepared package — manifest, definitions and
 listed payload — then copies the binary-owned hook, MCP, bootstrap and source-manifest surfaces. A
 manifestless foreign source materializes in the schema v1 layout `normalize` gave it, so rediscovery
 does not require excluded paths. Target collection applies the graph filters, except that every hook
 root remains available for the strict pre-filter compatibility check. The input fingerprint walks
-the root package's discovered item and MCP inventory separately; the single authored walker confines
-links to the package and rejects special files there, while sync and staging's binary-owned subtree
-copies retain sync's historical follow behavior. The fingerprint includes inventory kinds and
-authored bytes, but never Mars-generated catalog metadata. A flat-root skill retains authored root
-resources but its publication inventory excludes standard tooling directories and top-level special
-filesystem nodes. Installed skill frontmatter is written once into graph staging before every tree
-projects it; derived skill and hook trees then use the plain copier, with other-target hook fragments
-excluded.
+the root package's discovered item and MCP server-directory inventory separately; the single
+authored walker confines links to the package and rejects special files there, while sync and
+staging's binary-owned subtree copies retain sync's historical follow behavior. The fingerprint
+includes inventory kinds and authored bytes, but never Mars-generated catalog metadata. A flat-root
+skill retains authored root resources but its publication inventory excludes standard tooling
+directories and top-level special filesystem nodes. Installed skill frontmatter is written once into
+graph staging before every tree projects it; derived skill and hook trees then use the plain copier,
+with other-target hook fragments excluded.
 
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading project
 config, a lockfile, `.mars/`, or host model state. The implicit target selection is the set of built
@@ -113,8 +117,8 @@ before native lowering so generated guidance is born qualified; the fence-aware 
 only responsible for authored body references.
 
 `plugin_inputs_hash` is the offline F3 seam: bytes under the root package's discovered own-item
-paths (including hook fragments and MCP definitions), with generated trees skipped and text line
-endings normalized, plus `[package]` without `version` and the `[plugin]`, `[dependencies]`,
+paths (including hook fragments and MCP server directories), with generated trees skipped and text
+line endings normalized, plus `[package]` without `version` and the `[plugin]`, `[dependencies]`,
 `[models]`, `[skills]`, and `[agents]` tables. It never resolves. Builds compute it after output
 recovery while holding the output lock. The sentinel separately records resolved dependency
 version/commit identities, one SHA-256 per generated file, and the root-file ownership map; the

@@ -152,8 +152,8 @@ fn materialize_prepared_tree(
         }
         fs::copy(source, output)?;
     }
-    // Hooks, bootstrap documents, MCP definitions and foreign source manifests
-    // remain binary-owned package surfaces.
+    // Hooks, bootstrap documents, MCP server directories and foreign source
+    // manifests remain binary-owned package surfaces.
     for relative in ["hooks", "mcp"] {
         copy_authored_subtree(authored_root, Path::new(relative), destination, diag)?;
     }

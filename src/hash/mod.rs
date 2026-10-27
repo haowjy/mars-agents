@@ -9,8 +9,8 @@ use mars_schema::item::ItemKind;
 /// Compute SHA-256 of a file or directory (for skills).
 ///
 /// For agents (single `.md` file): SHA-256 of file content.
-/// For skills (directory): SHA-256 of sorted `(relative_path, file_hash)` pairs —
-/// deterministic regardless of filesystem ordering.
+/// For directories (skills, hooks, MCP server files): SHA-256 of sorted
+/// `(relative_path, file_hash)` pairs — deterministic regardless of filesystem ordering.
 ///
 /// A bootstrap doc is hashed as its directory (`bootstrap/<name>/`), whether the caller holds
 /// that directory or its `BOOTSTRAP.md`, so an installed doc's path hashes the way the lock
@@ -19,11 +19,11 @@ use mars_schema::item::ItemKind;
 /// Output format: `"sha256:<64-char-hex>"`.
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     match kind {
-        ItemKind::Agent | ItemKind::McpServer => {
-            let content = fs::read(path)?;
+        ItemKind::Agent => {
+            let content = fs::read(path).map_err(|error| MarsError::io("read", path, error))?;
             Ok(hash_bytes(&content))
         }
-        ItemKind::Skill | ItemKind::Hook => compute_dir_hash(path),
+        ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => compute_dir_hash(path),
         ItemKind::BootstrapDoc => {
             let is_doc_file = path.file_name().is_some_and(|name| name == "BOOTSTRAP.md");
             compute_dir_hash(path.parent().filter(|_| is_doc_file).unwrap_or(path))
@@ -147,10 +147,14 @@ fn collect_file_hashes(
     entries: &mut Vec<(String, String)>,
     excluded_top_level: &[&str],
 ) -> Result<(), MarsError> {
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
+    for entry in
+        fs::read_dir(current).map_err(|error| MarsError::io("read directory", current, error))?
+    {
+        let entry = entry.map_err(|error| MarsError::io("read directory", current, error))?;
         let path = entry.path();
-        let file_type = entry.file_type()?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| MarsError::io("inspect", &path, error))?;
 
         let rel_path = path.strip_prefix(root).expect("path is always under root");
         if is_excluded_top_level(rel_path, excluded_top_level) {
@@ -159,10 +163,23 @@ fn collect_file_hashes(
         if file_type.is_dir() {
             collect_file_hashes(root, &path, entries, excluded_top_level)?;
         } else {
+            // Follow symlinks so a linked file keeps hashing like the file it
+            // names, but never open what is not a file: reading a FIFO blocks.
+            let target_type = fs::metadata(&path)
+                .map_err(|error| MarsError::io("inspect", &path, error))?
+                .file_type();
+            if !target_type.is_file() {
+                return Err(MarsError::InvalidRequest {
+                    message: format!(
+                        "`{}` is not a regular file; a skill, hook or MCP server tree may contain only directories and regular files",
+                        path.display()
+                    ),
+                });
+            }
             // Build forward-slash relative path from components for cross-platform determinism
             let rel_path = portable_relative(root, &path)
                 .unwrap_or_else(|| rel_path.to_string_lossy().replace('\\', "/"));
-            let content = fs::read(&path)?;
+            let content = fs::read(&path).map_err(|error| MarsError::io("read", &path, error))?;
             let hash = hash_bytes(&content);
             entries.push((rel_path, hash));
         }
@@ -285,5 +302,38 @@ mod tests {
                 .unwrap();
 
         assert_eq!(hash1, hash2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dir_hash_rejects_a_fifo_without_opening_it() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "content").unwrap();
+        let fifo = skill_dir.join("events");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        // Opening a FIFO blocks until something writes to it, so a walk that
+        // stops rejecting special files would hang the suite instead of failing
+        // it. Hashing gets its own thread and a deadline.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(compute_dir_hash(&skill_dir).map_err(|error| error.to_string()));
+        });
+        let error = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("hashing a tree with a FIFO must finish instead of blocking")
+            .expect_err("a FIFO is not a regular file");
+        assert!(
+            error.contains(&fifo.display().to_string()),
+            "error must name the FIFO, got: {error}"
+        );
     }
 }

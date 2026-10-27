@@ -38,6 +38,17 @@ pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let locked_item = lock
         .find_by_dest_path(&from_dest)
         .expect("checked above: dest_path exists in lock");
+    if matches!(
+        locked_item.kind,
+        mars_schema::item::ItemKind::Hook | mars_schema::item::ItemKind::McpServer
+    ) {
+        return Err(MarsError::InvalidRequest {
+            message: format!(
+                "`{}` is a target-scoped {} directory, not a renameable item; `mars rename` applies to agents and skills",
+                args.from, locked_item.kind
+            ),
+        });
+    }
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::SetRename {

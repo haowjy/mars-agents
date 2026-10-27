@@ -156,18 +156,26 @@ Universal schema parsing and native lowering. Skills support variant layouts per
 ## Config Entries (`config_entries/`)
 
 MCP servers and hooks are selected during the target build, then validated and written to target
-config files via adapters. `TargetState` carries each selected parsed item and its managed targets,
-plus filtered exported graph hooks for plugin omission diagnostics; preflight and emission consume
-the selected values instead of rediscovering package config entries. Sync checks a selected hook's
-installed directory after target sync, while a plugin build can lower the same pure selection
-without an installed directory.
-`lower_config_entries_for_target` owns per-target MCP collision resolution, native merge-fragment
-loading, and hook ordering. Callers supply the `${MARS_HOOK_DIR}` replacement through its
-hook-directory callback.
+config files via adapters. `TargetState` carries one parsed selection per target, plus filtered
+exported graph hooks for plugin omission diagnostics; preflight and emission consume the selected
+values instead of rediscovering package config entries. After target sync, sync withholds a hook's
+or a token-naming MCP server's entry unless target sync recorded installing that directory, so an
+unmanaged or user-edited copy keeps the entry out with a `hook-not-installed` / `mcp-not-installed`
+warning naming the path; target sync's `target-unmanaged-collision` or `target-divergent` warning
+says why. A token-free server has no directory to check. `lower_config_entries_for_target` owns
+native merge-fragment loading and hook ordering. MCP collisions resolve once per target in
+`TargetState`, so the winning server's directory and config entry come from the same selection.
+Each selected item arrives with its directory token, the `${MARS_HOOK_DIR}` /
+`${MARS_MCP_DIR}` replacement, so installed copies and plugin trees share one lowering path.
 
 ## MCP Compilation (`mcp/`)
 
-Discovers MCP server items, validates env refs, detects collisions.
+Discovers MCP server items, validates env refs, and substitutes `${MARS_MCP_DIR}` in
+`command`/`args`. Only a server whose command or args name the token installs its
+directory, as a package-owned item beside each target that writes MCP, using the same
+target-scoped canonical path and lock ownership as a hook directory. Its name must then
+be one path component; a token-free server keeps whatever name it has, because nothing
+installs it as a directory.
 
 ## Hooks Compilation (`hooks/`)
 

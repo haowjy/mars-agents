@@ -5,7 +5,7 @@ agents and skills. Mars compiles these into target-specific config files during
 `mars sync`.
 
 - **MCP servers** are registered per harness target (`.claude/.mcp.json`,
-  `.codex/mcp.json`, `.opencode/opencode.json`, etc.) from `mcp/<name>/mcp.toml`
+  `.codex/codex_mcp.json`, `.opencode/opencode.json`, etc.) from `mcp/<name>/mcp.toml`
   package definitions.
 - **MCP tool-policy refs** (`mcp(...)` entries in an Agent's `tools` map)
   gate which MCP tools an agent may use — separate from server registration.
@@ -13,6 +13,8 @@ agents and skills. Mars compiles these into target-specific config files during
 - **Hooks** contribute target-native JSON fragments to Claude, Codex, and
   Cursor config, or whole TypeScript plugins to OpenCode and Pi, and install
   their complete hook directories beside the target.
+- **Server files** shipped beside `mcp.toml` are installed with their server
+  directory when `command` or `args` names it with `${MARS_MCP_DIR}`.
 
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
@@ -95,6 +97,55 @@ use a different name:
 name    = "custom-name"
 command = "node"
 ```
+
+### Server files (`${MARS_MCP_DIR}`)
+
+An MCP server directory may ship the program it launches, not just `mcp.toml`:
+
+```
+mcp/echo/
+  mcp.toml
+  server.js
+```
+
+Name those files with `${MARS_MCP_DIR}` instead of an absolute path:
+
+```toml
+command = "node"
+args    = ["${MARS_MCP_DIR}/server.js"]
+```
+
+`mars sync` installs the whole `mcp/<name>/` directory beside each target's
+config that writes an MCP config file (`.claude/mcp/echo/`, `.codex/mcp/echo/`,
+and so on) and replaces the token in `command` and `args` with that installed
+absolute path. A target whose adapter writes no MCP config (`.pi`, `.agents`)
+receives no directory. The server registered under a `name` override installs
+under the registered name. Executable bits are preserved. Removing the server
+from the package prunes the installed directories on the next sync.
+
+Only a server that names the token gets a directory; one whose `command` and
+`args` never mention `${MARS_MCP_DIR}` registers exactly as it did before and
+copies nothing. Because the registered name becomes one directory under each
+target, a token-using server's name must be a single path component: a name
+like `github/copilot` is skipped with a warning. A token-free server may use
+any name.
+
+If something Mars does not own already occupies an installed path, sync warns,
+leaves that content untouched, and withholds the target's config entry so
+nothing points at files Mars did not install. `mars sync --force` overwrites
+instead. A directory Mars installed but which was edited afterwards is kept
+with a `target-divergent` warning and also withholds the entry until
+`mars sync --force` or `mars repair` resets it.
+
+`mars build plugin` copies a token-using server's `mcp/<name>/` into each
+generated tree and maps the token to the tree's own root:
+`${CLAUDE_PLUGIN_ROOT}/mcp/<name>` for the shared Claude/Codex/Grok tree,
+`${CURSOR_PLUGIN_ROOT}/mcp/<name>` for Cursor, and a runtime-resolved path under
+the OpenCode package for OpenCode. An entry without the token is unchanged and
+ships no directory.
+
+The token applies to `command` and `args`. `env` values remain symbolic
+`{ from = "env", var = "…" }` references; Mars never resolves their values.
 
 ## Declaring Hooks in a Package
 
@@ -195,6 +246,13 @@ Only declared target tables receive the hook. Mars copies the whole authored
 directory to `<target>/hooks/<name>/`; `hook.toml` and fragment files remain
 there as inert package metadata. Merge-mode destinations are Claude
 `settings.local.json`, Codex `hooks.json`, and Cursor `hooks.json`.
+
+If something Mars does not own already occupies `<target>/hooks/<name>/`, sync
+warns, leaves that content untouched, and withholds the target's hook entry so
+nothing points at files Mars did not install. `mars sync --force` overwrites
+instead. A directory Mars installed but which was edited afterwards is kept
+with a `target-divergent` warning and also withholds the entry until
+`mars sync --force` or `mars repair` resets it.
 
 Mars validates only the merge contract:
 

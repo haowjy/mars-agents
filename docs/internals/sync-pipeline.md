@@ -203,7 +203,7 @@ Agents and skills come from each package's `Prepared` result, so no walk selects
 
 After building all items:
 5. **Detect cross-source destination collisions** — dependency agents and skills from different sources that want the same destination path are both auto-renamed with `__{source_name}`; explicit dependency `rename` mappings run first and can prevent or customize the rename
-6. **Check unmanaged collisions** — prune items that would overwrite a canonical path Mars does not own: `mars.lock` does not claim it and `.mars/provided.lock` does not list it (see [canonical ownership](lock-file.md#canonical-ownership))
+6. **Check unmanaged collisions** — prune items that would overwrite a canonical path Mars does not own: `mars.lock` does not claim it and `.mars/provided.lock` does not list it (see [canonical ownership](lock-file.md#canonical-ownership)). MCP server directories join the target state after MCP name collision resolution and take the same check, so only the winning server's files are installed.
 7. **Rewrite frontmatter** — build one `RenameIndex` from explicit skill renames and automatic collision renames that survived pruning, then apply one rewrite pass per agent; dependency fallback candidates follow mars.toml declaration order (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
 8. **Validate** — validate skill references in agent frontmatter, and warn on `config-rename-dangle` (config-side references to names that renames have replaced)
 
@@ -254,9 +254,16 @@ In `--diff` (dry run) mode, actions are computed but not executed.
 
 ### 5.1 Config Entry Compilation (`compile_config_entries`)
 
-Runs after the apply plan and before target sync. Compiles MCP server
+Runs after target sync, so a server's installed directory exists before the
+config entry that points at it is written. Compiles MCP server
 registrations and lifecycle hooks from all packages in the resolved graph and
-writes them to per-target config files.
+writes them to per-target config files. Target construction resolves MCP name collisions per
+target and makes a token-using winner's directory a target-scoped item, the same way a hook
+directory is installed and pruned; this phase consumes that selection. A hook's or token-using
+server's entry is withheld with a `hook-not-installed` / `mcp-not-installed` warning naming the
+path when target sync did not install that directory: an unmanaged path (preserved without a
+claim) and a user-edited copy (preserved as `target-divergent`) both leave the entry out. A server
+that never names the token has no directory and needs none.
 
 **Steps:**
 
@@ -266,7 +273,7 @@ writes them to per-target config files.
 3. Filter items whose `visibility` is `"local"` (default) when they originate
    from a dependency — only `"exported"` items cross the package boundary.
 4. Check env references — warn (or error under `--strict`) for missing env vars.
-5. Resolve per-target MCP name collisions:
+5. Use the per-target MCP winners from target construction. Collision precedence:
    - `_self` (local package) wins over any dependency, silently.
    - Among dependencies, earlier `[dependencies]` declaration order wins; a
      warning is emitted naming both sources.

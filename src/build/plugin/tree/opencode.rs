@@ -97,9 +97,19 @@ struct PackageManifest<'a> {
 #[derive(Serialize)]
 struct PluginData<'a> {
     plugin: &'a str,
+    /// Authored directory markers the runtime substitutes per installed file.
+    tokens: DirTokens,
     skills: Vec<SkillData>,
     mcp: Vec<&'a str>,
     hooks: Vec<HookData>,
+}
+
+#[derive(Serialize)]
+struct DirTokens {
+    #[serde(rename = "hookDir")]
+    hook_dir: &'static str,
+    #[serde(rename = "mcpDir")]
+    mcp_dir: &'static str,
 }
 
 #[derive(Serialize)]
@@ -176,6 +186,10 @@ fn write_package(
 
     let data = serde_json::to_string_pretty(&PluginData {
         plugin: &metadata.name,
+        tokens: DirTokens {
+            hook_dir: crate::compiler::hooks::HOOK_DIR_TOKEN,
+            mcp_dir: crate::compiler::mcp::MCP_DIR_TOKEN,
+        },
         skills,
         mcp,
         hooks,

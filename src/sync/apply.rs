@@ -223,7 +223,7 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
 /// Returns the installed checksum (hash of what was written to disk).
 fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsError> {
     match target.id.kind {
-        ItemKind::Agent | ItemKind::McpServer => {
+        ItemKind::Agent => {
             let content = content_to_install(target)?;
             write_file_and_verify(dest, &content)
         }
@@ -237,7 +237,7 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
             atomic_install_dir(&target.source_path, doc_dest)?;
             crate::hash::compute_hash(doc_dest, ItemKind::BootstrapDoc).map(ContentHash::from)
         }
-        ItemKind::Skill | ItemKind::Hook => {
+        ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => {
             if target.is_flat_skill {
                 crate::fs::atomic_install_dir_filtered(
                     &target.source_path,
@@ -255,8 +255,8 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
                     content.as_bytes(),
                 )?;
             }
-            // Skills are verified by hashing the installed directory content.
-            crate::hash::compute_hash(dest, ItemKind::Skill).map(ContentHash::from)
+            // Directory items are verified by hashing the installed content.
+            crate::hash::compute_hash(dest, target.id.kind).map(ContentHash::from)
         }
     }
 }

@@ -38,10 +38,11 @@ pub(super) fn merge_local_items(
         managed_root: ctx.project_root.join(".mars"),
     };
     let managed_targets = resolved.loaded.effective.settings.managed_targets();
+    let mcp_targets = target::mcp_config_targets(&managed_targets);
     for item in local_items {
         match &item.content {
             LocalItemContent::Mcp(mcp) => {
-                target_state.select_mcp(mcp.as_ref().clone(), &managed_targets);
+                target_state.select_mcp(mcp.as_ref().clone(), &mcp_targets);
             }
             LocalItemContent::Hook(hook) => {
                 merge.hook(hook, &managed_targets, target_state, diag)?;

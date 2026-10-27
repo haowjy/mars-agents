@@ -143,18 +143,16 @@ fn sync_one_target(
             continue;
         }
         let canonical_dest_rel = outcome.dest_path.as_str();
-        let hook_dest;
-        let dest_rel = if outcome.item_id.kind == mars_schema::item::ItemKind::Hook {
-            let Some((hook_target, target_dest)) =
-                crate::sync::target::hook_target_dest_path(&outcome.dest_path)
-            else {
-                continue;
-            };
-            if hook_target != target_name.trim_start_matches('.') {
+        let scoped_dest;
+        let dest_rel = if let Some(dir) = crate::sync::package_dir::PackageDir::parse_canonical(
+            outcome.item_id.kind,
+            &outcome.dest_path,
+        ) {
+            if !dir.belongs_to(target_name) {
                 continue;
             }
-            hook_dest = target_dest;
-            hook_dest.as_str()
+            scoped_dest = dir.native();
+            scoped_dest.as_str()
         } else {
             canonical_dest_rel
         };
@@ -311,7 +309,11 @@ fn sync_one_target(
                                 Err(e) => errors.push(format!("failed to copy {dest_rel}: {e}")),
                             }
                         }
-                    } else if native_skill_variant_key.is_none() && dest_exists {
+                    } else if !should_refresh_native_skill && dest_exists {
+                        // A skill this target projects a variant of is compared through
+                        // its projection, not the canonical tree; every other item that
+                        // kept local content is either unclaimed or user-edited, and the
+                        // user needs to hear which.
                         if old_lock
                             .installed_checksum_for_output(target_name, dest_rel)
                             .is_none()
@@ -542,11 +544,13 @@ fn copy_item_to_target(
 
     // Ensure parent directories exist
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| MarsError::io("create copy parent", parent, error))?;
     }
 
     // Follow symlinks to determine if source is a file or directory
-    let metadata = std::fs::metadata(source)?;
+    let metadata = std::fs::metadata(source)
+        .map_err(|error| MarsError::io("read metadata for", source, error))?;
 
     if metadata.is_dir() {
         if dest.exists() && fs_ops::directory_trees_content_equal(source, dest)? {

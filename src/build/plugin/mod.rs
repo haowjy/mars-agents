@@ -257,8 +257,10 @@ fn stage_plugin_inner(
         &graph_staging.path().join("resolve"),
         diag,
     )?;
+    let built_target =
+        crate::sync::build_target_state(&graph, &effective, &root_source, diag, |_, _| Ok(()))?;
     let mut prepared_target =
-        crate::sync::prepare_target_state(&graph, &effective, diag, |_, _| Ok(()))?;
+        crate::sync::apply_target_renames(built_target, &graph, &effective, diag)?;
     // A plugin build has no project-local items and carries no provided skills, so it passes no
     // declarations and no installed record: every ref is judged by what the graph ships.
     let warnings =

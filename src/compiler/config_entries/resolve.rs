@@ -9,18 +9,21 @@ use std::collections::BTreeMap;
 use crate::compiler::mcp::ParsedMcpItem;
 use crate::diagnostic::DiagnosticCollector;
 
-const SELF_SOURCE: &str = "_self";
-
 /// Resolve MCP name collisions for a single target root.
 ///
 /// `items` must already be filtered for `target_root`; target selection belongs
 /// to `TargetState`, while this module owns only collision precedence.
 ///
-/// Precedence: shallower package > earlier `decl_order`; equal graph position
-/// breaks alphabetically by source package name.
+/// `local_source` names the consumer's own package. It wins even where graph
+/// depth does not put it first: a plugin build lists its root package among its
+/// own dependencies.
+///
+/// Precedence: local package > shallower package > earlier `decl_order`; equal
+/// graph position breaks alphabetically by source package name.
 pub fn resolve_mcp_collisions_for_target<'a>(
     items: impl IntoIterator<Item = &'a ParsedMcpItem>,
     target_root: &str,
+    local_source: &str,
     diag: &mut DiagnosticCollector,
 ) -> Vec<&'a ParsedMcpItem> {
     let mut groups: BTreeMap<&str, Vec<&ParsedMcpItem>> = BTreeMap::new();
@@ -30,13 +33,14 @@ pub fn resolve_mcp_collisions_for_target<'a>(
 
     groups
         .into_values()
-        .map(|group| resolve_mcp_group(group, target_root, diag))
+        .map(|group| resolve_mcp_group(group, target_root, local_source, diag))
         .collect()
 }
 
 fn resolve_mcp_group<'a>(
     mut group: Vec<&'a ParsedMcpItem>,
     target_root: &str,
+    local_source: &str,
     diag: &mut DiagnosticCollector,
 ) -> &'a ParsedMcpItem {
     debug_assert!(!group.is_empty());
@@ -50,13 +54,19 @@ fn resolve_mcp_group<'a>(
             .then_with(|| a.decl_order.cmp(&b.decl_order))
             .then_with(|| a.source_name.cmp(&b.source_name))
     });
+    if let Some(index) = group
+        .iter()
+        .position(|item| item.source_name == local_source)
+    {
+        group.swap(0, index);
+    }
 
     let winner = group[0];
-    if winner.source_name == SELF_SOURCE
+    if winner.source_name == local_source
         && group
             .iter()
             .skip(1)
-            .all(|loser| loser.source_name != SELF_SOURCE)
+            .all(|loser| loser.source_name != local_source)
     {
         return winner;
     }
@@ -106,7 +116,7 @@ mod tests {
         );
         let mut diag = DiagnosticCollector::new();
 
-        let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
+        let resolved = resolve_mcp_collisions_for_target(&items, ".claude", "_self", &mut diag);
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].source_name, "_self");
@@ -127,7 +137,7 @@ mod tests {
         );
         let mut diag = DiagnosticCollector::new();
 
-        let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
+        let resolved = resolve_mcp_collisions_for_target(&items, ".claude", "_self", &mut diag);
         let diagnostics = diag.drain();
 
         assert_eq!(resolved.len(), 1);
@@ -151,7 +161,7 @@ mod tests {
         );
         let mut diag = DiagnosticCollector::new();
 
-        let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
+        let resolved = resolve_mcp_collisions_for_target(&items, ".claude", "_self", &mut diag);
         let diagnostics = diag.drain();
 
         assert_eq!(resolved.len(), 1);
@@ -175,7 +185,7 @@ mod tests {
         );
         let mut diag = DiagnosticCollector::new();
 
-        let resolved = resolve_mcp_collisions_for_target(&items, ".claude", &mut diag);
+        let resolved = resolve_mcp_collisions_for_target(&items, ".claude", "_self", &mut diag);
         let diagnostics = diag.drain();
 
         assert_eq!(resolved.len(), 1);
@@ -205,6 +215,7 @@ mod tests {
                 item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == ".claude")
             }),
             ".claude",
+            "_self",
             &mut diag,
         );
         let codex_resolved = resolve_mcp_collisions_for_target(
@@ -212,6 +223,7 @@ mod tests {
                 item.def.targets.is_empty() || item.def.targets.iter().any(|t| t == ".codex")
             }),
             ".codex",
+            "_self",
             &mut diag,
         );
 

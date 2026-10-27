@@ -36,6 +36,8 @@ pub(crate) fn inputs_for_items(
     if include_mcp {
         for definition in crate::compiler::mcp::discover_mcp_definition_paths(package_root, diag)? {
             let relative = definition
+                .parent()
+                .expect("discovered MCP definition belongs to a server directory")
                 .strip_prefix(package_root)
                 .expect("discovered MCP definition is inside its package")
                 .to_path_buf();

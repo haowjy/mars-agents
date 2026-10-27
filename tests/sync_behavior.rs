@@ -2334,3 +2334,78 @@ dialect = "mars-native"
         "claude native agent should preserve mcp__ wire identifier verbatim: {claude_native}"
     );
 }
+
+#[test]
+fn sync_installs_only_the_token_servers_directory_and_keeps_its_entry() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.child("source");
+    source.create_dir_all().unwrap();
+    source
+        .child("mars.toml")
+        .write_str("[package]\nname = \"source\"\nversion = \"1.0.0\"\n")
+        .unwrap();
+    source.child("mcp/echo").create_dir_all().unwrap();
+    source
+        .child("mcp/echo/mcp.toml")
+        .write_str(
+            "visibility = \"exported\"\ncommand = \"node\"\nargs = [\"${MARS_MCP_DIR}/server.js\"]\n",
+        )
+        .unwrap();
+    source
+        .child("mcp/echo/server.js")
+        .write_str("console.log(1)\n")
+        .unwrap();
+    source.child("mcp/plain").create_dir_all().unwrap();
+    source
+        .child("mcp/plain/mcp.toml")
+        .write_str("visibility = \"exported\"\ncommand = \"npx\"\nargs = [\"-y\", \"plain\"]\n")
+        .unwrap();
+
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".claude\"]\n[dependencies.source]\npath = \"{}\"\n",
+            portable_path(&source)
+        ))
+        .unwrap();
+    let user_copy = project.child(".claude/mcp/plain/keep.txt");
+    user_copy.write_str("user content").unwrap();
+
+    offline_mars(dir.path())
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    let entry: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project.child(".claude/.mcp.json").path()).unwrap(),
+    )
+    .unwrap();
+    let installed = project.child(".claude/mcp/echo/server.js");
+    // Mars canonicalizes the root; on Windows the temp dir may be an 8.3 short path.
+    let canonical_installed = dunce::canonicalize(installed.path()).unwrap();
+    assert_eq!(
+        entry["mcpServers"]["echo"]["args"][0],
+        json!(portable_path(&canonical_installed)),
+        "the token server's entry must name the installed directory"
+    );
+    assert!(installed.exists());
+    assert_eq!(
+        entry["mcpServers"]["plain"]["command"], "npx",
+        "a token-free server registers its entry without installing a directory"
+    );
+
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(
+        lock.contains("mcp-server/echo@claude"),
+        "the token server's directory must be lock-owned per target:\n{lock}"
+    );
+    assert!(
+        lock.contains("dest_path = \"mcp/echo\""),
+        "the token server's target output must be recorded:\n{lock}"
+    );
+
+    user_copy.assert("user content");
+    assert!(!project.child(".claude/mcp/plain/mcp.toml").exists());
+}

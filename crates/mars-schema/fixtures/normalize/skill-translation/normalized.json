@@ -312,12 +312,6 @@
               "severity": "warning",
               "path": [],
               "message": "refers to `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_SKILL_DIR}`, which are left as written and do not resolve outside Claude Code"
-            },
-            {
-              "code": "skill.needs-scripts",
-              "severity": "warning",
-              "path": [],
-              "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
             }
           ],
           "skills/mismatch/SKILL.md": [

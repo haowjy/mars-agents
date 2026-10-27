@@ -142,16 +142,7 @@
             "output_path": "skills/pdf/scripts/extract.py"
           }
         ],
-        "diagnostics": {
-          "skills/pdf/SKILL.md": [
-            {
-              "code": "skill.needs-scripts",
-              "severity": "warning",
-              "path": [],
-              "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
-            }
-          ]
-        }
+        "diagnostics": {}
       }
     },
     {

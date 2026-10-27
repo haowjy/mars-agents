@@ -7,6 +7,45 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.20.7] - 2026-10-27
+
+### Upgrade notes
+- Changelog entries go in the PR body's `## Changelog` section now. `CHANGELOG.md`
+  `## [Unreleased]` is an empty anchor and no PR edits that file; CI rejects a PR that adds
+  content under the anchor or a release heading. See
+  [the PR body gate](https://github.com/haowjy/mars-agents/blob/main/.github/workflows/README.md#pr-body-gate).
+- `scripts/manually-release.sh` collects merged PR notes by default, so it needs an
+  authenticated `gh`. `--notes-file PATH` adds notes after the collected ones, and
+  `--no-collect` releases from that file alone (offline, or a direct-push-only range). It no
+  longer promotes `[Unreleased]` or refuses an empty one. See
+  [manual backfill](https://github.com/haowjy/mars-agents/blob/main/.github/workflows/README.md#manual-backfill).
+
+### Changed
+- A changelog entry no longer blocks a PR. Entries are written in the PR body's `## Changelog`
+  section; the release job renders that section into `CHANGELOG.md` under the new version
+  heading and uses it as the GitHub Release body. Nobody edits `CHANGELOG.md` in a PR, so two
+  branches can no longer conflict on it.
+- Every merge since the last release contributes its notes, once per PR. The release job walks
+  the first-parent commits since the last `release: v` commit, resolves each commit's merged PR
+  targeting `main`, renders the bodies deduplicated by PR number, and always includes the
+  merging PR. A `release:skip` merge, a failed or cancelled run, and two merges in one push keep
+  their entries. If a second merge lands while that release is still running, the second run
+  sees that the first release already contains it and skips instead of cutting an extra version
+  that repeats its notes.
+- The PR gate refuses a `CHANGELOG.md` edit. `.github/workflows/pr-body.yml` validates the
+  body's `## Changelog` section, then compares the branch's file with the base branch's and names
+  what the PR adds: content under `[Unreleased]`, or a release heading (a pasted `## [X]`, a
+  second `## [Unreleased]`, a duplicate of a released heading). A typo fix inside a released
+  section still passes.
+
+### Fixed
+- `## [0.20.5]` ships the entries #238 added. They landed under `## [0.20.4]` because a branch
+  that merged `main` back in appended to the `### Fixed` block the 0.20.4 release had left
+  below its own heading, so `0.20.5` released empty; the two entries now sit under `[0.20.5]`.
+- `scripts/manually-release.sh` resolves a relative `--notes-file` against the directory it was
+  invoked from, and runs the full preflight before writing version bumps, so a failed gate
+  leaves the tree clean.
+
 ## [0.20.6] - 2026-10-27
 
 ### Fixed

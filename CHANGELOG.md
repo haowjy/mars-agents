@@ -15,9 +15,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   names skip that one server with a warning.
 
 ### Changed
-- README plugin support table: cells are generated from what each plugin tree actually does. Grok
-  agents now list the Claude agent fields that are dropped; Codex and Grok hooks state the `claude`
-  fragment rule. Generated plugin output is unchanged.
 - An unmanaged directory at `<target>/hooks/<name>/` no longer fails `mars sync`. It warns, survives
   untouched, and withholds that target's hook entry, as an MCP server's unmanaged `mcp/<name>/`
   already did; `mars sync --force` adopts and overwrites it.
@@ -30,6 +27,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   or `.cursor` now reports `target-divergent` with the `mars sync --force` / `mars repair` hint, as
   skills already did on targets without skill variants; the edited copy is kept and its config
   entry is withheld.
+
+## [0.20.3-rc.1] - 2026-10-27
+
+### Fixed
+- `@meridian-flow/mars-schema` publishes to npm again: its `package.json` names the source repository, which npm needs to verify provenance.
+
+## [0.20.2] - 2026-10-27
+
+### Fixed
+- `mars sync` no longer fails with `Not a directory` on a dependency read without a `mars.toml` (a foreign skill tree, a `subpath` into another repo) whose `skills/` holds a file such as `__init__.py` or `README.md`; the file is ignored, as in 0.18.
+- `mars check PATH --root DIR` checks `PATH` instead of failing, so `meridian mars check <package>` works again.
+
+### Changed
+- README plugin support table: cells are generated from what each plugin tree actually does. Grok
+  agents now list the Claude agent fields that are dropped; Codex and Grok hooks state the `claude`
+  fragment rule. Generated plugin output is unchanged.
 
 ## [0.20.1] - 2026-10-26
 

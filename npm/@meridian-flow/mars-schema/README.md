@@ -29,7 +29,7 @@ await init();
 | `emitValue(value, indent)` | YAML for one value, to splice after a key. |
 | `rewriteBlock(frontmatter)` | The whole frontmatter block between the `---` fences for ordered `[key, value]` pairs. |
 | `vocabulary()` | The tool capabilities, their aliases, and the native tools of each host. |
-| `prepare({files, context?, declaredDialect?})` | Reads one root held in memory: classifies it, upgrades or translates it, and returns each definition's normalized bytes, typed reading and change record. |
+| `prepare({files, context?, declaredDialect?, migrate?})` | Reads one root held in memory: classifies it, upgrades or translates it, and returns each definition's normalized bytes, typed reading and change record. `migrate` adds `mars migrate`'s repair: a removed Agent key whose replacement is a `harness-overrides` key moves there. |
 | `inspect({tree, hint?})` | Reports what a repository is: a marketplace's plugins, a plugin's or skill tree's items, the dialect and the evidence for it. |
 | `normalize({tree, source?, hint?, selection?})` | Turns a selection into schema v1 packages with a generated `mars.toml` and provenance. |
 | `version()` | The version of the schema crate this build was made from. |
@@ -106,7 +106,7 @@ Marketplace fields are untrusted input: a marketplace is third-party text, and a
 | `read` | the file, `expected.json` | the reading of one definition or manifest |
 | `emit` | `value.json`, `expected.txt` | the YAML for one value |
 | `upgrade` | `input.md`, `expected.md`, `expected-diagnostics.json` | the pre-v1 to v1 rewrite |
-| `prepare` | `input/`, `request.json`, `expected.json` | classifying and reading one root |
+| `prepare` | `input/`, `request.json`, `expected.json` | classifying and reading one root, and with `"migrate": true` the repair `mars migrate` writes back |
 | `normalize` | `input/`, `request.json`, `inspection.json`, `normalized.json`, `expected/` | reading a foreign repository |
 | `vocabulary` | `expected.json` | the capabilities, aliases and native tools |
 

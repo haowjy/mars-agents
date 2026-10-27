@@ -341,16 +341,16 @@ pub(crate) fn set_aside_rejected_keys(
     {
         let keys = movable
             .iter()
-            .map(|(key, _)| key.clone())
+            .map(|(key, _)| (key.as_str(), key.as_str()))
             .collect::<Vec<_>>();
         if let Moved::Done { moved, displaced } = move_keys_under(fm, harness, &keys) {
             changed = true;
             for (key, why) in &movable {
-                let what = if moved.contains(key) {
+                let what = if moved.contains(&key.as_str()) {
                     format!(
                         "it was moved under `harness-overrides.{harness}`, which Mars does not enforce"
                     )
-                } else if displaced.contains(key) {
+                } else if displaced.iter().any(|(from, _)| *from == key.as_str()) {
                     format!("it was dropped, `harness-overrides.{harness}.{key}` already sets it")
                 } else {
                     continue;

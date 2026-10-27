@@ -28,6 +28,14 @@ pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
         "permission",
         "move it under `harness-overrides.flow.permission`",
     ),
+    RemovedField::replaced(
+        "resident-rearm-budget",
+        "move it under `harness-overrides.meridian.resident-rearm-budget`",
+    ),
+    RemovedField::replaced(
+        "meridian-capabilities",
+        "move it under `harness-overrides.meridian.capabilities`",
+    ),
 ];
 
 /// Values `lift_mars_only_keys` rewrites; the reader refuses them.
@@ -707,6 +715,7 @@ pub(crate) fn read_fields(
                         })
                     });
             }
+            "permission" => diags.push(removed_permission(value)),
             "sandbox" => {
                 profile.sandbox = read_string(value, "sandbox", false, diags).and_then(|sandbox| {
                     SandboxMode::parse(&sandbox).or_else(|| {
@@ -781,6 +790,34 @@ pub(crate) fn read_fields(
     }
 
     profile
+}
+
+/// What the reader tells an author whose top-level `permission` schema 1 removed.
+///
+/// Flow defines `read` and `edit`, and OpenCode's format is a map; any other value names where it
+/// can live instead of sending the author to a block that would reject it again.
+fn removed_permission(value: &Value) -> crate::diagnostic::SchemaDiagnostic {
+    use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
+    match value {
+        Value::Mapping(_) => SchemaDiagnostic::new(
+            "field.removed",
+            Severity::Error,
+            key_path("permission"),
+            "`permission` as a map is OpenCode's format; put it under \
+             `harness-overrides.opencode.permission`",
+        ),
+        Value::String(permission) if matches!(permission.as_str(), "read" | "edit") => {
+            unrecognized_field(REMOVED_AGENT_FIELDS, "permission")
+        }
+        _ => SchemaDiagnostic::new(
+            "field.removed",
+            Severity::Error,
+            key_path("permission"),
+            "`permission` was removed; Flow reads only `read` or `edit`, at \
+             `harness-overrides.flow.permission`. Grant what it allowed with \
+             `tools: {<capability>: allow}`",
+        ),
+    }
 }
 
 /// Read an Agent definition through the versioned schema contract.

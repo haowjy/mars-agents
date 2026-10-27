@@ -4,10 +4,10 @@ All commands support two global flags:
 
 | Flag | Description |
 |---|---|
-| `--root <PATH>` | Explicit managed root (default: auto-detect from cwd) |
+| `--root <PATH>` | Explicit project root (default: auto-detect from cwd) |
 | `--json` | Machine-readable JSON output |
 
-The managed root's parent directory is the project root (where `mars.toml` and `mars.lock` live).
+The project root is the directory holding `mars.toml` and `mars.lock`.
 
 ## Exit Codes
 
@@ -22,7 +22,7 @@ The managed root's parent directory is the project root (where `mars.toml` and `
 
 ## `mars init`
 
-Initialize a mars project. Creates `mars.toml` and the managed output directory.
+Initialize a mars project. Creates `mars.toml` and `.mars/`.
 
 ```bash
 mars init [TARGET] [--link DIR...]
@@ -30,15 +30,14 @@ mars init [TARGET] [--link DIR...]
 
 | Argument/Flag | Description |
 |---|---|
-| `TARGET` | Directory name for managed output (default: `.agents`) |
+| `TARGET` | Optional managed output directory to create (default: none) |
 | `--link DIR` | Directories to link after init (repeatable) |
 
 **Behavior:**
 - Creates `<project-root>/mars.toml` with `[dependencies]` section
-- Creates the managed directory (default `.agents/`)
 - Creates `.mars/` internal state directory
+- Creates `TARGET`, when given, and records it as `settings.managed_root`
 - Adds `mars.local.toml` and `.mars/` to `.gitignore`
-- Persists non-default `managed_root` in `[settings]`
 - Idempotent: re-running is a no-op for init, but still processes `--link`
 - When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
   against configured managed targets, reporting what each target cannot express
@@ -46,9 +45,9 @@ mars init [TARGET] [--link DIR...]
   project has no package to publish, so it gets no preview
 
 ```bash
-mars init                    # Default: .agents/
-mars init .claude            # Custom managed root
-mars init --link .claude     # Init + link in one step
+mars init                    # No target directory; link one with `mars link`
+mars init .claude            # Create .claude/ as the single managed target
+mars init --link .claude     # No extra directory; add `.claude` to settings.targets
 ```
 
 ---
@@ -121,7 +120,7 @@ A dependency added with `--subpath`, `--plugin` or a path in the specifier is na
 
 ## `mars sync`
 
-Resolve dependencies and make the managed root match config.
+Resolve dependencies, install into `.mars/`, and copy managed content into each target.
 
 ```bash
 mars sync [--force] [--diff] [--frozen]
@@ -171,9 +170,9 @@ mars migrate [--check] [--root PATH] [--json]
 | Flag | Description |
 |---|---|
 | `--check` | List the files that would change and write nothing. Exits 1 if any file needs migration |
-| `--json` | `{check, changed, files, fully_rewritten_files, dropped}`; `dropped` lists `{file, code, message}` for each key the migration removed |
+| `--json` | `{check, changed, files, fully_rewritten_files, dropped, warnings}`; `dropped` lists `{file, code, message}` for each key the migration removed, and `warnings` lists the same shape for what it left alone and why |
 
-It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`) and every agent and skill definition, and writes only the files that change. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Quoting, key order and the body of a definition stay as they were, and a comment survives unless it belongs to a changed key's block (a comment written directly after a changed key's value is part of that block and is rewritten with it); only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
+It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`, and adds `requires-mars = ">=0.20.0"` when the manifest has no requirement; an existing requirement is reported, never rewritten) and every agent and skill definition, and writes only the files that change. A definition whose package already says `schema = 1` is rewritten too when it still carries a key that moved under `harness-overrides` (`permission`, `resident-rearm-budget`, `meridian-capabilities`); every other removed key is left as it is. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Quoting, key order and the body of a definition stay as they were, and a comment survives unless it belongs to a changed key's block (a comment written directly after a changed key's value is part of that block and is rewritten with it); only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
 
 In a consumer project (a `mars.toml` with no `[package]`), only `.mars-src/` is migrated; with none, the command says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories` and exits 0.
 
@@ -279,9 +278,9 @@ mars adopt <path> [--dry-run]
 `mars adopt` works in any project — `[package]` in `mars.toml` is not required.
 
 ```bash
-mars adopt .agents/agents/my-agent.md        # adopt an agent
-mars adopt .agents/skills/my-skill           # adopt a skill
-mars adopt .agents/agents/my-agent.md --dry-run  # preview only
+mars adopt .claude/agents/my-agent.md        # adopt an agent
+mars adopt .claude/skills/my-skill           # adopt a skill
+mars adopt .claude/agents/my-agent.md --dry-run  # preview only
 ```
 
 After adoption, the item lives in `.mars-src/` (your editable source) and is tracked in `mars.lock`. Edit it there and run `mars sync` to propagate changes.

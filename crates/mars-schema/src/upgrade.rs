@@ -6,6 +6,7 @@ use toml_edit::{DocumentMut, Item};
 use crate::claude;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
+use crate::harness_overrides::{Moved, move_keys_under};
 use crate::item::DefinitionKind;
 use crate::{
     agent::{REMOVED_AGENT_FIELDS, REMOVED_AGENT_VALUES},
@@ -17,7 +18,8 @@ pub struct UpgradeResult {
     pub text: String,
     /// What the upgrade changed, one note per key it dropped or moved.
     pub diagnostics: Vec<SchemaDiagnostic>,
-    /// A changed definition whose source shape prevented top-level block editing.
+    /// A changed definition whose text was re-rendered rather than edited minimally: the whole
+    /// frontmatter, or a `harness-overrides` block that could not be grown in place.
     pub fully_rewritten: bool,
     /// Authored key paths whose values or presence changed.
     pub edited_paths: Vec<Vec<PathSegment>>,
@@ -40,13 +42,39 @@ pub enum UpgradeError {
 }
 
 pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeResult, UpgradeError> {
+    rewrite(text, |frontmatter, diagnostics| match kind {
+        DefinitionKind::Agent => upgrade_agent(frontmatter, diagnostics),
+        DefinitionKind::Skill => upgrade_skill(frontmatter, diagnostics),
+    })
+}
+
+/// Apply only what schema 1 removes with a mechanical replacement: the Agent keys that moved
+/// under `harness-overrides`.
+///
+/// `mars migrate` runs this on a schema 1 file it is about to write back, so a file that
+/// carries a key the reader rejects is repaired instead of failing the run. Every reading
+/// caller leaves it off, because an authored schema 1 file is read exactly as written.
+pub fn relocate_removed_fields(
+    kind: DefinitionKind,
+    text: &str,
+) -> Result<UpgradeResult, UpgradeError> {
+    rewrite(text, |frontmatter, notes| {
+        if kind == DefinitionKind::Agent {
+            move_agent_fields(frontmatter, notes);
+        }
+    })
+}
+
+/// `text` with `apply`'s changes to its frontmatter, edited as minimally as the source shape
+/// allows.
+fn rewrite(
+    text: &str,
+    apply: impl FnOnce(&mut Frontmatter, &mut Vec<SchemaDiagnostic>),
+) -> Result<UpgradeResult, UpgradeError> {
     let original = Frontmatter::parse(text)?;
     let mut frontmatter = original.clone();
     let mut diagnostics = Vec::new();
-    match kind {
-        DefinitionKind::Agent => upgrade_agent(&mut frontmatter, &mut diagnostics),
-        DefinitionKind::Skill => upgrade_skill(&mut frontmatter, &mut diagnostics),
-    }
+    apply(&mut frontmatter, &mut diagnostics);
     if frontmatter.mapping() == original.mapping() {
         return Ok(UpgradeResult {
             text: text.to_string(),
@@ -68,14 +96,16 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
     };
     let minimally_edited = edit_top_level_blocks(text, original.mapping(), frontmatter.mapping())
         .and_then(|edited| {
-            Frontmatter::parse(&edited)
+            Frontmatter::parse(&edited.text)
                 .ok()
                 .filter(|parsed| parsed.mapping() == frontmatter.mapping())
                 .map(|_| edited)
         });
     Ok(UpgradeResult {
-        fully_rewritten: minimally_edited.is_none(),
-        text: minimally_edited.unwrap_or(fallback),
+        fully_rewritten: minimally_edited
+            .as_ref()
+            .is_none_or(|edited| edited.re_rendered),
+        text: minimally_edited.map_or(fallback, |edited| edited.text),
         diagnostics,
         edited_paths,
     })
@@ -216,9 +246,16 @@ struct SourceBlock<'a> {
     start: usize,
 }
 
+/// A frontmatter edited in place, and whether a block had to be re-rendered from its parsed
+/// value, which drops the comments and flow style written inside it.
+struct Edited {
+    text: String,
+    re_rendered: bool,
+}
+
 /// Rewrite only changed top-level blocks. Complex top-level YAML deliberately returns `None` so
 /// the caller has one explicit, verified full-serialization fallback.
-fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Option<String> {
+fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Option<Edited> {
     let (prefix, yaml, suffix) = frontmatter_source(text)?;
     let blocks = source_blocks(yaml)?;
     let before_keys = before
@@ -231,6 +268,7 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
 
     let render = |key: &str, value: &Value| with_line_ending_of(text, render_block(key, value));
     let mut output = String::with_capacity(text.len());
+    let mut re_rendered = false;
     output.push_str(prefix);
     let first_key_offset = blocks.first().map_or(yaml.len(), |block| block.start);
     output.push_str(&yaml[..first_key_offset]);
@@ -245,7 +283,13 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
         } else if let Some(after_value) = after.get(Value::String(block.key.to_string())) {
             if before_value == after_value {
                 output.push_str(block.text);
+            } else if let Some(grown) = grown_in_place(&block, before_value, after_value) {
+                output.push_str(&grown);
             } else {
+                // Re-rendering a block loses what the author wrote inside it, which only a
+                // `harness-overrides` block can avoid by growing in place, so a file that fell back
+                // here is reported.
+                re_rendered |= block.key == "harness-overrides";
                 output.push_str(&render(block.key, after_value));
             }
             emitted.push(block.key);
@@ -263,7 +307,86 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
         output.push_str(&render(key, value));
     }
     output.push_str(suffix);
-    Some(output)
+    Some(Edited {
+        text: output,
+        re_rendered,
+    })
+}
+
+/// `block` with the entries `after` adds, appended as text, so the comments and flow style the
+/// author wrote in the entries already there survive. `None` when the block cannot take text that
+/// simply: it is written in flow style, or an entry it has changed.
+fn grown_in_place(block: &SourceBlock<'_>, before: &Value, after: &Value) -> Option<String> {
+    let (Value::Mapping(before), Value::Mapping(after)) = (before, after) else {
+        return None;
+    };
+    if before
+        .iter()
+        .any(|(key, value)| after.get(key) != Some(value))
+    {
+        return None;
+    }
+    let added = after
+        .iter()
+        .filter(|(key, _)| before.get(key).is_none())
+        .collect::<Vec<_>>();
+    let indent = (!added.is_empty()).then(|| child_indent(block)).flatten()?;
+    // The block's text runs up to the next top-level key, so it ends with whatever blank lines and
+    // comments were written above that key; the new entries go before them.
+    let (body, tail) = split_trailing_run(block.text);
+    let mut grown = body.to_string();
+    if !grown.ends_with('\n') {
+        grown.push('\n');
+    }
+    for (key, value) in added {
+        let rendered = render_block(key.as_str()?, value);
+        // The block's own indentation is the author's; serde's two spaces a level become theirs.
+        let indented = rendered
+            .lines()
+            .map(|line| {
+                let depth = line.len() - line.trim_start().len();
+                format!("{}{}", indent.repeat(depth / 2 + 1), line.trim_start())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        grown.push_str(&indented);
+        grown.push('\n');
+    }
+    grown.push_str(tail);
+    Some(with_line_ending_of(block.text, grown))
+}
+
+/// `text` split where an appended entry belongs: before the trailing run of blank lines and
+/// comments at the document's left edge, which belong to the key below the block.
+fn split_trailing_run(text: &str) -> (&str, &str) {
+    let mut split = text.len();
+    for line in text.split_inclusive('\n').rev() {
+        let content = line.trim_end_matches(['\r', '\n']);
+        if !content.trim().is_empty() && !content.starts_with('#') {
+            break;
+        }
+        split -= line.len();
+    }
+    text.split_at(split)
+}
+
+/// The indentation of `block`'s own children in its source text, and `None` when it has none to
+/// line up with: a flow mapping, or a value that is not a mapping at all.
+fn child_indent<'a>(block: &'a SourceBlock<'a>) -> Option<&'a str> {
+    let first = block.text.split_inclusive('\n').next()?;
+    let rest = first[block.key_end + 1..].trim_end_matches(['\r', '\n']);
+    if !(rest.trim().is_empty() || rest.trim_start().starts_with('#')) {
+        return None;
+    }
+    for line in block.text.split_inclusive('\n').skip(1) {
+        let content = line.trim_end_matches(['\r', '\n']);
+        if content.trim().is_empty() || content.trim_start().starts_with('#') {
+            continue;
+        }
+        let indent = content.len() - content.trim_start().len();
+        return (indent > 0).then(|| &content[..indent]);
+    }
+    None
 }
 
 fn renamed_key<'a>(old: &str, before: &Mapping, after: &'a Mapping) -> Option<&'a str> {
@@ -373,7 +496,7 @@ pub(crate) fn lift_mars_only_keys(
         for removed in REMOVED_AGENT_VALUES {
             replace_scalar(fm, removed.key, removed.value, removed.replacement);
         }
-        move_permission(fm);
+        move_agent_fields(fm, notes);
         strip_model_policy_overrides(fm, notes);
     }
     fm.mapping() != &before
@@ -485,34 +608,79 @@ fn upgrade_tools(fm: &mut Frontmatter) {
     fm.remove("disallowed-tools");
 }
 
-fn move_permission(fm: &mut Frontmatter) {
-    let Some(permission @ ("read" | "edit")) = fm.get("permission").and_then(Value::as_str) else {
-        return;
-    };
-    let permission = permission.to_string();
-    let overrides = fm
-        .get("harness-overrides")
-        .cloned()
-        .unwrap_or_else(|| Value::Mapping(Mapping::new()));
-    let Value::Mapping(mut overrides) = overrides else {
-        return;
-    };
-    let flow_key = Value::String("flow".to_string());
-    let flow = overrides
-        .get(&flow_key)
-        .cloned()
-        .unwrap_or_else(|| Value::Mapping(Mapping::new()));
-    let Value::Mapping(mut flow) = flow else {
-        return;
-    };
-    let permission_key = Value::String("permission".to_string());
-    if flow.contains_key(&permission_key) {
-        return;
+/// The Agent keys schema 1 replaced with a `harness-overrides` key: the consumer namespace that
+/// owns it, and the name it takes there.
+///
+/// One conflict rule covers all three: a block already written wins, and its top-level twin is
+/// dropped with a note naming it. `permission` moves only for the values Flow defines; see
+/// [`moves_under_namespace`].
+const MOVED_AGENT_FIELDS: &[(&str, &str, &str)] = &[
+    ("flow", "permission", "permission"),
+    ("meridian", "resident-rearm-budget", "resident-rearm-budget"),
+    ("meridian", "meridian-capabilities", "capabilities"),
+];
+
+/// Whether the top-level `key` moves under its consumer namespace. Flow defines `read` and
+/// `edit` only, so any other `permission` value stays where it is for the reader to report.
+fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
+    key != "permission"
+        || fm
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|permission| matches!(permission, "read" | "edit"))
+}
+
+/// Move the Agent keys schema 1 replaced with a `harness-overrides` key. An existing block wins,
+/// and the top-level twin it displaces is dropped with a note: the reader would otherwise report
+/// the key `mars migrate` left behind.
+fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
+    let mut displaced = Vec::new();
+    for &namespace in crate::harness::RESERVED_CONSUMER_NAMESPACES {
+        let keys = MOVED_AGENT_FIELDS
+            .iter()
+            .filter_map(|(owner, from, to)| {
+                (*owner == namespace && moves_under_namespace(fm, from)).then_some((*from, *to))
+            })
+            .collect::<Vec<_>>();
+        if let Moved::Done {
+            displaced: dropped, ..
+        } = move_keys_under(fm, namespace, &keys)
+        {
+            displaced.extend(dropped.into_iter().map(|(from, to)| (namespace, from, to)));
+        }
     }
-    flow.insert(permission_key, Value::String(permission));
-    overrides.insert(flow_key, Value::Mapping(flow));
-    fm.insert("harness-overrides", Value::Mapping(overrides));
-    fm.remove("permission");
+    for (namespace, from, to) in displaced {
+        notes.push(dropped_twin(fm, namespace, from, to));
+    }
+}
+
+/// The note for a top-level key dropped because its namespace block already sets one. A dropped
+/// `permission` carried a restriction, which the note names as lost (`field.restriction-lost`, as
+/// the set-aside reports the same loss).
+fn dropped_twin(fm: &Frontmatter, namespace: &str, from: &str, to: &str) -> SchemaDiagnostic {
+    let path = vec![PathSegment::Key(from.to_string())];
+    if from == "permission" {
+        let agent = fm.get("name").and_then(Value::as_str).map_or_else(
+            || "this agent".to_string(),
+            |name| format!("agent `{name}`"),
+        );
+        return SchemaDiagnostic::new(
+            crate::set_aside::RESTRICTION_LOST,
+            Severity::Warning,
+            path,
+            format!(
+                "{agent} lost the restriction `permission`: it was dropped, because \
+                 `harness-overrides.{namespace}.{to}` already sets a value, and an override \
+                 written wins"
+            ),
+        );
+    }
+    SchemaDiagnostic::new(
+        "field.removed",
+        Severity::Warning,
+        path,
+        format!("dropped `{from}`; `harness-overrides.{namespace}.{to}` already sets it"),
+    )
 }
 
 fn strip_model_policy_overrides(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {

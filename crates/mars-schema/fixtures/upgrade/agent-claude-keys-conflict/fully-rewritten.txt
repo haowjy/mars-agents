@@ -1,0 +1,2 @@
+The `claude` entry itself changes, so the `harness-overrides` block cannot be grown
+in place: it is re-rendered, and what was written inside it is lost and reported.

@@ -50,8 +50,9 @@ pub fn names() -> String {
 }
 
 /// Consumer namespaces under `harness-overrides` that are not harnesses: the consumer
-/// owns the block's contents, and Mars only keeps it. Meridian Flow's is `flow`.
-pub(crate) const RESERVED_CONSUMER_NAMESPACES: &[&str] = &["flow"];
+/// owns the block's contents, and Mars only keeps it. Meridian Flow's is `flow`; the Meridian
+/// CLI's is `meridian`.
+pub(crate) const RESERVED_CONSUMER_NAMESPACES: &[&str] = &["flow", "meridian"];
 
 pub fn parse(name: &str) -> Option<HarnessId> {
     let normalized = name.trim().to_ascii_lowercase();

@@ -76,7 +76,7 @@ mars repair
 Mars auto-detects from the current directory, then maps the managed root back to the project root (directory containing `mars.toml`), stopping at the nearest `.git` boundary. Solutions:
 
 - Run `mars init` to create the config
-- Use `--root <path>` to point directly at the managed root (for example, `.agents/`) when auto-detection picks the wrong location
+- Use `--root <path>` to point directly at the project root (the directory holding `mars.toml`) when auto-detection picks the wrong location
 - Make sure you're inside the git repository that contains the project root
 
 ### "dependency `X` has both `url` and `path`"

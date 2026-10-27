@@ -61,7 +61,7 @@ An installed `.mars/` tree is not an authored package. Those files are whatever 
 | `skills` | list, or `{load: [...], available: [...]}` | A bare list means `load`. |
 | `subagents` | list of names | The Agents this one may spawn. |
 | `tools` | map of capability to `allow`, `deny` or `ask` | See [Tool capabilities](#tool-capabilities). |
-| `harness-overrides` | map of harness name to a map of native keys | See [harness-overrides](#harness-overrides-and-the-flow-namespace). |
+| `harness-overrides` | map of harness or consumer name to a map of that consumer's keys | See [harness-overrides](#harness-overrides-and-the-consumer-namespaces). |
 | `model-policies` | list of rules | See [Model policies](#model-policies). |
 
 Field-by-field behaviour is in [Agent profiles](agent-profiles.md).
@@ -78,6 +78,8 @@ A schema 1 file that carries one of these is an error (`field.removed`) naming t
 | `model_invocable`, `user_invocable` | `model-invocable`, `user-invocable` |
 | `approval: yolo` | `approval: never` |
 | `permission` | `harness-overrides.flow.permission` |
+| `resident-rearm-budget` | `harness-overrides.meridian.resident-rearm-budget` |
+| `meridian-capabilities` | `harness-overrides.meridian.capabilities` |
 | `fanout` | the consumer's `[settings.meridian.fanout]` |
 | `models` | `model-policies` |
 | `network_allow`, `network_deny` | `network-allow`, `network-deny` |
@@ -186,7 +188,7 @@ model-policies:
 
 So the Agent's own policy wins over its top-level field: top-level `effort` is the default for any model without a rule, and a rule is the exception for one model. Native agent files and plugin builds resolve the same chain, without the command-line layer, so a native file and a launch bundle agree.
 
-## harness-overrides and the flow namespace
+## harness-overrides and the consumer namespaces
 
 `harness-overrides.<name>` holds configuration that one consumer owns, on an Agent or a skill. Mars checks only that it is a map of serializable values and keeps it in the installed file. It does two things with a harness block:
 
@@ -201,10 +203,13 @@ harness-overrides:
     model_reasoning_summary: concise                  # a Codex config key, carried as written
   flow:
     permission: read                                  # Meridian Flow's own key
+  meridian:
+    resident-rearm-budget: 3                          # the Meridian CLI's own keys
+    capabilities: {spawn: true}
 ```
 
 - A name that is one of the five harnesses is a harness block.
-- **`flow` is reserved** for Meridian Flow. It is not a harness: routing never sees it and Mars never interprets its keys. It is the home of Flow-only keys, such as `permission` (formerly a top-level key).
+- **`flow` and `meridian` are reserved** for the two Meridian consumers, Flow and the CLI. Neither is a harness: routing never sees them, Mars never interprets their keys, and neither block is written to any native file or launch bundle. They are the home of the consumer's own keys: `flow.permission` (formerly a top-level `permission`), and `meridian.resident-rearm-budget` and `meridian.capabilities` (formerly top-level `resident-rearm-budget` and `meridian-capabilities`).
 - Any other name is a warning (`harness.unknown`) and the block is kept.
 
 ### Unknown keys

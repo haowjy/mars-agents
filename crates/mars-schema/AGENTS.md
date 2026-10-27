@@ -17,7 +17,7 @@ consumes the result and never re-checks it (a second copy of a rule in the binar
 |---|---|
 | `read` | `read(path, text)` and `read_definition(kind, text)`: the one way an authored definition is read; `installed_agent`/`installed_skill`, the upgrade-then-read every reader of an installed `.mars/` tree uses when the strict reading reports a pre-v1 spelling; `Reading`, `DefinitionRead`, `Valid` |
 | `agent`, `skill`, `manifest` | The field readers for Agents, skills and the `[package]` table; the removed-field and removed-value tables (`RemovedField`, `RemovedValue`, in `diagnostic`); `agent::LoweredField` and `skill::LOWERED_KEYS`, the Agent and skill keys Mars lowers itself, which set-aside and native lowering both read |
-| `harness_overrides` | `harness-overrides` parsing and `HarnessOverrides`, shared by the Agent and skill readers |
+| `harness_overrides` | `harness-overrides` parsing and `HarnessOverrides`, shared by the Agent and skill readers; `mask_consumer_namespaces`, the authored text with each consumer-namespace entry blanked by byte span, for a caller that scans what a package ships |
 | `prepare` | `prepare`: classify one root, select, upgrade or translate, read; `Prepared`, `PrepareContext`, `Classification` |
 | `dispatch` | Classification order, layout choice, consumer-configuration detection, the dialect prediction (`DialectChoice` in `dialect`) |
 | `discover` | The one bounded walk (`walk`, `walk_dirs`, `excluded`), the Mars convention scan, payload assignment |
@@ -48,10 +48,20 @@ A root with no manifest is a pre-v1 Mars package, read through the upgrade, only
 Mars wrote is never evidence for the root. `upgrade::lift_mars_only_keys` applies it per key,
 before the rules of whichever dialect reads the definition: the invocability renames, the
 discarded Agent fields (`RemovedField::discarded`), the removed values (`REMOVED_AGENT_VALUES`),
-a scalar `permission` moved to `harness-overrides.flow` and the removed model-policy override
-keys. `permission` is not on that list as a key, because OpenCode defines it too. Flow defines one key,
-`permission`, so that move is the only writer of `harness-overrides.flow`; the legacy upgrade drops
-what it cannot convert.
+`move_agent_fields` (a `permission` of `read` or `edit` to `harness-overrides.flow`,
+`resident-rearm-budget` and `meridian-capabilities` to `harness-overrides.meridian`, one conflict
+rule for all three: a block already set wins, and its top-level twin is dropped with a note, a
+lost restriction when the twin is `permission`) and the removed model-policy override keys.
+`permission` is not on that list as a key, because OpenCode defines it too. Flow defines one key,
+`permission`, and the Meridian CLI `resident-rearm-budget` and `capabilities`, so those moves are
+the only writers of the two reserved consumer namespaces; the legacy upgrade drops what it cannot
+convert.
+
+`mars migrate` prepares through `prepare_for_migration`, which runs
+`upgrade::relocate_removed_fields` — `move_agent_fields` alone — on a schema 1 definition,
+because it writes the result back. Every reading caller uses `prepare`, which reads an authored
+schema 1 file exactly as written: a removed key there is a `field.removed` error, and only
+the keys `mars migrate` can move are the ones it repairs.
 
 Prediction from the items reads each dialect's own vocabulary and holds none itself:
 `claude::translate::EVIDENCE_KEYS` (narrower than that module's moved-key lists, because `model`,

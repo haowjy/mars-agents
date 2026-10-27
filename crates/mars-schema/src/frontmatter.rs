@@ -94,11 +94,7 @@ impl Frontmatter {
     pub(crate) fn parse_preserving_structure(
         content: &str,
     ) -> Result<(Self, Vec<FrontmatterError>), FrontmatterError> {
-        let (has_bom, document) = content
-            .strip_prefix('\u{feff}')
-            .map_or((false, content), |document| (true, document));
-        let (first_line, after_first_line) = split_first_line(document);
-        if !is_delimiter_line(first_line) {
+        let Some(regions) = split_regions(content)? else {
             return Ok((
                 Self {
                     yaml: Mapping::new(),
@@ -108,39 +104,16 @@ impl Frontmatter {
                 },
                 Vec::new(),
             ));
-        }
-
-        let mut yaml_end = None;
-        let mut offset = 0usize;
-        for line in after_first_line.split_inclusive('\n') {
-            if is_delimiter_line(line) {
-                yaml_end = Some((offset, line.len()));
-                break;
-            }
-            offset += line.len();
-        }
-
-        let Some((yaml_len, closing_len)) = yaml_end else {
-            return Err(FrontmatterError::Unclosed);
         };
 
-        if yaml_len > MAX_FRONTMATTER_BYTES {
-            return Err(FrontmatterError::TooLarge(yaml_len));
-        }
-        let yaml_text = &after_first_line[..yaml_len];
-        if exceeds_flow_depth(yaml_text) {
-            return Err(FrontmatterError::TooDeep);
-        }
-        let body_start = yaml_len + closing_len;
-        let body = after_first_line[body_start..].to_string();
-
+        let yaml_text = regions.yaml;
         if yaml_text.trim().is_empty() {
             return Ok((
                 Self {
                     yaml: Mapping::new(),
-                    body,
+                    body: regions.body.to_string(),
                     has_frontmatter: true,
-                    has_bom,
+                    has_bom: regions.has_bom,
                 },
                 Vec::new(),
             ));
@@ -157,9 +130,9 @@ impl Frontmatter {
         Ok((
             Self {
                 yaml,
-                body,
+                body: regions.body.to_string(),
                 has_frontmatter: true,
-                has_bom,
+                has_bom: regions.has_bom,
             },
             structural_errors,
         ))
@@ -415,6 +388,60 @@ fn exceeds_flow_depth(yaml: &str) -> bool {
         }
     }
     false
+}
+
+/// A document's frontmatter region: the YAML between the fences, where it starts in the
+/// document, and the Markdown after the closing fence.
+struct Regions<'a> {
+    has_bom: bool,
+    /// Byte offset of `yaml`: past a byte-order mark and the opening fence line.
+    yaml_start: usize,
+    yaml: &'a str,
+    body: &'a str,
+}
+
+/// The frontmatter region of `content`, and `None` when it has no frontmatter.
+fn split_regions(content: &str) -> Result<Option<Regions<'_>>, FrontmatterError> {
+    let (has_bom, document) = content
+        .strip_prefix('\u{feff}')
+        .map_or((false, content), |document| (true, document));
+    let (first_line, after_first_line) = split_first_line(document);
+    if !is_delimiter_line(first_line) {
+        return Ok(None);
+    }
+
+    let mut yaml_end = None;
+    let mut offset = 0usize;
+    for line in after_first_line.split_inclusive('\n') {
+        if is_delimiter_line(line) {
+            yaml_end = Some((offset, line.len()));
+            break;
+        }
+        offset += line.len();
+    }
+
+    let Some((yaml_len, closing_len)) = yaml_end else {
+        return Err(FrontmatterError::Unclosed);
+    };
+
+    if yaml_len > MAX_FRONTMATTER_BYTES {
+        return Err(FrontmatterError::TooLarge(yaml_len));
+    }
+    let yaml = &after_first_line[..yaml_len];
+    if exceeds_flow_depth(yaml) {
+        return Err(FrontmatterError::TooDeep);
+    }
+    Ok(Some(Regions {
+        has_bom,
+        yaml_start: content.len() - after_first_line.len(),
+        yaml,
+        body: &after_first_line[yaml_len + closing_len..],
+    }))
+}
+
+/// The YAML text between a document's frontmatter fences, and where it starts in the document.
+pub(crate) fn yaml_text(content: &str) -> Result<Option<(&str, usize)>, FrontmatterError> {
+    Ok(split_regions(content)?.map(|regions| (regions.yaml, regions.yaml_start)))
 }
 
 fn split_first_line(content: &str) -> (&str, &str) {

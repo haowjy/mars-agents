@@ -21,17 +21,17 @@ Items in `.mars-src/` are discovered automatically on every `mars sync` and inst
 
 ### Adopting existing items
 
-If you already have unmanaged agents or skills sitting in a target directory (e.g., `.agents/`), use `mars adopt` to bring them under `.mars-src/` management in one step:
+If you already have unmanaged agents or skills sitting in a target directory (e.g., `.claude/`), use `mars adopt` to bring them under `.mars-src/` management in one step:
 
 ```bash
-mars adopt .agents/agents/my-agent.md
-mars adopt .agents/skills/my-skill
+mars adopt .claude/agents/my-agent.md
+mars adopt .claude/skills/my-skill
 ```
 
 This moves the item into `.mars-src/`, then syncs so it's immediately tracked. Use `--dry-run` to preview first:
 
 ```bash
-mars adopt .agents/agents/my-agent.md --dry-run
+mars adopt .claude/agents/my-agent.md --dry-run
 ```
 
 `mars adopt` requires the item to be on the same filesystem as the project root.

@@ -90,7 +90,7 @@ export interface AgentFields {
   skills: { load: string[]; available: string[] };
   subagents: string[];
   tools: ToolRule[];
-  /** Per-namespace passthrough blocks; `flow` is the consumer namespace. */
+  /** Per-namespace passthrough blocks; `flow` and `meridian` are the consumer namespaces. */
   "harness-overrides": { [namespace: string]: { [key: string]: JsonValue } };
   "model-policies": ModelPolicyRule[];
 }
@@ -272,6 +272,12 @@ export function prepare(input: {
   files: Map<string, Uint8Array>;
   context?: "package" | "authored-local" | "project";
   declaredDialect?: Dialect;
+  /**
+   * `migrate` adds `mars migrate`'s repair: a removed Agent key whose replacement is a
+   * `harness-overrides` key moves there. A reader leaves it off, because an authored schema 1
+   * file is read exactly as written.
+   */
+  migrate?: boolean;
 }): Prepared;
 
 export type Tree = Map<string, Uint8Array>;

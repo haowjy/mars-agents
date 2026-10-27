@@ -86,7 +86,7 @@ For launch bundles, Mars also selects the `harness-overrides.<resolved-harness>`
 
 Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. Codex native lowering writes `model_reasoning_effort = "low"` and adds the other Codex keys of the block; the launch bundle carries `{ "effort": "high" }` under `execution_policy.native_config` for the harness/runtime to interpret.
 
-`harness-overrides.flow` is a reserved consumer namespace, not a harness. It stays in `.mars/agents/` and is never lowered or selected for a launch. See [Schema v1](schema-v1.md#harness-overrides-and-the-flow-namespace).
+`harness-overrides.flow` and `harness-overrides.meridian` are reserved consumer namespaces, not harnesses. A block stays in `.mars/agents/` and is never lowered or selected for a launch. See [Schema v1](schema-v1.md#harness-overrides-and-the-consumer-namespaces).
 
 ## Per-Target Field Mapping
 

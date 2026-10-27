@@ -173,7 +173,7 @@ The order inside one `mars sync`:
 
 Warnings never stop a sync: unknown keys (`field.unknown`), the lossiness a target cannot express, and the pre-v1 notice are printed and the run continues. `--diff` runs the same steps and writes nothing.
 
-Other commands read the same `Prepared`. `mars check` and `mars validate` report its diagnostics (validate returns schema errors as report data, never mutating), `mars migrate` writes its normalized bytes back to the authored files, and `mars outdated` reads tags only, so it never classifies a package. An unusable version is refused by sync with its error.
+Other commands read the same `Prepared`. `mars check` and `mars validate` report its diagnostics (validate returns schema errors as report data, never mutating), `mars migrate` writes its normalized bytes back to the authored files, and `mars outdated` reads tags only, so it never classifies a package. `mars migrate` is the one caller that prepares for writing: it also repairs the keys schema 1 removed in favour of a `harness-overrides` namespace, in a schema 1 definition too. An unusable version is refused by sync with its error.
 
 ### Recovery halt (reader/compiler boundary)
 

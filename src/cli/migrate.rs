@@ -59,8 +59,11 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
 
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
-    let prepared =
-        crate::package_prepare::prepare_authored(&authored_root, context, None, &mut diagnostics)?;
+    let prepared = crate::package_prepare::prepare_authored_for_migration(
+        &authored_root,
+        context,
+        &mut diagnostics,
+    )?;
     diagnostics.fail_on_errors()?;
     let (pending, warnings) = pending_writes(root, &authored_root, &prepared, !consumer)?;
     let dropped = dropped_keys(root, &authored_root, &prepared);

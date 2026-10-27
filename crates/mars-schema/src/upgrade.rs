@@ -41,13 +41,39 @@ pub enum UpgradeError {
 }
 
 pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeResult, UpgradeError> {
+    rewrite(text, |frontmatter, diagnostics| match kind {
+        DefinitionKind::Agent => upgrade_agent(frontmatter, diagnostics),
+        DefinitionKind::Skill => upgrade_skill(frontmatter, diagnostics),
+    })
+}
+
+/// Apply only what schema 1 removes with a mechanical replacement: the Agent keys that moved
+/// under `harness-overrides`.
+///
+/// `mars migrate` runs this on a schema 1 file it is about to write back, so a file that
+/// carries a key the reader rejects is repaired instead of failing the run. Every reading
+/// caller leaves it off, because an authored schema 1 file is read exactly as written.
+pub fn relocate_removed_fields(
+    kind: DefinitionKind,
+    text: &str,
+) -> Result<UpgradeResult, UpgradeError> {
+    rewrite(text, |frontmatter, notes| {
+        if kind == DefinitionKind::Agent {
+            move_agent_fields(frontmatter, notes);
+        }
+    })
+}
+
+/// `text` with `apply`'s changes to its frontmatter, edited as minimally as the source shape
+/// allows.
+fn rewrite(
+    text: &str,
+    apply: impl FnOnce(&mut Frontmatter, &mut Vec<SchemaDiagnostic>),
+) -> Result<UpgradeResult, UpgradeError> {
     let original = Frontmatter::parse(text)?;
     let mut frontmatter = original.clone();
     let mut diagnostics = Vec::new();
-    match kind {
-        DefinitionKind::Agent => upgrade_agent(&mut frontmatter, &mut diagnostics),
-        DefinitionKind::Skill => upgrade_skill(&mut frontmatter, &mut diagnostics),
-    }
+    apply(&mut frontmatter, &mut diagnostics);
     if frontmatter.mapping() == original.mapping() {
         return Ok(UpgradeResult {
             text: text.to_string(),

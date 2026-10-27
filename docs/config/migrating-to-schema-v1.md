@@ -36,6 +36,8 @@ A value with no schema 1 meaning stops the run and names the file and key (``age
 
 Where a deleted key held something you still want, put it where schema 1 keeps it: compaction on the model alias (`[models.<alias>] autocompact = ...`), fan-out candidates in the consumer's `[settings.meridian.fanout]`, MCP grants as `mcp(server): allow` entries in `tools`, `models` as `model-policies`. `network`, `network-allow` and `network-deny` are schema 1 keys, so a profile that sets them keeps them.
 
+The three moves to a `harness-overrides` namespace are the only repairs `mars migrate` makes to a package that already says `schema = 1`: a `permission` of `read` or `edit`, `resident-rearm-budget` or `meridian-capabilities` left at the top level of a migrated file is moved with its value, the rest of the file keeps its key order, and `harness-overrides` keeps the place the author gave it. A block that is already set there wins; the top-level twin is dropped with a line naming it. Every other key schema 1 removed still fails the run and names the file and the key.
+
 An Agent that sets `tools` as a list with only some names used to restrict nothing; the map form `{name: allow}` states the same grants. It still restricts nothing. To restrict an Agent to a list, write the allowlist form: `"*": deny` plus an `allow` per capability.
 
 ## An example

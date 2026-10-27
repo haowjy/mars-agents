@@ -55,6 +55,12 @@ defines one key, `permission`, and the Meridian CLI `resident-rearm-budget` and 
 so those moves are the only writers of the two reserved consumer namespaces; the legacy upgrade
 drops what it cannot convert.
 
+`mars migrate` prepares through `prepare_for_migration`, which runs
+`upgrade::relocate_removed_fields` — `move_agent_fields` alone — on a schema 1 definition,
+because it writes the result back. Every reading caller uses `prepare`, which reads an authored
+schema 1 file exactly as written: a removed key there is a `field.removed` error, and only
+the keys `mars migrate` can move are the ones it repairs.
+
 Prediction from the items reads each dialect's own vocabulary and holds none itself:
 `claude::translate::EVIDENCE_KEYS` (narrower than that module's moved-key lists, because `model`,
 `effort`, `tools` and `hooks` also appear in Mars's own files, and the rewritten spellings are read in

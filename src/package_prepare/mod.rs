@@ -342,8 +342,32 @@ pub(crate) fn prepare_authored(
     dialect: Option<Dialect>,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
+    prepare_authored_with(root, context, dialect, false, diag)
+}
+
+/// `prepare_authored` as `mars migrate` runs it: preparation also rewrites what a schema 1 file
+/// can still need, because the migration writes the result back to the authored file.
+pub(crate) fn prepare_authored_for_migration(
+    root: &Path,
+    context: PrepareContext,
+    diag: &mut DiagnosticCollector,
+) -> Result<Prepared, MarsError> {
+    prepare_authored_with(root, context, None, true, diag)
+}
+
+fn prepare_authored_with(
+    root: &Path,
+    context: PrepareContext,
+    dialect: Option<Dialect>,
+    migrate: bool,
+    diag: &mut DiagnosticCollector,
+) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?;
-    let prepared = mars_schema::prepare::prepare(&source, context, dialect);
+    let prepared = if migrate {
+        mars_schema::prepare::prepare_for_migration(&source, context, dialect)
+    } else {
+        mars_schema::prepare::prepare(&source, context, dialect)
+    };
     if let Some(error) = source.take_error() {
         return Err(error);
     }

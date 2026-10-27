@@ -16,6 +16,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `harness-overrides.meridian.resident-rearm-budget` and `harness-overrides.meridian.capabilities`.
   `mars migrate` moves both with their values, so a pre-v1 package and a schema 1 file that still
   carries them migrate without a hand edit.
+- `mars migrate` rewrites a package that already declares `schema = 1` when it still carries a key
+  that moved under a `harness-overrides` namespace (`permission`, `resident-rearm-budget`,
+  `meridian-capabilities`), instead of failing the run on it. Everything else holds: values and the
+  file's key order are kept, `harness-overrides` keeps the place the author gave it, a block that
+  already sets the destination key wins and the dropped top-level key is named, and any other
+  removed key still fails and names the file and the key.
 
 ### Fixed
 - `mars build plugin` clears the sentinel's `root_files_previous` recovery record once the root

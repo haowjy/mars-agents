@@ -13,7 +13,7 @@ use crate::frontmatter::Frontmatter;
 use crate::item::DefinitionKind;
 use crate::read::{DefinitionRead, Reading, read_definition};
 use crate::tree::TreeSource;
-use crate::upgrade::UpgradeResult;
+use crate::upgrade::{UpgradeError, UpgradeResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -184,6 +184,11 @@ pub(crate) struct RootOptions<'a> {
     pub selection: Option<&'a BTreeSet<String>>,
     /// Names a root `SKILL.md` when its own `name` cannot.
     pub fallback_name: Option<&'a str>,
+    /// Repair what a schema 1 definition can still need: the replacement of an Agent key schema 1
+    /// removed in favour of a `harness-overrides` key. Only `mars migrate` asks, because it
+    /// writes the result back; a reader leaves it off, because an authored schema 1 file is read
+    /// exactly as written.
+    pub migrate: bool,
 }
 
 /// `prepare` plus what was discovered, for `inspect` and `normalize`.
@@ -199,6 +204,20 @@ pub fn prepare(
     declared_dialect: Option<Dialect>,
 ) -> Prepared {
     prepare_root(source, context, declared_dialect, RootOptions::default()).prepared
+}
+
+/// `prepare` as `mars migrate` runs it: a definition it could repair is repaired in
+/// `normalized_bytes`, for the migration to write back to the authored file.
+pub fn prepare_for_migration(
+    source: &impl TreeSource,
+    context: PrepareContext,
+    declared_dialect: Option<Dialect>,
+) -> Prepared {
+    let options = RootOptions {
+        migrate: true,
+        ..RootOptions::default()
+    };
+    prepare_root(source, context, declared_dialect, options).prepared
 }
 
 pub(crate) fn prepare_root(
@@ -248,6 +267,7 @@ pub(crate) fn prepare_root(
         .iter()
         .map(|definition| definition.source_path.as_str())
         .collect::<BTreeSet<_>>();
+    let shaping = Shaping::of(&classification, options.migrate);
     let definitions = if can_read_definitions {
         selected
             .iter()
@@ -255,7 +275,7 @@ pub(crate) fn prepare_root(
                 prepare_definition(
                     source,
                     definition,
-                    &classification,
+                    shaping,
                     all,
                     &selected_paths,
                     &mut diagnostics,
@@ -417,10 +437,38 @@ fn prepare_manifest(
     }
 }
 
+/// A definition's authored keys, made schema v1.
+type Rewrite = fn(DefinitionKind, &str) -> Result<UpgradeResult, UpgradeError>;
+
+/// How the root's definitions are made schema v1, decided once for the root.
+#[derive(Clone, Copy)]
+enum Shaping {
+    /// Nothing to convert: each file is read as written.
+    None,
+    /// The pre-v1 upgrade, or `mars migrate`'s repair of a schema 1 file.
+    Rewrite(Rewrite),
+    /// A foreign dialect, translated into schema v1.
+    Foreign(Dialect),
+}
+
+impl Shaping {
+    fn of(classification: &Classification, migrate: bool) -> Self {
+        match classification {
+            Classification::MarsLegacy => Self::Rewrite(crate::upgrade::upgrade_definition),
+            // Only `mars migrate` writes the result back, so only it repairs a schema 1 file.
+            Classification::Schema1 if migrate => {
+                Self::Rewrite(crate::upgrade::relocate_removed_fields)
+            }
+            Classification::Foreign(choice) => Self::Foreign(choice.dialect),
+            _ => Self::None,
+        }
+    }
+}
+
 fn prepare_definition(
     source: &impl TreeSource,
     selected: &SelectedDefinition,
-    classification: &Classification,
+    shaping: Shaping,
     all: &[SelectedDefinition],
     selected_paths: &BTreeSet<&str>,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
@@ -447,37 +495,35 @@ fn prepare_definition(
     };
     let (mut notes, mut findings) = (Vec::new(), Vec::new());
     let (normalized_bytes, change) = match std::str::from_utf8(&bytes) {
-        Ok(text) => match classification {
-            Classification::MarsLegacy => {
-                match crate::upgrade::upgrade_definition(selected.kind, text) {
-                    Ok(result) => {
-                        let (upgraded, change, upgrade_notes) = upgrade_result(text, result);
-                        notes = upgrade_notes;
-                        (upgraded, change)
-                    }
-                    Err(error) => {
-                        push(
-                            diagnostics,
-                            &selected.source_path,
-                            SchemaDiagnostic::new(
-                                "definition.upgrade-failed",
-                                Severity::Error,
-                                Vec::new(),
-                                error.to_string(),
-                            ),
-                        );
-                        (bytes.clone(), ChangeRecord::None)
-                    }
+        Ok(text) => match shaping {
+            Shaping::Rewrite(rewrite) => match rewrite(selected.kind, text) {
+                Ok(result) => {
+                    let (rewritten, change, upgrade_notes) = upgrade_result(text, result);
+                    notes = upgrade_notes;
+                    (rewritten, change)
                 }
-            }
-            Classification::Foreign(choice) => {
+                Err(error) => {
+                    push(
+                        diagnostics,
+                        &selected.source_path,
+                        SchemaDiagnostic::new(
+                            "definition.upgrade-failed",
+                            Severity::Error,
+                            Vec::new(),
+                            error.to_string(),
+                        ),
+                    );
+                    (bytes.clone(), ChangeRecord::None)
+                }
+            },
+            Shaping::Foreign(dialect) => {
                 let translated =
-                    translate_foreign(text, choice.dialect, selected, all, selected_paths, &bytes);
+                    translate_foreign(text, dialect, selected, all, selected_paths, &bytes);
                 notes = translated.changes;
                 findings = translated.findings;
                 (translated.bytes, translated.change)
             }
-            _ => (bytes.clone(), ChangeRecord::None),
+            Shaping::None => (bytes.clone(), ChangeRecord::None),
         },
         Err(_) => (bytes.clone(), ChangeRecord::None),
     };

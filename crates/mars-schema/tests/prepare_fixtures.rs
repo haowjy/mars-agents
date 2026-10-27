@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use mars_schema::{
     dialect::Dialect,
-    prepare::{ChangeRecord, PrepareContext, Prepared, prepare},
+    prepare::{ChangeRecord, PrepareContext, Prepared, prepare, prepare_for_migration},
     tree::TreeSource,
 };
 use serde::Deserialize;
@@ -12,6 +12,9 @@ struct Request {
     context: PrepareContext,
     #[serde(default)]
     declared_dialect: Option<Dialect>,
+    /// Preparation as `mars migrate` runs it: the written-back repair is part of the case.
+    #[serde(default)]
+    migrate: bool,
 }
 
 mod common;
@@ -22,7 +25,11 @@ fn prepare_fixtures_match() {
         let request: Request =
             serde_json::from_slice(&fs::read(case.join("request.json")).unwrap()).unwrap();
         let tree = common::load_tree(&case.join("input"));
-        let prepared = prepare(&tree, request.context, request.declared_dialect);
+        let prepared = if request.migrate {
+            prepare_for_migration(&tree, request.context, request.declared_dialect)
+        } else {
+            prepare(&tree, request.context, request.declared_dialect)
+        };
         // The bytes are checked against `expected/` below, not inlined in `expected.json`.
         common::assert_file(
             &case.join("expected.json"),

@@ -161,6 +161,7 @@ fn normalize_root<T: TreeSource>(
             }),
             selection: items.as_ref(),
             fallback_name: request.source.name.as_deref(),
+            ..RootOptions::default()
         },
     );
     let mut normalized = Normalized {
@@ -222,6 +223,7 @@ fn normalize_plugin<T: TreeSource>(
         }),
         selection: items.as_ref(),
         fallback_name: Some(&entry.name),
+        ..RootOptions::default()
     };
     let rooted = match &entry.source {
         PluginSource::Unsupported { reason } => {

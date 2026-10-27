@@ -1,11 +1,11 @@
 use super::*;
-use crate::resolve::compat::CompatibilityResult;
+use crate::resolve::compat::{CompatibilityResult, compatible_with};
 use mars_schema::item::ItemKind;
 use semver::Version;
 use std::path::PathBuf;
 
-fn semver_constraint(req: &str) -> VersionConstraint {
-    VersionConstraint::Semver(req.parse().expect("valid semver requirement"))
+fn semver_constraint(req: &str) -> Constraint {
+    Constraint::Semver(req.parse().expect("valid semver requirement"))
 }
 
 fn resolved_ref(
@@ -30,7 +30,7 @@ fn visited_set_not_seen() {
     let package = SourceName::from("alpha");
     let item = ItemName::from("coder");
 
-    let result = visited.check_version(&package, &item, &VersionConstraint::Latest);
+    let result = visited.check_version(&package, &item, &Constraint::Latest);
     assert!(matches!(result, VersionCheckResult::NotSeen));
 }
 
@@ -83,10 +83,10 @@ fn visited_set_different_version() {
             existing,
             requested,
         } => {
-            assert!(matches!(existing, VersionConstraint::Semver(_)));
-            assert!(matches!(requested, VersionConstraint::Semver(_)));
+            assert!(matches!(existing, Constraint::Semver(_)));
+            assert!(matches!(requested, Constraint::Semver(_)));
             assert_eq!(
-                existing.compatible_with(&requested),
+                compatible_with(&existing, &requested),
                 CompatibilityResult::Conflicting
             );
         }
@@ -103,7 +103,7 @@ fn visited_set_potentially_conflicting_version() {
     visited.insert(
         package.clone(),
         item.clone(),
-        VersionConstraint::Latest,
+        Constraint::Latest,
         resolved_ref(
             "alpha",
             Some("2.0.0"),
@@ -120,10 +120,10 @@ fn visited_set_potentially_conflicting_version() {
             existing,
             requested,
         } => {
-            assert!(matches!(existing, VersionConstraint::Latest));
-            assert!(matches!(requested, VersionConstraint::Semver(_)));
+            assert!(matches!(existing, Constraint::Latest));
+            assert!(matches!(requested, Constraint::Semver(_)));
             assert_eq!(
-                existing.compatible_with(&requested),
+                compatible_with(&existing, &requested),
                 CompatibilityResult::PotentiallyConflicting
             );
         }
@@ -166,7 +166,7 @@ fn apply_item_version_policy_warns_on_potential_drift() {
     let action = apply_item_version_policy(
         &pending,
         VersionCheckResult::PotentiallyConflicting {
-            existing: VersionConstraint::Latest,
+            existing: Constraint::Latest,
             requested: semver_constraint("^1.0"),
         },
         &mut diag,
@@ -232,13 +232,7 @@ fn package_versions_first_insert() {
 
     assert!(
         versions
-            .check_or_insert(
-                &package,
-                &resolved,
-                &VersionConstraint::Latest,
-                "mars.toml",
-                false,
-            )
+            .check_or_insert(&package, &resolved, &Constraint::Latest, "mars.toml", false,)
             .is_ok()
     );
 }
@@ -255,13 +249,7 @@ fn package_versions_same_version_reuse() {
         "/tmp/alpha",
     );
     versions
-        .check_or_insert(
-            &package,
-            &resolved,
-            &VersionConstraint::Latest,
-            "mars.toml",
-            false,
-        )
+        .check_or_insert(&package, &resolved, &Constraint::Latest, "mars.toml", false)
         .expect("initial insert should succeed");
 
     assert!(
@@ -269,7 +257,7 @@ fn package_versions_same_version_reuse() {
             .check_or_insert(
                 &package,
                 &resolved,
-                &VersionConstraint::Latest,
+                &Constraint::Latest,
                 "agent:coder",
                 false,
             )

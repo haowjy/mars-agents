@@ -1273,10 +1273,11 @@ fn planned_bump_entries(
 }
 
 fn constraint_needs_bump(current: Option<&str>, resolved: &semver::Version) -> bool {
-    match crate::resolve::parse_version_constraint(current) {
-        crate::resolve::VersionConstraint::Semver(req) => !req.matches(resolved),
-        crate::resolve::VersionConstraint::Latest
-        | crate::resolve::VersionConstraint::RefPin(_) => false,
+    match mars_schema::version::parse_constraint(current) {
+        mars_schema::version::Constraint::Semver(req) => !req.matches(resolved),
+        mars_schema::version::Constraint::Latest | mars_schema::version::Constraint::RefPin(_) => {
+            false
+        }
     }
 }
 

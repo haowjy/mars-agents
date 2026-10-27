@@ -1,3 +1,4 @@
+use mars_schema::version::Constraint;
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::path::{Path, PathBuf};
@@ -13,7 +14,7 @@ use mars_schema::item::ItemKind;
 use mars_schema::names::ItemName;
 
 use super::package::RegisteredPackage;
-use super::types::{PendingItem, VersionConstraint};
+use super::types::PendingItem;
 
 #[derive(Debug, Clone)]
 struct ResolvedSkill {
@@ -180,7 +181,7 @@ pub(crate) fn resolve_skill_ref(
     skill: &ItemName,
     requester: &PendingItem,
     registry: &IndexMap<SourceName, RegisteredPackage>,
-    constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
 ) -> Result<Option<PendingItem>, MarsError> {
     let required_by = format!("{}/{}", requester.package, requester.item);
     let resolver = SkillResolver { registry };
@@ -235,9 +236,9 @@ pub(crate) fn resolve_skill_ref(
 }
 
 pub(crate) fn primary_package_constraint<'a>(
-    constraints: &'a HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    constraints: &'a HashMap<SourceName, Vec<(String, Constraint)>>,
     package: &SourceName,
-) -> Option<&'a VersionConstraint> {
+) -> Option<&'a Constraint> {
     constraints
         .get(package)
         .and_then(|entries| entries.first().map(|(_, constraint)| constraint))

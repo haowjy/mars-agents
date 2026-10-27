@@ -1,9 +1,10 @@
 //! Upgrade hint calculation for sync reports.
 
+use mars_schema::version::Constraint;
 use semver::{Version, VersionReq};
 
 use crate::diagnostic::DiagnosticCollector;
-use crate::resolve::{ResolvedGraph, SourceProvider, VersionConstraint};
+use crate::resolve::{ResolvedGraph, SourceProvider};
 use crate::source::AvailableVersion;
 use crate::types::{SourceId, SourceName, SourceUrl};
 
@@ -41,16 +42,16 @@ fn has_newer_compatible_version(
     name: &SourceName,
     url: &SourceUrl,
     resolved: &Version,
-    constraints: &[(String, VersionConstraint)],
+    constraints: &[(String, Constraint)],
     provider: &dyn SourceProvider,
     diag: &mut DiagnosticCollector,
 ) -> bool {
     let mut semver_reqs: Vec<&VersionReq> = Vec::new();
     for (_, constraint) in constraints {
         match constraint {
-            VersionConstraint::Semver(req) => semver_reqs.push(req),
-            VersionConstraint::Latest => {}
-            VersionConstraint::RefPin(_) => return false,
+            Constraint::Semver(req) => semver_reqs.push(req),
+            Constraint::Latest => {}
+            Constraint::RefPin(_) => return false,
         }
     }
 

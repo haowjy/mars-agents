@@ -1,4 +1,5 @@
 use mars_schema::item::ItemKind;
+use mars_schema::version::{Constraint, parse_constraint};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -15,11 +16,10 @@ use mars_schema::names::{ItemName, SourceSubpath};
 
 use super::EngineExclusions;
 use super::SourceProvider;
-use super::constraint::parse_version_constraint;
 use super::context::ResolverContext;
 use super::filter::is_unfiltered_request;
 use super::requires::{EngineRequirementFailure, check_package_requirements};
-use super::types::{PendingItem, ResolveOptions, ResolvedNode, VersionConstraint};
+use super::types::{PendingItem, ResolveOptions, ResolvedNode};
 use super::version::resolve_single_source;
 
 /// Internal: a source waiting to be resolved.
@@ -32,7 +32,7 @@ pub(crate) struct PendingSource {
     pub(crate) source_id: SourceId,
     pub(crate) spec: SourceSpec,
     pub(crate) subpath: Option<SourceSubpath>,
-    pub(crate) constraint: VersionConstraint,
+    pub(crate) constraint: Constraint,
     pub(crate) filter: FilterMode,
     pub(crate) required_by: String,
 }
@@ -51,7 +51,7 @@ pub(crate) struct RegisteredPackage {
     pub(crate) node: ResolvedNode,
     pub(crate) declared_source_id: SourceId,
     pub(crate) items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem>,
-    pub(crate) constraint: VersionConstraint,
+    pub(crate) constraint: Constraint,
     pub(crate) is_local: bool,
 }
 
@@ -159,7 +159,7 @@ pub(crate) fn resolve_package_bottom_up(
         //   Semver(req) where existing version already satisfies req — adding that
         //     requirement cannot invalidate the currently selected version.
         let needs_check = matches!(pending_src.spec, SourceSpec::Git(_))
-            && !matches!(pending_src.constraint, VersionConstraint::RefPin(_));
+            && !matches!(pending_src.constraint, Constraint::RefPin(_));
 
         if needs_check {
             let existing_ref = ctx
@@ -169,7 +169,7 @@ pub(crate) fn resolve_package_bottom_up(
 
             // Fast path: semver constraint already satisfied → selection cannot change.
             let skip = match (&pending_src.constraint, &existing_ref) {
-                (VersionConstraint::Semver(req), Some(ref_)) => {
+                (Constraint::Semver(req), Some(ref_)) => {
                     ref_.version.as_ref().is_some_and(|v| req.matches(v))
                 }
                 _ => false, // Latest or no existing ref → must run full check
@@ -371,7 +371,7 @@ pub(crate) fn resolve_package_bottom_up(
 
         let label = candidate_version_label(&candidate.0);
         if options.version_selection_policy(&pending_src.name)
-            == super::types::VersionSelectionPolicy::LockOnly
+            == mars_schema::version::SelectionPolicy::LockOnly
         {
             return Err(MarsError::FrozenViolation {
                 message: format!(
@@ -624,7 +624,7 @@ fn describe_engine_failures(failures: &[EngineRequirementFailure]) -> String {
 fn engine_unsatisfiable_error(
     name: &SourceName,
     exclusions: &EngineExclusions,
-    constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
 ) -> Option<ResolutionError> {
     let mut rejected = exclusions
         .iter()
@@ -632,9 +632,9 @@ fn engine_unsatisfiable_error(
             source == name
                 && constraints.get(name).is_none_or(|constraints| {
                     constraints.iter().all(|(_, constraint)| match constraint {
-                        VersionConstraint::Semver(requirement) => requirement.matches(version),
-                        VersionConstraint::Latest => true,
-                        VersionConstraint::RefPin(_) => false,
+                        Constraint::Semver(requirement) => requirement.matches(version),
+                        Constraint::Latest => true,
+                        Constraint::RefPin(_) => false,
                     })
                 })
         })
@@ -746,7 +746,7 @@ pub(crate) fn collect_manifest_requests(
                     url: SourceUrl::from(url.as_str()),
                     version: dep_spec.version.clone(),
                 }),
-                parse_version_constraint(dep_spec.version.as_deref()),
+                parse_constraint(dep_spec.version.as_deref()),
             ),
             Source::Path { path } => {
                 let resolved_path = if path.is_absolute() {
@@ -754,7 +754,7 @@ pub(crate) fn collect_manifest_requests(
                 } else {
                     package_root.join(path)
                 };
-                (SourceSpec::Path(resolved_path), VersionConstraint::Latest)
+                (SourceSpec::Path(resolved_path), Constraint::Latest)
             }
         };
         let declared_source_id = source_id_for_spec(
@@ -765,7 +765,7 @@ pub(crate) fn collect_manifest_requests(
         );
         let (dep_spec_resolved, dep_constraint) =
             if let Some(path) = options.source_overrides.get(&dep_name_typed) {
-                (SourceSpec::Path(path.clone()), VersionConstraint::Latest)
+                (SourceSpec::Path(path.clone()), Constraint::Latest)
             } else {
                 (declared_spec, declared_constraint)
             };

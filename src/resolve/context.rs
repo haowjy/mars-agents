@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
 
 use indexmap::IndexMap;
+use mars_schema::version::Constraint;
 
 use super::filter::push_filter_constraint;
 use super::{
     PackageResolutionState, PackageVersions, PendingItem, RegisteredPackage, ResolvedGraph,
-    ResolvedNode, RootedSourceRef, VersionConstraint, VisitedSet,
+    ResolvedNode, RootedSourceRef, VisitedSet,
 };
 use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName};
@@ -16,7 +17,7 @@ pub struct ResolverContext {
     registry: IndexMap<SourceName, RegisteredPackage>,
     package_states: HashMap<SourceName, PackageResolutionState>,
     id_index: HashMap<SourceId, SourceName>,
-    version_constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    version_constraints: HashMap<SourceName, Vec<(String, Constraint)>>,
     materialization_filters: HashMap<SourceName, Vec<FilterMode>>,
     stack: Vec<PendingItem>,
     visited: VisitedSet,
@@ -188,9 +189,7 @@ impl ResolverContext {
         &mut self.id_index
     }
 
-    pub(super) fn version_constraints(
-        &self,
-    ) -> &HashMap<SourceName, Vec<(String, VersionConstraint)>> {
+    pub(super) fn version_constraints(&self) -> &HashMap<SourceName, Vec<(String, Constraint)>> {
         &self.version_constraints
     }
 
@@ -214,7 +213,7 @@ impl ResolverContext {
         &mut self,
         package: &SourceName,
         requester: &str,
-        constraint: VersionConstraint,
+        constraint: Constraint,
     ) {
         self.version_constraints
             .entry(package.clone())

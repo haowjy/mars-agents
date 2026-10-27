@@ -1,11 +1,11 @@
+use mars_schema::version::{Constraint, SelectionPolicy};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use indexmap::IndexMap;
-use semver::VersionReq;
 
-use super::compat::CompatibilityResult;
+use super::compat::{CompatibilityResult, compatible_with_resolved};
 use crate::config::{EffectiveDependency, Manifest};
 use crate::error::ResolutionError;
 use crate::source::ResolvedRef;
@@ -27,7 +27,7 @@ pub struct ResolvedGraph {
     /// All filter constraints collected for each source (direct + transitive).
     pub filters: HashMap<SourceName, Vec<FilterMode>>,
     /// All version constraints collected for each source (direct + transitive).
-    pub version_constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    pub version_constraints: HashMap<SourceName, Vec<(String, Constraint)>>,
     /// Hook surfaces that cannot be compiled because they use a removed schema.
     ///
     /// This is classified during staging and consumed only by the recovery halt
@@ -192,27 +192,6 @@ impl PluginRoot {
     }
 }
 
-/// How a version constraint was specified.
-#[derive(Debug, Clone)]
-pub enum VersionConstraint {
-    /// Semver requirement (^1.0, >=0.5.0, ~2.1, exact version).
-    Semver(VersionReq),
-    /// Any version, prefer newest.
-    Latest,
-    /// Branch or commit pin — no semver resolution.
-    RefPin(String),
-}
-
-impl std::fmt::Display for VersionConstraint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VersionConstraint::Semver(req) => write!(f, "{req}"),
-            VersionConstraint::Latest => write!(f, "latest"),
-            VersionConstraint::RefPin(reference) => write!(f, "ref:{reference}"),
-        }
-    }
-}
-
 /// An item waiting to be processed in DFS traversal.
 #[derive(Debug, Clone)]
 pub struct PendingItem {
@@ -223,7 +202,7 @@ pub struct PendingItem {
     /// Agent or Skill.
     pub kind: ItemKind,
     /// Version constraint from config.
-    pub constraint: VersionConstraint,
+    pub constraint: Constraint,
     /// Who requested this item (for error context).
     pub required_by: String,
     /// True if from a local path dependency (skip version checks).
@@ -239,13 +218,13 @@ pub enum VersionCheckResult {
     SameVersion,
     /// Item was visited with a potentially conflicting version (latest vs pinned).
     PotentiallyConflicting {
-        existing: VersionConstraint,
-        requested: VersionConstraint,
+        existing: Constraint,
+        requested: Constraint,
     },
     /// Item was visited with a conflicting version.
     DifferentVersion {
-        existing: VersionConstraint,
-        requested: VersionConstraint,
+        existing: Constraint,
+        requested: Constraint,
     },
 }
 
@@ -259,7 +238,7 @@ struct VisitedItem {
 /// Stored version information for a visited item.
 #[derive(Debug, Clone)]
 pub struct ResolvedVersion {
-    pub constraint: VersionConstraint,
+    pub constraint: Constraint,
     pub resolved_ref: ResolvedRef,
 }
 
@@ -295,14 +274,15 @@ impl VisitedSet {
         &self,
         package: &SourceName,
         item: &ItemName,
-        constraint: &VersionConstraint,
+        constraint: &Constraint,
     ) -> VersionCheckResult {
         match self.index.get(&Self::index_key(package, item)) {
             None => VersionCheckResult::NotSeen,
-            Some(existing) => match existing
-                .constraint
-                .compatible_with_resolved(constraint, existing.resolved_ref.version.as_ref())
-            {
+            Some(existing) => match compatible_with_resolved(
+                &existing.constraint,
+                constraint,
+                existing.resolved_ref.version.as_ref(),
+            ) {
                 CompatibilityResult::Compatible => VersionCheckResult::SameVersion,
                 CompatibilityResult::PotentiallyConflicting => {
                     VersionCheckResult::PotentiallyConflicting {
@@ -323,7 +303,7 @@ impl VisitedSet {
         &mut self,
         package: SourceName,
         item: ItemName,
-        constraint: VersionConstraint,
+        constraint: Constraint,
         resolved_ref: ResolvedRef,
     ) {
         self.index.insert(
@@ -339,7 +319,7 @@ impl VisitedSet {
 /// Tracks resolved version per package and rejects divergent refs.
 pub struct PackageVersions {
     /// package -> (resolved_ref, first_constraint, first_required_by)
-    versions: HashMap<SourceName, (ResolvedRef, VersionConstraint, String)>,
+    versions: HashMap<SourceName, (ResolvedRef, Constraint, String)>,
 }
 
 impl Default for PackageVersions {
@@ -360,7 +340,7 @@ impl PackageVersions {
         &mut self,
         package: &SourceName,
         resolved: &ResolvedRef,
-        requested: &VersionConstraint,
+        requested: &Constraint,
         required_by: &str,
         is_local: bool,
     ) -> Result<(), ResolutionError> {
@@ -375,7 +355,8 @@ impl PackageVersions {
             }
             Entry::Occupied(entry) => {
                 let (existing_ref, existing_constraint, existing_by) = entry.get();
-                match existing_constraint.compatible_with_resolved(
+                match compatible_with_resolved(
+                    existing_constraint,
                     requested,
                     existing_ref.version.as_ref().or(resolved.version.as_ref()),
                 ) {
@@ -463,17 +444,6 @@ impl Default for ResolveOptions {
     }
 }
 
-/// Version-selection behavior for a single source in the current resolve mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VersionSelectionPolicy {
-    /// Use compatible locked version when available; otherwise newest compatible.
-    PreferLockThenLatest,
-    /// Upgrade mode: choose newest compatible version and bypass lock preference.
-    LatestOnly,
-    /// Lock must be honored exactly; fail when lock cannot be used.
-    LockOnly,
-}
-
 impl ResolveOptions {
     pub fn sync() -> Self {
         Self {
@@ -534,8 +504,8 @@ impl ResolveOptions {
     pub(crate) fn direct_constraint_for(
         &self,
         source_name: &SourceName,
-        declared: VersionConstraint,
-    ) -> VersionConstraint {
+        declared: Constraint,
+    ) -> Constraint {
         if matches!(
             &self.mode,
             ResolveMode::Upgrade {
@@ -544,7 +514,7 @@ impl ResolveOptions {
             }
         ) && self.is_upgrade_target(source_name)
         {
-            VersionConstraint::Latest
+            Constraint::Latest
         } else {
             declared
         }
@@ -559,17 +529,14 @@ impl ResolveOptions {
         }
     }
 
-    pub(crate) fn version_selection_policy(
-        &self,
-        source_name: &SourceName,
-    ) -> VersionSelectionPolicy {
+    pub(crate) fn version_selection_policy(&self, source_name: &SourceName) -> SelectionPolicy {
         match &self.mode {
-            ResolveMode::Frozen => VersionSelectionPolicy::LockOnly,
+            ResolveMode::Frozen => SelectionPolicy::LockOnly,
             ResolveMode::Upgrade { .. } if self.is_upgrade_target(source_name) => {
-                VersionSelectionPolicy::LatestOnly
+                SelectionPolicy::LatestOnly
             }
             ResolveMode::Sync | ResolveMode::Upgrade { .. } => {
-                VersionSelectionPolicy::PreferLockThenLatest
+                SelectionPolicy::PreferLockThenLatest
             }
         }
     }

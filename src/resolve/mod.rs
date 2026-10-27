@@ -9,7 +9,6 @@
 //! Uses `semver` crate for all version parsing. No custom version logic.
 
 pub mod compat;
-mod constraint;
 mod context;
 mod filter;
 mod package;
@@ -22,13 +21,13 @@ mod skill;
 mod types;
 mod version;
 
+use mars_schema::version::{Constraint, parse_constraint};
 use std::collections::HashMap;
 use std::path::Path;
 
 #[cfg(test)]
 use indexmap::IndexMap;
 
-pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
 pub(crate) use plugin::plugin_list;
 pub(crate) use provider::RealSourceProvider;
@@ -233,9 +232,10 @@ pub fn resolve(
         let mut reqs = Vec::new();
         for (name, source) in &config.dependencies {
             let constraint = match &source.spec {
-                SourceSpec::Git(git) => options
-                    .direct_constraint_for(name, parse_version_constraint(git.version.as_deref())),
-                SourceSpec::Path(_) => VersionConstraint::Latest,
+                SourceSpec::Git(git) => {
+                    options.direct_constraint_for(name, parse_constraint(git.version.as_deref()))
+                }
+                SourceSpec::Path(_) => Constraint::Latest,
             };
             reqs.push(PendingSource {
                 name: name.clone(),

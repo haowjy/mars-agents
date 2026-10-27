@@ -94,16 +94,16 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
 
         // Find latest version matching current constraint
         let parsed_constraint =
-            crate::resolve::parse_version_constraint(dep_entry.version.as_deref());
+            mars_schema::version::parse_constraint(dep_entry.version.as_deref());
         let updateable = match &parsed_constraint {
-            crate::resolve::VersionConstraint::Semver(req) => versions
+            mars_schema::version::Constraint::Semver(req) => versions
                 .iter()
                 .filter(|v| req.matches(&v.version))
                 .max_by(|a, b| a.version.cmp(&b.version))
                 .map(|v| v.tag.clone())
                 .unwrap_or_else(|| locked_version.clone()),
-            crate::resolve::VersionConstraint::Latest => latest.clone(),
-            crate::resolve::VersionConstraint::RefPin(_) => locked_version.clone(),
+            mars_schema::version::Constraint::Latest => latest.clone(),
+            mars_schema::version::Constraint::RefPin(_) => locked_version.clone(),
         };
 
         entries.push(OutdatedEntry {

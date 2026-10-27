@@ -7,8 +7,6 @@ use crate::platform::cache::git_cache_component;
 use crate::platform::process::{display_command, run_git, run_git_with_ref};
 use crate::source::{AvailableVersion, GlobalCache};
 
-use super::git::parse_semver_tag;
-
 /// Dependency data (a URL, a tag or branch, a locked commit) reaches git as an argument, and one
 /// starting with `-` would be an option: `--upload-pack=<cmd>` runs `<cmd>`. Every function here
 /// refuses such a value before spawning git, and puts `--` before the repository where git has one.
@@ -71,7 +69,7 @@ pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
             continue;
         }
 
-        let Some(version) = parse_semver_tag(tag) else {
+        let Some(version) = mars_schema::version::parse_tag(tag) else {
             continue;
         };
 

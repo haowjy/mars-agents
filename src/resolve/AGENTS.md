@@ -1,6 +1,6 @@
 # src/resolve/ — Package Resolution
 
-Dependency resolution with semver constraints. 14 source files + tests, ~9700 lines.
+Dependency resolution with semver constraints (the grammar and the version choice are `mars_schema::version`). 14 source files + tests, ~9700 lines.
 
 ## Mental Model
 

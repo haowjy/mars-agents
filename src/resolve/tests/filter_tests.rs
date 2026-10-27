@@ -52,7 +52,7 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
             None,
         ),
         items: package_items,
-        constraint: VersionConstraint::Latest,
+        constraint: Constraint::Latest,
         is_local: false,
     };
     let pending = PendingSource {
@@ -64,7 +64,7 @@ fn include_filter_seeds_bootstrap_docs_without_hooks_or_mcp() {
         source_id: SourceId::git_with_subpath(SourceUrl::from("https://example.com/dep.git"), None),
         spec: git_spec("https://example.com/dep.git", Some("v1.0.0")),
         subpath: None,
-        constraint: VersionConstraint::Latest,
+        constraint: Constraint::Latest,
         filter: FilterMode::Include {
             agents: vec!["runner".into()],
             skills: vec![],

@@ -164,7 +164,7 @@ fn unmanaged_target_hook_directory_warns_and_withholds_entry() {
 }
 
 #[test]
-fn blocking_hook_parent_fails_preflight_without_partial_state() {
+fn a_file_where_the_hook_directory_belongs_warns_and_withholds_the_entry() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -186,16 +186,57 @@ fn blocking_hook_parent_fails_preflight_without_partial_state() {
         .unwrap();
 
     sync(&project)
-        .failure()
+        .success()
+        .stderr(predicate::str::contains("failed to copy hooks/audit"))
         .stderr(contains_path(".claude/hooks"))
-        .stderr(predicate::str::contains("directory"));
+        .stderr(predicate::str::contains("not emitting hook `audit`"));
     project.child(".claude/hooks").assert("user file");
     project
         .child(".claude/settings.local.json")
         .assert(predicate::path::missing());
     project
         .child(".mars/hooks/claude/audit")
+        .assert(predicate::path::is_dir());
+}
+
+#[test]
+fn a_file_where_the_installed_hook_belongs_warns_and_withholds_the_entry() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    write_hook(&project, "audit", "[targets.\".claude\"]\n");
+    write_fragment(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
+    );
+    project
+        .child(".claude/hooks/audit")
+        .write_str("user file")
+        .unwrap();
+
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("no installed-content claim"))
+        .stderr(contains_path(".claude/hooks/audit"))
+        .stderr(predicate::str::contains("not emitting hook `audit`"));
+    project.child(".claude/hooks/audit").assert("user file");
+    project
+        .child(".claude/settings.local.json")
         .assert(predicate::path::missing());
+
+    sync_force(&project).success();
+    project
+        .child(".claude/hooks/audit")
+        .assert(predicate::path::is_dir());
+    project
+        .child(".claude/settings.local.json")
+        .assert(predicate::path::exists());
 }
 
 #[test]

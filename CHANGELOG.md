@@ -15,9 +15,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   names skip that one server with a warning.
 
 ### Changed
-- An unmanaged directory at `<target>/hooks/<name>/` no longer fails `mars sync`. It warns, survives
-  untouched, and withholds that target's hook entry, as an MCP server's unmanaged `mcp/<name>/`
-  already did; `mars sync --force` adopts and overwrites it.
+- Anything unmanaged at `<target>/hooks/<name>/` no longer fails `mars sync`, whether it is a
+  directory or a file where that directory belongs. It warns, survives untouched, and withholds
+  that target's hook entry, as an MCP server's unmanaged `mcp/<name>/` already did;
+  `mars sync --force` adopts and overwrites it.
 
 ### Fixed
 - A FIFO, socket or device inside a skill, hook or MCP server directory is rejected with an error

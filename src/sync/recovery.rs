@@ -146,7 +146,7 @@ fn logical_key(item: &PendingWrite) -> Result<String, MarsError> {
     let dest = &item.dest_path;
     match crate::sync::package_dir::PackageDir::parse_canonical(item.kind, dest) {
         Some(dir) => Ok(format!("{}/{}", item.kind, dir.lock_name())),
-        None if crate::sync::package_dir::PackageDirKind::of(item.kind).is_some() => Err(invalid(
+        None if crate::sync::package_dir::installs_per_target(item.kind) => Err(invalid(
             "invalid target-scoped package directory destination",
         )),
         None => Ok(format!("{}/{}", item.kind, dest.item_name(item.kind))),

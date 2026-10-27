@@ -275,7 +275,7 @@ pub(crate) fn prepare_rooted(
     let package_name = prepared
         .manifest
         .as_ref()
-        .and_then(|manifest| manifest.reading.fields.as_ref())
+        .and_then(|manifest| manifest.reading.package.fields.as_ref())
         .map(|package| package.name.as_str())
         .filter(|name| !name.is_empty())
         .unwrap_or(source_name.as_ref());
@@ -322,7 +322,7 @@ pub(crate) fn prepared_rooted(
             crate::config::parse_prepared_manifest(
                 content,
                 &rooted.authored_root.join("mars.toml"),
-                prepared_manifest.reading.fields.as_ref(),
+                &prepared_manifest.reading,
             )
         })
         .transpose()?
@@ -491,7 +491,7 @@ fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
     prepared
         .manifest
         .as_ref()
-        .and_then(|manifest| manifest.reading.fields.as_ref())
+        .and_then(|manifest| manifest.reading.package.fields.as_ref())
         .map(|package| package.name.as_str())
         .filter(|name| !name.is_empty())
         .or_else(|| root.file_name().and_then(|name| name.to_str()))

@@ -1,4 +1,5 @@
 use super::*;
+use mars_schema::dependency::Entry;
 
 #[test]
 fn apply_subpath_success_case() {
@@ -142,17 +143,7 @@ fn transitive_override_does_not_collapse_conflicting_declared_identities() {
             requires_mars: None,
             requires_meridian: None,
         },
-        dependencies: IndexMap::from([(
-            "shared".to_string(),
-            ManifestDep {
-                url: None,
-                path: Some(relative_path.into()),
-                subpath: None,
-                version: None,
-                filter: mars_schema::filter::FilterConfig::default(),
-                plugin: None,
-            },
-        )]),
+        dependencies: IndexMap::from([("shared".to_string(), Entry::at_path(relative_path))]),
         models: IndexMap::new(),
     };
 
@@ -303,13 +294,10 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
     let mut manifest_deps = IndexMap::new();
     manifest_deps.insert(
         "dep".to_string(),
-        ManifestDep {
-            url: Some(SourceUrl::from("https://example.com/dep.git")),
-            path: None,
-            subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
+        Entry {
             version: Some(">=1.0.0".to_string()),
-            filter: FilterConfig::default(),
-            plugin: None,
+            subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
+            ..Entry::git("https://example.com/dep.git")
         },
     );
     let manifest_a = Manifest {
@@ -398,13 +386,10 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
     let mut manifest_deps = IndexMap::new();
     manifest_deps.insert(
         "dep".to_string(),
-        ManifestDep {
-            url: Some(SourceUrl::from("https://example.com/dep.git")),
-            path: None,
-            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+        Entry {
             version: Some(">=1.0.0".to_string()),
-            filter: FilterConfig::default(),
-            plugin: None,
+            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+            ..Entry::git("https://example.com/dep.git")
         },
     );
     let manifest_a = Manifest {
@@ -736,14 +721,7 @@ fn latest_and_pinned_revisit_re_resolves_to_pinned_version() {
     let mut deps_a = IndexMap::new();
     deps_a.insert(
         "shared".to_string(),
-        ManifestDep {
-            url: Some(SourceUrl::from("https://example.com/shared.git")),
-            path: None,
-            subpath: None,
-            version: None,
-            filter: FilterConfig::default(),
-            plugin: None,
-        },
+        Entry::git("https://example.com/shared.git"),
     );
     let manifest_a = Manifest {
         package: PackageInfo {
@@ -1325,13 +1303,9 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
     let mut manifest_deps = IndexMap::new();
     manifest_deps.insert(
         "dep".to_string(),
-        ManifestDep {
-            url: Some(SourceUrl::from("https://example.com/dep.git")),
-            path: None,
-            subpath: None,
+        Entry {
             version: Some(">=1.0.0".to_string()),
-            filter: FilterConfig::default(),
-            plugin: None,
+            ..Entry::git("https://example.com/dep.git")
         },
     );
     let manifest_a = Manifest {

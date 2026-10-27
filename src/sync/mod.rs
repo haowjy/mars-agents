@@ -1238,7 +1238,7 @@ fn planned_bump_entries(
     config: &Config,
     graph: &ResolvedGraph,
     mode: &ResolutionMode,
-) -> Vec<(SourceName, crate::config::DependencyEntry)> {
+) -> Vec<(SourceName, mars_schema::dependency::Entry)> {
     let ResolutionMode::Maximize {
         targets,
         bump: true,
@@ -1255,7 +1255,7 @@ fn planned_bump_entries(
                 return None;
             }
             // Only git dependencies with semver-tagged resolution can be bumped.
-            entry.url.as_ref()?;
+            matches!(entry.source, mars_schema::dependency::Source::Git { .. }).then_some(())?;
             let node = graph.nodes.get(name)?;
             let resolved_version = node.resolved_ref.version.as_ref()?;
             let resolved_tag = node.resolved_ref.version_tag.as_ref()?;

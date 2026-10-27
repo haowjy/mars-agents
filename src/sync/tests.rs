@@ -7,6 +7,7 @@ use crate::resolve::{ResolvedGraph, ResolvedNode};
 use crate::sync::target::TargetItem;
 use crate::types::{ContentHash, DestPath};
 use indexmap::IndexMap;
+use mars_schema::dependency::Entry;
 use mars_schema::filter::{FilterConfig, FilterMode};
 use mars_schema::item::ItemKind;
 use std::fs;
@@ -148,29 +149,15 @@ fn make_graph_config(
     )
 }
 
-fn path_dependency_entry(path: &std::path::Path) -> DependencyEntry {
-    DependencyEntry {
-        url: None,
-        path: Some(path.to_path_buf()),
-        subpath: None,
-        version: None,
-        dialect: None,
-        plugin: None,
-        filter: FilterConfig::default(),
-        unknown: Default::default(),
-    }
+fn path_dependency_entry(path: &std::path::Path) -> Entry {
+    Entry::at_path(path.to_path_buf())
 }
 
-fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> DependencyEntry {
-    DependencyEntry {
-        url: Some(url.into()),
-        path: None,
-        subpath: None,
+fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> Entry {
+    Entry {
         version: Some(version.to_string()),
-        dialect: None,
-        plugin: None,
         filter,
-        unknown: Default::default(),
+        ..Entry::git(url)
     }
 }
 
@@ -627,16 +614,7 @@ fn planned_bump_entries_bump_all_outdated_pins() {
     );
     config.dependencies.insert(
         "floating".into(),
-        DependencyEntry {
-            url: Some("https://example.com/floating.git".into()),
-            path: None,
-            subpath: None,
-            version: None,
-            dialect: None,
-            filter: FilterConfig::default(),
-            plugin: None,
-            unknown: Default::default(),
-        },
+        Entry::git("https://example.com/floating.git"),
     );
 
     let graph = graph_with_versions(&[
@@ -758,7 +736,7 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
     crate::config::save(
         project_root.path(),
         &Config {
-            dependencies: IndexMap::new(),
+            dependencies: Default::default(),
             settings: Settings::default(),
             ..Config::default()
         },

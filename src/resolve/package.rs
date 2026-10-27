@@ -5,11 +5,11 @@ use std::path::Path;
 use crate::config::{EffectiveConfig, GitSpec, Manifest, SourceSpec, source_id_for_spec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
-use crate::error::{ConfigError, MarsError, ResolutionError};
+use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
-use crate::types::{SourceId, SourceName};
+use crate::types::{SourceId, SourceName, SourceUrl};
 use indexmap::IndexMap;
-use mars_schema::dependency::validate_plugin_selector;
+use mars_schema::dependency::Source;
 use mars_schema::filter::FilterMode;
 use mars_schema::names::{ItemName, SourceSubpath};
 
@@ -739,43 +739,22 @@ pub(crate) fn collect_manifest_requests(
         let dep_name_typed = SourceName::from(dep_name.clone());
         let dep_subpath = dep_spec.subpath.clone();
         let dep_filter = dep_spec.filter.to_mode();
-        validate_plugin_selector(
-            dep_name,
-            dep_spec.plugin.as_deref(),
-            dep_subpath.as_ref(),
-            None,
-        )
-        .map_err(crate::error::ConfigError::from)?;
 
-        let (declared_spec, declared_constraint) = match (&dep_spec.url, &dep_spec.path) {
-            (Some(url), None) => (
+        let (declared_spec, declared_constraint) = match &dep_spec.source {
+            Source::Git { url } => (
                 SourceSpec::Git(GitSpec {
-                    url: url.clone(),
+                    url: SourceUrl::from(url.as_str()),
                     version: dep_spec.version.clone(),
                 }),
                 parse_version_constraint(dep_spec.version.as_deref()),
             ),
-            (None, Some(path)) => {
+            Source::Path { path } => {
                 let resolved_path = if path.is_absolute() {
                     path.clone()
                 } else {
                     package_root.join(path)
                 };
                 (SourceSpec::Path(resolved_path), VersionConstraint::Latest)
-            }
-            (Some(_), Some(_)) => {
-                return Err(ConfigError::Invalid {
-                    message: format!("source `{dep_name}` has both `url` and `path` — pick one"),
-                }
-                .into());
-            }
-            (None, None) => {
-                return Err(ConfigError::Invalid {
-                    message: format!(
-                        "source `{dep_name}` has neither `url` nor `path` — one is required"
-                    ),
-                }
-                .into());
             }
         };
         let declared_source_id = source_id_for_spec(

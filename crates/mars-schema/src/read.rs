@@ -14,7 +14,7 @@ use crate::ordered::OrderedValue;
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum Reading {
-    Manifest(DefinitionRead<crate::package::PackageMetadata>),
+    Manifest(crate::manifest::ManifestRead),
     Agent(DefinitionRead<crate::agent::AgentProfile>),
     Skill(DefinitionRead<crate::skill::SkillProfile>),
 }
@@ -22,7 +22,7 @@ pub enum Reading {
 impl Reading {
     pub fn diagnostics(&self) -> &[SchemaDiagnostic] {
         match self {
-            Self::Manifest(reading) => &reading.diagnostics,
+            Self::Manifest(reading) => &reading.package.diagnostics,
             Self::Agent(reading) => &reading.diagnostics,
             Self::Skill(reading) => &reading.diagnostics,
         }

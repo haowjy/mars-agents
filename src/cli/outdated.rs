@@ -3,6 +3,8 @@
 use serde::Serialize;
 
 use crate::error::MarsError;
+use crate::types::SourceUrl;
+use mars_schema::dependency::Source;
 
 use super::output;
 
@@ -30,10 +32,10 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
 
     for (name, dep_entry) in &config.dependencies {
         // Only check git dependencies with versions
-        let url = match &dep_entry.url {
-            Some(u) => u,
-            None => continue, // local path deps have no version
+        let Source::Git { url } = &dep_entry.source else {
+            continue; // local path deps have no version
         };
+        let url = &SourceUrl::from(url.as_str());
 
         let locked_version = lock
             .dependencies

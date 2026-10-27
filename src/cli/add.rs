@@ -1,12 +1,12 @@
 //! `mars add <dependency>` — add or update a dependency, then sync.
 
-use crate::config::DependencyEntry;
 use crate::error::{ConfigError, MarsError};
 use crate::source::parse;
 use crate::sync::{
     ConfigMutation, DependencyUpsertChange, ResolutionMode, SyncOptions, SyncRequest,
 };
 use crate::types::SourceName;
+use mars_schema::dependency::{Entry, Source};
 use mars_schema::filter::FilterConfig;
 use mars_schema::names::{ItemName, SourceSubpath};
 
@@ -60,7 +60,7 @@ pub struct AddArgs {
 #[derive(Debug)]
 struct ParsedDependency {
     name: SourceName,
-    entry: DependencyEntry,
+    entry: Entry,
 }
 
 /// Run `mars add`.
@@ -95,7 +95,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         .map_err(crate::error::ConfigError::from)?;
 
     // Build mutations for all sources
-    let mutations: Vec<(SourceName, DependencyEntry)> = args
+    let mutations: Vec<(SourceName, Entry)> = args
         .sources
         .iter()
         .map(|source| {
@@ -104,15 +104,9 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 args.subpath.as_deref(),
                 args.plugin.as_deref(),
             )?;
-            let entry = DependencyEntry {
-                url: parsed.entry.url,
-                path: parsed.entry.path,
-                subpath: parsed.entry.subpath,
-                version: parsed.entry.version,
-                dialect: parsed.entry.dialect,
-                plugin: parsed.entry.plugin,
+            let entry = Entry {
                 filter: filter_config.clone(),
-                unknown: Default::default(),
+                ..parsed.entry
             };
             Ok((parsed.name, entry))
         })
@@ -210,7 +204,7 @@ fn build_filter_config(args: &AddArgs) -> FilterConfig {
     }
 }
 
-/// Parse a dependency specifier string into a name + DependencyEntry.
+/// Parse a dependency specifier string into a name + Entry.
 ///
 /// Formats:
 /// - `owner/repo` → GitHub shorthand (no `.` in first segment, exactly one `/`)
@@ -238,6 +232,17 @@ fn parse_dependency_specifier(
             })
         })
         .transpose()?;
+    let source = match (parsed.url.clone(), parsed.path.clone()) {
+        (Some(url), None) => Source::Git {
+            url: url.to_string(),
+        },
+        (None, Some(path)) => Source::Path { path },
+        _ => {
+            return Err(MarsError::InvalidRequest {
+                message: format!("`{spec}` is neither a git source nor a path"),
+            });
+        }
+    };
     let subpath = merge_subpath(parsed.subpath.clone(), explicit_subpath)?;
     let name = derive_dependency_name(&parsed, subpath.as_ref(), plugin)?;
     mars_schema::dependency::validate_plugin_selector(&name, plugin, subpath.as_ref(), None)
@@ -245,15 +250,11 @@ fn parse_dependency_specifier(
 
     Ok(ParsedDependency {
         name: SourceName::from(name),
-        entry: DependencyEntry {
-            url: parsed.url,
-            path: parsed.path,
-            subpath,
+        entry: Entry {
             version: parsed.version,
-            dialect: None,
+            subpath,
             plugin: plugin.map(str::to_owned),
-            filter: FilterConfig::default(),
-            unknown: Default::default(),
+            ..Entry::from_source(source)
         },
     })
 }
@@ -361,10 +362,10 @@ mod tests {
         let parsed = parse_dependency_specifier("meridian-flow/meridian-base", None, None).unwrap();
         assert_eq!(parsed.name, "meridian-base");
         assert_eq!(
-            parsed.entry.url.as_deref(),
+            parsed.entry.url(),
             Some("https://github.com/meridian-flow/meridian-base")
         );
-        assert!(parsed.entry.path.is_none());
+        assert!(parsed.entry.path().is_none());
         assert!(parsed.entry.version.is_none());
     }
 
@@ -374,7 +375,7 @@ mod tests {
             parse_dependency_specifier("meridian-flow/meridian-base@v0.5.0", None, None).unwrap();
         assert_eq!(parsed.name, "meridian-base");
         assert_eq!(
-            parsed.entry.url.as_deref(),
+            parsed.entry.url(),
             Some("https://github.com/meridian-flow/meridian-base")
         );
         assert_eq!(parsed.entry.version.as_deref(), Some("v0.5.0"));
@@ -390,7 +391,7 @@ mod tests {
         .unwrap();
         assert_eq!(parsed.name, "meridian-dev-workflow");
         assert_eq!(
-            parsed.entry.url.as_deref(),
+            parsed.entry.url(),
             Some("https://github.com/meridian-flow/meridian-dev-workflow")
         );
         assert_eq!(parsed.entry.version.as_deref(), Some("v2"));
@@ -403,7 +404,7 @@ mod tests {
                 .unwrap();
         assert_eq!(parsed.name, "cool-agents");
         assert_eq!(
-            parsed.entry.url.as_deref(),
+            parsed.entry.url(),
             Some("https://github.com/someone/cool-agents")
         );
     }
@@ -415,7 +416,7 @@ mod tests {
                 .unwrap();
         assert_eq!(parsed.name, "cool-agents");
         assert_eq!(
-            parsed.entry.url.as_deref(),
+            parsed.entry.url(),
             Some("git@github.com:someone/cool-agents.git")
         );
         assert!(parsed.entry.version.is_none());
@@ -428,7 +429,7 @@ mod tests {
                 .unwrap();
         assert_eq!(parsed.name, "cool-agents");
         assert_eq!(
-            parsed.entry.url.as_deref(),
+            parsed.entry.url(),
             Some("git@github.com:someone/cool-agents.git")
         );
         assert_eq!(parsed.entry.version.as_deref(), Some("v2"));
@@ -438,17 +439,17 @@ mod tests {
     fn parse_local_path_relative() {
         let parsed = parse_dependency_specifier("./my-agents", None, None).unwrap();
         assert_eq!(parsed.name, "my-agents");
-        assert!(parsed.entry.url.is_none());
-        assert_eq!(parsed.entry.path.as_deref(), Some(Path::new("./my-agents")));
+        assert!(parsed.entry.url().is_none());
+        assert_eq!(parsed.entry.path(), Some(Path::new("./my-agents")));
     }
 
     #[test]
     fn parse_local_path_parent() {
         let parsed = parse_dependency_specifier("../meridian-dev-workflow", None, None).unwrap();
         assert_eq!(parsed.name, "meridian-dev-workflow");
-        assert!(parsed.entry.url.is_none());
+        assert!(parsed.entry.url().is_none());
         assert_eq!(
-            parsed.entry.path.as_deref(),
+            parsed.entry.path(),
             Some(Path::new("../meridian-dev-workflow"))
         );
     }
@@ -457,11 +458,8 @@ mod tests {
     fn parse_local_path_absolute() {
         let parsed = parse_dependency_specifier("/home/dev/agents", None, None).unwrap();
         assert_eq!(parsed.name, "agents");
-        assert!(parsed.entry.url.is_none());
-        assert_eq!(
-            parsed.entry.path.as_deref(),
-            Some(Path::new("/home/dev/agents"))
-        );
+        assert!(parsed.entry.url().is_none());
+        assert_eq!(parsed.entry.path(), Some(Path::new("/home/dev/agents")));
     }
 
     #[test]

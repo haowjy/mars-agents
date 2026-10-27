@@ -102,7 +102,7 @@ fn add_auto_inits_project_when_root_has_no_mars_toml() {
 
     let saved = mars_agents::config::load(project.path()).unwrap();
     assert_eq!(
-        saved.dependencies["bootstrap-source"].path.as_deref(),
+        saved.dependencies["bootstrap-source"].path(),
         Some(source.as_path())
     );
     assert!(project.child(".mars").exists());
@@ -466,7 +466,7 @@ fn doctor_warns_when_mars_not_gitignored() {
 }
 
 #[test]
-fn doctor_reports_semantic_config_errors_from_merge() {
+fn doctor_refuses_a_dependency_with_both_url_and_path() {
     let dir = TempDir::new().unwrap();
     let project_root = dir.child("project");
 
@@ -488,8 +488,8 @@ path = "./local-source"
         .args(["doctor", "--root", project_root.path().to_str().unwrap()])
         .assert()
         .code(2)
-        .stdout(predicate::str::contains("config error:"))
-        .stdout(predicate::str::contains("has both `url` and `path`"));
+        .stderr(predicate::str::contains("config error:"))
+        .stderr(predicate::str::contains("has both `url` and `path`"));
 }
 
 #[test]

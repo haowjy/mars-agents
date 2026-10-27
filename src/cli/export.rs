@@ -208,14 +208,14 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn infer_origin(dep: &crate::config::InstallDep) -> String {
-    if dep.url.is_some() {
-        "git".to_string()
-    } else if dep.path.is_some() {
-        "path".to_string()
-    } else {
-        "registry".to_string()
+use mars_schema::dependency::Source;
+
+fn infer_origin(dep: &mars_schema::dependency::Entry) -> String {
+    match dep.source {
+        Source::Git { .. } => "git",
+        Source::Path { .. } => "path",
     }
+    .to_string()
 }
 
 fn action_label(action: &crate::sync::apply::ActionTaken) -> &'static str {
@@ -273,34 +273,15 @@ mod tests {
 
     #[test]
     fn export_dependency_origin_git() {
-        use crate::config::InstallDep;
-        use crate::types::SourceUrl;
-        let dep = InstallDep {
-            url: Some(SourceUrl::from("https://github.com/org/repo")),
-            path: None,
-            subpath: None,
-            version: None,
-            dialect: None,
-            filter: Default::default(),
-            unknown: Default::default(),
-            plugin: None,
-        };
+        use mars_schema::dependency::Entry;
+        let dep = Entry::git("https://github.com/org/repo");
         assert_eq!(infer_origin(&dep), "git");
     }
 
     #[test]
     fn export_dependency_origin_path() {
-        use crate::config::InstallDep;
-        let dep = InstallDep {
-            url: None,
-            path: Some(std::path::PathBuf::from("../local-pkg")),
-            subpath: None,
-            version: None,
-            dialect: None,
-            filter: Default::default(),
-            unknown: Default::default(),
-            plugin: None,
-        };
+        use mars_schema::dependency::Entry;
+        let dep = Entry::at_path(std::path::PathBuf::from("../local-pkg"));
         assert_eq!(infer_origin(&dep), "path");
     }
 

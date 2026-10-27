@@ -8,11 +8,11 @@ mod version_tests;
 
 use super::*;
 use crate::config::{
-    EffectiveConfig, EffectiveDependency, GitSpec, Manifest, ManifestDep, PackageInfo, Settings,
-    SourceSpec,
+    EffectiveConfig, EffectiveDependency, GitSpec, Manifest, PackageInfo, Settings, SourceSpec,
 };
 use crate::types::{SourceId, SourceName, SourceUrl};
 use indexmap::IndexMap;
+use mars_schema::dependency::Entry;
 use mars_schema::filter::{FilterConfig, FilterMode};
 use mars_schema::names::{ItemName, RenameMap, SourceSubpath};
 use semver::Version;
@@ -359,13 +359,9 @@ fn make_manifest(name: &str, version: &str, deps: Vec<(&str, &str, &str)>) -> Ma
     for (dep_name, dep_url, dep_ver) in deps {
         dependencies.insert(
             dep_name.to_string(),
-            ManifestDep {
-                url: Some(SourceUrl::from(dep_url)),
-                path: None,
-                subpath: None,
+            Entry {
                 version: Some(dep_ver.to_string()),
-                filter: mars_schema::filter::FilterConfig::default(),
-                plugin: None,
+                ..Entry::git(dep_url)
             },
         );
     }
@@ -408,13 +404,10 @@ fn make_manifest_with_filters(
     for (dep_name, dep_url, dep_ver, dep_filter) in deps {
         dependencies.insert(
             dep_name.to_string(),
-            ManifestDep {
-                url: Some(SourceUrl::from(dep_url)),
-                path: None,
-                subpath: None,
+            Entry {
                 version: Some(dep_ver.to_string()),
                 filter: dep_filter,
-                plugin: None,
+                ..Entry::git(dep_url)
             },
         );
     }

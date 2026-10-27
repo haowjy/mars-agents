@@ -85,7 +85,7 @@ pub struct PreparedManifest {
     /// The normalized file; crosses to JavaScript as a `Uint8Array`.
     #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
-    pub reading: DefinitionRead<crate::package::PackageMetadata>,
+    pub reading: crate::manifest::ManifestRead,
     pub change: ChangeRecord,
 }
 
@@ -163,7 +163,7 @@ impl Prepared {
         {
             all.entry(path)
                 .or_default()
-                .extend(&manifest.reading.diagnostics);
+                .extend(&manifest.reading.package.diagnostics);
         }
         for definition in &self.definitions {
             all.entry(&definition.source_path)
@@ -425,7 +425,7 @@ fn prepare_manifest(
         .or_default()
         .extend(upgraded);
     let reading = std::str::from_utf8(&normalized_bytes).map_or_else(
-        |_| DefinitionRead::unread(invalid_utf8.into_iter().collect()),
+        |_| crate::manifest::ManifestRead::unread(invalid_utf8.into_iter().collect()),
         crate::manifest::read,
     );
     PreparedManifest {

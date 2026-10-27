@@ -28,9 +28,10 @@ impl TargetAdapter for AgentsAdapter {
         let path = match kind {
             ItemKind::Agent => format!("agents/{name}.md"),
             ItemKind::Skill => format!("skills/{name}"),
-            ItemKind::Hook => format!("hooks/{name}"),
-            ItemKind::McpServer => format!("mcp/{name}"),
             ItemKind::BootstrapDoc => format!("bootstrap/{name}/BOOTSTRAP.md"),
+            // Hooks and MCP servers install as target-scoped package directories,
+            // whose paths `PackageDir` owns.
+            ItemKind::Hook | ItemKind::McpServer => return None,
         };
         Some(DestPath::from(path.as_str()))
     }

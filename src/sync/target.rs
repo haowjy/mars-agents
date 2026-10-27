@@ -405,8 +405,10 @@ pub fn build_with_collisions_and_diag(
                 ContentHash::from(hash::compute_hash(&source_content_path, item.id.kind)?)
             };
 
+            let rename_kind = RenamableKind::of(item.id.kind)
+                .expect("hooks and MCP servers install through PackageDir, not a rename");
             let (dest_name, dest_path) =
-                apply_item_rename(item.id.kind, &item.id.name, &renames, source_name)?;
+                apply_item_rename(rename_kind, &item.id.name, &renames, source_name)?;
             if item.id.kind == ItemKind::Agent
                 && let Err(message) = crate::target::validate_agent_filename(dest_name.as_str())
             {
@@ -584,6 +586,8 @@ fn rename_destination_collisions(
                 source_b: second.source_name.to_string(),
             });
         }
+        let kind = RenamableKind::of(first.id.kind)
+            .expect("an auto-renamable collision is an agent or a skill");
 
         for &index in indices {
             let item = &mut items[index];
@@ -594,8 +598,8 @@ fn rename_destination_collisions(
             }
             let original_name = item.id.name.clone();
             let new_dest_path =
-                suffixed_collision_dest_path(&item.dest_path, item.id.kind, &item.source_name)?;
-            let new_name = ItemName::from(dest_name_from_dest(&new_dest_path, item.id.kind));
+                suffixed_collision_dest_path(&item.dest_path, kind, &item.source_name)?;
+            let new_name = ItemName::from(new_dest_path.item_name(kind.item_kind()));
 
             diag.warn(
                 "auto-rename-collision",
@@ -701,42 +705,72 @@ fn unmanaged_collision(
     !matches_install
 }
 
+/// Item kinds whose installed destination is derived from the item's own name.
+///
+/// Hooks and MCP servers install as target-scoped package directories whose
+/// paths `PackageDir` owns, so no rename names their destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenamableKind {
+    Agent,
+    Skill,
+    BootstrapDoc,
+}
+
+impl RenamableKind {
+    pub(crate) fn of(kind: ItemKind) -> Option<Self> {
+        match kind {
+            ItemKind::Agent => Some(Self::Agent),
+            ItemKind::Skill => Some(Self::Skill),
+            ItemKind::BootstrapDoc => Some(Self::BootstrapDoc),
+            ItemKind::Hook | ItemKind::McpServer => None,
+        }
+    }
+
+    fn item_kind(self) -> ItemKind {
+        match self {
+            Self::Agent => ItemKind::Agent,
+            Self::Skill => ItemKind::Skill,
+            Self::BootstrapDoc => ItemKind::BootstrapDoc,
+        }
+    }
+}
+
 fn apply_item_rename(
-    kind: ItemKind,
+    kind: RenamableKind,
     item_name: &str,
     renames: &RenameMap,
     source_name: &SourceName,
 ) -> Result<(ItemName, DestPath), MarsError> {
     let default_dest = default_dest_path(kind, item_name);
-    let default_key = default_dest.as_str();
-
-    let rename_value = renames.get(default_key).or_else(|| renames.get(item_name));
+    let rename_value = renames
+        .get(default_dest.as_str())
+        .or_else(|| renames.get(item_name));
 
     let dest_path = match rename_value {
         Some(value) => parse_rename_dest(kind, value.as_str(), source_name)?,
         None => default_dest,
     };
-    let dest_name = dest_name_from_dest(&dest_path, kind);
 
-    Ok((ItemName::from(dest_name), dest_path))
+    Ok((
+        ItemName::from(dest_path.item_name(kind.item_kind())),
+        dest_path,
+    ))
 }
 
 /// Construct the default destination path for an item.
 /// Uses string formatting to guarantee forward slashes on all platforms.
-pub(crate) fn default_dest_path(kind: ItemKind, name: &str) -> DestPath {
+pub(crate) fn default_dest_path(kind: RenamableKind, name: &str) -> DestPath {
     let path_str = match kind {
-        ItemKind::Agent => format!("agents/{name}.md"),
-        ItemKind::Skill => format!("skills/{name}"),
-        ItemKind::Hook => format!("hooks/{name}"),
-        ItemKind::McpServer => format!("mcp/{name}"),
-        ItemKind::BootstrapDoc => format!("bootstrap/{name}/BOOTSTRAP.md"),
+        RenamableKind::Agent => format!("agents/{name}.md"),
+        RenamableKind::Skill => format!("skills/{name}"),
+        RenamableKind::BootstrapDoc => format!("bootstrap/{name}/BOOTSTRAP.md"),
     };
     // Safe: internal paths constructed from validated item names
     DestPath::new(path_str).expect("internal default path is always valid")
 }
 
 fn parse_rename_dest(
-    kind: ItemKind,
+    kind: RenamableKind,
     rename_value: &str,
     source_name: &SourceName,
 ) -> Result<DestPath, MarsError> {
@@ -750,7 +784,8 @@ fn parse_rename_dest(
     let has_parent = normalized.contains('/');
 
     if has_prefix || has_parent {
-        let dest = if kind == ItemKind::BootstrapDoc && !normalized.ends_with("/BOOTSTRAP.md") {
+        let dest = if kind == RenamableKind::BootstrapDoc && !normalized.ends_with("/BOOTSTRAP.md")
+        {
             format!("{normalized}/BOOTSTRAP.md")
         } else {
             normalized.clone()
@@ -762,17 +797,15 @@ fn parse_rename_dest(
     }
 
     let path_str = match kind {
-        ItemKind::Agent => {
+        RenamableKind::Agent => {
             if normalized.ends_with(".md") {
                 format!("agents/{normalized}")
             } else {
                 format!("agents/{normalized}.md")
             }
         }
-        ItemKind::Skill => format!("skills/{normalized}"),
-        ItemKind::Hook => format!("hooks/{normalized}"),
-        ItemKind::McpServer => format!("mcp/{normalized}"),
-        ItemKind::BootstrapDoc => format!("bootstrap/{normalized}/BOOTSTRAP.md"),
+        RenamableKind::Skill => format!("skills/{normalized}"),
+        RenamableKind::BootstrapDoc => format!("bootstrap/{normalized}/BOOTSTRAP.md"),
     };
     DestPath::new(path_str).map_err(|e| MarsError::Source {
         source_name: source_name.to_string(),
@@ -780,37 +813,23 @@ fn parse_rename_dest(
     })
 }
 
-fn dest_name_from_dest(dest_path: &DestPath, kind: ItemKind) -> String {
-    match kind {
-        ItemKind::BootstrapDoc => dest_path.item_name(kind),
-        _ => {
-            let last = dest_path.as_str().rsplit('/').next().unwrap_or("");
-            match kind {
-                ItemKind::Agent => last.strip_suffix(".md").unwrap_or(last).to_string(),
-                ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => last.to_string(),
-                ItemKind::BootstrapDoc => unreachable!("handled above"),
-            }
-        }
-    }
-}
-
 fn suffixed_collision_dest_path(
     dest_path: &DestPath,
-    kind: ItemKind,
+    kind: RenamableKind,
     source_name: &SourceName,
 ) -> Result<DestPath, MarsError> {
     let suffix = format!("__{source_name}");
     let path = dest_path.as_str();
     let renamed = match kind {
-        ItemKind::Agent => {
+        RenamableKind::Agent => {
             let (parent, leaf) = split_parent_leaf(path);
             let stem = leaf.strip_suffix(".md").unwrap_or(leaf);
             join_parent_leaf(parent, &format!("{stem}{suffix}.md"))
         }
-        ItemKind::Skill => {
+        RenamableKind::Skill => {
             return suffixed_leaf_dest_path(path, &suffix, source_name);
         }
-        ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
+        RenamableKind::BootstrapDoc => {
             unreachable!("only agent and skill collisions are auto-renamed")
         }
     };
@@ -1176,8 +1195,8 @@ mod tests {
 
     #[test]
     fn default_dest_path_uses_forward_slashes_for_agents_and_skills() {
-        let agent = default_dest_path(ItemKind::Agent, "coder");
-        let skill = default_dest_path(ItemKind::Skill, "planning");
+        let agent = default_dest_path(RenamableKind::Agent, "coder");
+        let skill = default_dest_path(RenamableKind::Skill, "planning");
 
         assert_eq!(agent.as_str(), "agents/coder.md");
         assert_eq!(skill.as_str(), "skills/planning");
@@ -1189,10 +1208,18 @@ mod tests {
     fn parse_rename_dest_normalizes_backslashes_to_forward_slashes() {
         let source_name = SourceName::from("base");
 
-        let agent =
-            parse_rename_dest(ItemKind::Agent, r"agents\nested\renamed.md", &source_name).unwrap();
-        let skill =
-            parse_rename_dest(ItemKind::Skill, r"skills\nested\planning", &source_name).unwrap();
+        let agent = parse_rename_dest(
+            RenamableKind::Agent,
+            r"agents\nested\renamed.md",
+            &source_name,
+        )
+        .unwrap();
+        let skill = parse_rename_dest(
+            RenamableKind::Skill,
+            r"skills\nested\planning",
+            &source_name,
+        )
+        .unwrap();
 
         assert_eq!(agent.as_str(), "agents/nested/renamed.md");
         assert_eq!(skill.as_str(), "skills/nested/planning");
@@ -1204,11 +1231,11 @@ mod tests {
     fn parse_rename_dest_rejects_absolute_and_escape_destinations() {
         let source_name = SourceName::from("base");
 
-        let absolute = parse_rename_dest(ItemKind::Agent, "/tmp/escape", &source_name)
+        let absolute = parse_rename_dest(RenamableKind::Agent, "/tmp/escape", &source_name)
             .expect_err("absolute rename should fail");
         assert!(matches!(absolute, MarsError::Source { .. }));
 
-        let traversal = parse_rename_dest(ItemKind::Skill, "../escape", &source_name)
+        let traversal = parse_rename_dest(RenamableKind::Skill, "../escape", &source_name)
             .expect_err("traversal rename should fail");
         assert!(matches!(traversal, MarsError::Source { .. }));
     }

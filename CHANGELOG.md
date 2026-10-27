@@ -7,6 +7,13 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-10-27
+
+### Fixed
+- Importing a Claude plugin no longer warns about a link from one skill to another when the link still resolves after install. It warns when the target skill is not imported or the link breaks, and names the link to use instead.
+- Links from a root `SKILL.md`, and links into a nested skill's folder, are now checked; they used to break after install with no warning.
+- Importing a Claude skill that mentions `scripts/` no longer warns `skill.needs-scripts` ("runs scripts; … will not work until scripts can run"); the check is removed.
+
 ## [0.23.0] - 2026-10-27
 
 ### Added

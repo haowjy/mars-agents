@@ -36,10 +36,10 @@ pub(super) fn stage<T>(
         stored.files = files;
         crate::plugin_metadata::validate(&stored, &paths.new.join(SENTINEL_FILE))?;
         write_sentinel(&paths.new, &stored)?;
-        Ok(value)
+        Ok((stored, value))
     })();
 
-    let value = match staged {
+    let (sentinel, value) = match staged {
         Ok(value) => value,
         Err(build_error) => {
             return match crate::platform::fs::safe_remove(&paths.new) {
@@ -51,7 +51,14 @@ pub(super) fn stage<T>(
         }
     };
 
-    Ok((StagedPlugin { paths, _lock: lock }, value))
+    Ok((
+        StagedPlugin {
+            paths,
+            sentinel,
+            _lock: lock,
+        },
+        value,
+    ))
 }
 
 /// Recover a plugin output after an interrupted stage or publish.
@@ -72,15 +79,32 @@ pub(crate) fn recovery_staging_path(out_dir: &Path) -> Result<PathBuf, MarsError
 /// A complete plugin output waiting to replace the live directory.
 pub(super) struct StagedPlugin {
     paths: OutputPaths,
+    /// The sentinel written into the staging tree; publication keeps it for the
+    /// post-publish rewrite that drops the root-file recovery record.
+    sentinel: PluginSentinel,
     _lock: crate::fs::FileLock,
 }
 
 impl StagedPlugin {
-    pub(super) fn publish(self) -> Result<(), MarsError> {
+    pub(super) fn publish(&self) -> Result<(), MarsError> {
         match publish_staged_tree_inner(&self.paths) {
             Ok(()) => Ok(()),
             Err(error) => Err(clean_up_staging_after_error(&self.paths, error)),
         }
+    }
+
+    /// Drop the recovery record once the root files it guarded are on disk.
+    ///
+    /// The staged sentinel carries `root_files_previous` so a publication that
+    /// dies between the tree swap and the root-file rewrite is resumed by the
+    /// next build. After that rewrite the record describes nothing; keeping it
+    /// would make the next no-change build write a different sentinel.
+    pub(super) fn clear_root_files_previous(&mut self) -> Result<(), MarsError> {
+        if self.sentinel.root_files_previous.is_empty() {
+            return Ok(());
+        }
+        self.sentinel.root_files_previous.clear();
+        write_sentinel(&self.paths.out, &self.sentinel)
     }
 }
 

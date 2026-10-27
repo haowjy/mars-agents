@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `mars build plugin` clears the sentinel's `root_files_previous` recovery record once the root
+  files are written, so a package whose root `package.json` changes (every version bump) is
+  byte-identical to an immediate rebuild instead of needing a second build. A publication killed
+  between the tree swap and the root-file rewrite is still resumed by the next build.
+
 ## [0.20.5] - 2026-10-27
 
 ## [0.20.4] - 2026-10-27

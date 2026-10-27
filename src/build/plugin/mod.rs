@@ -145,15 +145,17 @@ impl StagedPluginBuild {
         self.root_files.created_directories()
     }
 
-    pub fn publish(self) -> Result<PluginBuildReport, MarsError> {
+    pub fn publish(mut self) -> Result<PluginBuildReport, MarsError> {
         // Replace the tree and sentinel first: that step is a rename swap, so it
         // either completes or restores the previous tree, and a failure there
         // leaves the package's root files untouched. Root files are rewritten
         // after, and the new sentinel records the hashes it replaces, so an
         // interrupted second step is recovered by the next build instead of
-        // refused.
+        // refused. Once they are written the record is stale, and leaving it
+        // would make the next no-change build rewrite the sentinel.
         self.output.publish()?;
         root_files::apply(&self.root_files)?;
+        self.output.clear_root_files_previous()?;
         Ok(self.report)
     }
 }

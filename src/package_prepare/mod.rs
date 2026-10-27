@@ -142,6 +142,12 @@ impl TreeSource for DiskTreeSource {
         let Some(actual) = self.confined(&logical) else {
             return Vec::new();
         };
+        // A file has no children, as in the in-memory tree the WASM build reads: discovery asks
+        // for the children of every `skills/` entry, and a foreign tree's `skills/` can hold
+        // files (`__init__.py`, `README.md`) beside the skill directories.
+        if !fs::metadata(&actual).is_ok_and(|metadata| metadata.is_dir()) {
+            return Vec::new();
+        }
         let entries = match fs::read_dir(&actual) {
             Ok(entries) => entries,
             Err(source) => {

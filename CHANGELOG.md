@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `mars sync` no longer fails with `Not a directory` on a dependency read without a `mars.toml` (a foreign skill tree, a `subpath` into another repo) whose `skills/` holds a file such as `__init__.py` or `README.md`; the file is ignored, as in 0.18.
+- `mars check PATH --root DIR` checks `PATH` instead of failing, so `meridian mars check <package>` works again.
+
 ### Changed
 - README plugin support table: cells are generated from what each plugin tree actually does. Grok
   agents now list the Claude agent fields that are dropped; Codex and Grok hooks state the `claude`

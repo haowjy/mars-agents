@@ -60,6 +60,15 @@ For CI or inspection, `mars build plugin PATH --out <dir>` writes only the owned
 tree and sentinel. It does not write package-root catalogs or `package.json`, and it can
 build a package without `[plugin]`.
 
+## OpenCode agents
+
+The OpenCode tree registers each published agent through the plugin `ctx.agent` API as
+`<plugin>:<agent>`, lowered the way `mars sync` lowers `.opencode/agents/<name>.md`. OpenCode's
+agent record has no skills field, so an agent's `skills.load` list reaches it as body guidance; the plugin's skills are available to it by
+OpenCode's default allow, unless the agent's own `permission` denies them. Permission keys are
+translated to the plugin API's spellings (`bash` → `shell`, `task` → `subagent`, `write` and
+`patch` → `edit`). The agent's `mode` defaults to `all` so the `subagent` tool can spawn it.
+
 ## MCP server files
 
 A server may ship its own files beside `mcp.toml` and name them with

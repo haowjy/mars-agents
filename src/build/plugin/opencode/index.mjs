@@ -70,6 +70,21 @@ export default {
       })
     }
 
+    if (DATA.agents.length) {
+      await ctx.agent.transform((editor) => {
+        for (const agent of DATA.agents) {
+          editor.update(agent.id, (info) => {
+            info.name = agent.name
+            info.description = agent.description
+            info.mode = agent.mode
+            if (agent.model) info.model = agent.model
+            info.system = agent.system
+            info.permissions.push(...agent.permissions)
+          })
+        }
+      })
+    }
+
     if (DATA.mcp.length) {
       const servers = JSON.parse(await readFile(join(ROOT, "mcp.json"), "utf8"))
       await ctx.mcp.transform((editor) => {

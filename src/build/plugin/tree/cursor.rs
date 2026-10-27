@@ -1,6 +1,5 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
 use mars_schema::HarnessId;
 use mars_schema::plugin_metadata::CURSOR_ROOT_FILE;
@@ -23,7 +22,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     },
     dropped_agent_fields: &[],
     approximate_lowers_to_dropped: true,
-    agents: Some(preserve_agent),
+    agents: None,
     native_model_aliases: &[],
     plugin_root: PluginRoot::Token("${CURSOR_PLUGIN_ROOT}"),
     check_hook,
@@ -33,15 +32,6 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
         description: "Cursor plugin manifest",
     },
 };
-
-fn preserve_agent(
-    lowered: &str,
-    _source: &mars_schema::frontmatter::Frontmatter,
-    _item: &TargetItem,
-    _diag: &mut DiagnosticCollector,
-) -> Result<String, MarsError> {
-    Ok(lowered.to_string())
-}
 
 fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut DiagnosticCollector) {}
 

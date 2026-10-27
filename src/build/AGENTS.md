@@ -29,10 +29,19 @@ tree, and `${MARS_HOOK_DIR}` / `${MARS_MCP_DIR}` map through that same plugin ro
 Harness identity, variant key, and sync root come from `compiler::harness_descriptor`; authored-hook
 checks run once before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode
 have their own tree identities. The OpenCode tree is an npm-shaped package whose fixed `index.mjs`
-registers skills and MCP servers and imports every targeted hook fragment as an in-memory TypeScript
+registers skills, agents, and MCP servers and imports every targeted hook fragment as an in-memory TypeScript
 data URL. A build warning reports fragments with no recognizable default export, but runtime
 isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
-and one fragment's load or setup failure does not block later hooks. The OpenCode tree's generated
+and one fragment's load or setup failure does not block later hooks. OpenCode loads no agent files from a
+plugin, so the tree's agents (lowered by the same lowering sync uses, carried in memory as
+`WrittenTreeContents::agents`) become `DATA.agents`. Each agent travels as one parsed
+`Frontmatter`: the lowering is parsed once, the tree's optional agent policy and the body-reference
+rewrite edit it, and `finish` serializes it (the standard finish writes `agents/<name>.md`).
+OpenCode's policy drops every key `ctx.agent` has no slot for, under the shared
+`plugin-agent-field-dropped` warning; a slash-less OpenCode model is a `NoDeterministicId` fallback. `index.mjs` registers each as `<plugin>:<agent>` through `ctx.agent`.
+The lowering emits v1 permission keys that OpenCode's file loader translates but `ctx.agent` does
+not, so `opencode_v2_action` (`mars-schema` `tool_natives`) translates them once. `Agent.Info` has
+no skills field, so preloaded skills stay body guidance. The OpenCode tree's generated
 `DATA` block carries both authored directory tokens, so `index.mjs` has no token literal of its
 own; Rust remains the only owner of the strings.
 

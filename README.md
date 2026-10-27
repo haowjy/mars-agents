@@ -31,7 +31,7 @@ where a cell explicitly says docs-only.
 |---|---|---|---|---|---|
 | Tree | claude | claude | claude | cursor | opencode |
 | Skills | supported | supported | supported | supported | supported (registered by `index.mjs`) |
-| Agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning | **impossible**: Codex plugins don't load agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning (same file as Claude) | supported | **impossible**: OpenCode plugins don't load agents |
+| Agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning | **impossible**: Codex plugins don't load agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning (same file as Claude) | supported | supported (registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance; `harness-overrides.opencode` keys other than `permission` are dropped with warning) |
 | Hooks | supported for hooks with the `claude` fragment; others dropped with warning | supported for hooks with the `claude` fragment; others dropped with warning (reads the Claude tree's `hooks/hooks.json`) | supported for hooks with the `claude` fragment; others dropped with warning | supported for hooks with the `cursor` fragment; others dropped with warning | supported for hooks with the `opencode` fragment; others dropped with warning (each fragment needs a default `{id, setup}` export) |
 | MCP | supported | supported (same file as Claude) | supported (same file as Claude) | supported | supported (registered by `index.mjs`) |
 | Bootstrap docs | impossible | impossible | impossible | impossible | impossible |
@@ -42,7 +42,7 @@ where a cell explicitly says docs-only.
 |---|---|---|---|---|---|
 | Install from catalog | live (local marketplace) | live (local marketplace) | live (local marketplace) | docs-only (account required) | live (`git+file://`) |
 | Skills | live (own and dependency skills) | live (own and dependency skills) | live, with `resources/` | docs-only (schema validation only) | live, with `resources/` |
-| Agents | live (subagent preload) | n/a (impossible) | live (subagent with native skill preload) | docs-only (schema validation only) | n/a (impossible) |
+| Agents | live (subagent preload) | n/a (impossible) | live (subagent with native skill preload) | docs-only (schema validation only) | live (`<plugin>:<agent>` spawned as a subagent; `task: deny` resolved as `subagent` deny) |
 | Hooks | live (`${CLAUDE_PLUGIN_ROOT}`, CommonJS script) | live (built tree, CommonJS script) | live (`CLAUDE_PLUGIN_ROOT`) | docs-only (schema validation only) | live (git install, CommonJS script) |
 | MCP | live (`env_vars` pass-through) | live (`env_vars` pass-through) | live (`env_vars` pass-through) | docs-only (schema validation only) | live (`<plugin>:<server>`) |
 <!-- END GENERATED PLUGIN SUPPORT -->

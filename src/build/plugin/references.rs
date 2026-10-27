@@ -18,12 +18,26 @@ pub(super) fn qualify_body_references(
 
     let mut frontmatter = mars_schema::frontmatter::parse(content)
         .map_err(|error| invalid_reference_error("markdown frontmatter", error))?;
-    let rewritten = rewrite_body(frontmatter.body(), references);
-    if rewritten == frontmatter.body() {
+    if !qualify_document(&mut frontmatter, references) {
         return Ok(content.to_string());
     }
-    frontmatter.set_body(rewritten);
     Ok(frontmatter.render())
+}
+
+/// `qualify_body_references` on a parsed document; returns whether the body changed.
+pub(super) fn qualify_document(
+    document: &mut mars_schema::frontmatter::Frontmatter,
+    references: &IndexMap<String, String>,
+) -> bool {
+    if references.is_empty() {
+        return false;
+    }
+    let rewritten = rewrite_body(document.body(), references);
+    if rewritten == document.body() {
+        return false;
+    }
+    document.set_body(rewritten);
+    true
 }
 
 fn rewrite_body(body: &str, references: &IndexMap<String, String>) -> String {

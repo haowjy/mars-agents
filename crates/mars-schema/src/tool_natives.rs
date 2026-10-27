@@ -316,6 +316,7 @@ const CODEX: Table = &[
 
 /// OpenCode, in the v1.19.3 permission vocabulary. Meridian knows the running version and
 /// translates to v2 spellings (`bash` → `shell`, `task` → `subagent`, `write` → `edit`).
+/// Mars does the same for plugin agents in [`opencode_v2_action`], so keep the two in step.
 ///
 /// Source: opencode.ai/docs/permissions, the provider tool lists captured from v1.19.3 and
 /// v2.0.29 (`opencode-matrix.md`), and strings from both binaries. `edit` is the permission
@@ -356,6 +357,18 @@ const OPENCODE: Table = &[
         NoSwitch("opencode views images through read; no switch"),
     ),
 ];
+
+/// The v2 spelling of a v1.19.3 OpenCode permission key, for a consumer that skips OpenCode's
+/// own agent-file loader (which does this translation): the plugin `ctx.agent` API takes v2
+/// rule actions. Keys v2 spells the same pass through.
+pub fn opencode_v2_action(v1: &str) -> &str {
+    match v1 {
+        "bash" => "shell",
+        "write" | "patch" => "edit",
+        "task" => "subagent",
+        other => other,
+    }
+}
 
 /// Pi 1.1.0 / 1.2.0, built-in tools only.
 ///

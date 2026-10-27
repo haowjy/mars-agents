@@ -48,12 +48,14 @@ A root with no manifest is a pre-v1 Mars package, read through the upgrade, only
 Mars wrote is never evidence for the root. `upgrade::lift_mars_only_keys` applies it per key,
 before the rules of whichever dialect reads the definition: the invocability renames, the
 discarded Agent fields (`RemovedField::discarded`), the removed values (`REMOVED_AGENT_VALUES`),
-`move_agent_fields` (a scalar `permission` to `harness-overrides.flow`, `resident-rearm-budget`
-and `meridian-capabilities` to `harness-overrides.meridian`) and the removed model-policy
-override keys. `permission` is not on that list as a key, because OpenCode defines it too. Flow
-defines one key, `permission`, and the Meridian CLI `resident-rearm-budget` and `capabilities`,
-so those moves are the only writers of the two reserved consumer namespaces; the legacy upgrade
-drops what it cannot convert.
+`move_agent_fields` (a `permission` of `read` or `edit` to `harness-overrides.flow`,
+`resident-rearm-budget` and `meridian-capabilities` to `harness-overrides.meridian`, one conflict
+rule for all three: a block already set wins, and its top-level twin is dropped with a note, a
+lost restriction when the twin is `permission`) and the removed model-policy override keys.
+`permission` is not on that list as a key, because OpenCode defines it too. Flow defines one key,
+`permission`, and the Meridian CLI `resident-rearm-budget` and `capabilities`, so those moves are
+the only writers of the two reserved consumer namespaces; the legacy upgrade drops what it cannot
+convert.
 
 `mars migrate` prepares through `prepare_for_migration`, which runs
 `upgrade::relocate_removed_fields` — `move_agent_fields` alone — on a schema 1 definition,

@@ -69,7 +69,7 @@ Unknown keys are kept and reported as `field.unknown` warnings. Removed keys are
 | `tool_natives` | per-host native tool tables as data (Claude, Codex, OpenCode, Pi, Cursor, and the Flow table); `vocabulary()` returns the published whole |
 | `tool_policy`, `mcp` | the tool rules of an Agent and the `mcp(server/tool)` reference grammar |
 | `model_policy` | the `model-policies` rule and its validator |
-| `harness` | `HarnessId` and the reserved consumer namespaces (`flow`) |
+| `harness` | `HarnessId` and the reserved consumer namespaces (`flow`, `meridian`) |
 | `dialect` | the layouts Mars reads: the foreign ones it translates (`claude`, `agent-skills`, `codex`, `opencode`, `cursor`) and `mars-native` |
 
 Projection onto a particular harness, overlay application, precedence and everything that touches the filesystem stay in the `mars-agents` binary.

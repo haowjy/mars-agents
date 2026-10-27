@@ -1,0 +1,56 @@
+{
+  "frontmatter": [
+    [
+      "resident-rearm-budget",
+      3
+    ],
+    [
+      "meridian-capabilities",
+      {
+        "spawn": true
+      }
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "resident-rearm-budget"
+      ],
+      "message": "`resident-rearm-budget` was removed; move it under `harness-overrides.meridian.resident-rearm-budget`"
+    },
+    {
+      "code": "field.removed",
+      "severity": "error",
+      "path": [
+        "meridian-capabilities"
+      ],
+      "message": "`meridian-capabilities` was removed; move it under `harness-overrides.meridian.capabilities`"
+    }
+  ]
+}

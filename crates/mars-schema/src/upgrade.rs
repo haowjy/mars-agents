@@ -6,6 +6,7 @@ use toml_edit::{DocumentMut, Item};
 use crate::claude;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
+use crate::harness_overrides::{Moved, move_keys_under};
 use crate::item::DefinitionKind;
 use crate::{
     agent::{REMOVED_AGENT_FIELDS, REMOVED_AGENT_VALUES},
@@ -373,7 +374,7 @@ pub(crate) fn lift_mars_only_keys(
         for removed in REMOVED_AGENT_VALUES {
             replace_scalar(fm, removed.key, removed.value, removed.replacement);
         }
-        move_permission(fm);
+        move_agent_fields(fm, notes);
         strip_model_policy_overrides(fm, notes);
     }
     fm.mapping() != &before
@@ -483,6 +484,35 @@ fn upgrade_tools(fm: &mut Frontmatter) {
     }
     fm.insert("tools", Value::Mapping(policy));
     fm.remove("disallowed-tools");
+}
+
+/// The Agent keys the Meridian CLI reads from a profile (an agent's re-arm budget, the
+/// capabilities it grants) under their new name. Mars has no meaning for either value, so the
+/// move carries them as authored.
+const MERIDIAN_AGENT_FIELDS: &[(&str, &str)] = &[
+    ("resident-rearm-budget", "resident-rearm-budget"),
+    ("meridian-capabilities", "capabilities"),
+];
+
+/// Move the Agent keys schema 1 replaced with a `harness-overrides` key. `permission` is
+/// separate: only the values Flow defines move, while an override already written wins, which
+/// the set-aside then reports as the restriction it loses.
+fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
+    move_permission(fm);
+    let Moved::Done { displaced, .. } = move_keys_under(fm, "meridian", MERIDIAN_AGENT_FIELDS)
+    else {
+        return;
+    };
+    for (from, to) in MERIDIAN_AGENT_FIELDS {
+        if displaced.iter().any(|key| key == from) {
+            notes.push(SchemaDiagnostic::new(
+                "field.removed",
+                Severity::Warning,
+                vec![PathSegment::Key((*from).to_string())],
+                format!("dropped `{from}`; `harness-overrides.meridian.{to}` already sets it"),
+            ));
+        }
+    }
 }
 
 fn move_permission(fm: &mut Frontmatter) {

@@ -90,7 +90,7 @@ export interface AgentFields {
   skills: { load: string[]; available: string[] };
   subagents: string[];
   tools: ToolRule[];
-  /** Per-namespace passthrough blocks; `flow` is the consumer namespace. */
+  /** Per-namespace passthrough blocks; `flow` and `meridian` are the consumer namespaces. */
   "harness-overrides": { [namespace: string]: { [key: string]: JsonValue } };
   "model-policies": ModelPolicyRule[];
 }

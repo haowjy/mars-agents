@@ -252,43 +252,65 @@ pub(crate) enum Moved {
 }
 
 /// Move the top-level `keys` of `fm`, in the order given and unchanged, under
-/// `harness-overrides.<harness>`.
-pub(crate) fn move_keys_under(fm: &mut Frontmatter, harness: &str, keys: &[String]) -> Moved {
+/// `harness-overrides.<harness>`; each `(from, to)` pair renames the key as it moves.
+pub(crate) fn move_keys_under(fm: &mut Frontmatter, harness: &str, keys: &[(&str, &str)]) -> Moved {
     let harness_key = Value::String(harness.to_owned());
-    let blocked = match fm.get("harness-overrides") {
-        None => false,
-        Some(Value::Mapping(overrides)) => overrides
-            .get(&harness_key)
-            .is_some_and(|entry| !entry.is_mapping()),
-        Some(_) => true,
+    let mut overrides = match fm.get("harness-overrides") {
+        None => serde_yaml::Mapping::new(),
+        Some(Value::Mapping(existing)) => existing.clone(),
+        Some(_) => return Moved::Blocked,
     };
-    if blocked {
+    if overrides
+        .get(&harness_key)
+        .is_some_and(|entry| !entry.is_mapping())
+    {
         return Moved::Blocked;
     }
-    let mut overrides = match fm.remove("harness-overrides") {
-        Some(Value::Mapping(existing)) => existing,
-        _ => serde_yaml::Mapping::new(),
+    let destination = |overrides: &serde_yaml::Mapping, to: &str| {
+        overrides
+            .get(&harness_key)
+            .and_then(Value::as_mapping)
+            .and_then(|entry| entry.get(to))
+            .cloned()
     };
-    let mut entry = match overrides.remove(&harness_key) {
-        Some(Value::Mapping(existing)) => existing,
-        _ => serde_yaml::Mapping::new(),
-    };
-    let (mut moved, mut displaced) = (Vec::new(), Vec::new());
-    for key in keys {
-        let Some(value) = fm.remove(key) else {
+    let (mut moved, mut displaced, mut carried) = (Vec::new(), Vec::new(), Vec::new());
+    for (from, to) in keys {
+        let Some(value) = fm.get(from).cloned() else {
             continue;
         };
-        match entry.get(key.as_str()) {
-            Some(existing) if *existing != value => displaced.push(key.clone()),
-            Some(_) => moved.push(key.clone()),
+        match destination(&overrides, to) {
+            // An override already written wins, and its top-level twin is dropped.
+            Some(existing) if existing != value => displaced.push((*from).to_owned()),
+            Some(_) => moved.push((*from).to_owned()),
             None => {
-                entry.insert(Value::String(key.clone()), value);
-                moved.push(key.clone());
+                moved.push((*from).to_owned());
+                carried.push(((*to).to_owned(), value));
             }
         }
     }
-    overrides.insert(harness_key, Value::Mapping(entry));
-    fm.insert("harness-overrides", Value::Mapping(overrides));
+    if moved.is_empty() && displaced.is_empty() {
+        return Moved::Done { moved, displaced };
+    }
+    if let Some(Value::Mapping(entry)) = overrides.get_mut(&harness_key) {
+        for (to, value) in carried {
+            entry.insert(Value::String(to), value);
+        }
+    } else {
+        let entry = carried
+            .into_iter()
+            .map(|(to, value)| (Value::String(to), value))
+            .collect::<serde_yaml::Mapping>();
+        overrides.insert(harness_key, Value::Mapping(entry));
+    }
+    // Writing the block back where it already sits keeps its place in the file, and only a file
+    // with no `harness-overrides` gains one, at the end.
+    match fm.get_mut("harness-overrides") {
+        Some(block) => *block = Value::Mapping(overrides),
+        None => fm.insert("harness-overrides", Value::Mapping(overrides)),
+    }
+    for key in moved.iter().chain(&displaced) {
+        fm.remove(key);
+    }
     Moved::Done { moved, displaced }
 }
 
@@ -334,7 +356,11 @@ pub(crate) fn move_harness_only_keys(
             message,
         ));
     };
-    match move_keys_under(fm, harness_name, &present) {
+    let pairs = present
+        .iter()
+        .map(|key| (key.as_str(), key.as_str()))
+        .collect::<Vec<_>>();
+    match move_keys_under(fm, harness_name, &pairs) {
         Moved::Blocked => {
             note(
                 Severity::Warning,

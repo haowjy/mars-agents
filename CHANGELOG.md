@@ -4,6 +4,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `harness-overrides.meridian` is a reserved consumer namespace, as `harness-overrides.flow` is for
+  Flow. Mars keeps the block in `.mars/agents/` and never writes it to a native file, a plugin tree
+  or a launch bundle; its keys belong to the Meridian CLI: `resident-rearm-budget` (an integer) and
+  `capabilities` (a map).
+
+### Changed
+- Agent `resident-rearm-budget` and `meridian-capabilities` are removed top-level keys: a schema 1
+  file that carries one is a `field.removed` error naming
+  `harness-overrides.meridian.resident-rearm-budget` and `harness-overrides.meridian.capabilities`.
+  `mars migrate` moves both with their values, so a pre-v1 package and a schema 1 file that still
+  carries them migrate without a hand edit.
+
 ### Fixed
 - `mars build plugin` clears the sentinel's `root_files_previous` recovery record once the root
   files are written, so a package whose root `package.json` changes (every version bump) is

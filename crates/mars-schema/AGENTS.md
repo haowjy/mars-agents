@@ -48,10 +48,12 @@ A root with no manifest is a pre-v1 Mars package, read through the upgrade, only
 Mars wrote is never evidence for the root. `upgrade::lift_mars_only_keys` applies it per key,
 before the rules of whichever dialect reads the definition: the invocability renames, the
 discarded Agent fields (`RemovedField::discarded`), the removed values (`REMOVED_AGENT_VALUES`),
-a scalar `permission` moved to `harness-overrides.flow` and the removed model-policy override
-keys. `permission` is not on that list as a key, because OpenCode defines it too. Flow defines one key,
-`permission`, so that move is the only writer of `harness-overrides.flow`; the legacy upgrade drops
-what it cannot convert.
+`move_agent_fields` (a scalar `permission` to `harness-overrides.flow`, `resident-rearm-budget`
+and `meridian-capabilities` to `harness-overrides.meridian`) and the removed model-policy
+override keys. `permission` is not on that list as a key, because OpenCode defines it too. Flow
+defines one key, `permission`, and the Meridian CLI `resident-rearm-budget` and `capabilities`,
+so those moves are the only writers of the two reserved consumer namespaces; the legacy upgrade
+drops what it cannot convert.
 
 Prediction from the items reads each dialect's own vocabulary and holds none itself:
 `claude::translate::EVIDENCE_KEYS` (narrower than that module's moved-key lists, because `model`,

@@ -341,7 +341,7 @@ pub(crate) fn set_aside_rejected_keys(
     {
         let keys = movable
             .iter()
-            .map(|(key, _)| key.clone())
+            .map(|(key, _)| (key.as_str(), key.as_str()))
             .collect::<Vec<_>>();
         if let Moved::Done { moved, displaced } = move_keys_under(fm, harness, &keys) {
             changed = true;

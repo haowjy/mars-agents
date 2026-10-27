@@ -28,6 +28,14 @@ pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
         "permission",
         "move it under `harness-overrides.flow.permission`",
     ),
+    RemovedField::replaced(
+        "resident-rearm-budget",
+        "move it under `harness-overrides.meridian.resident-rearm-budget`",
+    ),
+    RemovedField::replaced(
+        "meridian-capabilities",
+        "move it under `harness-overrides.meridian.capabilities`",
+    ),
 ];
 
 /// Values `lift_mars_only_keys` rewrites; the reader refuses them.

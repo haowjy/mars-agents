@@ -3,13 +3,13 @@ use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::{ConfigEntry, McpServerEntry};
 use mars_schema::HarnessId;
+use mars_schema::plugin_metadata::CLAUDE_ROOT_FILE;
 
 use super::super::spec::{
     Finish, NameRule, PluginHarnessSpec, PluginRoot, RootFile, TreeProfile,
     valid_claude_plugin_name,
 };
 use super::invalid_item;
-use crate::plugin_metadata::CLAUDE_ROOT_FILE;
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
 pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
@@ -17,7 +17,6 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     harness: HarnessId::Claude,
     root_file: RootFile::Marketplace {
         file: CLAUDE_ROOT_FILE,
-        catalog_directory: ".claude-plugin",
         source_prefix: "./",
         name_rule: NameRule {
             validate: valid_claude_plugin_name,

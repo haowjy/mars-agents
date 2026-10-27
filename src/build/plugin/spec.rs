@@ -18,10 +18,10 @@ use super::tree::{claude, cursor, opencode};
 use crate::compiler::harness_descriptor::{CompilerHarnessDescriptor, descriptor};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::plugin_metadata::GeneratedRootFile;
 use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
 use mars_schema::HarnessId;
+use mars_schema::plugin_metadata::GeneratedRootFile;
 
 pub(super) type AgentPolicy = fn(
     &str,
@@ -63,17 +63,16 @@ impl NameRule {
 
 /// The root file a tree owns in the package, and the format facts that come with it.
 ///
-/// A marketplace catalog always has a catalog directory and a marketplace-name rule;
-/// an npm package manifest has neither. Keeping them in the variant means a tree
-/// cannot declare one without the other, and the file itself names a
-/// `plugin_metadata::GENERATED_ROOT_FILES` constant, which the test below checks
-/// covers every tree, so staging and sentinel validation know each generated root
-/// file.
+/// The variant names a `mars_schema::plugin_metadata::GENERATED_ROOT_FILES` constant, which
+/// supplies the path and, for a catalog, the directory holding it; the test below checks the
+/// table covers every tree, so staging and sentinel validation know each generated root file.
+/// What the variant adds is what only that format has: a marketplace catalog's marketplace-name
+/// rule and source prefix, which a tree writing a catalog must state, and nothing for an npm
+/// package manifest.
 #[derive(Clone, Copy)]
 pub(super) enum RootFile {
     Marketplace {
         file: GeneratedRootFile,
-        catalog_directory: &'static str,
         /// Prefix for the catalog's plugin `source` entry (`./` or empty).
         source_prefix: &'static str,
         name_rule: NameRule,
@@ -92,10 +91,7 @@ impl RootFile {
 
     pub(super) fn catalog_directory(self) -> Option<&'static str> {
         match self {
-            Self::Marketplace {
-                catalog_directory, ..
-            } => Some(catalog_directory),
-            Self::NpmPackage { .. } => None,
+            Self::Marketplace { file, .. } | Self::NpmPackage { file } => file.catalog_directory(),
         }
     }
 
@@ -464,13 +460,14 @@ pub(super) fn valid_npm_package_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::plugin_metadata::GENERATED_ROOT_FILES;
+    use mars_schema::plugin_metadata::GENERATED_ROOT_FILES;
 
     use super::trees;
 
     /// Staging excludes and sentinel validation accept only `GENERATED_ROOT_FILES`,
-    /// so a tree whose root file is missing from it, or whose catalog directory
-    /// disagrees, would fail every configured build at the sentinel check.
+    /// so a tree whose root file is missing from it, or whose marketplace variant
+    /// needs a catalog directory the table does not declare, would fail every
+    /// configured build at the sentinel check.
     #[test]
     fn tree_root_files_match_the_generated_root_file_table() {
         for tree in trees() {
@@ -485,10 +482,15 @@ mod tests {
                     )
                 });
             assert_eq!(
-                declared.catalog_directory(),
-                tree.root_file.catalog_directory(),
-                "tree `{}` disagrees with `GENERATED_ROOT_FILES` about the catalog directory of `{path}`",
-                tree.key
+                declared.catalog_directory().is_some(),
+                tree.root_file.is_marketplace(),
+                "tree `{}` generates `{path}`, whose `GENERATED_ROOT_FILES` entry {} a catalog directory",
+                tree.key,
+                if tree.root_file.is_marketplace() {
+                    "has no"
+                } else {
+                    "has"
+                }
             );
         }
     }

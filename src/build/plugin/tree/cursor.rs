@@ -3,19 +3,18 @@ use crate::error::MarsError;
 use crate::sync::target::TargetItem;
 use crate::target::ConfigEntry;
 use mars_schema::HarnessId;
+use mars_schema::plugin_metadata::CURSOR_ROOT_FILE;
 
 use super::super::spec::{
     Finish, NameRule, PluginHarnessSpec, PluginRoot, RootFile, TreeProfile,
     valid_cursor_plugin_name,
 };
-use crate::plugin_metadata::CURSOR_ROOT_FILE;
 
 pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     key: "cursor",
     harness: HarnessId::Cursor,
     root_file: RootFile::Marketplace {
         file: CURSOR_ROOT_FILE,
-        catalog_directory: ".cursor-plugin",
         source_prefix: "",
         name_rule: NameRule {
             validate: valid_cursor_plugin_name,

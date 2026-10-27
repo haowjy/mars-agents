@@ -16,15 +16,16 @@ points straight at its `TreeProfile`, which carries the directory key, root file
 fields, lossiness adjustment, the plugin-root mapping, and the agent/config/finish writers, so a
 harness and its tree cannot disagree and adding a harness is one row. `TreeProfile.key` is the
 single key for both staged directory names and reported output paths. `RootFile` and `Finish` are
-enums: a marketplace cannot be declared without its catalog directory and name rule, and the
-standard finish owns its manifest path. `GENERATED_ROOT_FILES` in `plugin_metadata.rs` is the one
-declared list of generated root files; staging and sentinel validation read it, and a tree row names
-its constant directly, with `spec`'s test failing if a tree's root file or catalog directory is not
-in that list. `PluginRoot` is an enum: a tree either writes a harness token literally or keeps the
-Mars token for its own runtime to substitute, so the merged-hook path mapping matches on it instead
-of unwrapping an optional token. Every selected hook directory, and every MCP server directory
-whose command or args name `${MARS_MCP_DIR}`, is copied whole into the tree, and
-`${MARS_HOOK_DIR}` / `${MARS_MCP_DIR}` map through that same plugin root.
+enums: a marketplace cannot be declared without a name rule and source prefix, and its catalog
+directory comes from the generated root-file table; the
+standard finish owns its manifest path. `GENERATED_ROOT_FILES` in mars-schema's `plugin_metadata`
+is the one declared list of generated root files; staging and sentinel validation read it, and a
+tree row names its constant directly, with `spec`'s test failing if a tree's root file or catalog
+directory is not in that list. `PluginRoot` is an enum: a tree either writes a harness token
+literally or keeps the Mars token for its own runtime to substitute, so the merged-hook path
+mapping matches on it instead of unwrapping an optional token. Every selected hook directory, and
+every MCP server directory whose command or args name `${MARS_MCP_DIR}`, is copied whole into the
+tree, and `${MARS_HOOK_DIR}` / `${MARS_MCP_DIR}` map through that same plugin root.
 Harness identity, variant key, and sync root come from `compiler::harness_descriptor`; authored-hook
 checks run once before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode
 have their own tree identities. The OpenCode tree is an npm-shaped package whose fixed `index.mjs`

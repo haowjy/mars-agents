@@ -34,9 +34,13 @@ pub fn read(content: &str) -> ManifestRead {
             )]);
         }
     };
-    let mut reading = read_package(content, &value);
+    // `content` parsed as TOML above, so it parses here.
+    let document = content
+        .parse::<toml_edit::DocumentMut>()
+        .expect("content that parses as TOML parses as a document");
+    let mut reading = read_package(&document, &value);
     let dependencies = if reading.fields.is_some() {
-        Dependencies::read(content, &mut reading.diagnostics)
+        Dependencies::read(&document, &mut reading.diagnostics)
     } else {
         Dependencies::default()
     };
@@ -56,7 +60,10 @@ impl ManifestRead {
     }
 }
 
-fn read_package(content: &str, value: &toml::Value) -> DefinitionRead<PackageMetadata> {
+fn read_package(
+    document: &toml_edit::DocumentMut,
+    value: &toml::Value,
+) -> DefinitionRead<PackageMetadata> {
     use crate::diagnostic::key_path;
     let Some(package) = value.get("package").and_then(toml::Value::as_table) else {
         return DefinitionRead::unread(vec![SchemaDiagnostic::new(
@@ -174,7 +181,7 @@ fn read_package(content: &str, value: &toml::Value) -> DefinitionRead<PackageMet
         }
     };
     DefinitionRead {
-        frontmatter: package_pairs(content, &mut diagnostics),
+        frontmatter: package_pairs(document, &mut diagnostics),
         fields,
         body: None,
         diagnostics,
@@ -185,14 +192,10 @@ fn read_package(content: &str, value: &toml::Value) -> DefinitionRead<PackageMet
 /// integer beyond ±(2^53 − 1), NaN, infinity, a `__proto__` key) leaves its pair out with a
 /// `toml.non-json-value` diagnostic; a datetime is its TOML text, a string.
 fn package_pairs(
-    content: &str,
+    document: &toml_edit::DocumentMut,
     diagnostics: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> Vec<(String, OrderedValue)> {
-    use toml_edit::{DocumentMut, Item};
-    // `content` already parsed as TOML, and `[package]` exists.
-    let Ok(document) = content.parse::<DocumentMut>() else {
-        return Vec::new();
-    };
+    use toml_edit::Item;
     let Some(package) = document.get("package").and_then(Item::as_table_like) else {
         return Vec::new();
     };

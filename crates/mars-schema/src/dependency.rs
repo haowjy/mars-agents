@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use indexmap::IndexMap;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{SchemaDiagnostic, Severity, child_path};
 use crate::dialect::Dialect;
@@ -38,25 +38,27 @@ pub struct Entry {
     pub unknown: BTreeMap<String, toml::Value>,
 }
 
-/// The authored shape of an entry, before the rules that need its name.
+/// The authored shape of an entry, before the rules that need its name. A consumer's `mars.toml`
+/// holds entries in this shape, so a file with a bad entry still loads and `mars remove` can repair
+/// it; [`Entry::from_raw`] applies the rules where an entry is used.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RawEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
+    pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "path_serde")]
-    path: Option<PathBuf>,
+    pub path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    subpath: Option<SourceSubpath>,
+    pub subpath: Option<SourceSubpath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    version: Option<String>,
+    pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    dialect: Option<Dialect>,
+    pub dialect: Option<Dialect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    plugin: Option<String>,
+    pub plugin: Option<String>,
     #[serde(flatten)]
-    filter: FilterConfig,
+    pub filter: FilterConfig,
     #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    unknown: BTreeMap<String, toml::Value>,
+    pub unknown: BTreeMap<String, toml::Value>,
 }
 
 /// A path is written with `/` on every host.
@@ -190,158 +192,114 @@ impl From<&Entry> for RawEntry {
     }
 }
 
+impl From<Entry> for RawEntry {
+    fn from(entry: Entry) -> Self {
+        Self::from(&entry)
+    }
+}
+
 impl Serialize for Entry {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         RawEntry::from(self).serialize(serializer)
     }
 }
 
-/// One `[dependencies]` or `[local-dependencies]` table: entries by name, in declaration order.
-/// Deserializing refuses the first entry [`Entry::from_raw`] refuses.
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct Entries<K>(IndexMap<K, Entry>);
-
-impl<K: std::hash::Hash + Eq> PartialEq for Entries<K> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<K> Entries<K> {
-    pub fn into_map(self) -> IndexMap<K, Entry> {
-        self.0
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl<K: std::hash::Hash + Eq> Default for Entries<K> {
-    fn default() -> Self {
-        Self(IndexMap::new())
-    }
-}
-
-impl<K: std::hash::Hash + Eq> std::ops::Deref for Entries<K> {
-    type Target = IndexMap<K, Entry>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<K: std::hash::Hash + Eq> std::ops::DerefMut for Entries<K> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<'a, K> IntoIterator for &'a Entries<K> {
-    type Item = (&'a K, &'a Entry);
-    type IntoIter = indexmap::map::Iter<'a, K, Entry>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
-}
-
-impl<K> IntoIterator for Entries<K> {
-    type Item = (K, Entry);
-    type IntoIter = indexmap::map::IntoIter<K, Entry>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
-impl<K: std::hash::Hash + Eq> FromIterator<(K, Entry)> for Entries<K> {
-    fn from_iter<I: IntoIterator<Item = (K, Entry)>>(iter: I) -> Self {
-        Self(iter.into_iter().collect())
-    }
-}
-
-impl<'de, K> Deserialize<'de> for Entries<K>
-where
-    K: Deserialize<'de> + AsRef<str> + std::hash::Hash + Eq,
-{
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = IndexMap::<K, RawEntry>::deserialize(deserializer)?;
-        raw.into_iter()
-            .map(|(name, raw)| {
-                let entry =
-                    Entry::from_raw(name.as_ref(), raw).map_err(serde::de::Error::custom)?;
-                Ok((name, entry))
-            })
-            .collect()
-    }
-}
-
-/// A package manifest's two dependency tables.
+/// A package manifest's two dependency tables, entries by name in declaration order.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Dependencies {
-    #[serde(skip_serializing_if = "Entries::is_empty")]
-    pub dependencies: Entries<String>,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    pub dependencies: IndexMap<String, Entry>,
     #[serde(
         rename = "local-dependencies",
-        skip_serializing_if = "Entries::is_empty"
+        skip_serializing_if = "IndexMap::is_empty"
     )]
-    pub local_dependencies: Entries<String>,
+    pub local_dependencies: IndexMap<String, Entry>,
 }
 
 impl Dependencies {
-    /// Read both tables of a `mars.toml` that parses as TOML, entries in declaration order. An
-    /// entry that breaks a rule is left out and reported as an error at `[<table>.<name>]`, and a
-    /// filter conflict is a warning on an entry that is kept; a table that is not a table leaves both out with one error.
-    pub fn read(content: &str, diagnostics: &mut Vec<SchemaDiagnostic>) -> Self {
-        #[derive(Deserialize)]
-        struct Tables {
-            #[serde(default)]
-            dependencies: IndexMap<String, toml::Value>,
-            #[serde(default, rename = "local-dependencies")]
-            local_dependencies: IndexMap<String, toml::Value>,
-        }
-        let tables = match toml::from_str::<Tables>(content) {
-            Ok(tables) => tables,
-            Err(error) => {
-                diagnostics.push(SchemaDiagnostic::new(
-                    "dependency.invalid",
-                    Severity::Error,
-                    Vec::new(),
-                    format!("`dependencies` and `local-dependencies` must be tables: {error}"),
-                ));
-                return Self::default();
-            }
+    /// Read both tables of a parsed `mars.toml`, entries in declaration order. An entry that
+    /// breaks a rule is left out and reported at `[<table>.<name>]`. A refusal in `[dependencies]`
+    /// is an error, because a dependent installs from it; `[local-dependencies]` is never
+    /// installed from by a dependent, so its refusals are warnings. A filter conflict, and a
+    /// `plugin` entry's `dialect` (ignored there), are warnings on an entry that is kept. A table
+    /// that is not a table leaves both out with one error.
+    pub fn read(
+        document: &toml_edit::DocumentMut,
+        diagnostics: &mut Vec<SchemaDiagnostic>,
+    ) -> Self {
+        let tables = ["dependencies", "local-dependencies"].map(|key| match document.get(key) {
+            None => Ok(None),
+            Some(item) => item.as_table_like().map(Some).ok_or(key),
+        });
+        let [Ok(dependencies), Ok(local_dependencies)] = tables else {
+            let bad = tables.iter().find_map(|table| table.as_ref().err());
+            diagnostics.push(SchemaDiagnostic::new(
+                "dependency.invalid",
+                Severity::Error,
+                Vec::new(),
+                format!(
+                    "`dependencies` and `local-dependencies` must be tables: `{}` is not",
+                    bad.copied().unwrap_or_default()
+                ),
+            ));
+            return Self::default();
         };
         Self {
-            dependencies: read_table("dependencies", tables.dependencies, diagnostics),
+            dependencies: read_table("dependencies", dependencies, Severity::Error, diagnostics),
             local_dependencies: read_table(
                 "local-dependencies",
-                tables.local_dependencies,
+                local_dependencies,
+                Severity::Warning,
                 diagnostics,
             ),
         }
     }
 }
 
+/// Read one table's entries. A refused entry is left out and reported at `refusal` severity.
 fn read_table(
     table: &str,
-    values: IndexMap<String, toml::Value>,
+    items: Option<&dyn toml_edit::TableLike>,
+    refusal: Severity,
     diagnostics: &mut Vec<SchemaDiagnostic>,
-) -> Entries<String> {
-    let mut entries = Entries::default();
-    for (name, value) in values {
-        let path = child_path(table, &name);
-        let parsed = value
-            .try_into::<RawEntry>()
-            .map_err(|error| ("dependency.invalid", error.to_string()))
-            .and_then(|raw| {
-                Entry::from_raw(&name, raw).map_err(|error| (error.code(), error.to_string()))
-            });
-        match parsed {
+) -> IndexMap<String, Entry> {
+    let mut entries = IndexMap::new();
+    for (name, item) in items.into_iter().flat_map(|items| items.iter()) {
+        let path = child_path(table, name);
+        let key_path = format!("{table}.{name}");
+        let raw = match item.clone().into_value() {
+            Ok(value) => RawEntry::deserialize(
+                serde::de::IntoDeserializer::<toml_edit::de::Error>::into_deserializer(value),
+            )
+            .map_err(|error| format!("{key_path}: {}", error.to_string().trim_end())),
+            Err(_) => Err(format!("{key_path}: must be a table")),
+        };
+        let mut raw = match raw {
+            Ok(raw) => raw,
+            Err(message) => {
+                diagnostics.push(SchemaDiagnostic::new(
+                    "dependency.invalid",
+                    refusal,
+                    path,
+                    message,
+                ));
+                continue;
+            }
+        };
+        if raw.plugin.is_some() && raw.dialect.take().is_some() {
+            diagnostics.push(SchemaDiagnostic::new(
+                "dependency.dialect-ignored",
+                Severity::Warning,
+                path.clone(),
+                format!("source `{name}` has both `plugin` and `dialect`; the dialect is ignored"),
+            ));
+        }
+        match Entry::from_raw(name, raw) {
             Ok(entry) => {
                 // A package's entry is read as written, and its dependents' syncs must not
                 // break on it: a conflicting filter warns, and `FilterConfig::to_mode` picks the
                 // mode it always has.
-                if let Err(conflict) = entry.filter.validate(&name) {
+                if let Err(conflict) = entry.filter.validate(name) {
                     diagnostics.push(SchemaDiagnostic::new(
                         "dependency.filter-conflict",
                         Severity::Warning,
@@ -349,11 +307,14 @@ fn read_table(
                         conflict.to_string(),
                     ));
                 }
-                entries.insert(name, entry);
+                entries.insert(name.to_owned(), entry);
             }
-            Err((code, message)) => {
-                diagnostics.push(SchemaDiagnostic::new(code, Severity::Error, path, message))
-            }
+            Err(error) => diagnostics.push(SchemaDiagnostic::new(
+                error.code(),
+                refusal,
+                path,
+                error.to_string(),
+            )),
         }
     }
     entries

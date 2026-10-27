@@ -1255,7 +1255,7 @@ fn planned_bump_entries(
                 return None;
             }
             // Only git dependencies with semver-tagged resolution can be bumped.
-            matches!(entry.source, mars_schema::dependency::Source::Git { .. }).then_some(())?;
+            entry.url.as_ref()?;
             let node = graph.nodes.get(name)?;
             let resolved_version = node.resolved_ref.version.as_ref()?;
             let resolved_tag = node.resolved_ref.version_tag.as_ref()?;
@@ -1265,7 +1265,8 @@ fn planned_bump_entries(
             if entry.version.as_deref() == Some(resolved_tag.as_str()) {
                 return None;
             }
-            let mut bumped = entry.clone();
+            let mut bumped =
+                mars_schema::dependency::Entry::from_raw(name.as_ref(), entry.clone()).ok()?;
             bumped.version = Some(resolved_tag.clone());
             Some((name.clone(), bumped))
         })

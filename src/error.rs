@@ -27,6 +27,9 @@ pub enum ConfigError {
     Filter(#[from] mars_schema::filter::FilterError),
 
     #[error(transparent)]
+    Entry(#[from] mars_schema::dependency::EntryError),
+
+    #[error(transparent)]
     PluginSelector(#[from] mars_schema::dependency::PluginSelectorError),
 
     #[error("parse error: {0}")]

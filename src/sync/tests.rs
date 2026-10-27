@@ -153,12 +153,17 @@ fn path_dependency_entry(path: &std::path::Path) -> Entry {
     Entry::at_path(path.to_path_buf())
 }
 
-fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> Entry {
+fn git_dependency_entry(
+    url: &str,
+    version: &str,
+    filter: FilterConfig,
+) -> mars_schema::dependency::RawEntry {
     Entry {
         version: Some(version.to_string()),
         filter,
         ..Entry::git(url)
     }
+    .into()
 }
 
 fn create_sync_plan(sync_diff: &diff::SyncDiff, options: &SyncOptions) -> plan::SyncPlan {
@@ -614,7 +619,7 @@ fn planned_bump_entries_bump_all_outdated_pins() {
     );
     config.dependencies.insert(
         "floating".into(),
-        Entry::git("https://example.com/floating.git"),
+        Entry::git("https://example.com/floating.git").into(),
     );
 
     let graph = graph_with_versions(&[

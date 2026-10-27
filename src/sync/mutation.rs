@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use crate::config::{Config, LocalConfig, OverrideEntry};
 use crate::error::{ConfigError, MarsError};
 use crate::types::SourceName;
-use mars_schema::dependency::Entry;
+use mars_schema::dependency::{Entry, RawEntry};
 use mars_schema::filter::FilterConfig;
 use mars_schema::names::{ItemName, RenameMap};
 
@@ -140,7 +140,9 @@ fn apply_dependency_upsert(
         let old_filter = existing.filter.clone();
 
         // Merge: update location fields, preserve user customizations
-        existing.source = entry.source.clone();
+        let location = RawEntry::from(entry);
+        existing.url = location.url;
+        existing.path = location.path;
         existing.version = entry.version.clone();
         existing.plugin = entry.plugin.clone();
         // Atomic filter replacement: when any filter field is set on the
@@ -164,7 +166,9 @@ fn apply_dependency_upsert(
             new_filter: existing.filter.clone(),
         }
     } else {
-        config.dependencies.insert(name.clone(), entry.clone());
+        config
+            .dependencies
+            .insert(name.clone(), RawEntry::from(entry));
         DependencyUpsertChange {
             name: name.clone(),
             already_exists: false,

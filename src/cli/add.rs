@@ -245,6 +245,8 @@ fn parse_dependency_specifier(
     };
     let subpath = merge_subpath(parsed.subpath.clone(), explicit_subpath)?;
     let name = derive_dependency_name(&parsed, subpath.as_ref(), plugin)?;
+    // The entry is built here, not read through `Entry::from_raw`, so apply its plugin rule before
+    // the entry is written to `mars.toml`.
     mars_schema::dependency::validate_plugin_selector(&name, plugin, subpath.as_ref(), None)
         .map_err(crate::error::ConfigError::from)?;
 

@@ -10,7 +10,7 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
 use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
-use mars_schema::dependency::{Entries, Entry, Source, validate_plugin_selector};
+use mars_schema::dependency::{Entry, RawEntry, Source};
 use mars_schema::dialect::Dialect;
 use mars_schema::filter::FilterMode;
 use mars_schema::manifest::ManifestRead;
@@ -40,7 +40,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin: Option<toml::Value>,
     #[serde(default)]
-    pub dependencies: Entries<SourceName>,
+    pub dependencies: IndexMap<SourceName, RawEntry>,
     /// Local-only dependencies — installed when syncing this repo but NOT
     /// exported to consumers via manifest. Use for dev tooling, prompt
     /// authoring helpers, etc.
@@ -49,7 +49,7 @@ pub struct Config {
         skip_serializing_if = "IndexMap::is_empty",
         rename = "local-dependencies"
     )]
-    pub local_dependencies: Entries<SourceName>,
+    pub local_dependencies: IndexMap<SourceName, RawEntry>,
     #[serde(default)]
     pub settings: Settings,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
@@ -727,7 +727,7 @@ pub(crate) fn parse_prepared_manifest(
     };
     Ok(Some(Manifest {
         package,
-        dependencies: reading.dependencies.dependencies.clone().into_map(),
+        dependencies: reading.dependencies.dependencies.clone(),
         models: parsed.models,
     }))
 }
@@ -1175,6 +1175,10 @@ pub fn merge_with_root(
             .into());
         }
 
+        // The file holds entries as written; the rules every reader shares apply here, where
+        // an entry is used, so `mars remove` can still repair a bad one.
+        let entry = Entry::from_raw(name.as_ref(), entry.clone()).map_err(ConfigError::from)?;
+
         let base_spec = match &entry.source {
             Source::Git { url } => SourceSpec::Git(GitSpec {
                 url: SourceUrl::from(url.as_str()),
@@ -1182,14 +1186,6 @@ pub fn merge_with_root(
             }),
             Source::Path { path } => SourceSpec::Path(path.clone()),
         };
-
-        validate_plugin_selector(
-            name.as_ref(),
-            entry.plugin.as_deref(),
-            entry.subpath.as_ref(),
-            entry.dialect,
-        )
-        .map_err(ConfigError::from)?;
 
         // Validate filter combinations
         entry
@@ -1307,7 +1303,7 @@ fn migrate_legacy_source_urls(config: &mut Config) {
         .values_mut()
         .chain(config.local_dependencies.values_mut())
     {
-        if let Source::Git { url } = &mut dep.source
+        if let Some(url) = &mut dep.url
             && should_upgrade_legacy_git_url(url)
         {
             *url = format!("https://{url}");
@@ -1353,8 +1349,11 @@ version = "v1.0"
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.dependencies.len(), 1);
         let entry = &config.dependencies["base"];
-        assert_eq!(entry.url(), Some("https://github.com/org/base.git"));
-        assert!(entry.path().is_none());
+        assert_eq!(
+            entry.url.as_deref(),
+            Some("https://github.com/org/base.git")
+        );
+        assert!(entry.path.as_deref().is_none());
         assert_eq!(entry.version.as_deref(), Some("v1.0"));
     }
 
@@ -1366,8 +1365,8 @@ path = "../my-agents"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let entry = &config.dependencies["local"];
-        assert!(entry.url().is_none());
-        assert_eq!(entry.path(), Some(Path::new("../my-agents")));
+        assert!(entry.url.as_deref().is_none());
+        assert_eq!(entry.path.as_deref(), Some(Path::new("../my-agents")));
     }
 
     #[test]
@@ -1673,7 +1672,10 @@ exclude = ["reviewer"]
 [dependencies.empty]
 version = "v1.0"
 "#;
-        let err = toml::from_str::<Config>(toml_str).unwrap_err().to_string();
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let err = merge_with_root(config, LocalConfig::default(), Path::new("."))
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("neither"),
             "error should mention 'neither': {err}"
@@ -1687,7 +1689,10 @@ version = "v1.0"
 url = "https://github.com/org/repo.git"
 path = "/local/path"
 "#;
-        let err = toml::from_str::<Config>(toml_str).unwrap_err().to_string();
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let err = merge_with_root(config, LocalConfig::default(), Path::new("."))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("both"), "error should mention 'both': {err}");
     }
 
@@ -1726,11 +1731,11 @@ harness_order = ["pi", "opencode", "codex"]
         );
         assert_eq!(reloaded.dependencies.len(), 2);
         assert_eq!(
-            reloaded.dependencies["base"].url(),
+            reloaded.dependencies["base"].url.as_deref(),
             Some("https://github.com/org/base.git")
         );
         assert_eq!(
-            reloaded.dependencies["local"].path(),
+            reloaded.dependencies["local"].path.as_deref(),
             Some(Path::new("../local-agents"))
         );
         assert_eq!(
@@ -1762,7 +1767,7 @@ url = "github.com/org/base"
 
         let config = load(dir.path()).unwrap();
         assert_eq!(
-            config.dependencies["base"].url(),
+            config.dependencies["base"].url.as_deref(),
             Some("https://github.com/org/base")
         );
     }
@@ -1778,7 +1783,7 @@ url = "git@github.com:org/base.git"
 
         let config = load(dir.path()).unwrap();
         assert_eq!(
-            config.dependencies["base"].url(),
+            config.dependencies["base"].url.as_deref(),
             Some("git@github.com:org/base.git")
         );
     }
@@ -2530,13 +2535,14 @@ future_key = "allowed"
     fn merge_with_empty_local() {
         let config = Config {
             dependencies: {
-                let mut m = Entries::default();
+                let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
                     mars_schema::dependency::Entry {
                         version: Some("v1.0".into()),
                         ..mars_schema::dependency::Entry::git("https://github.com/org/base.git")
-                    },
+                    }
+                    .into(),
                 );
                 m
             },
@@ -2560,13 +2566,14 @@ future_key = "allowed"
     fn merge_override_replaces_with_path() {
         let config = Config {
             dependencies: {
-                let mut m = Entries::default();
+                let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
                     mars_schema::dependency::Entry {
                         version: Some("v1.0".into()),
                         ..mars_schema::dependency::Entry::git("https://github.com/org/base.git")
-                    },
+                    }
+                    .into(),
                 );
                 m
             },
@@ -2605,14 +2612,15 @@ future_key = "allowed"
 
         let config = Config {
             dependencies: {
-                let mut m = Entries::default();
+                let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
                     mars_schema::dependency::Entry {
                         subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
                         version: Some("v1.0".into()),
                         ..mars_schema::dependency::Entry::git("https://github.com/org/base.git")
-                    },
+                    }
+                    .into(),
                 );
                 m
             },
@@ -2654,10 +2662,10 @@ future_key = "allowed"
     fn merge_all_filter_mode() {
         let config = Config {
             dependencies: {
-                let mut m = Entries::default();
+                let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
-                    mars_schema::dependency::Entry::git("https://github.com/org/base.git"),
+                    mars_schema::dependency::Entry::git("https://github.com/org/base.git").into(),
                 );
                 m
             },
@@ -2739,7 +2747,7 @@ targets = [".claude"]
             Some("sample")
         );
         assert_eq!(
-            reloaded.dependencies["base"].url(),
+            reloaded.dependencies["base"].url.as_deref(),
             Some("https://github.com/org/base.git")
         );
         assert_eq!(
@@ -2911,10 +2919,10 @@ exclude = ["deprecated"]
     fn only_skills_false_not_serialized() {
         let config = Config {
             dependencies: {
-                let mut m = Entries::default();
+                let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
-                    mars_schema::dependency::Entry::git("https://github.com/org/base.git"),
+                    mars_schema::dependency::Entry::git("https://github.com/org/base.git").into(),
                 );
                 m
             },
@@ -3253,7 +3261,7 @@ skills = ["prompt-helper"]
         assert_eq!(config.local_dependencies.len(), 1);
         assert!(config.local_dependencies.contains_key("prompter"));
         assert_eq!(
-            config.local_dependencies["prompter"].url(),
+            config.local_dependencies["prompter"].url.as_deref(),
             Some("https://github.com/org/prompter.git")
         );
     }
@@ -3358,10 +3366,10 @@ skills = ["prompt-helper"]
 
     #[test]
     fn path_with_backslashes_serializes_as_forward_slashes() {
-        let mut deps = Entries::default();
+        let mut deps = IndexMap::new();
         deps.insert(
             SourceName::from("test-src"),
-            Entry::at_path("C:\\Users\\dev\\src"),
+            Entry::at_path("C:\\Users\\dev\\src").into(),
         );
         let config = Config {
             dependencies: deps,
@@ -3378,7 +3386,7 @@ skills = ["prompt-helper"]
         );
         let reparsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(
-            reparsed.dependencies["test-src"].path().unwrap(),
+            reparsed.dependencies["test-src"].path.as_deref().unwrap(),
             Path::new("C:/Users/dev/src"),
         );
     }

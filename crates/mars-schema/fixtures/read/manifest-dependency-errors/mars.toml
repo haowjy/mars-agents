@@ -25,3 +25,7 @@ url = 7
 
 [dependencies.fine]
 path = "../fine"
+
+[local-dependencies.local-both]
+url = "https://example.com/a.git"
+path = "../a"

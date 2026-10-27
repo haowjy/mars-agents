@@ -208,14 +208,8 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-use mars_schema::dependency::Source;
-
-fn infer_origin(dep: &mars_schema::dependency::Entry) -> String {
-    match dep.source {
-        Source::Git { .. } => "git",
-        Source::Path { .. } => "path",
-    }
-    .to_string()
+fn infer_origin(dep: &mars_schema::dependency::RawEntry) -> String {
+    if dep.url.is_some() { "git" } else { "path" }.to_string()
 }
 
 fn action_label(action: &crate::sync::apply::ActionTaken) -> &'static str {
@@ -273,15 +267,15 @@ mod tests {
 
     #[test]
     fn export_dependency_origin_git() {
-        use mars_schema::dependency::Entry;
-        let dep = Entry::git("https://github.com/org/repo");
+        use mars_schema::dependency::{Entry, RawEntry};
+        let dep = RawEntry::from(&Entry::git("https://github.com/org/repo"));
         assert_eq!(infer_origin(&dep), "git");
     }
 
     #[test]
     fn export_dependency_origin_path() {
-        use mars_schema::dependency::Entry;
-        let dep = Entry::at_path(std::path::PathBuf::from("../local-pkg"));
+        use mars_schema::dependency::{Entry, RawEntry};
+        let dep = RawEntry::from(&Entry::at_path(std::path::PathBuf::from("../local-pkg")));
         assert_eq!(infer_origin(&dep), "path");
     }
 

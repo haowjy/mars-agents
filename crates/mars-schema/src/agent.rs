@@ -815,8 +815,7 @@ fn removed_permission(value: &Value) -> crate::diagnostic::SchemaDiagnostic {
             key_path("permission"),
             "`permission` was removed; Flow reads only `read` or `edit`, at \
              `harness-overrides.flow.permission`. Grant what it allowed with \
-             `tools: {<capability>: allow}`, or set it for a harness that defines that value, at \
-             `harness-overrides.<harness>.permission`",
+             `tools: {<capability>: allow}`",
         ),
     }
 }

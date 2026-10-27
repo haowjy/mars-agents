@@ -48,8 +48,11 @@ pub(crate) fn apply_filter(
                 .filter(|item| match item.id.kind {
                     ItemKind::Agent => agents.contains(&item.id.name),
                     ItemKind::Skill => wanted_skills.contains(&item.id.name),
-                    // Not selectable through Include.
-                    ItemKind::BootstrapDoc | ItemKind::Hook | ItemKind::McpServer => false,
+                    // Package-level bootstrap docs travel with any requested part of the package,
+                    // as the resolver seeds them.
+                    ItemKind::BootstrapDoc => true,
+                    // Hooks and MCP servers are not selectable through Include.
+                    ItemKind::Hook | ItemKind::McpServer => false,
                 })
                 .cloned()
                 .collect())

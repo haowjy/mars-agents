@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-10-27
+
 ### Fixed
 - `mars sync` no longer fails with `Not a directory` on a dependency read without a `mars.toml` (a foreign skill tree, a `subpath` into another repo) whose `skills/` holds a file such as `__init__.py` or `README.md`; the file is ignored, as in 0.18.
 - `mars check PATH --root DIR` checks `PATH` instead of failing, so `meridian mars check <package>` works again.

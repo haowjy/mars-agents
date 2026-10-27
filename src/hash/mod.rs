@@ -303,4 +303,27 @@ mod tests {
 
         assert_eq!(hash1, hash2);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn dir_hash_rejects_a_fifo_without_opening_it() {
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "content").unwrap();
+        let fifo = skill_dir.join("events");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let error = compute_dir_hash(&skill_dir).unwrap_err();
+        assert!(
+            error.to_string().contains(&fifo.display().to_string()),
+            "error must name the FIFO, got: {error}"
+        );
+    }
 }

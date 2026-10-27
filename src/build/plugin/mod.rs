@@ -28,6 +28,7 @@ use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, Lossin
 use crate::error::{ConfigError, MarsError};
 use crate::resolve::{PublishLens, ResolveOptions};
 use crate::types::{RenameMap, SourceId, SourceName};
+use mars_schema::plugin_metadata::{PluginSentinel, ResolvedDependency, SENTINEL_SCHEMA_VERSION};
 
 use metadata::PackageMetadata;
 
@@ -317,8 +318,8 @@ fn stage_plugin_inner(
                 return Err(error);
             }
             Ok((
-                crate::plugin_metadata::PluginSentinel {
-                    schema_version: crate::plugin_metadata::SENTINEL_SCHEMA_VERSION,
+                PluginSentinel {
+                    schema_version: SENTINEL_SCHEMA_VERSION,
                     mars_version: crate::plugin_metadata::MARS_VERSION.to_string(),
                     plugin_name: plugin_name.clone(),
                     version: metadata.version.clone(),
@@ -668,7 +669,7 @@ fn canonical_json(value: serde_json::Value) -> serde_json::Value {
 fn resolved_dependency_identities(
     graph: &crate::resolve::ResolvedGraph,
     root_source: &SourceName,
-) -> std::collections::BTreeMap<String, crate::plugin_metadata::ResolvedDependency> {
+) -> std::collections::BTreeMap<String, ResolvedDependency> {
     let mut dependencies = std::collections::BTreeMap::new();
     for source_name in &graph.order {
         if source_name == root_source {
@@ -692,7 +693,7 @@ fn resolved_dependency_identities(
         }
         dependencies.insert(
             source_name.to_string(),
-            crate::plugin_metadata::ResolvedDependency { version, commit },
+            ResolvedDependency { version, commit },
         );
     }
     dependencies

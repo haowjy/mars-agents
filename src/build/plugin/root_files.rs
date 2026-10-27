@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::plugin_metadata::SENTINEL_FILE;
+use mars_schema::plugin_metadata::SENTINEL_FILE;
 
 use super::PluginBuildDestination;
 use super::inspect::{self, PluginRootFileState};

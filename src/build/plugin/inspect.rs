@@ -3,7 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::plugin_metadata::{MARS_VERSION, PluginSentinel, SENTINEL_FILE};
+use crate::plugin_metadata::MARS_VERSION;
+use mars_schema::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
 use super::spec::{PluginHarnessSpec, harness_specs, tree_for_root_file};
 use super::{configured_output_path, plugin_inputs_hash};

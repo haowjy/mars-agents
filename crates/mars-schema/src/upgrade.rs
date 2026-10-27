@@ -95,14 +95,16 @@ fn rewrite(
     };
     let minimally_edited = edit_top_level_blocks(text, original.mapping(), frontmatter.mapping())
         .and_then(|edited| {
-            Frontmatter::parse(&edited)
+            Frontmatter::parse(&edited.text)
                 .ok()
                 .filter(|parsed| parsed.mapping() == frontmatter.mapping())
                 .map(|_| edited)
         });
     Ok(UpgradeResult {
-        fully_rewritten: minimally_edited.is_none(),
-        text: minimally_edited.unwrap_or(fallback),
+        fully_rewritten: minimally_edited
+            .as_ref()
+            .is_none_or(|edited| edited.re_rendered),
+        text: minimally_edited.map_or(fallback, |edited| edited.text),
         diagnostics,
         edited_paths,
     })
@@ -243,9 +245,16 @@ struct SourceBlock<'a> {
     start: usize,
 }
 
+/// A frontmatter edited in place, and whether a block had to be re-rendered from its parsed
+/// value, which drops the comments and flow style written inside it.
+struct Edited {
+    text: String,
+    re_rendered: bool,
+}
+
 /// Rewrite only changed top-level blocks. Complex top-level YAML deliberately returns `None` so
 /// the caller has one explicit, verified full-serialization fallback.
-fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Option<String> {
+fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Option<Edited> {
     let (prefix, yaml, suffix) = frontmatter_source(text)?;
     let blocks = source_blocks(yaml)?;
     let before_keys = before
@@ -258,6 +267,7 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
 
     let render = |key: &str, value: &Value| with_line_ending_of(text, render_block(key, value));
     let mut output = String::with_capacity(text.len());
+    let mut re_rendered = false;
     output.push_str(prefix);
     let first_key_offset = blocks.first().map_or(yaml.len(), |block| block.start);
     output.push_str(&yaml[..first_key_offset]);
@@ -272,7 +282,13 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
         } else if let Some(after_value) = after.get(Value::String(block.key.to_string())) {
             if before_value == after_value {
                 output.push_str(block.text);
+            } else if let Some(grown) = grown_in_place(&block, before_value, after_value) {
+                output.push_str(&grown);
             } else {
+                // Re-rendering the block loses what the author wrote inside it, which only a
+                // consumer namespace entry's own repair needs to say.
+                re_rendered |= block.key == "harness-overrides"
+                    && changes_namespace_entry(before_value, after_value);
                 output.push_str(&render(block.key, after_value));
             }
             emitted.push(block.key);
@@ -290,7 +306,81 @@ fn edit_top_level_blocks(text: &str, before: &Mapping, after: &Mapping) -> Optio
         output.push_str(&render(key, value));
     }
     output.push_str(suffix);
-    Some(output)
+    Some(Edited {
+        text: output,
+        re_rendered,
+    })
+}
+
+/// Whether `after` adds or changes an entry a consumer namespace owns: the entries `mars migrate`
+/// writes, whose repair re-renders the block when it cannot be grown in place.
+fn changes_namespace_entry(before: &Value, after: &Value) -> bool {
+    let (Value::Mapping(before), Value::Mapping(after)) = (before, after) else {
+        return false;
+    };
+    after.iter().any(|(key, value)| {
+        key.as_str()
+            .is_some_and(|key| crate::harness::RESERVED_CONSUMER_NAMESPACES.contains(&key))
+            && before.get(key) != Some(value)
+    })
+}
+
+/// `block` with the entries `after` adds, appended as text, so the comments and flow style the
+/// author wrote in the entries already there survive. `None` when the block cannot take text that
+/// simply: it is written in flow style, or an entry it has changed.
+fn grown_in_place(block: &SourceBlock<'_>, before: &Value, after: &Value) -> Option<String> {
+    let (Value::Mapping(before), Value::Mapping(after)) = (before, after) else {
+        return None;
+    };
+    if before
+        .iter()
+        .any(|(key, value)| after.get(key) != Some(value))
+    {
+        return None;
+    }
+    let added = after
+        .iter()
+        .filter(|(key, _)| before.get(key).is_none())
+        .collect::<Vec<_>>();
+    let indent = (!added.is_empty()).then(|| child_indent(block)).flatten()?;
+    let mut grown = block.text.to_string();
+    if !grown.ends_with('\n') {
+        grown.push('\n');
+    }
+    for (key, value) in added {
+        let rendered = render_block(key.as_str()?, value);
+        // The block's own indentation is the author's; serde's two spaces a level become theirs.
+        let indented = rendered
+            .lines()
+            .map(|line| {
+                let depth = line.len() - line.trim_start().len();
+                format!("{}{}", indent.repeat(depth / 2 + 1), line.trim_start())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        grown.push_str(&indented);
+        grown.push('\n');
+    }
+    Some(with_line_ending_of(block.text, grown))
+}
+
+/// The indentation of `block`'s own children in its source text, and `None` when it has none to
+/// line up with: a flow mapping, or a value that is not a mapping at all.
+fn child_indent<'a>(block: &'a SourceBlock<'a>) -> Option<&'a str> {
+    let first = block.text.split_inclusive('\n').next()?;
+    let rest = first[block.key_end + 1..].trim_end_matches(['\r', '\n']);
+    if !(rest.trim().is_empty() || rest.trim_start().starts_with('#')) {
+        return None;
+    }
+    for line in block.text.split_inclusive('\n').skip(1) {
+        let content = line.trim_end_matches(['\r', '\n']);
+        if content.trim().is_empty() || content.trim_start().starts_with('#') {
+            continue;
+        }
+        let indent = content.len() - content.trim_start().len();
+        return (indent > 0).then(|| &content[..indent]);
+    }
+    None
 }
 
 fn renamed_key<'a>(old: &str, before: &Mapping, after: &'a Mapping) -> Option<&'a str> {

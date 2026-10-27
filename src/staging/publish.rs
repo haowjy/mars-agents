@@ -70,7 +70,7 @@ fn flat_skill_excluded_paths(package_root: &Path) -> Result<Vec<PathBuf>, MarsEr
         .iter()
         .chain(TOOLING_DIRECTORIES)
         .map(PathBuf::from)
-        .chain(crate::plugin_metadata::generated_root_paths().map(PathBuf::from))
+        .chain(mars_schema::plugin_metadata::generated_root_paths().map(PathBuf::from))
         .collect::<Vec<_>>();
     for entry in fs::read_dir(package_root)? {
         let entry = entry?;

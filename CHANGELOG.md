@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A generated-plugin sentinel with a Windows-absolute path entry (`C:\x`, `\\server\x`, `/x`) is rejected on every host, and `root_files_previous` entries are validated like `root_files`. `mars-schema` now owns the one generated root-file table and sentinel validators that the binary and `mars check` use, so a new plugin tree cannot be accepted by one copy and refused by the other. The binary reports the reason `mars-schema` gives, which names the offending entry, instead of testing the rules a second time.
+
 ## [0.20.3-rc.1] - 2026-10-27
 
 ### Fixed

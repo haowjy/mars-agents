@@ -40,7 +40,7 @@ pub mod permission_set;
 pub mod diagnostic;
 pub mod edit;
 pub mod package;
-mod plugin_metadata;
+pub mod plugin_metadata;
 pub mod prepare;
 mod set_aside;
 pub mod upgrade;

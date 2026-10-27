@@ -9,11 +9,11 @@ use crate::error::MarsError;
 use crate::target::opencode::{McpServer, OpencodeAdapter};
 use crate::target::{ConfigEntry, TargetAdapter};
 use mars_schema::HarnessId;
+use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
 
 use super::super::metadata::PackageMetadata;
 use super::super::spec::{Finish, PluginRoot, RootFile, TreeProfile};
 use super::WrittenTreeContents;
-use crate::plugin_metadata::OPENCODE_ROOT_FILE;
 
 const TARGET_ROOT: &str = ".opencode";
 const INDEX_TEMPLATE: &str = include_str!("../opencode/index.mjs");

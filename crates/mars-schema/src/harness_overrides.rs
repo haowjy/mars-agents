@@ -461,8 +461,8 @@ struct NamespaceSpans<'a> {
     frames: Vec<Frame>,
     /// Depth of the `harness-overrides` mapping, while one is open.
     overrides_depth: Option<usize>,
-    /// Byte offset where the entry being read starts.
-    open: Option<usize>,
+    /// Byte offset where the entry being read starts, and the column of its key.
+    open: Option<(usize, usize)>,
     spans: Vec<(usize, usize)>,
     /// Scanner positions are character indices; the spans are byte offsets.
     char_to_byte: Vec<usize>,
@@ -482,29 +482,35 @@ impl NamespaceSpans<'_> {
             && self.frames.last().is_some_and(|frame| frame.expect_key)
     }
 
-    /// The open entry ends where the next thing Mars reads begins. The spacing and the top-level
-    /// comments past its last line are not its own.
+    /// The byte offset at which the line holding `byte` starts.
+    fn line_start(&self, byte: usize) -> usize {
+        self.yaml[..byte]
+            .rfind('\n')
+            .map_or(0, |newline| newline + 1)
+    }
+
+    /// The open entry ends where the next thing Mars reads begins. The spacing and the comments a
+    /// later key owns are not its own: a comment indented at or left of the entry's key belongs to
+    /// that key, while one indented further in is the entry's own text.
     fn close(&mut self, end: usize) {
-        let Some(start) = self.open.take() else {
+        let Some((start, column)) = self.open.take() else {
             return;
         };
         self.spans
-            .push((start, self.trimmed_end(start, end).max(start)));
+            .push((start, self.trimmed_end(start, column, end).max(start)));
     }
 
-    fn trimmed_end(&self, start: usize, end: usize) -> usize {
+    fn trimmed_end(&self, start: usize, column: usize, end: usize) -> usize {
         let bytes = self.yaml.as_bytes();
         let mut stop = end;
         loop {
             while stop > start && bytes[stop - 1].is_ascii_whitespace() {
                 stop -= 1;
             }
-            let line_start = self.yaml[..stop]
-                .rfind('\n')
-                .map_or(0, |newline| newline + 1);
-            // A comment at the document's left edge never belongs to an indented entry, so it is
-            // still scanned; one indented inside the entry is the entry's own.
-            if line_start <= start || !self.yaml[line_start..stop].starts_with('#') {
+            let line_start = self.line_start(stop);
+            let line = &self.yaml[line_start..stop];
+            let indent = line.len() - line.trim_start_matches(' ').len();
+            if !line[indent..].starts_with('#') || indent > column {
                 return stop;
             }
             stop = line_start;
@@ -562,7 +568,7 @@ impl MarkedEventReceiver for NamespaceSpans<'_> {
                 }
                 self.node(Some(value));
                 if namespace {
-                    self.open = Some(byte);
+                    self.open = Some((byte, byte - self.line_start(byte)));
                 }
             }
             Event::Alias(_) => {

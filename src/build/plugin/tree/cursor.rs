@@ -23,6 +23,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     dropped_agent_fields: &[],
     approximate_lowers_to_dropped: true,
     agents: Some(super::keep_lowered),
+    agent_files: true,
     native_model_aliases: &[],
     plugin_root: PluginRoot::Token("${CURSOR_PLUGIN_ROOT}"),
     check_hook,

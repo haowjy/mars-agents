@@ -22,8 +22,16 @@ pub(in crate::build::plugin) mod claude;
 pub(in crate::build::plugin) mod cursor;
 pub(in crate::build::plugin) mod opencode;
 
+/// An agent after native lowering and plugin policy, before any serialization: Claude and
+/// Cursor write `content` to `agents/<name>.md`; OpenCode turns it into plugin data.
+pub(super) struct LoweredAgent {
+    pub name: String,
+    pub content: String,
+}
+
 pub(super) struct WrittenTreeContents<'a> {
     pub skills: &'a [String],
+    pub agents: &'a [LoweredAgent],
     pub hooks: &'a [&'a crate::compiler::hooks::ParsedHookItem],
     pub config_entries: &'a [ConfigEntry],
 }
@@ -269,19 +277,20 @@ pub(super) fn write_tree(
 
     let mut summary = PluginComponents::default();
     let mut model_fallbacks = ModelFallbackCounts::default();
+    let mut agents = Vec::new();
     for item in input.target.items.values() {
         match item.id.kind {
             ItemKind::Agent => {
                 if let Some(agent_policy) = profile.agents {
-                    let fallback = write_agent(
-                        root,
-                        item,
-                        input,
-                        profile,
-                        agent_policy,
-                        &installed_skills,
-                        diag,
-                    )?;
+                    let (agent, fallback) =
+                        lower_agent(item, input, profile, agent_policy, &installed_skills, diag)?;
+                    if profile.agent_files {
+                        crate::fs::atomic_write(
+                            &root.join("agents").join(format!("{}.md", agent.name)),
+                            agent.content.as_bytes(),
+                        )?;
+                    }
+                    agents.push(agent);
                     model_fallbacks.record(fallback);
                     summary.agents += 1;
                 }
@@ -338,6 +347,7 @@ pub(super) fn write_tree(
     let hook_items = hooks.iter().map(|(_, hook)| *hook).collect::<Vec<_>>();
     let contents = WrittenTreeContents {
         skills: &skill_names,
+        agents: &agents,
         hooks: &hook_items,
         config_entries: &entries,
     };
@@ -402,15 +412,14 @@ impl ModelFallbackCounts {
     }
 }
 
-fn write_agent(
-    root: &Path,
+fn lower_agent(
     item: &TargetItem,
     input: &TreeInput<'_>,
     tree_profile: &TreeProfile,
     agent_policy: AgentPolicy,
     installed_skills: &IndexMap<String, String>,
     diag: &mut DiagnosticCollector,
-) -> Result<Option<ModelFallbackReason>, MarsError> {
+) -> Result<(LoweredAgent, Option<ModelFallbackReason>), MarsError> {
     let authored_content = std::fs::read_to_string(&item.source_path)?;
     let content = item.rewritten_content.clone().unwrap_or(authored_content);
     // `check_agent_source` already reported the file's diagnostics, so only a file with no
@@ -501,9 +510,11 @@ fn write_agent(
     let lowered = agent_policy(&lowered, &source, item, diag)?;
     let qualified = qualify_body_references(&lowered, &body_refs)?;
 
-    let path = root.join("agents").join(format!("{}.md", item.id.name));
-    crate::fs::atomic_write(&path, qualified.as_bytes())?;
-    Ok(model.fallback)
+    let agent = LoweredAgent {
+        name: item.id.name.to_string(),
+        content: qualified,
+    };
+    Ok((agent, model.fallback))
 }
 
 fn qualify_agent_skills(

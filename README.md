@@ -42,7 +42,7 @@ where a cell explicitly says docs-only.
 |---|---|---|---|---|---|
 | Install from catalog | live (local marketplace) | live (local marketplace) | live (local marketplace) | docs-only (account required) | live (`git+file://`) |
 | Skills | live (own and dependency skills) | live (own and dependency skills) | live, with `resources/` | docs-only (schema validation only) | live, with `resources/` |
-| Agents | live (subagent preload) | n/a (impossible) | live (subagent with native skill preload) | docs-only (schema validation only) | live (`<plugin>:<agent>` spawned as a subagent) |
+| Agents | live (subagent preload) | n/a (impossible) | live (subagent with native skill preload) | docs-only (schema validation only) | live (`<plugin>:<agent>` spawned as a subagent; `task: deny` resolved as `subagent` deny) |
 | Hooks | live (`${CLAUDE_PLUGIN_ROOT}`, CommonJS script) | live (built tree, CommonJS script) | live (`CLAUDE_PLUGIN_ROOT`) | docs-only (schema validation only) | live (git install, CommonJS script) |
 | MCP | live (`env_vars` pass-through) | live (`env_vars` pass-through) | live (`env_vars` pass-through) | docs-only (schema validation only) | live (`<plugin>:<server>`) |
 <!-- END GENERATED PLUGIN SUPPORT -->

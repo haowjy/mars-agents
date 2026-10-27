@@ -33,10 +33,12 @@ registers skills, agents, and MCP servers and imports every targeted hook fragme
 data URL. A build warning reports fragments with no recognizable default export, but runtime
 isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
 and one fragment's load or setup failure does not block later hooks. OpenCode loads no agent files from a
-plugin, so the tree's OpenCode-lowered `agents/<name>.md` (the same lowering sync uses) is read back
-into `DATA.agents` and the directory deleted; `index.mjs` registers each as `<plugin>:<agent>` through
-`ctx.agent`. `Agent.Info` has no skills field, so preloaded skills stay body guidance and the agent gets
-an `allow` rule for the plugin's `skill` resources. The OpenCode tree's generated
+plugin, so the tree's agents (lowered by the same lowering sync uses, carried in memory as
+`WrittenTreeContents::agents`) become `DATA.agents`; Claude and Cursor write the same lowered
+value to `agents/<name>.md`. `index.mjs` registers each as `<plugin>:<agent>` through `ctx.agent`.
+The lowering emits v1 permission keys that OpenCode's file loader translates but `ctx.agent` does
+not, so `opencode_v2_action` (`mars-schema` `tool_natives`) translates them once. `Agent.Info` has
+no skills field, so preloaded skills stay body guidance. The OpenCode tree's generated
 `DATA` block carries both authored directory tokens, so `index.mjs` has no token literal of its
 own; Rust remains the only owner of the strings.
 

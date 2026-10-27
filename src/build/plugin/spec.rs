@@ -199,6 +199,9 @@ pub(super) struct TreeProfile {
     pub(super) dropped_agent_fields: &'static [&'static str],
     pub(super) approximate_lowers_to_dropped: bool,
     pub(super) agents: Option<AgentPolicy>,
+    /// Whether lowered agents are written to `agents/<name>.md`. A tree whose `finish` consumes
+    /// `WrittenTreeContents::agents` instead sets this false.
+    pub(super) agent_files: bool,
     pub(super) native_model_aliases: &'static [&'static str],
     pub(super) plugin_root: PluginRoot,
     pub(super) check_hook: HookCheck,
@@ -345,7 +348,7 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
             skills: verification(VerificationLevel::Live, ", with `resources/`"),
             agents: Some(verification(
                 VerificationLevel::Live,
-                " (`<plugin>:<agent>` spawned as a subagent)",
+                " (`<plugin>:<agent>` spawned as a subagent; `task: deny` resolved as `subagent` deny)",
             )),
             hooks: verification(VerificationLevel::Live, " (git install, CommonJS script)"),
             mcp: verification(VerificationLevel::Live, " (`<plugin>:<server>`)"),

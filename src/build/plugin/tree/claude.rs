@@ -26,6 +26,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     dropped_agent_fields: &["hooks", "mcpServers", "permissionMode", "initialPrompt"],
     approximate_lowers_to_dropped: false,
     agents: Some(apply_agent_policy),
+    agent_files: true,
     native_model_aliases: NATIVE_MODEL_ALIASES,
     plugin_root: PluginRoot::Token("${CLAUDE_PLUGIN_ROOT}"),
     check_hook,

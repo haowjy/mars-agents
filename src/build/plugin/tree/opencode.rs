@@ -13,7 +13,7 @@ use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
 
 use super::super::metadata::PackageMetadata;
 use super::super::spec::{Finish, PluginRoot, RootFile, TreeProfile};
-use super::WrittenTreeContents;
+use super::{LoweredAgent, WrittenTreeContents};
 
 const TARGET_ROOT: &str = ".opencode";
 const INDEX_TEMPLATE: &str = include_str!("../opencode/index.mjs");
@@ -28,6 +28,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     dropped_agent_fields: &[],
     approximate_lowers_to_dropped: false,
     agents: Some(super::keep_lowered),
+    agent_files: false,
     native_model_aliases: &[],
     plugin_root: PluginRoot::RuntimeResolved,
     check_hook,
@@ -181,7 +182,11 @@ fn write_package(
         .collect::<Result<Vec<_>, _>>()?;
     skills.sort_by(|left, right| left.directory.cmp(&right.directory));
 
-    let agents = agent_data(root, &metadata.name, diag)?;
+    let agents = contents
+        .agents
+        .iter()
+        .map(|agent| agent_data(&metadata.name, agent, diag))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut mcp = contents
         .config_entries
@@ -262,95 +267,74 @@ fn skill_data(root: &Path, directory: &str) -> Result<SkillData, MarsError> {
     })
 }
 
-/// Read the natively lowered `agents/<name>.md` files into plugin data, then delete them: OpenCode
-/// loads no agent files from a plugin, and the fixed `index.mjs` reads only `DATA`.
+/// One lowered agent as `ctx.agent` data. OpenCode loads no agent files from a plugin, and the
+/// fixed `index.mjs` reads only `DATA`, so the lowered agent travels as data.
 fn agent_data(
-    root: &Path,
     plugin: &str,
+    agent: &LoweredAgent,
     diag: &mut DiagnosticCollector,
-) -> Result<Vec<AgentData>, MarsError> {
-    let directory = root.join("agents");
-    if !directory.exists() {
-        return Ok(Vec::new());
-    }
-    let mut paths = std::fs::read_dir(&directory)?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()?;
-    paths.sort();
-    let mut agents = Vec::new();
-    for path in paths {
-        let name = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let content = std::fs::read_to_string(&path)?;
-        let invalid = |message: String| {
-            MarsError::Internal(format!(
-                "generated OpenCode agent {} is invalid: {message}",
-                path.display()
-            ))
-        };
-        let mut parsed = mars_schema::frontmatter::parse(&content)
-            .map_err(|error| invalid(error.to_string()))?;
-        let mut take_string = |key: &str| match parsed.remove(key) {
-            Some(serde_yaml::Value::String(value)) => Some(value),
-            _ => None,
-        };
-        let description = take_string("description");
-        // OpenCode's own agent files default to `all`; a plugin agent defaults to `primary`,
-        // which the `subagent` tool refuses.
-        let mode = take_string("mode").unwrap_or_else(|| "all".to_string());
-        let model = take_string("model").and_then(|model| {
-            let split = model.split_once('/');
-            if split.is_none() {
-                diag.warn(
-                    "plugin-opencode-agent-model",
-                    format!(
-                        "agent `{name}`: model `{model}` has no `provider/model` form, so the plugin API cannot set it; the agent uses the harness default"
-                    ),
-                );
-            }
-            split.map(|(provider, id)| ModelData {
-                provider_id: provider.to_string(),
-                id: id.to_string(),
-            })
-        });
-        parsed.remove("name");
-        let mut permissions = vec![PermissionRule {
-            action: "skill".to_string(),
-            resource: format!("{plugin}:*"),
-            effect: "allow".to_string(),
-        }];
-        if let Some(serde_yaml::Value::Mapping(map)) = parsed.remove("permission") {
-            permissions.extend(permission_rules(&map));
-        }
-        for key in parsed.keys() {
+) -> Result<AgentData, MarsError> {
+    let name = agent.name.clone();
+    let mut parsed = mars_schema::frontmatter::parse(&agent.content).map_err(|error| {
+        MarsError::Internal(format!(
+            "OpenCode lowering produced an unreadable agent `{name}`: {error}"
+        ))
+    })?;
+    let mut take_string = |key: &str| match parsed.remove(key) {
+        Some(serde_yaml::Value::String(value)) => Some(value),
+        _ => None,
+    };
+    let description = take_string("description");
+    // OpenCode's own agent files default to `all`; a plugin agent defaults to `primary`,
+    // which the `subagent` tool refuses.
+    let mode = take_string("mode").unwrap_or_else(|| "all".to_string());
+    let model = take_string("model").and_then(|model| {
+        let split = model.split_once('/');
+        if split.is_none() {
             diag.warn(
-                "plugin-opencode-agent-field",
-                format!("agent `{name}`: field `{key}` has no plugin agent API equivalent and was dropped"),
+                "plugin-opencode-agent-model",
+                format!(
+                    "agent `{name}`: model `{model}` has no `provider/model` form, so the plugin API cannot set it; the agent uses the harness default"
+                ),
             );
         }
-        agents.push(AgentData {
-            id: format!("{plugin}:{name}"),
-            name,
-            description,
-            mode,
-            model,
-            system: parsed.body().to_string(),
-            permissions,
-        });
+        split.map(|(provider, id)| ModelData {
+            provider_id: provider.to_string(),
+            id: id.to_string(),
+        })
+    });
+    parsed.remove("name");
+    let permissions = match parsed.remove("permission") {
+        Some(serde_yaml::Value::Mapping(map)) => permission_rules(&map),
+        _ => Vec::new(),
+    };
+    for key in parsed.keys() {
+        diag.warn(
+            "plugin-opencode-agent-field",
+            format!(
+                "agent `{name}`: field `{key}` has no plugin agent API equivalent and was dropped"
+            ),
+        );
     }
-    std::fs::remove_dir_all(&directory)?;
-    Ok(agents)
+    Ok(AgentData {
+        id: format!("{plugin}:{name}"),
+        name,
+        description,
+        mode,
+        model,
+        system: parsed.body().to_string(),
+        permissions,
+    })
 }
 
 /// OpenCode's `permission` map as `Agent.Info` rules: `tool: effect` or `tool: {pattern: effect}`.
+/// The lowering writes v1 keys, which OpenCode's file loader translates and `ctx.agent` does not.
 fn permission_rules(map: &serde_yaml::Mapping) -> Vec<PermissionRule> {
     let text = |value: &serde_yaml::Value| value.as_str().map(str::to_string);
     let mut rules = Vec::new();
     for (action, value) in map {
         let Some(action) = text(action) else { continue };
+        let action = mars_schema::tool_natives::opencode_v2_action(&action).to_string();
         match value {
             serde_yaml::Value::Mapping(patterns) => {
                 for (resource, effect) in patterns {
@@ -375,33 +359,4 @@ fn permission_rules(map: &serde_yaml::Mapping) -> Vec<PermissionRule> {
         }
     }
     rules
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lowered_agent_becomes_plugin_data() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir(root.path().join("agents")).unwrap();
-        std::fs::write(
-            root.path().join("agents/reader.md"),
-            "---\nname: reader\ndescription: Reads\nmodel: p/m\npermission:\n  edit: deny\n  bash:\n    'rm *': deny\n---\nBody\n",
-        )
-        .unwrap();
-
-        let mut diag = DiagnosticCollector::new();
-        let agents = agent_data(root.path(), "pkg", &mut diag).unwrap();
-
-        let json = serde_json::to_value(&agents).unwrap();
-        assert_eq!(json[0]["id"], "pkg:reader");
-        assert_eq!(json[0]["mode"], "all");
-        assert_eq!(json[0]["model"]["providerID"], "p");
-        assert_eq!(json[0]["system"], "Body\n");
-        assert_eq!(json[0]["permissions"][0]["resource"], "pkg:*");
-        assert_eq!(json[0]["permissions"][1]["action"], "edit");
-        assert_eq!(json[0]["permissions"][2]["resource"], "rm *");
-        assert!(!root.path().join("agents").exists());
-    }
 }

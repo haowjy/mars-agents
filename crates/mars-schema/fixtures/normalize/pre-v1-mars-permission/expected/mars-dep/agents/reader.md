@@ -6,7 +6,7 @@ tools:
   Read: allow
   Grep: allow
 harness-overrides:
-  flow:
+  meridian-flow:
     permission: read
 ---
 Read the code.

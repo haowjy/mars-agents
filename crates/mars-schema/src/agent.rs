@@ -26,15 +26,15 @@ pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
     RemovedField::replaced("network_deny", "use `network-deny`"),
     RemovedField::replaced(
         "permission",
-        "move it under `harness-overrides.flow.permission`",
+        "move it under `harness-overrides.meridian-flow.permission`",
     ),
     RemovedField::replaced(
         "resident-rearm-budget",
-        "move it under `harness-overrides.meridian.resident-rearm-budget`",
+        "move it under `harness-overrides.meridian-cli.resident-rearm-budget`",
     ),
     RemovedField::replaced(
         "meridian-capabilities",
-        "move it under `harness-overrides.meridian.capabilities`",
+        "move it under `harness-overrides.meridian-cli.capabilities`",
     ),
 ];
 
@@ -794,7 +794,7 @@ pub(crate) fn read_fields(
 
 /// What the reader tells an author whose top-level `permission` schema 1 removed.
 ///
-/// Flow defines `read` and `edit`, and OpenCode's format is a map; any other value names where it
+/// Meridian Flow defines `read` and `edit`, and OpenCode's format is a map; any other value names where it
 /// can live instead of sending the author to a block that would reject it again.
 fn removed_permission(value: &Value) -> crate::diagnostic::SchemaDiagnostic {
     use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
@@ -813,8 +813,8 @@ fn removed_permission(value: &Value) -> crate::diagnostic::SchemaDiagnostic {
             "field.removed",
             Severity::Error,
             key_path("permission"),
-            "`permission` was removed; Flow reads only `read` or `edit`, at \
-             `harness-overrides.flow.permission`. Grant what it allowed with \
+            "`permission` was removed; Meridian Flow reads only `read` or `edit`, at \
+             `harness-overrides.meridian-flow.permission`. Grant what it allowed with \
              `tools: {<capability>: allow}`",
         ),
     }

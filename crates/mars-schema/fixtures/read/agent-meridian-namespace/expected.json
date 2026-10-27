@@ -3,10 +3,10 @@
     [
       "harness-overrides",
       {
-        "flow": {
+        "meridian-flow": {
           "permission": "read"
         },
-        "meridian": {
+        "meridian-cli": {
           "resident-rearm-budget": 3,
           "capabilities": {
             "spawn": true
@@ -36,10 +36,10 @@
     "subagents": [],
     "tools": [],
     "harness-overrides": {
-      "flow": {
+      "meridian-flow": {
         "permission": "read"
       },
-      "meridian": {
+      "meridian-cli": {
         "resident-rearm-budget": 3,
         "capabilities": {
           "spawn": true

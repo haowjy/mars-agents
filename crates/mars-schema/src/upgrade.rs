@@ -59,6 +59,7 @@ pub fn relocate_removed_fields(
     text: &str,
 ) -> Result<UpgradeResult, UpgradeError> {
     rewrite(text, |frontmatter, notes| {
+        rename_consumer_namespaces(frontmatter, notes);
         if kind == DefinitionKind::Agent {
             move_agent_fields(frontmatter, notes);
         }
@@ -561,8 +562,8 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
 
 /// What the rules above could not make schema v1 is dropped, with a warning naming it, so the
 /// upgrade never hands the strict reader a value it rejects. It is not kept under
-/// `harness-overrides.flow`: Flow defines one key, `permission`, and `lift_mars_only_keys` writes
-/// it there when it is `read` or `edit`. Anything else in that namespace would not be Flow's.
+/// `harness-overrides.meridian-flow`: Meridian Flow defines one key, `permission`, and `lift_mars_only_keys` writes
+/// it there when it is `read` or `edit`. Anything else in that namespace would not be Meridian Flow's.
 fn set_aside_rejected_keys(
     fm: &mut Frontmatter,
     kind: DefinitionKind,
@@ -615,13 +616,17 @@ fn upgrade_tools(fm: &mut Frontmatter) {
 /// dropped with a note naming it. `permission` moves only for the values Flow defines; see
 /// [`moves_under_namespace`].
 const MOVED_AGENT_FIELDS: &[(&str, &str, &str)] = &[
-    ("flow", "permission", "permission"),
-    ("meridian", "resident-rearm-budget", "resident-rearm-budget"),
-    ("meridian", "meridian-capabilities", "capabilities"),
+    ("meridian-flow", "permission", "permission"),
+    (
+        "meridian-cli",
+        "resident-rearm-budget",
+        "resident-rearm-budget",
+    ),
+    ("meridian-cli", "meridian-capabilities", "capabilities"),
 ];
 
-/// Whether the top-level `key` moves under its consumer namespace. Flow defines `read` and
-/// `edit` only, so any other `permission` value stays where it is for the reader to report.
+/// Whether the top-level `key` moves under its consumer namespace. Meridian Flow defines
+/// `read` and `edit` only, so any other `permission` value stays where it is for the reader to report.
 fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
     key != "permission"
         || fm
@@ -651,6 +656,42 @@ fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
     }
     for (namespace, from, to) in displaced {
         notes.push(dropped_twin(fm, namespace, from, to));
+    }
+}
+
+/// Rename `harness-overrides.flow` and `.meridian` to the full host names, in place. A block
+/// already written under the new name wins, and the old one is dropped with a note.
+fn rename_consumer_namespaces(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
+    let Some(Value::Mapping(overrides)) = fm.get_mut("harness-overrides") else {
+        return;
+    };
+    for &(old, new) in crate::harness::RENAMED_CONSUMER_NAMESPACES {
+        if !overrides.contains_key(old) {
+            continue;
+        }
+        if overrides.contains_key(new) {
+            overrides.remove(old);
+            notes.push(SchemaDiagnostic::new(
+                "field.removed",
+                Severity::Warning,
+                vec![
+                    PathSegment::Key("harness-overrides".to_string()),
+                    PathSegment::Key(old.to_string()),
+                ],
+                format!(
+                    "dropped `harness-overrides.{old}`; `harness-overrides.{new}` already sets it"
+                ),
+            ));
+            continue;
+        }
+        // Rebuilt so the renamed block keeps its place among its siblings.
+        *overrides = std::mem::take(overrides)
+            .into_iter()
+            .map(|(key, value)| match key.as_str() {
+                Some(name) if name == old => (Value::String(new.to_string()), value),
+                _ => (key, value),
+            })
+            .collect();
     }
 }
 

@@ -3,7 +3,7 @@
     [
       "harness-overrides",
       {
-        "flow": {
+        "meridian-flow": {
           "permission": "read"
         }
       }
@@ -30,7 +30,7 @@
     "subagents": [],
     "tools": [],
     "harness-overrides": {
-      "flow": {
+      "meridian-flow": {
         "permission": "read"
       }
     },

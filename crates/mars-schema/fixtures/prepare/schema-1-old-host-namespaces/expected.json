@@ -1,0 +1,113 @@
+{
+  "classification": {
+    "kind": "schema-1"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "version",
+          "1.0.0"
+        ],
+        [
+          "schema",
+          1
+        ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "demo",
+      "source_path": "agents/demo.md",
+      "output_path": "agents/demo.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "demo"
+          ],
+          [
+            "description",
+            "Demo"
+          ],
+          [
+            "harness-overrides",
+            {
+              "meridian-flow": {
+                "permission": "read"
+              },
+              "claude": {
+                "x": 1
+              },
+              "meridian-cli": {
+                "capabilities": {
+                  "spawn": true
+                }
+              }
+            }
+          ]
+        ],
+        "fields": {
+          "name": "demo",
+          "description": "Demo",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {
+            "meridian-flow": {
+              "permission": "read"
+            },
+            "claude": {
+              "x": 1
+            },
+            "meridian-cli": {
+              "capabilities": {
+                "spawn": true
+              }
+            }
+          },
+          "model-policies": []
+        },
+        "body": "body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "fully-rewritten"
+      }
+    }
+  ],
+  "payload": [],
+  "diagnostics": {}
+}

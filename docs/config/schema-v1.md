@@ -77,9 +77,9 @@ A schema 1 file that carries one of these is an error (`field.removed`) naming t
 | `mcp-tools` | `mcp(server)` or `mcp(server/tool)` entries in `tools` |
 | `model_invocable`, `user_invocable` | `model-invocable`, `user-invocable` |
 | `approval: yolo` | `approval: never` |
-| `permission` | `harness-overrides.flow.permission` |
-| `resident-rearm-budget` | `harness-overrides.meridian.resident-rearm-budget` |
-| `meridian-capabilities` | `harness-overrides.meridian.capabilities` |
+| `permission` | `harness-overrides.meridian-flow.permission` |
+| `resident-rearm-budget` | `harness-overrides.meridian-cli.resident-rearm-budget` |
+| `meridian-capabilities` | `harness-overrides.meridian-cli.capabilities` |
 | `fanout` | the consumer's `[settings.meridian.fanout]` |
 | `models` | `model-policies` |
 | `network_allow`, `network_deny` | `network-allow`, `network-deny` |
@@ -201,7 +201,7 @@ It never replaces a top-level field of the same name.
 harness-overrides:
   codex:
     model_reasoning_summary: concise                  # a Codex config key, carried as written
-  flow:
+  meridian-flow:
     permission: read                                  # Meridian Flow's own key
   meridian:
     resident-rearm-budget: 3                          # the Meridian CLI's own keys
@@ -209,7 +209,7 @@ harness-overrides:
 ```
 
 - A name that is one of the five harnesses is a harness block.
-- **`flow` and `meridian` are reserved** for the two Meridian consumers, Flow and the CLI. Neither is a harness: routing never sees them, Mars never interprets their keys, and neither block is written to any native file or launch bundle. They are the home of the consumer's own keys: `flow.permission` (formerly a top-level `permission`), and `meridian.resident-rearm-budget` and `meridian.capabilities` (formerly top-level `resident-rearm-budget` and `meridian-capabilities`).
+- **`meridian-flow` and `meridian-cli` are reserved** for the two Meridian hosts, Meridian Flow and the Meridian CLI. Neither is a harness: routing never sees them, Mars never interprets their keys, and neither block is written to any native file or launch bundle. They are the home of the consumer's own keys: `meridian-flow.permission` (formerly a top-level `permission`), and `meridian-cli.resident-rearm-budget` and `meridian-cli.capabilities` (formerly top-level `resident-rearm-budget` and `meridian-capabilities`). The short names `flow` and `meridian` are not read: the reader reports each as `field.removed` naming the new key, and `mars migrate` renames them in place, in schema 1 files too.
 - Any other name is a warning (`harness.unknown`) and the block is kept.
 
 ### Unknown keys
@@ -250,7 +250,7 @@ Names are case-insensitive, and harness spellings and aliases (`Bash`, `shell`, 
 
 `*` stands for every tool no other rule names, and `mcp(server)`, `mcp(server/tool)`, `mcp(server/*)`, `mcp(*/tool)` and `mcp(*/*)` gate MCP tools. Neither is a capability in the table.
 
-The vocabulary also records, per host, which native tools a capability becomes. The hosts are `claude`, `codex`, `opencode`, `pi`, `cursor` and `flow`. Each entry is one of:
+The vocabulary also records, per host, which native tools a capability becomes. The hosts are `claude`, `codex`, `opencode`, `pi`, `cursor` and `meridian-flow`. Each entry is one of:
 
 - the host's tool names;
 - *scoped tools*: Claude spells a scoped file rule through a permission category, such as `Edit(path)`;

@@ -51,10 +51,10 @@
       "severity": "warning",
       "path": [
         "harness-overrides",
-        "flow",
+        "meridian-flow",
         "big"
       ],
-      "message": "agent field `harness-overrides.flow.big` has invalid value `12345678901234567890`; allowed: integer within ±(2^53 − 1)"
+      "message": "agent field `harness-overrides.meridian-flow.big` has invalid value `12345678901234567890`; allowed: integer within ±(2^53 − 1)"
     },
     {
       "code": "yaml.non-json-value",

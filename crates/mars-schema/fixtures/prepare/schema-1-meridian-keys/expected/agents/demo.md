@@ -2,9 +2,9 @@
 name: demo
 description: Demo
 harness-overrides:
-  flow:
+  meridian-flow:
     permission: read
-  meridian:
+  meridian-cli:
     resident-rearm-budget: 3
     capabilities:
       spawn: true

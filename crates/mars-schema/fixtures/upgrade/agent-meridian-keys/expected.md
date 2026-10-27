@@ -4,7 +4,7 @@ description: Demo
 harness-overrides:
   claude:
     model: opus
-  meridian:
+  meridian-cli:
     resident-rearm-budget: 3
     capabilities:
       spawn: true

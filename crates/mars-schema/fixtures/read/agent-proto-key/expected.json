@@ -21,7 +21,7 @@
     "subagents": [],
     "tools": [],
     "harness-overrides": {
-      "flow": {
+      "meridian-flow": {
         "ok": "y"
       }
     },
@@ -42,7 +42,7 @@
       "severity": "error",
       "path": [
         "harness-overrides",
-        "flow",
+        "meridian-flow",
         "__proto__"
       ],
       "message": "key `__proto__` cannot be held as a plain property by JavaScript"

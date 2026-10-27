@@ -1,4 +1,4 @@
 ---
-harness-overrides: {flow: {permission: read}}
+harness-overrides: {meridian-flow: {permission: read}}
 ---
 body

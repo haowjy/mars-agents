@@ -3,6 +3,6 @@ name: demo
 harness-overrides:
   claude:
     model: opus
-  flow:
+  meridian-flow:
     permission: edit
 ---

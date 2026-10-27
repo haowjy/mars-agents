@@ -2,37 +2,49 @@
 
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+Entries are rendered by CI from the merged PR bodies' `## Changelog` sections. Do not edit this
+file in a PR; `## [Unreleased]` is an empty anchor.
+
 ## [Unreleased]
 
-### Added
-- `harness-overrides.meridian` is a reserved consumer namespace, as `harness-overrides.flow` is for
-  Flow. Mars keeps the block in `.mars/agents/` and never writes it to a native file, a plugin tree
-  or a launch bundle; its keys belong to the Meridian CLI: `resident-rearm-budget` (an integer) and
-  `capabilities` (a map).
-- `@meridian-flow/mars-schema`'s `prepare` takes `migrate`, the shaping `mars migrate` writes back:
-  a schema 1 definition it can repair (a removed Agent key whose replacement is a
-  `harness-overrides` key) reports the moved bytes in `normalized_bytes`. Left off — a reader's
-  choice — a schema 1 file is read exactly as written.
+## [0.20.7] - 2026-10-27
+
+### Upgrade notes
+- Changelog entries go in the PR body's `## Changelog` section now. `CHANGELOG.md`
+  `## [Unreleased]` is an empty anchor and no PR edits that file; CI rejects a PR that adds
+  content under the anchor or a release heading. See
+  [the PR body gate](https://github.com/haowjy/mars-agents/blob/main/.github/workflows/README.md#pr-body-gate).
+- `scripts/manually-release.sh` collects merged PR notes by default, so it needs an
+  authenticated `gh`. `--notes-file PATH` adds notes after the collected ones, and
+  `--no-collect` releases from that file alone (offline, or a direct-push-only range). It no
+  longer promotes `[Unreleased]` or refuses an empty one. See
+  [manual backfill](https://github.com/haowjy/mars-agents/blob/main/.github/workflows/README.md#manual-backfill).
 
 ### Changed
-- Agent `resident-rearm-budget` and `meridian-capabilities` are removed top-level keys: a schema 1
-  file that carries one is a `field.removed` error naming
-  `harness-overrides.meridian.resident-rearm-budget` and `harness-overrides.meridian.capabilities`.
-  `mars migrate` moves both with their values, so a pre-v1 package and a schema 1 file that still
-  carries them migrate without a hand edit.
-- `mars migrate` rewrites a package that already declares `schema = 1` when it still carries a key
-  that moved under a `harness-overrides` namespace (`permission`, `resident-rearm-budget`,
-  `meridian-capabilities`), instead of failing the run on it. Everything else holds: values and the
-  file's key order are kept, `harness-overrides` keeps the place the author gave it, a block that
-  already sets the destination key wins and the dropped top-level key is named, and any other
-  removed key still fails and names the file and the key.
+- A changelog entry no longer blocks a PR. Entries are written in the PR body's `## Changelog`
+  section; the release job renders that section into `CHANGELOG.md` under the new version
+  heading and uses it as the GitHub Release body. Nobody edits `CHANGELOG.md` in a PR, so two
+  branches can no longer conflict on it.
+- Every merge since the last release contributes its notes, once per PR. The release job walks
+  the first-parent commits since the last `release: v` commit, resolves each commit's merged PR
+  targeting `main`, renders the bodies deduplicated by PR number, and always includes the
+  merging PR. A `release:skip` merge, a failed or cancelled run, and two merges in one push keep
+  their entries. If a second merge lands while that release is still running, the second run
+  sees that the first release already contains it and skips instead of cutting an extra version
+  that repeats its notes.
+- The PR gate refuses a `CHANGELOG.md` edit. `.github/workflows/pr-body.yml` validates the
+  body's `## Changelog` section, then compares the branch's file with the base branch's and names
+  what the PR adds: content under `[Unreleased]`, or a release heading (a pasted `## [X]`, a
+  second `## [Unreleased]`, a duplicate of a released heading). A typo fix inside a released
+  section still passes.
 
 ### Fixed
-- `mars build plugin`'s term scan no longer reads a `harness-overrides` block owned by a consumer
-  namespace (`flow`, `meridian`). Those blocks never reach a tree, so an Agent with
-  `harness-overrides.meridian` in a package without `requires-meridian` stops warning that it
-  "mentions meridian". A term in a harness block that does ship, in a skill or hook, or elsewhere
-  in the file still warns, at the same line.
+- `## [0.20.5]` ships the entries #238 added. They landed under `## [0.20.4]` because a branch
+  that merged `main` back in appended to the `### Fixed` block the 0.20.4 release had left
+  below its own heading, so `0.20.5` released empty; the two entries now sit under `[0.20.5]`.
+- `scripts/manually-release.sh` resolves a relative `--notes-file` against the directory it was
+  invoked from, and runs the full preflight before writing version bumps, so a failed gate
+  leaves the tree clean.
 
 ## [0.20.6] - 2026-10-27
 
@@ -43,6 +55,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   between the tree swap and the root-file rewrite is still resumed by the next build.
 
 ## [0.20.5] - 2026-10-27
+
+### Fixed
+- A dependency narrowed by any include filter (`agents`, `skills`, `only_skills`, `only_agents`)
+  now still contributes its exported MCP servers, instead of silently dropping every server it
+  declares. Filters select agents, skills and hooks; they never named servers. Upgrading: a
+  newly visible server whose name matches an entry you wrote by hand in that target's MCP config
+  replaces that entry.
+- `mars build plugin` keeps the building package's own agent and skill names when a dependency
+  defines the same name: the root ships `rev.md` and the dependency `rev__adep.md`, instead of
+  both being renamed to `rev__pkg.md` and `rev__adep.md`.
 
 ## [0.20.4] - 2026-10-27
 
@@ -63,14 +85,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `mars sync --force` adopts and overwrites it.
 
 ### Fixed
-- A dependency narrowed by any include filter (`agents`, `skills`, `only_skills`, `only_agents`)
-  now still contributes its exported MCP servers, instead of silently dropping every server it
-  declares. Filters select agents, skills and hooks; they never named servers. Upgrading: a
-  newly visible server whose name matches an entry you wrote by hand in that target's MCP config
-  replaces that entry.
-- `mars build plugin` keeps the building package's own agent and skill names when a dependency
-  defines the same name: the root ships `rev.md` and the dependency `rev__adep.md`, instead of
-  both being renamed to `rev__pkg.md` and `rev__adep.md`.
 - A FIFO, socket or device inside a skill, hook or MCP server directory is rejected with an error
   naming it, instead of hanging `mars sync` while hashing the tree. File errors from that hash walk
   now name the path instead of `<unknown>`.

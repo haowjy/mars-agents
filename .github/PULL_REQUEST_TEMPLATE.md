@@ -1,3 +1,19 @@
+## Changelog
+
+<!-- CI validates this section; the release job renders it into CHANGELOG.md
+     under the new version heading and uses it as the GitHub Release body. Do
+     not edit CHANGELOG.md in this PR. Use `### Upgrade notes`, `### Breaking`,
+     `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`,
+     or `### Security` blocks with `- ` bullets (continuation lines are fine),
+     or replace the whole section with one line: `None. <reason nothing a user
+     or developer notices changed>`. Write one line per upgrade note, ending in
+     an absolute link to the guide section: `- ... See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/...).`
+     The guide carries the detail; the changelog entry links to it. Absolute
+     links resolve in both the PR body and the GitHub Release body. -->
+
+### Fixed
+- <what a user now sees that was broken before>
+
 ## Why
 
 <!-- Problem or motivation. What breakage, gap, or need makes this PR worth merging? -->
@@ -58,9 +74,12 @@ After merge to `main`, CI (`.github/workflows/release-on-main.yml`) will:
 1. Read the PR release label
 2. Skip only when `release:skip` is present (no label defaults to RC)
 3. Compute the next stable or RC version from existing `v*` tags
-4. Update Cargo/PyPI/npm package versions + promote `CHANGELOG.md` `[Unreleased]`
-5. Commit `release: vX.Y.Z` (or `release: vX.Y.Z-rc.N`), create/push the matching tag
-6. Run `.github/workflows/release.yml` from the tag
+4. Collect the `## Changelog` sections of the merged PRs since the last release and render
+   them into `CHANGELOG.md` under the new version heading
+5. Update Cargo/PyPI/npm package versions
+6. Commit `release: vX.Y.Z` (or `release: vX.Y.Z-rc.N`), create/push the matching tag
+7. Run `.github/workflows/release.yml` from the tag, which publishes that same section as the
+   GitHub Release body
 
 ## Cleanup
 

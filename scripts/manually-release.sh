@@ -7,12 +7,24 @@ usage() {
   cat <<'USAGE'
 Usage:
   scripts/manually-release.sh [patch|minor|major|X.Y.Z] [--push]
+                              [--no-collect] [--notes-file PATH]
   scripts/manually-release.sh tag-current [--push]
 
 Manual release helper for emergency/backfill releases.
 
 Creates a real release commit before tagging. The normal path remains the
 label-gated GitHub workflow.
+
+Changelog notes come from the merged PR bodies: the script walks the first-parent
+commits since the last "release: v" commit and renders each merged PR's
+`## Changelog` section into CHANGELOG.md under the new version heading, exactly
+as the release workflow does. That needs an authenticated `gh`.
+
+  --notes-file PATH  additional notes rendered after the collected ones
+                     (same shape as a PR body); '-' reads stdin
+  --no-collect       skip the walk and render --notes-file alone (offline, or a
+                     direct-push-only range); the file must then carry every
+                     merged PR's notes since the last release
 USAGE
 }
 
@@ -53,34 +65,15 @@ require_clean_tree() {
   [[ -z "$(git -C "$ROOT_DIR" status --short)" ]] || die "working tree is not clean"
 }
 
-require_unreleased_entries() {
-  awk '
-    /^## \[Unreleased\]$/ { in_unreleased = 1; next }
-    in_unreleased && /^## \[/ { in_unreleased = 0 }
-    in_unreleased && /^- / { found = 1 }
-    END { exit found ? 0 : 1 }
-  ' "$ROOT_DIR/CHANGELOG.md" || die "CHANGELOG.md [Unreleased] has no bullet entries"
-}
-
-promote_changelog() {
+render_notes() {
   local version="$1"
   local date="$2"
-  local tmp_file
-  tmp_file="$(mktemp)"
-  awk -v version="$version" -v date="$date" '
-    BEGIN { promoted = 0 }
-    {
-      if (!promoted && $0 == "## [Unreleased]") {
-        print "## [Unreleased]"
-        print ""
-        print "## [" version "] - " date
-        promoted = 1
-        next
-      }
-      print
-    }
-  ' "$ROOT_DIR/CHANGELOG.md" >"$tmp_file"
-  mv "$tmp_file" "$ROOT_DIR/CHANGELOG.md"
+  shift 2
+  python3 "$ROOT_DIR/scripts/changelog-notes.py" render \
+    --version "$version" \
+    --date "$date" \
+    --changelog "$ROOT_DIR/CHANGELOG.md" \
+    "$@"
 }
 
 write_versions() {
@@ -160,29 +153,41 @@ push_release() {
 }
 
 main() {
-  [[ $# -ge 1 ]] || { usage; exit 1; }
+  [[ $# -ge 1 ]] || { usage >&2; exit 1; }
 
   case "$1" in
     -h|--help)
       usage
       exit 0
       ;;
+    -*)
+      die "the release command must come first: scripts/manually-release.sh patch --notes-file PATH"
+      ;;
   esac
 
   local command="$1"
   shift
   local push=0
+  local collect=1
+  local notes_file=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --push) push=1; shift ;;
+      --no-collect) collect=0; shift ;;
+      --notes-file)
+        [[ $# -ge 2 ]] || die "--notes-file requires a path ('-' reads stdin)"
+        notes_file="$2"
+        shift 2
+        ;;
       -h|--help) usage; exit 0 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
 
-  cd "$ROOT_DIR"
-
   if [[ "$command" == "tag-current" ]]; then
+    [[ -z "$notes_file" ]] || die "tag-current does not take --notes-file"
+    [[ "$collect" -eq 1 ]] || die "tag-current does not take --no-collect"
+    cd "$ROOT_DIR"
     require_clean_tree
     tag="$(validate_current_release)"
     create_tag "$tag"
@@ -190,9 +195,24 @@ main() {
     exit 0
   fi
 
+  work_dir="$(mktemp -d)"
+  trap 'rm -rf "$work_dir"' EXIT
+
+  # Resolve --notes-file before changing directory, so a relative path means
+  # the caller's working directory, not the repository root.
+  if [[ -n "$notes_file" ]]; then
+    if [[ "$notes_file" == "-" ]]; then
+      cat >"$work_dir/notes.md"
+      notes_file="$work_dir/notes.md"
+    else
+      [[ -f "$notes_file" ]] || die "notes file not found: $notes_file"
+      notes_file="$(cd "$(dirname "$notes_file")" && pwd)/$(basename "$notes_file")"
+    fi
+  fi
+
+  cd "$ROOT_DIR"
+
   require_clean_tree
-  require_unreleased_entries
-  scripts/preflight.sh full
   validate_versions_match
 
   local current version today tag
@@ -208,9 +228,23 @@ main() {
     die "tag already exists: $tag"
   fi
 
+  local notes_args=()
+  if [[ "$collect" -eq 1 ]]; then
+    if ! scripts/collect-release-notes.sh "$work_dir/prs.json"; then
+      die "collecting merged PR notes failed (see the error above); pass --no-collect to release from --notes-file alone"
+    fi
+    notes_args+=(--notes-json "$work_dir/prs.json")
+  fi
+  if [[ -n "$notes_file" ]]; then
+    notes_args+=(--notes-file "$notes_file")
+  fi
+  [[ ${#notes_args[@]} -gt 0 ]] || die "no notes: pass --notes-file PATH, or drop --no-collect so merged PRs are collected"
+
   today="$(date -u +%Y-%m-%d)"
+  render_notes "$version" "$today" "${notes_args[@]}" --dry-run >/dev/null
+  scripts/preflight.sh full
   write_versions "$version"
-  promote_changelog "$version" "$today"
+  render_notes "$version" "$today" "${notes_args[@]}"
 
   git add Cargo.toml crates/mars-schema/Cargo.toml crates/mars-schema-wasm/Cargo.toml pyproject.toml Cargo.lock CHANGELOG.md npm/@meridian-flow/*/package.json npm/@meridian-flow/*/package-lock.json
   git commit -m "release: v$version"

@@ -9,8 +9,10 @@ use crate::error::MarsError;
 use crate::target::opencode::{McpServer, OpencodeAdapter};
 use crate::target::{ConfigEntry, TargetAdapter};
 use mars_schema::HarnessId;
+use mars_schema::frontmatter::Frontmatter;
 use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
 
+use crate::sync::target::TargetItem;
 use super::super::metadata::PackageMetadata;
 use super::super::spec::{Finish, PluginRoot, RootFile, TreeProfile};
 use super::{LoweredAgent, WrittenTreeContents};
@@ -27,8 +29,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     },
     dropped_agent_fields: &[],
     approximate_lowers_to_dropped: false,
-    agents: Some(super::keep_lowered),
-    agent_files: false,
+    agents: Some(keep_plugin_agent_fields),
     native_model_aliases: &[],
     plugin_root: PluginRoot::RuntimeResolved,
     check_hook,
@@ -186,7 +187,7 @@ fn write_package(
         .agents
         .iter()
         .map(|agent| agent_data(&metadata.name, agent, diag))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     agents.sort_by(|left, right| left.id.cmp(&right.id));
 
     let mut mcp = contents
@@ -268,94 +269,90 @@ fn skill_data(root: &Path, directory: &str) -> Result<SkillData, MarsError> {
     })
 }
 
+/// The frontmatter keys `ctx.agent` takes; `name` and `permission` are read apart from the
+/// plain strings. Any other key, from the lowering or an author override, is dropped.
+const AGENT_KEYS: &[&str] = &["name", "description", "mode", "model", "permission"];
+
+fn keep_plugin_agent_fields(
+    doc: &mut Frontmatter,
+    _source: &Frontmatter,
+    item: &TargetItem,
+    diag: &mut DiagnosticCollector,
+) {
+    for key in doc.keys() {
+        if !AGENT_KEYS.contains(&key.as_str()) {
+            super::warn_agent_field_dropped(diag, item.id.name.as_str(), &key, "OpenCode");
+            doc.remove(&key);
+        }
+    }
+}
+
 /// One lowered agent as `ctx.agent` data. OpenCode loads no agent files from a plugin, and the
 /// fixed `index.mjs` reads only `DATA`, so the lowered agent travels as data.
-fn agent_data(
-    plugin: &str,
-    agent: &LoweredAgent,
-    diag: &mut DiagnosticCollector,
-) -> Result<AgentData, MarsError> {
-    let name = agent.name.clone();
-    let mut parsed = mars_schema::frontmatter::parse(&agent.content).map_err(|error| {
-        MarsError::Internal(format!(
-            "OpenCode lowering produced an unreadable agent `{name}`: {error}"
-        ))
-    })?;
-    let mut take_string = |key: &str| match parsed.remove(key) {
-        Some(serde_yaml::Value::String(value)) => Some(value),
-        _ => None,
-    };
-    let description = take_string("description");
+fn agent_data(plugin: &str, agent: &LoweredAgent, diag: &mut DiagnosticCollector) -> AgentData {
+    let doc = &agent.doc;
+    let text = |key: &str| doc.get(key).and_then(serde_yaml::Value::as_str);
     // OpenCode's own agent files default to `all`; a plugin agent defaults to `primary`,
     // which the `subagent` tool refuses.
-    let mode = take_string("mode").unwrap_or_else(|| "all".to_string());
-    let model = take_string("model").and_then(|model| {
-        let split = model.split_once('/');
-        if split.is_none() {
-            diag.warn(
-                "plugin-opencode-agent-model",
-                format!(
-                    "agent `{name}`: model `{model}` has no `provider/model` form, so the plugin API cannot set it; the agent uses the harness default"
-                ),
-            );
-        }
-        split.map(|(provider, id)| ModelData {
+    let model = text("model")
+        .and_then(|model| model.split_once('/'))
+        .map(|(provider, id)| ModelData {
             provider_id: provider.to_string(),
             id: id.to_string(),
-        })
-    });
-    parsed.remove("name");
-    let permissions = match parsed.remove("permission") {
-        Some(serde_yaml::Value::Mapping(map)) => permission_rules(&map),
-        _ => Vec::new(),
+        });
+    let permissions = match doc.get("permission") {
+        Some(serde_yaml::Value::Mapping(map)) => permission_rules(&agent.name, map, diag),
+        Some(_) => {
+            super::warn_agent_field_dropped(diag, &agent.name, "permission", "OpenCode");
+            Vec::new()
+        }
+        None => Vec::new(),
     };
-    for key in parsed.keys() {
-        diag.warn(
-            "plugin-opencode-agent-field",
-            format!(
-                "agent `{name}`: field `{key}` has no plugin agent API equivalent and was dropped"
-            ),
-        );
-    }
-    Ok(AgentData {
-        id: format!("{plugin}:{name}"),
-        name,
-        description,
-        mode,
+    AgentData {
+        id: format!("{plugin}:{}", agent.name),
+        name: agent.name.clone(),
+        description: text("description").map(str::to_string),
+        mode: text("mode").unwrap_or("all").to_string(),
         model,
-        system: parsed.body().to_string(),
+        system: doc.body().to_string(),
         permissions,
-    })
+    }
 }
 
 /// OpenCode's `permission` map as `Agent.Info` rules: `tool: effect` or `tool: {pattern: effect}`.
 /// The lowering writes v1 keys, which OpenCode's file loader translates and `ctx.agent` does not.
-fn permission_rules(map: &serde_yaml::Mapping) -> Vec<PermissionRule> {
-    let text = |value: &serde_yaml::Value| value.as_str().map(str::to_string);
+fn permission_rules(
+    agent: &str,
+    map: &serde_yaml::Mapping,
+    diag: &mut DiagnosticCollector,
+) -> Vec<PermissionRule> {
     let mut rules = Vec::new();
     for (action, value) in map {
-        let Some(action) = text(action) else { continue };
-        let action = mars_schema::tool_natives::opencode_v2_action(&action).to_string();
-        match value {
-            serde_yaml::Value::Mapping(patterns) => {
-                for (resource, effect) in patterns {
-                    if let (Some(resource), Some(effect)) = (text(resource), text(effect)) {
-                        rules.push(PermissionRule {
-                            action: action.clone(),
-                            resource,
-                            effect,
-                        });
-                    }
-                }
-            }
-            effect => {
-                if let Some(effect) = text(effect) {
-                    rules.push(PermissionRule {
-                        action,
-                        resource: "*".to_string(),
-                        effect,
-                    });
-                }
+        let Some(action) = action.as_str() else {
+            super::warn_agent_field_dropped(diag, agent, "permission", "OpenCode");
+            continue;
+        };
+        let v2_action = mars_schema::tool_natives::opencode_v2_action(action);
+        let entries: Vec<(Option<&str>, &serde_yaml::Value)> = match value {
+            serde_yaml::Value::Mapping(patterns) => patterns
+                .iter()
+                .map(|(resource, effect)| (resource.as_str(), effect))
+                .collect(),
+            effect => vec![(Some("*"), effect)],
+        };
+        for (resource, effect) in entries {
+            match (resource, effect.as_str()) {
+                (Some(resource), Some(effect)) => rules.push(PermissionRule {
+                    action: v2_action.to_string(),
+                    resource: resource.to_string(),
+                    effect: effect.to_string(),
+                }),
+                _ => super::warn_agent_field_dropped(
+                    diag,
+                    agent,
+                    &format!("permission.{action}"),
+                    "OpenCode",
+                ),
             }
         }
     }

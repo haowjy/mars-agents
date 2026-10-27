@@ -23,12 +23,13 @@ use crate::target::ConfigEntry;
 use mars_schema::HarnessId;
 use mars_schema::plugin_metadata::GeneratedRootFile;
 
+/// A tree's rewrite of the lowered agent document, given the authored frontmatter.
 pub(super) type AgentPolicy = fn(
-    &str,
+    &mut mars_schema::frontmatter::Frontmatter,
     &mars_schema::frontmatter::Frontmatter,
     &TargetItem,
     &mut DiagnosticCollector,
-) -> Result<String, MarsError>;
+);
 
 pub(super) type ConfigWriter = fn(
     &TreeProfile,
@@ -198,10 +199,8 @@ pub(super) struct TreeProfile {
     pub(super) root_file: RootFile,
     pub(super) dropped_agent_fields: &'static [&'static str],
     pub(super) approximate_lowers_to_dropped: bool,
+    /// `None` keeps the native lowering as is.
     pub(super) agents: Option<AgentPolicy>,
-    /// Whether lowered agents are written to `agents/<name>.md`. A tree whose `finish` consumes
-    /// `WrittenTreeContents::agents` instead sets this false.
-    pub(super) agent_files: bool,
     pub(super) native_model_aliases: &'static [&'static str],
     pub(super) plugin_root: PluginRoot,
     pub(super) check_hook: HookCheck,
@@ -338,7 +337,7 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         notes: SupportNotes {
             skills: Some("registered by `index.mjs`"),
             agents: Some(
-                "registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance",
+                "registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance; `harness-overrides.opencode` keys other than `permission` are dropped with warning",
             ),
             hooks: Some("each fragment needs a default `{id, setup}` export"),
             mcp: Some("registered by `index.mjs`"),

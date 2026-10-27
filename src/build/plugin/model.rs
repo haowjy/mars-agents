@@ -39,6 +39,8 @@ pub(super) fn resolve_model(
     let target = alias_target(alias);
     if let Some(model) = alias.pinned_model_id()
         && target == Some(descriptor.id)
+        // A file-less OpenCode agent names its model as provider and id, so a bare id cannot be set.
+        && (harness != HarnessId::OpenCode || model.contains('/'))
     {
         return ResolvedModel {
             native: NativeModel::Set(model.to_string()),

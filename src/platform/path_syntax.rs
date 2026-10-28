@@ -109,79 +109,52 @@ mod tests {
     use super::classify_local_source;
 
     #[test]
-    fn classify_posix_absolute() {
-        assert!(classify_local_source("/absolute/path").is_some());
-        assert!(classify_local_source("/").is_some());
+    fn classify_accepts_local_paths() {
+        for input in [
+            // POSIX absolute and relative
+            "/absolute/path",
+            "/",
+            ".",
+            "..",
+            "./relative",
+            "../parent",
+            // home-relative
+            "~/path",
+            "~",
+            // Windows drive, UNC, root-relative and backslash-relative
+            "C:\\path",
+            "C:/path",
+            "D:\\",
+            "C:relative",
+            "\\\\server\\share",
+            "\\\\server\\share\\path",
+            "\\path",
+            ".\\relative",
+            "..\\parent",
+            "foo\\bar",
+        ] {
+            assert!(classify_local_source(input).is_some(), "{input}");
+        }
     }
 
     #[test]
-    fn classify_posix_relative() {
-        assert!(classify_local_source(".").is_some());
-        assert!(classify_local_source("..").is_some());
-        assert!(classify_local_source("./relative").is_some());
-        assert!(classify_local_source("../parent").is_some());
-    }
-
-    #[test]
-    fn classify_home_relative() {
-        assert!(classify_local_source("~/path").is_some());
-        assert!(classify_local_source("~").is_some());
-    }
-
-    #[test]
-    fn classify_windows_drive_paths() {
-        assert!(classify_local_source("C:\\path").is_some());
-        assert!(classify_local_source("C:/path").is_some());
-        assert!(classify_local_source("D:\\").is_some());
-        assert!(classify_local_source("C:relative").is_some());
-    }
-
-    #[test]
-    fn classify_windows_unc_paths() {
-        assert!(classify_local_source("\\\\server\\share").is_some());
-        assert!(classify_local_source("\\\\server\\share\\path").is_some());
-    }
-
-    #[test]
-    fn classify_windows_root_relative() {
-        assert!(classify_local_source("\\path").is_some());
-    }
-
-    #[test]
-    fn classify_windows_backslash_relative() {
-        assert!(classify_local_source(".\\relative").is_some());
-        assert!(classify_local_source("..\\parent").is_some());
-        assert!(classify_local_source("foo\\bar").is_some());
-    }
-
-    #[test]
-    fn classify_rejects_extended_paths() {
-        assert!(classify_local_source("\\\\?\\C:\\path").is_none());
-        assert!(classify_local_source("\\\\.\\Device").is_none());
-    }
-
-    #[test]
-    fn classify_rejects_urls() {
-        assert!(classify_local_source("https://github.com/owner/repo").is_none());
-        assert!(classify_local_source("git://host/path").is_none());
-        assert!(classify_local_source("ssh://git@host/path").is_none());
-    }
-
-    #[test]
-    fn classify_rejects_ssh_shorthand() {
-        assert!(classify_local_source("git@github.com:owner/repo").is_none());
-        assert!(classify_local_source("git@host:path").is_none());
-    }
-
-    #[test]
-    fn classify_rejects_protocol_aliases() {
-        assert!(classify_local_source("github:owner/repo").is_none());
-        assert!(classify_local_source("gitlab:group/repo").is_none());
-    }
-
-    #[test]
-    fn classify_rejects_shorthand() {
-        assert!(classify_local_source("owner/repo").is_none());
-        assert!(classify_local_source("owner/repo/subpath").is_none());
+    fn classify_rejects_remote_and_extended_sources() {
+        for input in [
+            // extended paths
+            "\\\\?\\C:\\path",
+            "\\\\.\\Device",
+            // URLs, ssh shorthand, protocol aliases, owner/repo shorthand
+            "https://github.com/owner/repo",
+            "git://host/path",
+            "ssh://git@host/path",
+            "git@github.com:owner/repo",
+            "git@host:path",
+            "github:owner/repo",
+            "gitlab:group/repo",
+            "owner/repo",
+            "owner/repo/subpath",
+        ] {
+            assert!(classify_local_source(input).is_none(), "{input}");
+        }
     }
 }

@@ -182,37 +182,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_harness_name_and_legacy_path_form() {
-        assert_eq!(
-            normalize_link("codex"),
-            NormalizedLink {
-                raw: "codex".to_string(),
-                target: ".codex".to_string(),
-                harness: Some(HarnessId::Codex),
-                kind: LinkKind::KnownHarness,
-            }
-        );
-        assert_eq!(
-            normalize_link(".codex"),
-            NormalizedLink {
-                raw: ".codex".to_string(),
-                target: ".codex".to_string(),
-                harness: Some(HarnessId::Codex),
-                kind: LinkKind::KnownHarness,
-            }
-        );
-    }
-
-    #[test]
-    fn normalizes_agents_as_generic_target() {
-        assert_eq!(
-            normalize_link("agents"),
-            NormalizedLink {
-                raw: "agents".to_string(),
-                target: ".agents".to_string(),
-                harness: None,
-                kind: LinkKind::GenericTarget,
-            }
-        );
+    fn normalize_link_maps_names_to_targets() {
+        // (raw, target, harness, kind)
+        let cases = [
+            (
+                "codex",
+                ".codex",
+                Some(HarnessId::Codex),
+                LinkKind::KnownHarness,
+            ),
+            (
+                ".codex",
+                ".codex",
+                Some(HarnessId::Codex),
+                LinkKind::KnownHarness,
+            ),
+            ("agents", ".agents", None, LinkKind::GenericTarget),
+            ("foo", ".foo", None, LinkKind::GenericTarget),
+            ("path/agents/", "path/agents", None, LinkKind::PathLike),
+        ];
+        for (raw, target, harness, kind) in cases {
+            assert_eq!(
+                normalize_link(raw),
+                NormalizedLink {
+                    raw: raw.to_string(),
+                    target: target.to_string(),
+                    harness,
+                    kind,
+                },
+                "{raw}"
+            );
+        }
     }
 }

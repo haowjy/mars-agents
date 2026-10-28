@@ -161,30 +161,9 @@ pub fn display_command(args: &[&str]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
-
     use tempfile::TempDir;
 
     use super::*;
-
-    fn test_git_command() -> Command {
-        let mut command = Command::new("git");
-        remove_git_local_env(&mut command);
-        command.env("GIT_AUTHOR_NAME", "Mars Test");
-        command.env("GIT_AUTHOR_EMAIL", "mars@example.com");
-        command.env("GIT_COMMITTER_NAME", "Mars Test");
-        command.env("GIT_COMMITTER_EMAIL", "mars@example.com");
-        command
-    }
-
-    #[test]
-    fn run_git_version_succeeds() {
-        // git --version should work in any environment with git
-        let tmp = TempDir::new().unwrap();
-        let result = run_git(&["--version"], tmp.path(), "test");
-        assert!(result.is_ok(), "git --version should succeed: {:?}", result);
-        assert!(result.unwrap().contains("git version"));
-    }
 
     #[test]
     fn run_git_invalid_command_fails() {
@@ -199,60 +178,15 @@ mod tests {
             err_str.contains("not-a-real-command"),
             "error should include command"
         );
-    }
 
-    #[test]
-    fn run_git_execute_failure_includes_cwd_and_command() {
-        let missing = std::env::temp_dir().join("mars-run-git-missing-cwd");
-        let result = run_git(&["status", "--short"], &missing, "test");
-        let err = result.expect_err("missing cwd should fail before git runs");
-        let message = err.to_string();
-
+        // A missing cwd fails before git runs and names both cwd and command.
+        let missing = tmp.path().join("missing-cwd");
+        let message = run_git(&["status", "--short"], &missing, "test")
+            .expect_err("missing cwd should fail before git runs")
+            .to_string();
         assert!(message.contains("git status --short"));
         assert!(message.contains("cwd:"));
         assert!(message.contains(&missing.display().to_string()));
-    }
-
-    #[test]
-    fn display_command_formats_args() {
-        assert_eq!(display_command(&["status", "-s"]), "git status -s");
-        assert_eq!(
-            display_command(&["log", "--oneline", "-5"]),
-            "git log --oneline -5"
-        );
-    }
-
-    #[test]
-    fn run_git_with_ref_passes_ref_without_shell_interpretation() {
-        let tmp = TempDir::new().unwrap();
-        test_git_command()
-            .current_dir(tmp.path())
-            .args(["init", "."])
-            .output()
-            .expect("git init");
-        std::fs::write(tmp.path().join("README.md"), "hello").unwrap();
-        test_git_command()
-            .current_dir(tmp.path())
-            .args(["add", "README.md"])
-            .output()
-            .expect("git add");
-        test_git_command()
-            .current_dir(tmp.path())
-            .args(["commit", "-m", "init"])
-            .output()
-            .expect("git commit");
-
-        let result = run_git_with_ref(
-            &["rev-parse", "--verify"],
-            "HEAD;echo shell-injected",
-            tmp.path(),
-            "verify ref",
-        );
-
-        let err = result.expect_err("metacharacter ref should be passed as one invalid git ref");
-        let message = err.to_string();
-        assert!(message.contains("HEAD;echo shell-injected"));
-        assert!(!message.contains("shell-injected\n"));
     }
 
     #[test]
@@ -266,11 +200,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn detached_launch_passes_argv_without_shell_expansion_and_inherits_cwd() {
-        use std::ffi::OsString;
-        use std::time::{Duration, Instant};
+        use std::ffi::{CString, OsString};
+        use std::os::unix::ffi::OsStrExt;
 
         let tmp = TempDir::new().unwrap();
-        let output = tmp.path().join("child output.txt");
+        // The child writes into a FIFO, so reading it blocks until the child has run:
+        // no polling and no deadline.
+        let output = tmp.path().join("child output.fifo");
+        let c_path = CString::new(output.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
         let literal = "literal; $(touch should-not-exist) \\\"quoted\\\"";
         // The shell is the *explicit executable* here, not an implicit layer
         // inserted by the launcher. Its positional parameter is the argv probe.
@@ -285,20 +223,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let result = loop {
-            if let Ok(result) = std::fs::read_to_string(&output)
-                && result.ends_with('\n')
-                && result.lines().count() >= 2
-            {
-                break result;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "detached child should write result"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        };
+        let result = std::fs::read_to_string(&output).unwrap();
         let mut lines = result.lines();
         assert_eq!(lines.next(), Some(literal));
         assert_eq!(

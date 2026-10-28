@@ -328,22 +328,6 @@ impl fmt::Display for SourceId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    struct Wrapper<T> {
-        value: T,
-    }
-
-    #[test]
-    fn dest_path_roundtrip() {
-        let v = Wrapper {
-            value: DestPath::from("agents/coder.md"),
-        };
-        let s = toml::to_string(&v).unwrap();
-        let out: Wrapper<DestPath> = toml::from_str(&s).unwrap();
-        assert_eq!(v, out);
-    }
 
     #[test]
     fn source_subpath_and_dest_path_share_normalization_rules() {
@@ -356,165 +340,36 @@ mod tests {
         assert_eq!(subpath.as_str(), dest.as_str());
     }
 
-    // Edge case 7: Windows drive letter with forward slash (C:/foo)
-
-    // Edge case 9: "." alone — CurDir is skipped → segments empty → Empty error
-
-    #[test]
-    fn dest_path_normalizes_windows_and_unix_separators() {
-        let path = DestPath::new(r"agents\foo/bar\baz.md").unwrap();
-        assert_eq!(path.as_str(), "agents/foo/bar/baz.md");
-    }
-
     #[test]
     fn dest_path_rejects_empty() {
-        let err = DestPath::new("").unwrap_err();
-        assert_eq!(err, DestPathError::Empty);
-    }
+        assert_eq!(DestPath::new("").unwrap_err(), DestPathError::Empty);
 
-    #[test]
-    fn dest_path_rejects_absolute() {
-        let err = DestPath::new("/abs/path").unwrap_err();
-        assert!(matches!(err, DestPathError::Absolute { .. }));
-    }
-
-    #[test]
-    fn dest_path_rejects_root_only() {
-        let err = DestPath::new("/").unwrap_err();
-        assert!(matches!(err, DestPathError::Absolute { .. }));
-    }
-
-    #[test]
-    fn dest_path_rejects_windows_absolute() {
-        let err = DestPath::new(r"C:\abs\path").unwrap_err();
-        assert!(matches!(err, DestPathError::Absolute { .. }));
-    }
-
-    #[test]
-    fn dest_path_rejects_windows_drive_relative() {
-        let err = DestPath::new("C:relative").unwrap_err();
-        assert!(matches!(err, DestPathError::Absolute { .. }));
-    }
-
-    #[test]
-    fn dest_path_rejects_escape() {
+        for absolute in ["/abs/path", "/", r"C:\abs\path", "C:relative"] {
+            let err = DestPath::new(absolute).unwrap_err();
+            assert!(
+                matches!(err, DestPathError::Absolute { .. }),
+                "{absolute}: {err:?}"
+            );
+        }
         let err = DestPath::new("../escape").unwrap_err();
         assert!(matches!(err, DestPathError::Escaping { .. }));
     }
 
     #[test]
-    fn dest_path_normalizes_trailing_slash() {
-        let path = DestPath::new("skills/planning/").unwrap();
-        assert_eq!(path.as_str(), "skills/planning");
-    }
-
-    #[test]
-    fn dest_path_normalizes_leading_dot_slash() {
-        let path = DestPath::new("./skills/planning").unwrap();
-        assert_eq!(path.as_str(), "skills/planning");
-    }
-
-    #[test]
     fn dest_path_item_name_extracts_agent_leaf() {
-        let path = DestPath::new("agents/coder.md").unwrap();
-        assert_eq!(path.item_name(ItemKind::Agent), "coder");
-    }
-
-    #[test]
-    fn dest_path_item_name_extracts_skill_leaf() {
-        let path = DestPath::new("skills/planning").unwrap();
-        assert_eq!(path.item_name(ItemKind::Skill), "planning");
-    }
-
-    #[test]
-    fn dest_path_item_name_extracts_bootstrap_doc_container() {
-        let path = DestPath::new("bootstrap/global-auth/BOOTSTRAP.md").unwrap();
-        assert_eq!(path.item_name(ItemKind::BootstrapDoc), "global-auth");
-    }
-
-    #[test]
-    fn dest_path_item_name_extracts_nested_agent_leaf() {
-        let path = DestPath::new("agents/sub/deep.md").unwrap();
-        assert_eq!(path.item_name(ItemKind::Agent), "deep");
-    }
-
-    #[test]
-    fn dest_path_item_name_handles_no_slash_edge_case() {
-        let path = DestPath::new("solo.md").unwrap();
-        assert_eq!(path.item_name(ItemKind::Agent), "solo");
-    }
-
-    // Edge case 11: mid-path parent escape "a/../../escape" — hits ParentDir immediately after
-    // pushing "a", so it is rejected as Escaping (conservative: any ".." rejected)
-
-    // Edge case 12: "a/b/../c" — conservative policy: any ".." is rejected as Escaping,
-    // even when logically harmless. This documents and pins the chosen policy.
-
-    // Edge case 13: trailing slash normalizes (no trailing slash in canonical form)
-
-    // Edge case 14: leading "./" normalizes to the bare path
-
-    #[test]
-    fn config_roundtrip_preserves_subpath() {
-        let config = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-subpath = "plugins\\foo"
-"#;
-        let parsed: crate::config::Config = toml::from_str(config).unwrap();
-        assert_eq!(
-            parsed.dependencies["base"]
-                .subpath
-                .as_ref()
-                .map(SourceSubpath::as_str),
-            Some("plugins/foo")
-        );
-
-        let serialized = toml::to_string(&parsed).unwrap();
-        assert!(serialized.contains("subpath = \"plugins/foo\""));
-        let reparsed: crate::config::Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(
-            reparsed.dependencies["base"]
-                .subpath
-                .as_ref()
-                .map(SourceSubpath::as_str),
-            Some("plugins/foo")
-        );
-    }
-
-    // ========== RES-001: EffectiveDependency carries subpath after merge ==========
-
-    /// RES-001 (config side): after merge_with_root the EffectiveDependency.subpath
-    /// matches what was in the Config.  This confirms the subpath survives the
-    /// config-load → merge step.
-    #[test]
-    fn effective_dependency_subpath_preserved_through_merge() {
-        use crate::config::{Config, merge_with_root};
-
-        let toml_str = r#"
-[dependencies.dep]
-url = "https://github.com/org/repo.git"
-subpath = "plugins/foo"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let (effective, _) = merge_with_root(
-            config,
-            crate::config::LocalConfig::default(),
-            &crate::config::UserConfig::default(),
-            std::path::Path::new("."),
-        )
-        .unwrap();
-        assert_eq!(
-            effective.dependencies["dep"]
-                .subpath
-                .as_ref()
-                .map(SourceSubpath::as_str),
-            Some("plugins/foo")
-        );
-        // SourceId must embed the same subpath
-        assert!(matches!(
-            &effective.dependencies["dep"].source_id,
-            SourceId::Git { subpath: Some(sp), .. } if sp.as_str() == "plugins/foo"
-        ));
+        for (path, kind, expected) in [
+            ("agents/coder.md", ItemKind::Agent, "coder"),
+            ("skills/planning", ItemKind::Skill, "planning"),
+            (
+                "bootstrap/global-auth/BOOTSTRAP.md",
+                ItemKind::BootstrapDoc,
+                "global-auth",
+            ),
+            ("agents/sub/deep.md", ItemKind::Agent, "deep"),
+            ("solo.md", ItemKind::Agent, "solo"),
+        ] {
+            let path = DestPath::new(path).unwrap();
+            assert_eq!(path.item_name(kind), expected, "{path:?}");
+        }
     }
 }

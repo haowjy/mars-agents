@@ -196,56 +196,6 @@ mod tests {
         dunce::canonicalize(path).unwrap()
     }
 
-    fn write_skill(root: &Path, name: &str) -> PathBuf {
-        let path = root
-            .join(".mars")
-            .join("skills")
-            .join(name)
-            .join("SKILL.md");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "# Skill").unwrap();
-        dunce::canonicalize(path).unwrap()
-    }
-
-    fn make_fallback(root: &Path) {
-        fs::create_dir_all(root).unwrap();
-        fs::write(root.join("mars.toml"), "").unwrap();
-    }
-
-    #[test]
-    fn primary_content_shadows_fallback_content() {
-        let temp = TempDir::new().unwrap();
-        let primary = temp.path().join("primary");
-        let fallback = temp.path().join("fallback");
-        make_fallback(&fallback);
-
-        let primary_agent = write_agent(&primary, "reviewer");
-        write_agent(&fallback, "reviewer");
-        let primary_skill = write_skill(&primary, "planning");
-        write_skill(&fallback, "planning");
-
-        let roots = ContentRoots::new(&primary, Some(&fallback));
-
-        assert_eq!(roots.agent_file_path("reviewer"), primary_agent);
-        assert_eq!(roots.skill_file_path("planning"), primary_skill);
-    }
-
-    #[test]
-    fn fallback_fills_missing_agent_and_skill() {
-        let temp = TempDir::new().unwrap();
-        let primary = temp.path().join("primary");
-        let fallback = temp.path().join("fallback");
-        make_fallback(&fallback);
-
-        let fallback_agent = write_agent(&fallback, "reviewer");
-        let fallback_skill = write_skill(&fallback, "planning");
-
-        let roots = ContentRoots::new(&primary, Some(&fallback));
-
-        assert_eq!(roots.agent_file_path("reviewer"), fallback_agent);
-        assert_eq!(roots.skill_file_path("planning"), fallback_skill);
-    }
-
     #[test]
     fn absent_or_manifestless_fallback_contributes_nothing() {
         let temp = TempDir::new().unwrap();

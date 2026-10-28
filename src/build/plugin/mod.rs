@@ -9,6 +9,8 @@ mod root_files;
 mod spec;
 mod support;
 mod tree;
+#[cfg(test)]
+mod validate_tests;
 
 pub(crate) use inspect::inspect_validated;
 pub use inspect::{

@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::tempdir;
 
@@ -65,8 +66,24 @@ visibility = "exported"
     source_dir.to_path_buf()
 }
 
+/// Every `mars` process the tests start comes from here: it gets a private, empty
+/// user config dir (`config.toml`, `curated.toml`) and cache dir, so the developer's
+/// real `~/.config/mars` never leaks in. A test that wants its own state overrides
+/// with a later `.env("MARS_CONFIG_DIR", ..)`.
 pub fn mars() -> Command {
-    Command::cargo_bin("mars").unwrap()
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "mars-user-state-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (config, cache) = (root.join("config"), root.join("cache"));
+    fs::create_dir_all(&config).expect("failed to create empty user config dir");
+    fs::create_dir_all(&cache).expect("failed to create empty cache dir");
+    let mut cmd = Command::cargo_bin("mars").unwrap();
+    cmd.env("MARS_CONFIG_DIR", config)
+        .env("MARS_CACHE_DIR", cache);
+    cmd
 }
 
 /// Offline CLI fixture; all writable environment state stays under this test root.
@@ -244,58 +261,51 @@ pub fn read_cache_raw(project_root: &Path) -> String {
     fs::read_to_string(cache_path(project_root)).expect("failed to read cache file")
 }
 
-pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) {
-    let home = temp_root.join("home");
-    let xdg_config = temp_root.join("xdg-config");
-    let xdg_data = temp_root.join("xdg-data");
-    let mars_config = temp_root.join("mars-config");
-    let mars_cache = temp_root.join("mars-cache");
-
-    for dir in [&home, &xdg_config, &xdg_data, &mars_config, &mars_cache] {
-        fs::create_dir_all(dir).expect("failed to create isolated env directory");
+/// Fully isolated environment (HOME, XDG, config, cache) rooted under `temp_root`.
+fn isolated_env(temp_root: &Path, api_url: &str) -> Vec<(&'static str, PathBuf)> {
+    let join = |name: &str| temp_root.join(name);
+    let env = vec![
+        ("MARS_MODELS_API_URL", PathBuf::from(api_url)),
+        ("HOME", join("home")),
+        ("USERPROFILE", join("home")),
+        ("APPDATA", join("xdg-config")),
+        ("LOCALAPPDATA", join("xdg-data")),
+        ("XDG_CONFIG_HOME", join("xdg-config")),
+        ("XDG_DATA_HOME", join("xdg-data")),
+        ("MARS_CONFIG_DIR", join("mars-config")),
+        ("MARS_CACHE_DIR", join("mars-cache")),
+        ("NO_COLOR", PathBuf::from("1")),
+    ];
+    for dir in [
+        "home",
+        "xdg-config",
+        "xdg-data",
+        "mars-config",
+        "mars-cache",
+    ] {
+        fs::create_dir_all(join(dir)).expect("failed to create isolated env directory");
     }
+    env
+}
 
-    cmd.env("MARS_MODELS_API_URL", api_url)
-        .env("HOME", &home)
-        .env("USERPROFILE", &home)
-        .env("APPDATA", &xdg_config)
-        .env("LOCALAPPDATA", &xdg_data)
-        .env("XDG_CONFIG_HOME", &xdg_config)
-        .env("XDG_DATA_HOME", &xdg_data)
-        .env("MARS_CONFIG_DIR", &mars_config)
-        .env("MARS_CACHE_DIR", &mars_cache)
-        .env("NO_COLOR", "1")
-        .env_remove("MARS_OFFLINE")
+pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) {
+    for (key, value) in isolated_env(temp_root, api_url) {
+        cmd.env(key, value);
+    }
+    cmd.env_remove("MARS_OFFLINE")
         .env_remove("MERIDIAN_MANAGED");
 }
 
 pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) {
-    let home = temp_root.join("home");
-    let xdg_config = temp_root.join("xdg-config");
-    let xdg_data = temp_root.join("xdg-data");
-    let mars_config = temp_root.join("mars-config");
-    let mars_cache = temp_root.join("mars-cache");
-
-    for dir in [&home, &xdg_config, &xdg_data, &mars_config, &mars_cache] {
-        fs::create_dir_all(dir).expect("failed to create isolated env directory");
+    for (key, value) in isolated_env(temp_root, api_url) {
+        cmd.env(key, value);
     }
-
-    cmd.env("MARS_MODELS_API_URL", api_url)
-        .env("HOME", &home)
-        .env("USERPROFILE", &home)
-        .env("APPDATA", &xdg_config)
-        .env("LOCALAPPDATA", &xdg_data)
-        .env("XDG_CONFIG_HOME", &xdg_config)
-        .env("XDG_DATA_HOME", &xdg_data)
-        .env("MARS_CONFIG_DIR", &mars_config)
-        .env("MARS_CACHE_DIR", &mars_cache)
-        .env("NO_COLOR", "1")
-        .env_remove("MARS_OFFLINE")
+    cmd.env_remove("MARS_OFFLINE")
         .env_remove("MERIDIAN_MANAGED");
 }
 
 pub fn mars_cmd(project_root: &Path, temp_root: &Path, api_url: &str) -> Command {
-    let mut cmd = Command::cargo_bin("mars").expect("failed to locate mars test binary");
+    let mut cmd = mars();
     configure_assert_cmd(&mut cmd, temp_root, api_url);
     cmd.arg("--root").arg(project_root);
     cmd

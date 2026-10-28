@@ -16,8 +16,10 @@ bucket is not a testing tier.
   under the fixture's excluded `.mars/test-env` directory.
 - Catalog/probe tests use local servers and fake executables with
   `configure_assert_cmd` / `mars_cmd`; explicitly control PATH. Never use a live
-  model-backed agent as a test fixture. Bare `mars()` inherits the environment;
-  remaining migrations are tracked in issue #167.
+  model-backed agent as a test fixture. Start every `mars` process from
+  `common::mars()` (or `mars_cmd`): it gets a private empty `MARS_CONFIG_DIR` and
+  `MARS_CACHE_DIR`, so the developer's real user config never leaks in. Bare
+  `mars()` still inherits PATH and HOME; remaining migrations are tracked in issue #167.
 - Never mutate assumed-absent absolute paths. Arrange absence under a TempDir.
 - Test deletions need a retained-protection explanation, not replacement tests by
   default. Ignored specifications belong in tracked work, not a green-suite claim.

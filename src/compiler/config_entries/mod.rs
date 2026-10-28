@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::compiler::hooks::ParsedHookItem;
-use crate::compiler::mcp::{ParsedMcpItem, TargetMcpEntry};
+use crate::compiler::mcp::{ParsedMcpItem, lower_transport};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::ConfigEntryRecord;
@@ -200,12 +200,9 @@ pub(crate) fn lower_config_entries_for_target(
     let target_root = adapter.name();
     let mut entries = Vec::new();
     for (dir, parsed) in mcp {
-        let entry = TargetMcpEntry::from_parsed(parsed, dir);
         entries.push(ConfigEntry::McpServer(McpServerEntry {
-            name: entry.name,
-            command: entry.command,
-            args: entry.args,
-            env: entry.env.into_iter().collect(),
+            name: parsed.name.clone(),
+            transport: lower_transport(parsed, dir),
         }));
     }
 

@@ -11,7 +11,7 @@
 /// - Produce `MarsTargetMcpEntry` per target for adapter config writing
 use std::path::Path;
 
-use mars_schema::mcp_server::{McpServerDef, parse_mcp_toml};
+use mars_schema::mcp_server::{HeaderValue, McpServerDef, McpTransport, parse_mcp_toml};
 
 use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
@@ -92,6 +92,19 @@ pub(crate) fn discover_mcp_items(
             })
         })?;
         let resolved_name = def.name.as_deref().unwrap_or(&server_name).to_string();
+        if let McpTransport::Http { url, headers } = &def.transport
+            && (url.contains(MCP_DIR_TOKEN)
+                || headers.values().any(
+                    |value| matches!(value, HeaderValue::Literal(text) if text.contains(MCP_DIR_TOKEN)),
+                ))
+        {
+            return Err(MarsError::Config(ConfigError::Invalid {
+                message: format!(
+                    "{}: {MCP_DIR_TOKEN} applies only to a server with `command`; a remote server has no directory",
+                    toml_path.display()
+                ),
+            }));
+        }
         let visibility = Visibility::parse(
             &def.visibility,
             "MCP server",
@@ -194,8 +207,20 @@ pub fn check_env_refs(
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     for item in items {
-        for (key, env_ref) in &item.def.env {
-            let var_name = env_ref.var_name();
+        let refs: Vec<(&str, &str)> = match &item.def.transport {
+            McpTransport::Stdio { env, .. } => env
+                .iter()
+                .map(|(key, env_ref)| (key.as_str(), env_ref.var_name()))
+                .collect(),
+            McpTransport::Http { headers, .. } => headers
+                .iter()
+                .filter_map(|(key, value)| match value {
+                    HeaderValue::Env { var, .. } => Some((key.as_str(), var.as_str())),
+                    HeaderValue::Literal(_) => None,
+                })
+                .collect(),
+        };
+        for (key, var_name) in refs {
             if std::env::var(var_name).is_err() {
                 let msg = format!(
                     "MCP server `{}` (from `{}`): env var `{var_name}` (referenced by `{key}`) \
@@ -224,43 +249,28 @@ fn substitute_mcp_dir(text: &str, mcp_dir: &str) -> String {
 }
 
 fn def_uses_dir_token(def: &McpServerDef) -> bool {
-    def.command.contains(MCP_DIR_TOKEN) || def.args.iter().any(|arg| arg.contains(MCP_DIR_TOKEN))
+    match &def.transport {
+        McpTransport::Stdio { command, args, .. } => {
+            command.contains(MCP_DIR_TOKEN) || args.iter().any(|arg| arg.contains(MCP_DIR_TOKEN))
+        }
+        McpTransport::Http { .. } => false,
+    }
 }
 
-/// A fully lowered MCP server entry ready for a target adapter to write.
-#[derive(Debug, Clone)]
-pub struct TargetMcpEntry {
-    /// Server name as it appears in the target config.
-    pub name: String,
-    /// Launch command.
-    pub command: String,
-    /// Launch arguments.
-    pub args: Vec<String>,
-    /// Env vars: key → variable name (symbolic — adapters write the native form).
-    pub env: indexmap::IndexMap<String, String>,
-}
-
-impl TargetMcpEntry {
-    /// Build from a parsed item, resolving `${MARS_MCP_DIR}` to the directory
-    /// this target installs the server's files in.
-    pub fn from_parsed(item: &ParsedMcpItem, mcp_dir: &str) -> Self {
-        let env = item
-            .def
-            .env
-            .iter()
-            .map(|(k, v)| (k.clone(), v.var_name().to_string()))
-            .collect();
-        Self {
-            name: item.name.clone(),
-            command: substitute_mcp_dir(&item.def.command, mcp_dir),
-            args: item
-                .def
-                .args
+/// The transport a target writes for a parsed item, with `${MARS_MCP_DIR}`
+/// resolved to the directory this target installs the server's files in.
+/// Env stays symbolic: adapters write each harness's own reference syntax.
+pub fn lower_transport(item: &ParsedMcpItem, mcp_dir: &str) -> McpTransport {
+    match &item.def.transport {
+        McpTransport::Stdio { command, args, env } => McpTransport::Stdio {
+            command: substitute_mcp_dir(command, mcp_dir),
+            args: args
                 .iter()
                 .map(|arg| substitute_mcp_dir(arg, mcp_dir))
                 .collect(),
-            env,
-        }
+            env: env.clone(),
+        },
+        http @ McpTransport::Http { .. } => http.clone(),
     }
 }
 
@@ -295,8 +305,11 @@ args = ["-y", "@upstash/context7-mcp@latest"]
             discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "context7");
-        assert_eq!(items[0].def.command, "npx");
-        assert_eq!(items[0].def.args, &["-y", "@upstash/context7-mcp@latest"]);
+        let McpTransport::Stdio { command, args, .. } = &items[0].def.transport else {
+            panic!("stdio server expected");
+        };
+        assert_eq!(command, "npx");
+        assert_eq!(args, &["-y", "@upstash/context7-mcp@latest"]);
     }
 
     #[test]
@@ -346,8 +359,11 @@ API_KEY = { from = "env", var = "MY_API_KEY" }
         );
         let items =
             discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
-        assert_eq!(items[0].def.env.len(), 1);
-        let env_ref = &items[0].def.env["API_KEY"];
+        let McpTransport::Stdio { env, .. } = &items[0].def.transport else {
+            panic!("stdio server expected");
+        };
+        assert_eq!(env.len(), 1);
+        let env_ref = &env["API_KEY"];
         assert_eq!(env_ref.var_name(), "MY_API_KEY");
     }
 
@@ -409,8 +425,11 @@ TOKEN = { from = "env", var = "SECRET_TOKEN" }
         );
         let items =
             discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
-        let entry = TargetMcpEntry::from_parsed(&items[0], "/installed/mcp/server");
+        let McpTransport::Stdio { env, .. } = lower_transport(&items[0], "/installed/mcp/server")
+        else {
+            panic!("stdio server expected");
+        };
         // The env map carries the variable name, not the resolved value.
-        assert_eq!(entry.env["TOKEN"], "SECRET_TOKEN");
+        assert_eq!(env["TOKEN"].var_name(), "SECRET_TOKEN");
     }
 }

@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::types::DestPath;
+use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
+use mars_schema::mcp_server::{HeaderValue, McpTransport};
 
 use super::{
     HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpRender, McpServerEntry,
@@ -115,25 +117,63 @@ impl TargetAdapter for CodexAdapter {
 // written, so a renamed reference is reported as lossy and dropped.
 
 fn render(server: &McpServerEntry) -> McpRender {
-    let mut entry = serde_json::json!({
-        "command": server.command,
-        "args": server.args,
-    });
-    let (forwarded, renamed) = super::mcp_file::partition_env(server);
-    if !forwarded.is_empty() {
-        entry["env_vars"] = serde_json::json!(forwarded);
+    match &server.transport {
+        McpTransport::Stdio { command, args, .. } => {
+            let mut entry = serde_json::json!({ "command": command, "args": args });
+            let (forwarded, renamed) = super::mcp_file::partition_env(server);
+            if !forwarded.is_empty() {
+                entry["env_vars"] = serde_json::json!(forwarded);
+            }
+            McpRender {
+                value: entry,
+                lossy: renamed
+                    .into_iter()
+                    .map(|(key, variable)| {
+                        format!(
+                            "Codex forwards `{variable}` by name and cannot set it as `{key}`; `{key}` is not set for the server."
+                        )
+                    })
+                    .collect(),
+            }
+        }
+        McpTransport::Http { url, headers } => render_remote(url, headers),
     }
-    McpRender {
-        value: entry,
-        lossy: renamed
-            .into_iter()
-            .map(|(key, variable)| {
-                format!(
-                    "Codex forwards `{variable}` by name and cannot set it as `{key}`; `{key}` is not set for the server."
-                )
-            })
-            .collect(),
+}
+
+/// A Streamable HTTP server. Codex reads a header from the environment in
+/// whole (`env_http_headers`, no prefix) and has one prefixed form,
+/// `bearer_token_env_var` for `Authorization: Bearer <value>`; any other
+/// prefixed env header has no spelling and is reported and dropped.
+fn render_remote(url: &str, headers: &IndexMap<String, HeaderValue>) -> McpRender {
+    let mut entry = serde_json::json!({ "url": url });
+    let mut literals = serde_json::Map::new();
+    let mut from_env = serde_json::Map::new();
+    let mut lossy = Vec::new();
+    for (name, value) in headers {
+        match value {
+            HeaderValue::Literal(text) => {
+                literals.insert(name.clone(), text.as_str().into());
+            }
+            HeaderValue::Env { var, prefix } if prefix.is_empty() => {
+                from_env.insert(name.clone(), var.as_str().into());
+            }
+            HeaderValue::Env { var, prefix }
+                if name.eq_ignore_ascii_case("authorization") && prefix == "Bearer " =>
+            {
+                entry["bearer_token_env_var"] = var.as_str().into();
+            }
+            HeaderValue::Env { var, prefix } => lossy.push(format!(
+                "Codex reads header `{name}` from `{var}` whole and cannot prepend `{prefix}`; `{name}` is not set for the server."
+            )),
+        }
     }
+    if !literals.is_empty() {
+        entry["http_headers"] = literals.into();
+    }
+    if !from_env.is_empty() {
+        entry["env_http_headers"] = from_env.into();
+    }
+    McpRender { value: entry, lossy }
 }
 
 // ---------------------------------------------------------------------------

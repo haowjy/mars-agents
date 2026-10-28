@@ -15,10 +15,23 @@ use crate::error::{ConfigError, MarsError};
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, TargetAdapter};
+use super::{
+    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpRender, McpServerEntry,
+    TargetAdapter,
+};
 
 #[derive(Debug)]
 pub struct ClaudeAdapter;
+
+/// Claude's `.mcp.json` entry: the `mcpServers` shape with `${VAR}` references;
+/// a remote server names `"type": "http"`.
+fn render(server: &McpServerEntry) -> McpRender {
+    McpRender::exact(super::mcp_file::servers_entry(
+        server,
+        super::mcp_file::braced,
+        Some("http"),
+    ))
+}
 
 impl TargetAdapter for ClaudeAdapter {
     fn name(&self) -> &str {
@@ -104,7 +117,7 @@ impl TargetAdapter for ClaudeAdapter {
                 path: ".claude/.mcp.json",
                 format: McpFormat::JsonSection("mcpServers"),
             }),
-            render: super::mcp_file::braced_render,
+            render,
         })
     }
 

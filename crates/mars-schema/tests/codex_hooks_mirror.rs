@@ -173,15 +173,17 @@ fn parse(document: &serde_json::Value) -> Result<HookEventsToml, serde_json::Err
 fn codex_document(claude_json: &str) -> (serde_json::Value, PortableHooks) {
     let (hooks, _) = PortableHooks::from_claude_json(claude_json).unwrap();
     let rendered = hooks.render(
-        ".codex",
+        &mars_schema::hooks::targets::target(".codex")
+            .unwrap()
+            .profile,
         &Tokens {
             hook_dir: "/p/.codex/hooks/audit",
             hook_target: ".codex",
         },
     );
     let events: BTreeMap<_, Vec<_>> = rendered
-        .events
-        .into_iter()
+        .events()
+        .iter()
         .map(|(event, entries)| (event, entries.iter().map(|e| e.to_json()).collect()))
         .collect();
     (serde_json::json!({ "hooks": events }), hooks)

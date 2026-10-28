@@ -8,7 +8,7 @@ use serde_json::Number;
 
 use super::Tokens;
 use super::portable::{Handler, MatcherGroup, PortableHooks};
-use super::targets;
+use super::targets::{self, Profile, Rules};
 use crate::ordered::OrderedValue;
 
 /// Something a target does not run. `event` is `None` when the whole target is skipped.
@@ -18,14 +18,25 @@ pub struct Skip {
     pub reason: String,
 }
 
-/// One target's rendering of a hook's `[hooks]` table.
-#[derive(Debug, Clone, PartialEq, Default)]
+/// One profile's rendering of a hook's `[hooks]` table.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Rendered {
-    /// Finished entries per native event. An event with nothing left is absent.
-    pub events: BTreeMap<String, Vec<OrderedValue>>,
-    /// Events the target does not list that the hook's `unchecked = true` passed through.
-    pub unchecked_events: Vec<String>,
+    pub output: Output,
     pub skips: Vec<Skip>,
+}
+
+/// What a rendering yields, in the shape the target's placement takes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Output {
+    /// Finished entries per native event, for a hook config file. An event with nothing left
+    /// is absent.
+    Merge {
+        events: BTreeMap<String, Vec<OrderedValue>>,
+        /// Events the target does not list that the hook's `unchecked = true` passed through.
+        unchecked_events: Vec<String>,
+    },
+    /// The text of the one file generated from the table; `None` when nothing is generated.
+    File { text: Option<String> },
 }
 
 impl Rendered {
@@ -35,24 +46,55 @@ impl Rendered {
             reason,
         });
     }
+
+    /// Whether nothing was rendered.
+    pub fn is_empty(&self) -> bool {
+        match &self.output {
+            Output::Merge { events, .. } => events.is_empty(),
+            Output::File { text } => text.is_none(),
+        }
+    }
+
+    /// The merge shape's events; none for a file.
+    pub fn events(&self) -> &BTreeMap<String, Vec<OrderedValue>> {
+        static NONE: BTreeMap<String, Vec<OrderedValue>> = BTreeMap::new();
+        match &self.output {
+            Output::Merge { events, .. } => events,
+            Output::File { .. } => &NONE,
+        }
+    }
+
+    /// The merge shape's unchecked events; none for a file.
+    pub fn unchecked_events(&self) -> &[String] {
+        match &self.output {
+            Output::Merge {
+                unchecked_events, ..
+            } => unchecked_events,
+            Output::File { .. } => &[],
+        }
+    }
 }
 
 impl PortableHooks {
-    /// This table as `target_root` takes it, with `tokens` substituted in every string.
-    pub fn render(&self, target_root: &str, tokens: &Tokens<'_>) -> Rendered {
-        let mut rendered = Rendered::default();
-        match target_root {
-            ".claude" => self.render_claude(&mut rendered),
-            ".codex" => self.render_codex(&mut rendered),
-            ".cursor" => rendered.skips.push(Skip {
-                event: None,
-                reason: "mars renders no generated hooks for Cursor before 0.26".into(),
-            }),
-            ".opencode" | ".pi" => {
-                let harness = if target_root == ".pi" {
-                    "Pi"
-                } else {
-                    "OpenCode"
+    /// This table as `profile` takes it, with `tokens` substituted in every string.
+    pub fn render(&self, profile: &Profile, tokens: &Tokens<'_>) -> Rendered {
+        let mut rendered = match profile.rules {
+            Rules::Claude => self.render_claude(profile),
+            Rules::Codex => self.render_codex(profile),
+            Rules::Withheld { reason } => Rendered {
+                output: Output::Merge {
+                    events: BTreeMap::new(),
+                    unchecked_events: Vec::new(),
+                },
+                skips: vec![Skip {
+                    event: None,
+                    reason: reason.into(),
+                }],
+            },
+            Rules::TypeScript { harness } => {
+                let mut rendered = Rendered {
+                    output: Output::File { text: None },
+                    skips: Vec::new(),
                 };
                 for (event, _) in self.events() {
                     rendered.skip(
@@ -60,23 +102,22 @@ impl PortableHooks {
                         format!("mars does not render hooks for {harness} yet"),
                     );
                 }
+                rendered
             }
-            _ => {}
-        }
-        for entries in rendered.events.values_mut() {
-            entries
-                .iter_mut()
-                .for_each(|entry| tokens.substitute_value(entry));
+        };
+        if let Output::Merge { events, .. } = &mut rendered.output {
+            for entries in events.values_mut() {
+                entries
+                    .iter_mut()
+                    .for_each(|entry| tokens.substitute_value(entry));
+            }
         }
         rendered
     }
 
-    /// Whether `render` yields at least one event for `target_root`.
-    pub fn renders_for(&self, target_root: &str) -> bool {
-        !self
-            .render(target_root, &Tokens::default())
-            .events
-            .is_empty()
+    /// Whether `render` yields anything under `profile`.
+    pub fn renders_on(&self, profile: &Profile) -> bool {
+        !self.render(profile, &Tokens::default()).is_empty()
     }
 
     /// Events on which a handler sets `if`, though Claude never runs such a handler there.
@@ -94,22 +135,38 @@ impl PortableHooks {
             .collect()
     }
 
-    /// Identity: Claude takes the table as written. An event Claude does not list is one the
-    /// author passed with `unchecked = true`.
-    fn render_claude(&self, rendered: &mut Rendered) {
+    /// Identity: Claude takes the table as written. An event the profile does not list is one
+    /// the author passed with `unchecked = true`.
+    fn render_claude(&self, profile: &Profile) -> Rendered {
+        let mut events = BTreeMap::new();
+        let mut unchecked_events = Vec::new();
         for (event, groups) in self.events() {
-            if targets::claude_event(event).is_none() {
-                rendered.unchecked_events.push(event.to_owned());
+            if !profile.events.iter().any(|e| e.name == event) {
+                unchecked_events.push(event.to_owned());
             }
-            rendered.events.insert(
+            events.insert(
                 event.to_owned(),
                 groups.iter().map(MatcherGroup::to_claude).collect(),
             );
         }
+        Rendered {
+            output: Output::Merge {
+                events,
+                unchecked_events,
+            },
+            skips: Vec::new(),
+        }
     }
 
-    fn render_codex(&self, rendered: &mut Rendered) {
-        let known = targets::events(".codex");
+    fn render_codex(&self, profile: &Profile) -> Rendered {
+        let mut rendered = Rendered {
+            output: Output::Merge {
+                events: BTreeMap::new(),
+                unchecked_events: Vec::new(),
+            },
+            skips: Vec::new(),
+        };
+        let mut rendered_events = BTreeMap::new();
         for (event, groups) in self.events() {
             if targets::claude_event(event).is_none() {
                 rendered.skip(
@@ -118,7 +175,7 @@ impl PortableHooks {
                 );
                 continue;
             }
-            if !known.iter().any(|e| e.name == event) {
+            if !profile.events.iter().any(|e| e.name == event) {
                 rendered.skip(event, "Codex has no such event".into());
                 continue;
             }
@@ -137,9 +194,14 @@ impl PortableHooks {
                 }
             }
             if !entries.is_empty() {
-                rendered.events.insert(event.to_owned(), entries);
+                rendered_events.insert(event.to_owned(), entries);
             }
         }
+        rendered.output = Output::Merge {
+            events: rendered_events,
+            unchecked_events: Vec::new(),
+        };
+        rendered
     }
 }
 
@@ -217,6 +279,10 @@ fn whole_seconds(timeout: &Number) -> Result<Number, String> {
 mod tests {
     use super::*;
 
+    fn profile(root: &str) -> Profile {
+        targets::target(root).unwrap().profile
+    }
+
     fn hooks(json: &str) -> PortableHooks {
         PortableHooks::from_claude_json(json).unwrap().0
     }
@@ -240,22 +306,22 @@ mod tests {
 
     #[test]
     fn claude_gets_the_table_as_written_with_tokens_substituted() {
-        let rendered = hooks(MIXED).render(".claude", &tokens());
+        let rendered = hooks(MIXED).render(&profile(".claude"), &tokens());
         assert!(rendered.skips.is_empty());
-        let json = serde_json::to_string(&rendered.events["PreToolUse"][0].to_json()).unwrap();
+        let json = serde_json::to_string(&rendered.events()["PreToolUse"][0].to_json()).unwrap();
         assert!(
             json.contains("bash /p/.codex/hooks/audit/run.sh .codex"),
             "{json}"
         );
         assert!(json.contains(r#""timeout":2.5"#));
-        assert_eq!(rendered.events.len(), 3);
+        assert_eq!(rendered.events().len(), 3);
     }
 
     #[test]
     fn codex_gets_what_codex_parses_and_reports_the_rest() {
-        let rendered = hooks(MIXED).render(".codex", &tokens());
+        let rendered = hooks(MIXED).render(&profile(".codex"), &tokens());
         let pre = serde_json::to_string(
-            &rendered.events["PreToolUse"]
+            &rendered.events()["PreToolUse"]
                 .iter()
                 .map(OrderedValue::to_json)
                 .collect::<Vec<_>>(),
@@ -267,12 +333,12 @@ mod tests {
             r#"[{"hooks":[{"command":"bash /p/.codex/hooks/audit/run.sh .codex","if":"Bash(*tmux*)","onFailure":"block","statusMessage":"m","timeout":3,"type":"command"}],"matcher":"Bash"}]"#
         );
         // SessionEnd keeps the command and drops the mcp_tool; Notification has no Codex event.
-        let end = serde_json::to_string(&rendered.events["SessionEnd"][0].to_json()).unwrap();
+        let end = serde_json::to_string(&rendered.events()["SessionEnd"][0].to_json()).unwrap();
         assert_eq!(
             end,
             r#"{"hooks":[{"command":"echo bye","type":"command"}]}"#
         );
-        assert!(!rendered.events.contains_key("Notification"));
+        assert!(!rendered.events().contains_key("Notification"));
         let reasons: Vec<_> = rendered
             .skips
             .iter()
@@ -292,8 +358,8 @@ mod tests {
     #[test]
     fn a_group_with_no_handler_left_is_left_out() {
         let rendered = hooks(r#"{"Stop":[{"hooks":[{"type":"http","url":"u"}]}]}"#)
-            .render(".codex", &tokens());
-        assert!(rendered.events.is_empty());
+            .render(&profile(".codex"), &tokens());
+        assert!(rendered.is_empty());
         assert_eq!(rendered.skips.len(), 1);
     }
 
@@ -301,13 +367,13 @@ mod tests {
     fn opencode_pi_and_cursor_render_nothing_and_say_why() {
         let table = hooks(MIXED);
         for root in [".opencode", ".pi"] {
-            let rendered = table.render(root, &tokens());
-            assert!(rendered.events.is_empty());
+            let rendered = table.render(&profile(root), &tokens());
+            assert!(rendered.is_empty());
             assert_eq!(rendered.skips.len(), 3, "{root}");
             assert!(rendered.skips[0].reason.contains("yet"));
         }
-        let cursor = table.render(".cursor", &tokens());
-        assert!(cursor.events.is_empty());
+        let cursor = table.render(&profile(".cursor"), &tokens());
+        assert!(cursor.is_empty());
         assert_eq!(cursor.skips.len(), 1);
         assert_eq!(cursor.skips[0].event, None);
     }

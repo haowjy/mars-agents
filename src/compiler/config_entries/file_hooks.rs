@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::sync::package_dir::PackageDir;
-use crate::target::{HookPlacement, HookRole, TargetAdapter};
 use crate::types::MarsContext;
 use mars_schema::item::ItemKind;
 
@@ -59,14 +58,12 @@ fn owned_files(item: &crate::lock::LockedItemV2) -> Vec<(String, String)> {
     if dir_copies.is_empty() {
         return Vec::new();
     }
-    let registry = crate::target::TargetRegistry::new();
     item.outputs
         .iter()
         .filter(|output| output.target_root != crate::lock::CANONICAL_TARGET_ROOT)
         .filter(|output| {
-            registry.get(&output.target_root).is_some_and(|adapter| {
-                matches!(adapter.hook_placement(), Some(HookPlacement::File { .. }))
-            })
+            mars_schema::hooks::targets::target(&output.target_root)
+                .is_some_and(mars_schema::hooks::targets::Target::is_file)
         })
         .filter(|output| {
             !dir_copies.iter().any(|dir| {
@@ -84,13 +81,6 @@ fn owned_files(item: &crate::lock::LockedItemV2) -> Vec<(String, String)> {
             )
         })
         .collect()
-}
-
-/// The path, relative to `adapter`'s target root, of a hook's installed fragment file.
-pub(super) fn fragment_file_path(adapter: &dyn TargetAdapter, hook_name: &str) -> Option<String> {
-    adapter
-        .hook_placement()?
-        .file_path(hook_name, HookRole::Fragment)
 }
 
 #[allow(clippy::too_many_arguments)]

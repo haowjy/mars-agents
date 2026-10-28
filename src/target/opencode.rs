@@ -12,7 +12,7 @@ use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
 use mars_schema::mcp_servers::{McpRender, env_map, header_map};
 
-use super::{HookPlacement, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
+use super::{McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
 
 const MCP_SECTION: &str = "mcp";
 
@@ -48,10 +48,6 @@ pub struct OpencodeAdapter;
 impl TargetAdapter for OpencodeAdapter {
     fn name(&self) -> &str {
         ".opencode"
-    }
-
-    fn hook_placement(&self) -> Option<HookPlacement> {
-        Some(HookPlacement::File { dir: "plugins" })
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

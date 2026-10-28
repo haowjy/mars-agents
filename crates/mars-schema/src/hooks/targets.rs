@@ -1,8 +1,9 @@
-//! What each target root takes of a hook: the table of events (D11), where it keeps them,
-//! and the version of the harness the table was last checked against.
+//! What each target root takes of a hook (D11): one [`Target`] per root, holding where its
+//! hooks are placed, the events it accepts, the harness version that table was last checked
+//! against, how `[hooks]` is rendered for it, and what its generated files are called.
 //!
-//! One table per target. The renderers (`render`) read their event lists from here, and the
-//! binary reads `placement` to know whether a target merges entries or installs a file.
+//! The binary adds only where a merge target's file lives on disk. Nothing else about a
+//! target is kept anywhere else.
 
 /// A hook event of one target and the input field its `matcher` tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,14 +38,83 @@ const fn matched(name: &'static str, field: &'static str) -> Event {
 /// How a target root takes a hook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Placement {
-    /// The hook's events are merged into the target's hook config file; `events` is every
-    /// event the target's parser accepts.
-    Merge { events: &'static [Event] },
-    /// The hook is installed as opaque files.
-    File,
+    /// The hook's events are merged into the target's hook config file.
+    Merge,
+    /// The hook is installed as whole files in `dir`, under the target root.
+    File { dir: &'static str },
 }
 
-// Claude Code 2.1.312; event names from https://code.claude.com/docs/en/hooks (2026-07-24),
+/// How `[hooks]` becomes a target's entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rules {
+    /// Claude takes the table as written.
+    Claude,
+    /// Codex's parser: handlers and matchers it cannot run are left out (D17).
+    Codex,
+    /// Generated TypeScript for `harness`; not rendered yet.
+    TypeScript { harness: &'static str },
+    /// Nothing is rendered for the target, as a whole; `reason` says why.
+    Withheld { reason: &'static str },
+}
+
+/// What a renderer needs of a target: the events it accepts and the rules its parser applies.
+/// The two vary independently: the plugin tree's `hooks.json` is Claude's events under
+/// Codex's rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Profile {
+    /// Every event the target accepts.
+    pub events: &'static [Event],
+    pub rules: Rules,
+}
+
+impl Profile {
+    /// Whether the rules render `[hooks]` at all.
+    pub fn renders(&self) -> bool {
+        matches!(self.rules, Rules::Claude | Rules::Codex)
+    }
+}
+
+/// One target root's hook rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Target {
+    pub root: &'static str,
+    /// The harness version `profile.events` was last checked against; `None` while the
+    /// target's rows are unchecked.
+    pub verified_against: Option<&'static str>,
+    pub placement: Placement,
+    pub profile: Profile,
+}
+
+/// Where a file-placement target's generated file gets its suffix: the hook name ends in
+/// neither, so a generated file never collides with an authored one.
+const GENERATED_SUFFIX: &str = super::RESERVED_NAME_SUFFIX;
+
+impl Target {
+    /// Whether the target installs whole files rather than merging entries.
+    pub fn is_file(&self) -> bool {
+        matches!(self.placement, Placement::File { .. })
+    }
+
+    /// The path, relative to the target root, of the hook's own fragment file; `None` for a
+    /// merge target, which has no per-hook file.
+    pub fn fragment_path(&self, hook_name: &str) -> Option<String> {
+        let Placement::File { dir } = self.placement else {
+            return None;
+        };
+        Some(format!("{dir}/mars-{hook_name}.ts"))
+    }
+
+    /// The path, relative to the target root, of the file generated from the hook's
+    /// `[hooks]`; `None` for a merge target.
+    pub fn generated_path(&self, hook_name: &str) -> Option<String> {
+        let Placement::File { dir } = self.placement else {
+            return None;
+        };
+        Some(format!("{dir}/mars-{hook_name}{GENERATED_SUFFIX}.ts"))
+    }
+}
+
+// Claude Code 2.1.312 (`CLAUDE.verified_against`); event names from https://code.claude.com/docs/en/hooks (2026-07-24),
 // matcher fields from research/claude-codex-cursor-answers.md § Matchers per moment.
 const CLAUDE_EVENTS: &[Event] = &[
     matched("SessionStart", "source"),
@@ -123,43 +193,67 @@ const CURSOR_EVENTS: &[Event] = &[
     event("workspaceOpen"),
 ];
 
-/// How `target_root` takes hooks; `None` when it has no hook mechanism.
-pub fn placement(target_root: &str) -> Option<Placement> {
-    match target_root {
-        ".claude" => Some(Placement::Merge {
+const TARGETS: &[Target] = &[
+    Target {
+        root: ".claude",
+        verified_against: Some("Claude Code 2.1.312"),
+        placement: Placement::Merge,
+        profile: Profile {
             events: CLAUDE_EVENTS,
-        }),
-        ".codex" => Some(Placement::Merge {
+            rules: Rules::Claude,
+        },
+    },
+    Target {
+        root: ".codex",
+        verified_against: Some("codex-cli 0.164.0"),
+        placement: Placement::Merge,
+        profile: Profile {
             events: CODEX_EVENTS,
-        }),
-        ".cursor" => Some(Placement::Merge {
+            rules: Rules::Codex,
+        },
+    },
+    Target {
+        root: ".cursor",
+        verified_against: Some("cursor-agent 2026.07.16"),
+        placement: Placement::Merge,
+        profile: Profile {
             events: CURSOR_EVENTS,
-        }),
-        ".opencode" | ".pi" => Some(Placement::File),
-        _ => None,
-    }
+            rules: Rules::Withheld {
+                reason: "mars renders no generated hooks for Cursor before 0.26",
+            },
+        },
+    },
+    // The events a generated adapter handles are listed when its renderer lands.
+    Target {
+        root: ".opencode",
+        verified_against: None,
+        placement: Placement::File { dir: "plugins" },
+        profile: Profile {
+            events: &[],
+            rules: Rules::TypeScript {
+                harness: "OpenCode",
+            },
+        },
+    },
+    Target {
+        root: ".pi",
+        verified_against: None,
+        placement: Placement::File { dir: "extensions" },
+        profile: Profile {
+            events: &[],
+            rules: Rules::TypeScript { harness: "Pi" },
+        },
+    },
+];
+
+/// The hook rules of `root`; `None` when it has no hook mechanism.
+pub fn target(root: &str) -> Option<&'static Target> {
+    TARGETS.iter().find(|target| target.root == root)
 }
 
-/// The targets that render a `[hooks]` table today. OpenCode and Pi join when their
-/// generated TypeScript lands; Cursor in 0.26.
-pub const PORTABLE_TARGETS: &[&str] = &[".claude", ".codex"];
-
-/// The harness version the target's table was last verified against.
-pub fn verified_against(target_root: &str) -> Option<&'static str> {
-    match target_root {
-        ".claude" => Some("Claude Code 2.1.312"),
-        ".codex" => Some("codex-cli 0.164.0"),
-        ".cursor" => Some("cursor-agent 2026.07.16"),
-        _ => None,
-    }
-}
-
-/// The events `target_root` merges; empty for a target that does not.
-pub fn events(target_root: &str) -> &'static [Event] {
-    match placement(target_root) {
-        Some(Placement::Merge { events }) => events,
-        _ => &[],
-    }
+/// Every target that takes hooks.
+pub fn all() -> &'static [Target] {
+    TARGETS
 }
 
 /// Claude's event of that name: the set a `[hooks]` table may declare.

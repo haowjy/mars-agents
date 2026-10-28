@@ -9,7 +9,7 @@
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{HookPlacement, McpFile, McpLocation, SectionFormat, TargetAdapter};
+use super::{McpFile, McpLocation, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct PiAdapter;
@@ -17,10 +17,6 @@ pub struct PiAdapter;
 impl TargetAdapter for PiAdapter {
     fn name(&self) -> &str {
         ".pi"
-    }
-
-    fn hook_placement(&self) -> Option<HookPlacement> {
-        Some(HookPlacement::File { dir: "extensions" })
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

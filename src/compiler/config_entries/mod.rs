@@ -16,12 +16,12 @@ use crate::surface_ownership::retention::{RemovalOperation, RemovalReport};
 use crate::sync::AppliedState;
 use crate::sync::package_dir::PackageDir;
 use crate::target::{
-    HOOK_KEY_PREFIX, HookEntry, HookPlacement, MCP_KEY_PREFIX, McpServerEntry, TargetRegistry,
-    mcp_file,
+    HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, McpServerEntry, TargetRegistry, mcp_file,
 };
 use crate::types::MarsContext;
 use file_hooks::{file_hook_output_preserve_paths, kept_file_outputs, write_file_hook_outputs};
-use render::{RenderedHook, RenderedHooks, lower_merge_fragments};
+use mars_schema::hooks::HookOutput;
+use render::{RenderedHooks, lower_merge_fragments};
 
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
@@ -138,14 +138,16 @@ pub(crate) fn compile_config_entries(
         let mut file_writes = Vec::new();
         for (dir, item) in &installed_hooks {
             match rendered_hooks.get(dir) {
-                RenderedHook::Merge(fragment) => merge_fragments.push((*item, fragment)),
-                RenderedHook::File { path, content } => {
-                    desired_file_outputs.insert((target_root.clone(), path.clone()));
-                    file_writes.push((
-                        dir.canonical().as_str().to_string(),
-                        path.clone(),
-                        content.clone(),
-                    ));
+                HookOutput::Merge(fragment) => merge_fragments.push((*item, fragment)),
+                HookOutput::File(output) => {
+                    for file in &output.files {
+                        desired_file_outputs.insert((target_root.clone(), file.path.clone()));
+                        file_writes.push((
+                            dir.canonical().as_str().to_string(),
+                            file.path.clone(),
+                            file.content.clone(),
+                        ));
+                    }
                 }
             }
         }
@@ -285,16 +287,13 @@ pub(crate) fn compile_config_entries(
         let previous = hook_records(previous_records.get(&target_root));
         let holds_previous = registry
             .get(&target_root)
-            .and_then(|adapter| match adapter.hook_placement() {
-                Some(HookPlacement::Merge { file, .. }) => {
-                    Some(crate::target::hook_file::holds_recorded(
-                        &ctx.project_root.join(&target_root).join(file),
-                        &previous,
-                    ))
-                }
-                _ => None,
-            })
-            .unwrap_or(false);
+            .and_then(|adapter| adapter.hook_file())
+            .is_some_and(|hook_file| {
+                crate::target::hook_file::holds_recorded(
+                    &ctx.project_root.join(&target_root).join(hook_file.file),
+                    &previous,
+                )
+            });
         if holds_previous && desired == previous {
             pending_hooks.remove(&target_root);
             unchanged_records.insert(target_root, desired);
@@ -404,14 +403,8 @@ fn trust_snapshots(
     target_roots
         .iter()
         .filter_map(|root| {
-            let Some(HookPlacement::Merge {
-                file,
-                trust_gated: true,
-                ..
-            }) = registry.get(root)?.hook_placement()
-            else {
-                return None;
-            };
+            let hook_file = registry.get(root)?.hook_file().filter(|f| f.trust_gated)?;
+            let file = hook_file.file;
             let positions =
                 crate::target::hook_file::trust_positions(&ctx.project_root.join(root).join(file));
             Some((root.clone(), (format!("{root}/{file}"), positions)))
@@ -456,9 +449,9 @@ pub(crate) fn remove_hooks(
         );
     };
     let (target_dir, removal) = operation.into_parts(project_root);
-    let report = match adapter.hook_placement() {
-        Some(HookPlacement::Merge { file, .. }) => crate::target::hook_file::remove_recorded(
-            &target_dir.join(file),
+    let report = match adapter.hook_file() {
+        Some(hook_file) => crate::target::hook_file::remove_recorded(
+            &target_dir.join(hook_file.file),
             &removal.prior_records,
             &target_root,
             diag,
@@ -468,7 +461,7 @@ pub(crate) fn remove_hooks(
             |()| RemovalReport::confirmed(),
         ),
         // A file target records no merge entries.
-        _ => RemovalReport::confirmed(),
+        None => RemovalReport::confirmed(),
     };
     report.context(format!(
         "failed to remove prior hook entries from `{target_root}`"
@@ -585,16 +578,15 @@ fn apply_replacement_writes(
             continue;
         };
         let keys: Vec<String> = write.hooks().iter().map(HookEntry::key).collect();
-        let Some(HookPlacement::Merge {
-            file, top_level, ..
-        }) = adapter.hook_placement()
-        else {
+        let Some(hook_file) = adapter.hook_file() else {
             continue;
         };
         let (target_dir, hooks) = write.into_parts(&ctx.project_root);
-        if let Err(error) =
-            crate::target::hook_file::write(&target_dir.join(file), &hooks, top_level)
-        {
+        if let Err(error) = crate::target::hook_file::write(
+            &target_dir.join(hook_file.file),
+            &hooks,
+            hook_file.top_level,
+        ) {
             diag.warn(
                 "config-entry-write",
                 format!("failed to write config entries to `{target_root}`: {error}"),

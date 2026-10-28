@@ -3,8 +3,8 @@
 //! A hook is written once as Claude's hooks JSON in TOML (`[hooks]`, see `portable`), a
 //! native fragment per target (`[targets]`), or both. This module owns what is authored
 //! (`HookDef`, `read`), which targets receive it (`HookDef::select`), and what a fragment
-//! must look like (`merge_fragment`). `targets` is the per-target table of events and
-//! `render` turns a `[hooks]` table into a target's entries.
+//! must look like (`HookDef::output`). `targets` is the per-target table and `render` turns a
+//! `[hooks]` table into a profile's entries.
 //! Nothing here touches the filesystem: the caller reads the bytes and places the result,
 //! and adds the location (a path, or a package and version) to the path-free diagnostics.
 
@@ -22,13 +22,13 @@ use crate::ordered::OrderedValue;
 use crate::visibility::Visibility;
 use portable::PortableHooks;
 use render::Skip;
-use targets::Placement;
+use targets::Target;
 
 /// The authored placeholder for the directory a hook's files are installed in.
 pub const HOOK_DIR_TOKEN: &str = "${MARS_HOOK_DIR}";
 
 /// Hook names ending in this are reserved for files Mars generates beside authored ones.
-const RESERVED_NAME_SUFFIX: &str = ".hooks";
+pub(crate) const RESERVED_NAME_SUFFIX: &str = ".hooks";
 
 pub const REMOVED_SCHEMA_MESSAGE: &str = "uses the removed v0.11.0 hook schema (`events`/`matcher`/`[action]`/`path`); \
      migrate to per-target native fragment files with `fragment = \"<target>.json\"`";
@@ -135,7 +135,11 @@ impl HookDef {
             .filter(|root| {
                 self.targets.contains_key(*root)
                     || (self.generates_for(root)
-                        && self.portable.as_ref().is_some_and(|p| p.renders_for(root)))
+                        && targets::target(root).is_some_and(|target| {
+                            self.portable
+                                .as_ref()
+                                .is_some_and(|p| p.renders_on(&target.profile))
+                        }))
             })
             .collect()
     }
@@ -143,9 +147,9 @@ impl HookDef {
     /// What `[hooks]` leaves out on `target_root` when nothing there overrides it; empty
     /// for a target in `skip-targets` and for a hook with no `[hooks]`.
     pub fn skips_for(&self, target_root: &str) -> Vec<Skip> {
-        match &self.portable {
-            Some(portable) if self.generates_for(target_root) => {
-                portable.render(target_root, &Tokens::default()).skips
+        match (&self.portable, targets::target(target_root)) {
+            (Some(portable), Some(target)) if self.generates_for(target_root) => {
+                portable.render(&target.profile, &Tokens::default()).skips
             }
             _ => Vec::new(),
         }
@@ -332,7 +336,7 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
 
     let mut skip_targets = BTreeSet::new();
     for root in raw.skip_targets {
-        if targets::placement(&root).is_none() {
+        if targets::target(&root).is_none() {
             return failed(
                 "hook.skip-targets",
                 format!(
@@ -355,7 +359,7 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
             );
         }
         let mut unchecked = spec.unchecked;
-        if unchecked.is_some() && targets::placement(&root) == Some(Placement::File) {
+        if unchecked.is_some() && targets::target(&root).is_some_and(Target::is_file) {
             let message = format!(
                 "target `{root}` uses file-mode fragments; `unchecked` is not supported because file contents and events are not validated"
             );
@@ -442,6 +446,41 @@ fn validate_fragment_path(path: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// What a hook installs on one target.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HookOutput {
+    Merge(MergeOutput),
+    File(FileOutput),
+}
+
+impl HookOutput {
+    /// What `[hooks]` leaves out on the target, minus what a fragment replaces.
+    pub fn skips(&self) -> &[Skip] {
+        match self {
+            Self::Merge(output) => &output.skips,
+            Self::File(output) => &output.skips,
+        }
+    }
+}
+
+/// A file target's files for a hook: the authored fragment as written, and the file
+/// generated from `[hooks]`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FileOutput {
+    pub files: Vec<OutputFile>,
+    /// What is wrong with the fragment, if anything; it is installed regardless.
+    pub fragment_problem: Option<&'static str>,
+    pub skips: Vec<Skip>,
+}
+
+/// A file a hook installs on a file target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputFile {
+    /// Relative to the target root.
+    pub path: String,
+    pub content: String,
+}
+
 /// One merge target's events for a hook: `[hooks]` rendered, with the fragment's events
 /// replacing the generated ones they name.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -465,36 +504,85 @@ pub struct MergeOutput {
 pub struct FragmentError(String);
 
 impl HookDef {
-    /// The events `target_root` merges for this hook: `[hooks]` rendered (unless the target
-    /// is in `skip-targets`), then the fragment's events laid over them. `fragment_text` is
-    /// the fragment's file, read by the caller when the hook declares one for the target.
+    /// What this hook installs on `target`: `[hooks]` rendered (unless the target is in
+    /// `skip-targets`) and the fragment laid over it. `fragment_text` is the fragment's file,
+    /// read by the caller when the hook declares one for the target.
     ///
-    /// The fragment is an event-keyed JSON object, optionally wrapped as
+    /// On a merge target the fragment is an event-keyed JSON object, optionally wrapped as
     /// `{"hooks": …, "version"?, "description"?}`, whose events the target lists (unless
-    /// its table is `unchecked`) and whose values are arrays. A fragment replaces only the
-    /// events it declares, so one with an empty array turns that event off.
-    pub fn merge_output(
+    /// its table is `unchecked`) and whose values are arrays. It replaces only the events it
+    /// declares, so one with an empty array turns that event off. On a file target it is
+    /// opaque text.
+    pub fn output(
         &self,
-        target_root: &str,
+        target: &Target,
+        fragment_text: Option<&str>,
+        origin: Origin,
+        tokens: &Tokens<'_>,
+    ) -> Result<HookOutput, FragmentError> {
+        if target.is_file() {
+            Ok(HookOutput::File(self.file_output(
+                target,
+                fragment_text,
+                tokens,
+            )))
+        } else {
+            self.merge_output(target, fragment_text, origin, tokens)
+                .map(HookOutput::Merge)
+        }
+    }
+
+    fn file_output(
+        &self,
+        target: &Target,
+        fragment_text: Option<&str>,
+        tokens: &Tokens<'_>,
+    ) -> FileOutput {
+        let mut output = FileOutput::default();
+        if let (Some(text), Some(path)) = (fragment_text, target.fragment_path(&self.name)) {
+            let content = tokens.substitute(text);
+            output.fragment_problem = file_fragment_problem(target.root, &content);
+            output.files.push(OutputFile { path, content });
+        }
+        if let (Some(portable), true) = (&self.portable, self.generates_for(target.root)) {
+            let rendered = portable.render(&target.profile, tokens);
+            if let (
+                render::Output::File {
+                    text: Some(content),
+                },
+                Some(path),
+            ) = (rendered.output, target.generated_path(&self.name))
+            {
+                output.files.push(OutputFile { path, content });
+            }
+            output.skips = rendered.skips;
+        }
+        output
+    }
+
+    fn merge_output(
+        &self,
+        target: &Target,
         fragment_text: Option<&str>,
         origin: Origin,
         tokens: &Tokens<'_>,
     ) -> Result<MergeOutput, FragmentError> {
         let mut output = MergeOutput::default();
-        if self.generates_for(target_root)
-            && let Some(portable) = &self.portable
-        {
-            let rendered = portable.render(target_root, tokens);
-            output.events = rendered.events;
-            output.unchecked_events = rendered.unchecked_events;
+        if let (Some(portable), true) = (&self.portable, self.generates_for(target.root)) {
+            let rendered = portable.render(&target.profile, tokens);
+            if let render::Output::Merge {
+                events,
+                unchecked_events,
+            } = rendered.output
+            {
+                output.events = events;
+                output.unchecked_events = unchecked_events;
+            }
             output.skips = rendered.skips;
         }
-        let Some(text) = fragment_text else {
+        let (Some(text), Some(fragment)) = (fragment_text, self.fragment(target.root)) else {
             return Ok(output);
         };
-        let fragment = self
-            .fragment(target_root)
-            .expect("a fragment's text is read for a declared fragment table");
         let err = |message: String| FragmentError(message);
         let mut value: OrderedValue = serde_json::from_str(text)
             .map_err(|error| err(format!("fragment is not valid JSON: {error}")))?;
@@ -506,7 +594,7 @@ impl HookDef {
         };
         // Sorted, so the first fault reported does not depend on authored order.
         let sorted: BTreeMap<_, _> = object.into_iter().collect();
-        let known = targets::events(target_root);
+        let known = target.profile.events;
         for (event, entries) in sorted {
             if !known.iter().any(|e| e.name == event) {
                 if !fragment.is_unchecked() && origin == Origin::Dependency {
@@ -514,8 +602,12 @@ impl HookDef {
                     continue;
                 }
                 if !fragment.is_unchecked() {
+                    let checked = target
+                        .verified_against
+                        .map_or(String::new(), |v| format!(" (checked against {v})"));
                     return Err(err(format!(
-                        "unknown event `{event}` for target `{target_root}`; valid events: {}; use `unchecked = true` to pass a newer native event through verbatim",
+                        "unknown event `{event}` for target `{}`; valid events: {}{checked}; use `unchecked = true` to pass a newer native event through verbatim",
+                        target.root,
                         known.iter().map(|e| e.name).collect::<Vec<_>>().join(", ")
                     )));
                 }
@@ -561,6 +653,7 @@ pub fn file_fragment_problem(target_root: &str, content: &str) -> Option<&'stati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use targets::Placement;
 
     #[test]
     fn opencode_fragments_need_a_default_export() {
@@ -600,14 +693,20 @@ mod tests {
         fragment: Option<&str>,
         origin: Origin,
     ) -> Result<MergeOutput, FragmentError> {
-        def.merge_output(root, fragment, origin, &tokens())
+        match def.output(targets::target(root).unwrap(), fragment, origin, &tokens())? {
+            HookOutput::Merge(output) => Ok(output),
+            HookOutput::File(_) => panic!("{root} is a file target"),
+        }
     }
 
     fn events(root: &str) -> &'static [targets::Event] {
-        match targets::placement(root) {
-            Some(Placement::Merge { events }) => events,
-            other => panic!("{root} must merge hooks, got {other:?}"),
-        }
+        let target = targets::target(root).unwrap();
+        assert_eq!(target.placement, Placement::Merge, "{root}");
+        target.profile.events
+    }
+
+    fn profile(root: &str) -> targets::Profile {
+        targets::target(root).unwrap().profile
     }
 
     #[test]
@@ -620,14 +719,36 @@ mod tests {
         assert_eq!(cursor.len(), 21);
         assert!(cursor.iter().any(|e| e.name == "beforeShellExecution"));
         for root in [".opencode", ".pi"] {
-            assert_eq!(targets::placement(root), Some(Placement::File));
+            assert!(targets::target(root).unwrap().is_file());
         }
-        assert_eq!(targets::placement(".agents"), None);
+        assert!(targets::target(".agents").is_none());
         // Every Codex event is a Claude event, so a Claude-keyed table renders on both.
         assert!(
             codex
                 .iter()
                 .all(|e| targets::claude_event(e.name).is_some())
+        );
+    }
+
+    #[test]
+    fn file_targets_name_their_fragment_and_generated_files() {
+        let opencode = targets::target(".opencode").unwrap();
+        assert_eq!(
+            opencode.fragment_path("audit").as_deref(),
+            Some("plugins/mars-audit.ts")
+        );
+        assert_eq!(
+            opencode.generated_path("audit").as_deref(),
+            Some("plugins/mars-audit.hooks.ts")
+        );
+        let pi = targets::target(".pi").unwrap();
+        assert_eq!(
+            pi.fragment_path("audit").as_deref(),
+            Some("extensions/mars-audit.ts")
+        );
+        assert_eq!(
+            targets::target(".codex").unwrap().fragment_path("audit"),
+            None
         );
     }
 
@@ -643,9 +764,18 @@ mod tests {
         );
         let def = def_with("", &[(".claude", false)]);
         let text = r#"{"Stop":[{"hooks":[{"command":"${MARS_HOOK_DIR}/run.sh"}]}]}"#;
-        let merged = def
-            .merge_output(".claude", Some(text), Origin::Local, &t)
-            .unwrap();
+        let merged = match def
+            .output(
+                targets::target(".claude").unwrap(),
+                Some(text),
+                Origin::Local,
+                &t,
+            )
+            .unwrap()
+        {
+            HookOutput::Merge(merged) => merged,
+            HookOutput::File(_) => unreachable!(),
+        };
         assert_eq!(
             serde_json::to_string(&merged.events["Stop"]).unwrap(),
             r#"[{"hooks":[{"command":"${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh"}]}]"#
@@ -762,9 +892,7 @@ command = "echo n"
         .unwrap();
         let managed = [".codex".to_string()];
         assert_eq!(def.select(&managed), [".codex"]);
-        let out = def
-            .merge_output(".codex", Some(r#"{"Stop":[]}"#), Origin::Local, &tokens())
-            .unwrap();
+        let out = output(&def, ".codex", Some(r#"{"Stop":[]}"#), Origin::Local).unwrap();
         // Skipped: no generated PreToolUse. The fragment's own event is all there is.
         assert_eq!(out.events.keys().collect::<Vec<_>>(), ["Stop"]);
     }
@@ -829,10 +957,10 @@ command = "echo n"
             .def
             .unwrap();
         let portable = def.portable().unwrap();
-        let claude = portable.render(".claude", &tokens());
-        assert_eq!(claude.unchecked_events, ["FutureEvent"]);
-        let codex = portable.render(".codex", &tokens());
-        assert!(!codex.events.contains_key("FutureEvent"));
+        let claude = portable.render(&profile(".claude"), &tokens());
+        assert_eq!(claude.unchecked_events(), ["FutureEvent"]);
+        let codex = portable.render(&profile(".codex"), &tokens());
+        assert!(!codex.events().contains_key("FutureEvent"));
         assert!(
             codex
                 .skips

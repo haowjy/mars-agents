@@ -9,7 +9,7 @@ use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_servers::{self, Flavor, McpRender};
 
-use super::{HookPlacement, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
+use super::{HookFile, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct CursorAdapter;
@@ -39,8 +39,8 @@ impl TargetAdapter for CursorAdapter {
             render,
         })
     }
-    fn hook_placement(&self) -> Option<HookPlacement> {
-        Some(HookPlacement::Merge {
+    fn hook_file(&self) -> Option<HookFile> {
+        Some(HookFile {
             file: "hooks.json",
             top_level: HOOKS_TOP_LEVEL,
             trust_gated: false,

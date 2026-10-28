@@ -5,7 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use mars_schema::diagnostic::Severity;
-use mars_schema::hooks::{self, Fragment, HookDef, MergeOutput, Origin, Tokens};
+use mars_schema::hooks::targets::Target;
+use mars_schema::hooks::{self, Fragment, HookDef, HookOutput, Origin, Tokens};
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
@@ -35,15 +36,6 @@ impl ParsedHookItem {
                 .expect("parsed hook belongs to its package root")
                 .to_path_buf(),
         }
-    }
-
-    /// The fragment file of a hook selected for a file target, which only a fragment table
-    /// selects.
-    pub(crate) fn fragment_file(&self, target: &str) -> &str {
-        &self
-            .fragment(target)
-            .expect("a file target is selected for a hook only by its fragment table")
-            .file
     }
 
     /// The fragment table this hook declares for `target`; a `[hooks]`-only hook has none.
@@ -286,23 +278,23 @@ fn invalid_manifest(
     ConfigError::Invalid { message }.into()
 }
 
-/// The events a merge target takes of an installed hook: its `[hooks]` rendered, with its
-/// fragment's events laid over them.
-pub fn load_merge_output(
+/// What an installed hook puts on `target`: its `[hooks]` rendered, with its fragment (when
+/// it declares one for the target) laid over them.
+pub fn load_output(
     item: &ParsedHookItem,
-    target_name: &str,
+    target: &Target,
     tokens: &Tokens<'_>,
-) -> Result<MergeOutput, MarsError> {
+) -> Result<HookOutput, MarsError> {
     let fragment = item
-        .fragment(target_name)
+        .fragment(target.root)
         .map(|fragment| {
             let path = item.hook_dir.join(&fragment.file);
             read_fragment(&path).map(|text| (path, text))
         })
         .transpose()?;
     item.def
-        .merge_output(
-            target_name,
+        .output(
+            target,
             fragment.as_ref().map(|(_, text)| text.as_str()),
             item.origin,
             tokens,
@@ -313,20 +305,6 @@ pub fn load_merge_output(
                 .map_or_else(|| item.hook_dir.join("hook.toml"), |(path, _)| path.clone());
             invalid(&path, &error.to_string())
         })
-}
-
-/// Load a file-mode fragment and apply the same textual path substitution used
-/// for JSON string values. File-mode fragments are otherwise opaque.
-pub fn load_file_fragment(
-    item: &ParsedHookItem,
-    target_name: &str,
-    tokens: &Tokens<'_>,
-) -> Result<String, MarsError> {
-    let fragment = item
-        .fragment(target_name)
-        .expect("a file target is selected for a hook only by its fragment table");
-    let path = item.hook_dir.join(&fragment.file);
-    Ok(tokens.substitute(&read_fragment(&path)?))
 }
 
 fn read_fragment(path: &Path) -> Result<String, MarsError> {
@@ -381,11 +359,15 @@ pub(crate) fn check_hooks(
             ));
         }
         // Only the targets that render `[hooks]` today have a reason an author can act on;
-        // OpenCode, Pi and Cursor report "not rendered yet" at sync.
-        for target in mars_schema::hooks::targets::PORTABLE_TARGETS {
-            for skip in item.def.skips_for(target) {
+        // the others report "not rendered yet" at sync.
+        for target in mars_schema::hooks::targets::all()
+            .iter()
+            .filter(|target| target.profile.renders())
+        {
+            for skip in item.def.skips_for(target.root) {
                 warnings.push(format!(
-                    "hook `{name}`: `{target}` {}",
+                    "hook `{name}`: `{}` {}",
+                    target.root,
                     crate::compiler::config_entries::render::skip_text(&skip)
                 ));
             }

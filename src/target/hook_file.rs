@@ -223,7 +223,7 @@ fn remove_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::target::{HookPlacement, TargetRegistry};
+    use crate::target::{HookFile, TargetRegistry};
     use tempfile::TempDir;
 
     fn entry(name: &str, event: &str, script: &str) -> HookEntry {
@@ -314,8 +314,8 @@ mod tests {
     fn claude_hooks_go_to_the_local_settings_file() {
         let registry = TargetRegistry::new();
         assert_eq!(
-            registry.get(".claude").unwrap().hook_placement(),
-            Some(HookPlacement::Merge {
+            registry.get(".claude").unwrap().hook_file(),
+            Some(HookFile {
                 file: "settings.local.json",
                 top_level: &[],
                 trust_gated: false,
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn schema_and_adapter_placements_agree_for_every_target() {
-        use mars_schema::hooks::targets::{Placement, placement};
+        use mars_schema::hooks::targets::target;
         let registry = TargetRegistry::new();
         for root in [
             ".agents",
@@ -335,14 +335,9 @@ mod tests {
             ".pi",
             ".cursor",
         ] {
-            let accepted = placement(root);
-            let located = registry.get(root).unwrap().hook_placement();
-            match (accepted, located) {
-                (None, None)
-                | (Some(Placement::Merge { .. }), Some(HookPlacement::Merge { .. }))
-                | (Some(Placement::File), Some(HookPlacement::File { .. })) => {}
-                other => panic!("{root}: schema and adapter disagree: {other:?}"),
-            }
+            let merges = target(root).is_some_and(|target| !target.is_file());
+            let located = registry.get(root).unwrap().hook_file().is_some();
+            assert_eq!(merges, located, "{root}: schema and adapter disagree");
         }
     }
 }

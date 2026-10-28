@@ -60,42 +60,17 @@ impl HookEntry {
     }
 }
 
-/// Where a target keeps hooks on disk. Which events or files it accepts is
-/// `mars_schema::hooks::targets::placement`; the two agree per target (pinned by a test).
+/// The hook config file of a merge target: where its entries are appended. What the target
+/// accepts, and the files of a file target, are `mars_schema::hooks::targets`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookPlacement {
-    /// Events are appended into `file`, under the target root, after setting the
-    /// `top_level` keys (Cursor's `version`).
-    Merge {
-        file: &'static str,
-        top_level: &'static [(&'static str, i64)],
-        /// The harness skips hooks it has not been told to trust, keyed on their position in
-        /// `file` (Codex): a sync that moves or adds one says so.
-        trust_gated: bool,
-    },
-    /// Each output is a whole file in `dir`, under the target root.
-    File { dir: &'static str },
-}
-
-/// What a hook's output is, which decides the name of a file it becomes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookRole {
-    /// The author's own fragment, installed as written.
-    Fragment,
-}
-
-impl HookPlacement {
-    /// The path, relative to the target root, of the file a hook's `role` output
-    /// becomes; `None` for a merge target, which has no per-hook file.
-    pub fn file_path(&self, hook_name: &str, role: HookRole) -> Option<String> {
-        let Self::File { dir } = self else {
-            return None;
-        };
-        let name = match role {
-            HookRole::Fragment => format!("mars-{hook_name}.ts"),
-        };
-        Some(format!("{dir}/{name}"))
-    }
+pub struct HookFile {
+    /// Under the target root.
+    pub file: &'static str,
+    /// Keys set at the top of the file before appending (Cursor's `version`).
+    pub top_level: &'static [(&'static str, i64)],
+    /// The harness skips hooks it has not been told to trust, keyed on their position in
+    /// `file` (Codex): a sync that moves or adds one says so.
+    pub trust_gated: bool,
 }
 
 /// Per-target compilation adapter.
@@ -137,10 +112,10 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     // Config files
     // -----------------------------------------------------------------------
 
-    /// Where this target keeps hooks on disk; `None` when it takes none. What it
-    /// accepts there is `mars_schema::hooks::targets::placement`. MCP servers are
+    /// The file this target merges hook entries into; `None` for a target that merges none
+    /// (a file target's files are named by `mars_schema::hooks::targets`). MCP servers are
     /// reconciled by [`mcp_file::reconcile`] from [`Self::mcp_file`].
-    fn hook_placement(&self) -> Option<HookPlacement> {
+    fn hook_file(&self) -> Option<HookFile> {
         None
     }
 

@@ -1,0 +1,65 @@
+{
+  "items": [
+    {
+      "package": "a",
+      "kind": "agent",
+      "slug": "a1",
+      "path": "agents/a1.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "d1",
+      "kind": "agent",
+      "slug": "d1",
+      "path": "agents/d1.md",
+      "required_by": [
+        {
+          "by": "package",
+          "package": "a"
+        }
+      ]
+    },
+    {
+      "package": "x",
+      "kind": "agent",
+      "slug": "x1",
+      "path": "agents/x1.md",
+      "required_by": [
+        {
+          "by": "package",
+          "package": "d2"
+        }
+      ]
+    },
+    {
+      "package": "y",
+      "kind": "agent",
+      "slug": "y1",
+      "path": "agents/y1.md",
+      "required_by": [
+        {
+          "by": "package",
+          "package": "x"
+        }
+      ]
+    },
+    {
+      "package": "d2",
+      "kind": "agent",
+      "slug": "d2",
+      "path": "agents/d2.md",
+      "required_by": [
+        {
+          "by": "package",
+          "package": "a"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

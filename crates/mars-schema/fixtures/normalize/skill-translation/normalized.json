@@ -295,6 +295,48 @@
             "output_path": "skills/everything/scripts/go.sh"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "badname",
+              "output_path": "skills/badname/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "broken",
+              "output_path": "skills/broken/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "colon",
+              "output_path": "skills/colon/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "everything",
+              "output_path": "skills/everything/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "mismatch",
+              "output_path": "skills/mismatch/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "plain",
+              "output_path": "skills/plain/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           "skills/badname/SKILL.md": [
             {

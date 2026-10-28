@@ -80,6 +80,18 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "visible",
+              "output_path": "skills/visible/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

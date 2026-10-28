@@ -1,0 +1,36 @@
+{
+  "requests": [
+    {
+      "name": "creative-writing-skills"
+    },
+    {
+      "name": "meridian-base",
+      "agents": [
+        "cold-reader",
+        "explorer",
+        "kb-lead",
+        "kb-maintainer",
+        "session-miner"
+      ],
+      "skills": [
+        "correct",
+        "grill",
+        "grill-with-docs",
+        "information-hierarchy",
+        "intent-modeling",
+        "knowledge-layers",
+        "llm-writing",
+        "md-validation",
+        "qi-layer",
+        "qi-maintenance",
+        "reflect",
+        "shared-dao",
+        "structured-artifact",
+        "zoom-out"
+      ]
+    },
+    {
+      "name": "writing-sync"
+    }
+  ]
+}

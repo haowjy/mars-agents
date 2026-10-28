@@ -1,5 +1,4 @@
 pub(crate) mod archive;
-pub(crate) mod canonical;
 pub mod git;
 pub(crate) mod git_cli;
 pub mod parse;
@@ -18,7 +17,8 @@ pub struct GlobalCache {
 }
 
 impl GlobalCache {
-    /// Create a new cache directory, ensuring required subdirs exist.
+    /// Locate the cache. Nothing is created here: the first fetch creates `git/` and `archives/`,
+    /// so a run that fetches nothing works with a read-only cache root.
     ///
     /// Resolution order:
     /// 1. `MARS_CACHE_DIR`
@@ -27,10 +27,7 @@ impl GlobalCache {
     pub fn new() -> Result<Self, MarsError> {
         let root = global_cache_root()?;
 
-        let cache = Self { root };
-        std::fs::create_dir_all(cache.archives_dir())?;
-        std::fs::create_dir_all(cache.git_dir())?;
-        Ok(cache)
+        Ok(Self { root })
     }
 
     pub fn archives_dir(&self) -> PathBuf {

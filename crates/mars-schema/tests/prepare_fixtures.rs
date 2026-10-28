@@ -25,11 +25,13 @@ fn prepare_fixtures_match() {
         let request: Request =
             serde_json::from_slice(&fs::read(case.join("request.json")).unwrap()).unwrap();
         let tree = common::load_tree(&case.join("input"));
-        let prepared = if request.migrate {
+        let mut prepared = if request.migrate {
             prepare_for_migration(&tree, request.context, request.declared_dialect)
         } else {
             prepare(&tree, request.context, request.declared_dialect)
         };
+        // As the WASM export returns it.
+        mars_schema::links::package(&mut prepared);
         // The bytes are checked against `expected/` below, not inlined in `expected.json`.
         common::assert_file(
             &case.join("expected.json"),

@@ -29,3 +29,31 @@ pub fn provider_of(skill_name: &str) -> Option<&str> {
     }
     Some(provider)
 }
+
+/// The provider a ref is deferred to, when the requesting package declares it.
+///
+/// The package-only half of a ref's validity: `<x>__<p>` is valid wherever `p` supplies it when
+/// the package lists `p` in `[package] uses-providers`. Selection and `mars check` ask only
+/// this question, so a package resolves the same on every machine; sync's validator is the one
+/// reporter that also knows what this machine installed.
+///
+/// `declared` is the requesting package's `uses-providers`: `Some` for a package (a dependency,
+/// or a package repository's own items), `None` for a consumer project's local items, which need
+/// no declaration.
+pub fn deferred_provider<'a>(name: &'a str, declared: Option<&[String]>) -> Option<&'a str> {
+    let provider = provider_of(name)?;
+    declared?
+        .iter()
+        .any(|declared| declared == provider)
+        .then_some(provider)
+}
+
+/// The hint for a `<skill>__<provider>` ref that no package ships and no package declares.
+///
+/// A name can look exactly like a host provider's and still be a typo, so the hint is
+/// conditional. Selection's missing-skill report carries this one text (`MissingSkill::hint`), and `mars check` prints it.
+pub(crate) fn undeclared_provider_hint(provider: &str) -> String {
+    format!(
+        "if `{provider}` is a host that provides this skill, declare it in `[package] uses-providers`; otherwise check the name"
+    )
+}

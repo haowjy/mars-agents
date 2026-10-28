@@ -35,7 +35,7 @@ mars.toml + mars.local.toml
          │ continue
          ▼
 ┌─────────────────┐
-│  3. Build Target│  Select the prepared definitions, apply filters, detect
+│  3. Build Target│  Take the selected items from the graph, apply renames, detect
 │                 │  collisions. Local (_self) items are projected before
 │                 │  hashing, so the diff compares the installed form.
 └────────┬────────┘
@@ -111,18 +111,19 @@ Fetches sources, resolves concrete versions, and prepares each package.
 **Algorithm (src/resolve/mod.rs):**
 1. Fetch dependencies from EffectiveConfig
 2. Read `mars.toml` manifests in source trees to discover transitive dependencies (including transitive skill dependencies pulled in through agent declarations)
-3. Intersect version constraints across dependents
-4. Select concrete versions
-5. Topological sort (Kahn's algorithm: deps before dependents)
+3. Settle each package's constraints (`mars_schema::version::settle`: one pin, or a pin beside a range refuses)
+4. Select concrete versions (`mars_schema::version::keeps_lock`, then `select`, the rule below; `choose` is all the steps for a caller with no tags to avoid listing, such as the WASM package's `selectVersion`)
+5. Select the items the consumer installs (`mars_schema::selection::select`, one pass over the settled graph; it computes the registry order skill refs resolve in)
 
 **Version selection strategy:**
 
 | Mode | Strategy | Used by |
 |---|---|---|
-| Normal | Minimum Version Selection (MVS) | `mars sync`, `mars add` |
-| Maximize | Newest compatible version | `mars upgrade` |
+| Normal | The locked version when it still satisfies every constraint (whether or not its tag still exists upstream), otherwise the newest compatible version | `mars sync`, `mars add` |
+| Maximize | The newest compatible version, ignoring the lock | `mars upgrade` |
+| Frozen | The locked version, or an error | `--frozen` |
 
-**MVS** picks the minimum version satisfying all constraints. This is deterministic and conservative: you get exactly what you asked for, not the newest thing available. `mars upgrade` switches to maximize mode to find the newest compatible version.
+Mars never picks the oldest version that satisfies the constraints. A sync keeps what the lock recorded, so versions move only when a constraint stops allowing the locked one or `mars upgrade` asks.
 
 **Lock replay:** When a lock file exists, the resolver tries to reuse locked commits for sources whose version constraints haven't changed. This makes `mars sync` deterministic after the first install. Normal sync runs a post-resolution compatible-upgrade check; `--no-upgrade-hint` skips that lookup. In `--frozen` mode, lock replay failures become hard errors (the lock must fully reproduce the previous state).
 
@@ -193,11 +194,11 @@ this branch; it enters the compiler and reports the schema error.
 
 Constructs the desired target state from the resolved graph.
 
-For each source in topological order:
+For each source in alphabetical order:
 
-Agents and skills come from each package's `Prepared` result, so no walk selects them here. For project-local (`_self`) items, `staging::materialize_local_prepared` projects the selected definition and its crate-listed payload into the scratch generation before hashing, so the sync diff compares the installed form, not the raw source.
+The graph already carries the selection: which Agents, skills and bootstrap documents the consumer's entries install. Agents and skills come from each package's `Prepared` result, and this step only checks membership in that selection. For project-local (`_self`) items, `staging::materialize_local_prepared` projects the selected definition and its crate-listed payload into the scratch generation before hashing, so the sync diff compares the installed form, not the raw source.
 1. **Select** the prepared Agents and skills; the binary discovers only hooks, MCP servers and bootstrap documents itself (`bootstrap/` directories at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`)
-2. **Apply filter** (All, Include, Exclude, OnlySkills, OnlyAgents)
+2. **Keep the selected items** (the filter ran earlier, inside `select`)
 3. **Apply rename** mappings from config
 4. **Compute source hash** (SHA-256 of source content)
 
@@ -205,7 +206,7 @@ After building all items:
 5. **Detect cross-source destination collisions** — dependency agents and skills from different sources that want the same destination path are both auto-renamed with `__{source_name}`; explicit dependency `rename` mappings run first and can prevent or customize the rename
 6. **Check unmanaged collisions** — prune items that would overwrite a canonical path Mars does not own: `mars.lock` does not claim it and `.mars/provided.lock` does not list it (see [canonical ownership](lock-file.md#canonical-ownership)). MCP server directories join the target state after MCP name collision resolution and take the same check, so only the winning server's files are installed.
 7. **Rewrite frontmatter** — build one `RenameIndex` from explicit skill renames and automatic collision renames that survived pruning, then apply one rewrite pass per agent; dependency fallback candidates follow mars.toml declaration order (`frontmatter` is the YAML metadata block at the top of each agent Markdown file)
-8. **Validate** — validate skill references in agent frontmatter, and warn on `config-rename-dangle` (config-side references to names that renames have replaced)
+8. **Validate** — validate skill references in agent frontmatter; report the body links of dependency skills that no longer land on anything in the installed tree (`skill.reference-to-skill`, `skill.outside-reference`, judged after filters and renames by `mars_schema::links::check`; the project's own `.mars-src` skills are judged by the same check, against the installed tree); and warn on `config-rename-dangle` (config-side references to names that renames have replaced)
 
 ### 4. Create Plan (`create_plan`)
 
@@ -287,13 +288,16 @@ that never names the token has no directory and needs none.
 8. Lower desired entries and derive native lock keys such as
    `hook:PreToolUse:audit`.
 9. Compare desired entries against the previous lock and remove stale entries
-   before writing replacements. Removal is ownership-gated and hook commands
-   are path-matched by name. The same phase performs temporary removal-only
-   residue sweeps for legacy OpenCode `opencode.json` hooks and Codex
-   `codex_hooks.json` hooks.
-10. Write desired entries to target config files via target adapters
-    (`.mcp.json`, `settings.local.json`, `hooks.json`, etc.). Non-fatal
-    per-target.
+   before writing replacements. Hook removal is ownership-gated; the same phase
+   performs temporary removal-only residue sweeps (until 0.25) for legacy
+   OpenCode `opencode.json` hooks and Codex `codex_hooks.json` hooks. MCP
+   servers skip this step: step 10 removes and writes them in one pass.
+10. Write desired entries to target config files: MCP through each adapter's
+    `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), reconciled in one
+    pass per file (`mcp_file::reconcile`: stale owned entries removed, desired
+    ones written, one save), hooks through the adapter (`settings.local.json`,
+    `hooks.json`). A same-named MCP entry the lock does not own is kept.
+    Non-fatal per-target.
 
 In `--diff` (dry run) mode, stale entries are reported as warnings but not
 removed; writes are skipped.

@@ -1,8 +1,9 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
-use crate::target::{ConfigEntry, McpServerEntry};
+use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
+use mars_schema::mcp_servers::{Flavor, render};
 use mars_schema::plugin_metadata::CLAUDE_ROOT_FILE;
 
 use super::super::spec::{
@@ -40,24 +41,23 @@ fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut Diagno
 fn write_config_entries(
     _profile: &TreeProfile,
     root: &std::path::Path,
-    entries: &[ConfigEntry],
+    mcp: &[McpServerEntry],
+    hooks: &[HookEntry],
     harnesses: &[&'static PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let (mcp, hooks) = super::standard_config_entries(entries);
-
     if !mcp.is_empty() {
-        write_plugin_mcp_json(&root.join(".mcp.json"), &mcp, harnesses, diag)?;
+        write_plugin_mcp_json(&root.join(".mcp.json"), mcp, harnesses, diag)?;
     }
     if !hooks.is_empty() {
-        crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), &hooks)?;
+        crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), hooks)?;
     }
     Ok(())
 }
 
 fn write_plugin_mcp_json(
     path: &std::path::Path,
-    servers: &[&McpServerEntry],
+    servers: &[McpServerEntry],
     harnesses: &[&'static PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
@@ -67,41 +67,14 @@ fn write_plugin_mcp_json(
         .expect("new MCP root contains an object");
 
     for server in servers {
-        let mut entry = serde_json::json!({
-            "command": server.command,
-            "args": server.args,
-        });
-        let mut env = serde_json::Map::new();
-        let mut env_vars = Vec::new();
-        let mut renamed = Vec::new();
-        for (key, variable) in &server.env {
-            if key == variable {
-                env_vars.push(variable.clone());
-            } else {
-                env.insert(
-                    key.clone(),
-                    serde_json::Value::String(format!("${{{variable}}}")),
-                );
-                renamed.push(format!("`{key}` from `{variable}`"));
+        // The file is shared with Codex, so only a Codex build reports what Codex cannot read.
+        let rendered = render(&server.transport, Flavor::Plugin);
+        if harnesses.iter().any(|harness| harness.key == "codex") {
+            for lost in rendered.lossy {
+                diag.warn("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
             }
         }
-        if !env.is_empty() {
-            entry["env"] = serde_json::Value::Object(env);
-        }
-        if !env_vars.is_empty() {
-            entry["env_vars"] = serde_json::json!(env_vars);
-        }
-        if !renamed.is_empty() && harnesses.iter().any(|harness| harness.key == "codex") {
-            diag.warn(
-                "plugin-codex-mcp-env-rename",
-                format!(
-                    "MCP server `{}` renames {}; Codex 0.164.0 passes these `${{VAR}}` values literally instead of reading the source environment variables",
-                    server.name,
-                    renamed.join(", ")
-                ),
-            );
-        }
-        mcp_servers.insert(server.name.clone(), entry);
+        mcp_servers.insert(server.name.clone(), rendered.value);
     }
 
     crate::fs::atomic_write(

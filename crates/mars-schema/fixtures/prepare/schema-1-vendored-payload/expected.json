@@ -72,5 +72,17 @@
       "output_path": "skills/s/node_modules/m/i.js"
     }
   ],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "skill",
+        "slug": "s",
+        "output_path": "skills/s/SKILL.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {}
 }

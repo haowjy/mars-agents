@@ -272,13 +272,7 @@ pub(crate) fn prepare_rooted(
         });
     };
     let prepared = package.prepared.clone();
-    let package_name = prepared
-        .manifest
-        .as_ref()
-        .and_then(|manifest| manifest.reading.fields.as_ref())
-        .map(|package| package.name.as_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(source_name.as_ref());
+    let package_name = dependency_name(&prepared, source_name);
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
@@ -287,6 +281,21 @@ pub(crate) fn prepare_rooted(
     );
 
     prepared_rooted(rooted, Arc::new(prepared), diag)
+}
+
+/// How diagnostics name a dependency: by its manifest, else by its source name; never by where
+/// the cache keeps its archive.
+pub(crate) fn dependency_name<'a>(
+    prepared: &'a Prepared,
+    source_name: &'a crate::types::SourceName,
+) -> &'a str {
+    prepared
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.reading.package.fields.as_ref())
+        .map(|package| package.name.as_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(source_name.as_ref())
 }
 
 /// A marketplace dependency installs one plugin, and the lock records which: the dependency
@@ -322,7 +331,7 @@ pub(crate) fn prepared_rooted(
             crate::config::parse_prepared_manifest(
                 content,
                 &rooted.authored_root.join("mars.toml"),
-                prepared_manifest.reading.fields.as_ref(),
+                &prepared_manifest.reading,
             )
         })
         .transpose()?
@@ -348,14 +357,16 @@ pub(crate) fn prepare_authored(
 }
 
 /// `prepare_authored` as `mars migrate` runs it: preparation also rewrites what a schema 1 file
-/// can still need, because the migration writes the result back to the authored file.
+/// can still need, because the migration writes the result back to the authored file. The
+/// package's own link verdict is added, since the migration is run in the package.
 pub(crate) fn prepare_authored_for_migration(
     root: &Path,
     context: PrepareContext,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?;
-    let prepared = mars_schema::prepare::prepare_for_migration(&source, context, None);
+    let mut prepared = mars_schema::prepare::prepare_for_migration(&source, context, None);
+    mars_schema::links::package(&mut prepared);
     reported(root, source, prepared, diag)
 }
 
@@ -389,7 +400,11 @@ pub(crate) fn prepare_project(
     root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<(Prepared, Option<Vec<u8>>), MarsError> {
-    let prepared = prepare_authored(root, PrepareContext::Project, None, diag)?;
+    let source = DiskTreeSource::new(root)?;
+    let mut prepared = mars_schema::prepare::prepare(&source, PrepareContext::Project, None);
+    // `mars check` judges the package's own layout; a sync judges installed trees.
+    mars_schema::links::package(&mut prepared);
+    let prepared = reported(root, source, prepared, diag)?;
     let manifest = match &prepared.manifest {
         Some(manifest) => Some(manifest.normalized_bytes.clone()),
         None => match fs::read(root.join("mars.toml")) {
@@ -483,7 +498,7 @@ pub(crate) fn report_diagnostics(
 }
 
 /// A project's own source file, by its real path.
-fn source_label(root: &Path) -> impl Fn(&str) -> String + '_ {
+pub(crate) fn source_label(root: &Path) -> impl Fn(&str) -> String + '_ {
     move |relative| format!("source `{}`", root.join(relative).display())
 }
 
@@ -491,7 +506,7 @@ fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
     prepared
         .manifest
         .as_ref()
-        .and_then(|manifest| manifest.reading.fields.as_ref())
+        .and_then(|manifest| manifest.reading.package.fields.as_ref())
         .map(|package| package.name.as_str())
         .filter(|name| !name.is_empty())
         .or_else(|| root.file_name().and_then(|name| name.to_str()))
@@ -501,7 +516,7 @@ fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
 
 /// Prepare a real on-disk tree for graph fixtures, with no dependency entry (so no dialect hint).
 #[cfg(test)]
-pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Option<Arc<Prepared>> {
+pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<Prepared> {
     let config = crate::config::EffectiveConfig {
         dependencies: indexmap::IndexMap::new(),
         settings: crate::config::Settings::default(),
@@ -522,5 +537,5 @@ pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Optio
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
-    Some(prepared.prepared)
+    prepared.prepared
 }

@@ -23,8 +23,14 @@ pub enum ConfigError {
         message: &'static str,
     },
 
-    #[error("source `{name}` uses both agents/skills and exclude — pick one")]
-    ConflictingFilters { name: String },
+    #[error(transparent)]
+    Filter(#[from] mars_schema::filter::FilterError),
+
+    #[error(transparent)]
+    Entry(#[from] mars_schema::dependency::EntryError),
+
+    #[error(transparent)]
+    PluginSelector(#[from] mars_schema::dependency::PluginSelectorError),
 
     #[error("parse error: {0}")]
     Parse(#[from] toml::de::Error),
@@ -76,27 +82,6 @@ pub enum ResolutionError {
     VersionConflict { name: String, message: String },
 
     #[error(
-        "version conflict for item `{item}` from package `{package}`: {existing} vs {requested} (requester chain: {chain})"
-    )]
-    ItemVersionConflict {
-        item: String,
-        package: String,
-        existing: String,
-        requested: String,
-        chain: String,
-    },
-
-    #[error(
-        "package version conflict for `{package}`: {existing} vs {requested} (requester chain: {chain})"
-    )]
-    PackageVersionConflict {
-        package: String,
-        existing: String,
-        requested: String,
-        chain: String,
-    },
-
-    #[error(
         "skill `{skill}` not found (required by {required_by}; searched packages: {searched:?}){}",
         hint.as_ref().map(|hint| format!("\n  hint: {hint}")).unwrap_or_default()
     )]
@@ -125,9 +110,6 @@ pub enum ResolutionError {
         existing: String,
         incoming: String,
     },
-
-    #[error("source not found: {name}")]
-    SourceNotFound { name: String },
 }
 
 /// Top-level error type aggregating all module errors
@@ -381,12 +363,6 @@ mod tests {
             (
                 MarsError::Lock(LockError::Corrupt {
                     message: "bad lock".to_string(),
-                }),
-                2,
-            ),
-            (
-                MarsError::Resolution(ResolutionError::SourceNotFound {
-                    name: "missing".to_string(),
                 }),
                 2,
             ),

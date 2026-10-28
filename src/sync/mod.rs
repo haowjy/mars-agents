@@ -1,7 +1,6 @@
 use mars_schema::item::ItemKind;
 pub mod apply;
 pub mod diff;
-pub mod filter;
 mod local_items;
 pub mod mutation;
 pub(crate) mod ownership;
@@ -11,7 +10,7 @@ pub(crate) mod recovery;
 pub mod rewrite;
 pub mod target;
 pub mod types;
-mod upgrades;
+pub(crate) mod upgrades;
 pub(crate) mod validate;
 
 use std::collections::BTreeMap;
@@ -165,7 +164,7 @@ pub(crate) struct ResolvedState {
     pub preparation: crate::platform::fs::PendingStagingGeneration,
 }
 
-/// Phase 3: Desired target state after discovery + filtering.
+/// Phase 3: Desired target state after discovery; the graph's selection already applied the filters.
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
@@ -268,7 +267,7 @@ fn build_recovery_halt(
                 .graph
                 .nodes
                 .values()
-                .filter(|candidate| candidate.deps.contains(source_name))
+                .filter(|candidate| candidate.deps().any(|dep| &dep == source_name))
                 .map(|candidate| candidate.source_name.to_string())
                 .collect();
             let upgrade_cmd =
@@ -479,19 +478,7 @@ pub(crate) fn resolve_graph(
 
     let cache = GlobalCache::new()?;
     let source_provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
-    let source_overrides = loaded
-        .local
-        .overrides
-        .iter()
-        .map(|(name, entry)| {
-            let path = if entry.path.is_absolute() {
-                entry.path.clone()
-            } else {
-                ctx.project_root.join(&entry.path)
-            };
-            (name.clone(), path)
-        })
-        .collect();
+    let source_overrides = loaded.local.source_overrides(&ctx.project_root);
     let preparation = if request.options.dry_run {
         crate::platform::fs::PendingStagingGeneration::scratch()?
     } else {
@@ -527,7 +514,7 @@ pub(crate) fn resolve_graph(
     let upgrades_available = if request.options.frozen || !request.options.check_upgrades {
         0
     } else {
-        upgrades::count_compatible_upgrades(&graph, &source_provider, diag)
+        upgrades::count_compatible_upgrades(&graph, &source_provider, &resolve_options, diag)
     };
 
     let bump_entries = planned_bump_entries(&loaded.config, &graph, &request.resolution);
@@ -660,7 +647,14 @@ pub(crate) fn build_target(
         &local_source,
         diag,
         |target_state, diag| {
-            local_items::merge_local_items(ctx, &resolved, local_items, request, target_state, diag)
+            local_items::merge_local_items(
+                ctx,
+                &resolved,
+                &local_items,
+                request,
+                target_state,
+                diag,
+            )
         },
     )?;
 
@@ -701,6 +695,8 @@ pub(crate) fn build_target(
             .as_ref()
             .map(|package| package.uses_providers.as_slice()),
     );
+
+    validate::report_skill_links(&target_state, &resolved.graph, &local_items, diag);
 
     validate::warn_config_dangles_after_rename(
         &renames,
@@ -1233,7 +1229,7 @@ fn planned_bump_entries(
     config: &Config,
     graph: &ResolvedGraph,
     mode: &ResolutionMode,
-) -> Vec<(SourceName, crate::config::DependencyEntry)> {
+) -> Vec<(SourceName, mars_schema::dependency::Entry)> {
     let ResolutionMode::Maximize {
         targets,
         bump: true,
@@ -1260,7 +1256,12 @@ fn planned_bump_entries(
             if entry.version.as_deref() == Some(resolved_tag.as_str()) {
                 return None;
             }
-            let mut bumped = entry.clone();
+            let (mut bumped, _) = mars_schema::dependency::Entry::read(
+                name.as_ref(),
+                entry.clone(),
+                mars_schema::dependency::Strictness::Consumer,
+            )
+            .ok()?;
             bumped.version = Some(resolved_tag.clone());
             Some((name.clone(), bumped))
         })
@@ -1268,11 +1269,8 @@ fn planned_bump_entries(
 }
 
 fn constraint_needs_bump(current: Option<&str>, resolved: &semver::Version) -> bool {
-    match crate::resolve::parse_version_constraint(current) {
-        crate::resolve::VersionConstraint::Semver(req) => !req.matches(resolved),
-        crate::resolve::VersionConstraint::Latest
-        | crate::resolve::VersionConstraint::RefPin(_) => false,
-    }
+    let constraint = mars_schema::version::parse_constraint(current);
+    !mars_schema::version::allows(&[("", &constraint)], resolved, &Default::default())
 }
 
 fn has_version_changes(changes: &[DependencyUpsertChange]) -> bool {

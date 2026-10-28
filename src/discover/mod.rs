@@ -16,9 +16,9 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::ItemId;
 use crate::package_prepare::DiskTreeSource;
-use crate::types::ItemName;
 use mars_schema::discover::{Excluded, excluded, walk_dirs};
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 pub(crate) const SOURCE_MANIFEST_PATHS: &[&str] = &[
     ".claude-plugin/plugin.json",

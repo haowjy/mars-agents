@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "package": "p",
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "p",
+      "kind": "skill",
+      "slug": "review",
+      "path": "skills/review",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

@@ -30,6 +30,7 @@ if let Reading::Agent(reading) = read("agents/coder.md", &text).unwrap() {
 | `fields` | the typed `AgentProfile`, `SkillProfile` or `PackageMetadata`; `None` when the file cannot be read at all |
 | `body` | every byte after the closing fence; `None` for `mars.toml` |
 | `diagnostics` | `SchemaDiagnostic { code, severity, path, message, range }` |
+| `dependencies`, `local-dependencies` | `mars.toml` only (`manifest::ManifestRead` flattens them beside the four fields above): the entries by name in declaration order, in the file's spellings, each read by `Entry::read`. A table is omitted when empty |
 
 The typed fields serialize with the spellings the file uses (kebab-case keys and values, `xhigh`, `read-only`); that serialization is the published shape, pinned by `fixtures/read/`. A refactor that changes it changes the contract. `agent::read`, `skill::read` and `manifest::read` are the three readers behind `read::read`, and nothing else in the workspace reads those keys. An installed `.mars/` tree is read with `read::installed_agent` and `read::installed_skill`, which upgrade a file whose strict reading reports a pre-v1 spelling, because those bytes are whatever Mars version installed them.
 
@@ -68,6 +69,7 @@ Unknown keys are kept and reported as `field.unknown` warnings. Removed keys are
 | `tool_names` | the capability vocabulary and the `capability(pattern)` grammar; `capabilities()` lists them with their aliases |
 | `tool_natives` | per-host native tool tables as data (Claude, Codex, OpenCode, Pi, Cursor, and the `meridian-flow` table); `vocabulary()` returns the published whole |
 | `tool_policy`, `mcp` | the tool rules of an Agent and the `mcp(server/tool)` reference grammar |
+| `mcp_server`, `mcp_servers`, `visibility` | an `mcp.toml` server definition, the one codec for the Claude `mcpServers` entry (read and rendered for Claude, Pi, Cursor and a plugin tree), and `Visibility` |
 | `model_policy` | the `model-policies` rule and its validator |
 | `harness` | `HarnessId` and the reserved consumer namespaces (`meridian-flow`, `meridian-cli`) |
 | `dialect` | the layouts Mars reads: the foreign ones it translates (`claude`, `agent-skills`, `codex`, `opencode`, `cursor`) and `mars-native` |

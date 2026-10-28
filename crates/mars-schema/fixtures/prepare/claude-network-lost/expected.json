@@ -84,6 +84,18 @@
     }
   ],
   "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "n",
+        "output_path": "agents/n.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {},
   "changes": {
     "agents/n.md": [

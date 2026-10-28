@@ -12,6 +12,7 @@ use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 use crate::frontmatter::Frontmatter;
 use crate::item::DefinitionKind;
 use crate::read::{DefinitionRead, Reading, read_definition};
+use crate::selection::{Definition, Request, SelectionFacts};
 use crate::tree::TreeSource;
 use crate::upgrade::{UpgradeError, UpgradeResult};
 
@@ -85,7 +86,7 @@ pub struct PreparedManifest {
     /// The normalized file; crosses to JavaScript as a `Uint8Array`.
     #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
-    pub reading: DefinitionRead<crate::package::PackageMetadata>,
+    pub reading: crate::manifest::ManifestRead,
     pub change: ChangeRecord,
 }
 
@@ -95,12 +96,28 @@ pub struct PreparedDefinition {
     pub slug: String,
     pub source_path: String,
     pub output_path: String,
+    /// A skill's folder in the package tree (empty for a root skill); `None` for an agent.
+    #[serde(skip)]
+    pub skill_root: Option<String>,
     /// The normalized file; crosses to JavaScript as a `Uint8Array`.
     #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
     /// The Agent or skill reading `kind` names.
     pub reading: Reading,
     pub change: ChangeRecord,
+}
+
+/// An MCP server translated from another dialect's declaration, as the `mcp/<name>/mcp.toml` it
+/// is written to. The same shape as a definition's output so a caller writes it the same way.
+#[derive(Debug, Clone, Serialize)]
+pub struct PreparedMcpServer {
+    pub name: String,
+    /// The file that declared the server (`.mcp.json`, `plugin.json`).
+    pub source_path: String,
+    pub output_path: String,
+    /// The rendered `mcp.toml`; crosses to JavaScript as a `Uint8Array`.
+    #[serde(with = "serde_bytes")]
+    pub normalized_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -115,7 +132,12 @@ pub struct Prepared {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manifest: Option<PreparedManifest>,
     pub definitions: Vec<PreparedDefinition>,
+    /// The MCP servers a foreign plugin declares, translated. Selection does not apply to them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<PreparedMcpServer>,
     pub payload: Vec<PayloadEntry>,
+    /// What item selection reads of this package (see [`selection_facts`]).
+    pub selection: SelectionFacts,
     /// Package-level findings by source path: what discovery and translation met and could not
     /// convert. A definition's own reading diagnostics live on its `reading` only; see
     /// [`Prepared::all_diagnostics`].
@@ -125,6 +147,50 @@ pub struct Prepared {
     /// reports [`Prepared::changed_files`]; `mars migrate` lists these.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub changes: BTreeMap<String, Vec<SchemaDiagnostic>>,
+}
+
+/// What item selection reads of a prepared package: its Agents' and skills' skill refs, and the
+/// `[dependencies]` entries and `uses-providers` its manifest reads.
+pub(crate) fn selection_facts(
+    manifest: Option<&PreparedManifest>,
+    definitions: &[PreparedDefinition],
+) -> SelectionFacts {
+    let reading = manifest.map(|manifest| &manifest.reading);
+    SelectionFacts {
+        definitions: definitions
+            .iter()
+            .map(|definition| Definition {
+                kind: definition.kind,
+                slug: definition.slug.clone(),
+                output_path: definition.output_path.clone(),
+                skills: match &definition.reading {
+                    Reading::Agent(read) => read
+                        .fields
+                        .as_ref()
+                        .map(|profile| profile.skills.all())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                },
+            })
+            .collect(),
+        edges: reading
+            .map(|reading| {
+                reading
+                    .dependencies
+                    .dependencies
+                    .iter()
+                    .map(|(name, entry)| Request {
+                        name: name.clone(),
+                        filter: entry.filter.to_mode(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        uses_providers: reading
+            .and_then(|reading| reading.package.fields.as_ref())
+            .map(|package| package.uses_providers.clone())
+            .unwrap_or_default(),
+    }
 }
 
 impl Prepared {
@@ -163,7 +229,7 @@ impl Prepared {
         {
             all.entry(path)
                 .or_default()
-                .extend(&manifest.reading.diagnostics);
+                .extend(&manifest.reading.package.diagnostics);
         }
         for definition in &self.definitions {
             all.entry(&definition.source_path)
@@ -274,30 +340,6 @@ pub(crate) fn prepare_root(
     } else {
         Vec::new()
     };
-    if let Shaping::Foreign(Dialect::Claude | Dialect::AgentSkills) = shaping {
-        let selected_paths = selected
-            .iter()
-            .map(|definition| definition.source_path.as_str())
-            .collect::<BTreeSet<_>>();
-        for (definition, prepared) in selected.iter().zip(&definitions) {
-            let Reading::Skill(DefinitionRead {
-                body: Some(body), ..
-            }) = &prepared.reading
-            else {
-                continue;
-            };
-            diagnostics
-                .entry(definition.source_path.clone())
-                .or_default()
-                .extend(crate::claude::checks::reference_diagnostics(
-                    definition,
-                    body,
-                    all,
-                    &selected_paths,
-                ));
-        }
-    }
-
     let payload = if can_read_definitions {
         payload_paths(
             source,
@@ -316,15 +358,38 @@ pub(crate) fn prepare_root(
         Vec::new()
     };
 
+    let mut mcp_servers = Vec::new();
     if can_read_definitions {
         report_unconverted(source, &dispatched, &mut diagnostics);
+        // A bare skill tree's `.mcp.json` is usually its contributors' own, not a plugin's.
+        if let Layout::Claude(spec) = &dispatched.layout
+            && !spec.is_bare_tree()
+        {
+            let imported = crate::claude::mcp::import(source, spec);
+            for (path, diagnostic) in imported.diagnostics {
+                push(&mut diagnostics, &path, diagnostic);
+            }
+            mcp_servers = imported
+                .servers
+                .into_iter()
+                .map(|server| PreparedMcpServer {
+                    output_path: format!("mcp/{}/mcp.toml", server.name),
+                    normalized_bytes: crate::mcp_server::render_mcp_toml(&server.def).into_bytes(),
+                    name: server.name,
+                    source_path: server.source_path,
+                })
+                .collect();
+        }
     }
     diagnostics.retain(|_, diagnostics| !diagnostics.is_empty());
     changes.retain(|_, diagnostics| !diagnostics.is_empty());
+    let manifest = manifest.take();
     let prepared = Prepared {
         classification,
-        manifest: manifest.take(),
+        selection: selection_facts(manifest.as_ref(), &definitions),
+        manifest,
         definitions,
+        mcp_servers,
         payload,
         diagnostics,
         changes,
@@ -335,7 +400,8 @@ pub(crate) fn prepare_root(
     }
 }
 
-/// Commands are dropped, and hooks and MCP servers are not converted yet.
+/// Commands are dropped and hooks are not converted yet. MCP servers are translated, not
+/// reported here (`claude::mcp`).
 fn report_unconverted(
     source: &impl TreeSource,
     dispatched: &Dispatched,
@@ -371,6 +437,13 @@ fn report_unconverted(
             ),
         );
     }
+    if spec.is_bare_tree() && source.is_file(".mcp.json") {
+        warn(
+            ".mcp.json",
+            "import.mcp-not-imported",
+            "this is a skill tree, not a Claude plugin (it has no `.claude-plugin/plugin.json`), so its MCP servers were not imported".into(),
+        );
+    }
     if source.is_file("hooks/hooks.json") || spec.hooks {
         let path = if source.is_file("hooks/hooks.json") {
             "hooks/hooks.json"
@@ -381,18 +454,6 @@ fn report_unconverted(
             path,
             "import.hooks-not-converted",
             "hooks are not converted yet".into(),
-        );
-    }
-    if source.is_file(".mcp.json") || spec.mcp {
-        let path = if source.is_file(".mcp.json") {
-            ".mcp.json"
-        } else {
-            crate::claude::manifest::PLUGIN_MANIFEST
-        };
-        warn(
-            path,
-            "import.mcp-not-converted",
-            "MCP servers are not converted yet".into(),
         );
     }
 }
@@ -436,7 +497,7 @@ fn prepare_manifest(
         .or_default()
         .extend(upgraded);
     let reading = std::str::from_utf8(&normalized_bytes).map_or_else(
-        |_| DefinitionRead::unread(invalid_utf8.into_iter().collect()),
+        |_| crate::manifest::ManifestRead::unread(invalid_utf8.into_iter().collect()),
         crate::manifest::read,
     );
     PreparedManifest {
@@ -489,6 +550,7 @@ fn prepare_definition(
             slug: selected.slug.clone(),
             source_path: selected.source_path.clone(),
             output_path: selected.output_path.clone(),
+            skill_root: selected.skill_root.clone(),
             normalized_bytes: Vec::new(),
             reading: unreadable(
                 selected.kind,
@@ -566,6 +628,7 @@ fn prepare_definition(
         slug: selected.slug.clone(),
         source_path: selected.source_path.clone(),
         output_path: selected.output_path.clone(),
+        skill_root: selected.skill_root.clone(),
         normalized_bytes,
         reading,
         change,

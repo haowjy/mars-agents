@@ -37,7 +37,7 @@ pub fn classify_local_source(input: &str) -> Option<PathBuf> {
     }
 
     // SSH shorthand (git@host:path) is not a local path.
-    if is_ssh_shorthand(input) {
+    if mars_schema::git_url::is_ssh_shorthand(input) {
         return None;
     }
 
@@ -102,18 +102,6 @@ pub fn classify_local_source(input: &str) -> Option<PathBuf> {
 fn is_windows_drive_path(input: &str) -> bool {
     let bytes = input.as_bytes();
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
-}
-
-/// Check if input is SSH shorthand (git@host:path).
-fn is_ssh_shorthand(input: &str) -> bool {
-    if !input.contains('@') || !input.contains(':') {
-        return false;
-    }
-
-    match (input.find('@'), input.find(':')) {
-        (Some(at), Some(colon)) => at < colon && colon + 1 < input.len(),
-        _ => false,
-    }
 }
 
 #[cfg(test)]

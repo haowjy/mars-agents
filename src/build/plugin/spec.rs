@@ -19,7 +19,7 @@ use crate::compiler::harness_descriptor::{CompilerHarnessDescriptor, descriptor}
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
-use crate::target::ConfigEntry;
+use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
 use mars_schema::plugin_metadata::GeneratedRootFile;
 
@@ -34,7 +34,8 @@ pub(super) type AgentPolicy = fn(
 pub(super) type ConfigWriter = fn(
     &TreeProfile,
     &Path,
-    &[ConfigEntry],
+    &[McpServerEntry],
+    &[HookEntry],
     &[&'static PluginHarnessSpec],
     &mut DiagnosticCollector,
 ) -> Result<(), MarsError>;

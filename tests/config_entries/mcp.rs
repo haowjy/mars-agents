@@ -48,7 +48,7 @@ fn remove_prunes_stale_config_entries() {
         .success();
     assert_config_entry_consistency(&project);
 
-    let mcp_path = project.child(".claude").child(".mcp.json");
+    let mcp_path = project.child(".mcp.json");
     let installed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(mcp_path.path()).unwrap()).unwrap();
     assert!(installed["mcpServers"]["context7"].is_object());
@@ -59,9 +59,8 @@ fn remove_prunes_stale_config_entries() {
         .success();
     assert_config_entry_consistency(&project);
 
-    let removed: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(mcp_path.path()).unwrap()).unwrap();
-    assert!(removed["mcpServers"]["context7"].is_null());
+    // The last server went and the file held nothing else: it is deleted.
+    assert!(!mcp_path.path().exists());
 }
 
 #[test]

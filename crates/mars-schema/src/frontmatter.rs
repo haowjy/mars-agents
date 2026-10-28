@@ -15,7 +15,7 @@ pub struct Frontmatter {
 /// A flat `skills: [a, b]` list is represented as all `load` entries for
 /// backward compatibility. A structured `skills: { load: [...], available: [...] }`
 /// keeps the two launch-bundle channels separate.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SkillsSpec {
     pub load: Vec<String>,
     pub available: Vec<String>,

@@ -67,6 +67,17 @@ pub struct Normalized {
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
 }
 
+impl Normalized {
+    /// Add each package's link verdict ([`crate::links::package`]). Normalizing leaves it out
+    /// because the binary judges a dependency's links against what the consumer installs; the
+    /// WASM export, which has no consumer, adds it.
+    pub fn report_links(&mut self) {
+        for package in &mut self.packages {
+            crate::links::package(&mut package.prepared);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct NormalizedPackage {
     /// The plugin name for a marketplace plugin, else the package name.
@@ -302,6 +313,7 @@ fn finish_package<T: TreeSource>(
         .any(SchemaDiagnostic::is_error);
     if refused {
         prepared.definitions.clear();
+        prepared.mcp_servers.clear();
         prepared.payload.clear();
     }
 
@@ -329,7 +341,7 @@ fn finish_package<T: TreeSource>(
     let manifest_name = prepared
         .manifest
         .as_ref()
-        .and_then(|manifest| manifest.reading.fields.as_ref())
+        .and_then(|manifest| manifest.reading.package.fields.as_ref())
         .map(|package| package.name.clone())
         .unwrap_or_else(|| repository_name(request));
     let selected_items = prepared
@@ -392,6 +404,7 @@ fn generated_manifest(
     let mut reading = crate::manifest::read(&text);
     // A package with no declared version is not a defect of the generated file.
     reading
+        .package
         .diagnostics
         .retain(|diagnostic| diagnostic.code != "manifest.version-missing");
     PreparedManifest {

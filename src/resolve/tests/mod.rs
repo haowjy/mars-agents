@@ -3,16 +3,18 @@
 mod filter_tests;
 mod integration_tests;
 mod skill_tests;
-mod tracker_tests;
 mod version_tests;
 
 use super::*;
 use crate::config::{
-    EffectiveConfig, EffectiveDependency, FilterConfig, FilterMode, GitSpec, Manifest, ManifestDep,
-    PackageInfo, Settings, SourceSpec,
+    EffectiveConfig, EffectiveDependency, GitSpec, Manifest, PackageInfo, Settings, SourceSpec,
 };
-use crate::types::{ItemName, RenameMap, SourceId, SourceName, SourceSubpath, SourceUrl};
+use crate::types::{SourceId, SourceName, SourceUrl};
 use indexmap::IndexMap;
+use mars_schema::dependency::Entry;
+use mars_schema::filter::{FilterConfig, FilterMode};
+use mars_schema::names::{RenameMap, SourceSubpath};
+use mars_schema::version::{Constraint, parse_constraint};
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -33,8 +35,6 @@ pub(crate) struct MockProvider {
     trees: HashMap<String, PathBuf>,
     /// Optional source tree overrides keyed by (source name, version tag).
     versioned_trees: HashMap<(String, String), PathBuf>,
-    /// Manifests to return for specific source trees
-    manifests: HashMap<PathBuf, Option<Manifest>>,
     /// Optional commit sequences keyed by source name.
     /// When set, each `fetch_git_version` call without preferred_commit rotates
     /// through the sequence to simulate ref drift for restart-cap tests.
@@ -58,7 +58,6 @@ impl MockProvider {
             list_versions_failures: HashSet::new(),
             trees: HashMap::new(),
             versioned_trees: HashMap::new(),
-            manifests: HashMap::new(),
             commit_sequences: HashMap::new(),
             commit_sequence_indices: RefCell::new(HashMap::new()),
             unreachable_preferred_commits: HashSet::new(),
@@ -81,12 +80,10 @@ impl MockProvider {
         self.versions.insert(url.to_string(), avs);
     }
 
-    /// Register a source tree for a source name, with optional manifest.
+    /// Register a source tree for a source name; a manifest is written to the tree's `mars.toml`.
     fn add_source(&mut self, name: &str, tree_path: PathBuf, manifest: Option<Manifest>) {
-        if let Some(ref m) = manifest {
-            self.manifests.insert(tree_path.clone(), Some(m.clone()));
-        } else {
-            self.manifests.insert(tree_path.clone(), None);
+        if let Some(manifest) = &manifest {
+            write_manifest(&tree_path, manifest);
         }
         self.trees.insert(name.to_string(), tree_path);
     }
@@ -98,10 +95,8 @@ impl MockProvider {
         tree_path: PathBuf,
         manifest: Option<Manifest>,
     ) {
-        if let Some(ref m) = manifest {
-            self.manifests.insert(tree_path.clone(), Some(m.clone()));
-        } else {
-            self.manifests.insert(tree_path.clone(), None);
+        if let Some(manifest) = &manifest {
+            write_manifest(&tree_path, manifest);
         }
         self.versioned_trees
             .insert((name.to_string(), version_tag.to_string()), tree_path);
@@ -303,23 +298,6 @@ impl SourceFetcher for MockProvider {
     }
 }
 
-impl ManifestReader for MockProvider {
-    fn read_manifest(
-        &self,
-        source_tree: &Path,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<Option<Manifest>, MarsError> {
-        // If manifest is pre-populated, return it
-        if let Some(manifest) = self.manifests.get(source_tree) {
-            return Ok(manifest.clone());
-        }
-        // Otherwise, read from disk (for path sources in integration tests)
-        let (manifest, diagnostics) = crate::config::load_manifest(source_tree)?;
-        diag.extend(diagnostics);
-        Ok(manifest)
-    }
-}
-
 // ========== Helper functions ==========
 
 fn make_config(sources: Vec<(&str, SourceSpec)>) -> EffectiveConfig {
@@ -359,13 +337,9 @@ fn make_manifest(name: &str, version: &str, deps: Vec<(&str, &str, &str)>) -> Ma
     for (dep_name, dep_url, dep_ver) in deps {
         dependencies.insert(
             dep_name.to_string(),
-            ManifestDep {
-                url: Some(SourceUrl::from(dep_url)),
-                path: None,
-                subpath: None,
+            Entry {
                 version: Some(dep_ver.to_string()),
-                filter: crate::config::FilterConfig::default(),
-                plugin: None,
+                ..Entry::git(dep_url)
             },
         );
     }
@@ -408,13 +382,10 @@ fn make_manifest_with_filters(
     for (dep_name, dep_url, dep_ver, dep_filter) in deps {
         dependencies.insert(
             dep_name.to_string(),
-            ManifestDep {
-                url: Some(SourceUrl::from(dep_url)),
-                path: None,
-                subpath: None,
+            Entry {
                 version: Some(dep_ver.to_string()),
                 filter: dep_filter,
-                plugin: None,
+                ..Entry::git(dep_url)
             },
         );
     }
@@ -477,6 +448,21 @@ fn resolve_with_report_details(
     (result, diag.take_engine_fallbacks())
 }
 
+/// The tree's `mars.toml`, as a package author would write it.
+fn write_manifest(tree: &Path, manifest: &Manifest) {
+    #[derive(serde::Serialize)]
+    struct File<'a> {
+        package: &'a PackageInfo,
+        dependencies: &'a IndexMap<String, Entry>,
+    }
+    let text = toml::to_string(&File {
+        package: &manifest.package,
+        dependencies: &manifest.dependencies,
+    })
+    .expect("serialize manifest");
+    std::fs::write(tree.join("mars.toml"), text).expect("write mars.toml");
+}
+
 fn write_minimal_package_marker(tree: &Path) {
     std::fs::write(
         tree.join("mars.toml"),
@@ -489,17 +475,6 @@ fn write_skill(tree: &Path, name: &str) {
     let dir = tree.join("skills").join(name);
     std::fs::create_dir_all(&dir).expect("create skill dir");
     std::fs::write(dir.join("SKILL.md"), "---\n---\n").expect("write SKILL.md");
-}
-
-fn write_skill_with_deps(tree: &Path, name: &str, skills: &[&str]) {
-    let dir = tree.join("skills").join(name);
-    std::fs::create_dir_all(&dir).expect("create skill dir");
-    let frontmatter = if skills.is_empty() {
-        "---\n---\n".to_string()
-    } else {
-        format!("---\nskills: [{}]\n---\n", skills.join(", "))
-    };
-    std::fs::write(dir.join("SKILL.md"), frontmatter).expect("write SKILL.md");
 }
 
 fn write_agent(tree: &Path, name: &str, skills: &[&str]) {
@@ -516,9 +491,8 @@ fn write_agent(tree: &Path, name: &str, skills: &[&str]) {
 fn source_id_for_spec(spec: &SourceSpec, subpath: Option<SourceSubpath>) -> SourceId {
     match spec {
         SourceSpec::Git(g) => {
-            let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
-                g.url.as_ref(),
-            ));
+            let canonical_url =
+                SourceUrl::from(mars_schema::git_url::canonicalize_git_url(g.url.as_ref()));
             SourceId::git_with_subpath(canonical_url, subpath)
         }
         SourceSpec::Path(path) => SourceId::Path {
@@ -526,24 +500,5 @@ fn source_id_for_spec(spec: &SourceSpec, subpath: Option<SourceSubpath>) -> Sour
             subpath,
             plugin: None,
         },
-    }
-}
-
-fn dummy_ref(name: &str) -> ResolvedRef {
-    ResolvedRef {
-        source_name: name.into(),
-        version: None,
-        version_tag: None,
-        commit: None,
-        tree_path: PathBuf::new(),
-    }
-}
-
-fn dummy_rooted_ref() -> RootedSourceRef {
-    RootedSourceRef {
-        checkout_root: PathBuf::new(),
-        authored_root: PathBuf::new(),
-        package_root: PathBuf::new(),
-        plugin: None,
     }
 }

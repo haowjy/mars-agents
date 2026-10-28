@@ -87,6 +87,18 @@
             "output_path": "skills/parent/guide.md"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "parent",
+              "output_path": "skills/parent/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

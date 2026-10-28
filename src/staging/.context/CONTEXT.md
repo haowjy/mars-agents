@@ -5,7 +5,7 @@ lift, upgrade, or validate Agent and skill definitions.
 
 For a resolved dependency, `materialize_prepared_rooted` projects the prepared manifest,
 definitions and listed payload into an owned scratch directory, then copies only the binary-owned
-hook, MCP, bootstrap and plugin-manifest surfaces (the `bootstrapDocs` declaration) before applying consumer skill overlays. It does
+hook, MCP, bootstrap and plugin-manifest surfaces (the `bootstrapDocs` declaration) before applying consumer skill overlays. `Prepared.mcp_servers` (a foreign plugin's translated servers) are written as `mcp/<name>/mcp.toml` first; prepare leaves out any server the package also ships under `mcp/<name>/`, so the authored copy that follows never shares a directory with a translated one. It does
 not copy unrelated authored files. `RootedSourceRef.authored_root` remains the dependency origin;
 only `package_root`, the materialized content view, changes. A manifest-free dependency materializes in the schema v1 layout `normalize` gave it: `skills/<slug>/`, `agents/<slug>.md`, and the generated `mars.toml`.
 

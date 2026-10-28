@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::platform::path_syntax::classify_local_source;
-use crate::types::{SourceSubpath, SourceUrl};
+use crate::types::SourceUrl;
+use mars_schema::names::SourceSubpath;
 
 /// Classification of source input syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,12 +380,7 @@ fn parse_generic_git(
     input: &str,
     version: Option<String>,
 ) -> Result<Option<ParsedSourceSpec>, ParseError> {
-    if is_ssh_shorthand(input) {
-        if !input.contains(':') {
-            return Err(ParseError::MalformedSshUrl {
-                input: input.to_string(),
-            });
-        }
+    if mars_schema::git_url::is_ssh_shorthand(input) {
         let repo = derive_repo_name_from_git(input)?;
         return Ok(Some(spec_from_git(
             SourceFormat::GenericGit,
@@ -634,21 +630,17 @@ fn collect_non_empty_segments(input: &str) -> Vec<String> {
         .collect()
 }
 
-fn is_ssh_shorthand(input: &str) -> bool {
-    !input.contains("://")
-        && input.contains('@')
-        && input.contains(':')
-        && input.find('@').unwrap_or(usize::MAX) < input.find(':').unwrap_or(0)
-}
-
 /// Extract hostname from a URL-like git source string.
 pub fn extract_hostname(input: &str) -> Option<String> {
-    if is_ssh_shorthand(input) {
+    if mars_schema::git_url::is_ssh_shorthand(input) {
         let (user_host, path) = input.split_once(':')?;
         if path.trim_matches('/').is_empty() {
             return None;
         }
-        return user_host.split_once('@').map(|(_, host)| host.to_string());
+        let host = user_host
+            .split_once('@')
+            .map_or(user_host, |(_, host)| host);
+        return Some(host.to_string());
     }
 
     parse_http_like_url(input).map(|url| url.host)

@@ -47,5 +47,17 @@
       "output_path": "skills/flat/notes.md"
     }
   ],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "skill",
+        "slug": "flat",
+        "output_path": "skills/flat/SKILL.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {}
 }

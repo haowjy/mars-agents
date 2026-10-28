@@ -21,21 +21,23 @@
 //!
 //! Merge-mode hooks are also matched by content: a hook entry is removed only
 //! when its recorded `emitted_json` still matches the entry on disk. The
-//! temporary issue #130 old-lock bridge is narrower: a hook record without
-//! `emitted_json` authorizes only the legacy command-path cleanup associated
-//! with that recorded key.
+//! temporary issue #130 old-lock bridge (Codex and OpenCode only; remove in
+//! 0.25) is narrower: a hook record without `emitted_json` authorizes only the
+//! legacy command-path cleanup associated with that recorded key.
 //!
-//! MCP servers are owned by name. On an MCP record, `emitted_json` only lets a
-//! target tell where and how it wrote the entry: OpenCode reads `None` as the
-//! legacy `mcpServers` section and `Some` as `mcp`. MCP records that change
-//! between syncs are removed before the rewrite, using the old record to find
-//! the entry; this is how OpenCode moves servers from `mcpServers` to `mcp`.
+//! MCP servers are matched by content too: a record's `emitted_json` is the
+//! entry mars wrote, so an entry on disk that still equals it is mars's to
+//! replace or remove, and one that differs was edited and is preserved. A
+//! record without `emitted_json` predates content ownership; it removes by name
+//! from the adapter's legacy file, if it has one (`target::mcp_file::reconcile`,
+//! which owns MCP removal and write in one pass).
 //!
-//! [`retention`] enforces the other half of the contract: each removal is a
-//! single-use operation that reports the records it could not confirm removing.
-//! A confirmed pair can bind its target, surface, and payload into one write
-//! operation; an unconfirmed pair cannot. This preserves retry authority instead
-//! of silently replacing ownership evidence after a failed sweep.
+//! [`retention`] enforces the other half of the contract for hooks, which are
+//! removed whole before they are rewritten: each removal is a single-use
+//! operation that reports the records it could not confirm removing. A
+//! confirmed target can bind its payload into one write operation; an
+//! unconfirmed target cannot. This preserves retry authority instead of
+//! silently replacing ownership evidence after a failed sweep.
 
 #[cfg(test)]
 use mars_schema::item::ItemKind;

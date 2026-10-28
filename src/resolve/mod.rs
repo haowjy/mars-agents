@@ -2,108 +2,57 @@
 //!
 //! Algorithm:
 //! 1. Resolve package refs/versions (lock-preferred latest-compatible for git sources)
-//! 2. Resolve package manifests bottom-up (deps before item seeds)
-//! 3. Traverse items with DFS from seeded requests and frontmatter skill deps
-//! 4. Emit deterministic alphabetical package order
+//! 2. Resolve package manifests bottom-up, recording each package's manifest entries
+//! 3. Once the graph settles, select the items it installs (`select`, a pure pass, once; the
+//!    package being checked is its root when `ResolveOptions::root` names one)
+//! 4. Order the packages alphabetically for sync (`selection` orders its own registry)
 //!
 //! Uses `semver` crate for all version parsing. No custom version logic.
 
-pub mod compat;
-mod constraint;
 mod context;
-mod filter;
 mod package;
 mod path;
 mod plugin;
 mod provider;
 mod publish;
 mod requires;
-mod skill;
+mod select;
 mod types;
+mod upgrade;
 mod version;
 
 use std::collections::HashMap;
 use std::path::Path;
 
-#[cfg(test)]
-use indexmap::IndexMap;
-
-pub use constraint::parse_version_constraint;
 pub use context::ResolverContext;
 pub(crate) use plugin::plugin_list;
 pub(crate) use provider::RealSourceProvider;
+pub use publish::PublishLens;
 pub(crate) use publish::resolve_publish_graph_from_config;
-pub use publish::{PublishLens, resolve_publish_graph};
 pub(crate) use requires::{
     check_consumer_package_requirements, validate_package_requirement_syntax,
 };
+#[cfg(test)]
+pub(crate) use select::select_for_test;
 pub use types::*;
+pub(crate) use upgrade::upgrade_candidate;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
 #[cfg(test)]
 pub(crate) use path::apply_subpath;
 
-#[cfg(test)]
-use crate::config::Manifest;
-use crate::config::{EffectiveConfig, SourceSpec};
+use crate::config::EffectiveConfig;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
 use crate::source::{AvailableVersion, ResolvedRef};
 use crate::types::SourceName;
 use crate::types::SourceUrl;
-use filter::is_item_excluded;
 use package::resolve_package_bottom_up;
-use skill::{parse_pending_item_skill_deps, resolve_skill_ref};
-use version::validate_all_constraints;
+use version::warn_version_drift;
 
 type EngineExclusions =
     HashMap<(SourceName, semver::Version), Vec<requires::EngineRequirementFailure>>;
-
-#[derive(Debug)]
-enum VersionAction {
-    Process,
-    Skip,
-}
-
-fn apply_item_version_policy(
-    pending_item: &PendingItem,
-    check: VersionCheckResult,
-    diag: &mut DiagnosticCollector,
-) -> Result<VersionAction, ResolutionError> {
-    match check {
-        VersionCheckResult::NotSeen => Ok(VersionAction::Process),
-        VersionCheckResult::SameVersion => Ok(VersionAction::Skip),
-        VersionCheckResult::PotentiallyConflicting {
-            existing,
-            requested,
-        } => {
-            diag.warn(
-                "potential-version-drift",
-                format!(
-                    "potential version drift: item '{}' from '{}' requested as {} but already seen as {}",
-                    pending_item.item, pending_item.package, requested, existing
-                ),
-            );
-            Ok(VersionAction::Skip)
-        }
-        VersionCheckResult::DifferentVersion {
-            existing,
-            requested,
-        } => {
-            if pending_item.is_local {
-                return Ok(VersionAction::Skip);
-            }
-            Err(ResolutionError::ItemVersionConflict {
-                item: pending_item.item.to_string(),
-                package: pending_item.package.to_string(),
-                existing: existing.to_string(),
-                requested: requested.to_string(),
-                chain: pending_item.required_by.clone(),
-            })
-        }
-    }
-}
 
 fn same_resolved_ref(a: &ResolvedRef, b: &ResolvedRef) -> bool {
     a.version == b.version
@@ -167,28 +116,9 @@ pub trait SourceFetcher {
     ) -> Result<ResolvedRef, MarsError>;
 }
 
-/// Reads source manifests for transitive dependency discovery.
-#[cfg(test)]
-pub trait ManifestReader {
-    fn read_manifest(
-        &self,
-        source_tree: &Path,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<Option<Manifest>, MarsError>;
-}
-
-/// Composite trait used by `resolve()`.
-#[cfg(not(test))]
+/// What `resolve()` needs from the outside world.
 pub trait SourceProvider: VersionLister + SourceFetcher {}
-#[cfg(not(test))]
 impl<T> SourceProvider for T where T: VersionLister + SourceFetcher {}
-
-/// Unit-test providers may inject manifests without writing fixture files.
-#[cfg(test)]
-pub trait SourceProvider: VersionLister + SourceFetcher + ManifestReader {}
-
-#[cfg(test)]
-impl<T> SourceProvider for T where T: VersionLister + SourceFetcher + ManifestReader {}
 
 /// Resolve the full dependency graph from config.
 ///
@@ -229,27 +159,19 @@ pub fn resolve(
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedGraph, MarsError> {
     // Build direct requests (stable across restarts — determined by config + options).
-    let direct_requests: Vec<PendingSource> = {
-        let mut reqs = Vec::new();
-        for (name, source) in &config.dependencies {
-            let constraint = match &source.spec {
-                SourceSpec::Git(git) => options
-                    .direct_constraint_for(name, parse_version_constraint(git.version.as_deref())),
-                SourceSpec::Path(_) => VersionConstraint::Latest,
-            };
-            reqs.push(PendingSource {
-                name: name.clone(),
-                declared_source_id: source.declared_source_id.clone(),
-                source_id: source.source_id.clone(),
-                spec: source.spec.clone(),
-                subpath: source.subpath.clone(),
-                constraint,
-                filter: source.filter.clone(),
-                required_by: "mars.toml".to_string(),
-            });
-        }
-        reqs
-    };
+    let direct_requests: Vec<PendingSource> = config
+        .dependencies
+        .iter()
+        .map(|(name, source)| PendingSource {
+            name: name.clone(),
+            declared_source_id: source.declared_source_id.clone(),
+            source_id: source.source_id.clone(),
+            constraint: options.direct_constraint_for(name, source.spec.constraint()),
+            spec: source.spec.clone(),
+            subpath: source.subpath.clone(),
+            required_by: "mars.toml".to_string(),
+        })
+        .collect();
 
     // Version overrides carried across restarts:
     // package → (correct ref, correct rooted package).
@@ -272,31 +194,11 @@ pub fn resolve(
         let mut ctx = ResolverContext::new();
         ctx.set_version_overrides(version_overrides.clone());
 
-        // Bottom-up phase: resolve all packages (with version selection) and seed items.
+        // Bottom-up phase: resolve all packages, with version selection.
         let bottom_up_result = (|| -> Result<(), MarsError> {
-            for request in direct_requests
-                .iter()
-                .filter(|request| filter::is_unfiltered_request(&request.filter))
-            {
+            for request in &direct_requests {
                 resolve_package_bottom_up(
                     request,
-                    true,
-                    provider,
-                    locked,
-                    options,
-                    config,
-                    diag,
-                    &mut ctx,
-                    &mut exclusions,
-                )?;
-            }
-            for request in direct_requests
-                .iter()
-                .filter(|request| !filter::is_unfiltered_request(&request.filter))
-            {
-                resolve_package_bottom_up(
-                    request,
-                    true,
                     provider,
                     locked,
                     options,
@@ -348,104 +250,32 @@ pub fn resolve(
         }
     };
 
-    // Item DFS phase: traverse seeded items, resolve skill deps.
-    let mut ctx = ctx;
-    while let Some(pending_item) = ctx.pop_pending() {
-        let (resolved_ref, skill_deps) = {
-            let Some(package) = ctx.registry().get(&pending_item.package) else {
-                return Err(ResolutionError::SourceNotFound {
-                    name: pending_item.package.to_string(),
-                }
-                .into());
-            };
-
-            if package
-                .item(pending_item.kind, &pending_item.item)
-                .is_none()
-            {
-                continue;
-            }
-
-            let skill_deps = parse_pending_item_skill_deps(&pending_item, package)?;
-            (package.node.resolved_ref.clone(), skill_deps)
-        };
-
-        match apply_item_version_policy(
-            &pending_item,
-            ctx.visited().check_version(
-                &pending_item.package,
-                &pending_item.item,
-                &pending_item.constraint,
-            ),
-            diag,
-        )
-        .map_err(MarsError::from)?
-        {
-            VersionAction::Process => {}
-            VersionAction::Skip => continue,
-        }
-
-        ctx.package_versions_mut()
-            .check_or_insert(
-                &pending_item.package,
-                &resolved_ref,
-                &pending_item.constraint,
-                &pending_item.required_by,
-                pending_item.is_local,
-            )
-            .map_err(MarsError::from)?;
-
-        ctx.visited_mut().insert(
-            pending_item.package.clone(),
-            pending_item.item.clone(),
-            pending_item.constraint.clone(),
-            resolved_ref,
-        );
-
-        for skill_dep in skill_deps {
-            let Some(resolved_skill) = resolve_skill_ref(
-                &skill_dep,
-                &pending_item,
-                ctx.registry(),
-                ctx.version_constraints(),
-            )?
-            else {
-                continue;
-            };
-            if is_item_excluded(
-                ctx.materialization_filters(),
-                ctx.registry(),
-                &resolved_skill.package,
-                resolved_skill.kind,
-                &resolved_skill.item,
-            ) {
-                continue;
-            }
-            ctx.add_filter(
-                &resolved_skill.package,
-                crate::config::FilterMode::Include {
-                    agents: Vec::new(),
-                    skills: vec![resolved_skill.item.clone()],
-                },
-            );
-            ctx.push_pending(resolved_skill);
-        }
+    let selection = select::select_registry(config, ctx.registry(), options.root.as_deref());
+    for diagnostic in &selection.diagnostics {
+        diag.schema(diagnostic, "selection", false);
     }
-
+    // With a root, the caller judges the refs the selection could not resolve.
+    if options.root.is_none()
+        && let Some(missing) = selection.missing_skills.first()
+    {
+        return Err(ResolutionError::SkillNotFound {
+            skill: missing.skill.clone(),
+            required_by: match &missing.package {
+                Some(package) => format!("{package}/{}", missing.agent),
+                None => missing.agent.clone(),
+            },
+            searched: missing.searched.clone(),
+            hint: missing.hint.clone(),
+        }
+        .into());
+    }
     let version_constraints = ctx.version_constraints().clone();
-    let graph = ctx.into_graph();
+    let graph = ctx.into_graph(selection);
 
-    validate_all_constraints(&graph.nodes, &version_constraints)?;
+    warn_version_drift(&graph.nodes, &version_constraints, diag);
     diag.reconcile_engine_fallbacks(&graph);
 
     Ok(graph)
-}
-
-#[cfg(test)]
-fn alphabetical_order(nodes: &IndexMap<SourceName, ResolvedNode>) -> Vec<SourceName> {
-    let mut order: Vec<SourceName> = nodes.keys().cloned().collect();
-    order.sort();
-    order
 }
 
 #[cfg(test)]

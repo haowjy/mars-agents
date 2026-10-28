@@ -1,4 +1,5 @@
 use super::*;
+use mars_schema::dependency::Entry;
 
 #[test]
 fn apply_subpath_success_case() {
@@ -142,17 +143,7 @@ fn transitive_override_does_not_collapse_conflicting_declared_identities() {
             requires_mars: None,
             requires_meridian: None,
         },
-        dependencies: IndexMap::from([(
-            "shared".to_string(),
-            ManifestDep {
-                url: None,
-                path: Some(relative_path.into()),
-                subpath: None,
-                version: None,
-                filter: crate::config::FilterConfig::default(),
-                plugin: None,
-            },
-        )]),
+        dependencies: IndexMap::from([("shared".to_string(), Entry::at_path(relative_path))]),
         models: IndexMap::new(),
     };
 
@@ -305,13 +296,10 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
     let mut manifest_deps = IndexMap::new();
     manifest_deps.insert(
         "dep".to_string(),
-        ManifestDep {
-            url: Some(SourceUrl::from("https://example.com/dep.git")),
-            path: None,
-            subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
+        Entry {
             version: Some(">=1.0.0".to_string()),
-            filter: FilterConfig::default(),
-            plugin: None,
+            subpath: Some(SourceSubpath::new("plugins/bar").unwrap()),
+            ..Entry::git("https://example.com/dep.git")
         },
     );
     let manifest_a = Manifest {
@@ -402,13 +390,10 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
     let mut manifest_deps = IndexMap::new();
     manifest_deps.insert(
         "dep".to_string(),
-        ManifestDep {
-            url: Some(SourceUrl::from("https://example.com/dep.git")),
-            path: None,
-            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+        Entry {
             version: Some(">=1.0.0".to_string()),
-            filter: FilterConfig::default(),
-            plugin: None,
+            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+            ..Entry::git("https://example.com/dep.git")
         },
     );
     let manifest_a = Manifest {
@@ -740,14 +725,7 @@ fn latest_and_pinned_revisit_re_resolves_to_pinned_version() {
     let mut deps_a = IndexMap::new();
     deps_a.insert(
         "shared".to_string(),
-        ManifestDep {
-            url: Some(SourceUrl::from("https://example.com/shared.git")),
-            path: None,
-            subpath: None,
-            version: None,
-            filter: FilterConfig::default(),
-            plugin: None,
-        },
+        Entry::git("https://example.com/shared.git"),
     );
     let manifest_a = Manifest {
         package: PackageInfo {
@@ -904,7 +882,7 @@ fn source_without_manifest_has_no_transitive_deps() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     assert_eq!(graph.nodes.len(), 1);
-    assert!(graph.nodes["a"].deps.is_empty());
+    assert_eq!(graph.nodes["a"].deps().count(), 0);
 }
 
 #[test]
@@ -962,175 +940,6 @@ fn local_path_source_resolves_transitive_path_dependencies() {
     assert!(graph.nodes.contains_key("planning"));
 }
 
-// ========== Deterministic package order tests ==========
-
-#[test]
-fn alphabetical_order_linear_chain() {
-    let mut nodes = IndexMap::new();
-    nodes.insert(
-        "c".into(),
-        ResolvedNode {
-            source_name: "c".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("c"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec!["b".into()],
-        },
-    );
-    nodes.insert(
-        "b".into(),
-        ResolvedNode {
-            source_name: "b".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("b"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec!["a".into()],
-        },
-    );
-    nodes.insert(
-        "a".into(),
-        ResolvedNode {
-            source_name: "a".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("a"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec![],
-        },
-    );
-
-    let order = alphabetical_order(&nodes);
-    assert_eq!(order, vec!["a", "b", "c"]);
-}
-
-#[test]
-fn alphabetical_order_ignores_dependency_shape() {
-    // a depends on b and c, both depend on d
-    let mut nodes = IndexMap::new();
-    nodes.insert(
-        "a".into(),
-        ResolvedNode {
-            source_name: "a".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("a"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec!["b".into(), "c".into()],
-        },
-    );
-    nodes.insert(
-        "b".into(),
-        ResolvedNode {
-            source_name: "b".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("b"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec!["d".into()],
-        },
-    );
-    nodes.insert(
-        "c".into(),
-        ResolvedNode {
-            source_name: "c".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/c"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("c"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec!["d".into()],
-        },
-    );
-    nodes.insert(
-        "d".into(),
-        ResolvedNode {
-            source_name: "d".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/d"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("d"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec![],
-        },
-    );
-
-    let order = alphabetical_order(&nodes);
-    assert_eq!(order, vec!["a", "b", "c", "d"]);
-}
-
-#[test]
-fn alphabetical_order_no_deps() {
-    let mut nodes = IndexMap::new();
-    nodes.insert(
-        "a".into(),
-        ResolvedNode {
-            source_name: "a".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("a"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec![],
-        },
-    );
-    nodes.insert(
-        "b".into(),
-        ResolvedNode {
-            source_name: "b".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("b"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec![],
-        },
-    );
-
-    let order = alphabetical_order(&nodes);
-    assert_eq!(order.len(), 2);
-    // Deterministic alphabetical order for independent nodes
-    assert_eq!(order, vec!["a", "b"]);
-}
-
-#[test]
-fn alphabetical_order_is_stable_for_cycles() {
-    let mut nodes = IndexMap::new();
-    nodes.insert(
-        "a".into(),
-        ResolvedNode {
-            source_name: "a".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/a"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("a"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec!["b".into()],
-        },
-    );
-    nodes.insert(
-        "b".into(),
-        ResolvedNode {
-            source_name: "b".into(),
-            source_id: SourceId::git_with_subpath(SourceUrl::from("example.com/b"), None),
-            prepared: None,
-            resolved_ref: dummy_ref("b"),
-            rooted_ref: dummy_rooted_ref(),
-            manifest: None,
-            deps: vec!["a".into()],
-        },
-    );
-
-    let order = alphabetical_order(&nodes);
-    assert_eq!(order, vec!["a", "b"]);
-}
-
 // ========== RES-006 / RES-008: apply_subpath with None subpath ==========
 
 /// RES-006 / RES-008: When no subpath is specified, checkout_root IS the
@@ -1158,10 +967,8 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     let package_root = checkout.join("plugins/foo");
     std::fs::create_dir_all(&package_root).unwrap();
 
-    // The manifest is associated with package_root, NOT the checkout root.
-    // MockProvider keyed by tree_path: we register the manifest under
-    // package_root so that a read from checkout_root would return None
-    // while a read from package_root returns the manifest.
+    // The manifest sits in package_root, NOT the checkout root, so a read from
+    // checkout_root finds none.
     let manifest = Manifest {
         package: PackageInfo {
             name: "foo".to_string(),
@@ -1183,12 +990,8 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
 
     let mut provider = MockProvider::new();
     provider.add_versions("https://example.com/repo.git", vec![(1, 0, 0)]);
-    // Register tree at checkout but map manifest only for package_root
     provider.trees.insert("dep".to_string(), checkout.clone());
-    provider
-        .manifests
-        .insert(package_root.clone(), Some(manifest.clone()));
-    provider.manifests.insert(checkout.clone(), None);
+    write_manifest(&package_root, &manifest);
 
     let mut dependencies = IndexMap::new();
     dependencies.insert(
@@ -1333,13 +1136,9 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
     let mut manifest_deps = IndexMap::new();
     manifest_deps.insert(
         "dep".to_string(),
-        ManifestDep {
-            url: Some(SourceUrl::from("https://example.com/dep.git")),
-            path: None,
-            subpath: None,
+        Entry {
             version: Some(">=1.0.0".to_string()),
-            filter: FilterConfig::default(),
-            plugin: None,
+            ..Entry::git("https://example.com/dep.git")
         },
     );
     let manifest_a = Manifest {
@@ -1393,13 +1192,13 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
 #[test]
 fn ssh_and_https_url_forms_have_same_canonical_source_id() {
     let ssh_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "git@example.com:org/repo.git",
         )),
         None,
     );
     let https_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://example.com/org/repo.git",
         )),
         None,
@@ -1427,7 +1226,7 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     provider.add_source("dep-b", tree, None);
 
     // Both deps canonicalize to the same SourceId
-    let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+    let canonical_url = SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
         "https://example.com/org/shared.git",
     ));
     let mut deps = IndexMap::new();
@@ -1500,7 +1299,7 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     // SSH form: git@example.com:org/shared.git → canonical: example.com/org/shared
     // HTTPS form: https://example.com/org/shared.git → canonical: example.com/org/shared
     // Both are the same canonical, so the resolver should not raise SourceIdentityMismatch.
-    let ssh_canonical = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+    let ssh_canonical = SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
         "git@example.com:org/shared.git",
     ));
     let mut deps = IndexMap::new();
@@ -1508,13 +1307,13 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
         SourceName::from("a"),
         EffectiveDependency {
             declared_source_id: SourceId::git_with_subpath(
-                SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
                     "https://example.com/a.git",
                 )),
                 None,
             ),
             source_id: SourceId::git_with_subpath(
-                SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+                SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
                     "https://example.com/a.git",
                 )),
                 None,
@@ -1561,13 +1360,13 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
 fn different_host_or_path_does_not_produce_false_convergence() {
     // Different hosts → different SourceIds
     let github_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo.git",
         )),
         None,
     );
     let gitlab_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://gitlab.com/org/repo.git",
         )),
         None,
@@ -1579,13 +1378,13 @@ fn different_host_or_path_does_not_produce_false_convergence() {
 
     // Different paths on the same host → different SourceIds
     let repo_a_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo-a.git",
         )),
         None,
     );
     let repo_b_id = SourceId::git_with_subpath(
-        SourceUrl::from(crate::source::canonical::canonicalize_git_url(
+        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo-b.git",
         )),
         None,
@@ -1872,7 +1671,7 @@ fn restart_fresh_context_drops_removed_transitive_engine_fallback() {
 }
 
 #[test]
-fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
+fn restart_fresh_context_selects_new_transitive_dependency_items() {
     let dir = TempDir::new().unwrap();
     let tree_a_v1 = dir.path().join("a-v1");
     let tree_a_v2 = dir.path().join("a-v2");
@@ -1882,6 +1681,8 @@ fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
     std::fs::create_dir_all(&tree_a_v2).unwrap();
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_y).unwrap();
+    write_minimal_package_marker(&tree_y);
+    write_agent(&tree_y, "y-agent", &[]);
 
     // A@v1 has no deps; A@v2 introduces Y.
     let manifest_a_v1 = make_manifest("a", "1.0.0", vec![]);
@@ -1916,15 +1717,13 @@ fn restart_fresh_context_materializes_new_transitive_dependency_filters() {
         "Y should be present after A re-resolves to v2"
     );
 
-    let y_filters = graph
-        .filters
-        .get("y")
-        .expect("Y must receive materialization filters on restart");
     assert!(
-        y_filters
+        graph
+            .selection
+            .items
             .iter()
-            .any(|filter| matches!(filter, FilterMode::All)),
-        "Y should receive an unfiltered materialization request so sync includes it"
+            .any(|item| item.package.as_deref() == Some("y") && item.slug == "y-agent"),
+        "Y is reached through unfiltered entries, so its items are installed"
     );
 }
 

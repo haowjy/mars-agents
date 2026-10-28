@@ -1,31 +1,28 @@
-use std::collections::hash_map::Entry;
+use mars_schema::version::Constraint;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use indexmap::IndexMap;
-use semver::VersionReq;
 
-use super::compat::CompatibilityResult;
-use crate::config::{EffectiveDependency, FilterMode, Manifest};
-use crate::error::ResolutionError;
+use crate::config::{EffectiveDependency, Manifest};
 use crate::source::ResolvedRef;
-use crate::types::{ItemName, SourceId, SourceName};
+use crate::types::{SourceId, SourceName, SourceUrl};
 use mars_schema::claude::manifest::PluginSource;
-use mars_schema::item::ItemKind;
 
 /// The resolved dependency graph — all sources with concrete versions.
 ///
 /// Produced by the resolver after fetching sources, reading manifests,
-/// intersecting version constraints, and deterministic ordering.
+/// intersecting version constraints, and sorting the packages by name.
 #[derive(Debug, Clone)]
 pub struct ResolvedGraph {
     pub nodes: IndexMap<SourceName, ResolvedNode>,
-    /// Deterministic alphabetical order (prompt packages don't require dependency ordering).
+    /// Alphabetical, for the order sync walks the packages in. The order skill refs resolve in is
+    /// not this one; `selection` computes it.
     pub order: Vec<SourceName>,
-    /// All filter constraints collected for each source (direct + transitive).
-    pub filters: HashMap<SourceName, Vec<FilterMode>>,
+    /// The Agents, skills and documents the consumer installs, chosen once the graph settled.
+    pub selection: mars_schema::selection::SelectionResult,
     /// All version constraints collected for each source (direct + transitive).
-    pub version_constraints: HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    pub version_constraints: HashMap<SourceName, Vec<(String, Constraint)>>,
     /// Hook surfaces that cannot be compiled because they use a removed schema.
     ///
     /// This is classified during staging and consumed only by the recovery halt
@@ -52,14 +49,14 @@ impl ResolvedGraph {
         while let Some(current) = queue.pop_front() {
             let current_depth = depths[&current];
             if let Some(node) = self.nodes.get(&current) {
-                for dep in &node.deps {
-                    if !self.nodes.contains_key(dep) {
+                for dep in node.deps() {
+                    if !self.nodes.contains_key(&dep) {
                         continue;
                     }
                     let candidate = current_depth + 1;
-                    if depths.get(dep).is_none_or(|depth| candidate < *depth) {
-                        depths.insert(dep.clone(), candidate);
+                    if depths.get(&dep).is_none_or(|depth| candidate < *depth) {
                         queue.push_back(dep.clone());
+                        depths.insert(dep, candidate);
                     }
                 }
             }
@@ -88,11 +85,11 @@ impl ResolvedGraph {
                 continue;
             };
 
-            for dep in &node.deps {
-                if !self.nodes.contains_key(dep) {
+            for dep in node.deps() {
+                if !self.nodes.contains_key(&dep) {
                     continue;
                 }
-                match orders.get_mut(dep) {
+                match orders.get_mut(&dep) {
                     Some(existing) if current_order < *existing => {
                         *existing = current_order;
                         queue.push_back(dep.clone());
@@ -134,15 +131,30 @@ pub struct EngineFallback {
 #[derive(Debug, Clone)]
 pub struct ResolvedNode {
     pub source_name: SourceName,
+    /// Canonical identity: compare it, never fetch with it (scheme and user are stripped).
     pub source_id: SourceId,
+    /// The URL the resolver fetched this git source with, as the entry spelled it. The only locator
+    /// for any git call after resolve (version listing, upgrade check, HEAD lookup). `None` for
+    /// a path source.
+    pub fetch_url: Option<SourceUrl>,
     pub rooted_ref: RootedSourceRef,
     /// Crate-owned semantic preparation result for this authored package.
-    pub prepared: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
+    pub prepared: std::sync::Arc<mars_schema::prepare::Prepared>,
     pub resolved_ref: ResolvedRef,
     /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
-    /// Source names this depends on.
-    pub deps: Vec<SourceName>,
+}
+
+impl ResolvedNode {
+    /// Source names this depends on: the `[dependencies]` its prepared manifest reads, in
+    /// declaration order.
+    pub fn deps(&self) -> impl Iterator<Item = SourceName> + '_ {
+        self.prepared
+            .manifest
+            .iter()
+            .flat_map(|manifest| manifest.reading.dependencies.dependencies.keys())
+            .map(|name| SourceName::from(name.as_str()))
+    }
 }
 
 /// Source checkout provenance and rooted package boundary.
@@ -190,231 +202,6 @@ impl PluginRoot {
     }
 }
 
-/// How a version constraint was specified.
-#[derive(Debug, Clone)]
-pub enum VersionConstraint {
-    /// Semver requirement (^1.0, >=0.5.0, ~2.1, exact version).
-    Semver(VersionReq),
-    /// Any version, prefer newest.
-    Latest,
-    /// Branch or commit pin — no semver resolution.
-    RefPin(String),
-}
-
-impl std::fmt::Display for VersionConstraint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VersionConstraint::Semver(req) => write!(f, "{req}"),
-            VersionConstraint::Latest => write!(f, "latest"),
-            VersionConstraint::RefPin(reference) => write!(f, "ref:{reference}"),
-        }
-    }
-}
-
-/// An item waiting to be processed in DFS traversal.
-#[derive(Debug, Clone)]
-pub struct PendingItem {
-    /// Package containing this item.
-    pub package: SourceName,
-    /// Item name.
-    pub item: ItemName,
-    /// Agent or Skill.
-    pub kind: ItemKind,
-    /// Version constraint from config.
-    pub constraint: VersionConstraint,
-    /// Who requested this item (for error context).
-    pub required_by: String,
-    /// True if from a local path dependency (skip version checks).
-    pub is_local: bool,
-}
-
-/// Result of checking whether an item was seen already.
-#[derive(Debug)]
-pub enum VersionCheckResult {
-    /// Item has not been visited yet.
-    NotSeen,
-    /// Item was visited with a compatible version.
-    SameVersion,
-    /// Item was visited with a potentially conflicting version (latest vs pinned).
-    PotentiallyConflicting {
-        existing: VersionConstraint,
-        requested: VersionConstraint,
-    },
-    /// Item was visited with a conflicting version.
-    DifferentVersion {
-        existing: VersionConstraint,
-        requested: VersionConstraint,
-    },
-}
-
-/// Stable key for visited items.
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-struct VisitedItem {
-    package: SourceName,
-    item: ItemName,
-}
-
-/// Stored version information for a visited item.
-#[derive(Debug, Clone)]
-pub struct ResolvedVersion {
-    pub constraint: VersionConstraint,
-    pub resolved_ref: ResolvedRef,
-}
-
-/// Tracks visited items with version-aware lookup for DFS traversal.
-pub struct VisitedSet {
-    /// Fast lookup by (package, item).
-    index: HashMap<(SourceName, ItemName), ResolvedVersion>,
-}
-
-impl Default for VisitedSet {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl VisitedSet {
-    pub fn new() -> Self {
-        Self {
-            index: HashMap::new(),
-        }
-    }
-
-    fn index_key(package: &SourceName, item: &ItemName) -> (SourceName, ItemName) {
-        let key = VisitedItem {
-            package: package.clone(),
-            item: item.clone(),
-        };
-        (key.package, key.item)
-    }
-
-    /// Check whether an item was visited and compare version constraints.
-    pub fn check_version(
-        &self,
-        package: &SourceName,
-        item: &ItemName,
-        constraint: &VersionConstraint,
-    ) -> VersionCheckResult {
-        match self.index.get(&Self::index_key(package, item)) {
-            None => VersionCheckResult::NotSeen,
-            Some(existing) => match existing
-                .constraint
-                .compatible_with_resolved(constraint, existing.resolved_ref.version.as_ref())
-            {
-                CompatibilityResult::Compatible => VersionCheckResult::SameVersion,
-                CompatibilityResult::PotentiallyConflicting => {
-                    VersionCheckResult::PotentiallyConflicting {
-                        existing: existing.constraint.clone(),
-                        requested: constraint.clone(),
-                    }
-                }
-                CompatibilityResult::Conflicting => VersionCheckResult::DifferentVersion {
-                    existing: existing.constraint.clone(),
-                    requested: constraint.clone(),
-                },
-            },
-        }
-    }
-
-    /// Insert an item as visited.
-    pub fn insert(
-        &mut self,
-        package: SourceName,
-        item: ItemName,
-        constraint: VersionConstraint,
-        resolved_ref: ResolvedRef,
-    ) {
-        self.index.insert(
-            Self::index_key(&package, &item),
-            ResolvedVersion {
-                constraint,
-                resolved_ref,
-            },
-        );
-    }
-}
-
-/// Tracks resolved version per package and rejects divergent refs.
-pub struct PackageVersions {
-    /// package -> (resolved_ref, first_constraint, first_required_by)
-    versions: HashMap<SourceName, (ResolvedRef, VersionConstraint, String)>,
-}
-
-impl Default for PackageVersions {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PackageVersions {
-    pub fn new() -> Self {
-        Self {
-            versions: HashMap::new(),
-        }
-    }
-
-    /// Check existing package version or insert if first time seen.
-    pub fn check_or_insert(
-        &mut self,
-        package: &SourceName,
-        resolved: &ResolvedRef,
-        requested: &VersionConstraint,
-        required_by: &str,
-        is_local: bool,
-    ) -> Result<(), ResolutionError> {
-        if is_local {
-            return Ok(());
-        }
-
-        match self.versions.entry(package.clone()) {
-            Entry::Vacant(entry) => {
-                entry.insert((resolved.clone(), requested.clone(), required_by.to_string()));
-                Ok(())
-            }
-            Entry::Occupied(entry) => {
-                let (existing_ref, existing_constraint, existing_by) = entry.get();
-                match existing_constraint.compatible_with_resolved(
-                    requested,
-                    existing_ref.version.as_ref().or(resolved.version.as_ref()),
-                ) {
-                    CompatibilityResult::Compatible
-                    | CompatibilityResult::PotentiallyConflicting => {
-                        if resolved_ref_matches(existing_ref, resolved) {
-                            Ok(())
-                        } else {
-                            Err(ResolutionError::PackageVersionConflict {
-                                package: package.to_string(),
-                                existing: format!("{existing_ref:?} (required by {existing_by})"),
-                                requested: format!("{resolved:?} (required by {required_by})"),
-                                chain: required_by.to_string(),
-                            })
-                        }
-                    }
-                    CompatibilityResult::Conflicting => {
-                        Err(ResolutionError::PackageVersionConflict {
-                            package: package.to_string(),
-                            existing: format!("{existing_constraint} (required by {existing_by})"),
-                            requested: format!("{requested} (required by {required_by})"),
-                            chain: required_by.to_string(),
-                        })
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn resolved_ref_matches(existing: &ResolvedRef, incoming: &ResolvedRef) -> bool {
-    existing.source_name == incoming.source_name
-        && existing.version == incoming.version
-        && existing.version_tag == incoming.version_tag
-        && existing.commit == incoming.commit
-        && crate::target::paths_equivalent(
-            &existing.tree_path.to_string_lossy(),
-            &incoming.tree_path.to_string_lossy(),
-        )
-}
-
 /// High-level resolver mode shared by sync and upgrade.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveMode {
@@ -445,6 +232,8 @@ pub struct ResolveOptions {
     pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     pub(crate) prepared_sources:
         indexmap::IndexMap<SourceName, std::sync::Arc<mars_schema::prepare::Prepared>>,
+    /// The package selected for, when it is not a node of the graph. See [`Self::with_root`].
+    pub(crate) root: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
 }
 
 impl Default for ResolveOptions {
@@ -457,43 +246,28 @@ impl Default for ResolveOptions {
             ignore_requires_meridian: false,
             source_overrides: indexmap::IndexMap::new(),
             prepared_sources: indexmap::IndexMap::new(),
+            root: None,
         }
     }
 }
 
-/// Version-selection behavior for a single source in the current resolve mode.
+/// How a source's version is decided: the schema crate's choice among tags, or `--frozen`, which
+/// replays the lock exactly and is the resolver's own rule, not a way of choosing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VersionSelectionPolicy {
-    /// Use compatible locked version when available; otherwise newest compatible.
-    PreferLockThenLatest,
-    /// Upgrade mode: choose newest compatible version and bypass lock preference.
-    LatestOnly,
-    /// Lock must be honored exactly; fail when lock cannot be used.
-    LockOnly,
+pub(crate) enum VersionMode {
+    Choose(mars_schema::version::SelectionPolicy),
+    Frozen,
 }
 
 impl ResolveOptions {
     pub fn sync() -> Self {
-        Self {
-            mode: ResolveMode::Sync,
-            mars_version: None,
-            meridian_version: None,
-            ignore_requires_mars: false,
-            ignore_requires_meridian: false,
-            source_overrides: indexmap::IndexMap::new(),
-            prepared_sources: indexmap::IndexMap::new(),
-        }
+        Self::default()
     }
 
     pub fn frozen() -> Self {
         Self {
             mode: ResolveMode::Frozen,
-            mars_version: None,
-            meridian_version: None,
-            ignore_requires_mars: false,
-            ignore_requires_meridian: false,
-            source_overrides: indexmap::IndexMap::new(),
-            prepared_sources: indexmap::IndexMap::new(),
+            ..Self::default()
         }
     }
 
@@ -503,13 +277,20 @@ impl ResolveOptions {
                 targets,
                 bump_direct_constraints,
             },
-            mars_version: None,
-            meridian_version: None,
-            ignore_requires_mars: false,
-            ignore_requires_meridian: false,
-            source_overrides: indexmap::IndexMap::new(),
-            prepared_sources: indexmap::IndexMap::new(),
+            ..Self::default()
         }
+    }
+
+    /// Select as the install of `root`, a package that is not itself in the graph (`mars check`
+    /// resolves a package's `[dependencies]` as its consumer would). Its items and its Agents'
+    /// skill refs take part in the one selection, so a ref only the root ships is found. The unresolved refs stay in `ResolvedGraph::selection`
+    /// for the caller to judge instead of failing resolution.
+    pub(crate) fn with_root(
+        mut self,
+        root: std::sync::Arc<mars_schema::prepare::Prepared>,
+    ) -> Self {
+        self.root = Some(root);
+        self
     }
 
     pub(crate) fn with_source_overrides(
@@ -532,8 +313,8 @@ impl ResolveOptions {
     pub(crate) fn direct_constraint_for(
         &self,
         source_name: &SourceName,
-        declared: VersionConstraint,
-    ) -> VersionConstraint {
+        declared: Constraint,
+    ) -> Constraint {
         if matches!(
             &self.mode,
             ResolveMode::Upgrade {
@@ -542,7 +323,7 @@ impl ResolveOptions {
             }
         ) && self.is_upgrade_target(source_name)
         {
-            VersionConstraint::Latest
+            Constraint::Latest
         } else {
             declared
         }
@@ -557,18 +338,54 @@ impl ResolveOptions {
         }
     }
 
-    pub(crate) fn version_selection_policy(
-        &self,
-        source_name: &SourceName,
-    ) -> VersionSelectionPolicy {
+    pub(crate) fn version_mode(&self, source_name: &SourceName) -> VersionMode {
+        use mars_schema::version::SelectionPolicy;
         match &self.mode {
-            ResolveMode::Frozen => VersionSelectionPolicy::LockOnly,
+            ResolveMode::Frozen => VersionMode::Frozen,
             ResolveMode::Upgrade { .. } if self.is_upgrade_target(source_name) => {
-                VersionSelectionPolicy::LatestOnly
+                VersionMode::Choose(SelectionPolicy::LatestOnly)
             }
             ResolveMode::Sync | ResolveMode::Upgrade { .. } => {
-                VersionSelectionPolicy::PreferLockThenLatest
+                VersionMode::Choose(SelectionPolicy::PreferLockThenLatest)
             }
         }
     }
+}
+
+/// A prepared package whose manifest depends on `deps` (path entries, unfiltered; no manifest when
+/// there are none), for tests that build a `ResolvedNode` by hand.
+#[cfg(test)]
+pub(crate) fn prepared_with_deps(deps: &[&str]) -> std::sync::Arc<mars_schema::prepare::Prepared> {
+    let manifest = (!deps.is_empty()).then(|| {
+        let mut text = String::from("[package]\nname = \"p\"\nversion = \"1.0.0\"\n");
+        for dep in deps {
+            text.push_str(&format!("\n[dependencies.{dep}]\npath = \"/{dep}\"\n"));
+        }
+        mars_schema::prepare::PreparedManifest {
+            source_path: Some("mars.toml".to_string()),
+            output_path: "mars.toml".to_string(),
+            reading: mars_schema::manifest::read(&text),
+            normalized_bytes: text.into_bytes(),
+            change: mars_schema::prepare::ChangeRecord::None,
+        }
+    });
+    std::sync::Arc::new(mars_schema::prepare::Prepared {
+        classification: mars_schema::prepare::Classification::Empty,
+        selection: mars_schema::selection::SelectionFacts {
+            edges: deps
+                .iter()
+                .map(|dep| mars_schema::selection::Request {
+                    name: (*dep).to_string(),
+                    filter: mars_schema::filter::FilterMode::All,
+                })
+                .collect(),
+            ..Default::default()
+        },
+        manifest,
+        definitions: Vec::new(),
+        payload: Vec::new(),
+        mcp_servers: Vec::new(),
+        diagnostics: Default::default(),
+        changes: Default::default(),
+    })
 }

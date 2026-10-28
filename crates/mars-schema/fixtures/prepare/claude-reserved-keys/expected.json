@@ -122,6 +122,24 @@
     }
   ],
   "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "g",
+        "output_path": "agents/g.md",
+        "skills": []
+      },
+      {
+        "kind": "skill",
+        "slug": "lint",
+        "output_path": "skills/lint/SKILL.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {},
   "changes": {
     "agents/g.md": [

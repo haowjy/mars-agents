@@ -122,6 +122,24 @@
             "output_path": "skills/shared/README.md"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "main",
+              "output_path": "skills/main/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "shared",
+              "output_path": "skills/shared/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           "skills/main/SKILL.md": [
             {
@@ -131,10 +149,10 @@
               "message": "links to `../../scripts/build.sh`, which is outside the skill and is not imported"
             },
             {
-              "code": "skill.reference-to-skill",
+              "code": "skill.outside-reference",
               "severity": "warning",
               "path": [],
-              "message": "links to `../dropped/SKILL.md`, a file of skill `dropped`, which is not imported; stored it would be `skills/dropped/SKILL.md`"
+              "message": "links to `../dropped/SKILL.md`, which is outside the skill and is not imported"
             }
           ]
         }

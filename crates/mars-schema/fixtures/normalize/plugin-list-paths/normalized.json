@@ -129,6 +129,24 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "real",
+              "output_path": "agents/real.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "a",
+              "output_path": "skills/a/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           ".claude-plugin/plugin.json": [
             {

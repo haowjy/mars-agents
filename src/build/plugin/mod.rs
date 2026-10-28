@@ -21,13 +21,13 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 use serde::Serialize;
 
-use crate::config::{
-    Config, EffectiveConfig, EffectiveDependency, FilterMode, Settings, SourceSpec,
-};
+use crate::config::{Config, EffectiveConfig, EffectiveDependency, Settings, SourceSpec};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, LossinessMode};
 use crate::error::{ConfigError, MarsError};
 use crate::resolve::{PublishLens, ResolveOptions};
-use crate::types::{RenameMap, SourceId, SourceName};
+use crate::types::{SourceId, SourceName};
+use mars_schema::filter::FilterMode;
+use mars_schema::names::RenameMap;
 use mars_schema::plugin_metadata::{PluginSentinel, ResolvedDependency, SENTINEL_SCHEMA_VERSION};
 
 use metadata::PackageMetadata;
@@ -268,6 +268,9 @@ fn stage_plugin_inner(
     let warnings =
         crate::sync::validate::validate_skill_refs(&prepared_target.target, &graph, None, None);
     emit_missing_skill_warnings(&warnings, diag);
+    // The plugin ships the installed tree, so its skills' links, the root's among them, are
+    // judged the way a sync judges them.
+    crate::sync::validate::report_skill_links(&prepared_target.target, &graph, &[], diag);
     materialize_rewritten_skills(&mut prepared_target.target)?;
 
     let aliases = crate::models::merged_model_aliases(&graph, &effective, diag);

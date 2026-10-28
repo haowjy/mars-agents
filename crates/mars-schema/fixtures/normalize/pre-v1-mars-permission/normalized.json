@@ -132,6 +132,18 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "reader",
+              "output_path": "agents/reader.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

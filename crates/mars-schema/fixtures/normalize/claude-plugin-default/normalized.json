@@ -250,19 +250,184 @@
             }
           }
         ],
+        "mcp_servers": [
+          {
+            "name": "extra",
+            "source_path": "config/more-mcp.json",
+            "output_path": "mcp/extra/mcp.toml"
+          },
+          {
+            "name": "github",
+            "source_path": ".mcp.json",
+            "output_path": "mcp/github/mcp.toml"
+          },
+          {
+            "name": "indexer",
+            "source_path": ".mcp.json",
+            "output_path": "mcp/indexer/mcp.toml"
+          },
+          {
+            "name": "replaced",
+            "source_path": ".claude-plugin/plugin.json",
+            "output_path": "mcp/replaced/mcp.toml"
+          }
+        ],
         "payload": [
           {
             "source_path": "skills/review/checklist.md",
             "output_path": "skills/review/checklist.md"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "helper",
+              "output_path": "agents/helper.md",
+              "skills": []
+            },
+            {
+              "kind": "agent",
+              "slug": "plan",
+              "output_path": "agents/plan.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "plan",
+              "output_path": "skills/plan/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "review",
+              "output_path": "skills/review/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
+          ".claude-plugin/plugin.json": [
+            {
+              "code": "mcp.manifest-entry-unsupported",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                2
+              ],
+              "message": "`mcpServers` entry `./bundle.mcpb` is not a JSON file inside the plugin (a `.mcpb` bundle or a URL cannot be imported), so it was left out"
+            }
+          ],
           ".mcp.json": [
             {
-              "code": "import.mcp-not-converted",
+              "code": "mcp.name-invalid",
               "severity": "warning",
-              "path": [],
-              "message": "MCP servers are not converted yet"
+              "path": [
+                "mcpServers",
+                "bad name"
+              ],
+              "message": "MCP server `bad name` was not imported: its name becomes a directory, so it may use only letters, digits, `-`, `_` and `.`, starting with a letter or digit"
+            },
+            {
+              "code": "mcp.default-value",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "defaulted",
+                "url"
+              ],
+              "message": "MCP server `defaulted` was not imported: it uses a `${VAR:-default}` in `url`; Mars passes an environment variable by name, with no default"
+            },
+            {
+              "code": "mcp.shadowed-by-authored",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "docs"
+              ],
+              "message": "MCP server `docs` was not imported: the plugin also ships `mcp/docs/`, which is used instead"
+            },
+            {
+              "code": "mcp.transport-unsupported",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "events",
+                "type"
+              ],
+              "message": "MCP server `events` was not imported: it uses transport `sse`; Mars imports `stdio` and `http`"
+            },
+            {
+              "code": "mcp.field-unsupported",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "helper",
+                "headersHelper"
+              ],
+              "message": "MCP server `helper` was not imported: it sets `headersHelper`, which runs a command to produce request headers; Mars passes headers by value or environment variable"
+            },
+            {
+              "code": "mcp.field-unsupported",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "helper",
+                "oauth"
+              ],
+              "message": "MCP server `helper` was not imported: it sets `oauth`, which pre-registers an OAuth client; each harness runs its own OAuth flow"
+            },
+            {
+              "code": "mcp.field-dropped",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "indexer",
+                "timeout"
+              ],
+              "message": "MCP server `indexer`: `timeout` has no equivalent and was dropped"
+            },
+            {
+              "code": "mcp.literal-env",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "literal",
+                "env.MODE"
+              ],
+              "message": "MCP server `literal` was not imported: it sets `env.MODE` to a literal value; Mars passes only a reference to an environment variable, `${VAR}`"
+            },
+            {
+              "code": "mcp.plugin-variable",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "rooted",
+                "command"
+              ],
+              "message": "MCP server `rooted` was not imported: it uses `${CLAUDE_PLUGIN_ROOT}` in `command`, which names the plugin's install location or settings and has no equivalent here"
+            },
+            {
+              "code": "mcp.plugin-variable",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "rooted",
+                "args"
+              ],
+              "message": "MCP server `rooted` was not imported: it uses `${CLAUDE_PLUGIN_DATA}` in `args`, which names the plugin's install location or settings and has no equivalent here"
+            },
+            {
+              "code": "mcp.url-without-type",
+              "severity": "warning",
+              "path": [
+                "mcpServers",
+                "untyped",
+                "url"
+              ],
+              "message": "MCP server `untyped` was not imported: it has a `url` and no `type`; Claude reads that as invalid. Set `\"type\": \"http\"`"
             }
           ],
           "commands": [

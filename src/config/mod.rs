@@ -9,11 +9,13 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
-use crate::types::{
-    ItemName, RenameMap, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
-};
+use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
+use mars_schema::dependency::{Entry, RawEntry, Source, Strictness};
 use mars_schema::dialect::Dialect;
+use mars_schema::filter::FilterMode;
+use mars_schema::manifest::ManifestRead;
 use mars_schema::model_policy::ModelPolicyRule;
+use mars_schema::names::{RenameMap, SourceSubpath};
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 pub use mars_schema::package::PackageMetadata as PackageInfo;
 use mars_schema::permission_set::PermissionSet;
@@ -39,7 +41,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin: Option<toml::Value>,
     #[serde(default)]
-    pub dependencies: IndexMap<SourceName, InstallDep>,
+    pub dependencies: IndexMap<SourceName, RawEntry>,
     /// Local-only dependencies — installed when syncing this repo but NOT
     /// exported to consumers via manifest. Use for dev tooling, prompt
     /// authoring helpers, etc.
@@ -48,7 +50,7 @@ pub struct Config {
         skip_serializing_if = "IndexMap::is_empty",
         rename = "local-dependencies"
     )]
-    pub local_dependencies: IndexMap<SourceName, InstallDep>,
+    pub local_dependencies: IndexMap<SourceName, RawEntry>,
     #[serde(default)]
     pub settings: Settings,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
@@ -120,85 +122,14 @@ mod toml_path_serde {
     }
 }
 
-mod toml_path_serde_opt {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::path::PathBuf;
-
-    pub fn serialize<S>(path: &Option<PathBuf>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match path {
-            Some(path) => {
-                let s = path.to_string_lossy().replace('\\', "/");
-                serializer.serialize_some(&s)
-            }
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = Option::<String>::deserialize(deserializer)?;
-        Ok(s.map(PathBuf::from))
-    }
-}
-
-/// Consumer install intent — what goes in [dependencies] of a consumer mars.toml.
-/// Has optional URL or path source plus filters for selecting items.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct InstallDep {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<SourceUrl>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "toml_path_serde_opt"
-    )]
-    pub path: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subpath: Option<SourceSubpath>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    /// Inbound lift dialect for this dependency (see `mars_schema::dialect::Dialect`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dialect: Option<Dialect>,
-    /// The plugin to install from the marketplace at this source.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<String>,
-    #[serde(flatten)]
-    pub filter: FilterConfig,
-    /// Keys Mars does not read here; kept so load can warn about them.
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) unknown: BTreeMap<String, toml::Value>,
-}
-
-/// Backwards-compatible alias during migration.
-pub type DependencyEntry = InstallDep;
-
-/// Package manifest dependency — what a package declares its consumers need.
-/// Supports both URL (for remote consumers) and path (for local development).
-#[derive(Debug, Clone, PartialEq)]
-pub struct ManifestDep {
-    pub url: Option<SourceUrl>,
-    pub path: Option<PathBuf>,
-    pub subpath: Option<SourceSubpath>,
-    pub version: Option<String>,
-    pub plugin: Option<String>,
-    pub filter: FilterConfig,
-}
-
 /// Source-manifest view extracted from mars.toml.
 ///
 /// In source repositories, `mars.toml` may include `[package]` +
 /// `[dependencies]` only, or coexist with consumer sections.
-/// Dependencies are ManifestDep (URL or path, matching the source config).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
     pub package: PackageInfo,
-    pub dependencies: IndexMap<String, ManifestDep>,
+    pub dependencies: IndexMap<String, Entry>,
     pub models: IndexMap<String, crate::models::ModelAlias>,
 }
 
@@ -208,26 +139,7 @@ pub struct Manifest {
 struct SourceManifestSections {
     package: Option<toml::Value>,
     #[serde(default)]
-    dependencies: IndexMap<SourceName, InstallDep>,
-    #[serde(default)]
     models: IndexMap<String, crate::models::ModelAlias>,
-}
-
-/// Shared include/exclude/rename filter configuration for a source.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct FilterConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agents: Option<Vec<ItemName>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skills: Option<Vec<ItemName>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<Vec<ItemName>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rename: Option<RenameMap>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub only_skills: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub only_agents: bool,
 }
 
 /// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed`).
@@ -334,10 +246,6 @@ impl SkillOverlay {
             && self.model_invocable.is_none()
             && self.user_invocable.is_none()
     }
-}
-
-fn is_false(v: &bool) -> bool {
-    !v
 }
 
 /// Dev override config (mars.local.toml).
@@ -633,24 +541,6 @@ pub struct GitSpec {
     pub version: Option<String>,
 }
 
-/// How items are filtered from a source.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FilterMode {
-    /// Install everything from the source.
-    All,
-    /// Only install specific agents and/or skills.
-    Include {
-        agents: Vec<ItemName>,
-        skills: Vec<ItemName>,
-    },
-    /// Install everything except these items.
-    Exclude(Vec<ItemName>),
-    /// Install only skills, no agents.
-    OnlySkills,
-    /// Install only agents plus their transitive skill dependencies.
-    OnlyAgents,
-}
-
 /// Effective configuration after merging mars.toml and mars.local.toml.
 ///
 /// This is what the rest of the pipeline operates on.
@@ -780,6 +670,23 @@ pub(super) fn read_error(path: &Path, source: std::io::Error) -> MarsError {
     }
 }
 
+impl LocalConfig {
+    /// The `[overrides]` as absolute paths, relative ones resolved against the project root.
+    pub(crate) fn source_overrides(&self, root: &Path) -> IndexMap<SourceName, PathBuf> {
+        self.overrides
+            .iter()
+            .map(|(name, entry)| {
+                let path = if entry.path.is_absolute() {
+                    entry.path.clone()
+                } else {
+                    root.join(&entry.path)
+                };
+                (name.clone(), path)
+            })
+            .collect()
+    }
+}
+
 /// Load mars.toml from the given root directory.
 pub fn load(root: &Path) -> Result<Config, MarsError> {
     let path = root.join(CONFIG_FILE);
@@ -794,31 +701,9 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 }
 
 pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
-    let mut config: Config = parse_without_removed_visibility(content, path)?;
+    let config: Config = parse_without_removed_visibility(content, path)?;
     validate_agent_overlays(path, &config.agents)?;
-    migrate_legacy_source_urls(&mut config);
     Ok(config)
-}
-
-/// Load source manifest data from mars.toml in a source tree root.
-///
-/// Returns `None` when mars.toml is absent or when it has no `[package]`
-/// section (consumer config only).
-///
-/// Converts `InstallDep` entries to `ManifestDep`, preserving both URL and
-/// path dependencies.
-#[cfg(test)]
-pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
-    let path = source_root.join(CONFIG_FILE);
-    match std::fs::read_to_string(&path) {
-        Ok(content) => parse_manifest(&content, &path),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, Vec::new())),
-        Err(source) => Err(MarsError::Io {
-            operation: "read manifest config".to_string(),
-            path,
-            source,
-        }),
-    }
 }
 
 /// Interpret consumer-owned manifest sections from bytes already normalized by
@@ -827,7 +712,7 @@ pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagno
 pub(crate) fn parse_prepared_manifest(
     content: &str,
     authored_path: &Path,
-    package: Option<&PackageInfo>,
+    reading: &ManifestRead,
 ) -> Result<Option<Manifest>, MarsError> {
     let parsed: SourceManifestSections =
         toml::from_str(content).map_err(|error| crate::error::ConfigError::Invalid {
@@ -836,54 +721,14 @@ pub(crate) fn parse_prepared_manifest(
     let Some(_) = parsed.package else {
         return Ok(None);
     };
-    let Some(package) = package.cloned() else {
+    let Some(package) = reading.package.fields.clone() else {
         return Ok(None);
     };
-    let dependencies = parsed
-        .dependencies
-        .into_iter()
-        .map(|(name, entry)| {
-            (
-                name.to_string(),
-                ManifestDep {
-                    url: entry.url,
-                    path: entry.path,
-                    subpath: entry.subpath,
-                    version: entry.version,
-                    plugin: entry.plugin,
-                    filter: entry.filter,
-                },
-            )
-        })
-        .collect();
     Ok(Some(Manifest {
         package,
-        dependencies,
+        dependencies: reading.dependencies.dependencies.clone(),
         models: parsed.models,
     }))
-}
-
-#[cfg(test)]
-fn parse_manifest(
-    content: &str,
-    path: &Path,
-) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
-    let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
-    let parsed: toml::Value = toml::from_str(content).map_err(crate::error::ConfigError::Parse)?;
-    if parsed.get("package").is_none() {
-        return Ok((None, Vec::new()));
-    }
-    let reading = mars_schema::manifest::read(content);
-    for diagnostic in &reading.diagnostics {
-        diagnostics.schema(diagnostic, &format!("manifest `{}`", path.display()), false);
-    }
-    if reading.fields.is_none() {
-        return Ok((None, diagnostics.drain()));
-    }
-    Ok((
-        parse_prepared_manifest(content, path, reading.fields.as_ref())?,
-        diagnostics.drain(),
-    ))
 }
 
 /// Load mars.local.toml (returns Default if absent).
@@ -1308,56 +1153,24 @@ pub fn merge_with_root(
             .into());
         }
 
-        // Validate url XOR path
-        let base_spec = match (&entry.url, &entry.path) {
-            (Some(url), None) => SourceSpec::Git(GitSpec {
-                url: url.clone(),
-                version: entry.version.clone(),
-            }),
-            (None, Some(path)) => SourceSpec::Path(path.clone()),
-            (Some(_), Some(_)) => {
-                return Err(ConfigError::Invalid {
-                    message: format!("source `{name}` has both `url` and `path` — pick one"),
-                }
-                .into());
-            }
-            (None, None) => {
-                return Err(ConfigError::Invalid {
-                    message: format!(
-                        "source `{name}` has neither `url` nor `path` — one is required"
-                    ),
-                }
-                .into());
-            }
-        };
-
-        validate_plugin_selector(
-            name.as_ref(),
-            entry.plugin.as_deref(),
-            entry.subpath.as_ref(),
-            entry.dialect,
-        )?;
-
-        // Validate filter combinations
-        validate_filter(&entry.filter, name.as_ref())?;
+        // The file holds entries as written; the rules every reader shares apply here, where
+        // an entry is used, so `mars remove` can still repair a bad one.
+        let (entry, _) = Entry::read(name.as_ref(), entry.clone(), Strictness::Consumer)
+            .map_err(ConfigError::from)?;
 
         let filter = entry.filter.to_mode();
-
         let rename = entry.filter.rename.clone().unwrap_or_default();
-
         let subpath = entry.subpath.clone();
-        let declared_source_id =
-            source_id_for_spec(root, &base_spec, subpath.clone(), entry.plugin.as_deref());
-
-        // Check if this source has a local override
-        let spec = if let Some(ov) = local.overrides.get(name) {
-            SourceSpec::Path(ov.path.clone())
-        } else {
-            base_spec
-        };
         let dialect = entry.dialect;
-        let effective_source_id =
-            source_id_for_spec(root, &spec, subpath.clone(), entry.plugin.as_deref());
+        let EntrySource {
+            declared_source_id,
+            source_id: effective_source_id,
+            spec,
+        } = entry_source(
+            &entry,
+            root,
+            local.overrides.get(name).map(|ov| ov.path.as_path()),
+        );
 
         dependencies.insert(
             name.clone(),
@@ -1416,77 +1229,62 @@ fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
     }
 }
 
-/// Validate filter configuration for consistency.
-///
-/// Rejects invalid combinations:
-/// - `only_skills` and `only_agents` together
-/// - category-only flags with include lists
-/// - category-only flags with exclude
-/// - include lists with exclude
-pub fn validate_filter(filter: &FilterConfig, dep_name: &str) -> Result<(), MarsError> {
-    let has_include = filter.agents.is_some() || filter.skills.is_some();
-    let has_exclude = filter.exclude.is_some();
-    let has_category = filter.only_skills || filter.only_agents;
-
-    if filter.only_skills && filter.only_agents {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "dependency `{dep_name}`: only_skills and only_agents are mutually exclusive"
-            ),
-        }
-        .into());
-    }
-    if has_category && has_include {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "dependency `{dep_name}`: only_skills/only_agents cannot combine with agents/skills lists"
-            ),
-        }
-        .into());
-    }
-    if has_category && has_exclude {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "dependency `{dep_name}`: only_skills/only_agents cannot combine with exclude"
-            ),
-        }
-        .into());
-    }
-    if has_include && has_exclude {
-        return Err(ConfigError::ConflictingFilters {
-            name: dep_name.to_string(),
-        }
-        .into());
-    }
-    Ok(())
+/// Where an entry's package comes from, whichever manifest holds the entry.
+pub(crate) struct EntrySource {
+    /// The identity the entry declares, before any local override.
+    pub(crate) declared_source_id: SourceId,
+    /// The identity fetched this run.
+    pub(crate) source_id: SourceId,
+    /// What to fetch: the entry's source, or a local override's path.
+    pub(crate) spec: SourceSpec,
 }
 
-impl FilterConfig {
-    /// Convert to the resolved FilterMode enum.
-    pub fn to_mode(&self) -> FilterMode {
-        if self.only_skills {
-            FilterMode::OnlySkills
-        } else if self.only_agents {
-            FilterMode::OnlyAgents
-        } else if self.agents.is_some() || self.skills.is_some() {
-            FilterMode::Include {
-                agents: self.agents.clone().unwrap_or_default(),
-                skills: self.skills.clone().unwrap_or_default(),
-            }
-        } else if self.exclude.is_some() {
-            FilterMode::Exclude(self.exclude.clone().unwrap_or_default())
+/// Read an entry of the manifest in `base_dir` (a relative `path` is relative to it), with the
+/// local path override for its name if there is one.
+pub(crate) fn entry_source(
+    entry: &Entry,
+    base_dir: &Path,
+    override_path: Option<&Path>,
+) -> EntrySource {
+    let declared = match &entry.source {
+        Source::Git { url } => SourceSpec::Git(GitSpec {
+            url: SourceUrl::from(url.as_str()),
+            version: entry.version.clone(),
+        }),
+        Source::Path { path } => SourceSpec::Path(if path.is_absolute() {
+            path.clone()
         } else {
-            FilterMode::All
-        }
+            base_dir.join(path)
+        }),
+    };
+    let declared_source_id = source_id_for_spec(
+        base_dir,
+        &declared,
+        entry.subpath.clone(),
+        entry.plugin.as_deref(),
+    );
+    let spec = override_path.map_or(declared, |path| SourceSpec::Path(path.to_path_buf()));
+    let source_id = source_id_for_spec(
+        base_dir,
+        &spec,
+        entry.subpath.clone(),
+        entry.plugin.as_deref(),
+    );
+    EntrySource {
+        declared_source_id,
+        source_id,
+        spec,
     }
+}
 
-    /// Returns true if any filter field is set (not default).
-    pub fn has_any_filter(&self) -> bool {
-        self.agents.is_some()
-            || self.skills.is_some()
-            || self.exclude.is_some()
-            || self.only_skills
-            || self.only_agents
+impl SourceSpec {
+    /// The version constraint a request for this source carries: a git source's `version`; a path
+    /// has none.
+    pub(crate) fn constraint(&self) -> mars_schema::version::Constraint {
+        match self {
+            Self::Git(git) => mars_schema::version::parse_constraint(git.version.as_deref()),
+            Self::Path(_) => mars_schema::version::Constraint::Latest,
+        }
     }
 }
 
@@ -1498,9 +1296,8 @@ pub(crate) fn source_id_for_spec(
 ) -> SourceId {
     let id = match spec {
         SourceSpec::Git(git) => {
-            let canonical_url = SourceUrl::from(crate::source::canonical::canonicalize_git_url(
-                git.url.as_ref(),
-            ));
+            let canonical_url =
+                SourceUrl::from(mars_schema::git_url::canonicalize_git_url(git.url.as_ref()));
             SourceId::git_with_subpath(canonical_url, subpath)
         }
         SourceSpec::Path(path) => SourceId::path_with_subpath(root, path, subpath.clone())
@@ -1518,56 +1315,6 @@ pub(crate) fn source_id_for_spec(
             }),
     };
     id.with_plugin(plugin.map(str::to_owned))
-}
-
-/// `plugin` picks one plugin of the marketplace at the source's root, read as a Claude
-/// marketplace; a `subpath` or `dialect` would name a different root or reading.
-pub(crate) fn validate_plugin_selector(
-    name: &str,
-    plugin: Option<&str>,
-    subpath: Option<&SourceSubpath>,
-    dialect: Option<Dialect>,
-) -> Result<(), ConfigError> {
-    let Some(plugin) = plugin else {
-        return Ok(());
-    };
-    let invalid = |message: String| ConfigError::Invalid { message };
-    if !mars_schema::claude::manifest::is_plugin_name(plugin) {
-        return Err(invalid(format!(
-            "source `{name}` has `plugin = \"{plugin}\"`; a plugin name is {}",
-            mars_schema::claude::manifest::PLUGIN_NAME_RULE
-        )));
-    }
-    if subpath.is_some() {
-        return Err(invalid(format!(
-            "source `{name}` has both `plugin` and `subpath` — a marketplace is read at the root of its source, and the marketplace entry says where the plugin is"
-        )));
-    }
-    if dialect.is_some() {
-        return Err(invalid(format!(
-            "source `{name}` has both `plugin` and `dialect` — a marketplace plugin is read as a Claude plugin"
-        )));
-    }
-    Ok(())
-}
-
-fn migrate_legacy_source_urls(config: &mut Config) {
-    for dep in config
-        .dependencies
-        .values_mut()
-        .chain(config.local_dependencies.values_mut())
-    {
-        if let Some(url) = dep.url.as_mut() {
-            let raw = url.as_str();
-            if should_upgrade_legacy_git_url(raw) {
-                *url = SourceUrl::from(format!("https://{raw}"));
-            }
-        }
-    }
-}
-
-fn should_upgrade_legacy_git_url(url: &str) -> bool {
-    !url.contains("://") && !url.starts_with("git@") && url.contains('/') && url.contains('.')
 }
 
 /// Write mars.toml, changing only what differs from the file as it stands.
@@ -1607,7 +1354,7 @@ version = "v1.0"
             entry.url.as_deref(),
             Some("https://github.com/org/base.git")
         );
-        assert!(entry.path.is_none());
+        assert!(entry.path.as_deref().is_none());
         assert_eq!(entry.version.as_deref(), Some("v1.0"));
     }
 
@@ -1619,7 +1366,7 @@ path = "../my-agents"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let entry = &config.dependencies["local"];
-        assert!(entry.url.is_none());
+        assert!(entry.url.as_deref().is_none());
         assert_eq!(entry.path.as_deref(), Some(Path::new("../my-agents")));
     }
 
@@ -1929,10 +1676,14 @@ exclude = ["reviewer"]
 version = "v1.0"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        let err = merge_with_root(
+            config,
+            LocalConfig::default(),
+            &UserConfig::default(),
+            Path::new("."),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("neither"),
             "error should mention 'neither': {err}"
@@ -1947,10 +1698,14 @@ url = "https://github.com/org/repo.git"
 path = "/local/path"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        let err = merge_with_root(
+            config,
+            LocalConfig::default(),
+            &UserConfig::default(),
+            Path::new("."),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("both"), "error should mention 'both': {err}");
     }
 
@@ -2015,111 +1770,12 @@ harness_order = ["pi", "opencode", "codex"]
     }
 
     #[test]
-    fn load_migrates_legacy_bare_domain_url() {
-        let dir = TempDir::new().unwrap();
-        let toml_str = r#"
-[dependencies.base]
-url = "github.com/org/base"
-"#;
-        std::fs::write(dir.path().join("mars.toml"), toml_str).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        assert_eq!(
-            config.dependencies["base"].url.as_deref(),
-            Some("https://github.com/org/base")
-        );
-    }
-
-    #[test]
-    fn load_does_not_migrate_ssh_url() {
-        let dir = TempDir::new().unwrap();
-        let toml_str = r#"
-[dependencies.base]
-url = "git@github.com:org/base.git"
-"#;
-        std::fs::write(dir.path().join("mars.toml"), toml_str).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        assert_eq!(
-            config.dependencies["base"].url.as_deref(),
-            Some("git@github.com:org/base.git")
-        );
-    }
-
-    #[test]
     fn load_missing_file_returns_not_found() {
         let dir = TempDir::new().unwrap();
         let result = load(dir.path());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found"), "should be NotFound: {err}");
-    }
-
-    #[test]
-    fn load_manifest_returns_none_without_package() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-"#,
-        )
-        .unwrap();
-
-        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
-        assert!(diagnostics.is_empty());
-        assert!(manifest.is_none());
-    }
-
-    #[test]
-    fn load_manifest_returns_package_and_dependencies() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[package]
-name = "pkg"
-version = "1.2.3"
-schema = 1
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = ">=1.0.0"
-skills = ["frontend-design"]
-"#,
-        )
-        .unwrap();
-
-        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
-        assert!(diagnostics.is_empty());
-        let manifest = manifest.unwrap();
-        assert_eq!(manifest.package.name, "pkg");
-        assert_eq!(manifest.package.version, "1.2.3");
-        assert!(manifest.dependencies.contains_key("base"));
-        assert_eq!(
-            manifest.dependencies["base"].filter.skills.as_deref(),
-            Some(&[ItemName::from("frontend-design")][..])
-        );
-    }
-
-    #[test]
-    fn load_manifest_io_error_includes_operation_and_path() {
-        let dir = TempDir::new().unwrap();
-        let config_path = dir.path().join("mars.toml");
-        std::fs::create_dir(&config_path).unwrap();
-
-        let err = load_manifest(dir.path()).unwrap_err();
-        let msg = err.to_string();
-
-        assert!(
-            msg.contains("read manifest config"),
-            "error should include operation context: {msg}"
-        );
-        assert!(
-            msg.contains("mars.toml"),
-            "error should include config path: {msg}"
-        );
     }
 
     #[test]
@@ -2796,16 +2452,11 @@ future_key = "allowed"
                 let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
-                    DependencyEntry {
-                        url: Some("https://github.com/org/base.git".into()),
-                        path: None,
-                        subpath: None,
+                    mars_schema::dependency::Entry {
                         version: Some("v1.0".into()),
-                        dialect: None,
-                        filter: FilterConfig::default(),
-                        plugin: None,
-                        unknown: Default::default(),
-                    },
+                        ..mars_schema::dependency::Entry::git("https://github.com/org/base.git")
+                    }
+                    .into(),
                 );
                 m
             },
@@ -2833,16 +2484,11 @@ future_key = "allowed"
                 let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
-                    DependencyEntry {
-                        url: Some("https://github.com/org/base.git".into()),
-                        path: None,
-                        subpath: None,
+                    mars_schema::dependency::Entry {
                         version: Some("v1.0".into()),
-                        dialect: None,
-                        filter: FilterConfig::default(),
-                        plugin: None,
-                        unknown: Default::default(),
-                    },
+                        ..mars_schema::dependency::Entry::git("https://github.com/org/base.git")
+                    }
+                    .into(),
                 );
                 m
             },
@@ -2885,16 +2531,12 @@ future_key = "allowed"
                 let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
-                    DependencyEntry {
-                        url: Some("https://github.com/org/base.git".into()),
-                        path: None,
+                    mars_schema::dependency::Entry {
                         subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
                         version: Some("v1.0".into()),
-                        dialect: None,
-                        filter: FilterConfig::default(),
-                        plugin: None,
-                        unknown: Default::default(),
-                    },
+                        ..mars_schema::dependency::Entry::git("https://github.com/org/base.git")
+                    }
+                    .into(),
                 );
                 m
             },
@@ -2940,16 +2582,7 @@ future_key = "allowed"
                 let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
-                    DependencyEntry {
-                        url: Some("https://github.com/org/base.git".into()),
-                        path: None,
-                        subpath: None,
-                        version: None,
-                        dialect: None,
-                        filter: FilterConfig::default(),
-                        plugin: None,
-                        unknown: Default::default(),
-                    },
+                    mars_schema::dependency::Entry::git("https://github.com/org/base.git").into(),
                 );
                 m
             },
@@ -3218,16 +2851,7 @@ exclude = ["deprecated"]
                 let mut m = IndexMap::new();
                 m.insert(
                     "base".into(),
-                    DependencyEntry {
-                        url: Some("https://github.com/org/base.git".into()),
-                        path: None,
-                        subpath: None,
-                        version: None,
-                        dialect: None,
-                        filter: FilterConfig::default(),
-                        plugin: None,
-                        unknown: Default::default(),
-                    },
+                    mars_schema::dependency::Entry::git("https://github.com/org/base.git").into(),
                 );
                 m
             },
@@ -3259,62 +2883,6 @@ only_skills = true
         let serialized = toml::to_string_pretty(&config).unwrap();
         let reloaded: Config = toml::from_str(&serialized).unwrap();
         assert!(reloaded.dependencies["base"].filter.only_skills);
-    }
-
-    #[test]
-    fn filter_config_has_any_filter() {
-        assert!(!FilterConfig::default().has_any_filter());
-        assert!(
-            FilterConfig {
-                only_skills: true,
-                ..FilterConfig::default()
-            }
-            .has_any_filter()
-        );
-        assert!(
-            FilterConfig {
-                agents: Some(vec!["coder".into()]),
-                ..FilterConfig::default()
-            }
-            .has_any_filter()
-        );
-    }
-
-    #[test]
-    fn filter_config_to_mode() {
-        assert!(matches!(FilterConfig::default().to_mode(), FilterMode::All));
-        assert!(matches!(
-            FilterConfig {
-                only_skills: true,
-                ..FilterConfig::default()
-            }
-            .to_mode(),
-            FilterMode::OnlySkills
-        ));
-        assert!(matches!(
-            FilterConfig {
-                only_agents: true,
-                ..FilterConfig::default()
-            }
-            .to_mode(),
-            FilterMode::OnlyAgents
-        ));
-        assert!(matches!(
-            FilterConfig {
-                agents: Some(vec!["coder".into()]),
-                ..FilterConfig::default()
-            }
-            .to_mode(),
-            FilterMode::Include { .. }
-        ));
-        assert!(matches!(
-            FilterConfig {
-                exclude: Some(vec!["old".into()]),
-                ..FilterConfig::default()
-            }
-            .to_mode(),
-            FilterMode::Exclude(_)
-        ));
     }
 
     // === managed_targets tests ===
@@ -3658,36 +3226,6 @@ url = "https://github.com/org/prompter.git"
     }
 
     #[test]
-    fn local_dependencies_not_exported_to_manifest() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[package]
-name = "my-package"
-version = "1.0.0"
-schema = 1
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-
-[local-dependencies.prompter]
-url = "https://github.com/org/prompter.git"
-"#,
-        )
-        .unwrap();
-
-        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
-        assert!(diagnostics.is_empty());
-        let manifest = manifest.unwrap();
-
-        // Only base should be in manifest, not prompter
-        assert_eq!(manifest.dependencies.len(), 1);
-        assert!(manifest.dependencies.contains_key("base"));
-        assert!(!manifest.dependencies.contains_key("prompter"));
-    }
-
-    #[test]
     fn error_on_duplicate_name_across_sections() {
         let toml_str = r#"
 [dependencies.base]
@@ -3741,16 +3279,7 @@ skills = ["prompt-helper"]
         let mut deps = IndexMap::new();
         deps.insert(
             SourceName::from("test-src"),
-            InstallDep {
-                url: None,
-                path: Some(PathBuf::from("C:\\Users\\dev\\src")),
-                subpath: None,
-                version: None,
-                dialect: None,
-                filter: FilterConfig::default(),
-                plugin: None,
-                unknown: Default::default(),
-            },
+            Entry::at_path("C:\\Users\\dev\\src").into(),
         );
         let config = Config {
             dependencies: deps,
@@ -3767,8 +3296,8 @@ skills = ["prompt-helper"]
         );
         let reparsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(
-            reparsed.dependencies["test-src"].path.as_ref().unwrap(),
-            &PathBuf::from("C:/Users/dev/src"),
+            reparsed.dependencies["test-src"].path.as_deref().unwrap(),
+            Path::new("C:/Users/dev/src"),
         );
     }
 

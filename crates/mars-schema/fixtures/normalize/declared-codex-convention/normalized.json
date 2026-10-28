@@ -80,6 +80,18 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "found",
+              "output_path": "skills/found/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

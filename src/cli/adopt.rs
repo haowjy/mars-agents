@@ -36,7 +36,7 @@ struct AdoptPlan {
 #[derive(Debug, Serialize)]
 struct AdoptJson<'a> {
     ok: bool,
-    kind: &'a str,
+    kind: ItemKind,
     name: &'a str,
     source_path: &'a str,
     dest_path: &'a str,
@@ -127,7 +127,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     if json {
         output::print_json(&AdoptJson {
             ok: true,
-            kind: kind_name(plan.kind),
+            kind: plan.kind,
             name: &plan.name,
             source_path: &plan.source_display,
             dest_path: &plan.dest_display,
@@ -136,10 +136,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
     } else {
         output::print_success(&format!(
             "adopted {} `{}`: {} -> {}",
-            kind_name(plan.kind),
-            plan.name,
-            plan.source_display,
-            plan.dest_display
+            plan.kind, plan.name, plan.source_display, plan.dest_display
         ));
         output::print_sync_report(&report, false, true);
     }
@@ -266,7 +263,7 @@ fn print_dry_run(plan: &AdoptPlan, json: bool) -> Result<i32, MarsError> {
         output::print_json(&serde_json::json!({
             "ok": true,
             "dry_run": true,
-            "kind": kind_name(plan.kind),
+            "kind": plan.kind,
             "name": plan.name,
             "source_path": plan.source_display,
             "dest_path": plan.dest_display,
@@ -275,10 +272,7 @@ fn print_dry_run(plan: &AdoptPlan, json: bool) -> Result<i32, MarsError> {
     } else {
         output::print_info(&format!(
             "would adopt {} `{}`: {} -> {}",
-            kind_name(plan.kind),
-            plan.name,
-            plan.source_display,
-            plan.dest_display
+            plan.kind, plan.name, plan.source_display, plan.dest_display
         ));
     }
     Ok(0)
@@ -315,16 +309,6 @@ fn restore_item(source: &Path, dest: &Path) -> Result<(), MarsError> {
     }
     std::fs::rename(source, dest)?;
     Ok(())
-}
-
-fn kind_name(kind: ItemKind) -> &'static str {
-    match kind {
-        ItemKind::Agent => "agent",
-        ItemKind::Skill => "skill",
-        ItemKind::Hook => "hook",
-        ItemKind::McpServer => "mcp-server",
-        ItemKind::BootstrapDoc => "bootstrap-doc",
-    }
 }
 
 fn relative_display(project_root: &Path, path: &Path) -> String {

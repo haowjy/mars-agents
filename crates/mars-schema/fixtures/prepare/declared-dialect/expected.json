@@ -80,5 +80,17 @@
     }
   ],
   "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "native",
+        "output_path": "agents/native.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {}
 }

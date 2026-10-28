@@ -47,7 +47,7 @@ for (const name of cases("read")) {
     : ["mars.toml", "mars.toml"];
   check(wasm.read(path, text("read", name, file)), json("read", name, "expected.json"), `read/${name}`);
 }
-assert.throws(() => wasm.read("README.md", ""), /not a schema file/);
+assert.throws(() => wasm.read("README.md", ""), (e) => e.code === "read.unrecognized-path" && /not a schema file/.test(e.message));
 
 // prepare: result equals expected.json once the bytes are checked against expected/ or the input
 const stripBytes = value => {
@@ -72,7 +72,7 @@ for (const name of cases("prepare")) {
   stripBytes(result);
   check(result, json("prepare", name, "expected.json"), `prepare/${name}`);
 }
-assert.throws(() => wasm.prepare({ files: new Map(), context: "nonsense" }));
+assert.throws(() => wasm.prepare({ files: new Map(), context: "nonsense" }), (e) => e.code === "input.invalid");
 
 // normalize: inspection, the staged inspection and normalization of each fetched remote plugin
 // (its own tree, with `hint.plugin` set to the marketplace entry), and the packages equal the
@@ -102,7 +102,7 @@ for (const name of cases("normalize")) {
   const expectedFiles = existsSync(expectedDir) ? tree(expectedDir) : new Map();
   let produced = 0;
   for (const pkg of packages) {
-    for (const file of [pkg.prepared.manifest, ...pkg.prepared.definitions].filter(Boolean)) {
+    for (const file of [pkg.prepared.manifest, ...pkg.prepared.definitions, ...(pkg.prepared.mcp_servers ?? [])].filter(Boolean)) {
       const want = expectedFiles.get(`${pkg.id}/${file.output_path}`);
       assert.ok(file.normalized_bytes instanceof Uint8Array, `normalize/${name} bytes are a Uint8Array`);
       assert.deepStrictEqual(Buffer.from(file.normalized_bytes), Buffer.from(want ?? []), `normalize/${name} ${pkg.id}/${file.output_path} bytes`);
@@ -138,6 +138,56 @@ for (const name of cases("upgrade")) {
   assert.equal(messages.length, keys.length, `upgrade/${name} diagnostics ${JSON.stringify(messages)}`);
   for (const key of keys) assert.ok(messages.some(m => m.includes(`\`${key}\``)), `upgrade/${name} names ${key}`);
   checked++;
+}
+
+// version: the ops the package exports (`parse-constraint` and `parse-tag` are Rust-only). A
+// refusal is a thrown Error whose `code` the fixture names.
+const attempt = (run) => {
+  try { return run(); } catch (error) {
+    assert.ok(error instanceof Error && typeof error.code === "string", `a coded Error, got ${error}`);
+    return { error: { code: error.code, message: error.message } };
+  }
+};
+for (const name of cases("version")) {
+  const input = json("version", name, "input.json");
+  const actual = {
+    "satisfies": () => attempt(() => ({ satisfied: wasm.satisfies(input.constraint ?? null, input.version) })),
+    "satisfies-requirement": () => attempt(() => ({ satisfied: wasm.satisfiesRequirement(input.requirement, input.version) })),
+    "select-version": () => attempt(() => wasm.selectVersion({
+      available: input.tags, constraints: input.constraints,
+      locked: input.locked,
+    })),
+  }[input.op];
+  // `policy` and `excluded` are the binary's (upgrade, engine exclusions); `selectVersion` has neither.
+  if (actual && !("policy" in input || "excluded" in input)) check(actual(), json("version", name, "expected.json"), `version/${name}`);
+}
+assert.equal(attempt(() => wasm.satisfies(null, "1.x")).error.code, "version.invalid-version");
+assert.equal(attempt(() => wasm.selectVersion({ available: [], constraints: [], locked: "nightly" })).error.code, "version.invalid-tag");
+assert.equal(attempt(() => wasm.selectVersion({ available: [], constraints: [], typo: 1 })).error.code, "input.invalid");
+
+// selection: each package is prepared, then the results go to selectItems as prepare returned them
+const selectionCase = (name) => {
+  const request = json("selection", name, "request.json");
+  const from = request.packages_from ?? name;
+  const dir = join(fixtures, "selection", from);
+  const packages = {};
+  for (const pkg of cases(join("selection", from, "packages"))) {
+    packages[pkg] = { prepared: wasm.prepare({ files: tree(join(dir, "packages", pkg)), context: "package" }), extra_items: request.extra_items?.[pkg] };
+  }
+  const root = request.root ? packages[request.root] : undefined;
+  if (request.root) delete packages[request.root];
+  return { requests: request.requests, packages, root };
+};
+for (const name of cases("selection")) {
+  check(wasm.selectItems(selectionCase(name)), json("selection", name, "expected.json"), `selection/${name}`);
+}
+{
+  const input = selectionCase("cws-v0.6.1-as-root");
+  const refuses = (change) => attempt(() => wasm.selectItems(change(structuredClone(input)))).error?.code;
+  assert.equal(refuses(i => ({ ...i, requests: [{ name: "writing-sync", rename: { a: "b" } }] })), "input.invalid", "rename");
+  assert.equal(refuses(i => ({ ...i, requests: [{ name: "writing-sync", agnets: ["a"] }] })), "input.invalid", "a typo in a filter");
+  assert.equal(refuses(i => ({ ...i, root: { ...i.root, extraItems: [] } })), "input.invalid", "camelCase");
+  assert.equal(refuses(i => ({ ...i, requests: [{ name: "writing-sync", agents: ["a"], exclude: ["b"] }] })), "filter.inconsistent");
 }
 
 // vocabulary
@@ -187,11 +237,11 @@ const nestedBlock = wasm.rewriteBlock(nested.frontmatter);
 assert.ok(nestedBlock.indexOf("write: allow") < nestedBlock.indexOf("bash: ask") && nestedBlock.indexOf("zeta") < nestedBlock.indexOf("alpha"));
 check(wasm.read("agents/a.md", `---\n${nestedBlock}---\nbody\n`).frontmatter, nested.frontmatter, "rewriteBlock keeps nested key order");
 assert.equal(wasm.rewriteBlock([]), "");
-assert.throws(() => wasm.rewriteBlock([["a", 1], ["a", 2]]), /duplicate/);
+assert.throws(() => wasm.rewriteBlock([["a", 1], ["a", 2]]), (e) => e.code === "edit.duplicate-key" && /duplicate/.test(e.message));
 assert.throws(() => wasm.emitValue(NaN, 0), /NaN/);
 assert.throws(() => wasm.emitValue(Infinity, 0), /Infinity/);
 for (const lone of ["\ud800x", "x\udfff"]) {
-  assert.throws(() => wasm.emitValue(lone, 0), /lone surrogate/);
+  assert.throws(() => wasm.emitValue(lone, 0), (e) => e.code === "input.lone-surrogate" && /lone surrogate/.test(e.message));
   assert.throws(() => wasm.emitValue({ [lone]: 1 }, 0), /lone surrogate/);
   assert.throws(() => wasm.emitValue([{ a: [lone] }], 0), /lone surrogate/);
   assert.throws(() => wasm.rewriteBlock([[lone, 1]]), /lone surrogate/);

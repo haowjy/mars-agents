@@ -1,39 +1,33 @@
 use super::*;
 
-// ========== parse_version_constraint tests ==========
+// ========== parse_constraint tests ==========
 
 #[test]
 fn parse_none_is_latest() {
-    assert!(matches!(
-        parse_version_constraint(None),
-        VersionConstraint::Latest
-    ));
+    assert!(matches!(parse_constraint(None), Constraint::Latest));
 }
 
 #[test]
 fn parse_empty_is_latest() {
-    assert!(matches!(
-        parse_version_constraint(Some("")),
-        VersionConstraint::Latest
-    ));
+    assert!(matches!(parse_constraint(Some("")), Constraint::Latest));
 }
 
 #[test]
 fn parse_latest_string() {
     assert!(matches!(
-        parse_version_constraint(Some("latest")),
-        VersionConstraint::Latest
+        parse_constraint(Some("latest")),
+        Constraint::Latest
     ));
     assert!(matches!(
-        parse_version_constraint(Some("LATEST")),
-        VersionConstraint::Latest
+        parse_constraint(Some("LATEST")),
+        Constraint::Latest
     ));
 }
 
 #[test]
 fn parse_exact_version() {
-    match parse_version_constraint(Some("v1.2.3")) {
-        VersionConstraint::Semver(req) => {
+    match parse_constraint(Some("v1.2.3")) {
+        Constraint::Semver(req) => {
             assert!(req.matches(&Version::new(1, 2, 3)));
             assert!(!req.matches(&Version::new(1, 2, 4)));
         }
@@ -43,8 +37,8 @@ fn parse_exact_version() {
 
 #[test]
 fn parse_major_version() {
-    match parse_version_constraint(Some("v2")) {
-        VersionConstraint::Semver(req) => {
+    match parse_constraint(Some("v2")) {
+        Constraint::Semver(req) => {
             assert!(req.matches(&Version::new(2, 0, 0)));
             assert!(req.matches(&Version::new(2, 5, 3)));
             assert!(!req.matches(&Version::new(1, 9, 9)));
@@ -56,8 +50,8 @@ fn parse_major_version() {
 
 #[test]
 fn parse_major_minor_version() {
-    match parse_version_constraint(Some("v2.1")) {
-        VersionConstraint::Semver(req) => {
+    match parse_constraint(Some("v2.1")) {
+        Constraint::Semver(req) => {
             assert!(req.matches(&Version::new(2, 1, 0)));
             assert!(req.matches(&Version::new(2, 1, 5)));
             assert!(!req.matches(&Version::new(2, 0, 9)));
@@ -69,8 +63,8 @@ fn parse_major_minor_version() {
 
 #[test]
 fn parse_semver_req_gte() {
-    match parse_version_constraint(Some(">=0.5.0")) {
-        VersionConstraint::Semver(req) => {
+    match parse_constraint(Some(">=0.5.0")) {
+        Constraint::Semver(req) => {
             assert!(req.matches(&Version::new(0, 5, 0)));
             assert!(req.matches(&Version::new(1, 0, 0)));
             assert!(!req.matches(&Version::new(0, 4, 9)));
@@ -81,8 +75,8 @@ fn parse_semver_req_gte() {
 
 #[test]
 fn parse_semver_req_caret() {
-    match parse_version_constraint(Some("^2.0")) {
-        VersionConstraint::Semver(req) => {
+    match parse_constraint(Some("^2.0")) {
+        Constraint::Semver(req) => {
             assert!(req.matches(&Version::new(2, 0, 0)));
             assert!(req.matches(&Version::new(2, 9, 0)));
             assert!(!req.matches(&Version::new(3, 0, 0)));
@@ -93,8 +87,8 @@ fn parse_semver_req_caret() {
 
 #[test]
 fn parse_semver_req_tilde() {
-    match parse_version_constraint(Some("~1.2")) {
-        VersionConstraint::Semver(req) => {
+    match parse_constraint(Some("~1.2")) {
+        Constraint::Semver(req) => {
             assert!(req.matches(&Version::new(1, 2, 0)));
             assert!(req.matches(&Version::new(1, 2, 9)));
             assert!(!req.matches(&Version::new(1, 3, 0)));
@@ -105,8 +99,8 @@ fn parse_semver_req_tilde() {
 
 #[test]
 fn parse_branch_ref() {
-    match parse_version_constraint(Some("main")) {
-        VersionConstraint::RefPin(ref_name) => {
+    match parse_constraint(Some("main")) {
+        Constraint::RefPin(ref_name) => {
             assert_eq!(ref_name, "main");
         }
         other => panic!("expected RefPin, got {other:?}"),
@@ -115,8 +109,8 @@ fn parse_branch_ref() {
 
 #[test]
 fn parse_commit_ref() {
-    match parse_version_constraint(Some("abc123def456")) {
-        VersionConstraint::RefPin(ref_name) => {
+    match parse_constraint(Some("abc123def456")) {
+        Constraint::RefPin(ref_name) => {
             assert_eq!(ref_name, "abc123def456");
         }
         other => panic!("expected RefPin, got {other:?}"),
@@ -1778,9 +1772,9 @@ fn r5_frozen_replays_transitive_from_lock() {
 // R12: RefPin overrides semver version selection.
 // Covered by `branch_ref_resolves_without_semver` above.
 
-// R13: Multiple RefPins for the same source → first wins.
+// R13: Multiple different RefPins for the same source conflict.
 #[test]
-fn r13_multiple_refpins_use_first() {
+fn r13_multiple_refpins_conflict() {
     // Two direct deps that both depend on `shared` via different RefPin constraints.
     // Because resolve_git_source short-circuits on first RefPin, the first encountered wins.
     let dir = TempDir::new().unwrap();
@@ -1815,20 +1809,12 @@ fn r13_multiple_refpins_use_first() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    // Resolution should succeed (first RefPin wins); result has no semver version.
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+    // Two different pins on one package are a conflict, whichever declaration meets them first.
+    let error = resolve(&config, &provider, None, &default_options()).unwrap_err();
+    let message = error.to_string();
     assert!(
-        graph.nodes.contains_key("shared"),
-        "shared must be resolved"
-    );
-    assert!(
-        graph.nodes["shared"].resolved_ref.version.is_none(),
-        "RefPin sources have no semver version"
-    );
-    assert_eq!(
-        graph.nodes["shared"].resolved_ref.commit.as_deref(),
-        Some("ref:main"),
-        "first RefPin constraint should determine the fetched ref"
+        message.contains("ref:main") && message.contains("ref:dev"),
+        "conflict must name both pins: {message}"
     );
 }
 

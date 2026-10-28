@@ -1,0 +1,4 @@
+visibility = "local"
+command = "npx"
+args = ["-y", "indexer"]
+env = { INDEX_KEY = { from = "env", var = "INDEX_KEY" } }

@@ -1,0 +1,57 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "closure"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ],
+    [
+      "schema",
+      1
+    ]
+  ],
+  "fields": {
+    "name": "closure",
+    "version": "1.0.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [],
+  "dependencies": {
+    "base": {
+      "url": "https://github.com/haowjy/meridian-base",
+      "version": ">=0.13.0, <0.14.0",
+      "agents": [
+        "coder"
+      ],
+      "skills": [
+        "review"
+      ],
+      "rename": {
+        "zeta": "z2",
+        "coder": "builder"
+      }
+    },
+    "local": {
+      "path": "../local",
+      "subpath": "pkg",
+      "exclude": [
+        "draft"
+      ]
+    },
+    "market": {
+      "url": "https://github.com/acme/market",
+      "plugin": "writer",
+      "only_skills": true,
+      "future-key": 1
+    }
+  },
+  "local-dependencies": {
+    "helper": {
+      "url": "https://github.com/haowjy/meridian-prompter"
+    }
+  }
+}

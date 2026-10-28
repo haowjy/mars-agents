@@ -1,21 +1,21 @@
 /// `.claude` target adapter.
 ///
-/// Handles MCP server registration in `.mcp.json` and hook binding in
-/// `settings.local.json` within the `.claude/` target directory.
+/// Handles MCP server registration in the project-root `.mcp.json` and hook
+/// binding in `.claude/settings.local.json`.
 ///
 /// Claude-native lowering:
-/// - MCP: writes to `.mcp.json` (mcpServers section)
+/// - MCP: writes `<project>/.mcp.json` (mcpServers section)
 /// - Hooks: writes to `settings.local.json` (hooks section). Hook commands
 ///   carry machine-local cache paths, so they belong in the gitignored
 ///   `settings.local.json` rather than the committed `settings.json`.
 /// - Env references: rendered as `${VAR_NAME}` for Claude Desktop config compat
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{ConfigEntry, HookEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
+use super::{HookEntry, HookFragmentMode, McpFile, McpLocation, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct ClaudeAdapter;
@@ -74,60 +74,38 @@ impl TargetAdapter for ClaudeAdapter {
         }
     }
 
-    fn write_config_entries(
+    fn write_hook_entries(
         &self,
         write: crate::surface_ownership::retention::ConfigWrite<'_>,
         project_root: &Path,
-    ) -> Result<Vec<PathBuf>, MarsError> {
-        let (target_dir, entries) = write.into_parts(project_root);
-        let mut written = Vec::new();
-
-        let mcp_servers: Vec<&McpServerEntry> = entries
-            .iter()
-            .filter_map(|e| {
-                if let ConfigEntry::McpServer(s) = e {
-                    Some(s)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let hooks: Vec<&HookEntry> = entries
-            .iter()
-            .filter_map(|e| {
-                if let ConfigEntry::Hook(h) = e {
-                    Some(h)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if !mcp_servers.is_empty() {
-            let path = target_dir.join(".mcp.json");
-            write_mcp_json(&path, &mcp_servers)?;
-            written.push(path);
+    ) -> Result<(), MarsError> {
+        let (target_dir, hooks) = write.into_parts(project_root);
+        if hooks.is_empty() {
+            return Ok(());
         }
-
-        if !hooks.is_empty() {
-            let path = target_dir.join("settings.local.json");
-            write_hooks_settings(&path, &hooks)?;
-            written.push(path);
-        }
-
-        Ok(written)
+        write_hooks_settings(&target_dir.join("settings.local.json"), &hooks)
     }
 
-    fn mcp_config_file_names(&self) -> &'static [&'static str] {
-        &[".mcp.json"]
+    fn mcp_file(&self) -> Option<McpFile> {
+        Some(McpFile {
+            // The project-root file: Claude reads `<project>/.mcp.json`, not
+            // `.claude/.mcp.json`. Claude asks the user to approve project
+            // servers; mars does not.
+            at: McpLocation {
+                path: ".mcp.json",
+                format: SectionFormat::JsonSection("mcpServers"),
+            },
+            // Where mars wrote before. Remove in 0.25.
+            legacy: Some(McpLocation {
+                path: ".claude/.mcp.json",
+                format: SectionFormat::JsonSection("mcpServers"),
+            }),
+            render: super::mcp_file::claude_render,
+        })
     }
+
     fn hook_config_file_names(&self) -> &'static [&'static str] {
         &["settings.local.json"]
-    }
-
-    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
-        &["settings.json"]
     }
 
     fn remove_owned_hook_entries(
@@ -139,126 +117,6 @@ impl TargetAdapter for ClaudeAdapter {
         let (target_dir, removal) = operation.into_parts(project_root);
         remove_owned_claude_hooks(&removal.prior_records, &target_dir, diag)
     }
-
-    fn remove_config_entries(
-        &self,
-        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
-        project_root: &Path,
-    ) -> crate::surface_ownership::retention::RemovalReport {
-        let (target_dir, removal) = operation.into_parts(project_root);
-        match remove_mcp_entries_by_key(&removal.keys_to_remove, &target_dir) {
-            Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
-            Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
-                error,
-                removal.prior_records.clone(),
-            ),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MCP JSON — `.mcp.json` format
-// ---------------------------------------------------------------------------
-
-/// Write (or merge) MCP servers into `path`.
-///
-/// The file format is:
-/// ```json
-/// {
-///   "mcpServers": {
-///     "server-name": {
-///       "command": "npx",
-///       "args": [...],
-///       "env": { "KEY": "${ENV_VAR}" }
-///     }
-///   }
-/// }
-/// ```
-///
-/// Existing entries with other names are preserved (merge, not replace).
-pub(crate) fn write_mcp_json(path: &Path, servers: &[&McpServerEntry]) -> Result<(), MarsError> {
-    // Load existing config or start fresh.
-    let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(path)?
-    } else {
-        serde_json::json!({})
-    };
-
-    // Ensure mcpServers key exists.
-    let mcp_obj = root
-        .as_object_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{} is not a JSON object", path.display()),
-            })
-        })?
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let mcp_map = mcp_obj.as_object_mut().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: mcpServers is not an object", path.display()),
-        })
-    })?;
-
-    for server in servers {
-        let mut entry = serde_json::json!({
-            "command": server.command,
-            "args": server.args,
-        });
-
-        if !server.env.is_empty() {
-            let env_obj: serde_json::Map<String, serde_json::Value> = server
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(format!("${{{v}}}"))))
-                .collect();
-            entry["env"] = serde_json::Value::Object(env_obj);
-        }
-
-        mcp_map.insert(server.name.clone(), entry);
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(path, content.as_bytes())?;
-
-    Ok(())
-}
-
-/// Remove MCP server entries by key from `.mcp.json`.
-fn remove_mcp_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
-    let path = target_dir.join(".mcp.json");
-    if !path.is_file() {
-        return Ok(());
-    }
-
-    let mut root = super::parse_json_file(&path)?;
-
-    if let Some(mcp_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("mcpServers"))
-        .and_then(|v| v.as_object_mut())
-    {
-        for key in entry_keys {
-            // Keys are "mcp:<name>" — strip the prefix.
-            if let Some(name) = key.strip_prefix("mcp:") {
-                mcp_map.remove(name);
-            }
-        }
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -281,60 +139,8 @@ fn remove_mcp_entries_by_key(entry_keys: &[String], target_dir: &Path) -> Result
 ///   }
 /// }
 /// ```
-pub(crate) fn write_hooks_settings(path: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
-    let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(path)?
-    } else {
-        serde_json::json!({})
-    };
-
-    let hooks_section = root
-        .as_object_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{} is not a JSON object", path.display()),
-            })
-        })?
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let hooks_map = hooks_section.as_object_mut().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: hooks is not an object", path.display()),
-        })
-    })?;
-
-    for hook in hooks {
-        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, path)?;
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(path, content.as_bytes())?;
-
-    Ok(())
-}
-
-fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name: &str) {
-    bindings.retain(|binding| {
-        let Some(inner_hooks) = binding.get("hooks").and_then(|h| h.as_array()) else {
-            return true;
-        };
-        !inner_hooks.iter().any(|h| {
-            h.get("command")
-                .and_then(|c| c.as_str())
-                .map(|cmd| is_managed_hook_command_for(cmd, hook_name))
-                .unwrap_or(false)
-        })
-    });
-}
-
-fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
-    let normalized = command.replace('\\', "/").replace("//", "/");
-    normalized.contains(&format!("/hooks/{hook_name}/"))
+pub(crate) fn write_hooks_settings(path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
+    super::hook_file::write(path, hooks, &[])
 }
 
 fn remove_owned_claude_hooks(
@@ -342,114 +148,17 @@ fn remove_owned_claude_hooks(
     target_dir: &Path,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> crate::surface_ownership::retention::RemovalReport {
-    if let Err(error) = remove_owned_claude_hooks_from_file(
-        records,
+    match super::hook_file::remove_recorded(
         &target_dir.join("settings.local.json"),
-        Some(diag),
-    ) {
-        return crate::surface_ownership::retention::RemovalReport::failed(error, records.clone());
-    }
-    // One-release bridge: v0.11.0 command-path emissions and pre-local-settings residue.
-    // Delete with the other #130 sweeps after the next release.
-    let legacy_records: std::collections::BTreeMap<_, _> = records
-        .iter()
-        .filter(|(_, record)| record.emitted_json.is_none())
-        .map(|(key, record)| (key.clone(), record.clone()))
-        .collect();
-    if legacy_records.is_empty() {
-        return crate::surface_ownership::retention::RemovalReport::confirmed();
-    }
-    match remove_owned_claude_hooks_from_file(
-        &legacy_records,
-        &target_dir.join("settings.json"),
-        None,
+        records,
+        ".claude",
+        diag,
     ) {
         Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
         Err(error) => {
-            crate::surface_ownership::retention::RemovalReport::failed(error, legacy_records)
+            crate::surface_ownership::retention::RemovalReport::failed(error, records.clone())
         }
     }
-}
-
-fn remove_owned_claude_hooks_from_file(
-    records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
-    path: &Path,
-    mut diag: Option<&mut crate::diagnostic::DiagnosticCollector>,
-) -> Result<(), MarsError> {
-    if !path.is_file() {
-        return Ok(());
-    }
-    let mut root = super::parse_json_file(path)?;
-    let mut changed = false;
-    if let Some(hooks_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("hooks"))
-        .and_then(|v| v.as_object_mut())
-    {
-        let mut emptied_events = std::collections::BTreeSet::new();
-        for (key, record) in records.iter().filter(|(key, _)| key.starts_with("hook:")) {
-            let Some((event, name)) = key
-                .strip_prefix("hook:")
-                .and_then(|rest| rest.split_once(':'))
-            else {
-                continue;
-            };
-            if let Some(expected) = record
-                .emitted_json
-                .as_deref()
-                .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
-            {
-                let update = super::remove_json_event_entries(hooks_map, event, &expected);
-                changed |= update.changed;
-                if update.missing > 0
-                    && let Some(diag) = diag.as_deref_mut()
-                {
-                    diag.warn(
-                        "config-divergence",
-                        format!(
-                            "config-divergence: managed hook `{name}` diverged in target `.claude` at `{}`; preserving edited config and appending the package entry",
-                            path.display()
-                        ),
-                    );
-                }
-            } else {
-                for (event, value) in hooks_map.iter_mut() {
-                    if let Some(bindings) = value.as_array_mut() {
-                        let before = bindings.len();
-                        remove_managed_hook_bindings(bindings, name);
-                        changed |= bindings.len() != before;
-                        if before > 0 && bindings.is_empty() {
-                            emptied_events.insert(event.clone());
-                        }
-                    }
-                }
-            }
-        }
-        for event in emptied_events {
-            hooks_map.remove(&event);
-        }
-    }
-    if changed
-        && root
-            .get("hooks")
-            .and_then(|v| v.as_object())
-            .is_some_and(serde_json::Map::is_empty)
-    {
-        root.as_object_mut().unwrap().remove("hooks");
-    }
-    if !changed {
-        return Ok(());
-    }
-    crate::fs::atomic_write(
-        path,
-        serde_json::to_string_pretty(&root)
-            .map_err(|e| {
-                MarsError::Config(ConfigError::Invalid {
-                    message: format!("failed to serialize {}: {e}", path.display()),
-                })
-            })?
-            .as_bytes(),
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -459,42 +168,17 @@ fn remove_owned_claude_hooks_from_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surface_ownership::retention::{Surface, WritePermit};
-
-    fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
-        WritePermit::for_test("", entries[0].surface())
-    }
-    use indexmap::IndexMap;
+    use crate::surface_ownership::retention::WritePermit;
     use tempfile::TempDir;
 
-    fn make_mcp_entry(name: &str) -> ConfigEntry {
-        ConfigEntry::McpServer(McpServerEntry {
-            name: name.to_string(),
-            command: "npx".to_string(),
-            args: vec!["-y".to_string(), "some-mcp@latest".to_string()],
-            env: IndexMap::new(),
-        })
-    }
-
-    fn make_mcp_entry_with_env(name: &str, env_key: &str, env_var: &str) -> ConfigEntry {
-        let mut env = IndexMap::new();
-        env.insert(env_key.to_string(), env_var.to_string());
-        ConfigEntry::McpServer(McpServerEntry {
-            name: name.to_string(),
-            command: "npx".to_string(),
-            args: vec![],
-            env,
-        })
-    }
-
-    fn make_hook_entry(name: &str, _event: &str, native: &str) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
+    fn make_hook_entry(name: &str, _event: &str, native: &str) -> HookEntry {
+        HookEntry {
             name: name.to_string(),
             native_event: native.to_string(),
             entries: vec![
                 serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '/hooks/{name}/run.sh'")} ]}),
             ],
-        })
+        }
     }
 
     fn make_hook_entry_with_path(
@@ -502,90 +186,14 @@ mod tests {
         _event: &str,
         native: &str,
         script_path: &str,
-    ) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
+    ) -> HookEntry {
+        HookEntry {
             name: name.to_string(),
             native_event: native.to_string(),
             entries: vec![
                 serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '{script_path}'")} ]}),
             ],
-        })
-    }
-
-    #[test]
-    fn write_mcp_creates_mcp_json() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path()).unwrap();
-
-        let adapter = ClaudeAdapter;
-        let entries = vec![make_mcp_entry("context7")];
-        let written = adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-
-        assert_eq!(written.len(), 1);
-        assert!(tmp.path().join(".mcp.json").exists());
-
-        let raw = std::fs::read_to_string(tmp.path().join(".mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["context7"].is_object());
-        assert_eq!(json["mcpServers"]["context7"]["command"], "npx");
-    }
-
-    #[test]
-    fn write_mcp_merges_with_existing() {
-        let tmp = TempDir::new().unwrap();
-        let existing = serde_json::json!({
-            "mcpServers": { "existing-server": { "command": "old" } }
-        });
-        std::fs::write(
-            tmp.path().join(".mcp.json"),
-            serde_json::to_string_pretty(&existing).unwrap(),
-        )
-        .unwrap();
-
-        let adapter = ClaudeAdapter;
-        let entries = vec![make_mcp_entry("new-server")];
-        adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join(".mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["existing-server"].is_object());
-        assert!(json["mcpServers"]["new-server"].is_object());
-    }
-
-    #[test]
-    fn write_mcp_env_renders_as_interpolation() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = ClaudeAdapter;
-        let entries = vec![make_mcp_entry_with_env("server", "API_KEY", "MY_SECRET")];
-        adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join(".mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(
-            json["mcpServers"]["server"]["env"]["API_KEY"],
-            "${MY_SECRET}"
-        );
+        }
     }
 
     #[test]
@@ -593,16 +201,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = ClaudeAdapter;
         let entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
-        let written = adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
+        adapter
+            .write_hook_entries(
+                WritePermit::for_test("").bind_hooks(entries.clone()),
                 tmp.path(),
             )
             .unwrap();
 
-        assert_eq!(written.len(), 1);
         assert!(tmp.path().join("settings.local.json").exists());
         assert!(!tmp.path().join("settings.json").exists());
 
@@ -617,28 +222,24 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = ClaudeAdapter;
         adapter
-            .write_config_entries(
-                WritePermit::for_test("", Surface::Hook)
-                    .bind_config_entries(vec![make_hook_entry_with_path(
-                        "audit",
-                        "tool.pre",
-                        "PreToolUse",
-                        "/old/hooks/audit/run.sh",
-                    )])
-                    .unwrap(),
+            .write_hook_entries(
+                WritePermit::for_test("").bind_hooks(vec![make_hook_entry_with_path(
+                    "audit",
+                    "tool.pre",
+                    "PreToolUse",
+                    "/old/hooks/audit/run.sh",
+                )]),
                 tmp.path(),
             )
             .unwrap();
         adapter
-            .write_config_entries(
-                WritePermit::for_test("", Surface::Hook)
-                    .bind_config_entries(vec![make_hook_entry_with_path(
-                        "audit",
-                        "tool.pre",
-                        "PreToolUse",
-                        "/new/hooks/audit/run.sh",
-                    )])
-                    .unwrap(),
+            .write_hook_entries(
+                WritePermit::for_test("").bind_hooks(vec![make_hook_entry_with_path(
+                    "audit",
+                    "tool.pre",
+                    "PreToolUse",
+                    "/new/hooks/audit/run.sh",
+                )]),
                 tmp.path(),
             )
             .unwrap();
@@ -659,146 +260,6 @@ mod tests {
                 .unwrap()
                 .contains("/new/hooks/audit/")
         );
-    }
-
-    #[test]
-    fn remove_mcp_entries_removes_by_name() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = ClaudeAdapter;
-        let entries = vec![make_mcp_entry("context7"), make_mcp_entry("other")];
-        adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-
-        remove_mcp_entries_by_key(&["mcp:context7".to_string()], tmp.path()).unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join(".mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["context7"].is_null());
-        assert!(json["mcpServers"]["other"].is_object());
-    }
-
-    #[test]
-    fn legacy_failure_retains_only_records_not_removed_by_the_successful_current_write() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(
-            tmp.path().join("settings.local.json"),
-            r#"{"hooks":{"PreToolUse":[{"matcher":"owned"}]}}"#,
-        )
-        .unwrap();
-        std::fs::write(tmp.path().join("settings.json"), "{ malformed").unwrap();
-        let structural_key = "hook:PreToolUse:current".to_owned();
-        let legacy_key = "hook:PreToolUse:legacy".to_owned();
-        let records = std::collections::BTreeMap::from([
-            (
-                structural_key.clone(),
-                crate::lock::ConfigEntryRecord {
-                    emitted_json: Some(r#"[{"matcher":"owned"}]"#.to_owned()),
-                },
-            ),
-            (
-                legacy_key.clone(),
-                crate::lock::ConfigEntryRecord { emitted_json: None },
-            ),
-        ]);
-
-        let report = remove_owned_claude_hooks(
-            &records,
-            tmp.path(),
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        );
-
-        let crate::surface_ownership::retention::RemovalReport::Unconfirmed { retained, .. } =
-            report
-        else {
-            panic!("malformed legacy file must make removal unconfirmed");
-        };
-        assert_eq!(retained.keys().collect::<Vec<_>>(), [&legacy_key]);
-        assert!(!retained.contains_key(&structural_key));
-        let current: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap(),
-        )
-        .unwrap();
-        assert!(current.get("hooks").is_none());
-    }
-
-    #[test]
-    fn write_mcp_and_hooks_both_written() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = ClaudeAdapter;
-        let mcp_entries = vec![make_mcp_entry("context7")];
-        let hook_entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
-        let mut written = adapter
-            .write_config_entries(
-                write_permit(&mcp_entries)
-                    .bind_config_entries(mcp_entries)
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-        written.extend(
-            adapter
-                .write_config_entries(
-                    write_permit(&hook_entries)
-                        .bind_config_entries(hook_entries)
-                        .unwrap(),
-                    tmp.path(),
-                )
-                .unwrap(),
-        );
-        assert_eq!(written.len(), 2);
-        assert!(tmp.path().join(".mcp.json").exists());
-        assert!(tmp.path().join("settings.local.json").exists());
-        assert!(!tmp.path().join("settings.json").exists());
-    }
-
-    #[test]
-    fn remove_hook_entries_matches_backslash_commands() {
-        let tmp = TempDir::new().unwrap();
-        let existing = serde_json::json!({
-            "hooks": {
-                "PreToolUse": [
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            { "type": "command", "command": "bash \"C:\\\\pkg\\\\hooks\\\\audit\\\\run.sh\"" }
-                        ]
-                    },
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            { "type": "command", "command": "bash \"C:\\\\pkg\\\\hooks\\\\audit-extended\\\\run.sh\"" }
-                        ]
-                    }
-                ]
-            }
-        });
-        std::fs::write(
-            tmp.path().join("settings.local.json"),
-            serde_json::to_string_pretty(&existing).unwrap(),
-        )
-        .unwrap();
-
-        let records = std::collections::BTreeMap::from([(
-            "hook:tool.pre:audit".to_string(),
-            crate::lock::ConfigEntryRecord { emitted_json: None },
-        )]);
-        remove_owned_claude_hooks(
-            &records,
-            tmp.path(),
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        )
-        .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let hooks = json["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(hooks.len(), 1);
     }
 
     #[test]
@@ -867,10 +328,8 @@ mod tests {
         let adapter = ClaudeAdapter;
         let entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
         adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
+            .write_hook_entries(
+                WritePermit::for_test("").bind_hooks(entries.clone()),
                 tmp.path(),
             )
             .unwrap();

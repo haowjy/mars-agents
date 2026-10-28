@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Serialize;
@@ -6,8 +5,8 @@ use serde::Serialize;
 use crate::compiler::hooks::ParsedHookItem;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::target::opencode::{McpServer, OpencodeAdapter};
-use crate::target::{ConfigEntry, TargetAdapter};
+use crate::target::opencode::OpencodeAdapter;
+use crate::target::{HookEntry, McpServerEntry, TargetAdapter};
 use mars_schema::HarnessId;
 use mars_schema::frontmatter::Frontmatter;
 use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
@@ -67,17 +66,12 @@ fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
 fn write_config_entries(
     _profile: &TreeProfile,
     root: &Path,
-    entries: &[ConfigEntry],
+    mcp: &[McpServerEntry],
+    _hooks: &[HookEntry],
     _harnesses: &[&'static super::super::spec::PluginHarnessSpec],
     _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let servers = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            ConfigEntry::McpServer(server) => Some((server.name.clone(), McpServer::from(server))),
-            ConfigEntry::Hook(_) => None,
-        })
-        .collect::<BTreeMap<_, _>>();
+    let servers = super::render_servers(&OpencodeAdapter, mcp);
     if servers.is_empty() {
         return Ok(());
     }
@@ -191,12 +185,9 @@ fn write_package(
     agents.sort_by(|left, right| left.id.cmp(&right.id));
 
     let mut mcp = contents
-        .config_entries
+        .mcp_servers
         .iter()
-        .filter_map(|entry| match entry {
-            ConfigEntry::McpServer(server) => Some(server.name.as_str()),
-            ConfigEntry::Hook(_) => None,
-        })
+        .map(|server| server.name.as_str())
         .collect::<Vec<_>>();
     mcp.sort_unstable();
 
@@ -227,7 +218,7 @@ fn write_package(
         plugin: &metadata.name,
         tokens: DirTokens {
             hook_dir: crate::compiler::hooks::HOOK_DIR_TOKEN,
-            mcp_dir: crate::compiler::mcp::MCP_DIR_TOKEN,
+            mcp_dir: mars_schema::mcp_server::MCP_DIR_TOKEN,
         },
         skills,
         agents,

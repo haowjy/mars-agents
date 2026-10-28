@@ -25,8 +25,6 @@ pub mod skills;
 pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
-/// Typed visibility shared by hook and MCP manifests.
-pub mod visibility;
 
 /// Item names become one directory under a target; reject anything that could
 /// escape it.
@@ -43,6 +41,23 @@ pub(crate) fn validate_path_component(name: &str) -> Result<(), &'static str> {
         (Some(Component::Normal(_)), None) => Ok(()),
         _ => Err("must be a single path component"),
     }
+}
+
+/// Say that an item's `visibility` is not `local` or `exported`; it is read as `local`.
+pub(crate) fn warn_unknown_visibility(
+    unknown: &str,
+    item_kind: &str,
+    item_name: &str,
+    source_name: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    diag.warn(
+        "unknown-visibility",
+        format!(
+            "{item_kind} `{item_name}` from source `{source_name}` has unknown \
+             visibility `{unknown}`; treating it as `local`"
+        ),
+    );
 }
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
@@ -303,9 +318,10 @@ mod skill_surface_tests {
     use crate::config::AgentEmission;
     use crate::lock::ItemId;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
-    use crate::types::{DestPath, ItemName};
+    use crate::types::DestPath;
     use mars_schema::HarnessId;
     use mars_schema::item::ItemKind;
+    use mars_schema::names::ItemName;
 
     #[test]
     fn native_agent_emission_defaults_to_standalone_auto() {

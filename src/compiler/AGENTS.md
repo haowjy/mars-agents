@@ -46,7 +46,6 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `mcp/` — MCP server item discovery, env-ref validation, collision detection
 - `hooks/` — fragment-manifest discovery, merge-fragment validation/substitution, and ordering
 - `variants/` — skill variant layout validation, indexing, projection
-- `visibility/` — typed `local` / `exported` parsing for effectful items
 
 ## Dual-Surface Compilation
 
@@ -162,16 +161,21 @@ values instead of rediscovering package config entries. After target sync, sync 
 or a token-naming MCP server's entry unless target sync recorded installing that directory, so an
 unmanaged or user-edited copy keeps the entry out with a `hook-not-installed` / `mcp-not-installed`
 warning naming the path; target sync's `target-unmanaged-collision` or `target-divergent` warning
-says why. A token-free server has no directory to check. `lower_config_entries_for_target` owns
-native merge-fragment loading and hook ordering. MCP collisions resolve once per target in
+says why. A token-free server has no directory to check. `lower_hook_entries` owns
+native merge-fragment loading and hook ordering; `lower_mcp_servers` lowers servers. MCP collisions resolve once per target in
 `TargetState`, so the winning server's directory and config entry come from the same selection.
 Each selected item arrives with its directory token, the `${MARS_HOOK_DIR}` /
 `${MARS_MCP_DIR}` replacement, so installed copies and plugin trees share one lowering path.
+Both tokens render absolute: a relative path would break in a git worktree, where a committed
+`.mcp.json` points at a server directory that only the main checkout has.
 
 ## MCP Compilation (`mcp/`)
 
-Discovers MCP server items, validates env refs, and substitutes `${MARS_MCP_DIR}` in
-`command`/`args`. Only a server whose command or args name the token installs its
+Discovers MCP server items, validates env refs (stdio `env` and remote header refs), and
+substitutes `${MARS_MCP_DIR}` in a stdio server's `command`/`args`. `mars-schema::mcp_server`
+owns the authored definition (`McpServerDef`, `McpTransport::{Stdio, Http}`, `HeaderValue`,
+`EnvRef`) and the `mcp.toml` parse; this lane consumes those types and never re-parses. A
+remote server names no directory, so the token in its `url` or headers is an error. Only a server whose command or args name the token installs its
 directory, as a package-owned item beside each target that writes MCP, using the same
 target-scoped canonical path and lock ownership as a hook directory. Its name must then
 be one path component; a token-free server keeps whatever name it has, because nothing
@@ -193,10 +197,11 @@ again.
 
 Skill variant layout validation, indexing, and projection per harness target.
 
-## Visibility (`visibility/`)
+## Visibility
 
-Hook and MCP manifests parse visibility once into `Visibility`. Unknown values warn and become
-`Local`; downstream selection only compares the enum with `Exported`.
+`mars_schema::visibility::Visibility` is the one type. A hook's or MCP server's authored value is parsed once; an
+unknown value warns (`warn_unknown_visibility`) and becomes `Local`; downstream selection only
+compares the enum with `Exported`.
 
 ## Patterns
 

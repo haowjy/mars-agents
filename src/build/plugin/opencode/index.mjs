@@ -18,21 +18,36 @@ function substituteMcpDir(value, mcpDirectory) {
   return value
 }
 
+const ENV_REF = /\{env:([^}]+)\}/g
+
+// Resolve every `{env:VAR}` in a value, or return undefined when one is unset.
+function resolveEnvRefs(value) {
+  let missing = false
+  const resolved = value.replace(ENV_REF, (_, name) => {
+    const found = process.env[name]
+    if (found === undefined) missing = true
+    return found ?? ""
+  })
+  return missing ? undefined : resolved
+}
+
+function resolveEntries(values) {
+  const resolved = {}
+  for (const [key, value] of Object.entries(values)) {
+    const found = resolveEnvRefs(value)
+    if (found !== undefined) resolved[key] = found
+  }
+  return resolved
+}
+
 function runtimeServer(name, server) {
   const resolved = substituteMcpDir(server, join(ROOT, "mcp", name))
-  if (!resolved.environment) return resolved
-
-  const environment = {}
-  for (const [key, value] of Object.entries(resolved.environment)) {
-    const match = /^\{env:(.+)\}$/.exec(value)
-    if (!match) {
-      environment[key] = value
-      continue
-    }
-    const resolvedValue = process.env[match[1]]
-    if (resolvedValue !== undefined) environment[key] = resolvedValue
+  if (resolved.type === "remote") {
+    return resolved.headers ? { ...resolved, headers: resolveEntries(resolved.headers) } : resolved
   }
-  return { ...resolved, environment }
+  return resolved.environment
+    ? { ...resolved, environment: resolveEntries(resolved.environment) }
+    : resolved
 }
 
 function encodeForJavaScriptString(value) {

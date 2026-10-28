@@ -91,6 +91,18 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "here",
+              "output_path": "skills/here/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

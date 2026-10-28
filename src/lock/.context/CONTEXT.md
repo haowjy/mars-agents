@@ -51,8 +51,7 @@ model. The promotion consults disk at that boundary only: a regular file with a
 matching checksum becomes installed; an absent, non-file, unreadable, or
 mismatched path becomes pending deletion. This preserves retry authority without
 asserting ghost content and leaves legacy config-entry records available to the
-#130 hook sweep. Delete the v2 promotion after the release following lock v3,
-alongside that sweep.
+#130 hook sweep. Remove the v2 promotion in 0.25, alongside that sweep.
 
 Canonical write intent is separate from installed/deletion authority.
 `sync/recovery.rs` uses a versioned `.mars/pending-canonical.json` journal, bound

@@ -6,10 +6,10 @@ use std::path::{Component, Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
+use mars_schema::visibility::Visibility;
 
 pub(crate) const REMOVED_HOOK_SCHEMA_MESSAGE: &str = "uses the removed v0.11.0 hook schema (`events`/`matcher`/`[action]`/`path`); \
      migrate to per-target native fragment files with `fragment = \"<target>.json\"`";
@@ -28,8 +28,7 @@ pub struct HookTarget {
 struct RawHookDef {
     #[serde(default)]
     name: Option<String>,
-    #[serde(default = "crate::compiler::visibility::default_visibility")]
-    visibility: String,
+    visibility: Option<String>,
     targets: BTreeMap<String, HookTarget>,
     #[serde(default)]
     order: i32,
@@ -194,7 +193,13 @@ fn load_hook_item(
             ));
         }
     }
-    let visibility = Visibility::parse(&raw_def.visibility, "hook", &name, source_name, diag);
+    let visibility = match raw_def.visibility.as_deref() {
+        None => Visibility::Local,
+        Some(text) => Visibility::parse(text).unwrap_or_else(|| {
+            crate::compiler::warn_unknown_visibility(text, "hook", &name, source_name, diag);
+            Visibility::Local
+        }),
+    };
     Ok(ParsedHookItem {
         def: HookDef {
             name,

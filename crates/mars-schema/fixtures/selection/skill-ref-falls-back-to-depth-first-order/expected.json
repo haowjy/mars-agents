@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "package": "requester",
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "second",
+      "kind": "skill",
+      "slug": "planning",
+      "path": "skills/planning",
+      "required_by": [
+        {
+          "by": "item",
+          "package": "requester",
+          "kind": "agent",
+          "slug": "coder"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

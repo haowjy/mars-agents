@@ -10,6 +10,33 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+/**
+ * What every export throws: an `Error` whose `code` says which failure, so a caller maps codes
+ * and never reads messages. `input.invalid` is an argument that is not the shape the export
+ * documents (a missing, misspelled or unknown key included). The rest come from the crate's
+ * error types: `read.unrecognized-path`, `tree.invalid-path`, `edit.*`
+ * (`integer-too-large`, `duplicate-key`, `key-too-long`), `input.lone-surrogate`,
+ * `filter.inconsistent`, and `VersionErrorCode`.
+ */
+export interface MarsSchemaError extends Error {
+  code: string;
+}
+
+/** Codes of the version exports: `selectVersion`, `satisfies` and `satisfiesRequirement`. */
+export type VersionErrorCode =
+  /** No tag meets every constraint; the message names each requirement and the versions there are. */
+  | "version.no-satisfying"
+  /** Two different branch or commit pins. */
+  | "version.pins-differ"
+  /** A branch or commit pin beside a semver range. */
+  | "version.pin-beside-range"
+  /** A `version` argument that is not semver. */
+  | "version.invalid-version"
+  /** A `requires-mars` that is not a requirement. */
+  | "version.invalid-requirement"
+  /** A `locked` entry that is not a version tag. */
+  | "version.invalid-tag";
+
 /** Build-time version of the schema crate. */
 export function version(): string;
 
@@ -119,8 +146,41 @@ export interface ManifestFields {
   "requires-meridian"?: string;
 }
 
+/**
+ * A `[dependencies]` or `[local-dependencies]` entry, in the file's spellings. Exactly one of
+ * `url` and `path` is set; a bare `host/path` URL comes back as `https://host/path`. A key Mars
+ * does not read is passed through, so a caller can warn.
+ */
+export interface DependencyEntry {
+  url?: string;
+  path?: string;
+  subpath?: string;
+  version?: string;
+  dialect?: Dialect;
+  plugin?: string;
+  agents?: string[];
+  skills?: string[];
+  exclude?: string[];
+  rename?: { [from: string]: string };
+  only_skills?: boolean;
+  only_agents?: boolean;
+  [unknown: string]: JsonValue | undefined;
+}
+
+/**
+ * The reading of `mars.toml`: the `[package]` table as any definition reading, and the
+ * dependencies the package declares in declaration order, one `selectVersion` call per entry. A
+ * table is omitted when empty, and both when `fields` is `null`. An entry that breaks a rule is
+ * left out with a `dependency.*` diagnostic (an error in `[dependencies]`, a warning in
+ * `[local-dependencies]`, which a dependent never installs from).
+ */
+export interface ManifestRead extends DefinitionRead<ManifestFields> {
+  dependencies?: { [name: string]: DependencyEntry };
+  "local-dependencies"?: { [name: string]: DependencyEntry };
+}
+
 export type Reading =
-  | DefinitionRead<ManifestFields>
+  | ManifestRead
   | DefinitionRead<AgentFields>
   | DefinitionRead<SkillFields>;
 
@@ -128,7 +188,7 @@ export type Reading =
  * Read one file; the package-relative `path` picks the reader. Any path other than
  * `mars.toml`, `agents/<slug>.md` or `skills/<slug>/SKILL.md` throws.
  */
-export function read(path: "mars.toml", text: string): DefinitionRead<ManifestFields>;
+export function read(path: "mars.toml", text: string): ManifestRead;
 export function read(path: `agents/${string}.md`, text: string): DefinitionRead<AgentFields>;
 export function read(path: `skills/${string}/SKILL.md`, text: string): DefinitionRead<SkillFields>;
 export function read(path: string, text: string): Reading;
@@ -220,7 +280,7 @@ export interface PreparedManifest {
   source_path?: string;
   output_path: string;
   normalized_bytes: Uint8Array;
-  reading: DefinitionRead<ManifestFields>;
+  reading: ManifestRead;
   change: ChangeRecord;
 }
 
@@ -236,11 +296,28 @@ export type PreparedDefinition = {
   | { kind: "skill"; reading: DefinitionRead<SkillFields> }
 );
 
+/**
+ * An MCP server translated from a foreign plugin, written as `mcp/<name>/mcp.toml`. The staged
+ * `mcp/<name>/mcp.toml`, not this list, is what `mars sync` installs from.
+ */
+export interface PreparedMcpServer {
+  name: string;
+  /** The file that declared it (`.mcp.json`, `.claude-plugin/plugin.json`). */
+  source_path: string;
+  output_path: string;
+  /** The rendered `mcp.toml`. */
+  normalized_bytes: Uint8Array;
+}
+
 export interface Prepared {
   classification: Classification;
   manifest?: PreparedManifest;
   definitions: PreparedDefinition[];
+  /** A Claude plugin's `.mcp.json` and `plugin.json` servers, translated (`mcp.*` diagnostics report the rest). Absent when empty. */
+  mcp_servers?: PreparedMcpServer[];
   payload: { source_path: string; output_path: string }[];
+  /** What `selectItems` reads of this package; pass this result to it whole. */
+  selection: SelectionFacts;
   /**
    * Package-level findings by source path: what discovery and translation met and could not
    * convert (`skill.*`, `agent.*`, `import.*`). A file's own reading diagnostics are on its
@@ -422,3 +499,139 @@ export function normalize(input: {
   hint?: Hint;
   selection?: Selection;
 }): Normalized;
+
+/**
+ * Whether `version` meets a dependency entry's `version` text: `null` or `"latest"` is any
+ * version, `v2` is `>=2.0.0, <3.0.0`, a bare `0.20` is `^0.20`, and a branch or commit pin is
+ * met by none. `version` that is not semver throws.
+ */
+export function satisfies(constraint: string | null, version: string): boolean;
+
+/**
+ * Whether `version` meets a package's `requires-mars` / `requires-meridian`, where a bare
+ * `0.20` means `>=0.20.0` (not the caret range `satisfies` reads). A requirement that is not
+ * one, or a `version` that is not semver, throws.
+ */
+export function satisfiesRequirement(requirement: string, version: string): boolean;
+
+/**
+ * Which ref a package ends at, from every constraint on it and the repository's tags. Settles
+ * first (one branch or commit pin wins; two pins, or a pin beside a semver range, throw), then
+ * keeps `locked` (`{ locked: true }`) when it meets every range, even if `available` no longer
+ * lists its tag (only an upgrade moves a lock), else chooses the newest tag in `available` that
+ * meets them. A `latest` (or `null`) constraint allows any tag and makes the newest win over
+ * `locked`. A tag that is not a version (`nightly`) is ignored, and with none left the result is
+ * `untagged`: the default branch. Constraints are `[requester, version | null]` as the manifests spell them
+ * (`v2`, `^1.2`, `>=0.5`, a branch, `latest`); see `satisfies` for the grammar.
+ */
+export function selectVersion(input: {
+  available: string[];
+  constraints: [requester: string, version: string | null][];
+  locked?: string;
+}): { pin: string } | { locked: true } | { tag: string } | { untagged: true };
+
+/** An entry's filter, as `requests` take it. `rename` is not here: selection ignores it, so it is refused. */
+export interface FilterConfig {
+  agents?: string[];
+  skills?: string[];
+  exclude?: string[];
+  only_skills?: boolean;
+  only_agents?: boolean;
+}
+
+/** `selectItems` decides only agents, skills and bootstrap documents; the caller selects hooks and MCP servers, and an `mcp-server` in `extra_items` throws. */
+export type ItemKind = "agent" | "skill" | "hook" | "mcp-server" | "bootstrap-doc";
+
+/**
+ * An item `prepare` does not read (a bootstrap document, a hook), found by the caller.
+ */
+export interface ExtraItem {
+  kind: ItemKind;
+  slug: string;
+  /** Package-relative, `/`-separated. */
+  path: string;
+}
+
+/** The part of a prepared package that selection reads (`Prepared.selection`). */
+export interface SelectionFacts {
+  definitions: { kind: "agent" | "skill"; slug: string; output_path: string; skills: string[] }[];
+  /** The manifest's `[dependencies]` entries in declaration order, never `[local-dependencies]`. */
+  edges: { name: string; filter: SelectionFilter }[];
+  uses_providers: string[];
+}
+
+export type SelectionFilter =
+  | "all"
+  | { include: { agents: string[]; skills: string[] } }
+  | { exclude: string[] }
+  | "only-skills"
+  | "only-agents";
+
+export interface SelectionPackage {
+  /** The result of `prepare` for this package, as it returned it. */
+  prepared: Prepared;
+  extra_items?: ExtraItem[];
+}
+
+export type Requester =
+  /** An entry of the consumer or of `root`, an item of `root`, or one of the root's Agents' skill refs. */
+  | { by: "consumer" }
+  /** An unfiltered entry of this dependency's manifest, reached through unfiltered entries only. */
+  | { by: "package"; package: string }
+  /** A skill ref of this Agent. */
+  | { by: "item"; package: string; kind: ItemKind; slug: string };
+
+export interface SelectedItem {
+  /** The package it is from; `null` for an item of `root`. */
+  package: string | null;
+  kind: ItemKind;
+  slug: string;
+  /** An Agent's file, a skill's directory (`.` for a flat skill), a document's or hook's directory. */
+  path: string;
+  required_by: Requester[];
+}
+
+/** A skill ref that no package ships. */
+export interface MissingSkill {
+  skill: string;
+  /** The Agent that names it. */
+  agent: string;
+  /** Its package; `null` for the root. */
+  package: string | null;
+  /** The packages looked in, sorted; the root is not among them. */
+  searched: string[];
+  /** For a name shaped like a provider's, when no package declares that provider. */
+  hint: string | null;
+}
+
+export interface SelectionResult {
+  /** In registry order (below), the root first, then each package's own item order. */
+  items: SelectedItem[];
+  missing_skills: MissingSkill[];
+  /** `selection.duplicate-slug`: two packages (the root counts) install the same Agent or skill slug. */
+  diagnostics: Diagnostic[];
+}
+
+/**
+ * The Agents, skills and bootstrap documents an install of `root` and its dependencies
+ * yields, and why each is selected. Hooks and MCP servers are selected by `mars sync` (visibility
+ * and depth), so Flow and sync are guaranteed to agree only on these three kinds. `{ root, packages }` is the whole call for an
+ * imported package: `root` is selected whole, and its manifest entries (`[dependencies]`, with
+ * their filters and `exclude`) are applied as the consumer's own requests, so a filtered
+ * dependency contributes what its filter names plus the skills the selected Agents name.
+ * `requests` holds further consumer entries, in order, for a project whose configuration is not
+ * in `root`'s manifest.
+ *
+ * Pass each package's `prepare` result whole (selection reads `selection`). `packages` holds the
+ * dependencies by name in any order; the registry order that skill refs resolve in is computed
+ * here (depth first from `root`, then each request, descending manifest entries in declaration
+ * order). A package nothing reaches is never selected from. Installed names (renames, collision
+ * suffixes) are the caller's.
+ *
+ * Unknown keys throw `input.invalid`, at the top level, in a package and in a request.
+ */
+export function selectItems(input: {
+  requests?: ({ name: string } & FilterConfig)[];
+  packages: { [name: string]: SelectionPackage };
+  root?: SelectionPackage;
+}): SelectionResult;

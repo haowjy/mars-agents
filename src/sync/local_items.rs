@@ -23,7 +23,7 @@ use crate::types::{ContentHash, MarsContext, SourceName, SourceOrigin, managed_c
 pub(super) fn merge_local_items(
     ctx: &MarsContext,
     resolved: &ResolvedState,
-    local_items: Vec<LocalDiscoveredItem>,
+    local_items: &[LocalDiscoveredItem],
     request: &SyncRequest,
     target_state: &mut TargetState,
     diag: &mut DiagnosticCollector,
@@ -108,7 +108,7 @@ impl LocalMerge<'_> {
     /// A local agent or skill.
     fn item(
         &self,
-        item: LocalDiscoveredItem,
+        item: &LocalDiscoveredItem,
         target_state: &mut TargetState,
         diag: &mut DiagnosticCollector,
     ) -> Result<(), MarsError> {
@@ -135,7 +135,7 @@ impl LocalMerge<'_> {
             };
         let item_key = format!("{}:{}", kind, item.discovered.id.name);
         let source_path = crate::staging::materialize_local_prepared(
-            &item,
+            item,
             &self.loaded().effective.skills,
             self.resolved.preparation.path(),
             &item_key,

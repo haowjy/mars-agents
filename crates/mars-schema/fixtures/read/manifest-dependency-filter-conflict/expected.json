@@ -1,0 +1,74 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "closure"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ],
+    [
+      "schema",
+      1
+    ]
+  ],
+  "fields": {
+    "name": "closure",
+    "version": "1.0.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "dependency.filter-conflict",
+      "severity": "warning",
+      "path": [
+        "dependencies",
+        "include-and-exclude"
+      ],
+      "message": "source `include-and-exclude` uses both agents/skills and exclude — pick one"
+    },
+    {
+      "code": "dependency.filter-conflict",
+      "severity": "warning",
+      "path": [
+        "dependencies",
+        "both-categories"
+      ],
+      "message": "dependency `both-categories`: only_skills and only_agents are mutually exclusive"
+    },
+    {
+      "code": "dependency.filter-conflict",
+      "severity": "warning",
+      "path": [
+        "dependencies",
+        "category-and-list"
+      ],
+      "message": "dependency `category-and-list`: only_skills/only_agents cannot combine with agents/skills lists"
+    }
+  ],
+  "dependencies": {
+    "include-and-exclude": {
+      "path": "../a",
+      "agents": [
+        "coder"
+      ],
+      "exclude": [
+        "draft"
+      ]
+    },
+    "both-categories": {
+      "path": "../b",
+      "only_skills": true,
+      "only_agents": true
+    },
+    "category-and-list": {
+      "path": "../c",
+      "skills": [
+        "review"
+      ],
+      "only_agents": true
+    }
+  }
+}

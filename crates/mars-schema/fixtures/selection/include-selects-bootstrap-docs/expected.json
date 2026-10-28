@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "package": "p",
+      "kind": "agent",
+      "slug": "foo",
+      "path": "agents/foo.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "p",
+      "kind": "bootstrap-doc",
+      "slug": "intro",
+      "path": "bootstrap/intro",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

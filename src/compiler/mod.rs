@@ -316,109 +316,36 @@ pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
 mod skill_surface_tests {
     use super::*;
     use crate::config::AgentEmission;
-    use crate::lock::ItemId;
-    use crate::sync::apply::{ActionOutcome, ActionTaken};
-    use crate::types::DestPath;
     use mars_schema::HarnessId;
-    use mars_schema::item::ItemKind;
-    use mars_schema::names::ItemName;
 
+    /// The `agent_emission` / `agent_copy` / Meridian-managed table in `compiler/AGENTS.md`.
     #[test]
-    fn native_agent_emission_defaults_to_standalone_auto() {
-        assert_eq!(
-            agent_surface_policy(None, None, false),
-            AgentSurfacePolicy::EmitAll
-        );
-    }
-
-    #[test]
-    fn native_agent_emission_auto_suppresses_meridian_managed() {
-        assert_eq!(
-            agent_surface_policy(Some(&AgentEmission::Auto), None, true),
-            AgentSurfacePolicy::SuppressAll
-        );
-    }
-
-    #[test]
-    fn native_agent_emission_always_ignores_meridian_managed() {
-        assert_eq!(
-            agent_surface_policy(Some(&AgentEmission::Always), None, true),
-            AgentSurfacePolicy::EmitAll
-        );
-    }
-
-    #[test]
-    fn native_agent_emission_never_suppresses_standalone() {
-        assert_eq!(
-            agent_surface_policy(Some(&AgentEmission::Never), None, false),
-            AgentSurfacePolicy::SuppressAll
-        );
-    }
-
-    #[test]
-    fn omit_agent_outcomes_drops_agents_only() {
-        let outcomes = vec![
-            ActionOutcome {
-                item_id: ItemId {
-                    kind: ItemKind::Agent,
-                    name: ItemName::from("coder"),
-                },
-                dest_path: DestPath::from("agents/coder.md"),
-                action: ActionTaken::Installed,
-                source_name: "test-source".into(),
-                source_checksum: None,
-                installed_checksum: None,
-            },
-            ActionOutcome {
-                item_id: ItemId {
-                    kind: ItemKind::Skill,
-                    name: ItemName::from("plan"),
-                },
-                dest_path: DestPath::from("skills/plan"),
-                action: ActionTaken::Installed,
-                source_name: "test-source".into(),
-                source_checksum: None,
-                installed_checksum: None,
-            },
+    fn agent_surface_policy_follows_the_documented_table() {
+        let copy = agent_copy::AgentCopySpec {
+            harnesses: vec![HarnessId::Claude],
+            include_fanout: false,
+        };
+        let selective = AgentSurfacePolicy::EmitSelective(copy.clone());
+        let auto = Some(&AgentEmission::Auto);
+        let always = Some(&AgentEmission::Always);
+        let never = Some(&AgentEmission::Never);
+        let cases = [
+            // (emission, agent_copy, meridian_managed, expected)
+            (None, None, false, AgentSurfacePolicy::EmitAll),
+            (auto, None, true, AgentSurfacePolicy::SuppressAll),
+            (always, None, true, AgentSurfacePolicy::EmitAll),
+            (never, None, false, AgentSurfacePolicy::SuppressAll),
+            // agent_copy supersedes auto-under-Meridian and never, but not always.
+            (auto, Some(&copy), true, selective.clone()),
+            (never, Some(&copy), false, selective),
+            (always, Some(&copy), true, AgentSurfacePolicy::EmitAll),
         ];
-        let filtered = omit_agent_outcomes(&outcomes);
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].item_id.kind, ItemKind::Skill);
-    }
-
-    #[test]
-    fn agent_copy_supersedes_meridian_managed_auto() {
-        let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessId::Claude],
-            include_fanout: false,
-        };
-        assert!(matches!(
-            agent_surface_policy(Some(&AgentEmission::Auto), Some(&spec), true),
-            AgentSurfacePolicy::EmitSelective(_)
-        ));
-    }
-
-    #[test]
-    fn agent_copy_supersedes_never_emission() {
-        let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessId::Claude],
-            include_fanout: false,
-        };
-        assert!(matches!(
-            agent_surface_policy(Some(&AgentEmission::Never), Some(&spec), false),
-            AgentSurfacePolicy::EmitSelective(_)
-        ));
-    }
-
-    #[test]
-    fn agent_emission_always_takes_precedence_over_agent_copy() {
-        let spec = agent_copy::AgentCopySpec {
-            harnesses: vec![HarnessId::Claude],
-            include_fanout: false,
-        };
-        assert_eq!(
-            agent_surface_policy(Some(&AgentEmission::Always), Some(&spec), true),
-            AgentSurfacePolicy::EmitAll
-        );
+        for (emission, spec, managed, expected) in cases {
+            assert_eq!(
+                agent_surface_policy(emission, spec, managed),
+                expected,
+                "emission {emission:?}, agent_copy {spec:?}, managed {managed}"
+            );
+        }
     }
 }

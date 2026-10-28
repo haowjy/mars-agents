@@ -513,13 +513,11 @@ impl Problems<'_, '_> {
                         Interpolation::Literal => {
                             headers.insert(header.clone(), HeaderValue::Literal(text));
                         }
-                        Interpolation::Variable { var, .. }
-                            if CREDENTIAL_VARIABLES.contains(&var) =>
-                        {
+                        Interpolation::Variable { var, .. } if is_credential_variable(var) => {
                             self.report(
                                 Some(&field),
                                 "mcp.credential-blocked",
-                                format!("sends `${{{var}}}` in `{field}`; Claude reads that credential as empty toward a remote server, so importing it would send the real value"),
+                                format!("sends `${{{var}}}` in `{field}`; Claude does not send that credential to a remote server, so the imported server would connect differently"),
                             );
                         }
                         Interpolation::Variable { prefix, var } => {
@@ -554,17 +552,148 @@ const PLUGIN_VARIABLES: [&str; 3] = [
     "CLAUDE_PROJECT_DIR",
 ];
 
-/// Environment variables Claude reads as empty in a remote server's `url` and `headers`, so a
-/// plugin cannot send them to its server. Mars's renderers would send the real value, so these
-/// are refused. Claude names these as examples of its covered set and does not list the rest:
-/// <https://code.claude.com/docs/en/mcp#credential-variables-that-read-as-empty>.
-const CREDENTIAL_VARIABLES: [&str; 5] = [
+/// Environment variables Claude Code 2.1.312 reads as empty in a remote server's `url` and
+/// `headers`, extracted from its binary: Claude does not publish the full list (its docs name
+/// a few "such as" examples). Mars's renderers would send the real value, so these are refused.
+/// The check is a deliberate superset of Claude's: see [`is_credential_variable`].
+const CREDENTIAL_VARIABLES: [&str; 109] = [
     "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_SESSIONS_OAUTH_TOKEN",
+    "CLAUDE_CODE_ARTIFACTS_API_TOKEN",
+    "CLAUDE_CODE_MEMORY_API_TOKEN",
+    "CLAUDE_CODE_SLACK_TAG_TOKEN",
     "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_FOUNDRY_API_KEY",
+    "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+    "ANTHROPIC_AWS_API_KEY",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
     "AWS_BEARER_TOKEN_BEDROCK",
-    "HTTPS_PROXY",
-    "NPM_TOKEN",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_GHA_CREDS_PATH",
+    "AZURE_CLIENT_SECRET",
+    "IDENTITY_HEADER",
+    "MSI_SECRET",
+    "AZURE_CLIENT_CERTIFICATE_PATH",
+    "AZURE_CLIENT_CERTIFICATE_PASSWORD",
+    "AZURE_PASSWORD",
+    "AZURE_FEDERATED_TOKEN_FILE",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+    "CLOUDSDK_AUTH_ACCESS_TOKEN",
+    "GOOGLE_OAUTH_ACCESS_TOKEN",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "HUGGINGFACEHUB_API_TOKEN",
+    "NODE_AUTH_TOKEN",
+    "NUGET_AUTH_TOKEN",
+    "CARGO_REGISTRY_TOKEN",
+    "TWINE_PASSWORD",
+    "TWINE_USERNAME",
+    "PYPI_TOKEN",
+    "PYPI_API_TOKEN",
+    "UV_PUBLISH_TOKEN",
+    "UV_PUBLISH_PASSWORD",
+    "UV_PUBLISH_USERNAME",
+    "FLIT_PASSWORD",
+    "FLIT_USERNAME",
+    "HATCH_INDEX_AUTH",
+    "HATCH_INDEX_USER",
+    "GEM_HOST_API_KEY",
+    "MATURIN_PYPI_TOKEN",
+    "MATURIN_PASSWORD",
+    "MATURIN_USERNAME",
+    "CONAN_LOGIN_USERNAME",
+    "CONAN_PASSWORD",
+    "ANACONDA_API_TOKEN",
+    "BINSTAR_API_TOKEN",
+    "VAULT_TOKEN",
+    "VAULT_AUTH_TOKEN",
+    "VAULT_ROLE_ID",
+    "VAULT_SECRET_ID",
+    "CONSUL_HTTP_TOKEN",
+    "CONSUL_HTTP_AUTH",
+    "NOMAD_TOKEN",
+    "NOMAD_HTTP_AUTH",
+    "CI_REGISTRY_USER",
+    "CI_DEPLOY_USER",
+    "JF_USER",
+    "FASTLANE_SESSION",
+    "MATCH_GIT_BASIC_AUTHORIZATION",
+    "SONAR_TOKEN",
+    "SONARQUBE_SCANNER_PARAMS",
+    "SONAR_SCANNER_JSON_PARAMS",
+    "SLACK_WEBHOOK_URL",
+    "SLACK_WEBHOOK",
+    "DISCORD_WEBHOOK",
+    "DISCORD_WEBHOOK_URL",
+    "TEAMS_WEBHOOK_URL",
+    "MS_TEAMS_WEBHOOK_URI",
+    "ANTHROPIC_IDENTITY_TOKEN",
+    "ANTHROPIC_IDENTITY_TOKEN_FILE",
+    "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE",
+    "CLOUDSDK_AUTH_AUTHORIZATION_TOKEN_FILE",
+    "AZURE_AUTH_LOCATION",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_URL",
+    "ACTIONS_RUNTIME_TOKEN",
+    "ACTIONS_RUNTIME_URL",
+    "ALL_INPUTS",
+    "VSS_NUGET_EXTERNAL_FEED_ENDPOINTS",
+    "ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS",
+    "VSS_NUGET_ACCESSTOKEN",
+    "ARTIFACTS_CREDENTIALPROVIDER_ACCESSTOKEN",
+    "COMPOSER_AUTH",
+    "OVERRIDE_GITHUB_TOKEN",
+    "DEFAULT_WORKFLOW_TOKEN",
+    "SSH_SIGNING_KEY",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CONFIG_FILE",
+    "CLOUDSDK_CONFIG",
+    "AZURE_CONFIG_DIR",
+    "KUBECONFIG",
+    "NETRC",
+    "PGPASSFILE",
+    "PGSERVICEFILE",
+    "DOCKER_CONFIG",
+    "GH_CONFIG_DIR",
+    "GNUPGHOME",
+    "NPM_CONFIG_USERCONFIG",
+    "NPM_CONFIG_GLOBALCONFIG",
 ];
+
+/// Prefix families refused whole, covering names newer Claude versions may add. Suffix families
+/// (`_TOKEN`, `_SECRET`) are not used: they would refuse ordinary plugin auth such as
+/// `Bearer ${GITHUB_TOKEN}`, which Claude sends.
+const CREDENTIAL_PREFIXES: [&str; 9] = [
+    "ANTHROPIC_",
+    "CLAUDE_CODE_",
+    "AWS_",
+    "AZURE_",
+    "GOOGLE_",
+    "CLOUDSDK_",
+    "VAULT_",
+    "OTEL_",
+    "GIT_CONFIG_",
+];
+
+/// Whether a header may not send `${var}`. Wrongly refusing one server costs less than sending
+/// a credential to a plugin's server, so this refuses more than Claude does: the name is
+/// uppercased as Claude does, and `INPUT_` is stripped first.
+fn is_credential_variable(var: &str) -> bool {
+    let upper = var.to_ascii_uppercase();
+    let name = upper.strip_prefix("INPUT_").unwrap_or(&upper);
+    CREDENTIAL_VARIABLES.contains(&name)
+        || CREDENTIAL_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}
 
 /// What `${...}` a string holds.
 enum Interpolation<'a> {

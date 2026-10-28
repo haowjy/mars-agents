@@ -230,7 +230,7 @@ imported to connect differently from what the plugin declares:
 | `mcp.url-without-type` | a `url` with no `type`, which Claude treats as invalid |
 | `mcp.field-unsupported` | `headersHelper`, `oauth` |
 | `mcp.plugin-variable` | `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, `${CLAUDE_PROJECT_DIR}`, `${user_config.*}` |
-| `mcp.credential-blocked` | a header that sends `${ANTHROPIC_API_KEY}`, `${ANTHROPIC_AUTH_TOKEN}`, `${AWS_BEARER_TOKEN_BEDROCK}`, `${HTTPS_PROXY}` or `${NPM_TOKEN}`, which Claude reads as empty toward a remote server |
+| `mcp.credential-blocked` | a header that sends an environment variable Claude does not send to a remote server: its cloud, registry and CI credentials, and their prefix families (Anthropic, Claude Code, AWS, Azure, Google, Vault, OpenTelemetry), matched case-insensitively. Mars refuses a superset of Claude's set, so the server would otherwise connect differently |
 | `mcp.default-value` | `${VAR:-default}` |
 | `mcp.interpolation-unsupported` | any other `${...}`, such as one inside `command` or `url` |
 | `mcp.literal-env` | an `env` value that is not `${VAR}` |

@@ -10,7 +10,7 @@ pub(crate) mod recovery;
 pub mod rewrite;
 pub mod target;
 pub mod types;
-mod upgrades;
+pub(crate) mod upgrades;
 pub(crate) mod validate;
 
 use std::collections::BTreeMap;

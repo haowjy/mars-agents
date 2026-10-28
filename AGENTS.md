@@ -99,20 +99,26 @@ release heading to `CHANGELOG.md`. Check it locally with
 | `release:rc` | Prerelease |
 | `release:skip` | No release |
 
-**A breaking change split across several PRs ships as one release.** Every PR merged to
-`main` with `release:minor`/`release:major` cuts its own release, so when one piece of work
-breaks behaviour in several PRs, plan this when you split it:
-1. Create an integration branch from `main` (e.g. `release/<topic>`) and open its PR to
-   `main` early, as a draft. It carries the release label, the combined changelog and
-   upgrade notes, and the whole-change review.
-2. Point each part's PR at the integration branch. Merging there releases nothing, so those
-   PRs need no label. Copy their changelog sections into the integration PR's `## Changelog`:
-   a release reads only the bodies of PRs merged into `main`, so a part PR's notes never reach
+**Minor and major releases collect on `release/v<X>.<Y>.0`.** Every PR merged to `main`
+with `release:minor`/`release:major` cuts its own release, so breaking work never merges to
+`main` piece by piece, even when it starts as one PR:
+1. Create `release/v<X>.<Y>.0` from `main` if it doesn't exist (`release/v<X>.0.0` for a
+   major) and push it. Once the first part has merged, open its PR to `main` as a draft. It
+   carries the release label, the combined changelog and upgrade notes, and the whole-change
+   review.
+2. Point each part's PR at the release branch. Merging there releases nothing, so those PRs
+   need no label. Copy their changelog sections into the release PR's `## Changelog`: a
+   release reads only the bodies of PRs merged into `main`, so a part PR's notes never reach
    `CHANGELOG.md` on their own.
-3. When the last part lands and the full gate passes, merge the integration PR once.
+3. The agent leading the release merges its part PRs into the release branch once each
+   passes its own review and CI, without asking. Merging the release PR to `main` needs
+   Jimmy's approval.
+4. When the last part lands and the full gate passes, merge the release PR once.
 
 Work that must release on its own (e.g. a Mars release a Meridian change waits on) gets its
-own release; decide that when planning, not at merge time.
+own release; decide that when planning, not at merge time. meridian-cli's
+`docs/releasing.md` ("Minor and major releases collect on a release branch") has the same
+process.
 
 ## Releasing
 

@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-10-28
+
+### Fixed
+- `mars outdated --json` and every other `--json` command no longer print warnings and status lines (such as "`dep` is overridden by mars.local.toml") to stdout ahead of the JSON, so `json.loads(stdout)` works again. They go to stderr.
+
 ## [0.24.0] - 2026-10-28
 
 ### Added

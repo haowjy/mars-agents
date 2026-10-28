@@ -784,7 +784,7 @@ fn suffixed_collision_dest_path(
         RenamableKind::Agent => {
             let (parent, leaf) = split_parent_leaf(path);
             let stem = leaf.strip_suffix(".md").unwrap_or(leaf);
-            join_parent_leaf(parent, &format!("{stem}{suffix}.md"))
+            mars_schema::discover::join(parent, &format!("{stem}{suffix}.md"))
         }
         RenamableKind::Skill => {
             return suffixed_leaf_dest_path(path, &suffix, source_name);
@@ -806,7 +806,7 @@ fn suffixed_leaf_dest_path(
     source_name: &SourceName,
 ) -> Result<DestPath, MarsError> {
     let (parent, leaf) = split_parent_leaf(path);
-    let renamed = join_parent_leaf(parent, &format!("{leaf}{suffix}"));
+    let renamed = mars_schema::discover::join(parent, &format!("{leaf}{suffix}"));
     DestPath::new(&renamed).map_err(|e| MarsError::Source {
         source_name: source_name.to_string(),
         message: format!("invalid auto-renamed destination `{renamed}`: {e}"),
@@ -815,14 +815,6 @@ fn suffixed_leaf_dest_path(
 
 fn split_parent_leaf(path: &str) -> (&str, &str) {
     path.rsplit_once('/').unwrap_or(("", path))
-}
-
-fn join_parent_leaf(parent: &str, leaf: &str) -> String {
-    if parent.is_empty() {
-        leaf.to_string()
-    } else {
-        format!("{parent}/{leaf}")
-    }
 }
 
 #[cfg(test)]

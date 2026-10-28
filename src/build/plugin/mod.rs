@@ -268,14 +268,9 @@ fn stage_plugin_inner(
     let warnings =
         crate::sync::validate::validate_skill_refs(&prepared_target.target, &graph, None, None);
     emit_missing_skill_warnings(&warnings, diag);
-    // The plugin ships the installed tree, so its skills' links are judged the way a sync judges
-    // them. The root was judged against its own layout when it was prepared.
-    crate::sync::validate::report_skill_links(
-        &prepared_target.target,
-        &graph,
-        Some(&root_source),
-        diag,
-    );
+    // The plugin ships the installed tree, so its skills' links, the root's among them, are
+    // judged the way a sync judges them.
+    crate::sync::validate::report_skill_links(&prepared_target.target, &graph, &[], diag);
     materialize_rewritten_skills(&mut prepared_target.target)?;
 
     let aliases = crate::models::merged_model_aliases(&graph, &effective, diag);

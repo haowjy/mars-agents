@@ -53,7 +53,11 @@ fn write_config_entries(
         )?;
     }
     if !hooks.is_empty() {
-        crate::target::cursor::write_cursor_hooks_json(&root.join("hooks/hooks.json"), hooks)?;
+        crate::target::hook_file::write(
+            &root.join("hooks/hooks.json"),
+            hooks,
+            crate::target::cursor::HOOKS_TOP_LEVEL,
+        )?;
     }
     Ok(())
 }

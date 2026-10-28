@@ -15,8 +15,8 @@ use crate::surface_ownership::retention::{RemovalOperation, RemovalReport};
 use crate::sync::AppliedState;
 use crate::sync::package_dir::PackageDir;
 use crate::target::{
-    HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, McpServerEntry, TargetAdapter, TargetRegistry,
-    mcp_file,
+    HOOK_KEY_PREFIX, HookEntry, HookPlacement, HookRole, MCP_KEY_PREFIX, McpServerEntry,
+    TargetAdapter, TargetRegistry, mcp_file,
 };
 use crate::types::MarsContext;
 use mars_schema::item::ItemKind;
@@ -51,12 +51,9 @@ pub(crate) fn file_hook_output_preserve_paths(
                 canonical.target_root == crate::lock::CANONICAL_TARGET_ROOT
                     && PackageDir::parse_canonical(ItemKind::Hook, &canonical.dest_path)
                         .filter(|dir| dir.belongs_to(&output.target_root))
-                        .and_then(|dir| adapter.hook_file_dest_path(dir.name()))
+                        .and_then(|dir| fragment_file_path(adapter, dir.name()))
                         .is_some_and(|path| {
-                            crate::target::dest_paths_equivalent(
-                                path.to_string_lossy().as_ref(),
-                                output.dest_path.as_str(),
-                            )
+                            crate::target::dest_paths_equivalent(&path, output.dest_path.as_str())
                         })
             });
             if is_file_fragment {
@@ -128,13 +125,9 @@ pub(crate) fn preflight_config_entries(
                     ));
                 }
             }
-            let names = if touches_hooks {
-                adapter.hook_config_file_names()
-            } else {
-                &[]
-            };
-            for name in names {
-                let path = target_dir.join(name);
+            if touches_hooks && let Some(HookPlacement::Merge { file, .. }) = adapter.hook_placement()
+            {
+                let path = target_dir.join(file);
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
                     errors.push(error);
                 }
@@ -161,7 +154,7 @@ pub(crate) fn preflight_config_entries(
             }
             Some(Placement::File) => {
                 if let Some(relative) =
-                    adapter.and_then(|adapter| adapter.hook_file_dest_path(&item.def.name))
+                    adapter.and_then(|adapter| fragment_file_path(adapter, &item.def.name))
                 {
                     let destination = ctx.project_root.join(target_name).join(relative);
                     if let Err(error) =
@@ -409,7 +402,7 @@ pub(crate) fn compile_config_entries(
                 let tokens = mars_schema::hooks::Tokens {
                     hook_dir: &installed,
                 };
-                let Some(relative_dest) = adapter.hook_file_dest_path(&item.def.name) else {
+                let Some(relative_dest) = fragment_file_path(adapter, &item.def.name) else {
                     diag.error(
                         "hook-fragment",
                         format!(
@@ -420,7 +413,9 @@ pub(crate) fn compile_config_entries(
                 };
                 match crate::compiler::hooks::load_file_fragment(item, target_root, &tokens) {
                     Ok(content) => {
-                        if let Some(problem) = adapter.hook_fragment_problem(&content) {
+                        if let Some(problem) =
+                            mars_schema::hooks::file_fragment_problem(target_root, &content)
+                        {
                             diag.warn(
                                 "hook-fragment-contract",
                                 format!(
@@ -431,7 +426,6 @@ pub(crate) fn compile_config_entries(
                                 ),
                             );
                         }
-                        let relative_dest = relative_dest.to_string_lossy().into_owned();
                         desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
                         file_writes.push((
                             dir.canonical().as_str().to_string(),
@@ -609,11 +603,31 @@ pub(crate) fn remove_hooks(
             removal.prior_records.clone(),
         );
     };
+    let (target_dir, removal) = operation.into_parts(project_root);
+    let report = match adapter.hook_placement() {
+        Some(HookPlacement::Merge { file, .. }) => crate::target::hook_file::remove_recorded(
+            &target_dir.join(file),
+            &removal.prior_records,
+            &target_root,
+            diag,
+        )
+        .map_or_else(
+            |error| RemovalReport::failed(error, removal.prior_records.clone()),
+            |()| RemovalReport::confirmed(),
+        ),
+        // A file target records no merge entries.
+        _ => RemovalReport::confirmed(),
+    };
+    report.context(format!(
+        "failed to remove prior hook entries from `{target_root}`"
+    ))
+}
+
+/// The path, relative to `adapter`'s target root, of a hook's installed fragment file.
+fn fragment_file_path(adapter: &dyn TargetAdapter, hook_name: &str) -> Option<String> {
     adapter
-        .remove_owned_hook_entries(operation, project_root, diag)
-        .context(format!(
-            "failed to remove prior hook entries from `{target_root}`"
-        ))
+        .hook_placement()?
+        .file_path(hook_name, HookRole::Fragment)
 }
 
 /// Report the stale entries a sync or `mars unlink` took off the books: the
@@ -726,7 +740,13 @@ fn apply_replacement_writes(
             continue;
         };
         let keys: Vec<String> = write.hooks().iter().map(HookEntry::key).collect();
-        if let Err(error) = adapter.write_hook_entries(write, &ctx.project_root) {
+        let Some(HookPlacement::Merge { file, top_level }) = adapter.hook_placement() else {
+            continue;
+        };
+        let (target_dir, hooks) = write.into_parts(&ctx.project_root);
+        if let Err(error) =
+            crate::target::hook_file::write(&target_dir.join(file), &hooks, top_level)
+        {
             diag.warn(
                 "config-entry-write",
                 format!("failed to write config entries to `{target_root}`: {error}"),

@@ -19,10 +19,6 @@ pub mod mcp_file;
 pub mod opencode;
 pub mod pi;
 
-use std::path::{Path, PathBuf};
-
-use crate::error::MarsError;
-use crate::surface_ownership::retention::{ConfigWrite, RemovalOperation, RemovalReport};
 use crate::types::DestPath;
 pub use config_doc::SectionFormat;
 use mars_schema::item::ItemKind;
@@ -64,6 +60,41 @@ impl HookEntry {
     }
 }
 
+/// Where a target keeps hooks on disk. Which events or files it accepts is
+/// `mars_schema::hooks::placement`; the two agree per target (pinned by a test).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookPlacement {
+    /// Events are appended into `file`, under the target root, after setting the
+    /// `top_level` keys (Cursor's `version`).
+    Merge {
+        file: &'static str,
+        top_level: &'static [(&'static str, i64)],
+    },
+    /// Each output is a whole file in `dir`, under the target root.
+    File { dir: &'static str },
+}
+
+/// What a hook's output is, which decides the name of a file it becomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookRole {
+    /// The author's own fragment, installed as written.
+    Fragment,
+}
+
+impl HookPlacement {
+    /// The path, relative to the target root, of the file a hook's `role` output
+    /// becomes; `None` for a merge target, which has no per-hook file.
+    pub fn file_path(&self, hook_name: &str, role: HookRole) -> Option<String> {
+        let Self::File { dir } = self else {
+            return None;
+        };
+        let name = match role {
+            HookRole::Fragment => format!("mars-{hook_name}.ts"),
+        };
+        Some(format!("{dir}/{name}"))
+    }
+}
+
 /// Per-target compilation adapter.
 ///
 /// Implementations encapsulate all per-target knowledge:
@@ -81,11 +112,6 @@ impl HookEntry {
 pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Target root name (e.g., `.claude`, `.codex`).
     fn name(&self) -> &str;
-
-    /// Relative destination for an opaque file-mode fragment.
-    fn hook_file_dest_path(&self, _name: &str) -> Option<PathBuf> {
-        None
-    }
 
     /// Skill variant harness key used when projecting skills to this target.
     ///
@@ -105,50 +131,20 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath>;
 
     // -----------------------------------------------------------------------
-    // Config-file writing
+    // Config files
     // -----------------------------------------------------------------------
 
-    /// Write hook entries to this target's hook config file. MCP servers are
-    /// written by [`mcp_file::reconcile`] from [`Self::mcp_file`].
-    ///
-    /// Default: no-op — targets that don't use a config file leave this as-is.
-    fn write_hook_entries(
-        &self,
-        write: ConfigWrite<'_>,
-        project_root: &Path,
-    ) -> Result<(), MarsError> {
-        let _ = write.into_parts(project_root);
-        Ok(())
+    /// Where this target keeps hooks on disk; `None` when it takes none. What it
+    /// accepts there is `mars_schema::hooks::placement`. MCP servers are
+    /// reconciled by [`mcp_file::reconcile`] from [`Self::mcp_file`].
+    fn hook_placement(&self) -> Option<HookPlacement> {
+        None
     }
 
     /// The file this harness reads MCP servers from and how entries render
     /// there; `None` when the target takes no MCP servers.
     fn mcp_file(&self) -> Option<McpFile> {
         None
-    }
-
-    /// Config files mutated by merge-mode hook entries.
-    fn hook_config_file_names(&self) -> &'static [&'static str] {
-        &[]
-    }
-
-    /// Name what is wrong with an opaque file-mode hook fragment, if anything.
-    ///
-    /// Most targets treat file fragments as opaque text. Targets with a native
-    /// loader report a contract violation; callers build the diagnostic text.
-    fn hook_fragment_problem(&self, _content: &str) -> Option<&'static str> {
-        None
-    }
-
-    /// Remove hook entries recorded in the previous lock by structural equality.
-    fn remove_owned_hook_entries(
-        &self,
-        operation: RemovalOperation<'_>,
-        project_root: &Path,
-        _diag: &mut crate::diagnostic::DiagnosticCollector,
-    ) -> RemovalReport {
-        let (_, _) = operation.into_parts(project_root);
-        RemovalReport::confirmed()
     }
 }
 

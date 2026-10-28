@@ -6,12 +6,10 @@
 /// - MCP: writes `.pi/mcp.json` (`mcpServers` section) with `${VAR}` env
 ///   interpolation. Pi reads project MCP servers only from trusted projects.
 /// - Hooks: whole-file extensions.
-use std::path::PathBuf;
-
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{McpFile, McpLocation, SectionFormat, TargetAdapter};
+use super::{HookPlacement, McpFile, McpLocation, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct PiAdapter;
@@ -21,8 +19,8 @@ impl TargetAdapter for PiAdapter {
         ".pi"
     }
 
-    fn hook_file_dest_path(&self, name: &str) -> Option<PathBuf> {
-        Some(PathBuf::from(format!("extensions/mars-{name}.ts")))
+    fn hook_placement(&self) -> Option<HookPlacement> {
+        Some(HookPlacement::File { dir: "extensions" })
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

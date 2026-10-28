@@ -6,7 +6,7 @@ use crate::compiler::hooks::ParsedHookItem;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::target::opencode::OpencodeAdapter;
-use crate::target::{HookEntry, McpServerEntry, TargetAdapter};
+use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
 use mars_schema::frontmatter::Frontmatter;
 use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
@@ -52,7 +52,7 @@ fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
             return;
         }
     };
-    if let Some(problem) = OpencodeAdapter.hook_fragment_problem(&content) {
+    if let Some(problem) = mars_schema::hooks::file_fragment_problem(TARGET_ROOT, &content) {
         diag.warn(
             "hook-fragment-contract",
             format!(

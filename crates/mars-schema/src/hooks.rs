@@ -443,9 +443,43 @@ pub fn merge_fragment(
     })
 }
 
+/// Name what is wrong with a file target's fragment, if anything. Warning-only: a file
+/// fragment is otherwise opaque, and the caller words the diagnostic.
+///
+/// `.opencode` must export a default `{ id, setup }`: `export default …`,
+/// `export { x as default }` or `export * as default`. The check scans identifier tokens,
+/// so a commented-out export satisfies it; the cost of that miss is a warning not shown.
+pub fn file_fragment_problem(target_root: &str, content: &str) -> Option<&'static str> {
+    if target_root != ".opencode" {
+        return None;
+    }
+    let tokens: Vec<&str> = content
+        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '$')))
+        .filter(|token| !token.is_empty())
+        .collect();
+    let has_default_export = tokens
+        .windows(2)
+        .any(|pair| matches!(pair, ["export", "default"] | ["as", "default"]));
+    (!has_default_export)
+        .then_some("has no recognizable default export; add a default `{ id, setup }` export")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_fragments_need_a_default_export() {
+        for ok in [
+            "export default { id: 'a' }",
+            "export { plugin as default }",
+            "export * as default from './x'",
+        ] {
+            assert_eq!(file_fragment_problem(".opencode", ok), None, "{ok}");
+        }
+        assert!(file_fragment_problem(".opencode", "export const x = 1").is_some());
+        assert_eq!(file_fragment_problem(".pi", "anything"), None);
+    }
 
     fn tokens() -> Tokens<'static> {
         Tokens {

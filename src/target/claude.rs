@@ -104,7 +104,7 @@ impl TargetAdapter for ClaudeAdapter {
                 path: ".claude/.mcp.json",
                 format: McpFormat::JsonSection("mcpServers"),
             }),
-            render: super::mcp_file::braced_render,
+            render: super::mcp_file::claude_render,
         })
     }
 

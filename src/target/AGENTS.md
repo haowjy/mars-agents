@@ -64,14 +64,14 @@ adapter that needs a different file or shape changes its spec, nothing else.
   `RemovalPlan` pre-removes only these records (the one arm in `surface_ownership::retention`
   to delete with the legacy cleanup), so a changed record with content is never removed before
   its write. Delete the `legacy` specs one release after they ship.
-- The Claude plugin tree has its own renderer (`build/plugin/tree/claude.rs`): it adds
-  `env_vars` for same-name stdio references (sharing `mcp_file::partition_env` with Codex) and
-  writes remote servers as `type: http` with `${VAR}` headers, which Codex passes literally (a
-  lossy warning). `McpRender::lossy` holds full sentences everywhere.
-- `mcp_file::servers_entry` is the `mcpServers`-family entry builder (Claude, Cursor, Pi) for
-  both transports; `insert_headers` writes a remote server's `headers`. Claude and Pi share
-  `braced_render` (`${VAR}`, remote typed `http`); Cursor passes `typed_http: false` because it
-  is not known to accept `type`. Codex renders remote servers itself (`render_remote`).
+- The `mcpServers` family (Claude, Pi, Cursor, and the Claude/Codex plugin tree) has one codec,
+  `mars_schema::mcp_servers`: `render(transport, Flavor)` and the parse the plugin import uses.
+  Claude and Pi share `claude_render` (`${VAR}`, remote typed `http`); Cursor passes
+  `Flavor::Cursor` (`${env:VAR}`, no `type`, since it is not known to accept one); the plugin tree
+  (`build/plugin/tree/claude.rs`) passes `Flavor::Plugin`, which adds `env_vars` for same-name stdio
+  references. Codex renders its own TOML shape (`render_remote`) and OpenCode its own, sharing
+  `env_map`/`header_map`/`partition_env` from the codec. `McpRender::lossy` holds full sentences
+  everywhere; sync and the plugin tree report them as `mcp-lossy`.
 
 - **Files**: `mcp_doc` holds JSON as `OrderedValue` so a rewrite keeps the user's key order
   (the crate does not enable `serde_json/preserve_order`; that would reorder every JSON

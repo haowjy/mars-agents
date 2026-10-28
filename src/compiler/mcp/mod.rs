@@ -12,14 +12,13 @@
 ///   adapter config writing
 use std::path::Path;
 
-pub(crate) use mars_schema::mcp_server::MCP_DIR_TOKEN;
-use mars_schema::mcp_server::{
-    HeaderValue, McpServerDef, McpTransport, ParsedMcpToml, parse_mcp_toml,
-};
-
-use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
+use mars_schema::mcp_server::{
+    HeaderValue, MCP_DIR_TOKEN, McpServerDef, McpTransport, ParsedMcpToml, parse_mcp_toml,
+};
+use mars_schema::mcp_servers::{NAME_INVALID, NAME_RULE, is_server_name};
+use mars_schema::visibility::Visibility;
 
 // ---------------------------------------------------------------------------
 // Discovered items
@@ -93,6 +92,7 @@ pub(crate) fn discover_mcp_items(
         let ParsedMcpToml {
             def,
             ignored_fields,
+            unknown_visibility,
         } = parse_mcp_toml(&raw).map_err(|e| {
             MarsError::Config(ConfigError::Invalid {
                 message: format!("failed to parse {}: {e}", toml_path.display()),
@@ -108,23 +108,23 @@ pub(crate) fn discover_mcp_items(
                 ),
             );
         }
-        let visibility = Visibility::parse(
-            &def.visibility,
-            "MCP server",
-            &resolved_name,
-            source_name,
-            diag,
-        );
+        if let Some(unknown) = &unknown_visibility {
+            crate::compiler::warn_unknown_visibility(
+                unknown,
+                "MCP server",
+                &resolved_name,
+                source_name,
+                diag,
+            );
+        }
         // Only a server that installs its own directory needs a name that is a
         // safe path component; a token-free server is only a config entry.
-        if def_uses_dir_token(&def)
-            && let Err(message) = crate::compiler::validate_path_component(&resolved_name)
-        {
+        if def_uses_dir_token(&def) && !is_server_name(&resolved_name) {
             let relative = toml_path.strip_prefix(package_root).unwrap_or(&toml_path);
             diag.warn(
-                "mcp-invalid-name",
+                NAME_INVALID,
                 format!(
-                    "MCP server `{resolved_name}` in `{source_name}` at `{}` uses {MCP_DIR_TOKEN}, so its directory name {message}; skipping this server",
+                    "MCP server `{resolved_name}` in `{source_name}` at `{}` uses {MCP_DIR_TOKEN}, so its directory name may use only {NAME_RULE}; skipping this server",
                     relative.display()
                 ),
             );
@@ -133,8 +133,8 @@ pub(crate) fn discover_mcp_items(
 
         items.push(ParsedMcpItem {
             name: resolved_name,
+            visibility: def.visibility,
             def,
-            visibility,
             source_name: source_name.to_string(),
             source_path: toml_path,
             depth,

@@ -11,8 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use indexmap::IndexMap;
-use mars_schema::mcp_server::{EnvRef, HeaderValue, McpTransport};
+use mars_schema::mcp_servers::{Flavor, McpRender, render};
 use serde_json::Value;
 
 use super::mcp_doc::Doc;
@@ -39,15 +38,6 @@ pub struct McpLocation {
     pub format: McpFormat,
 }
 
-/// One server rendered into a harness's native shape.
-#[derive(Debug, Clone)]
-pub struct McpRender {
-    pub value: Value,
-    /// What the native shape could not carry, one full sentence each; each
-    /// becomes a warning.
-    pub lossy: Vec<String>,
-}
-
 /// Where a harness reads MCP servers and how an entry renders there.
 #[derive(Debug, Clone, Copy)]
 pub struct McpFile {
@@ -59,99 +49,9 @@ pub struct McpFile {
     pub render: fn(&McpServerEntry) -> McpRender,
 }
 
-impl McpRender {
-    pub fn exact(value: Value) -> Self {
-        Self {
-            value,
-            lossy: Vec::new(),
-        }
-    }
-}
-
-/// An `mcpServers`-family entry. Claude, Cursor and Pi share it and differ only
-/// in the interpolation and in whether a remote entry names `"type": "http"`:
-/// stdio is `{ command, args, env: { KEY: <var> } }`, remote is
-/// `{ url, headers: { NAME: <prefix><var> } }`.
-pub(super) fn servers_entry(
-    server: &McpServerEntry,
-    interpolate: impl Fn(&str) -> String,
-    typed_http: bool,
-) -> Value {
-    match &server.transport {
-        McpTransport::Stdio { command, args, env } => {
-            let mut entry = serde_json::json!({ "command": command, "args": args });
-            if !env.is_empty() {
-                entry["env"] = env
-                    .iter()
-                    .map(|(key, env_ref)| {
-                        (key.clone(), Value::String(interpolate(env_ref.var_name())))
-                    })
-                    .collect::<serde_json::Map<_, _>>()
-                    .into();
-            }
-            entry
-        }
-        McpTransport::Http { url, headers } => {
-            let mut entry = serde_json::json!({ "url": url });
-            if typed_http {
-                entry["type"] = "http".into();
-            }
-            insert_headers(&mut entry, headers, interpolate);
-            entry
-        }
-    }
-}
-
-/// Set `entry.headers` when there are any: a literal as written, an env
-/// header as its prefix followed by the harness's reference to the variable.
-pub(crate) fn insert_headers(
-    entry: &mut Value,
-    headers: &IndexMap<String, HeaderValue>,
-    interpolate: impl Fn(&str) -> String,
-) {
-    if headers.is_empty() {
-        return;
-    }
-    entry["headers"] = headers
-        .iter()
-        .map(|(name, value)| {
-            let text = match value {
-                HeaderValue::Literal(text) => text.clone(),
-                HeaderValue::Env { env, prefix } => {
-                    format!("{prefix}{}", interpolate(env.var_name()))
-                }
-            };
-            (name.clone(), Value::String(text))
-        })
-        .collect::<serde_json::Map<_, _>>()
-        .into();
-}
-
-/// The `${VAR}` rendering Claude and Pi share.
-pub(crate) fn braced(var: &str) -> String {
-    format!("${{{var}}}")
-}
-
 /// The entry Claude and Pi share: `${VAR}` references, remote servers typed `http`.
-pub(super) fn braced_render(server: &McpServerEntry) -> McpRender {
-    McpRender::exact(servers_entry(server, braced, true))
-}
-
-/// Split a stdio server's env by whether a harness can forward it by name:
-/// `key == variable` is `forwarded`, anything else is `renamed` as
-/// `(key, variable)`.
-pub(crate) fn partition_env(env: &IndexMap<String, EnvRef>) -> (Vec<&str>, Vec<(&str, &str)>) {
-    let mut forwarded = Vec::new();
-    let mut renamed = Vec::new();
-    for (key, env_ref) in env {
-        let variable = env_ref.var_name();
-        if key == variable {
-            forwarded.push(variable);
-        } else {
-            renamed.push((key.as_str(), variable));
-        }
-    }
-    (forwarded, renamed)
+pub(super) fn claude_render(server: &McpServerEntry) -> McpRender {
+    render(&server.transport, Flavor::Claude)
 }
 
 /// The lock record for one server: the canonical JSON of what is written.
@@ -384,6 +284,7 @@ mod tests {
     use super::*;
     use crate::surface_ownership::retention::{RemovalPlan, Surface, WritePermit};
     use crate::target::TargetRegistry;
+    use mars_schema::mcp_server::McpTransport;
     use std::collections::BTreeMap;
 
     fn server(name: &str, env: &[(&str, &str)]) -> ConfigEntry {

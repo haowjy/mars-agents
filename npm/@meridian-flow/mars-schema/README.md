@@ -35,7 +35,7 @@ await init();
 | `satisfies(constraint, version)` | Whether a version meets a dependency entry's `version` (`^1.2`, `v2`, a bare `0.20` as `^0.20`, `latest`; a branch or commit pin is met by none). |
 | `satisfiesRequirement(requirement, version)` | Whether a version meets a package's `requires-mars` or `requires-meridian`, where a bare `0.20` means `>=0.20.0`. |
 | `selectVersion({available, constraints, locked?})` | Which ref a package ends at, from every `[requester, version \| null]` on it and the repository's tags: `{pin}` (a branch or commit), `{tag}` (the newest that meets every semver range, or the locked one when it still meets them) or `{untagged: true}` (no version tags). Throws when none qualifies. |
-| `selectItems({packages, root?, requests?})` | Which Agents, skills and package documents an install of `root` and its dependencies yields, and why. Takes each package's `prepare` result. |
+| `selectItems({packages, root?, requests?})` | Which Agents, skills and bootstrap documents an install of `root` and its dependencies yields, and why. Takes each package's `prepare` result. |
 | `version()` | The version of the schema crate this build was made from. |
 
 A tree is a `Map<string, Uint8Array>` from `/`-separated relative paths to bytes. `prepare`, `inspect` and `normalize` read manifests, definitions and directory listings, never the bytes of a skill's other files.
@@ -118,7 +118,7 @@ const result = selectItems({
 // result.items: [{package, kind, slug, path, required_by}], result.missing_skills, result.diagnostics
 ```
 
-Each package's edges and `uses-providers` are read from `prepared.selection`, so nothing is derived twice. A filtered entry of a dependency's manifest seeds nothing; only the root's or the consumer's own `exclude` blocks. A skill an Agent names resolves to a package in its own, then its dependencies, then any other package in registry order, which `selectItems` computes from `root` and `requests`; `packages` is a set. Items of `root` have `package: null`, and a slug that `root` and a dependency both install is a `selection.duplicate-slug` diagnostic. `missing_skills` lists refs no package ships. `kind` values are `agent`, `skill`, `hook`, `mcp-server` and `bootstrap-doc`. Input keys are snake_case; an unknown key (a misspelled filter, `rename`) throws `input.invalid`.
+Each package's edges and `uses-providers` are read from `prepared.selection`, so nothing is derived twice. A filtered entry of a dependency's manifest seeds nothing; only the root's or the consumer's own `exclude` blocks. A skill an Agent names resolves to a package in its own, then its dependencies, then any other package in registry order, which `selectItems` computes from `root` and `requests`; `packages` is a set. Items of `root` have `package: null`, and a slug that `root` and a dependency both install is a `selection.duplicate-slug` diagnostic. `missing_skills` lists refs no package ships. `kind` values are `agent`, `skill`, `hook`, `mcp-server` and `bootstrap-doc`; `selectItems` decides only Agents, skills and bootstrap documents. Hooks and MCP servers are selected by the binary (visibility and depth), so Flow and `mars sync` are guaranteed to agree only on those three kinds. Input keys are snake_case; an unknown key (a misspelled filter, `rename`) throws `input.invalid`.
 
 ## Fixtures
 

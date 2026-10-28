@@ -47,7 +47,7 @@ impl TargetAdapter for PiAdapter {
                 format: McpFormat::JsonSection("mcpServers"),
             },
             legacy: None,
-            render: super::mcp_file::braced_render,
+            render: super::mcp_file::claude_render,
         })
     }
 }

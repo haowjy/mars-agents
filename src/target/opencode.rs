@@ -14,10 +14,9 @@ use crate::error::MarsError;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
+use mars_schema::mcp_servers::{McpRender, env_map, header_map};
 
-use super::{
-    HookFragmentMode, McpFile, McpFormat, McpLocation, McpRender, McpServerEntry, TargetAdapter,
-};
+use super::{HookFragmentMode, McpFile, McpFormat, McpLocation, McpServerEntry, TargetAdapter};
 
 const MCP_SECTION: &str = "mcp";
 
@@ -32,22 +31,15 @@ fn render(server: &McpServerEntry) -> McpRender {
                 "command": std::iter::once(command).chain(args).collect::<Vec<_>>(),
             });
             if !env.is_empty() {
-                entry["environment"] = env
-                    .iter()
-                    .map(|(key, env_ref)| {
-                        (
-                            key.clone(),
-                            serde_json::Value::String(interpolate(env_ref.var_name())),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>()
-                    .into();
+                entry["environment"] = env_map(env, interpolate);
             }
             entry
         }
         McpTransport::Http { url, headers } => {
             let mut entry = serde_json::json!({ "type": "remote", "url": url });
-            super::mcp_file::insert_headers(&mut entry, headers, interpolate);
+            if !headers.is_empty() {
+                entry["headers"] = header_map(headers, interpolate);
+            }
             entry
         }
     };

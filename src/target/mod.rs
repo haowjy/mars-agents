@@ -26,7 +26,7 @@ pub use crate::surface_ownership::retention::ConfigWrite;
 use crate::surface_ownership::retention::{RemovalOperation, RemovalReport, Surface};
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
-pub use mcp_file::{McpFile, McpFormat, McpLocation, McpRender};
+pub use mcp_file::{McpFile, McpFormat, McpLocation};
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 

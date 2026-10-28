@@ -525,6 +525,4 @@ mod tests {
             "alias should not leak when override set: {codex_text}"
         );
     }
-
-    // --- 3.3: Dispatch ---
 }

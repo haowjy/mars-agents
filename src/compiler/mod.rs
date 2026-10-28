@@ -353,6 +353,7 @@ mod skill_surface_tests {
             );
         }
     }
+
     #[test]
     fn omit_agent_outcomes_drops_agents_only() {
         let outcomes = vec![

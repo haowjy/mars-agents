@@ -173,7 +173,10 @@ fn render_remote(url: &str, headers: &IndexMap<String, HeaderValue>) -> McpRende
     if !from_env.is_empty() {
         entry["env_http_headers"] = from_env.into();
     }
-    McpRender { value: entry, lossy }
+    McpRender {
+        value: entry,
+        lossy,
+    }
 }
 
 // ---------------------------------------------------------------------------

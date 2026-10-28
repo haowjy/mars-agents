@@ -103,7 +103,10 @@ fn render_plugin_mcp(server: &McpServerEntry) -> McpRender {
             (entry, lossy)
         }
     };
-    McpRender { value: entry, lossy }
+    McpRender {
+        value: entry,
+        lossy,
+    }
 }
 
 fn write_plugin_mcp_json(

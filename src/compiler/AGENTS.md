@@ -172,8 +172,11 @@ Both tokens render absolute: a relative path would break in a git worktree, wher
 
 ## MCP Compilation (`mcp/`)
 
-Discovers MCP server items, validates env refs, and substitutes `${MARS_MCP_DIR}` in
-`command`/`args`. Only a server whose command or args name the token installs its
+Discovers MCP server items, validates env refs (stdio `env` and remote header refs), and
+substitutes `${MARS_MCP_DIR}` in a stdio server's `command`/`args`. `mars-schema::mcp_server`
+owns the authored definition (`McpServerDef`, `McpTransport::{Stdio, Http}`, `HeaderValue`,
+`EnvRef`) and the `mcp.toml` parse; this lane consumes those types and never re-parses. A
+remote server names no directory, so the token in its `url` or headers is an error. Only a server whose command or args name the token installs its
 directory, as a package-owned item beside each target that writes MCP, using the same
 target-scoped canonical path and lock ownership as a hook directory. Its name must then
 be one path component; a token-free server keeps whatever name it has, because nothing

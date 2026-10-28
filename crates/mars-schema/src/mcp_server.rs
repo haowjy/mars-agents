@@ -60,7 +60,10 @@ pub enum HeaderValue {
     Literal(String),
     /// `prefix` followed by the value of environment variable `var`, read by
     /// the harness at runtime. The prefix is literal and may be empty.
-    Env { var: String, prefix: String },
+    Env {
+        var: String,
+        prefix: String,
+    },
 }
 
 /// Parsed content of a single `mcp/<name>/mcp.toml`.
@@ -132,8 +135,7 @@ impl std::error::Error for McpParseError {}
 /// Parse the text of one `mcp.toml`. A server sets exactly one of `command`
 /// (stdio) or `url` (remote).
 pub fn parse_mcp_toml(text: &str) -> Result<McpServerDef, McpParseError> {
-    let raw: RawServer =
-        toml::from_str(text).map_err(|error| McpParseError(error.to_string()))?;
+    let raw: RawServer = toml::from_str(text).map_err(|error| McpParseError(error.to_string()))?;
     let fail = |message: &str| Err(McpParseError(message.to_string()));
     let transport = match (raw.command, raw.url) {
         (Some(command), None) => {

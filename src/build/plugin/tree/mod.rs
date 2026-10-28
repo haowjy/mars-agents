@@ -9,9 +9,9 @@ use crate::resolve::ResolvedGraph;
 use crate::sync::rewrite::RenameIndex;
 use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry};
-use mars_schema::mcp_server::McpTransport;
 use crate::types::SourceName;
 use mars_schema::item::ItemKind;
+use mars_schema::mcp_server::McpTransport;
 
 use super::PluginComponents;
 use super::metadata::PackageMetadata;

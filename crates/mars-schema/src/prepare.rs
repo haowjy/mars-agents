@@ -115,7 +115,6 @@ pub struct PreparedMcpServer {
     /// The rendered `mcp.toml`; crosses to JavaScript as a `Uint8Array`.
     #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
-    pub def: crate::mcp_server::McpServerDef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -383,7 +382,10 @@ pub(crate) fn prepare_root(
     let mut mcp_servers = Vec::new();
     if can_read_definitions {
         report_unconverted(source, &dispatched, &mut diagnostics);
-        if let Layout::Claude(spec) = &dispatched.layout {
+        // A bare skill tree's `.mcp.json` is usually its contributors' own, not a plugin's.
+        if let Layout::Claude(spec) = &dispatched.layout
+            && !spec.is_bare_tree()
+        {
             let imported = crate::claude::mcp::import(source, spec);
             for (path, diagnostic) in imported.diagnostics {
                 push(&mut diagnostics, &path, diagnostic);
@@ -396,7 +398,6 @@ pub(crate) fn prepare_root(
                     normalized_bytes: crate::mcp_server::render_mcp_toml(&server.def).into_bytes(),
                     name: server.name,
                     source_path: server.source_path,
-                    def: server.def,
                 })
                 .collect();
         }
@@ -455,6 +456,13 @@ fn report_unconverted(
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+        );
+    }
+    if spec.is_bare_tree() && source.is_file(".mcp.json") {
+        warn(
+            ".mcp.json",
+            "import.mcp-not-imported",
+            "this is a skill tree, not a Claude plugin (it has no `.claude-plugin/plugin.json`), so its MCP servers were not imported".into(),
         );
     }
     if source.is_file("hooks/hooks.json") || spec.hooks {

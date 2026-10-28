@@ -263,21 +263,6 @@ export type PreparedDefinition = {
   | { kind: "skill"; reading: DefinitionRead<SkillFields> }
 );
 
-export type McpHeaderValue =
-  | { literal: string }
-  /** `prefix` followed by the value of the environment variable `env.var`, read by the harness. */
-  | { env: { env: { from: "env"; var: string }; prefix: string } };
-
-export interface McpServerDef {
-  /** Overrides the directory name as the server's config key. */
-  name: string | null;
-  transport:
-    | { kind: "stdio"; command: string; args: string[]; env: { [name: string]: { from: "env"; var: string } } }
-    | { kind: "http"; url: string; headers: { [name: string]: McpHeaderValue } };
-  visibility: string;
-  targets: string[];
-}
-
 /** An MCP server translated from a foreign plugin, written as `mcp/<name>/mcp.toml`. */
 export interface PreparedMcpServer {
   name: string;
@@ -286,7 +271,6 @@ export interface PreparedMcpServer {
   output_path: string;
   /** The rendered `mcp.toml`. */
   normalized_bytes: Uint8Array;
-  def: McpServerDef;
 }
 
 export interface Prepared {

@@ -209,7 +209,10 @@ user to approve or log in, as for any project server).
 A Claude plugin's servers install like any other: Mars translates the plugin's `.mcp.json`
 (with or without the `mcpServers` wrapper) and `plugin.json` `mcpServers` (an inline map, a
 path to a JSON file inside the plugin, or a list of those; a `plugin.json` server replaces a
-`.mcp.json` server of the same name) into `mcp/<name>/mcp.toml` with `visibility = "local"`.
+`.mcp.json` server of the same name; manifest entries apply in array order) into
+`mcp/<name>/mcp.toml` with `visibility = "local"`. Only a Claude plugin (one with
+`.claude-plugin/plugin.json`) is imported: a bare skill tree's `.mcp.json` is usually its
+contributors' own, so it is left out with one `import.mcp-not-imported` warning.
 
 | Claude | Imported as |
 |---|---|
@@ -227,16 +230,17 @@ imported to connect differently from what the plugin declares:
 | `mcp.url-without-type` | a `url` with no `type`, which Claude treats as invalid |
 | `mcp.field-unsupported` | `headersHelper`, `oauth` |
 | `mcp.plugin-variable` | `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, `${CLAUDE_PROJECT_DIR}`, `${user_config.*}` |
+| `mcp.credential-blocked` | a header that sends `${ANTHROPIC_API_KEY}`, `${ANTHROPIC_AUTH_TOKEN}`, `${AWS_BEARER_TOKEN_BEDROCK}`, `${HTTPS_PROXY}` or `${NPM_TOKEN}`, which Claude reads as empty toward a remote server |
 | `mcp.default-value` | `${VAR:-default}` |
 | `mcp.interpolation-unsupported` | any other `${...}`, such as one inside `command` or `url` |
 | `mcp.literal-env` | an `env` value that is not `${VAR}` |
 | `mcp.name-invalid` | a name that cannot be a directory |
 | `mcp.invalid-server` | a malformed server |
 
-`mcp.manifest-entry-unsupported` skips a `plugin.json` entry that is a `.mcpb` bundle, a URL or
+`mcp.no-servers` marks a valid JSON file with no map of servers; `mcp.manifest-entry-unsupported` skips a `plugin.json` entry that is a `.mcpb` bundle, a URL or
 a missing file, and a marketplace entry's own `mcpServers`; `mcp.field-dropped` notes a field
 that does not affect how the server connects (`timeout`), and the server still imports. If the
-plugin also ships `mcp/<name>/mcp.toml`, that file is used and the Claude declaration is left
+plugin also ships an `mcp/<name>/` directory, its `mcp.toml` is used and the Claude declaration is left
 out (`mcp.shadowed-by-authored`). Servers declared in an agent's frontmatter `mcpServers` are
 not imported; only their names carry over (`agent.mcp-not-converted`).
 

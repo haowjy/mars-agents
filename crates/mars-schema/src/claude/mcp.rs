@@ -55,7 +55,6 @@ pub(crate) fn import(source: &impl TreeSource, spec: &PluginSpec) -> Imported {
     if let Some(value) = read_json(source, MCP_JSON, &mut out) {
         documents.push((MCP_JSON.to_owned(), value));
     }
-    let mut manifest_inline: Vec<Value> = Vec::new();
     let manifest_value = source
         .read(PLUGIN_MANIFEST)
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -68,7 +67,7 @@ pub(crate) fn import(source: &impl TreeSource, spec: &PluginSpec) -> Imported {
             };
             for (index, entry) in entries.into_iter().enumerate() {
                 match entry {
-                    Value::Object(_) => manifest_inline.push(entry),
+                    Value::Object(_) => documents.push((PLUGIN_MANIFEST.to_owned(), entry)),
                     Value::String(reference) => {
                         documents.extend(manifest_file(source, &reference, index, &mut out));
                     }
@@ -92,20 +91,14 @@ pub(crate) fn import(source: &impl TreeSource, spec: &PluginSpec) -> Imported {
         None => {}
     }
 
-    // `.mcp.json` first, so a manifest server of the same name replaces it.
+    // In order: `.mcp.json` first, then each manifest entry, so a later server of the same name
+    // replaces an earlier one.
     let mut declared: BTreeMap<String, Declared<'_>> = BTreeMap::new();
-    let manifest_documents = manifest_inline
-        .iter()
-        .map(|value| (PLUGIN_MANIFEST.to_owned(), value));
-    let documents = documents
-        .iter()
-        .map(|(file, value)| (file.clone(), value))
-        .chain(manifest_documents);
-    for (file, document) in documents {
+    for (file, document) in &documents {
         let Some((prefix, servers)) = server_map(document) else {
             out.warn(
-                &file,
-                "mcp.invalid-json",
+                file,
+                "mcp.no-servers",
                 Vec::new(),
                 format!("`{file}` holds no map of MCP servers, so nothing was imported from it"),
             );
@@ -137,13 +130,13 @@ pub(crate) fn import(source: &impl TreeSource, spec: &PluginSpec) -> Imported {
             );
             continue;
         }
-        let shadow = format!("mcp/{name}/mcp.toml");
-        if source.is_file(&shadow) {
+        let shadow = format!("mcp/{name}");
+        if source.is_dir(&shadow) {
             out.warn(
                 &declared.file,
                 "mcp.shadowed-by-authored",
                 declared.prefix,
-                format!("MCP server `{name}` was not imported: the plugin also ships `{shadow}`, which is used instead"),
+                format!("MCP server `{name}` was not imported: the plugin also ships `{shadow}/`, which is used instead"),
             );
             continue;
         }
@@ -520,6 +513,15 @@ impl Problems<'_, '_> {
                         Interpolation::Literal => {
                             headers.insert(header.clone(), HeaderValue::Literal(text));
                         }
+                        Interpolation::Variable { var, .. }
+                            if CREDENTIAL_VARIABLES.contains(&var) =>
+                        {
+                            self.report(
+                                Some(&field),
+                                "mcp.credential-blocked",
+                                format!("sends `${{{var}}}` in `{field}`; Claude reads that credential as empty toward a remote server, so importing it would send the real value"),
+                            );
+                        }
                         Interpolation::Variable { prefix, var } => {
                             headers.insert(
                                 header.clone(),
@@ -544,6 +546,25 @@ impl Problems<'_, '_> {
         Some(McpTransport::Http { url: url?, headers }).filter(|_| !self.failed)
     }
 }
+
+/// The variables Claude substitutes in a plugin's servers, besides `${user_config.*}`.
+const PLUGIN_VARIABLES: [&str; 3] = [
+    "CLAUDE_PLUGIN_ROOT",
+    "CLAUDE_PLUGIN_DATA",
+    "CLAUDE_PROJECT_DIR",
+];
+
+/// Environment variables Claude reads as empty in a remote server's `url` and `headers`, so a
+/// plugin cannot send them to its server. Mars's renderers would send the real value, so these
+/// are refused. Claude names these as examples of its covered set and does not list the rest:
+/// <https://code.claude.com/docs/en/mcp#credential-variables-that-read-as-empty>.
+const CREDENTIAL_VARIABLES: [&str; 5] = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "HTTPS_PROXY",
+    "NPM_TOKEN",
+];
 
 /// What `${...}` a string holds.
 enum Interpolation<'a> {
@@ -573,7 +594,7 @@ fn interpolation(text: &str) -> Interpolation<'_> {
     }
     if let Some(variable) = names
         .iter()
-        .find(|name| name.starts_with("CLAUDE_") || name.starts_with("user_config."))
+        .find(|name| PLUGIN_VARIABLES.contains(name) || name.starts_with("user_config."))
     {
         return Interpolation::PluginVariable(variable);
     }

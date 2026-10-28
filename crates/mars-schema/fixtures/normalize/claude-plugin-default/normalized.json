@@ -254,84 +254,22 @@
           {
             "name": "extra",
             "source_path": "config/more-mcp.json",
-            "output_path": "mcp/extra/mcp.toml",
-            "def": {
-              "name": null,
-              "transport": {
-                "kind": "http",
-                "url": "https://extra.invalid/mcp",
-                "headers": {}
-              },
-              "visibility": "local",
-              "targets": []
-            }
+            "output_path": "mcp/extra/mcp.toml"
           },
           {
             "name": "github",
             "source_path": ".mcp.json",
-            "output_path": "mcp/github/mcp.toml",
-            "def": {
-              "name": null,
-              "transport": {
-                "kind": "http",
-                "url": "https://example.invalid/mcp",
-                "headers": {
-                  "Authorization": {
-                    "env": {
-                      "env": {
-                        "from": "env",
-                        "var": "GITHUB_TOKEN"
-                      },
-                      "prefix": "Bearer "
-                    }
-                  },
-                  "X-Region": {
-                    "literal": "eu"
-                  }
-                }
-              },
-              "visibility": "local",
-              "targets": []
-            }
+            "output_path": "mcp/github/mcp.toml"
           },
           {
             "name": "indexer",
             "source_path": ".mcp.json",
-            "output_path": "mcp/indexer/mcp.toml",
-            "def": {
-              "name": null,
-              "transport": {
-                "kind": "stdio",
-                "command": "npx",
-                "args": [
-                  "-y",
-                  "indexer"
-                ],
-                "env": {
-                  "INDEX_KEY": {
-                    "from": "env",
-                    "var": "INDEX_KEY"
-                  }
-                }
-              },
-              "visibility": "local",
-              "targets": []
-            }
+            "output_path": "mcp/indexer/mcp.toml"
           },
           {
             "name": "replaced",
             "source_path": ".claude-plugin/plugin.json",
-            "output_path": "mcp/replaced/mcp.toml",
-            "def": {
-              "name": null,
-              "transport": {
-                "kind": "http",
-                "url": "https://new.invalid/mcp",
-                "headers": {}
-              },
-              "visibility": "local",
-              "targets": []
-            }
+            "output_path": "mcp/replaced/mcp.toml"
           }
         ],
         "payload": [
@@ -409,7 +347,7 @@
                 "mcpServers",
                 "docs"
               ],
-              "message": "MCP server `docs` was not imported: the plugin also ships `mcp/docs/mcp.toml`, which is used instead"
+              "message": "MCP server `docs` was not imported: the plugin also ships `mcp/docs/`, which is used instead"
             },
             {
               "code": "mcp.transport-unsupported",

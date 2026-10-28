@@ -39,8 +39,7 @@ impl EnvRef {
 }
 
 /// How a server is reached.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpTransport {
     /// A local process the harness launches and talks to over stdio.
     Stdio {
@@ -61,8 +60,7 @@ pub enum McpTransport {
 }
 
 /// A request header's value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderValue {
     Literal(String),
     /// `prefix` followed by the value of the referenced environment variable,
@@ -74,7 +72,7 @@ pub enum HeaderValue {
 }
 
 /// Parsed content of a single `mcp/<name>/mcp.toml`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpServerDef {
     /// Overrides the server's directory name as its config key.
     pub name: Option<String>,

@@ -1,7 +1,8 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
-use crate::target::{ConfigEntry, McpServerEntry};
+use crate::target::mcp_file::partition_env;
+use crate::target::{ConfigEntry, McpRender, McpServerEntry};
 use mars_schema::HarnessId;
 use mars_schema::plugin_metadata::CLAUDE_ROOT_FILE;
 
@@ -55,6 +56,40 @@ fn write_config_entries(
     Ok(())
 }
 
+/// Render one server for a Claude plugin tree, which Claude, Codex and Grok
+/// share: a same-name reference is a pass-through list (`env_vars`); a renamed
+/// one stays a `${VAR}` interpolation, which Codex passes literally, so it is
+/// reported as lossy. This stays here, not in the harness `render`s, because
+/// the shared file needs `env_vars` alongside `env`.
+fn render_plugin_mcp(server: &McpServerEntry) -> McpRender {
+    let mut entry = serde_json::json!({
+        "command": server.command,
+        "args": server.args,
+    });
+    let (forwarded, renamed) = partition_env(server);
+    if !renamed.is_empty() {
+        entry["env"] = renamed
+            .iter()
+            .map(|(key, variable)| ((*key).to_owned(), format!("${{{variable}}}").into()))
+            .collect::<serde_json::Map<_, _>>()
+            .into();
+    }
+    if !forwarded.is_empty() {
+        entry["env_vars"] = serde_json::json!(forwarded);
+    }
+    McpRender {
+        value: entry,
+        lossy: renamed
+            .into_iter()
+            .map(|(key, variable)| {
+                format!(
+                    "Codex 0.164.0 passes `${{{variable}}}` literally instead of reading `{variable}`, so `{key}` is not set from it."
+                )
+            })
+            .collect(),
+    }
+}
+
 fn write_plugin_mcp_json(
     path: &std::path::Path,
     servers: &[&McpServerEntry],
@@ -67,41 +102,16 @@ fn write_plugin_mcp_json(
         .expect("new MCP root contains an object");
 
     for server in servers {
-        let mut entry = serde_json::json!({
-            "command": server.command,
-            "args": server.args,
-        });
-        let mut env = serde_json::Map::new();
-        let mut env_vars = Vec::new();
-        let mut renamed = Vec::new();
-        for (key, variable) in &server.env {
-            if key == variable {
-                env_vars.push(variable.clone());
-            } else {
-                env.insert(
-                    key.clone(),
-                    serde_json::Value::String(format!("${{{variable}}}")),
+        let rendered = render_plugin_mcp(server);
+        if harnesses.iter().any(|harness| harness.key == "codex") {
+            for lost in rendered.lossy {
+                diag.warn(
+                    "plugin-codex-mcp-env-rename",
+                    format!("MCP server `{}`: {lost}", server.name),
                 );
-                renamed.push(format!("`{key}` from `{variable}`"));
             }
         }
-        if !env.is_empty() {
-            entry["env"] = serde_json::Value::Object(env);
-        }
-        if !env_vars.is_empty() {
-            entry["env_vars"] = serde_json::json!(env_vars);
-        }
-        if !renamed.is_empty() && harnesses.iter().any(|harness| harness.key == "codex") {
-            diag.warn(
-                "plugin-codex-mcp-env-rename",
-                format!(
-                    "MCP server `{}` renames {}; Codex 0.164.0 passes these `${{VAR}}` values literally instead of reading the source environment variables",
-                    server.name,
-                    renamed.join(", ")
-                ),
-            );
-        }
-        mcp_servers.insert(server.name.clone(), entry);
+        mcp_servers.insert(server.name.clone(), rendered.value);
     }
 
     crate::fs::atomic_write(

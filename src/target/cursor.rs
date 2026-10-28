@@ -11,7 +11,10 @@ use crate::error::MarsError;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{ConfigEntry, HookEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
+use super::{
+    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpRender, McpServerEntry,
+    TargetAdapter,
+};
 
 #[derive(Debug)]
 pub struct CursorAdapter;
@@ -62,36 +65,14 @@ impl TargetAdapter for CursorAdapter {
         }
     }
 
-    fn write_config_entries(
+    fn write_hook_entries(
         &self,
         write: crate::surface_ownership::retention::ConfigWrite<'_>,
         project_root: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
         let (target_dir, entries) = write.into_parts(project_root);
-        let mcp_servers: Vec<&McpServerEntry> = entries
-            .iter()
-            .filter_map(|e| {
-                if let ConfigEntry::McpServer(s) = e {
-                    Some(s)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let hooks: Vec<&HookEntry> = entries
-            .iter()
-            .filter_map(|entry| match entry {
-                ConfigEntry::Hook(hook) => Some(hook),
-                ConfigEntry::McpServer(_) => None,
-            })
-            .collect();
-
+        let hooks = super::hooks_of(&entries);
         let mut written = Vec::new();
-        if !mcp_servers.is_empty() {
-            let path = target_dir.join("mcp.json");
-            write_cursor_mcp_json(&path, &mcp_servers)?;
-            written.push(path);
-        }
         if !hooks.is_empty() {
             let path = target_dir.join("hooks.json");
             write_cursor_hooks_json(&path, &hooks)?;
@@ -100,8 +81,20 @@ impl TargetAdapter for CursorAdapter {
         Ok(written)
     }
 
-    fn mcp_config_file_names(&self) -> &'static [&'static str] {
-        &["mcp.json"]
+    fn mcp_file(&self) -> Option<McpFile> {
+        Some(McpFile {
+            at: McpLocation {
+                path: ".cursor/mcp.json",
+                format: McpFormat::JsonSection("mcpServers"),
+            },
+            // v0.23 wrote its records here without `emitted_json`.
+            // Delete after one release.
+            legacy: Some(McpLocation {
+                path: ".cursor/mcp.json",
+                format: McpFormat::JsonSection("mcpServers"),
+            }),
+            render,
+        })
     }
     fn hook_config_file_names(&self) -> &'static [&'static str] {
         &["hooks.json"]
@@ -115,21 +108,6 @@ impl TargetAdapter for CursorAdapter {
     ) -> crate::surface_ownership::retention::RemovalReport {
         let (target_dir, removal) = operation.into_parts(project_root);
         match remove_owned_cursor_hooks(&removal.prior_records, &target_dir, diag) {
-            Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
-            Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
-                error,
-                removal.prior_records.clone(),
-            ),
-        }
-    }
-
-    fn remove_config_entries(
-        &self,
-        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
-        project_root: &Path,
-    ) -> crate::surface_ownership::retention::RemovalReport {
-        let (target_dir, removal) = operation.into_parts(project_root);
-        match remove_cursor_mcp_entries(&removal.keys_to_remove, &target_dir) {
             Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
             Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
                 error,
@@ -243,7 +221,7 @@ fn remove_owned_cursor_hooks(
 }
 
 // ---------------------------------------------------------------------------
-// Cursor MCP — `mcp.json` format
+// Cursor MCP — `mcp.json` entry shape
 // ---------------------------------------------------------------------------
 //
 // Cursor uses `${env:VAR_NAME}` interpolation syntax for env vars.
@@ -257,93 +235,10 @@ fn remove_owned_cursor_hooks(
 //   }
 // }
 
-pub(crate) fn write_cursor_mcp_json(
-    path: &Path,
-    servers: &[&McpServerEntry],
-) -> Result<(), MarsError> {
-    let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(path)?
-    } else {
-        serde_json::json!({})
-    };
-
-    let mcp_obj = root
-        .as_object_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{} is not a JSON object", path.display()),
-            })
-        })?
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let mcp_map = mcp_obj.as_object_mut().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: mcpServers is not an object", path.display()),
-        })
-    })?;
-
-    for server in servers {
-        let mut entry = serde_json::json!({
-            "command": server.command,
-            "args": server.args,
-        });
-
-        // Cursor env: `${env:VAR_NAME}` interpolation syntax.
-        if !server.env.is_empty() {
-            let env_obj: serde_json::Map<String, serde_json::Value> = server
-                .env
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        k.clone(),
-                        serde_json::Value::String(format!("${{env:{v}}}")),
-                    )
-                })
-                .collect();
-            entry["env"] = serde_json::Value::Object(env_obj);
-        }
-
-        mcp_map.insert(server.name.clone(), entry);
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(path, content.as_bytes())?;
-
-    Ok(())
-}
-
-fn remove_cursor_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
-    let path = target_dir.join("mcp.json");
-    if !path.is_file() {
-        return Ok(());
-    }
-
-    let mut root = super::parse_json_file(&path)?;
-
-    if let Some(mcp_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("mcpServers"))
-        .and_then(|v| v.as_object_mut())
-    {
-        for key in entry_keys {
-            if let Some(name) = key.strip_prefix("mcp:") {
-                mcp_map.remove(name);
-            }
-        }
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-    Ok(())
+fn render(server: &McpServerEntry) -> McpRender {
+    McpRender::exact(super::mcp_file::stdio_entry(server, |var| {
+        format!("${{env:{var}}}")
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -353,96 +248,7 @@ fn remove_cursor_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surface_ownership::retention::WritePermit;
-
-    fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
-        WritePermit::for_test("", entries[0].surface())
-    }
-    use crate::target::McpServerEntry;
-    use indexmap::IndexMap;
     use tempfile::TempDir;
-
-    fn make_mcp_entry(name: &str, env_var: Option<(&str, &str)>) -> ConfigEntry {
-        let mut env = IndexMap::new();
-        if let Some((k, v)) = env_var {
-            env.insert(k.to_string(), v.to_string());
-        }
-        ConfigEntry::McpServer(McpServerEntry {
-            name: name.to_string(),
-            command: "npx".to_string(),
-            args: vec![],
-            env,
-        })
-    }
-
-    #[test]
-    fn write_mcp_creates_mcp_json() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CursorAdapter;
-        let entries = vec![make_mcp_entry("context7", None)];
-        let written = adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-        assert_eq!(written.len(), 1);
-        assert!(tmp.path().join("mcp.json").exists());
-
-        let raw = std::fs::read_to_string(tmp.path().join("mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["context7"].is_object());
-    }
-
-    #[test]
-    fn write_mcp_env_uses_cursor_interpolation() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CursorAdapter;
-        let entries = vec![make_mcp_entry("server", Some(("API_KEY", "MY_SECRET")))];
-        adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        // Cursor uses ${env:VAR_NAME} interpolation syntax
-        assert_eq!(
-            json["mcpServers"]["server"]["env"]["API_KEY"],
-            "${env:MY_SECRET}"
-        );
-    }
-
-    #[test]
-    fn remove_mcp_entries_preserves_others() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CursorAdapter;
-        let entries = vec![
-            make_mcp_entry("to-remove", None),
-            make_mcp_entry("to-keep", None),
-        ];
-        adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-
-        remove_cursor_mcp_entries(&["mcp:to-remove".to_string()], tmp.path()).unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["to-remove"].is_null());
-        assert!(json["mcpServers"]["to-keep"].is_object());
-    }
 
     #[test]
     fn divergent_structural_removal_does_not_rewrite_hooks() {

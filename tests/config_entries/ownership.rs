@@ -323,7 +323,7 @@ fn config_destination_directory_rejects_before_any_config_write() {
         .stderr(predicate::str::contains("settings.local.json"))
         .stderr(predicate::str::contains("file"));
     project
-        .child(".claude/.mcp.json")
+        .child(".mcp.json")
         .assert(predicate::path::missing());
     project
         .child(".mars/hooks/claude/audit")
@@ -423,10 +423,7 @@ fn unrelated_malformed_mcp_file_cannot_retain_removed_hook_ownership() {
     sync(&project).success();
 
     fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
-    project
-        .child(".claude/.mcp.json")
-        .write_str("{malformed")
-        .unwrap();
+    project.child(".mcp.json").write_str("{malformed").unwrap();
     sync(&project).success();
 
     let lock: mars_agents::lock::LockFile =
@@ -449,7 +446,7 @@ fn unrelated_malformed_mcp_file_cannot_retain_removed_hook_ownership() {
 
     // Repair and run again: the already-consistent state remains converged and
     // no ghost record is resurrected on a later sync.
-    project.child(".claude/.mcp.json").write_str("{}").unwrap();
+    project.child(".mcp.json").write_str("{}").unwrap();
     sync(&project).success();
     assert_config_entry_consistency(&project);
     let repaired = fs::read_to_string(project.child("mars.lock").path()).unwrap();

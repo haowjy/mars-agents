@@ -202,27 +202,29 @@ fn assert_config_entry_consistency_with_diagnostics(
                     "lock owns `{key}` but its emitted entries do not exist on disk"
                 );
             } else if let Some(name) = key.strip_prefix("mcp:") {
-                let file = match target.as_str() {
-                    ".claude" => ".mcp.json",
-                    ".codex" => "codex_mcp.json",
-                    ".cursor" => "mcp.json",
-                    ".opencode" => "opencode.json",
+                // Project-relative file and section each target's harness reads.
+                let (file, section) = match target.as_str() {
+                    ".claude" => (".mcp.json", "mcpServers"),
+                    ".codex" => (".codex/config.toml", "mcp_servers"),
+                    ".cursor" => (".cursor/mcp.json", "mcpServers"),
+                    ".opencode" => (".opencode/opencode.json", "mcp"),
+                    ".pi" => (".pi/mcp.json", "mcpServers"),
                     _ => continue,
                 };
-                let path = project.child(target).child(file);
+                let path = project.child(file);
                 let Ok(raw) = fs::read_to_string(path.path()) else {
                     panic!(
                         "lock owns `{key}` but `{}` is absent",
                         path.path().display()
                     );
                 };
-                let Ok(root) = serde_json::from_str::<serde_json::Value>(&raw) else {
-                    continue;
-                };
-                let section = if target == ".opencode" {
-                    "mcp"
+                let root = if file.ends_with(".toml") {
+                    toml::from_str::<serde_json::Value>(&raw).ok()
                 } else {
-                    "mcpServers"
+                    serde_json::from_str::<serde_json::Value>(&raw).ok()
+                };
+                let Some(root) = root else {
+                    continue;
                 };
                 assert!(
                     root[section].get(name).is_some(),

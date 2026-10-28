@@ -167,6 +167,8 @@ native merge-fragment loading and hook ordering. MCP collisions resolve once per
 `TargetState`, so the winning server's directory and config entry come from the same selection.
 Each selected item arrives with its directory token, the `${MARS_HOOK_DIR}` /
 `${MARS_MCP_DIR}` replacement, so installed copies and plugin trees share one lowering path.
+Both tokens render absolute: a relative path would break in a git worktree, where a committed
+`.mcp.json` points at a server directory that only the main checkout has.
 
 ## MCP Compilation (`mcp/`)
 

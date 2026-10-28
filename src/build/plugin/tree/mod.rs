@@ -67,6 +67,20 @@ pub(super) fn pretty_json_bytes(
     Ok(bytes)
 }
 
+/// Render servers through the sync adapter's own MCP spec, keyed by name.
+pub(super) fn render_servers(
+    adapter: &dyn crate::target::TargetAdapter,
+    servers: &[&McpServerEntry],
+) -> serde_json::Map<String, serde_json::Value> {
+    let file = adapter
+        .mcp_file()
+        .expect("a plugin tree profile renders through an adapter that takes MCP servers");
+    servers
+        .iter()
+        .map(|server| (server.name.clone(), (file.render)(server).value))
+        .collect()
+}
+
 pub(super) fn write_pretty_json(
     path: &Path,
     value: &impl serde::Serialize,

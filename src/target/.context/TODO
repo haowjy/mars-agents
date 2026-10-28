@@ -1,0 +1,9 @@
+# Target TODO
+
+- **Hook config files still have their own load/validate/save.** Duplicated sites:
+  `parse_json_file` and `validate_json_config_file` (`mod.rs`), and the load → object check →
+  `to_string_pretty` → `atomic_write` sequence in Claude (`write_hooks_settings`,
+  `remove_owned_claude_hooks`), Cursor (`write_cursor_hooks_json`, its removal), Codex
+  (`write_hooks_json`, its removal) and OpenCode (`remove_hook_residue`). Unlike `mcp_doc::Doc`,
+  they don't follow symlinks, preserve permissions or keep key order. `Doc` (JSON variant, with a
+  mutable section accessor) is the intended owner; move the hook writers onto it.

@@ -4,16 +4,20 @@
 //! come from the target build that also selects installed content.
 
 pub mod resolve;
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 
 use crate::compiler::hooks::ParsedHookItem;
 use crate::compiler::mcp::{ParsedMcpItem, TargetMcpEntry};
 use crate::diagnostic::DiagnosticCollector;
+use crate::error::MarsError;
 use crate::lock::ConfigEntryRecord;
+use crate::surface_ownership::retention::{ConfigWrite, RemovalOperation, RemovalReport, Surface};
 use crate::sync::AppliedState;
 use crate::sync::package_dir::PackageDir;
-use crate::target::{ConfigEntry, HookEntry, McpServerEntry, TargetAdapter};
+use crate::target::{
+    ConfigEntry, HookEntry, McpServerEntry, TargetAdapter, TargetRegistry, mcp_file,
+};
 use crate::types::MarsContext;
 use mars_schema::item::ItemKind;
 
@@ -104,22 +108,22 @@ pub(crate) fn preflight_config_entries(
             continue;
         }
         if let Some(adapter) = registry.get(target_name) {
-            let has_legacy_hooks = resolved
-                .loaded
-                .old_lock
-                .config_entries
-                .get(target_name)
-                .is_some_and(|records| {
-                    records.iter().any(|(key, record)| {
-                        crate::surface_ownership::retention::Surface::of_key(key)
-                            == crate::surface_ownership::retention::Surface::Hook
-                            && record.emitted_json.is_none()
-                    })
-                });
-            let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-            if *touches_mcp {
-                names.extend(adapter.mcp_config_file_names());
+            let records = resolved.loaded.old_lock.config_entries.get(target_name);
+            let has_legacy_hooks = has_unrecorded(records, Surface::Hook);
+            if *touches_mcp && let Some(file) = adapter.mcp_file() {
+                let has_legacy = has_unrecorded(records, Surface::Mcp);
+                for location in
+                    std::iter::once(&file.at).chain(file.legacy.iter().filter(|_| has_legacy))
+                {
+                    let path = ctx.project_root.join(location.path);
+                    if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                        errors.push(error);
+                    } else if let Err(error) = crate::target::mcp_file::validate(location, &path) {
+                        errors.push(error.to_string());
+                    }
+                }
             }
+            let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
             if *touches_hooks {
                 names.extend(adapter.hook_config_file_names());
             }
@@ -131,9 +135,7 @@ pub(crate) fn preflight_config_entries(
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
                     errors.push(error);
                 }
-                if let Err(error) =
-                    crate::target::validate_json_config_file(&path, adapter.mcp_section_key())
-                {
+                if let Err(error) = crate::target::validate_json_config_file(&path) {
                     errors.push(error.to_string());
                 }
             }
@@ -303,7 +305,7 @@ fn validate_destination_path(
 /// 1. Run env-ref preflight (warn on missing vars)
 /// 2. Detect per-target-root MCP name collisions
 /// 3. Order hooks deterministically
-/// 4. For each target root, lower items and write via adapter `write_config_entries()`
+/// 4. For each target root, lower items and write via adapter `write_hook_entries()`
 ///
 /// All errors are non-fatal — emitted as diagnostics and compilation continues.
 pub(crate) fn compile_config_entries(
@@ -429,13 +431,11 @@ pub(crate) fn compile_config_entries(
         }
 
         // Write via the target adapter (if one is registered).
+        // Lossiness warnings come with the records, so they run even on dry runs.
         let mut target_records = BTreeMap::new();
         for entry in &entries {
-            target_records.insert(entry.key(), adapter.config_entry_record(entry));
+            target_records.insert(entry.key(), record_entry(adapter, entry, diag));
         }
-
-        // Emit target-specific pre-write diagnostics (runs even on dry runs).
-        adapter.emit_pre_write_diagnostics(&entries, diag);
         if !target_records.is_empty() {
             desired_records.insert(target_root.clone(), target_records);
         }
@@ -477,31 +477,8 @@ pub(crate) fn compile_config_entries(
         };
     }
 
-    use crate::surface_ownership::retention::Surface;
     let retention = removal_plan.execute(
-        |operation, diag| {
-            let target_root = operation.target_root().to_owned();
-            let surface = operation.surface();
-            let Some(adapter) = registry.get(&target_root) else {
-                let (_, removal) = operation.into_parts(&ctx.project_root);
-                return crate::surface_ownership::retention::RemovalReport::failed(
-                    format!("no adapter registered for `{target_root}`"),
-                    removal.prior_records.clone(),
-                );
-            };
-            match surface {
-                Surface::Hook => adapter
-                    .remove_owned_hook_entries(operation, &ctx.project_root, diag)
-                    .context(format!(
-                        "failed to remove prior hook entries from `{target_root}`"
-                    )),
-                Surface::Mcp => adapter
-                    .remove_config_entries(operation, &ctx.project_root)
-                    .context(format!(
-                        "failed to remove stale config entries from `{target_root}`"
-                    )),
-            }
-        },
+        |operation, diag| remove(&registry, operation, &ctx.project_root, diag),
         diag,
     );
 
@@ -546,6 +523,101 @@ pub(crate) fn compile_config_entries(
     )
 }
 
+/// Whether `records` hold an entry of `surface` from before content ownership
+/// (no `emitted_json`), which preflight must be able to clean up.
+fn has_unrecorded(records: Option<&BTreeMap<String, ConfigEntryRecord>>, surface: Surface) -> bool {
+    records.is_some_and(|records| {
+        records
+            .iter()
+            .any(|(key, record)| Surface::of_key(key) == surface && record.emitted_json.is_none())
+    })
+}
+
+/// The lock record for one emitted entry: an MCP server records its native
+/// rendering, a hook its structural entries. Warns about what an MCP server's
+/// native shape cannot carry.
+fn record_entry(
+    adapter: &dyn TargetAdapter,
+    entry: &ConfigEntry,
+    diag: &mut DiagnosticCollector,
+) -> ConfigEntryRecord {
+    match entry {
+        ConfigEntry::Hook(hook) => ConfigEntryRecord {
+            emitted_json: serde_json::to_string(&hook.entries).ok(),
+        },
+        ConfigEntry::McpServer(server) => {
+            let file = adapter
+                .mcp_file()
+                .expect("MCP servers are lowered only for targets that declare an MCP file");
+            mcp_file::record_and_warn(&file, server, diag)
+        }
+    }
+}
+
+/// Remove the entries `operation` names, on whichever surface it is for. Shared by
+/// sync and `mars unlink`.
+pub(crate) fn remove(
+    registry: &TargetRegistry,
+    operation: RemovalOperation<'_>,
+    project_root: &Path,
+    diag: &mut DiagnosticCollector,
+) -> RemovalReport {
+    let target_root = operation.target_root().to_owned();
+    let Some(adapter) = registry.get(&target_root) else {
+        let (_, removal) = operation.into_parts(project_root);
+        return RemovalReport::failed(
+            format!("no adapter registered for `{target_root}`"),
+            removal.prior_records.clone(),
+        );
+    };
+    match operation.surface() {
+        Surface::Hook => adapter
+            .remove_owned_hook_entries(operation, project_root, diag)
+            .context(format!(
+                "failed to remove prior hook entries from `{target_root}`"
+            )),
+        Surface::Mcp => mcp_file::remove_entries(adapter, operation, project_root, diag).context(
+            format!("failed to remove stale config entries from `{target_root}`"),
+        ),
+    }
+}
+
+/// Write `write`'s entries on `surface`; returns the keys now on disk as rendered.
+fn write_entries(
+    adapter: &dyn TargetAdapter,
+    surface: Surface,
+    write: ConfigWrite<'_>,
+    project_root: &Path,
+    previous: Option<&BTreeMap<String, ConfigEntryRecord>>,
+    force: bool,
+    diag: &mut DiagnosticCollector,
+) -> Result<BTreeSet<String>, MarsError> {
+    match surface {
+        Surface::Hook => {
+            let keys = write.entries().iter().map(ConfigEntry::key).collect();
+            adapter.write_hook_entries(write, project_root)?;
+            Ok(keys)
+        }
+        Surface::Mcp => {
+            let file = adapter
+                .mcp_file()
+                .expect("MCP servers are lowered only for targets that declare an MCP file");
+            let target_root = write.target_root().to_owned();
+            mcp_file::write_entries(
+                &file,
+                write,
+                project_root,
+                &mcp_file::WriteOwnership {
+                    target_root: &target_root,
+                    previous,
+                    force,
+                },
+                diag,
+            )
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_replacement_writes(
     ctx: &MarsContext,
@@ -564,9 +636,6 @@ fn apply_replacement_writes(
     mut emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
     removed_outputs: Vec<(String, String)>,
 ) -> ConfigEntryCompilation {
-    use crate::surface_ownership::retention::Surface;
-    use crate::target::ConfigEntry;
-
     // Write desired entries only after every removal has completed.
     let mut written_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
@@ -591,51 +660,53 @@ fn apply_replacement_writes(
         let Some(adapter) = registry.get(write.target_root()) else {
             continue;
         };
-        let written_keys: std::collections::BTreeSet<_> =
+        let attempted: std::collections::BTreeSet<_> =
             write.entries().iter().map(ConfigEntry::key).collect();
-        match adapter.write_config_entries(write, &ctx.project_root) {
-            Ok(_) => {
-                if let Some(records) = desired_records.get(&authorized_target) {
-                    written_records
-                        .entry(authorized_target.clone())
-                        .or_default()
-                        .extend(
-                            records
-                                .iter()
-                                .filter(|(key, _)| written_keys.contains(*key))
-                                .map(|(key, record)| (key.clone(), record.clone())),
-                        );
-                }
-            }
-            Err(error) => {
-                diag.warn(
-                    "config-entry-write",
-                    format!("failed to write config entries to `{authorized_target}`: {error}"),
-                );
-                // An unchanged entry the old lock owned is still on disk; keep
-                // its record so a later sync can remove it. A changed record's
-                // entry was already removed before this write, so it drops.
-                // Hook removal clears the whole pair before the write, so no
-                // hook record applies.
-                if surface == Surface::Mcp {
-                    let desired = desired_records.get(&authorized_target);
-                    written_records
-                        .entry(authorized_target.clone())
-                        .or_default()
-                        .extend(
-                            old_lock
-                                .config_entries
-                                .get(&authorized_target)
-                                .into_iter()
-                                .flatten()
-                                .filter(|(key, record)| {
-                                    written_keys.contains(*key)
-                                        && desired.and_then(|d| d.get(*key)) == Some(*record)
-                                })
-                                .map(|(key, record)| (key.clone(), record.clone())),
-                        );
-                }
-            }
+        let result = write_entries(
+            adapter,
+            surface,
+            write,
+            &ctx.project_root,
+            old_lock.config_entries.get(&authorized_target),
+            force,
+            diag,
+        );
+        let written_keys = result.unwrap_or_else(|error| {
+            diag.warn(
+                "config-entry-write",
+                format!("failed to write config entries to `{authorized_target}`: {error}"),
+            );
+            BTreeSet::new()
+        });
+        let records = written_records
+            .entry(authorized_target.clone())
+            .or_default();
+        records.extend(
+            desired_records
+                .get(&authorized_target)
+                .into_iter()
+                .flatten()
+                .filter(|(key, _)| written_keys.contains(*key))
+                .map(|(key, record)| (key.clone(), record.clone())),
+        );
+        // An MCP entry attempted but not written (preserved as the user's, or
+        // the write failed) is still on disk as the old lock recorded it, so
+        // keep that record. Hook removal clears the whole pair before the
+        // write, so no hook record applies.
+        if surface == Surface::Mcp {
+            records.extend(
+                old_lock
+                    .config_entries
+                    .get(&authorized_target)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(key, record)| {
+                        attempted.contains(*key)
+                            && !written_keys.contains(*key)
+                            && record.emitted_json.is_some()
+                    })
+                    .map(|(key, record)| (key.clone(), record.clone())),
+            );
         }
     }
 

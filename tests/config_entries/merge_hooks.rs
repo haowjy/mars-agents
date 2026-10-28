@@ -622,7 +622,7 @@ fn all_merge_destinations_are_validated_before_the_first_write() {
         .unwrap();
     project.child(".claude").create_dir_all().unwrap();
     project
-        .child(".claude/.mcp.json")
+        .child(".mcp.json")
         .write_str(r#"{"sentinel":"mcp"}"#)
         .unwrap();
     project
@@ -646,9 +646,7 @@ fn all_merge_destinations_are_validated_before_the_first_write() {
         .failure()
         .stderr(predicate::str::contains("settings.local.json"))
         .stderr(predicate::str::contains("hooks is not an object"));
-    project
-        .child(".claude/.mcp.json")
-        .assert(r#"{"sentinel":"mcp"}"#);
+    project.child(".mcp.json").assert(r#"{"sentinel":"mcp"}"#);
     project
         .child(".claude/settings.local.json")
         .assert(r#"{"hooks":[]}"#);

@@ -2378,10 +2378,9 @@ fn sync_installs_only_the_token_servers_directory_and_keeps_its_entry() {
         .assert()
         .success();
 
-    let entry: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project.child(".claude/.mcp.json").path()).unwrap(),
-    )
-    .unwrap();
+    let entry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(project.child(".mcp.json").path()).unwrap())
+            .unwrap();
     let installed = project.child(".claude/mcp/echo/server.js");
     // Mars canonicalizes the root; on Windows the temp dir may be an 8.3 short path.
     let canonical_installed = dunce::canonicalize(installed.path()).unwrap();

@@ -489,7 +489,7 @@ pub(crate) fn mcp_config_targets(managed_targets: &[String]) -> Vec<String> {
         .filter(|target| {
             registry
                 .get(target)
-                .is_some_and(|adapter| !adapter.mcp_config_file_names().is_empty())
+                .is_some_and(|adapter| adapter.mcp_file().is_some())
         })
         .cloned()
         .collect()

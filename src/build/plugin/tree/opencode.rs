@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Serialize;
@@ -6,7 +5,7 @@ use serde::Serialize;
 use crate::compiler::hooks::ParsedHookItem;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::target::opencode::{McpServer, OpencodeAdapter};
+use crate::target::opencode::OpencodeAdapter;
 use crate::target::{ConfigEntry, TargetAdapter};
 use mars_schema::HarnessId;
 use mars_schema::frontmatter::Frontmatter;
@@ -71,13 +70,8 @@ fn write_config_entries(
     _harnesses: &[&'static super::super::spec::PluginHarnessSpec],
     _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let servers = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            ConfigEntry::McpServer(server) => Some((server.name.clone(), McpServer::from(server))),
-            ConfigEntry::Hook(_) => None,
-        })
-        .collect::<BTreeMap<_, _>>();
+    let (mcp, _) = super::standard_config_entries(entries);
+    let servers = super::render_servers(&OpencodeAdapter, &mcp);
     if servers.is_empty() {
         return Ok(());
     }

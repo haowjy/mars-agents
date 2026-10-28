@@ -134,22 +134,12 @@ fn remove_owned_target_content(
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
     let retention = removal_plan.execute(
         |operation, diagnostics| {
-            let surface = operation.surface();
-            let Some(adapter) = registry.get(operation.target_root()) else {
-                let (target_dir, removal) = operation.into_parts(&ctx.project_root);
-                return crate::surface_ownership::retention::RemovalReport::failed(
-                    format!("no adapter registered for `{}`", target_dir.display()),
-                    removal.prior_records.clone(),
-                );
-            };
-            match surface {
-                crate::surface_ownership::retention::Surface::Hook => {
-                    adapter.remove_owned_hook_entries(operation, &ctx.project_root, diagnostics)
-                }
-                crate::surface_ownership::retention::Surface::Mcp => {
-                    adapter.remove_config_entries(operation, &ctx.project_root)
-                }
-            }
+            crate::compiler::config_entries::remove(
+                &registry,
+                operation,
+                &ctx.project_root,
+                diagnostics,
+            )
         },
         &mut diagnostics,
     );

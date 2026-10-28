@@ -291,9 +291,10 @@ that never names the token has no directory and needs none.
    are path-matched by name. The same phase performs temporary removal-only
    residue sweeps for legacy OpenCode `opencode.json` hooks and Codex
    `codex_hooks.json` hooks.
-10. Write desired entries to target config files via target adapters
-    (`.mcp.json`, `settings.local.json`, `hooks.json`, etc.). Non-fatal
-    per-target.
+10. Write desired entries to target config files: MCP through each adapter's
+    `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), hooks through the
+    adapter (`settings.local.json`, `hooks.json`). A same-named MCP entry the
+    lock does not own is kept. Non-fatal per-target.
 
 In `--diff` (dry run) mode, stale entries are reported as warnings but not
 removed; writes are skipped.

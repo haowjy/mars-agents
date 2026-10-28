@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-10-28
+
+### Fixed
+- `mars check` no longer warns "has a model policy for alias `X`, which is not a catalog alias here" for aliases a dependency defines; it reads them from `mars.lock`, as `mars sync` does. When the lock records no dependencies, the warning says their catalogs were not consulted.
+
 ## [0.23.1] - 2026-10-27
 
 ### Fixed

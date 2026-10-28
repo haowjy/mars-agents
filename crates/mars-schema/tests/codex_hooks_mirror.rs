@@ -221,6 +221,35 @@ const EVERYTHING: &str = r#"{
   "TaskCreated":[{"hooks":[{"type":"command","command":"echo t"}]}]
 }"#;
 
+// codex-rs/hooks/src/engine/matcher.rs `HookMatcher::new`: what discovery compiles.
+fn codex_admits_matcher(pattern: &str) -> bool {
+    pattern.is_empty()
+        || pattern == "*"
+        || pattern
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '|')
+        || regex::Regex::new(pattern).is_ok()
+}
+
+#[test]
+fn every_rendered_matcher_compiles_in_codex() {
+    // Patterns that work on Claude (JavaScript regex) and fail in Rust's `regex`.
+    let (document, _) = codex_document(
+        r#"{"PreToolUse":[
+            {"matcher":"^(?!Read).*","hooks":[{"type":"command","command":"a"}]},
+            {"matcher":"(a)\\1","hooks":[{"type":"command","command":"b"}]},
+            {"matcher":"Bash","hooks":[{"type":"command","command":"c"}]},
+            {"matcher":"^mcp__(github|slack)__.*$","hooks":[{"type":"command","command":"d"}]}]}"#,
+    );
+    let groups = document["hooks"]["PreToolUse"].as_array().unwrap();
+    assert_eq!(groups.len(), 2, "{document:#}");
+    for group in groups {
+        let matcher = group["matcher"].as_str().unwrap();
+        assert!(codex_admits_matcher(matcher), "Codex rejects `{matcher}`");
+    }
+    assert!(!codex_admits_matcher("^(?!Read).*"));
+}
+
 #[test]
 fn every_rendered_codex_document_loads_with_no_handler_skipped() {
     let (document, _) = codex_document(EVERYTHING);

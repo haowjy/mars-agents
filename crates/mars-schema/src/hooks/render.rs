@@ -179,8 +179,23 @@ impl PortableHooks {
                 rendered.skip(event, "Codex has no such event".into());
                 continue;
             }
+            let matched = profile
+                .events
+                .iter()
+                .any(|e| e.name == event && e.matcher.is_some());
             let mut entries = Vec::new();
             for (g, group) in groups.iter().enumerate() {
+                if let (true, Some(matcher)) = (matched, &group.matcher)
+                    && let Err(reason) = codex_matcher(matcher)
+                {
+                    rendered.skip(
+                        event,
+                        format!(
+                            "matcher group {g}: Codex cannot compile matcher `{matcher}`: {reason}"
+                        ),
+                    );
+                    continue;
+                }
                 let mut kept = Vec::new();
                 for (h, handler) in group.handlers.iter().enumerate() {
                     match codex_handler(event, handler) {
@@ -203,6 +218,32 @@ impl PortableHooks {
         };
         rendered
     }
+}
+
+/// Whether Codex 0.164.0 admits a group's `matcher`. Codex compiles it at discovery, and a
+/// group whose matcher fails is skipped (`HookMatcher::new`, codex-rs/hooks/src/engine/
+/// matcher.rs; `append_matcher_groups`, discovery.rs L527-541): empty, `*` and plain
+/// `A|B` name lists are exact, anything else is a Rust `regex`, which has no look-around or
+/// backreferences although Claude's JavaScript regex does. Codex reads the matcher only on
+/// the events that have a matcher field (`matcher_pattern_for_event`, events/common.rs).
+fn codex_matcher(pattern: &str) -> Result<(), String> {
+    use regex_syntax::Error;
+    if pattern.is_empty()
+        || pattern == "*"
+        || pattern
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '|')
+    {
+        return Ok(());
+    }
+    regex_syntax::Parser::new()
+        .parse(pattern)
+        .map(drop)
+        .map_err(|error| match error {
+            Error::Parse(error) => error.kind().to_string(),
+            Error::Translate(error) => error.kind().to_string(),
+            other => other.to_string(),
+        })
 }
 
 /// A handler as Codex 0.164.0 parses it, or why Codex would not run it. Codex rejects its
@@ -352,6 +393,43 @@ mod tests {
                 "PreToolUse: matcher group 0, handler 2: Codex parses `prompt` handlers but never runs them",
                 "SessionEnd: matcher group 0, handler 0: Codex runs no `mcp_tool` handler on SessionEnd",
             ]
+        );
+    }
+
+    #[test]
+    fn codex_skips_a_group_whose_matcher_it_cannot_compile() {
+        let table = hooks(
+            r#"{"PreToolUse":[
+                {"matcher":"^(?!Read).*","hooks":[{"type":"command","command":"a"}]},
+                {"matcher":"Bash|Edit","hooks":[{"type":"command","command":"b"}]},
+                {"matcher":"mcp__.*","hooks":[{"type":"command","command":"c"}]},
+                {"matcher":"*","hooks":[{"type":"command","command":"d"}]}],
+               "Stop":[{"matcher":"(?<=x)y","hooks":[{"type":"command","command":"e"}]}]}"#,
+        );
+        let rendered = table.render(&profile(".codex"), &tokens());
+        let commands: Vec<_> = rendered.events()["PreToolUse"]
+            .iter()
+            .map(|g| {
+                g.to_json()["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(commands, ["b", "c", "d"]);
+        // Codex reads no matcher on Stop, so that group stays.
+        assert!(rendered.events().contains_key("Stop"));
+        assert_eq!(rendered.skips.len(), 1);
+        assert!(
+            rendered.skips[0].reason.contains("matcher group 0")
+                && rendered.skips[0].reason.contains("look-around"),
+            "{:?}",
+            rendered.skips
+        );
+        // Claude takes all of it.
+        assert_eq!(
+            table.render(&profile(".claude"), &tokens()).events()["PreToolUse"].len(),
+            4
         );
     }
 

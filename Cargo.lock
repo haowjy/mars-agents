@@ -1352,6 +1352,8 @@ name = "mars-schema"
 version = "0.24.1"
 dependencies = [
  "indexmap",
+ "regex",
+ "regex-syntax",
  "semver",
  "serde",
  "serde_bytes",

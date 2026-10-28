@@ -7,6 +7,15 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.23.3] - 2026-10-28
+
+### Added
+- The user `config.toml` (`$MARS_CONFIG_DIR/config.toml`, else the platform `mars/config.toml`) accepts the same `[settings]`, `[models]`, `[agents]` and `[skills]` sections as `mars.local.toml`, so one file replaces per-project copies. It ranks below `mars.toml`: `user config.toml < mars.toml < mars.local.toml < CLI`. `[overrides]` is rejected there with an error that points to the project's `mars.local.toml`.
+
+### Changed
+- A user `config.toml` key that Mars once ignored with a warning (`default_model` and other `[settings]` keys) now applies. Unknown keys no longer warn, as in `mars.local.toml`.
+- A TOML parse error in any config file reads `failed to parse <path>: …`, and a read failure carries the file path.
+
 ## [0.23.2] - 2026-10-28
 
 ### Fixed

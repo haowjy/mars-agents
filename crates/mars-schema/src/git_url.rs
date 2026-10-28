@@ -9,13 +9,22 @@ pub fn with_default_scheme(url: &str) -> String {
     }
 }
 
-/// `user@host:path`, the SSH shorthand, whatever the user.
+/// `host:path` or `user@host:path`, the SSH shorthand: a colon before any `/`, with no `://`, and
+/// something other than a port number after it.
 fn is_scp_style(url: &str) -> bool {
-    url.split_once(':').is_some_and(|(authority, _)| {
-        authority.split_once('@').is_some_and(|(user, host)| {
-            !user.is_empty() && !host.is_empty() && !authority.contains('/')
-        })
-    })
+    let Some((authority, path)) = url.split_once(':') else {
+        return false;
+    };
+    let (user_ok, host) = match authority.split_once('@') {
+        Some((user, host)) => (!user.is_empty(), host),
+        None => (true, authority),
+    };
+    let first_segment = path.split('/').next().unwrap_or("");
+    user_ok
+        && !host.is_empty()
+        && !authority.contains('/')
+        && !first_segment.is_empty()
+        && !first_segment.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Canonicalize a git URL for identity comparison and cache keying.

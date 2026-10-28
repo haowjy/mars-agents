@@ -146,7 +146,7 @@ otherwise (`resolve()` turns the selection's first `missing_skills` entry into t
 never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator
 reports what is actually provided. Source items come from `Prepared.definitions` and, for the kinds
 the crate does not prepare (bootstrap documents, hooks), from `src/discover/`'s convention walk.
-Every constraint on a package must hold on the ref it settles at, whether or not it selects anything: a ref pin holds only at that ref, a range never at a pin, `latest` anywhere (and warns beside a pin). `mars_schema::version::settle` refuses two pins, or a pin beside a range, before any fetch; a constraint arriving after the package resolved re-runs resolution (path sources aside). `validate_all_constraints` re-checks the settled graph and emits the drift warning.
+Every constraint on a package must hold on the ref it settles at, whether or not it selects anything: a ref pin holds only at that ref, a range never at a pin, `latest` anywhere (and warns beside a pin). `mars_schema::version::settle` refuses two pins, or a pin beside a range, before any fetch; a constraint arriving after the package resolved re-runs resolution (path sources aside). `warn_version_drift` re-checks the settled graph and emits the drift warning.
 
 ## Patterns
 

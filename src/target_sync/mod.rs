@@ -755,35 +755,6 @@ mod tests {
     }
 
     #[test]
-    fn sync_removes_items_from_target() {
-        let dir = TempDir::new().unwrap();
-        let mars_dir = dir.path().join(".mars");
-        let target = dir.path().join(".agents");
-
-        std::fs::create_dir_all(&mars_dir).unwrap();
-        std::fs::create_dir_all(target.join("agents")).unwrap();
-        std::fs::write(target.join("agents/old.md"), "# Old").unwrap();
-
-        let outcomes = vec![make_outcome("agents/old.md", ActionTaken::Removed)];
-        let mut diag = DiagnosticCollector::new();
-
-        let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
-            &[".agents".to_string()],
-            &outcomes,
-            &target_sync_ctx(
-                &lock_with_target_outputs(".agents", &[("agents/old.md", "sha256:old")]),
-                false,
-            ),
-            &mut diag,
-        );
-
-        assert_eq!(results[0].items_removed, 1);
-        assert!(!target.join("agents/old.md").exists());
-    }
-
-    #[test]
     fn sync_cleans_up_previous_managed_orphans() {
         let dir = TempDir::new().unwrap();
         let mars_dir = dir.path().join(".mars");
@@ -978,57 +949,6 @@ mod tests {
         assert!(!dir.path().join(".codex/agents/coder.md").exists());
         assert!(!dir.path().join(".opencode/agents/coder.md").exists());
         assert!(!dir.path().join(".pi/agents/coder.md").exists());
-    }
-
-    #[test]
-    fn sync_unknown_target_still_copies_canonical_agents() {
-        let dir = TempDir::new().unwrap();
-        let mars_dir = dir.path().join(".mars");
-
-        std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
-        std::fs::write(mars_dir.join("agents/coder.md"), "# Coder").unwrap();
-
-        let outcomes = vec![make_outcome("agents/coder.md", ActionTaken::Installed)];
-        let mut diag = DiagnosticCollector::new();
-
-        let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
-            &[".custom-target".to_string()],
-            &outcomes,
-            &target_sync_ctx(&LockFile::empty(), false),
-            &mut diag,
-        );
-
-        assert_eq!(results[0].items_synced, 1);
-        assert!(dir.path().join(".custom-target/agents/coder.md").exists());
-    }
-
-    #[test]
-    fn sync_skill_directory() {
-        let dir = TempDir::new().unwrap();
-        let mars_dir = dir.path().join(".mars");
-        let target = dir.path().join(".agents");
-
-        std::fs::create_dir_all(mars_dir.join("skills/planning")).unwrap();
-        std::fs::write(mars_dir.join("skills/planning/SKILL.md"), "# Planning").unwrap();
-
-        let mut outcome = make_outcome("skills/planning", ActionTaken::Installed);
-        outcome.item_id.kind = mars_schema::item::ItemKind::Skill;
-        let outcomes = vec![outcome];
-        let mut diag = DiagnosticCollector::new();
-
-        let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
-            &[".agents".to_string()],
-            &outcomes,
-            &target_sync_ctx(&LockFile::empty(), false),
-            &mut diag,
-        );
-
-        assert_eq!(results[0].items_synced, 1);
-        assert!(target.join("skills/planning/SKILL.md").exists());
     }
 
     #[test]

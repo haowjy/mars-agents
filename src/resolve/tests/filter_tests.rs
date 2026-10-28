@@ -182,6 +182,8 @@ fn direct_filter_is_retained_when_same_source_is_also_a_filtered_transitive_dep(
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
 
@@ -243,6 +245,8 @@ fn filtered_include_dep_resolves_version_without_seeding_transitive_items() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
 
@@ -319,6 +323,8 @@ fn filtered_parent_dep_does_not_seed_unfiltered_grandchild_items() {
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
 
@@ -380,6 +386,8 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
     let config = EffectiveConfig {
         dependencies,
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
 

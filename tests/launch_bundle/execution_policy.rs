@@ -285,7 +285,7 @@ network-deny = ["blocked.overlay.example"]
     std::fs::create_dir_all(&user_config).unwrap();
     std::fs::write(
         user_config.join("config.toml"),
-        "[settings]\ndefault-network = \"allowlist\"\nnetwork_allow = [\"z.user.example\"]\nnetwork_deny = [\"blocked.user.example\"]\ndefault_model = \"ignored\"\n",
+        "[settings]\ndefault-network = \"allowlist\"\nnetwork_allow = [\"z.user.example\"]\nnetwork_deny = [\"blocked.user.example\"]\n",
     )
     .unwrap();
 
@@ -329,17 +329,6 @@ network-deny = ["blocked.overlay.example"]
     );
     assert_eq!(bundle["provenance"]["network_source"], "config");
     assert_eq!(bundle["execution_policy"]["effort"], "high");
-    assert!(
-        bundle["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| {
-                warning
-                    .as_str()
-                    .is_some_and(|message| message.contains("[settings].default_model is ignored"))
-            })
-    );
 
     let project_config_path = project_root.join("mars.toml");
     let project_config = std::fs::read_to_string(&project_config_path)

@@ -341,6 +341,8 @@ fn make_config(sources: Vec<(&str, SourceSpec)>) -> EffectiveConfig {
     EffectiveConfig {
         dependencies: map,
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     }
 }

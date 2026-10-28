@@ -66,8 +66,9 @@ fn link_target(
 
     let config = crate::config::load(&ctx.project_root)?;
     let local = crate::config::load_local(&ctx.project_root)?;
+    let user = crate::config::load_user_config()?;
     let (effective, _) =
-        crate::config::merge_with_root(config.clone(), local.clone(), &ctx.project_root)?;
+        crate::config::merge_with_root(config.clone(), local.clone(), &user, &ctx.project_root)?;
     let mut runtime_targets = effective.settings.managed_targets();
     let mut persisted_targets = config.settings.managed_targets();
     ensure_target_list_contains(&mut runtime_targets, target_name);
@@ -168,8 +169,6 @@ fn link_target(
             &crate::compiler::NativeAgentLinkMaterializeCtx {
                 mars_ctx: ctx,
                 managed_targets: &runtime_targets,
-                config: &config,
-                local: &local,
                 effective: &effective,
                 graph: &graph,
                 old_lock: &lock,

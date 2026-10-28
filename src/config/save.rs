@@ -34,7 +34,7 @@ pub(super) fn save_document<T: Serialize>(
                 .map_err(|e| invalid(format!("failed to serialize config: {e}")))?;
             return crate::fs::atomic_write(path, content.as_bytes());
         }
-        Err(e) => return Err(ConfigError::Io(e).into()),
+        Err(source) => return Err(super::read_error(path, source)),
     };
 
     let base_table = to_toml(&parse(&text)?)?;

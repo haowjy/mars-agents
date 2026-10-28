@@ -403,8 +403,9 @@ pub(crate) fn load_config(
     }
 
     // Build effective config.
+    let user = crate::config::load_user_config()?;
     let (effective, config_diagnostics) =
-        crate::config::merge_with_root(config.clone(), local.clone(), project_root)?;
+        crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
     diag.extend(config_diagnostics);
 
     if request.options.ignore_requires_mars {
@@ -539,13 +540,7 @@ pub(crate) fn resolve_graph(
     }
 
     // Merge model config from dependency tree (for diagnostics side effects).
-    let _ = crate::models::merged_model_aliases(
-        &graph,
-        &loaded.effective,
-        &loaded.config,
-        &loaded.local,
-        diag,
-    );
+    let _ = crate::models::merged_model_aliases(&graph, &loaded.effective, diag);
 
     Ok(ResolvedState {
         loaded,
@@ -1059,7 +1054,7 @@ pub(crate) fn finalize(
             .loaded
             .effective
             .settings;
-        let ttl = settings.models_cache_ttl_hours;
+        let ttl = settings.models_cache_ttl_hours();
         let providers = settings
             .catalog_providers
             .clone()

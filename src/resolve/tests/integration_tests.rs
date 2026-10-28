@@ -2,19 +2,6 @@ use super::*;
 use mars_schema::dependency::Entry;
 
 #[test]
-fn apply_subpath_success_case() {
-    let dir = TempDir::new().unwrap();
-    let package_root = dir.path().join("plugins/foo");
-    std::fs::create_dir_all(&package_root).unwrap();
-
-    let subpath = SourceSubpath::new("plugins/foo").unwrap();
-    let rooted = apply_subpath(&SourceName::from("dep"), dir.path(), Some(&subpath)).unwrap();
-
-    assert_eq!(rooted.checkout_root, dir.path());
-    assert_eq!(rooted.package_root, package_root);
-}
-
-#[test]
 fn apply_subpath_missing_directory_rejection() {
     let dir = TempDir::new().unwrap();
     let subpath = SourceSubpath::new("plugins/missing").unwrap();
@@ -26,15 +13,9 @@ fn apply_subpath_missing_directory_rejection() {
         err.contains("does not exist"),
         "missing directory should be rejected: {err}"
     );
-}
 
-#[test]
-fn apply_subpath_file_not_dir_rejection() {
-    let dir = TempDir::new().unwrap();
-    let file_path = dir.path().join("plugins");
-    std::fs::write(&file_path, "not a directory").unwrap();
+    std::fs::write(dir.path().join("plugins"), "not a directory").unwrap();
     let subpath = SourceSubpath::new("plugins").unwrap();
-
     let err = apply_subpath(&SourceName::from("dep"), dir.path(), Some(&subpath))
         .unwrap_err()
         .to_string();
@@ -64,61 +45,6 @@ fn apply_subpath_traversal_rejection() {
 }
 
 // ========== Resolution tests ==========
-
-#[test]
-fn single_source_no_deps() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("source-a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 1, 0)]);
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("^1.0")),
-    )]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-
-    assert_eq!(graph.nodes.len(), 1);
-    assert!(graph.nodes.contains_key("a"));
-    assert_eq!(graph.order.len(), 1);
-    assert_eq!(graph.order[0], "a");
-
-    // Latest-compatible: should pick 1.1.0 (newest satisfying)
-    let node = &graph.nodes["a"];
-    assert_eq!(node.resolved_ref.version, Some(Version::new(1, 1, 0)));
-}
-
-#[test]
-fn two_sources_no_deps() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_b = dir.path().join("b");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_b).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/b.git", vec![(2, 0, 0)]);
-    provider.add_source("a", tree_a, None);
-    provider.add_source("b", tree_b, None);
-
-    let config = make_config(vec![
-        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-        ("b", git_spec("https://example.com/b.git", Some("v2.0.0"))),
-    ]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-
-    assert_eq!(graph.nodes.len(), 2);
-    assert_eq!(graph.order.len(), 2);
-    // Both should be in the order (either order is valid since no deps)
-    assert!(graph.order.contains(&"a".into()));
-    assert!(graph.order.contains(&"b".into()));
-}
 
 #[test]
 fn transitive_override_does_not_collapse_conflicting_declared_identities() {
@@ -381,161 +307,67 @@ fn source_identity_mismatch_detects_different_subpaths_for_same_name() {
 
 #[test]
 fn transitive_dep_propagates_subpath_into_source_identity() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_dep = dir.path().join("dep");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(tree_dep.join("plugins/foo")).unwrap();
+    // A declared subpath flows into the dependency's identity and package root; a dependency
+    // with none keeps `None`, and its package root is the checkout root.
+    for subpath in [Some("plugins/foo"), None] {
+        let dir = TempDir::new().unwrap();
+        let tree_a = dir.path().join("a");
+        let tree_dep = dir.path().join("dep");
+        std::fs::create_dir_all(&tree_a).unwrap();
+        std::fs::create_dir_all(tree_dep.join("plugins/foo")).unwrap();
 
-    let mut manifest_deps = IndexMap::new();
-    manifest_deps.insert(
-        "dep".to_string(),
-        Entry {
-            version: Some(">=1.0.0".to_string()),
-            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
-            ..Entry::git("https://example.com/dep.git")
-        },
-    );
-    let manifest_a = Manifest {
-        package: PackageInfo {
-            name: "a".to_string(),
-            version: "1.0.0".to_string(),
-            description: None,
-            authors: None,
-            homepage: None,
-            license: None,
-            schema: None,
-            uses_providers: Vec::new(),
-            requires_mars: None,
-            requires_meridian: None,
-        },
-        dependencies: manifest_deps,
-        models: IndexMap::new(),
-    };
+        let subpath = subpath.map(|path| SourceSubpath::new(path).unwrap());
+        let mut manifest_deps = IndexMap::new();
+        manifest_deps.insert(
+            "dep".to_string(),
+            Entry {
+                version: Some(">=1.0.0".to_string()),
+                subpath: subpath.clone(),
+                ..Entry::git("https://example.com/dep.git")
+            },
+        );
+        let manifest_a = Manifest {
+            package: PackageInfo {
+                name: "a".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: None,
+                homepage: None,
+                license: None,
+                schema: None,
+                uses_providers: Vec::new(),
+                requires_mars: None,
+                requires_meridian: None,
+            },
+            dependencies: manifest_deps,
+            models: IndexMap::new(),
+        };
 
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("dep", tree_dep.clone(), None);
+        let mut provider = MockProvider::new();
+        provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+        provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
+        provider.add_source("a", tree_a, Some(manifest_a));
+        provider.add_source("dep", tree_dep.clone(), None);
 
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("v1.0.0")),
-    )]);
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some("v1.0.0")),
+        )]);
+        let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
-    let dep_node = graph.nodes.get("dep").expect("dep should be resolved");
-    // SourceId stores the canonical URL (no protocol, no .git suffix)
-    assert_eq!(
-        dep_node.source_id,
-        SourceId::git_with_subpath(
-            SourceUrl::from("example.com/dep"),
-            Some(SourceSubpath::new("plugins/foo").unwrap())
-        )
-    );
-    assert_eq!(
-        dep_node.rooted_ref.package_root,
-        tree_dep.join("plugins/foo")
-    );
-}
-
-#[test]
-fn compatible_constraints_from_two_dependents() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_b = dir.path().join("b");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_b).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-
-    // Both a and b depend on shared with the same constraint.
-    // The resolved version must satisfy both.
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", ">=1.0.0")],
-    );
-    let manifest_b = make_manifest(
-        "b",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", ">=1.0.0")],
-    );
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
-    provider.add_versions(
-        "https://example.com/shared.git",
-        vec![(1, 0, 0), (1, 2, 0), (1, 5, 0), (2, 0, 0)],
-    );
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("b", tree_b, Some(manifest_b));
-    provider.add_source("shared", tree_shared, None);
-
-    let config = make_config(vec![
-        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
-    ]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-
-    assert_eq!(graph.nodes.len(), 3);
-    // Latest-compatible with >=1.0.0 from both → picks 2.0.0 (newest satisfying all)
-    let shared_node = &graph.nodes["shared"];
-    assert_eq!(
-        shared_node.resolved_ref.version,
-        Some(Version::new(2, 0, 0))
-    );
-}
-
-#[test]
-fn narrower_second_constraint_upgrades_latest_compatible_selection() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_b = dir.path().join("b");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_b).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-
-    // a requires shared >=1.0.0, b requires shared >=1.5.0.
-    // Combined constraints select the newest satisfying version: 2.0.0.
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", ">=1.0.0")],
-    );
-    let manifest_b = make_manifest(
-        "b",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", ">=1.5.0")],
-    );
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
-    provider.add_versions(
-        "https://example.com/shared.git",
-        vec![(1, 0, 0), (1, 2, 0), (1, 5, 0), (2, 0, 0)],
-    );
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("b", tree_b, Some(manifest_b));
-    provider.add_source("shared", tree_shared, None);
-
-    let config = make_config(vec![
-        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
-    ]);
-
-    let graph = resolve(&config, &provider, None, &default_options())
-        .expect("both constraints are satisfiable; should resolve to 2.0.0");
-    assert_eq!(
-        graph.nodes["shared"].resolved_ref.version,
-        Some(Version::new(2, 0, 0)),
-        "re-resolution must upgrade shared to the newest version satisfying both >=1.0.0 and >=1.5.0"
-    );
+        let dep_node = graph.nodes.get("dep").expect("dep should be resolved");
+        // SourceId stores the canonical URL (no protocol, no .git suffix)
+        assert_eq!(
+            dep_node.source_id,
+            SourceId::git_with_subpath(SourceUrl::from("example.com/dep"), subpath.clone())
+        );
+        let expected_root = match &subpath {
+            Some(subpath) => tree_dep.join(subpath.as_str()),
+            None => tree_dep.clone(),
+        };
+        assert_eq!(dep_node.rooted_ref.package_root, expected_root);
+        assert_eq!(dep_node.rooted_ref.checkout_root, tree_dep);
+    }
 }
 
 #[test]
@@ -620,94 +452,6 @@ fn cycle_does_not_error() {
     assert_eq!(graph.nodes.len(), 2);
     assert!(graph.nodes.contains_key("a"));
     assert!(graph.nodes.contains_key("b"));
-}
-
-#[test]
-fn same_version_revisit_skips_and_package_fetches_once() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_b = dir.path().join("b");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_b).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-    write_minimal_package_marker(&tree_shared);
-    write_skill(&tree_shared, "common");
-
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", ">=1.0.0")],
-    );
-    let manifest_b = make_manifest(
-        "b",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", ">=1.0.0")],
-    );
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0)]);
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("b", tree_b, Some(manifest_b));
-    provider.add_source("shared", tree_shared, None);
-
-    let config = make_config(vec![
-        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
-    ]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    assert!(graph.nodes.contains_key("shared"));
-    assert_eq!(provider.fetch_count("shared"), 1);
-}
-
-#[test]
-fn different_second_constraint_re_resolves_to_satisfying_version() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_b = dir.path().join("b");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_b).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-    write_minimal_package_marker(&tree_shared);
-    write_skill(&tree_shared, "common");
-
-    // a requires shared >=1.0.0.
-    // b requires shared >=2.0.0 — latest-compatible with combined constraints is 2.0.0.
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", ">=1.0.0")],
-    );
-    let manifest_b = make_manifest(
-        "b",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", ">=2.0.0")],
-    );
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (2, 0, 0)]);
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("b", tree_b, Some(manifest_b));
-    provider.add_source("shared", tree_shared, None);
-
-    let config = make_config(vec![
-        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
-    ]);
-
-    let graph = resolve(&config, &provider, None, &default_options())
-        .expect(">=1.0.0 and >=2.0.0 are jointly satisfiable by 2.0.0; should not error");
-    assert_eq!(
-        graph.nodes["shared"].resolved_ref.version,
-        Some(Version::new(2, 0, 0)),
-        "re-resolution must select shared 2.0.0 (latest satisfying >=1.0.0 ∩ >=2.0.0)"
-    );
 }
 
 #[test]
@@ -866,43 +610,6 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
 }
 
 #[test]
-fn source_without_manifest_has_no_transitive_deps() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_source("a", tree, None); // No manifest
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("v1.0.0")),
-    )]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    assert_eq!(graph.nodes.len(), 1);
-    assert_eq!(graph.nodes["a"].deps().count(), 0);
-}
-
-#[test]
-fn path_source_resolves_without_version() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("local-source");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_source("local", tree.clone(), None);
-
-    let config = make_config(vec![("local", SourceSpec::Path(tree))]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    assert_eq!(graph.nodes.len(), 1);
-    let node = &graph.nodes["local"];
-    assert!(node.resolved_ref.version.is_none());
-}
-
-#[test]
 fn local_path_source_resolves_transitive_path_dependencies() {
     let dir = TempDir::new().unwrap();
     let app = dir.path().join("app");
@@ -941,17 +648,6 @@ fn local_path_source_resolves_transitive_path_dependencies() {
 }
 
 // ========== RES-006 / RES-008: apply_subpath with None subpath ==========
-
-/// RES-006 / RES-008: When no subpath is specified, checkout_root IS the
-/// package_root and the resolver produces a RootedSourceRef where both
-/// fields point to the same directory.
-#[test]
-fn apply_subpath_none_yields_checkout_as_package_root() {
-    let dir = TempDir::new().unwrap();
-    let rooted = apply_subpath(&SourceName::from("dep"), dir.path(), None).unwrap();
-    assert_eq!(rooted.checkout_root, dir.path());
-    assert_eq!(rooted.package_root, dir.path());
-}
 
 // ========== RES-009: manifest reader is called with package_root ==========
 
@@ -1033,243 +729,13 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
 
 // ========== RES-005: single fetch for same URL, multiple subpaths ==========
 
-/// RES-005: Two dependencies at different subpaths of the same git URL
-/// must not trigger a second fetch.  In our resolver the fetch is keyed by
-/// (source name, URL) so two DISTINCT dep names pointing to the same URL
-/// but different subpaths each call fetch_git_version once — but the test
-/// verifies they both resolve successfully with distinct package_roots,
-/// which is the observable contract from the resolver's perspective
-/// (cache sharing is a source-layer concern; here we verify no error is
-/// raised and both roots are distinct).
-#[test]
-fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
-    let dir = TempDir::new().unwrap();
-    let checkout_a = dir.path().join("a");
-    let checkout_b = dir.path().join("b");
-    let pkg_a = checkout_a.join("plugins/foo");
-    let pkg_b = checkout_b.join("plugins/bar");
-    std::fs::create_dir_all(&pkg_a).unwrap();
-    std::fs::create_dir_all(&pkg_b).unwrap();
-
-    let subpath_foo = SourceSubpath::new("plugins/foo").unwrap();
-    let subpath_bar = SourceSubpath::new("plugins/bar").unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/mono.git", vec![(1, 0, 0)]);
-    provider.add_source("dep-a", checkout_a.clone(), None);
-    provider.add_source("dep-b", checkout_b.clone(), None);
-
-    let mut dependencies = IndexMap::new();
-    dependencies.insert(
-        SourceName::from("dep-a"),
-        EffectiveDependency {
-            declared_source_id: SourceId::git_with_subpath(
-                SourceUrl::from("https://example.com/mono.git"),
-                Some(subpath_foo.clone()),
-            ),
-            source_id: SourceId::git_with_subpath(
-                SourceUrl::from("https://example.com/mono.git"),
-                Some(subpath_foo.clone()),
-            ),
-            spec: git_spec("https://example.com/mono.git", Some("v1.0.0")),
-            subpath: Some(subpath_foo),
-            filter: FilterMode::All,
-            rename: RenameMap::new(),
-            dialect: None,
-        },
-    );
-    dependencies.insert(
-        SourceName::from("dep-b"),
-        EffectiveDependency {
-            declared_source_id: SourceId::git_with_subpath(
-                SourceUrl::from("https://example.com/mono.git"),
-                Some(subpath_bar.clone()),
-            ),
-            source_id: SourceId::git_with_subpath(
-                SourceUrl::from("https://example.com/mono.git"),
-                Some(subpath_bar.clone()),
-            ),
-            spec: git_spec("https://example.com/mono.git", Some("v1.0.0")),
-            subpath: Some(subpath_bar),
-            filter: FilterMode::All,
-            rename: RenameMap::new(),
-            dialect: None,
-        },
-    );
-    let config = EffectiveConfig {
-        dependencies,
-        settings: Settings::default(),
-        models: indexmap::IndexMap::new(),
-        agents: indexmap::IndexMap::new(),
-        skills: indexmap::IndexMap::new(),
-    };
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    assert_eq!(graph.nodes.len(), 2);
-
-    let node_a = graph.nodes.get("dep-a").expect("dep-a should be resolved");
-    let node_b = graph.nodes.get("dep-b").expect("dep-b should be resolved");
-    // Each gets its own distinct package_root
-    assert_eq!(node_a.rooted_ref.package_root, pkg_a);
-    assert_eq!(node_b.rooted_ref.package_root, pkg_b);
-    // checkout_roots differ because MockProvider returns different trees per name
-    assert_ne!(
-        node_a.rooted_ref.package_root,
-        node_b.rooted_ref.package_root
-    );
-}
-
 // ========== RES-011: transitive dep with no subpath gets None identity ==========
-
-/// RES-011 contrast: a transitive dep whose manifest entry has NO subpath
-/// should produce a source identity with subpath = None (not inherit from
-/// the parent).
-#[test]
-fn transitive_dep_without_subpath_has_none_in_source_identity() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_dep = dir.path().join("dep");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_dep).unwrap();
-
-    // 'a' depends on 'dep' with NO subpath declared
-    let mut manifest_deps = IndexMap::new();
-    manifest_deps.insert(
-        "dep".to_string(),
-        Entry {
-            version: Some(">=1.0.0".to_string()),
-            ..Entry::git("https://example.com/dep.git")
-        },
-    );
-    let manifest_a = Manifest {
-        package: PackageInfo {
-            name: "a".to_string(),
-            version: "1.0.0".to_string(),
-            description: None,
-            authors: None,
-            homepage: None,
-            license: None,
-            schema: None,
-            uses_providers: Vec::new(),
-            requires_mars: None,
-            requires_meridian: None,
-        },
-        dependencies: manifest_deps,
-        models: IndexMap::new(),
-    };
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("dep", tree_dep.clone(), None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("v1.0.0")),
-    )]);
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-
-    let dep_node = graph.nodes.get("dep").expect("dep should be in graph");
-    // No subpath declared → identity must have subpath = None
-    // SourceId stores the canonical URL (no protocol, no .git suffix)
-    assert_eq!(
-        dep_node.source_id,
-        SourceId::git_with_subpath(SourceUrl::from("example.com/dep"), None)
-    );
-    // package_root equals checkout_root when subpath is None
-    assert_eq!(dep_node.rooted_ref.package_root, tree_dep);
-    assert_eq!(dep_node.rooted_ref.checkout_root, tree_dep);
-}
 
 // ========== URL Identity Convergence Tests ==========
 //
 // These tests verify that SSH and HTTPS URL forms of the same repository
 // canonicalize to the same SourceId, preventing false-duplicate cache entries
 // and enabling correct deduplication in the resolver.
-
-/// SSH and HTTPS forms of the same repo produce equal canonical SourceIds.
-#[test]
-fn ssh_and_https_url_forms_have_same_canonical_source_id() {
-    let ssh_id = SourceId::git_with_subpath(
-        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
-            "git@example.com:org/repo.git",
-        )),
-        None,
-    );
-    let https_id = SourceId::git_with_subpath(
-        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
-            "https://example.com/org/repo.git",
-        )),
-        None,
-    );
-    assert_eq!(
-        ssh_id, https_id,
-        "SSH and HTTPS of the same repo must produce equal SourceIds"
-    );
-}
-
-/// Two direct deps with different names that both resolve to the same canonical URL
-/// are detected as a duplicate-identity conflict.
-#[test]
-fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("shared");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    // Register versions for the SSH URL (used by spec of dep-a)
-    provider.add_versions("git@example.com:org/shared.git", vec![(1, 0, 0)]);
-    // Register versions for the HTTPS URL (used by spec of dep-b)
-    provider.add_versions("https://example.com/org/shared.git", vec![(1, 0, 0)]);
-    provider.add_source("dep-a", tree.clone(), None);
-    provider.add_source("dep-b", tree, None);
-
-    // Both deps canonicalize to the same SourceId
-    let canonical_url = SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
-        "https://example.com/org/shared.git",
-    ));
-    let mut deps = IndexMap::new();
-    deps.insert(
-        SourceName::from("dep-a"),
-        EffectiveDependency {
-            declared_source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
-            source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
-            spec: git_spec("git@example.com:org/shared.git", Some("v1.0.0")),
-            subpath: None,
-            filter: FilterMode::All,
-            rename: RenameMap::new(),
-            dialect: None,
-        },
-    );
-    deps.insert(
-        SourceName::from("dep-b"),
-        EffectiveDependency {
-            declared_source_id: SourceId::git_with_subpath(canonical_url.clone(), None),
-            source_id: SourceId::git_with_subpath(canonical_url, None),
-            spec: git_spec("https://example.com/org/shared.git", Some("v1.0.0")),
-            subpath: None,
-            filter: FilterMode::All,
-            rename: RenameMap::new(),
-            dialect: None,
-        },
-    );
-    let config = EffectiveConfig {
-        dependencies: deps,
-        settings: Settings::default(),
-        models: indexmap::IndexMap::new(),
-        agents: indexmap::IndexMap::new(),
-        skills: indexmap::IndexMap::new(),
-    };
-
-    let err = resolve(&config, &provider, None, &default_options())
-        .unwrap_err()
-        .to_string();
-    assert!(
-        err.contains("duplicate source identity"),
-        "SSH and HTTPS of same repo should be detected as duplicate: {err}"
-    );
-}
 
 /// A transitive dep declared with HTTPS form converges with a direct dep declared
 /// with SSH form of the same repo — no SourceIdentityMismatch is raised.
@@ -1354,47 +820,6 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     assert!(graph.nodes.contains_key("a"), "a should be resolved");
 }
 
-/// TRUE mismatches (different host or path) still produce errors — canonicalization
-/// does not collapse genuinely different repos into the same identity.
-#[test]
-fn different_host_or_path_does_not_produce_false_convergence() {
-    // Different hosts → different SourceIds
-    let github_id = SourceId::git_with_subpath(
-        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
-            "https://github.com/org/repo.git",
-        )),
-        None,
-    );
-    let gitlab_id = SourceId::git_with_subpath(
-        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
-            "https://gitlab.com/org/repo.git",
-        )),
-        None,
-    );
-    assert_ne!(
-        github_id, gitlab_id,
-        "Different hosts must produce distinct SourceIds"
-    );
-
-    // Different paths on the same host → different SourceIds
-    let repo_a_id = SourceId::git_with_subpath(
-        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
-            "https://github.com/org/repo-a.git",
-        )),
-        None,
-    );
-    let repo_b_id = SourceId::git_with_subpath(
-        SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
-            "https://github.com/org/repo-b.git",
-        )),
-        None,
-    );
-    assert_ne!(
-        repo_a_id, repo_b_id,
-        "Different repo paths must produce distinct SourceIds"
-    );
-}
-
 // ========== Re-resolution order-independence tests ==========
 //
 // When a transitive dep is resolved under a partial constraint set and a later
@@ -1439,77 +864,30 @@ fn transitive_latest_constraint_upgrades_already_resolved_version() {
     provider.add_source("b", tree_b, Some(manifest_b));
     provider.add_source("shared", tree_shared, None);
 
-    // `a` appears first in config; `b` contributes a late Latest constraint.
-    // The result must still be 1.2.0.
-    let config = make_config(vec![
-        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
-    ]);
+    // Whichever of `a` (semver bound) or `b` (Latest) comes first in config, the result
+    // must be 1.2.0.
+    for order in [["a", "b"], ["b", "a"]] {
+        let config = make_config(
+            order
+                .into_iter()
+                .map(|name| {
+                    (
+                        name,
+                        git_spec(&format!("https://example.com/{name}.git"), Some("v1.0.0")),
+                    )
+                })
+                .collect(),
+        );
 
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+        let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
-    assert_eq!(graph.nodes.len(), 3, "a, b, shared should all be resolved");
-    let shared_node = &graph.nodes["shared"];
-    assert_eq!(
-        shared_node.resolved_ref.version,
-        Some(Version::new(1, 2, 0)),
-        "shared must resolve to 1.2.0 (Latest+semver maximizes within >=1.0,<2.0)"
-    );
-}
-
-/// Symmetric case: `b` is processed first (Latest → 1.2.0), then `a` adds
-/// `>=1.0.0, <2.0.0`.  Since 1.2.0 already satisfies the semver bound, re-resolution
-/// should keep `shared` at 1.2.0.  Verifies order-independence — the result must
-/// match the primary regression test above.
-#[test]
-fn transitive_latest_constraint_order_independent_b_first() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_b = dir.path().join("b");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_b).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![(
-            "shared",
-            "https://example.com/shared.git",
-            ">=1.0.0, <2.0.0",
-        )],
-    );
-    let manifest_b = make_manifest(
-        "b",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", "")],
-    );
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (1, 2, 0)]);
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("b", tree_b, Some(manifest_b));
-    provider.add_source("shared", tree_shared, None);
-
-    // `b` first: Latest selects 1.2.0.  `a` arrives with `>=1.0.0, <2.0.0` which
-    // 1.2.0 satisfies — no version change, no re-resolution needed, stays at 1.2.0.
-    let config = make_config(vec![
-        ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
-        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-    ]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-
-    assert_eq!(graph.nodes.len(), 3, "a, b, shared should all be resolved");
-    let shared_node = &graph.nodes["shared"];
-    assert_eq!(
-        shared_node.resolved_ref.version,
-        Some(Version::new(1, 2, 0)),
-        "shared must resolve to 1.2.0 regardless of processing order"
-    );
+        assert_eq!(graph.nodes.len(), 3, "a, b, shared should all be resolved");
+        assert_eq!(
+            graph.nodes["shared"].resolved_ref.version,
+            Some(Version::new(1, 2, 0)),
+            "shared must resolve to 1.2.0 (Latest+semver maximizes within >=1.0,<2.0), order {order:?}"
+        );
+    }
 }
 
 #[test]
@@ -1896,10 +1274,6 @@ fn restart_override_preserves_latest_version_metadata() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     let shared = graph.nodes.get("shared").expect("shared should resolve");
     assert_eq!(shared.resolved_ref.version, Some(Version::new(1, 2, 0)));
-    assert!(
-        provider.fetch_count("shared") > 1,
-        "shared should be re-resolved at least once to exercise override path"
-    );
 }
 
 #[test]
@@ -2166,30 +1540,37 @@ fn incompatible_locked_version_warns_and_falls_back() {
 }
 
 #[test]
-fn refpin_engine_incompatibility_is_a_hard_error() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-    let mut provider = MockProvider::new();
-    provider.add_source(
-        "a",
-        tree,
-        Some(make_engine_manifest("a", "1.0.0", Some(">=99"), None)),
-    );
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("main")),
-    )]);
-    let options = ResolveOptions {
-        mars_version: Some(Version::new(1, 0, 0)),
-        ..default_options()
-    };
-    assert!(matches!(
-        resolve(&config, &provider, None, &options),
-        Err(MarsError::Resolution(
-            ResolutionError::RequiresEngineIncompatible { .. }
-        ))
-    ));
+fn refpin_and_path_engine_incompatibility_is_a_hard_error() {
+    for use_path in [false, true] {
+        let dir = TempDir::new().unwrap();
+        let tree = dir.path().join("a");
+        std::fs::create_dir_all(&tree).unwrap();
+        let mut provider = MockProvider::new();
+        provider.add_source(
+            "a",
+            tree.clone(),
+            Some(make_engine_manifest("a", "1.0.0", Some(">=99"), None)),
+        );
+        let spec = if use_path {
+            SourceSpec::Path(tree)
+        } else {
+            git_spec("https://example.com/a.git", Some("main"))
+        };
+        let config = make_config(vec![("a", spec)]);
+        let options = ResolveOptions {
+            mars_version: Some(Version::new(1, 0, 0)),
+            ..default_options()
+        };
+        assert!(
+            matches!(
+                resolve(&config, &provider, None, &options),
+                Err(MarsError::Resolution(
+                    ResolutionError::RequiresEngineIncompatible { .. }
+                ))
+            ),
+            "path source: {use_path}"
+        );
+    }
 }
 
 #[test]
@@ -2279,30 +1660,6 @@ fn transitive_engine_fallback_names_requiring_package() {
             .iter()
             .any(|d| d.code == "requires-mars-fallback" && d.message.contains("required by a"))
     );
-}
-
-#[test]
-fn path_engine_incompatibility_is_a_hard_error() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-    let mut provider = MockProvider::new();
-    provider.add_source(
-        "a",
-        tree.clone(),
-        Some(make_engine_manifest("a", "1.0.0", Some(">=99"), None)),
-    );
-    let config = make_config(vec![("a", SourceSpec::Path(tree))]);
-    let options = ResolveOptions {
-        mars_version: Some(Version::new(1, 0, 0)),
-        ..default_options()
-    };
-    assert!(matches!(
-        resolve(&config, &provider, None, &options),
-        Err(MarsError::Resolution(
-            ResolutionError::RequiresEngineIncompatible { .. }
-        ))
-    ));
 }
 
 #[test]

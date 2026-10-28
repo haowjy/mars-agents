@@ -14,7 +14,6 @@ use indexmap::IndexMap;
 use mars_schema::dependency::Entry;
 use mars_schema::filter::{FilterConfig, FilterMode};
 use mars_schema::names::{RenameMap, SourceSubpath};
-use mars_schema::version::{Constraint, parse_constraint};
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

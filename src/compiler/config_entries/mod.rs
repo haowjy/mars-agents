@@ -115,7 +115,6 @@ pub(crate) fn preflight_config_entries(
         }
         if let Some(adapter) = registry.get(target_name) {
             let records = resolved.loaded.old_lock.config_entries.get(target_name);
-            let has_legacy_hooks = has_unrecorded(records, HOOK_KEY_PREFIX);
             if touches_mcp && let Some(file) = adapter.mcp_file() {
                 let has_legacy = has_unrecorded(records, MCP_KEY_PREFIX);
                 for location in
@@ -136,9 +135,6 @@ pub(crate) fn preflight_config_entries(
             let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
             if touches_hooks {
                 names.extend(adapter.hook_config_file_names());
-            }
-            if has_legacy_hooks {
-                names.extend(adapter.legacy_hook_config_file_names());
             }
             for name in names {
                 let path = target_dir.join(name);

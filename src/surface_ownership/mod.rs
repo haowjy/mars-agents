@@ -20,10 +20,9 @@
 //! resemblance without a lock record never establishes ownership.
 //!
 //! Merge-mode hooks are also matched by content: a hook entry is removed only
-//! when its recorded `emitted_json` still matches the entry on disk. The
-//! temporary issue #130 old-lock bridge (Codex and OpenCode only; remove in
-//! 0.25) is narrower: a hook record without `emitted_json` authorizes only the
-//! legacy command-path cleanup associated with that recorded key.
+//! when its recorded `emitted_json` still matches the entry on disk. A hook
+//! record without `emitted_json` names nothing to match: it is dropped and the
+//! entry stays on disk.
 //!
 //! MCP servers are matched by content too: a record's `emitted_json` is the
 //! entry mars wrote, so an entry on disk that still equals it is mars's to

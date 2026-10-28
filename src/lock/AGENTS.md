@@ -40,7 +40,7 @@ paths match.
 - **V2 promotion is the only legacy lifecycle inference seam.** Matching regular
   files and directory manifests become installed. Absent, mismatched, symlinked,
   unreadable, or unsupported paths become pending deletion. Remove the promotion
-  in 0.25, together with the #130 legacy-hook sweeps.
+  in 0.25.
 - **Marketplace plugins extend `LockedSource`, not the version.** `plugin` and `content {url,
   subpath, commit}` are optional and skipped when absent, so locks without plugins read and write
   unchanged at version 3. A plugin dependency's `url`, `version` and `commit` stay the marketplace's

@@ -231,8 +231,6 @@ fn assert_config_entry_consistency_with_diagnostics(
                     "lock owns `{key}` but {section}.{name} is absent on disk"
                 );
             }
-            // A hook record without emitted_json is the explicit one-release
-            // legacy migration state and cannot be content-matched.
         }
     }
 

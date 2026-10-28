@@ -288,9 +288,7 @@ that never names the token has no directory and needs none.
 8. Lower desired entries and derive native lock keys such as
    `hook:PreToolUse:audit`.
 9. Compare desired entries against the previous lock and remove stale entries
-   before writing replacements. Hook removal is ownership-gated; the same phase
-   performs temporary removal-only residue sweeps (until 0.25) for legacy
-   OpenCode `opencode.json` hooks and Codex `codex_hooks.json` hooks. MCP
+   before writing replacements. Hook removal is ownership-gated. MCP
    servers skip this step: step 10 removes and writes them in one pass.
 10. Write desired entries to target config files: MCP through each adapter's
     `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), reconciled in one

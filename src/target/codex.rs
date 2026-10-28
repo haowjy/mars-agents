@@ -89,10 +89,6 @@ impl TargetAdapter for CodexAdapter {
         &["hooks.json"]
     }
 
-    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
-        &["codex_hooks.json"]
-    }
-
     fn remove_owned_hook_entries(
         &self,
         operation: crate::surface_ownership::retention::RemovalOperation<'_>,
@@ -194,39 +190,6 @@ fn render_remote(url: &str, headers: &IndexMap<String, HeaderValue>) -> McpRende
 //   }
 // }
 
-fn remove_managed_hook_entries(bindings: &mut Vec<serde_json::Value>, hook_name: &str) -> bool {
-    let mut removed = false;
-    bindings.retain_mut(|binding| {
-        if let Some(command) = binding.as_str() {
-            let is_managed = is_managed_hook_command_for(command, hook_name);
-            removed |= is_managed;
-            return !is_managed;
-        }
-
-        let Some(hooks) = binding.get_mut("hooks").and_then(|v| v.as_array_mut()) else {
-            return true;
-        };
-        let mut removed_from_binding = false;
-        hooks.retain(|hook| {
-            let is_managed = hook
-                .get("command")
-                .and_then(|v| v.as_str())
-                .map(|command| is_managed_hook_command_for(command, hook_name))
-                .unwrap_or(false);
-            removed_from_binding |= is_managed;
-            !is_managed
-        });
-        removed |= removed_from_binding;
-        !removed_from_binding || !hooks.is_empty()
-    });
-    removed
-}
-
-fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
-    let normalized = command.replace('\\', "/").replace("//", "/");
-    normalized.contains(&format!("/hooks/{hook_name}/"))
-}
-
 fn remove_owned_codex_hooks(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     target_dir: &Path,
@@ -237,34 +200,7 @@ fn remove_owned_codex_hooks(
     {
         return crate::surface_ownership::retention::RemovalReport::failed(error, records.clone());
     }
-    // Legacy-Codex sweep for records without `emitted_json` (hook records have
-    // carried it since v0.12.0). Remove in 0.25.
-    let legacy_records: std::collections::BTreeMap<_, _> = records
-        .iter()
-        .filter(|(_, record)| record.emitted_json.is_none())
-        .map(|(key, record)| (key.clone(), record.clone()))
-        .collect();
-    if legacy_records.is_empty() {
-        return crate::surface_ownership::retention::RemovalReport::confirmed();
-    }
-    let names: Vec<&str> = legacy_records
-        .keys()
-        .filter_map(|key| key.strip_prefix(super::HOOK_KEY_PREFIX)?.split_once(':'))
-        .map(|(_, name)| name)
-        .collect();
-    let sweep = |file: &str| {
-        super::hook_file::sweep_events(&target_dir.join(file), |bindings| {
-            names.iter().fold(false, |changed, name| {
-                remove_managed_hook_entries(bindings, name) | changed
-            })
-        })
-    };
-    match sweep("hooks.json").and_then(|()| sweep("codex_hooks.json")) {
-        Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
-        Err(error) => {
-            crate::surface_ownership::retention::RemovalReport::failed(error, legacy_records)
-        }
-    }
+    crate::surface_ownership::retention::RemovalReport::confirmed()
 }
 
 // ---------------------------------------------------------------------------
@@ -361,56 +297,6 @@ mod tests {
     }
 
     #[test]
-    fn remove_hook_entries_matches_backslash_commands() {
-        let tmp = TempDir::new().unwrap();
-        let existing = serde_json::json!({
-            "hooks": {
-                "PreToolUse": [
-                    {
-                        "matcher": "Bash",
-                        "hooks": [
-                            { "type": "command", "command": "bash \"C:\\\\pkg\\\\hooks\\\\audit\\\\run.sh\"" }
-                        ]
-                    },
-                    {
-                        "matcher": "Bash",
-                        "hooks": [
-                            { "type": "command", "command": "bash \"C:\\\\pkg\\\\hooks\\\\audit-extended\\\\run.sh\"" }
-                        ]
-                    }
-                ]
-            }
-        });
-        std::fs::write(
-            tmp.path().join("hooks.json"),
-            serde_json::to_string_pretty(&existing).unwrap(),
-        )
-        .unwrap();
-
-        let records = std::collections::BTreeMap::from([(
-            "hook:tool.pre:audit".to_string(),
-            crate::lock::ConfigEntryRecord { emitted_json: None },
-        )]);
-        remove_owned_codex_hooks(
-            &records,
-            tmp.path(),
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        )
-        .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let hooks = json["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(hooks.len(), 1);
-        assert!(
-            hooks[0]["hooks"][0]["command"]
-                .as_str()
-                .unwrap()
-                .contains("audit-extended")
-        );
-    }
-
-    #[test]
     fn divergent_structural_removal_does_not_rewrite_hooks() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("hooks.json");
@@ -440,47 +326,5 @@ mod tests {
             std::fs::metadata(&path).unwrap().modified().unwrap(),
             before_modified
         );
-    }
-
-    #[test]
-    fn remove_hook_entries_cleans_real_legacy_codex_hooks_json_only_by_managed_path() {
-        let tmp = TempDir::new().unwrap();
-        let legacy = serde_json::json!({
-            "userSetting": "preserved",
-            "hooks": {
-                "pre-exec": [
-                    "bash \"/cache/pkg/hooks/audit/run.sh\"",
-                    "printf user-owned"
-                ],
-                "post-exec": ["bash \"/cache/pkg/hooks/audit/run.sh\""],
-                "user-empty": []
-            }
-        });
-        std::fs::write(
-            tmp.path().join("codex_hooks.json"),
-            serde_json::to_string_pretty(&legacy).unwrap(),
-        )
-        .unwrap();
-
-        let records = std::collections::BTreeMap::from([(
-            "hook:tool.pre:audit".to_string(),
-            crate::lock::ConfigEntryRecord { emitted_json: None },
-        )]);
-        remove_owned_codex_hooks(
-            &records,
-            tmp.path(),
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        )
-        .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("codex_hooks.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(json["userSetting"], "preserved");
-        assert_eq!(
-            json["hooks"]["pre-exec"],
-            serde_json::json!(["printf user-owned"])
-        );
-        assert!(json["hooks"]["post-exec"].is_null());
-        assert_eq!(json["hooks"]["user-empty"], serde_json::json!([]));
     }
 }

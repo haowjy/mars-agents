@@ -13,11 +13,8 @@ together. Records without `emitted_json` are the trigger: MCP records lack it th
   `preflight_config_entries`.
 - The `Option` on `ConfigEntryRecord.emitted_json`: hook records always serialize and, after
   the above, so do MCP records, so `None` cannot occur.
-- Hook sweeps for records without `emitted_json`: `legacy_hook_config_file_names` (Codex
-  `codex_hooks.json`, OpenCode `opencode.json`) with their preflight check, the Codex
-  command-path sweep in `remove_owned_codex_hooks*`, and OpenCode `remove_hook_residue`.
-- The lock v2 promotion (`LockFileV2Wire`, `promote_v2_lock` in `src/lock/`), which exists to
-  hand those records to the hook sweeps.
+- The lock v2 promotion (`LockFileV2Wire`, `promote_v2_lock` in `src/lock/`). It was kept for
+  the hook sweeps, now removed; v2 locks still promote until it goes.
 
 Also in 0.25: after `mars remove` or `unlink` the MCP file is left as `{}` when the section
 empties; delete a file that holds only an empty section, whatever its location.

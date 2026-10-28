@@ -21,60 +21,6 @@ fn opencode_file_hook_ignores_malformed_unrelated_config() {
 }
 
 #[test]
-fn legacy_opencode_hook_records_reach_the_removal_only_sweep() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = [\".opencode\"]\n")
-        .unwrap();
-    write_hook(
-        &project,
-        "audit",
-        "[targets.\".opencode\"]\nfragment = \"plugin.ts\"\n",
-    );
-    write_fragment(&project, "audit", "plugin.ts", "export default {}");
-    sync(&project).success();
-
-    let lock_path = project.child("mars.lock");
-    let mut lock: Value = toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
-    let mut records = toml::Table::new();
-    records.insert(
-        "hook:tool.pre:audit".into(),
-        toml::Table::from_iter([("source".into(), Value::String("_self".into()))]).into(),
-    );
-    lock.as_table_mut().unwrap().insert(
-        "config_entries".into(),
-        Value::Table(toml::Table::from_iter([(
-            ".opencode".into(),
-            Value::Table(records),
-        )])),
-    );
-    lock_path
-        .write_str(&toml::to_string(&lock).unwrap())
-        .unwrap();
-    project
-        .child(".opencode/opencode.json")
-        .write_str(
-            r#"{"user":true,"hooks":{"tool.pre":["/cache/hooks/audit/run.sh","printf user"]}}"#,
-        )
-        .unwrap();
-    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
-
-    sync(&project).success();
-    let json: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project.child(".opencode/opencode.json").path()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(json["user"], true);
-    assert_eq!(
-        json["hooks"]["tool.pre"],
-        serde_json::json!(["printf user"])
-    );
-}
-
-#[test]
 fn promoted_v2_absent_file_hook_is_a_tombstone_not_ghost_ownership() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");

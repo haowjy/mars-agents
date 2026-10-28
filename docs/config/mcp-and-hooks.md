@@ -527,11 +527,9 @@ root, placed `mars-<name>.ts` path, and installed checksum. Removal deletes
 only that exact lock-owned output and leaves every other plugin or extension
 untouched.
 
-Until 0.25, Codex removal also recognizes v0.11.0 command-path entries containing
-`/hooks/<name>/`, including staging-path commands, from lock records that carry
-no emitted entry (hook records have carried one since v0.12.0). This migration
-sweep runs before fragment writes, with the OpenCode and legacy-Codex residue
-sweeps. Claude no longer has one.
+Hook removal matches by recorded content only. A lock record with no emitted
+entry (written before v0.12.0) is dropped without touching the target file, so
+a v0.11.0 command-path entry stays there until you delete it by hand.
 
 ## Collision Resolution
 

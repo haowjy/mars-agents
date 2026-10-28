@@ -38,7 +38,6 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
 | `hook_fragment_problem(content)` | Names a contract violation in a file-mode fragment; callers build the warning |
 | `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
-| `legacy_hook_config_file_names()` | Legacy hook files for old lock records (remove in 0.25, see `.context/TODO`) |
 | `remove_owned_hook_entries(token, records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |
 
 ## MCP Spec (`mcp_file.rs`)

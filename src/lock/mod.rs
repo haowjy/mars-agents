@@ -476,8 +476,7 @@ struct LockedItemV2Wire {
     outputs: Vec<OutputRecordV2>,
 }
 
-/// One-release v2 wire format. Remove in 0.25, alongside the #130 legacy-hook
-/// sweeps that depend on these records.
+/// One-release v2 wire format. Remove in 0.25.
 #[derive(Deserialize)]
 struct LockFileV2Wire {
     #[allow(dead_code)]

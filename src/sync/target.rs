@@ -349,8 +349,13 @@ pub fn build_with_collisions_and_diag(
             diag,
         ) {
             Ok(items) => {
+                // Depth 1 is a dependency this consumer declares itself; `local`
+                // servers reach only those, `exported` ones reach every depth.
+                let is_direct = dependency_depths.get(source_name) == Some(&1);
                 for item in items {
-                    if item.def.visibility == crate::compiler::visibility::Visibility::Exported {
+                    if is_direct
+                        || item.def.visibility == crate::compiler::visibility::Visibility::Exported
+                    {
                         target.select_mcp(item, &mcp_target_roots);
                     }
                 }

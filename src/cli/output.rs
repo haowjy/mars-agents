@@ -4,6 +4,7 @@
 //! Colors only a terminal, and never when `NO_COLOR` is set.
 
 use std::io::{IsTerminal, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
@@ -522,11 +523,7 @@ pub fn print_json<T: Serialize>(value: &T) {
 
 /// Print a simple success message.
 pub fn print_success(msg: &str) {
-    let mut stdout = stdout_stream();
-    let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
-    let _ = write!(stdout, "  ✓ ");
-    let _ = stdout.reset();
-    let _ = writeln!(stdout, "{msg}");
+    narrate(Some((Color::Green, "✓")), msg);
 }
 
 /// Print pipeline diagnostics to stderr (same format as sync report output).
@@ -546,25 +543,45 @@ pub fn print_diagnostics(diagnostics: &[Diagnostic]) {
 
 /// Print a warning message (yellow).
 pub fn print_warn(msg: &str) {
-    let mut stdout = stdout_stream();
-    let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
-    let _ = write!(stdout, "  ⚠ ");
-    let _ = stdout.reset();
-    let _ = writeln!(stdout, "{msg}");
+    narrate(Some((Color::Yellow, "⚠")), msg);
 }
 
 /// Print an error message (red).
 pub fn print_error(msg: &str) {
-    let mut stdout = stdout_stream();
-    let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
-    let _ = write!(stdout, "  ✗ ");
-    let _ = stdout.reset();
-    let _ = writeln!(stdout, "{msg}");
+    narrate(Some((Color::Red, "✗")), msg);
 }
 
 /// Print an info message.
 pub fn print_info(msg: &str) {
-    println!("  {msg}");
+    narrate(None, msg);
+}
+
+/// Under `--json`, stdout carries exactly one JSON document, so human narration moves to stderr.
+static JSON_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Called once from dispatch, before any command output.
+pub fn set_json_mode(json: bool) {
+    JSON_MODE.store(json, Ordering::Relaxed);
+}
+
+/// Write one human-readable status line: stdout normally, stderr under `--json`.
+fn narrate(marker: Option<(Color, &str)>, msg: &str) {
+    let mut out = if JSON_MODE.load(Ordering::Relaxed) {
+        stderr_stream()
+    } else {
+        stdout_stream()
+    };
+    match marker {
+        Some((color, glyph)) => {
+            let _ = out.set_color(ColorSpec::new().set_fg(Some(color)));
+            let _ = write!(out, "  {glyph} ");
+            let _ = out.reset();
+        }
+        None => {
+            let _ = write!(out, "  ");
+        }
+    }
+    let _ = writeln!(out, "{msg}");
 }
 
 #[cfg(test)]

@@ -12,6 +12,13 @@ CLI command definitions, project root discovery, and dispatch to library functio
 
 The CLI layer is **policy** — what to do, which model, what output. Library modules are **mechanism** — how to do it.
 
+## JSON Output
+
+Under `--json`, stdout carries exactly one JSON document. `dispatch` calls
+`output::set_json_mode`, which sends `print_warn`/`print_error`/`print_info`/`print_success`
+to stderr, so a command that forgets to guard a status line cannot corrupt the document.
+Raw `println!` in a command is not covered: guard it with `json`.
+
 ## Root Discovery
 
 `find_agents_root()` walks up from cwd (or `--root`) to filesystem root looking for `mars.toml`. Git boundaries do NOT stop the walk. `Path::parent()` returns `None` at filesystem root on all platforms.

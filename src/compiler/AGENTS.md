@@ -161,8 +161,8 @@ values instead of rediscovering package config entries. After target sync, sync 
 or a token-naming MCP server's entry unless target sync recorded installing that directory, so an
 unmanaged or user-edited copy keeps the entry out with a `hook-not-installed` / `mcp-not-installed`
 warning naming the path; target sync's `target-unmanaged-collision` or `target-divergent` warning
-says why. A token-free server has no directory to check. `lower_config_entries_for_target` owns
-native merge-fragment loading and hook ordering. MCP collisions resolve once per target in
+says why. A token-free server has no directory to check. `lower_hook_entries` owns
+native merge-fragment loading and hook ordering; `lower_mcp_servers` lowers servers. MCP collisions resolve once per target in
 `TargetState`, so the winning server's directory and config entry come from the same selection.
 Each selected item arrives with its directory token, the `${MARS_HOOK_DIR}` /
 `${MARS_MCP_DIR}` replacement, so installed copies and plugin trees share one lowering path.

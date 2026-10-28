@@ -7,3 +7,25 @@
   (`write_hooks_json`, its removal) and OpenCode (`remove_hook_residue`). Unlike `mcp_doc::Doc`,
   they don't follow symlinks, preserve permissions or keep key order. `Doc` (JSON variant, with a
   mutable section accessor) is the intended owner; move the hook writers onto it.
+
+## Remove in 0.25
+
+Everything below exists only to clean up state written by v0.23.x and earlier. Delete it
+together. Records without `emitted_json` are the trigger: MCP records lack it through v0.23.x
+(OpenCode's from v0.19.0), hook records before v0.12.0.
+
+- `McpFile.legacy` and the adapters' `legacy:` specs (Claude `.claude/.mcp.json`, Codex
+  `.codex/codex_mcp.json`, Cursor's same-file legacy), with `Ownership::Legacy`, the legacy
+  arm of `mcp_file::reconcile` (the record loop's `file.legacy` lookup, the empty-file delete),
+  `Doc::is_empty`, and the MCP half of `has_unrecorded` and the legacy chain in
+  `preflight_config_entries`.
+- The `Option` on `ConfigEntryRecord.emitted_json`: hook records always serialize and, after
+  the above, so do MCP records, so `None` cannot occur.
+- Hook sweeps for records without `emitted_json`: `legacy_hook_config_file_names` (Codex
+  `codex_hooks.json`, OpenCode `opencode.json`) with their preflight check, the Codex
+  command-path sweep in `remove_owned_codex_hooks*`, and OpenCode `remove_hook_residue`.
+- The lock v2 promotion (`LockFileV2Wire`, `promote_v2_lock` in `src/lock/`), which exists to
+  hand those records to the hook sweeps.
+
+Also in 0.25: after `mars remove` or `unlink` the MCP file is left as `{}` when the section
+empties; delete a file that holds only an empty section, whatever its location.

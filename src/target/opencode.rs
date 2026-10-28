@@ -91,11 +91,7 @@ impl TargetAdapter for OpencodeAdapter {
                 path: ".opencode/opencode.json",
                 format: McpFormat::JsonSection(MCP_SECTION),
             },
-            // Before the `mcp` section existed, mars wrote `mcpServers`.
-            legacy: Some(McpLocation {
-                path: ".opencode/opencode.json",
-                format: McpFormat::JsonSection("mcpServers"),
-            }),
+            legacy: None,
             render,
         })
     }
@@ -142,8 +138,7 @@ fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
 }
 
 /// Removal-only residue cleanup. Versions before native hook authoring wrote
-/// an invalid `hooks` object into `opencode.json`. Delete this sweep after one
-/// release.
+/// an invalid `hooks` object into `opencode.json`. Remove in 0.25.
 fn remove_hook_residue(
     prior_records: &BTreeMap<String, crate::lock::ConfigEntryRecord>,
     target_dir: &Path,

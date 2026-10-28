@@ -21,43 +21,16 @@ pub mod pi;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-#[doc(hidden)]
-pub use crate::surface_ownership::retention::ConfigWrite;
-use crate::surface_ownership::retention::{RemovalOperation, RemovalReport, Surface};
+use crate::surface_ownership::retention::{ConfigWrite, RemovalOperation, RemovalReport};
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 pub use mcp_file::{McpFile, McpFormat, McpLocation};
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
-/// A config entry to be written to a target's config file.
-///
-/// Adapters consume these entries to write or update target-specific config
-/// files (MCP JSON, hooks in settings.json, etc.).
-#[derive(Debug, Clone)]
-pub enum ConfigEntry {
-    /// An MCP server entry to register in the target's MCP config file.
-    McpServer(McpServerEntry),
-    /// A hook binding to register in the target's hook config.
-    Hook(HookEntry),
-}
-
-impl ConfigEntry {
-    /// Stable identity key for this entry (used by stale-cleanup logic).
-    pub(crate) fn surface(&self) -> Surface {
-        match self {
-            Self::McpServer(_) => Surface::Mcp,
-            Self::Hook(_) => Surface::Hook,
-        }
-    }
-
-    pub fn key(&self) -> String {
-        match self {
-            ConfigEntry::McpServer(e) => format!("mcp:{}", e.name),
-            ConfigEntry::Hook(e) => format!("hook:{}:{}", e.native_event, e.name),
-        }
-    }
-}
+/// Lock-record key prefixes: `mcp:<name>` for a server, `hook:<event>:<name>` for a hook.
+pub(crate) const MCP_KEY_PREFIX: &str = "mcp:";
+pub(crate) const HOOK_KEY_PREFIX: &str = "hook:";
 
 /// An MCP server entry ready to be written into a target config file.
 ///
@@ -80,6 +53,13 @@ pub struct HookEntry {
     pub native_event: String,
     /// Opaque native entries, in author-declared order.
     pub entries: Vec<serde_json::Value>,
+}
+
+impl HookEntry {
+    /// The lock-record key for this entry.
+    pub fn key(&self) -> String {
+        format!("{HOOK_KEY_PREFIX}{}:{}", self.native_event, self.name)
+    }
 }
 
 /// How a target consumes hook fragments.
@@ -138,18 +118,17 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     // Config-file writing
     // -----------------------------------------------------------------------
 
-    /// Write hook entries to this target's hook config file. MCP entries are
-    /// written by [`mcp_file::write_entries`] from [`Self::mcp_file`].
+    /// Write hook entries to this target's hook config file. MCP servers are
+    /// written by [`mcp_file::reconcile`] from [`Self::mcp_file`].
     ///
-    /// Returns the paths of files written, for lock tracking.
     /// Default: no-op — targets that don't use a config file leave this as-is.
     fn write_hook_entries(
         &self,
         write: ConfigWrite<'_>,
         project_root: &Path,
-    ) -> Result<Vec<PathBuf>, MarsError> {
-        let (_target_dir, _entries) = write.into_parts(project_root);
-        Ok(Vec::new())
+    ) -> Result<(), MarsError> {
+        let _ = write.into_parts(project_root);
+        Ok(())
     }
 
     /// The file this harness reads MCP servers from and how entries render
@@ -163,8 +142,8 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         &[]
     }
 
-    /// One-release legacy hook files touched only when old lock records lack
-    /// structural emission data.
+    /// Legacy hook files touched only when old lock records lack structural
+    /// emission data. Remove in 0.25.
     fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
         &[]
     }
@@ -187,17 +166,6 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         let (_, _) = operation.into_parts(project_root);
         RemovalReport::confirmed()
     }
-}
-
-/// The hooks in a write bound to the `Hook` surface, which holds nothing else.
-pub(crate) fn hooks_of(entries: &[ConfigEntry]) -> Vec<&HookEntry> {
-    entries
-        .iter()
-        .map(|entry| match entry {
-            ConfigEntry::Hook(hook) => hook,
-            ConfigEntry::McpServer(_) => unreachable!("a Hook write holds only hooks"),
-        })
-        .collect()
 }
 
 pub(crate) fn parse_json_file(path: &Path) -> Result<serde_json::Value, MarsError> {

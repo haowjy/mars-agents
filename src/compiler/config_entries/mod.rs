@@ -10,13 +10,13 @@ use std::path::{Path, PathBuf};
 use crate::compiler::hooks::ParsedHookItem;
 use crate::compiler::mcp::{ParsedMcpItem, lower_transport};
 use crate::diagnostic::DiagnosticCollector;
-use crate::error::MarsError;
 use crate::lock::ConfigEntryRecord;
-use crate::surface_ownership::retention::{ConfigWrite, RemovalOperation, RemovalReport, Surface};
+use crate::surface_ownership::retention::{RemovalOperation, RemovalReport};
 use crate::sync::AppliedState;
 use crate::sync::package_dir::PackageDir;
 use crate::target::{
-    ConfigEntry, HookEntry, McpServerEntry, TargetAdapter, TargetRegistry, mcp_file,
+    HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, McpServerEntry, TargetAdapter, TargetRegistry,
+    mcp_file,
 };
 use crate::types::MarsContext;
 use mars_schema::item::ItemKind;
@@ -86,22 +86,28 @@ pub(crate) fn preflight_config_entries(
     let resolved = &targeted.resolved;
     let registry = TargetRegistry::new();
     let mut errors = Vec::new();
-    let mut touched_targets: BTreeMap<String, (bool, bool)> = BTreeMap::new();
+    // Targets whose MCP file / hook files this sync reads: those the old lock
+    // has records on, and those with something selected.
+    let mut mcp_targets: BTreeSet<String> = BTreeSet::new();
+    let mut hook_targets: BTreeSet<String> = BTreeSet::new();
     for (target, records) in &resolved.loaded.old_lock.config_entries {
-        let touch = touched_targets.entry(target.clone()).or_default();
-        touch.0 |= records.keys().any(|key| key.starts_with("mcp:"));
-        touch.1 |= records.keys().any(|key| key.starts_with("hook"));
+        if records.keys().any(|key| key.starts_with(MCP_KEY_PREFIX)) {
+            mcp_targets.insert(target.clone());
+        }
+        if records.keys().any(|key| key.starts_with(HOOK_KEY_PREFIX)) {
+            hook_targets.insert(target.clone());
+        }
     }
-    for (dir, _) in targeted.target.selected_hooks() {
-        touched_targets
-            .entry(dir.target().to_string())
-            .or_default()
-            .1 = true;
-    }
-    for target in targeted.target.selected_mcp_targets() {
-        touched_targets.entry(target.to_string()).or_default().0 = true;
-    }
-    for (target_name, (touches_mcp, touches_hooks)) in &touched_targets {
+    hook_targets.extend(
+        targeted
+            .target
+            .selected_hooks()
+            .map(|(dir, _)| dir.target().to_string()),
+    );
+    mcp_targets.extend(targeted.target.selected_mcp_targets().map(str::to_string));
+    for target_name in mcp_targets.union(&hook_targets) {
+        let touches_mcp = mcp_targets.contains(target_name);
+        let touches_hooks = hook_targets.contains(target_name);
         let target_dir = ctx.project_root.join(target_name);
         if let Err(error) = validate_destination_path(&ctx.project_root, &target_dir, true) {
             errors.push(error);
@@ -109,9 +115,9 @@ pub(crate) fn preflight_config_entries(
         }
         if let Some(adapter) = registry.get(target_name) {
             let records = resolved.loaded.old_lock.config_entries.get(target_name);
-            let has_legacy_hooks = has_unrecorded(records, Surface::Hook);
-            if *touches_mcp && let Some(file) = adapter.mcp_file() {
-                let has_legacy = has_unrecorded(records, Surface::Mcp);
+            let has_legacy_hooks = has_unrecorded(records, HOOK_KEY_PREFIX);
+            if touches_mcp && let Some(file) = adapter.mcp_file() {
+                let has_legacy = has_unrecorded(records, MCP_KEY_PREFIX);
                 for location in
                     std::iter::once(&file.at).chain(file.legacy.iter().filter(|_| has_legacy))
                 {
@@ -124,7 +130,7 @@ pub(crate) fn preflight_config_entries(
                 }
             }
             let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-            if *touches_hooks {
+            if touches_hooks {
                 names.extend(adapter.hook_config_file_names());
             }
             if has_legacy_hooks {
@@ -184,33 +190,35 @@ pub(crate) fn preflight_config_entries(
     }
 }
 
-/// Lower the mergeable MCP and hook entries for one target.
+/// Lower the selected MCP servers for one target.
 ///
-/// The caller owns target-specific eligibility checks, including whether an
-/// installed hook or MCP directory is current, and supplies each item's
-/// directory token with it: the replacement for `${MARS_HOOK_DIR}` in a hook's
-/// native fragment and for `${MARS_MCP_DIR}` in a server's command and
-/// arguments.
-pub(crate) fn lower_config_entries_for_target(
-    hooks: &[(String, &ParsedHookItem)],
-    mcp: &[(String, &ParsedMcpItem)],
-    adapter: &dyn TargetAdapter,
-    diag: &mut DiagnosticCollector,
-) -> Vec<ConfigEntry> {
-    let target_root = adapter.name();
-    let mut entries = Vec::new();
-    for (dir, parsed) in mcp {
-        entries.push(ConfigEntry::McpServer(McpServerEntry {
+/// The caller owns eligibility checks, including whether an installed MCP
+/// directory is current, and supplies each item's directory token with it: the
+/// replacement for `${MARS_MCP_DIR}` in a server's command and arguments.
+pub(crate) fn lower_mcp_servers(mcp: &[(String, &ParsedMcpItem)]) -> Vec<McpServerEntry> {
+    mcp.iter()
+        .map(|(dir, parsed)| McpServerEntry {
             name: parsed.name.clone(),
             transport: lower_transport(parsed, dir),
-        }));
-    }
+        })
+        .collect()
+}
 
+/// Lower the mergeable hook entries for one target.
+///
+/// The caller supplies each hook's directory token: the replacement for
+/// `${MARS_HOOK_DIR}` in its native fragment.
+pub(crate) fn lower_hook_entries(
+    hooks: &[(String, &ParsedHookItem)],
+    adapter: &dyn TargetAdapter,
+    diag: &mut DiagnosticCollector,
+) -> Vec<HookEntry> {
+    let target_root = adapter.name();
     let Some(crate::target::HookFragmentMode::MergeJson {
         events: known_events,
     }) = adapter.hook_fragment_mode()
     else {
-        return entries;
+        return Vec::new();
     };
     let mut contributions = Vec::new();
     for (dir, item) in hooks {
@@ -249,18 +257,14 @@ pub(crate) fn lower_config_entries_for_target(
                 right_event.as_str(),
             ))
     });
-    entries.extend(
-        contributions
-            .into_iter()
-            .map(|(item, event, hook_entries)| {
-                ConfigEntry::Hook(HookEntry {
-                    name: item.def.name.clone(),
-                    native_event: event,
-                    entries: hook_entries,
-                })
-            }),
-    );
-    entries
+    contributions
+        .into_iter()
+        .map(|(item, event, entries)| HookEntry {
+            name: item.def.name.clone(),
+            native_event: event,
+            entries,
+        })
+        .collect()
 }
 
 fn validate_destination_path(
@@ -302,7 +306,8 @@ fn validate_destination_path(
 /// 1. Run env-ref preflight (warn on missing vars)
 /// 2. Detect per-target-root MCP name collisions
 /// 3. Order hooks deterministically
-/// 4. For each target root, lower items and write via adapter `write_hook_entries()`
+/// 4. For each target root, lower items; hooks are removed then appended via the
+///    adapter, MCP servers are reconciled in one pass per target file
 ///
 /// All errors are non-fatal — emitted as diagnostics and compilation continues.
 pub(crate) fn compile_config_entries(
@@ -341,10 +346,8 @@ pub(crate) fn compile_config_entries(
     let registry = TargetRegistry::new();
     let mut desired_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
-    let mut pending_writes: BTreeMap<
-        (String, crate::surface_ownership::retention::Surface),
-        Vec<ConfigEntry>,
-    > = BTreeMap::new();
+    let mut desired_mcp: BTreeMap<String, Vec<mcp_file::Rendered>> = BTreeMap::new();
+    let mut pending_hooks: BTreeMap<String, Vec<HookEntry>> = BTreeMap::new();
     let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
     let mut desired_file_outputs = std::collections::BTreeSet::new();
     let emitted_outputs = Vec::new();
@@ -385,7 +388,8 @@ pub(crate) fn compile_config_entries(
             .iter()
             .map(|(dir, item)| (installed_token(ctx, dir), *item))
             .collect::<Vec<_>>();
-        let entries = lower_config_entries_for_target(&hook_entries, &mcp_entries, adapter, diag);
+        let hooks = lower_hook_entries(&hook_entries, adapter, diag);
+        let mcp_servers = lower_mcp_servers(&mcp_entries);
 
         // Resolve and load whole-file hooks independently of merge ordering.
         let mut file_writes = Vec::new();
@@ -427,20 +431,32 @@ pub(crate) fn compile_config_entries(
             }
         }
 
-        // Write via the target adapter (if one is registered).
-        // Lossiness warnings come with the records, so they run even on dry runs.
-        let mut target_records = BTreeMap::new();
-        for entry in &entries {
-            target_records.insert(entry.key(), record_entry(adapter, entry, diag));
-        }
+        // Render each server once. Lossiness warnings come with the render, so
+        // they run even on dry runs.
+        let rendered = adapter
+            .mcp_file()
+            .map(|file| mcp_file::render_all(&file, &mcp_servers, diag))
+            .unwrap_or_default();
+        let target_records: BTreeMap<_, _> = rendered
+            .iter()
+            .map(|server| (server.key(), server.record()))
+            .chain(hooks.iter().map(|hook| {
+                (
+                    hook.key(),
+                    ConfigEntryRecord {
+                        emitted_json: serde_json::to_string(&hook.entries).ok(),
+                    },
+                )
+            }))
+            .collect();
         if !target_records.is_empty() {
             desired_records.insert(target_root.clone(), target_records);
         }
-        for entry in entries {
-            pending_writes
-                .entry((target_root.clone(), entry.surface()))
-                .or_default()
-                .push(entry);
+        if !rendered.is_empty() {
+            desired_mcp.insert(target_root.clone(), rendered);
+        }
+        if !hooks.is_empty() {
+            pending_hooks.insert(target_root.clone(), hooks);
         }
         if !file_writes.is_empty() {
             pending_file_writes.insert(target_root.clone(), file_writes);
@@ -454,18 +470,27 @@ pub(crate) fn compile_config_entries(
         .loaded
         .old_lock
         .config_entries;
-    let removal_plan =
-        crate::surface_ownership::retention::RemovalPlan::build(previous_records, &desired_records);
 
     if dry_run {
-        for (target_root, keys) in removal_plan.stale_keys() {
-            diag.warn(
-                "stale-config-entry",
-                format!(
-                    "target `{target_root}` has stale config entries: {}",
-                    keys.join(", ")
-                ),
-            );
+        for (target_root, records) in previous_records {
+            let stale: Vec<&str> = records
+                .keys()
+                .filter(|key| {
+                    !desired_records
+                        .get(target_root)
+                        .is_some_and(|desired| desired.contains_key(*key))
+                })
+                .map(String::as_str)
+                .collect();
+            if !stale.is_empty() {
+                diag.warn(
+                    "stale-config-entry",
+                    format!(
+                        "target `{target_root}` has stale config entries: {}",
+                        stale.join(", ")
+                    ),
+                );
+            }
         }
         return ConfigEntryCompilation {
             records: desired_records,
@@ -474,10 +499,12 @@ pub(crate) fn compile_config_entries(
         };
     }
 
-    let retention = removal_plan.execute(
-        |operation, diag| remove(&registry, operation, &ctx.project_root, diag),
-        diag,
-    );
+    let retention =
+        crate::surface_ownership::retention::RemovalPlan::build(previous_records, &desired_records)
+            .execute(
+                |operation, diag| remove_hooks(&registry, operation, &ctx.project_root, diag),
+                diag,
+            );
 
     // File-mode fragments are ordinary target outputs. Remove only exact paths
     // owned by the old lock and no longer desired.
@@ -504,56 +531,67 @@ pub(crate) fn compile_config_entries(
         }
     }
 
-    apply_replacement_writes(
+    // MCP servers are reconciled per target file: a target no longer managed
+    // still gets its stale servers removed.
+    let mut mcp_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> = BTreeMap::new();
+    let mut mcp_removed: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for target_root in previous_records
+        .keys()
+        .chain(desired_mcp.keys())
+        .collect::<BTreeSet<_>>()
+    {
+        let reconciled = reconcile_mcp(
+            &registry,
+            &ctx.project_root,
+            target_root,
+            previous_records.get(target_root),
+            desired_mcp.get(target_root).map_or(&[], Vec::as_slice),
+            force,
+            diag,
+        );
+        if !reconciled.records.is_empty() {
+            mcp_records.insert(target_root.clone(), reconciled.records);
+        }
+        mcp_removed.insert(target_root.clone(), reconciled.removed);
+    }
+    report_removed(retention.removed_keys(), &mcp_removed, diag);
+
+    let mut compiled = apply_replacement_writes(
         ctx,
         &registry,
         old_lock,
         ownership_lock,
         retention,
-        pending_writes,
+        pending_hooks,
         pending_file_writes,
         &desired_records,
         force,
         diag,
         emitted_outputs,
         removed_outputs,
-    )
+    );
+    for (target_root, records) in mcp_records {
+        compiled
+            .records
+            .entry(target_root)
+            .or_default()
+            .extend(records);
+    }
+    compiled
 }
 
-/// Whether `records` hold an entry of `surface` from before content ownership
+/// Whether `records` hold an entry with `prefix` from before content ownership
 /// (no `emitted_json`), which preflight must be able to clean up.
-fn has_unrecorded(records: Option<&BTreeMap<String, ConfigEntryRecord>>, surface: Surface) -> bool {
+fn has_unrecorded(records: Option<&BTreeMap<String, ConfigEntryRecord>>, prefix: &str) -> bool {
     records.is_some_and(|records| {
         records
             .iter()
-            .any(|(key, record)| Surface::of_key(key) == surface && record.emitted_json.is_none())
+            .any(|(key, record)| key.starts_with(prefix) && record.emitted_json.is_none())
     })
 }
 
-/// The lock record for one emitted entry: an MCP server records its native
-/// rendering, a hook its structural entries. Warns about what an MCP server's
-/// native shape cannot carry.
-fn record_entry(
-    adapter: &dyn TargetAdapter,
-    entry: &ConfigEntry,
-    diag: &mut DiagnosticCollector,
-) -> ConfigEntryRecord {
-    match entry {
-        ConfigEntry::Hook(hook) => ConfigEntryRecord {
-            emitted_json: serde_json::to_string(&hook.entries).ok(),
-        },
-        ConfigEntry::McpServer(server) => {
-            let file = adapter
-                .mcp_file()
-                .expect("MCP servers are lowered only for targets that declare an MCP file");
-            mcp_file::record_and_warn(&file, server, diag)
-        }
-    }
-}
-
-/// Remove the entries `operation` names, on whichever surface it is for. Shared by
-/// sync and `mars unlink`.
-pub(crate) fn remove(
+/// Remove the hook entries `operation` names. Shared by sync and `mars unlink`.
+pub(crate) fn remove_hooks(
     registry: &TargetRegistry,
     operation: RemovalOperation<'_>,
     project_root: &Path,
@@ -567,52 +605,89 @@ pub(crate) fn remove(
             removal.prior_records.clone(),
         );
     };
-    match operation.surface() {
-        Surface::Hook => adapter
-            .remove_owned_hook_entries(operation, project_root, diag)
-            .context(format!(
-                "failed to remove prior hook entries from `{target_root}`"
-            )),
-        Surface::Mcp => mcp_file::remove_entries(adapter, operation, project_root, diag).context(
-            format!("failed to remove stale config entries from `{target_root}`"),
-        ),
+    adapter
+        .remove_owned_hook_entries(operation, project_root, diag)
+        .context(format!(
+            "failed to remove prior hook entries from `{target_root}`"
+        ))
+}
+
+/// Report the stale entries a sync or `mars unlink` took off the books: the
+/// hooks the retention plan removed and the MCP servers `reconcile_mcp` did,
+/// as one line per target.
+pub(crate) fn report_removed(
+    hooks: &BTreeMap<String, Vec<String>>,
+    mcp: &BTreeMap<String, Vec<String>>,
+    diag: &mut DiagnosticCollector,
+) {
+    for target_root in hooks.keys().chain(mcp.keys()).collect::<BTreeSet<_>>() {
+        let keys: Vec<&str> = [hooks.get(target_root), mcp.get(target_root)]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        if keys.is_empty() {
+            continue;
+        }
+        diag.info(
+            "stale-config-entry",
+            format!(
+                "removed stale config entries from `{target_root}`: {}",
+                keys.join(", ")
+            ),
+        );
     }
 }
 
-/// Write `write`'s entries on `surface`; returns the keys now on disk as rendered.
-fn write_entries(
-    adapter: &dyn TargetAdapter,
-    surface: Surface,
-    write: ConfigWrite<'_>,
+/// Reconcile `target_root`'s MCP file with `desired`. Shared by sync and
+/// `mars unlink` (`desired` empty).
+pub(crate) fn reconcile_mcp(
+    registry: &TargetRegistry,
     project_root: &Path,
+    target_root: &str,
     previous: Option<&BTreeMap<String, ConfigEntryRecord>>,
+    desired: &[mcp_file::Rendered],
     force: bool,
     diag: &mut DiagnosticCollector,
-) -> Result<BTreeSet<String>, MarsError> {
-    match surface {
-        Surface::Hook => {
-            let keys = write.entries().iter().map(ConfigEntry::key).collect();
-            adapter.write_hook_entries(write, project_root)?;
-            Ok(keys)
+) -> mcp_file::Reconciled {
+    let no_records = BTreeMap::new();
+    let previous = previous.unwrap_or(&no_records);
+    let Some(adapter) = registry.get(target_root) else {
+        let retained: BTreeMap<_, _> = previous
+            .iter()
+            .filter(|(key, _)| key.starts_with(MCP_KEY_PREFIX))
+            .map(|(key, record)| (key.clone(), record.clone()))
+            .collect();
+        if !retained.is_empty() {
+            diag.warn(
+                "config-entry-remove",
+                format!(
+                    "failed to remove stale config entries from `{target_root}`: no adapter registered for `{target_root}`"
+                ),
+            );
         }
-        Surface::Mcp => {
-            let file = adapter
-                .mcp_file()
-                .expect("MCP servers are lowered only for targets that declare an MCP file");
-            let target_root = write.target_root().to_owned();
-            mcp_file::write_entries(
-                &file,
-                write,
-                project_root,
-                &mcp_file::WriteOwnership {
-                    target_root: &target_root,
-                    previous,
-                    force,
-                },
-                diag,
-            )
-        }
-    }
+        return mcp_file::Reconciled {
+            records: retained,
+            removed: Vec::new(),
+        };
+    };
+    // A target that takes no MCP servers has no file to hold a record.
+    let Some(file) = adapter.mcp_file() else {
+        return mcp_file::Reconciled {
+            records: BTreeMap::new(),
+            removed: Vec::new(),
+        };
+    };
+    mcp_file::reconcile(
+        &file,
+        project_root,
+        target_root,
+        previous,
+        desired,
+        force,
+        diag,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -622,10 +697,7 @@ fn apply_replacement_writes(
     old_lock: &crate::lock::LockFile,
     ownership_lock: &mut crate::lock::LockFile,
     retention: crate::surface_ownership::retention::RetentionPlan,
-    pending_writes: BTreeMap<
-        (String, crate::surface_ownership::retention::Surface),
-        Vec<crate::target::ConfigEntry>,
-    >,
+    pending_hooks: BTreeMap<String, Vec<HookEntry>>,
     pending_file_writes: BTreeMap<String, Vec<(String, String, String)>>,
     desired_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     force: bool,
@@ -633,91 +705,52 @@ fn apply_replacement_writes(
     mut emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
     removed_outputs: Vec<(String, String)>,
 ) -> ConfigEntryCompilation {
-    // Write desired entries only after every removal has completed.
+    // Write desired hooks only after every removal has completed. Removal
+    // cleared the target's recorded hooks, so a failed write leaves no record.
     let mut written_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
-    for ((target_root, surface), entries) in pending_writes {
-        let Some(permit) = retention.write_permit(&target_root, surface) else {
-            diag.info(
-                "config-entry-suppressed",
-                format!(
-                    "not writing {surface:?} entries to `{target_root}`: prior removal unconfirmed"
-                ),
-            );
-            continue;
-        };
-        let write = match permit.bind_config_entries(entries) {
-            Ok(write) => write,
-            Err(error) => {
-                diag.warn("config-entry-write", error.to_string());
-                continue;
-            }
-        };
-        let authorized_target = write.target_root().to_owned();
-        let Some(adapter) = registry.get(write.target_root()) else {
-            continue;
-        };
-        let attempted: std::collections::BTreeSet<_> =
-            write.entries().iter().map(ConfigEntry::key).collect();
-        let result = write_entries(
-            adapter,
-            surface,
-            write,
-            &ctx.project_root,
-            old_lock.config_entries.get(&authorized_target),
-            force,
-            diag,
-        );
-        let written_keys = result.unwrap_or_else(|error| {
-            diag.warn(
-                "config-entry-write",
-                format!("failed to write config entries to `{authorized_target}`: {error}"),
-            );
-            BTreeSet::new()
-        });
-        let records = written_records
-            .entry(authorized_target.clone())
-            .or_default();
-        records.extend(
-            desired_records
-                .get(&authorized_target)
-                .into_iter()
-                .flatten()
-                .filter(|(key, _)| written_keys.contains(*key))
-                .map(|(key, record)| (key.clone(), record.clone())),
-        );
-        // An MCP entry attempted but not written (preserved as the user's, or
-        // the write failed) is still on disk as the old lock recorded it, so
-        // keep that record. Hook removal clears the whole pair before the
-        // write, so no hook record applies.
-        if surface == Surface::Mcp {
-            records.extend(
-                old_lock
-                    .config_entries
-                    .get(&authorized_target)
-                    .into_iter()
-                    .flatten()
-                    .filter(|(key, record)| {
-                        attempted.contains(*key)
-                            && !written_keys.contains(*key)
-                            && record.emitted_json.is_some()
-                    })
-                    .map(|(key, record)| (key.clone(), record.clone())),
-            );
-        }
-    }
-
-    for (target_root, files) in pending_file_writes {
-        let Some(permit) = retention.write_permit(&target_root, Surface::Hook) else {
+    for (target_root, hooks) in pending_hooks {
+        let Some(permit) = retention.write_permit(&target_root) else {
             diag.info(
                 "config-entry-suppressed",
                 format!("not writing Hook entries to `{target_root}`: prior removal unconfirmed"),
             );
             continue;
         };
-        let write = permit
-            .bind_file_hooks(files)
-            .expect("Hook permit accepts file-hook payloads");
+        let write = permit.bind_hooks(hooks);
+        let Some(adapter) = registry.get(write.target_root()) else {
+            continue;
+        };
+        let keys: Vec<String> = write.hooks().iter().map(HookEntry::key).collect();
+        if let Err(error) = adapter.write_hook_entries(write, &ctx.project_root) {
+            diag.warn(
+                "config-entry-write",
+                format!("failed to write config entries to `{target_root}`: {error}"),
+            );
+            continue;
+        }
+        written_records
+            .entry(target_root.clone())
+            .or_default()
+            .extend(
+                desired_records
+                    .get(&target_root)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(key, _)| keys.contains(key))
+                    .map(|(key, record)| (key.clone(), record.clone())),
+            );
+    }
+
+    for (target_root, files) in pending_file_writes {
+        let Some(permit) = retention.write_permit(&target_root) else {
+            diag.info(
+                "config-entry-suppressed",
+                format!("not writing Hook entries to `{target_root}`: prior removal unconfirmed"),
+            );
+            continue;
+        };
+        let write = permit.bind_file_hooks(files);
         write_file_hook_outputs(
             write,
             ctx,

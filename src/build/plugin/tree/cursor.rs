@@ -1,6 +1,6 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::target::ConfigEntry;
+use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
 use mars_schema::plugin_metadata::CURSOR_ROOT_FILE;
 
@@ -38,23 +38,22 @@ fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut Diagno
 fn write_config_entries(
     _profile: &TreeProfile,
     root: &std::path::Path,
-    entries: &[ConfigEntry],
+    mcp: &[McpServerEntry],
+    hooks: &[HookEntry],
     _harnesses: &[&'static PluginHarnessSpec],
     _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let (mcp, hooks) = super::standard_config_entries(entries);
-
     if !mcp.is_empty() {
         super::write_pretty_json(
             &root.join("mcp.json"),
             &serde_json::json!({
-                "mcpServers": super::render_servers(&crate::target::cursor::CursorAdapter, &mcp)
+                "mcpServers": super::render_servers(&crate::target::cursor::CursorAdapter, mcp)
             }),
             "Cursor MCP configuration",
         )?;
     }
     if !hooks.is_empty() {
-        crate::target::cursor::write_cursor_hooks_json(&root.join("hooks/hooks.json"), &hooks)?;
+        crate::target::cursor::write_cursor_hooks_json(&root.join("hooks/hooks.json"), hooks)?;
     }
     Ok(())
 }

@@ -9,7 +9,7 @@
 ///   carry machine-local cache paths, so they belong in the gitignored
 ///   `settings.local.json` rather than the committed `settings.json`.
 /// - Env references: rendered as `${VAR_NAME}` for Claude Desktop config compat
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::{ConfigError, MarsError};
 use crate::types::DestPath;
@@ -78,16 +78,12 @@ impl TargetAdapter for ClaudeAdapter {
         &self,
         write: crate::surface_ownership::retention::ConfigWrite<'_>,
         project_root: &Path,
-    ) -> Result<Vec<PathBuf>, MarsError> {
-        let (target_dir, entries) = write.into_parts(project_root);
-        let hooks = super::hooks_of(&entries);
-        let mut written = Vec::new();
-        if !hooks.is_empty() {
-            let path = target_dir.join("settings.local.json");
-            write_hooks_settings(&path, &hooks)?;
-            written.push(path);
+    ) -> Result<(), MarsError> {
+        let (target_dir, hooks) = write.into_parts(project_root);
+        if hooks.is_empty() {
+            return Ok(());
         }
-        Ok(written)
+        write_hooks_settings(&target_dir.join("settings.local.json"), &hooks)
     }
 
     fn mcp_file(&self) -> Option<McpFile> {
@@ -99,7 +95,7 @@ impl TargetAdapter for ClaudeAdapter {
                 path: ".mcp.json",
                 format: McpFormat::JsonSection("mcpServers"),
             },
-            // Where mars wrote before. Delete after one release.
+            // Where mars wrote before. Remove in 0.25.
             legacy: Some(McpLocation {
                 path: ".claude/.mcp.json",
                 format: McpFormat::JsonSection("mcpServers"),
@@ -110,10 +106,6 @@ impl TargetAdapter for ClaudeAdapter {
 
     fn hook_config_file_names(&self) -> &'static [&'static str] {
         &["settings.local.json"]
-    }
-
-    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
-        &["settings.json"]
     }
 
     fn remove_owned_hook_entries(
@@ -147,7 +139,7 @@ impl TargetAdapter for ClaudeAdapter {
 ///   }
 /// }
 /// ```
-pub(crate) fn write_hooks_settings(path: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
+pub(crate) fn write_hooks_settings(path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
     let mut root: serde_json::Value = if path.is_file() {
         super::parse_json_file(path)?
     } else {
@@ -184,55 +176,19 @@ pub(crate) fn write_hooks_settings(path: &Path, hooks: &[&HookEntry]) -> Result<
     Ok(())
 }
 
-fn remove_managed_hook_bindings(bindings: &mut Vec<serde_json::Value>, hook_name: &str) {
-    bindings.retain(|binding| {
-        let Some(inner_hooks) = binding.get("hooks").and_then(|h| h.as_array()) else {
-            return true;
-        };
-        !inner_hooks.iter().any(|h| {
-            h.get("command")
-                .and_then(|c| c.as_str())
-                .map(|cmd| is_managed_hook_command_for(cmd, hook_name))
-                .unwrap_or(false)
-        })
-    });
-}
-
-fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
-    let normalized = command.replace('\\', "/").replace("//", "/");
-    normalized.contains(&format!("/hooks/{hook_name}/"))
-}
-
 fn remove_owned_claude_hooks(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     target_dir: &Path,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> crate::surface_ownership::retention::RemovalReport {
-    if let Err(error) = remove_owned_claude_hooks_from_file(
+    match remove_owned_claude_hooks_from_file(
         records,
         &target_dir.join("settings.local.json"),
-        Some(diag),
-    ) {
-        return crate::surface_ownership::retention::RemovalReport::failed(error, records.clone());
-    }
-    // One-release bridge: v0.11.0 command-path emissions and pre-local-settings residue.
-    // Delete with the other #130 sweeps after the next release.
-    let legacy_records: std::collections::BTreeMap<_, _> = records
-        .iter()
-        .filter(|(_, record)| record.emitted_json.is_none())
-        .map(|(key, record)| (key.clone(), record.clone()))
-        .collect();
-    if legacy_records.is_empty() {
-        return crate::surface_ownership::retention::RemovalReport::confirmed();
-    }
-    match remove_owned_claude_hooks_from_file(
-        &legacy_records,
-        &target_dir.join("settings.json"),
-        None,
+        diag,
     ) {
         Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
         Err(error) => {
-            crate::surface_ownership::retention::RemovalReport::failed(error, legacy_records)
+            crate::surface_ownership::retention::RemovalReport::failed(error, records.clone())
         }
     }
 }
@@ -240,7 +196,7 @@ fn remove_owned_claude_hooks(
 fn remove_owned_claude_hooks_from_file(
     records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
     path: &Path,
-    mut diag: Option<&mut crate::diagnostic::DiagnosticCollector>,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> Result<(), MarsError> {
     if !path.is_file() {
         return Ok(());
@@ -252,7 +208,6 @@ fn remove_owned_claude_hooks_from_file(
         .and_then(|o| o.get_mut("hooks"))
         .and_then(|v| v.as_object_mut())
     {
-        let mut emptied_events = std::collections::BTreeSet::new();
         for (key, record) in records.iter().filter(|(key, _)| key.starts_with("hook:")) {
             let Some((event, name)) = key
                 .strip_prefix("hook:")
@@ -260,39 +215,24 @@ fn remove_owned_claude_hooks_from_file(
             else {
                 continue;
             };
-            if let Some(expected) = record
+            let Some(expected) = record
                 .emitted_json
                 .as_deref()
                 .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
-            {
-                let update = super::remove_json_event_entries(hooks_map, event, &expected);
-                changed |= update.changed;
-                if update.missing > 0
-                    && let Some(diag) = diag.as_deref_mut()
-                {
-                    diag.warn(
-                        "config-divergence",
-                        format!(
-                            "config-divergence: managed hook `{name}` diverged in target `.claude` at `{}`; preserving edited config and appending the package entry",
-                            path.display()
-                        ),
-                    );
-                }
-            } else {
-                for (event, value) in hooks_map.iter_mut() {
-                    if let Some(bindings) = value.as_array_mut() {
-                        let before = bindings.len();
-                        remove_managed_hook_bindings(bindings, name);
-                        changed |= bindings.len() != before;
-                        if before > 0 && bindings.is_empty() {
-                            emptied_events.insert(event.clone());
-                        }
-                    }
-                }
+            else {
+                continue;
+            };
+            let update = super::remove_json_event_entries(hooks_map, event, &expected);
+            changed |= update.changed;
+            if update.missing > 0 {
+                diag.warn(
+                    "config-divergence",
+                    format!(
+                        "config-divergence: managed hook `{name}` diverged in target `.claude` at `{}`; preserving edited config and appending the package entry",
+                        path.display()
+                    ),
+                );
             }
-        }
-        for event in emptied_events {
-            hooks_map.remove(&event);
         }
     }
     if changed
@@ -325,22 +265,17 @@ fn remove_owned_claude_hooks_from_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surface_ownership::retention::{Surface, WritePermit};
-    use crate::target::ConfigEntry;
-
-    fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
-        WritePermit::for_test("", entries[0].surface())
-    }
+    use crate::surface_ownership::retention::WritePermit;
     use tempfile::TempDir;
 
-    fn make_hook_entry(name: &str, _event: &str, native: &str) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
+    fn make_hook_entry(name: &str, _event: &str, native: &str) -> HookEntry {
+        HookEntry {
             name: name.to_string(),
             native_event: native.to_string(),
             entries: vec![
                 serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '/hooks/{name}/run.sh'")} ]}),
             ],
-        })
+        }
     }
 
     fn make_hook_entry_with_path(
@@ -348,14 +283,14 @@ mod tests {
         _event: &str,
         native: &str,
         script_path: &str,
-    ) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
+    ) -> HookEntry {
+        HookEntry {
             name: name.to_string(),
             native_event: native.to_string(),
             entries: vec![
                 serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '{script_path}'")} ]}),
             ],
-        })
+        }
     }
 
     #[test]
@@ -363,16 +298,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = ClaudeAdapter;
         let entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
-        let written = adapter
+        adapter
             .write_hook_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
+                WritePermit::for_test("").bind_hooks(entries.clone()),
                 tmp.path(),
             )
             .unwrap();
 
-        assert_eq!(written.len(), 1);
         assert!(tmp.path().join("settings.local.json").exists());
         assert!(!tmp.path().join("settings.json").exists());
 
@@ -388,27 +320,23 @@ mod tests {
         let adapter = ClaudeAdapter;
         adapter
             .write_hook_entries(
-                WritePermit::for_test("", Surface::Hook)
-                    .bind_config_entries(vec![make_hook_entry_with_path(
-                        "audit",
-                        "tool.pre",
-                        "PreToolUse",
-                        "/old/hooks/audit/run.sh",
-                    )])
-                    .unwrap(),
+                WritePermit::for_test("").bind_hooks(vec![make_hook_entry_with_path(
+                    "audit",
+                    "tool.pre",
+                    "PreToolUse",
+                    "/old/hooks/audit/run.sh",
+                )]),
                 tmp.path(),
             )
             .unwrap();
         adapter
             .write_hook_entries(
-                WritePermit::for_test("", Surface::Hook)
-                    .bind_config_entries(vec![make_hook_entry_with_path(
-                        "audit",
-                        "tool.pre",
-                        "PreToolUse",
-                        "/new/hooks/audit/run.sh",
-                    )])
-                    .unwrap(),
+                WritePermit::for_test("").bind_hooks(vec![make_hook_entry_with_path(
+                    "audit",
+                    "tool.pre",
+                    "PreToolUse",
+                    "/new/hooks/audit/run.sh",
+                )]),
                 tmp.path(),
             )
             .unwrap();
@@ -429,94 +357,6 @@ mod tests {
                 .unwrap()
                 .contains("/new/hooks/audit/")
         );
-    }
-
-    #[test]
-    fn legacy_failure_retains_only_records_not_removed_by_the_successful_current_write() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(
-            tmp.path().join("settings.local.json"),
-            r#"{"hooks":{"PreToolUse":[{"matcher":"owned"}]}}"#,
-        )
-        .unwrap();
-        std::fs::write(tmp.path().join("settings.json"), "{ malformed").unwrap();
-        let structural_key = "hook:PreToolUse:current".to_owned();
-        let legacy_key = "hook:PreToolUse:legacy".to_owned();
-        let records = std::collections::BTreeMap::from([
-            (
-                structural_key.clone(),
-                crate::lock::ConfigEntryRecord {
-                    emitted_json: Some(r#"[{"matcher":"owned"}]"#.to_owned()),
-                },
-            ),
-            (
-                legacy_key.clone(),
-                crate::lock::ConfigEntryRecord { emitted_json: None },
-            ),
-        ]);
-
-        let report = remove_owned_claude_hooks(
-            &records,
-            tmp.path(),
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        );
-
-        let crate::surface_ownership::retention::RemovalReport::Unconfirmed { retained, .. } =
-            report
-        else {
-            panic!("malformed legacy file must make removal unconfirmed");
-        };
-        assert_eq!(retained.keys().collect::<Vec<_>>(), [&legacy_key]);
-        assert!(!retained.contains_key(&structural_key));
-        let current: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap(),
-        )
-        .unwrap();
-        assert!(current.get("hooks").is_none());
-    }
-
-    #[test]
-    fn remove_hook_entries_matches_backslash_commands() {
-        let tmp = TempDir::new().unwrap();
-        let existing = serde_json::json!({
-            "hooks": {
-                "PreToolUse": [
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            { "type": "command", "command": "bash \"C:\\\\pkg\\\\hooks\\\\audit\\\\run.sh\"" }
-                        ]
-                    },
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            { "type": "command", "command": "bash \"C:\\\\pkg\\\\hooks\\\\audit-extended\\\\run.sh\"" }
-                        ]
-                    }
-                ]
-            }
-        });
-        std::fs::write(
-            tmp.path().join("settings.local.json"),
-            serde_json::to_string_pretty(&existing).unwrap(),
-        )
-        .unwrap();
-
-        let records = std::collections::BTreeMap::from([(
-            "hook:tool.pre:audit".to_string(),
-            crate::lock::ConfigEntryRecord { emitted_json: None },
-        )]);
-        remove_owned_claude_hooks(
-            &records,
-            tmp.path(),
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        )
-        .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("settings.local.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let hooks = json["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(hooks.len(), 1);
     }
 
     #[test]
@@ -586,9 +426,7 @@ mod tests {
         let entries = vec![make_hook_entry("audit", "tool.pre", "PreToolUse")];
         adapter
             .write_hook_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
+                WritePermit::for_test("").bind_hooks(entries.clone()),
                 tmp.path(),
             )
             .unwrap();

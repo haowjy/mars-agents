@@ -5,7 +5,7 @@
 /// Codex-native lowering:
 /// - MCP: edits `[mcp_servers.<name>]` in `.codex/config.toml`, env vars forwarded by name
 /// - Hooks: writes to `hooks.json` with Codex command hook entries
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::MarsError;
 use crate::types::DestPath;
@@ -62,14 +62,12 @@ impl TargetAdapter for CodexAdapter {
         &self,
         write: crate::surface_ownership::retention::ConfigWrite<'_>,
         project_root: &Path,
-    ) -> Result<Vec<PathBuf>, MarsError> {
-        let (target_dir, entries) = write.into_parts(project_root);
-        let hooks = super::hooks_of(&entries);
-        let mut written = Vec::new();
-        if !hooks.is_empty() {
-            written.push(write_hooks_json(&target_dir, &hooks)?);
+    ) -> Result<(), MarsError> {
+        let (target_dir, hooks) = write.into_parts(project_root);
+        if hooks.is_empty() {
+            return Ok(());
         }
-        Ok(written)
+        write_hooks_json(&target_dir, &hooks)
     }
 
     fn mcp_file(&self) -> Option<McpFile> {
@@ -80,7 +78,7 @@ impl TargetAdapter for CodexAdapter {
                 path: ".codex/config.toml",
                 format: McpFormat::TomlTable("mcp_servers"),
             },
-            // Where mars wrote before. Delete after one release.
+            // Where mars wrote before. Remove in 0.25.
             legacy: Some(McpLocation {
                 path: ".codex/codex_mcp.json",
                 format: McpFormat::JsonSection("mcpServers"),
@@ -198,7 +196,7 @@ fn render_remote(url: &str, headers: &IndexMap<String, HeaderValue>) -> McpRende
 //   }
 // }
 
-fn write_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, MarsError> {
+fn write_hooks_json(target_dir: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
     let path = target_dir.join("hooks.json");
 
     let mut root: serde_json::Value = if path.is_file() {
@@ -232,9 +230,7 @@ fn write_hooks_json(target_dir: &Path, hooks: &[&HookEntry]) -> Result<PathBuf, 
             message: format!("failed to serialize {}: {e}", path.display()),
         })
     })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-
-    Ok(path)
+    crate::fs::atomic_write(&path, content.as_bytes())
 }
 
 fn remove_managed_hook_entries(bindings: &mut Vec<serde_json::Value>, hook_name: &str) -> bool {
@@ -280,7 +276,8 @@ fn remove_owned_codex_hooks(
     {
         return crate::surface_ownership::retention::RemovalReport::failed(error, records.clone());
     }
-    // Existing legacy-Codex sweep remains until #130's next-release cleanup.
+    // Legacy-Codex sweep for records without `emitted_json` (hook records have
+    // carried it since v0.12.0). Remove in 0.25.
     let legacy_records: std::collections::BTreeMap<_, _> = records
         .iter()
         .filter(|(_, record)| record.emitted_json.is_none())
@@ -388,32 +385,27 @@ fn remove_owned_codex_hooks_from_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::surface_ownership::retention::{Surface, WritePermit};
-    use crate::target::ConfigEntry;
-
-    fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
-        WritePermit::for_test("", entries[0].surface())
-    }
+    use crate::surface_ownership::retention::WritePermit;
     use tempfile::TempDir;
 
-    fn make_hook_entry(name: &str, native: &str) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
+    fn make_hook_entry(name: &str, native: &str) -> HookEntry {
+        HookEntry {
             name: name.to_string(),
             native_event: native.to_string(),
             entries: vec![
                 serde_json::json!({"matcher": "Bash", "hooks": [{"type": "command", "command": format!("bash '/hooks/{name}/run.sh'")} ]}),
             ],
-        })
+        }
     }
 
-    fn make_hook_entry_with_path(name: &str, native: &str, script_path: &str) -> ConfigEntry {
-        ConfigEntry::Hook(HookEntry {
+    fn make_hook_entry_with_path(name: &str, native: &str, script_path: &str) -> HookEntry {
+        HookEntry {
             name: name.to_string(),
             native_event: native.to_string(),
             entries: vec![
                 serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '{script_path}'")} ]}),
             ],
-        })
+        }
     }
 
     #[test]
@@ -423,9 +415,7 @@ mod tests {
         let entries = vec![make_hook_entry("audit", "PreToolUse")];
         adapter
             .write_hook_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
+                WritePermit::for_test("").bind_hooks(entries.clone()),
                 tmp.path(),
             )
             .unwrap();
@@ -449,25 +439,21 @@ mod tests {
         let adapter = CodexAdapter;
         adapter
             .write_hook_entries(
-                WritePermit::for_test("", Surface::Hook)
-                    .bind_config_entries(vec![make_hook_entry_with_path(
-                        "audit",
-                        "PreToolUse",
-                        "/old/hooks/audit/run.sh",
-                    )])
-                    .unwrap(),
+                WritePermit::for_test("").bind_hooks(vec![make_hook_entry_with_path(
+                    "audit",
+                    "PreToolUse",
+                    "/old/hooks/audit/run.sh",
+                )]),
                 tmp.path(),
             )
             .unwrap();
         adapter
             .write_hook_entries(
-                WritePermit::for_test("", Surface::Hook)
-                    .bind_config_entries(vec![make_hook_entry_with_path(
-                        "audit",
-                        "PreToolUse",
-                        "/new/hooks/audit/run.sh",
-                    )])
-                    .unwrap(),
+                WritePermit::for_test("").bind_hooks(vec![make_hook_entry_with_path(
+                    "audit",
+                    "PreToolUse",
+                    "/new/hooks/audit/run.sh",
+                )]),
                 tmp.path(),
             )
             .unwrap();

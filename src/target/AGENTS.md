@@ -8,7 +8,7 @@ Target-specific lowering for `.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`,
 TargetRegistry → TargetAdapter trait → per-target implementations
     ↓
 default_dest_path()  → where items go
-write_hook_entries(WritePermit, …) → hook config files; MCP goes through mcp_file.rs
+write_hook_entries(ConfigWrite, …) → hook config files; MCP goes through mcp_file::reconcile
 skill_variant_key()  → which skill variant directory to use
 ```
 
@@ -33,37 +33,39 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `skill_variant_key()` | Which `variants/<key>/` directory this target consumes |
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `mcp_file()` | The adapter's one MCP spec (below); `None` when the target takes no MCP servers |
-| `write_hook_entries(permit, entries, target_dir)` | Hook config file writes; MCP is written by `mcp_file.rs` |
+| `write_hook_entries(write, project_root)` | Hook config file writes; MCP is reconciled by `mcp_file::reconcile` |
 | `hook_fragment_mode()` | Declares `MergeJson { events }` or `File` fragment placement |
 | `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
 | `hook_fragment_problem(content)` | Names a contract violation in a file-mode fragment; callers build the warning |
 | `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
-| `legacy_hook_config_file_names()` | One-release legacy hook files for old lock records |
+| `legacy_hook_config_file_names()` | Legacy hook files for old lock records (remove in 0.25, see `.context/TODO`) |
 | `remove_owned_hook_entries(token, records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |
-
-## Config Entries
 
 ## MCP Spec (`mcp_file.rs`)
 
 Each adapter declares one `McpFile`: the project-relative path of the file its
 harness reads, the format of the section (`JsonSection(key)` or `TomlTable(key)`),
 and `render`, which turns an `McpServerEntry` into the native value plus
-lossiness. Preflight, write, removal, and the lock record all derive from it
+lossiness. Preflight, the reconcile and the lock record all derive from it
 (`mcp_file.rs`; `mcp_doc.rs` reads and edits either format as JSON values). An
 adapter that needs a different file or shape changes its spec, nothing else.
 
-- **Ownership**: one predicate, `mcp_file::ownership(record, current)` → `Unowned | Owned |
-  Edited`, used by write and remove. Write is the only place an entry is replaced: `Owned`
-  replaces in place (keeping the file's key order); `Edited` and `Unowned` are kept with a
-  warning (`--force` adopts them). Remove deletes `Owned`, keeps `Edited` with a warning, and
-  removes an `Unowned` legacy record by name.
+- **One call per target**: `mcp_file::reconcile(file, project_root, target, previous, desired,
+  force, diag)` loads the file (and the legacy file, only if a record lacks `emitted_json`)
+  once, removes stale entries the lock still owns, writes the desired ones, saves each file at
+  most once, and returns exactly the records the lock should hold. On failure it returns
+  `previous`'s MCP records so the next sync retries. `mars unlink` calls it with `desired`
+  empty. Servers are rendered once, by `render_all`, where they are lowered.
+- **Ownership**: one predicate, `mcp_file::ownership(record, current)` → `Unowned | Legacy |
+  Owned | Edited`. `Owned` is replaced in place (keeping the file's key order) or removed;
+  `Edited` is kept with a warning (`--force` replaces it on write); `Unowned` and `Legacy`
+  (a record that never recorded content) are kept on write with a warning, and `--force` adopts
+  them.
 - **Legacy**: a record with no `emitted_json` predates the spec. It is removed by name from
-  `legacy` (the adapter's earlier file, or the same file's earlier section), and that file is
-  deleted only if it ends up empty. An adapter with no `legacy` drops such a record and
-  touches no file, so deleting a `legacy` spec later can never reach a user entry by name.
-  `RemovalPlan` pre-removes only these records (the one arm in `surface_ownership::retention`
-  to delete with the legacy cleanup), so a changed record with content is never removed before
-  its write. Delete the `legacy` specs one release after they ship.
+  `legacy` (the adapter's earlier file, or the same file), and that file is deleted only if it
+  ends up empty. An adapter with no `legacy` drops such a record and touches no file, so
+  deleting a `legacy` spec later can never reach a user entry by name. Remove the `legacy`
+  specs in 0.25 (`.context/TODO`).
 - The `mcpServers` family (Claude, Pi, Cursor, and the Claude/Codex plugin tree) has one codec,
   `mars_schema::mcp_servers`: `render(transport, Flavor)` and the parse the plugin import uses.
   Claude and Pi share `claude_render` (`${VAR}`, remote typed `http`); Cursor passes
@@ -77,13 +79,15 @@ adapter that needs a different file or shape changes its spec, nothing else.
   (the crate does not enable `serde_json/preserve_order`; that would reorder every JSON
   output). A symlinked destination is written through to its target, so the link survives.
 
-Hooks do not use the spec: their event-array semantics differ.
+Hooks do not use the spec: their event-array semantics differ. Hooks are unkeyed array
+elements, so a write cannot replace one in place; they keep the retention plan
+(`surface_ownership::retention`): remove every recorded entry, then append.
 
-Two entry types flow through adapters:
+Two entry types flow through lowering:
 - `McpServerEntry { name, transport }` — `transport` is the schema's `McpTransport` (stdio command/args/env, or http url/headers) with symbolic variable names; `${MARS_MCP_DIR}` is already replaced with an absolute path in stdio
 - `HookEntry` — hook name, native event name, and an opaque `Vec<Value>` of entries (post-substitution); structural removal matches these exact entries by JSON equality
 
-The permit and removal token are sealed proofs issued by `surface_ownership::retention`; adapter removals cannot bypass outcome recording, and config writes cannot bypass suppression.
+The permit and removal token are sealed proofs issued by `surface_ownership::retention` for hooks; adapter removals cannot bypass outcome recording, and hook writes cannot bypass suppression.
 
 Adapters translate env variable names to target interpolation syntax (e.g., `${VAR}` for Claude) in `render`.
 

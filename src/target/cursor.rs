@@ -5,7 +5,7 @@
 /// Cursor-native lowering:
 /// - MCP: writes to `mcp.json` (mcpServers section), env vars as `${env:VAR}` syntax
 ///
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::MarsError;
 use crate::types::DestPath;
@@ -69,16 +69,12 @@ impl TargetAdapter for CursorAdapter {
         &self,
         write: crate::surface_ownership::retention::ConfigWrite<'_>,
         project_root: &Path,
-    ) -> Result<Vec<PathBuf>, MarsError> {
-        let (target_dir, entries) = write.into_parts(project_root);
-        let hooks = super::hooks_of(&entries);
-        let mut written = Vec::new();
-        if !hooks.is_empty() {
-            let path = target_dir.join("hooks.json");
-            write_cursor_hooks_json(&path, &hooks)?;
-            written.push(path);
+    ) -> Result<(), MarsError> {
+        let (target_dir, hooks) = write.into_parts(project_root);
+        if hooks.is_empty() {
+            return Ok(());
         }
-        Ok(written)
+        write_cursor_hooks_json(&target_dir.join("hooks.json"), &hooks)
     }
 
     fn mcp_file(&self) -> Option<McpFile> {
@@ -88,7 +84,7 @@ impl TargetAdapter for CursorAdapter {
                 format: McpFormat::JsonSection("mcpServers"),
             },
             // v0.23 wrote its records here without `emitted_json`.
-            // Delete after one release.
+            // Remove in 0.25.
             legacy: Some(McpLocation {
                 path: ".cursor/mcp.json",
                 format: McpFormat::JsonSection("mcpServers"),
@@ -118,7 +114,7 @@ impl TargetAdapter for CursorAdapter {
 }
 
 // Cursor uses a flat entry array and requires the version wrapper.
-pub(crate) fn write_cursor_hooks_json(path: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
+pub(crate) fn write_cursor_hooks_json(path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
     let mut root: serde_json::Value = if path.is_file() {
         super::parse_json_file(path)?
     } else {

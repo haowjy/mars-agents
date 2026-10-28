@@ -288,14 +288,16 @@ that never names the token has no directory and needs none.
 8. Lower desired entries and derive native lock keys such as
    `hook:PreToolUse:audit`.
 9. Compare desired entries against the previous lock and remove stale entries
-   before writing replacements. Removal is ownership-gated and hook commands
-   are path-matched by name. The same phase performs temporary removal-only
-   residue sweeps for legacy OpenCode `opencode.json` hooks and Codex
-   `codex_hooks.json` hooks.
+   before writing replacements. Hook removal is ownership-gated; the same phase
+   performs temporary removal-only residue sweeps (until 0.25) for legacy
+   OpenCode `opencode.json` hooks and Codex `codex_hooks.json` hooks. MCP
+   servers skip this step: step 10 removes and writes them in one pass.
 10. Write desired entries to target config files: MCP through each adapter's
-    `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), hooks through the
-    adapter (`settings.local.json`, `hooks.json`). A same-named MCP entry the
-    lock does not own is kept. Non-fatal per-target.
+    `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), reconciled in one
+    pass per file (`mcp_file::reconcile`: stale owned entries removed, desired
+    ones written, one save), hooks through the adapter (`settings.local.json`,
+    `hooks.json`). A same-named MCP entry the lock does not own is kept.
+    Non-fatal per-target.
 
 In `--diff` (dry run) mode, stale entries are reported as warnings but not
 removed; writes are skipped.

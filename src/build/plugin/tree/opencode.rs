@@ -6,7 +6,7 @@ use crate::compiler::hooks::ParsedHookItem;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::target::opencode::OpencodeAdapter;
-use crate::target::{ConfigEntry, TargetAdapter};
+use crate::target::{HookEntry, McpServerEntry, TargetAdapter};
 use mars_schema::HarnessId;
 use mars_schema::frontmatter::Frontmatter;
 use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
@@ -66,12 +66,12 @@ fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
 fn write_config_entries(
     _profile: &TreeProfile,
     root: &Path,
-    entries: &[ConfigEntry],
+    mcp: &[McpServerEntry],
+    _hooks: &[HookEntry],
     _harnesses: &[&'static super::super::spec::PluginHarnessSpec],
     _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let (mcp, _) = super::standard_config_entries(entries);
-    let servers = super::render_servers(&OpencodeAdapter, &mcp);
+    let servers = super::render_servers(&OpencodeAdapter, mcp);
     if servers.is_empty() {
         return Ok(());
     }
@@ -185,12 +185,9 @@ fn write_package(
     agents.sort_by(|left, right| left.id.cmp(&right.id));
 
     let mut mcp = contents
-        .config_entries
+        .mcp_servers
         .iter()
-        .filter_map(|entry| match entry {
-            ConfigEntry::McpServer(server) => Some(server.name.as_str()),
-            ConfigEntry::Hook(_) => None,
-        })
+        .map(|server| server.name.as_str())
         .collect::<Vec<_>>();
     mcp.sort_unstable();
 

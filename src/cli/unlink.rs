@@ -124,17 +124,16 @@ fn remove_owned_target_content(
         .config_entries
         .get(target_name)
         .cloned()
-        .map(|entries| std::collections::BTreeMap::from([(target_name.to_string(), entries)]))
         .unwrap_or_default();
-    let removal_plan = crate::surface_ownership::retention::RemovalPlan::build(
-        &previous,
-        &std::collections::BTreeMap::new(),
-    );
     let registry = crate::target::TargetRegistry::new();
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
-    let retention = removal_plan.execute(
+    let retention = crate::surface_ownership::retention::RemovalPlan::build(
+        &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
+        &std::collections::BTreeMap::new(),
+    )
+    .execute(
         |operation, diagnostics| {
-            crate::compiler::config_entries::remove(
+            crate::compiler::config_entries::remove_hooks(
                 &registry,
                 operation,
                 &ctx.project_root,
@@ -143,9 +142,29 @@ fn remove_owned_target_content(
         },
         &mut diagnostics,
     );
+    let reconciled = crate::compiler::config_entries::reconcile_mcp(
+        &registry,
+        &ctx.project_root,
+        target_name,
+        Some(&previous),
+        &[],
+        false,
+        &mut diagnostics,
+    );
+    crate::compiler::config_entries::report_removed(
+        retention.removed_keys(),
+        &std::collections::BTreeMap::from([(target_name.to_string(), reconciled.removed)]),
+        &mut diagnostics,
+    );
     lock.config_entries.remove(target_name);
     lock.config_entries
         .extend(retention.into_retained_records());
+    if !reconciled.records.is_empty() {
+        lock.config_entries
+            .entry(target_name.to_string())
+            .or_default()
+            .extend(reconciled.records);
+    }
 
     Ok((removed.len(), diagnostics.drain()))
 }

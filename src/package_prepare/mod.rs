@@ -272,21 +272,30 @@ pub(crate) fn prepare_rooted(
         });
     };
     let prepared = package.prepared.clone();
-    let package_name = prepared
+    let package_name = dependency_name(&prepared, source_name);
+    report_diagnostics(
+        &prepared,
+        &|relative| format!("{package_name}: {relative}"),
+        &Subject::Dependency(package_name),
+        diag,
+    );
+
+    prepared_rooted(rooted, Arc::new(prepared), diag)
+}
+
+/// How diagnostics name a dependency: by its manifest, else by its source name; never by where
+/// the cache keeps its archive.
+pub(crate) fn dependency_name<'a>(
+    prepared: &'a Prepared,
+    source_name: &'a crate::types::SourceName,
+) -> &'a str {
+    prepared
         .manifest
         .as_ref()
         .and_then(|manifest| manifest.reading.package.fields.as_ref())
         .map(|package| package.name.as_str())
         .filter(|name| !name.is_empty())
-        .unwrap_or(source_name.as_ref());
-    report_diagnostics(
-        &prepared,
-        &|relative| format!("{package_name}: {relative}"),
-        &Subject::Package(package_name),
-        diag,
-    );
-
-    prepared_rooted(rooted, Arc::new(prepared), diag)
+        .unwrap_or(source_name.as_ref())
 }
 
 /// A marketplace dependency installs one plugin, and the lock records which: the dependency
@@ -411,6 +420,9 @@ pub(crate) fn prepare_project(
 pub(crate) enum Subject<'a> {
     /// A package, named by its manifest; `mars migrate` runs in its repository.
     Package(&'a str),
+    /// A dependency of a sync: like a package, except its body links are judged by `sync`
+    /// against what the consumer's filters and renames install, not here against the package.
+    Dependency(&'a str),
     /// The project's own `.mars-src` content.
     AuthoredSource,
 }
@@ -432,6 +444,11 @@ pub(crate) fn report_diagnostics(
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
         for diagnostic in diagnostics {
+            if matches!(subject, Subject::Dependency(_))
+                && mars_schema::links::LINK_CODES.contains(&diagnostic.code.as_str())
+            {
+                continue;
+            }
             diag.schema(diagnostic, &context, false);
         }
     }
@@ -443,7 +460,7 @@ pub(crate) fn report_diagnostics(
         return;
     }
     let (name, migrate) = match subject {
-        Subject::Package(name) => (
+        Subject::Package(name) | Subject::Dependency(name) => (
             format!("package `{name}`"),
             "run `mars migrate` in its repository",
         ),

@@ -338,26 +338,38 @@ pub(crate) fn prepare_root(
         Vec::new()
     };
     if let Shaping::Foreign(Dialect::Claude | Dialect::AgentSkills) = shaping {
-        let selected_paths = selected
+        // Every discovered skill is a link owner; only the selected ones are installed, under
+        // their own output folder.
+        let bodies = selected
             .iter()
-            .map(|definition| definition.source_path.as_str())
-            .collect::<BTreeSet<_>>();
-        for (definition, prepared) in selected.iter().zip(&definitions) {
-            let Reading::Skill(DefinitionRead {
-                body: Some(body), ..
-            }) = &prepared.reading
-            else {
-                continue;
-            };
+            .zip(&definitions)
+            .filter_map(|(definition, prepared)| match &prepared.reading {
+                Reading::Skill(DefinitionRead {
+                    body: Some(body), ..
+                }) => Some((definition.source_path.as_str(), body.as_str())),
+                _ => None,
+            })
+            .collect::<BTreeMap<_, _>>();
+        let skills = all
+            .iter()
+            .filter(|definition| definition.kind == DefinitionKind::Skill)
+            .filter(|definition| definition.skill_root.is_some())
+            .collect::<Vec<_>>();
+        let views = skills
+            .iter()
+            .map(|definition| crate::links::SkillView {
+                slug: &definition.slug,
+                source_root: definition.skill_root.as_deref().unwrap_or_default(),
+                stored_root: definition.output_root(),
+                installed: selected.contains(definition),
+                body: bodies.get(definition.source_path.as_str()).copied(),
+            })
+            .collect::<Vec<_>>();
+        for (definition, found) in skills.iter().zip(crate::links::skill_link_diagnostics(&views)) {
             diagnostics
                 .entry(definition.source_path.clone())
                 .or_default()
-                .extend(crate::claude::checks::reference_diagnostics(
-                    definition,
-                    body,
-                    all,
-                    &selected_paths,
-                ));
+                .extend(found);
         }
     }
 

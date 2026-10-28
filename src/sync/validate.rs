@@ -4,15 +4,16 @@
 //! Called from `build_target` against the post-prune, post-rewrite target state.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::provided::ProvidedNames;
 use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
-use crate::types::{SourceName, SourceOrigin};
+use crate::types::{DestPath, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
-use mars_schema::item::ItemKind;
+use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::provider::deferred_provider;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
@@ -172,5 +173,86 @@ pub(crate) fn warn_config_dangles_after_rename(
     }
     for name in loaded.effective.skills.keys() {
         check(name, ItemKind::Skill, "[skills.<name>] overlay", diag);
+    }
+}
+
+/// Report the body links of every dependency skill that stop resolving once the skills are
+/// installed, judged against the installed tree: after the consumer's filters, explicit renames
+/// and collision renames. This is the one reporter of these links for a dependency; `package_prepare`
+/// leaves them out (`Subject::Dependency`) because it only knows the package's own layout.
+///
+/// The project's own `_self` skills are not checked here: they install under their default
+/// paths, never filtered or renamed, so the verdict `package_prepare` gives is already exact.
+pub(crate) fn report_skill_links(
+    target: &TargetState,
+    graph: &ResolvedGraph,
+    diag: &mut DiagnosticCollector,
+) {
+    use mars_schema::links::{SkillView, skill_link_diagnostics};
+    use mars_schema::read::{DefinitionRead, Reading};
+
+    let installed: HashMap<(&SourceName, &Path), &DestPath> = target
+        .items
+        .values()
+        .filter(|item| item.id.kind == ItemKind::Skill)
+        .map(|item| ((&item.source_name, item.source_path.as_path()), &item.dest_path))
+        .collect();
+
+    for (source_name, node) in &graph.nodes {
+        let Some(prepared) = &node.prepared else {
+            continue;
+        };
+        let skills = prepared
+            .definitions
+            .iter()
+            .filter(|definition| definition.kind == DefinitionKind::Skill)
+            .map(|definition| {
+                let item = crate::discover::definition_item(definition, &definition.output_path);
+                let dest = installed
+                    .get(&(source_name, node.rooted_ref.package_root.join(item.source_path).as_path()))
+                    .map(|dest| dest.as_str());
+                (definition, dest)
+            })
+            .collect::<Vec<_>>();
+        let stored = skills
+            .iter()
+            .map(|(definition, dest)| {
+                dest.map_or_else(|| format!("skills/{}", definition.slug), str::to_owned)
+            })
+            .collect::<Vec<_>>();
+        let roots = skills
+            .iter()
+            .map(|(definition, _)| {
+                definition
+                    .source_path
+                    .strip_suffix("SKILL.md")
+                    .unwrap_or_default()
+                    .trim_end_matches('/')
+            })
+            .collect::<Vec<_>>();
+        let views = skills
+            .iter()
+            .enumerate()
+            .map(|(index, (definition, dest))| SkillView {
+                slug: &definition.slug,
+                source_root: roots[index],
+                stored_root: &stored[index],
+                installed: dest.is_some(),
+                body: match &definition.reading {
+                    Reading::Skill(DefinitionRead { body, .. }) => body.as_deref(),
+                    _ => None,
+                },
+            })
+            .collect::<Vec<_>>();
+        let package = crate::package_prepare::dependency_name(prepared, source_name);
+        for ((definition, _), found) in skills.iter().zip(skill_link_diagnostics(&views)) {
+            for diagnostic in &found {
+                diag.schema(
+                    diagnostic,
+                    &format!("{package}: {}", definition.source_path),
+                    false,
+                );
+            }
+        }
     }
 }

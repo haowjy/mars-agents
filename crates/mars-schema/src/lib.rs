@@ -26,6 +26,7 @@ pub mod claude;
 pub mod frontmatter;
 mod invocability;
 pub mod item;
+pub mod links;
 mod lift;
 pub mod markdown;
 

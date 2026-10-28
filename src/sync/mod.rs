@@ -701,6 +701,8 @@ pub(crate) fn build_target(
             .map(|package| package.uses_providers.as_slice()),
     );
 
+    validate::report_skill_links(&target_state, &resolved.graph, diag);
+
     validate::warn_config_dangles_after_rename(
         &renames,
         &collision_renames,

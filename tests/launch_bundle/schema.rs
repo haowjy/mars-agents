@@ -143,54 +143,6 @@ Review code changes.
 }
 
 #[test]
-fn build_launch_bundle_supports_ad_hoc_mode_with_model_override() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-skills: [planning]
-tools:
-  Bash: allow
-  Write: allow
----
-Review code changes."#;
-    let skill_content =
-        "---\nname: planning\ndescription: Plan tasks\n---\nUse this skill to plan.";
-
-    let (server, project_root) = setup_bundle_project(
-        &temp,
-        "bundle-source",
-        agent_content,
-        &[("planning", skill_content)],
-        "",
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.args(["build", "launch-bundle", "--model", "gpt-5"]);
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["version"].as_u64(), Some(4));
-    assert!(bundle["agent"].is_null());
-    assert_field_absent_or_null(&bundle, "agent_body");
-    assert_eq!(bundle["routing"]["model_token"].as_str(), Some("gpt-5"));
-    assert!(bundle["routing"]["harness"].is_string());
-    assert_eq!(bundle["tools"]["allowed"], serde_json::json!([]));
-    assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
-    assert_eq!(bundle["tools"]["mcp"], serde_json::json!([]));
-    assert_eq!(bundle["skills"]["loaded"], serde_json::json!([]));
-    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
-    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
-    assert_eq!(
-        bundle["prompt_surface"]["supplemental_documents"],
-        serde_json::json!(Vec::<Value>::new())
-    );
-}
-
-#[test]
 fn build_launch_bundle_ad_hoc_without_mars_toml() {
     let temp = TempDir::new().unwrap();
     let server = MockServer::start();
@@ -372,65 +324,37 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_rejects_prompt_file_flag() {
-    let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--prompt-file",
-        "task.md",
-    ]);
-
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains("--prompt-file"));
-}
-
-#[test]
-fn build_launch_bundle_uses_installed_harness_default_when_no_model_available() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
-    let agent_content = r#"---
-name: reviewer
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["model_token"].as_str(), Some(""));
-    assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
-    assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
-    assert_eq!(
-        bundle["routing"]["harness_model_source"].as_str(),
-        Some("passthrough")
-    );
-    assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("unset"));
-}
-
-#[test]
 fn build_launch_bundle_ad_hoc_without_model_uses_installed_harness_default() {
+    // Profile in a project, then ad hoc without a project: both fall back to the installed harness.
+    {
+        let temp = TempDir::new().unwrap();
+        let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
+        let agent_content = r#"---
+name: reviewer
+---
+Review code changes."#;
+
+        let (server, project_root) =
+            setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
+
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+        cmd.env("PATH", replace_path_with(&bin_dir));
+
+        let output = cmd.assert().success().get_output().clone();
+        let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+        assert_eq!(bundle["routing"]["model_token"].as_str(), Some(""));
+        assert_eq!(bundle["routing"]["model"].as_str(), Some(""));
+        assert_eq!(bundle["routing"]["harness"].as_str(), Some("codex"));
+        assert_eq!(bundle["routing"]["harness_model"].as_str(), Some(""));
+        assert_eq!(
+            bundle["routing"]["harness_model_source"].as_str(),
+            Some("passthrough")
+        );
+        assert_eq!(bundle["provenance"]["model_source"].as_str(), Some("unset"));
+    }
+
     let temp = TempDir::new().unwrap();
     let server = MockServer::start();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);

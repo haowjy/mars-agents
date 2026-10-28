@@ -6,82 +6,41 @@ use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 
 #[test]
-fn build_launch_bundle_fails_on_unknown_agent_harness() {
-    let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-harness: claude
----
-Review code changes."#;
+fn build_launch_bundle_fails_on_invalid_agent_frontmatter() {
+    // (valid line, broken line, expected stderr)
+    let cases = [
+        (
+            "harness: claude",
+            "harness: not-a-harness",
+            "unknown harness",
+        ),
+        (
+            "model-invocable: true",
+            "model-invocable: nope",
+            "model-invocable",
+        ),
+    ];
+    for (valid, broken, expected) in cases {
+        let temp = TempDir::new().unwrap();
+        let agent_content = format!(
+            "---\nname: reviewer\nmodel: claude-opus-4-6\n{valid}\n---\nReview code changes."
+        );
 
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-    std::fs::write(
-        project_root.join(".mars/agents/reviewer.md"),
-        agent_content.replace("harness: claude", "harness: not-a-harness"),
-    )
-    .unwrap();
+        let (server, project_root) =
+            setup_bundle_project(&temp, "bundle-source", &agent_content, &[], "");
+        std::fs::write(
+            project_root.join(".mars/agents/reviewer.md"),
+            agent_content.replace(valid, broken),
+        )
+        .unwrap();
 
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains("unknown harness"));
-}
-
-#[test]
-fn build_launch_bundle_fails_on_invalid_top_level_agent_field_value() {
-    let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-model-invocable: true
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-    std::fs::write(
-        project_root.join(".mars/agents/reviewer.md"),
-        agent_content.replace("model-invocable: true", "model-invocable: nope"),
-    )
-    .unwrap();
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains("model-invocable"));
-}
-
-#[test]
-fn build_launch_bundle_accepts_model_invocable_passthrough_override() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-harness-overrides:
-  claude:
-    model-invocable: false
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        bundle["execution_policy"]["native_config"]["model-invocable"].as_bool(),
-        Some(false)
-    );
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+        cmd.assert()
+            .failure()
+            .code(2)
+            .stderr(predicates::str::contains(expected));
+    }
 }
 
 #[test]

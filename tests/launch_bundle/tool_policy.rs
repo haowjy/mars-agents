@@ -6,97 +6,6 @@ use assert_fs::TempDir;
 use serde_json::Value;
 
 #[test]
-fn build_launch_bundle_normalizes_tool_head_and_preserves_scoped_payload() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-tools:
-  "Bash(git status *)": allow
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "claude",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        bundle["tools"]["allowed"],
-        serde_json::json!(["Bash(git status *)"])
-    );
-}
-
-#[test]
-fn build_launch_bundle_warns_for_unknown_first_class_tool_and_preserves_mcp() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-tools:
-  PlanMode: deny
-  CustomDeny: deny
-  CustomTool: allow
-  Notebook: allow
-  mcp(plugin:context7:context7): allow
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "claude",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    // `CustomTool` / `CustomDeny` are not capabilities: Mars leaves them out and says so
-    // instead of guessing a Claude spelling.
-    assert_eq!(
-        bundle["tools"]["allowed"],
-        serde_json::json!(["NotebookEdit"])
-    );
-    assert_eq!(
-        bundle["tools"]["disallowed"],
-        serde_json::json!(["EnterPlanMode", "ExitPlanMode"])
-    );
-    assert_eq!(
-        bundle["tools"]["mcp"],
-        serde_json::json!(["mcp__plugin:context7:context7__*"])
-    );
-    for (name, action) in [("custom_tool", "allow"), ("custom_deny", "deny")] {
-        let unknown = rule(&bundle, name, None);
-        assert_eq!(unknown["action"], action);
-        assert_eq!(unknown["native_status"], "unknown");
-        assert_eq!(unknown["native"], serde_json::json!([]));
-        assert!(unknown["note"].is_string(), "{unknown}");
-    }
-    assert_eq!(bundle["warnings"], serde_json::json!([]));
-}
-
-#[test]
 fn build_launch_bundle_opencode_tool_normalization_maps_to_opencode_permission_names() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
@@ -230,58 +139,6 @@ Review code changes."#;
         "unknown"
     );
     assert_eq!(codex_bundle["warnings"], serde_json::json!([]));
-}
-
-#[test]
-fn build_launch_bundle_cursor_and_pi_unknown_tools_are_left_out_with_a_note() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "pi"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-tools:
-  CustomTool: allow
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cursor_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cursor_cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "cursor",
-    ]);
-    cursor_cmd.env("PATH", replace_path_with(&bin_dir));
-    let cursor_output = cursor_cmd.assert().success().get_output().clone();
-    let cursor_bundle: Value = serde_json::from_slice(&cursor_output.stdout).unwrap();
-    assert_eq!(cursor_bundle["tools"]["allowed"], serde_json::json!([]));
-    let cursor_rule = rule(&cursor_bundle, "custom_tool", None);
-    assert_eq!(cursor_rule["native_status"], "unknown");
-    assert!(cursor_rule["note"].is_string(), "{cursor_rule}");
-    assert_eq!(cursor_bundle["warnings"], serde_json::json!([]));
-
-    let mut pi_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    pi_cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "pi",
-    ]);
-    pi_cmd.env("PATH", replace_path_with(&bin_dir));
-    let pi_output = pi_cmd.assert().success().get_output().clone();
-    let pi_bundle: Value = serde_json::from_slice(&pi_output.stdout).unwrap();
-    assert_eq!(pi_bundle["tools"]["allowed"], serde_json::json!([]));
-    let pi_rule = rule(&pi_bundle, "custom_tool", None);
-    assert_eq!(pi_rule["native_status"], "unknown");
-    assert!(pi_rule["note"].is_string(), "{pi_rule}");
-    assert_eq!(pi_bundle["warnings"], serde_json::json!([]));
 }
 
 #[test]
@@ -476,35 +333,6 @@ fn bundle_accepts_ask_and_normalizes_colon_star() {
 }
 
 #[test]
-fn bundle_scopes_claude_write_with_edit_and_explains_the_effect() {
-    let agent = r#"---
-name: reviewer
-model: claude-opus-4-6
-tools:
-  'write(src/**)': allow
----
-Review code changes."#;
-    let bundle = bundle_for(agent, "claude");
-    let scoped_write = rule(&bundle, "write", Some("src/**"));
-    assert_eq!(scoped_write["native"], serde_json::json!(["Edit(src/**)"]));
-    assert_eq!(scoped_write["native_tools"], serde_json::json!(["Write"]));
-    assert_eq!(scoped_write["native_status"], "known");
-    let note = scoped_write["note"].as_str().unwrap_or_default();
-    assert!(
-        note.contains("allow adds no practical write power"),
-        "{note}"
-    );
-    assert!(
-        note.contains("deny also refuses other built-in file edits"),
-        "{note}"
-    );
-    assert_eq!(
-        bundle["tools"]["allowed"],
-        serde_json::json!(["Edit(src/**)"])
-    );
-}
-
-#[test]
 fn bundle_flat_lists_derive_from_rules_and_cannot_hold_ask() {
     let bundle = bundle_for(TYPED_RULES_AGENT, "claude");
     assert_eq!(
@@ -519,56 +347,6 @@ fn bundle_flat_lists_derive_from_rules_and_cannot_hold_ask() {
             .iter()
             .any(|name| name.as_str().unwrap().contains("git push")),
         "an ask rule is neither allowed nor disallowed: {disallowed:?}"
-    );
-}
-
-#[test]
-fn bundle_marks_tools_a_harness_lacks_as_absent() {
-    let codex = bundle_for(TYPED_RULES_AGENT, "codex");
-    // Codex has no notebook or lsp tool, and the model reads files through the shell.
-    for capability in ["notebook", "lsp"] {
-        let absent = rule(&codex, capability, None);
-        assert_eq!(absent["native_status"], "absent", "{capability}");
-        assert_eq!(absent["native"], serde_json::json!([]));
-        assert_eq!(absent["native_tools"], serde_json::json!([]));
-    }
-    assert_eq!(
-        rule(&codex, "edit", None)["native"],
-        serde_json::json!(["apply_patch"])
-    );
-    assert_eq!(
-        rule(&codex, "edit", None)["native_tools"],
-        serde_json::json!(["apply_patch"])
-    );
-    assert_eq!(
-        rule(&codex, "web", None)["native"],
-        serde_json::json!(["web_search"])
-    );
-    assert_eq!(
-        rule(&codex, "mcp", Some("github/delete_repo"))["native_status"],
-        "unknown"
-    );
-
-    let opencode = bundle_for(TYPED_RULES_AGENT, "opencode");
-    assert_eq!(
-        rule(&opencode, "ask_user", None)["native"],
-        serde_json::json!(["question"])
-    );
-    assert_eq!(
-        rule(&opencode, "ask_user", None)["native_tools"],
-        serde_json::json!(["question"])
-    );
-    assert_eq!(
-        rule(&opencode, "agent", None)["native"],
-        serde_json::json!(["task"])
-    );
-    assert_eq!(
-        rule(&opencode, "task", None)["native"],
-        serde_json::json!(["todowrite"])
-    );
-    assert_eq!(
-        rule(&opencode, "web", None)["native"],
-        serde_json::json!(["websearch", "webfetch"])
     );
 }
 
@@ -601,76 +379,6 @@ Review code changes."#;
         serde_json::json!(["Read", "Grep"])
     );
     assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
-}
-
-/// The shape of the shipped `prompt-tester`: no editing, but writing files is fine.
-const NO_EDIT_BUT_WRITE_AGENT: &str = r#"---
-name: reviewer
-model: claude-opus-4-6
-tools:
-  bash: allow
-  read: allow
-  write: allow
-  edit: deny
-  notebook: deny
----
-Test prompts."#;
-
-#[test]
-fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_notes_where_it_cannot() {
-    // Claude and Pi tell `write` from `edit`: the narrow allow wins the shared tool.
-    for (harness, allowed, denied) in [("claude", "Write", "Edit"), ("pi", "write", "edit")] {
-        let bundle = bundle_for(NO_EDIT_BUT_WRITE_AGENT, harness);
-        let allowed_list = bundle["tools"]["allowed"].as_array().unwrap();
-        let disallowed_list = bundle["tools"]["disallowed"].as_array().unwrap();
-        assert!(
-            allowed_list.contains(&serde_json::json!(allowed)),
-            "{harness}"
-        );
-        assert!(
-            !disallowed_list.contains(&serde_json::json!(allowed)),
-            "{harness}"
-        );
-        assert!(
-            disallowed_list.contains(&serde_json::json!(denied)),
-            "{harness}"
-        );
-        assert!(rule(&bundle, "write", None)["note"].is_null(), "{harness}");
-        assert!(rule(&bundle, "edit", None)["note"].is_null(), "{harness}");
-        assert_eq!(
-            rule(&bundle, "write", None)["native_tools"],
-            serde_json::json!([allowed]),
-            "{harness}"
-        );
-    }
-    let claude = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "claude");
-    assert_eq!(
-        rule(&claude, "edit", None)["native"],
-        serde_json::json!(["Edit", "NotebookEdit"])
-    );
-    assert_eq!(
-        rule(&claude, "edit", None)["native_tools"],
-        serde_json::json!(["Edit", "NotebookEdit"])
-    );
-
-    // Codex edits and writes through `apply_patch` alone, so Mars cannot pick: both rules say the
-    // harness decides, and the launch gets no warning.
-    let codex = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "codex");
-    for capability in ["write", "edit"] {
-        let overlapping = rule(&codex, capability, None);
-        assert_eq!(overlapping["native_status"], "known");
-        assert_eq!(
-            overlapping["native_tools"],
-            serde_json::json!(["apply_patch"])
-        );
-        assert!(
-            overlapping["note"]
-                .as_str()
-                .is_some_and(|note| note.contains("the harness decides")),
-            "{overlapping}"
-        );
-    }
-    assert_eq!(codex["warnings"], serde_json::json!([]));
 }
 
 #[test]

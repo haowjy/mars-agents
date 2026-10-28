@@ -49,76 +49,28 @@ model = "gpt-5"
 }
 
 #[test]
-fn explicit_empty_targets_do_not_autodiscover() {
-    let (output, calls) = launch_with_scope("targets = []", None, &[]);
-    assert!(
-        !output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    assert!(calls.is_empty(), "{calls}");
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        error.contains("model fallback candidates exhausted")
-            && error.contains("on linked harnesses"),
-        "{error}"
-    );
-}
-
-#[test]
-fn generic_and_path_targets_enable_no_harnesses() {
-    let (output, calls) =
-        launch_with_scope("targets = [\".agents\", \"output/agents\"]", None, &[]);
-    assert!(
-        !output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    assert!(calls.is_empty(), "{calls}");
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        error.contains("model fallback candidates exhausted")
-            && error.contains("on linked harnesses"),
-        "{error}"
-    );
-}
-
-#[test]
-fn generic_managed_root_enables_no_harnesses() {
-    let (output, calls) = launch_with_scope("managed_root = \".agents\"", None, &[]);
-    assert!(
-        !output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    assert!(calls.is_empty(), "{calls}");
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        error.contains("model fallback candidates exhausted")
-            && error.contains("on linked harnesses"),
-        "{error}"
-    );
-}
-
-#[test]
-fn local_empty_targets_override_project_targets() {
-    let (output, calls) = launch_with_scope(
-        "targets = [\".claude\"]",
-        Some("[settings]\ntargets = []"),
-        &[],
-    );
-    assert!(
-        !output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    assert!(calls.is_empty(), "{calls}");
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        error.contains("model fallback candidates exhausted")
-            && error.contains("on linked harnesses"),
-        "{error}"
-    );
+fn configs_that_enable_no_harness_target_fail_without_probing_executables() {
+    let cases: [(&str, Option<&str>); 4] = [
+        ("targets = []", None),
+        ("targets = [\".agents\", \"output/agents\"]", None),
+        ("managed_root = \".agents\"", None),
+        ("targets = [\".claude\"]", Some("[settings]\ntargets = []")),
+    ];
+    for (settings, local) in cases {
+        let (output, calls) = launch_with_scope(settings, local, &[]);
+        assert!(
+            !output.status.success(),
+            "{settings}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(calls.is_empty(), "{settings}: {calls}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("model fallback candidates exhausted")
+                && error.contains("on linked harnesses"),
+            "{settings}: {error}"
+        );
+    }
 }
 
 #[test]

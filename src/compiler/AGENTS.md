@@ -156,7 +156,7 @@ Universal schema parsing and native lowering. Skills support variant layouts per
 
 MCP servers and hooks are selected during the target build, then validated and written to target
 config files via adapters. `TargetState` carries one parsed selection per target, plus filtered
-exported graph hooks for plugin omission diagnostics; preflight and emission consume the selected
+accepted hooks (every hook past the package filters and visibility, local ones too) for the skip report and plugin omission diagnostics; preflight and emission consume the selected
 values instead of rediscovering package config entries. After target sync, sync withholds a hook's
 or a token-naming MCP server's entry unless target sync recorded installing that directory, so an
 unmanaged or user-edited copy keeps the entry out with a `hook-not-installed` / `mcp-not-installed`
@@ -165,7 +165,7 @@ says why. A token-free server has no directory to check. `config_entries/render.
 preflight reads, validates and renders every selected hook once (`RenderedHooks`); compile reuses
 that result, and `lower_merge_fragments` orders each hook's merge output (`lower_hook_entries` is
 the same for a plugin build, which has no preflight; there `${MARS_HOOK_TARGET}` is `plugin`).
-Preflight also says what `[hooks]` leaves out on every managed target (`hook-event-skipped`:
+Preflight also says what `[hooks]` leaves out on every managed target, for every accepted hook even when no target takes it (`hook-event-skipped`:
 a warning per skip for the project's own hooks, one info line per sync for dependencies) and
 a fragment replacing generated events (`hook-fragment-overrides`). After the writes, compile
 compares a trust-gated target's (event, group, handler) positions with those before the sync and
@@ -173,13 +173,22 @@ warns `codex-hooks-need-trust` for any new or moved one. `config_entries/file_ho
 outputs: what the old lock says a hook owns on a target (every non-canonical output but its
 directory copy, so a hook may own several files) and writing them. `lower_mcp_servers` lowers servers.
 A target whose merge-file hook entries equal the lock's records, and whose file still holds
-them, is not rewritten (Codex keys trust on entry position).
+them in the order a sync would write them (`hook_file::holds_recorded`, matched entry by entry),
+is not rewritten (Codex keys trust on entry position). A changed `order` therefore rewrites the
+file at once, moving the entries and raising `codex-hooks-need-trust`; a sync that changed nothing
+stays silent.
 
 A dependency hook whose `hook.toml` fails validation (D19) is `KeptHook` in `TargetState`:
 `sync::diff` keeps its `.mars` directories as the lock has them, compile carries its merge
 records (re-appended from the record if the file is rewritten for another reason) and file
 outputs, and target sync re-projects the unchanged directory as for any unchanged item. A hook
-never installed installs nothing; both warn `hook-invalid-kept`. A dependency hook in the
+never installed installs nothing; both warn `hook-invalid-kept`. A dependency hook is judged
+invalid in one place, discovery: it must also render (read its fragments) on each managed target
+it is installed for. The project's own hook that fails to render is a hard error at preflight.
+The hook kept is whatever the old lock installed from that package under the `name` its broken
+file still declares, else its directory's name (the lock records no source path). A hook the
+consumer excludes, or whose file does not still say `visibility = "exported"`, keeps nothing and
+is not reported. A dependency hook in the
 removed schema, and any invalid project hook, still fail the sync. A dependency's unknown
 top-level key and unknown merge-fragment event warn (`Origin::Dependency`) and install. MCP collisions resolve once per target in
 `TargetState`, so the winning server's directory and config entry come from the same selection.
@@ -204,13 +213,14 @@ installs it as a directory.
 
 Hook discovery and output loading. The `hook.toml` model, its reader, each target root's
 placement and event table, the `[hooks]` renderers, fragment validation and token substitution
-(`Tokens`) are `mars-schema::hooks`; the binary holds no copy of those rules. `load_merge_output`
-reads the fragment file when the hook declares one and asks the schema for the target's events;
+(`Tokens`) are `mars-schema::hooks`; the binary holds no copy of those rules. `load_output`
+reads the fragment file when the hook declares one and asks the schema what the hook installs on
+the target (`HookOutput`: merge events, or a list of files);
 `check_hooks` is `mars check`'s hook pass (the `requires-mars >= 0.25.0` floor, `if` on a
 non-tool event, what Claude and Codex leave out). This module reads
 the bytes, calls the schema, and adds the location to its path-free diagnostics exactly once:
-the real path for the project's own hook, `source package <p> version <v>, hook <n>` for a
-dependency's (whose path is a staging directory that must never reach an error).
+the real path for the project's own hook, the package and hook (with the version when reading
+`hook.toml`) for a dependency's (whose path is a staging directory that must never reach an error).
 Placement and lock recording are handled by `config_entries/`. Target construction derives the
 filter-facing `DiscoveredItem` from that strict parse instead of parsing `hook.toml` again.
 

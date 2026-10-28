@@ -8,7 +8,7 @@ Target-specific lowering for `.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`,
 TargetRegistry → TargetAdapter trait → per-target implementations
     ↓
 default_dest_path()  → where items go
-hook_placement()    → where hooks live (merge file or file dir); MCP goes through mcp_file::reconcile
+hook_file()         → the file a merge target appends hook entries to; MCP goes through mcp_file::reconcile
 skill_variant_key()  → which skill variant directory to use
 ```
 
@@ -33,7 +33,7 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `skill_variant_key()` | Which `variants/<key>/` directory this target consumes |
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `mcp_file()` | The adapter's one MCP spec (below); `None` when the target takes no MCP servers |
-| `hook_placement()` | `HookPlacement::Merge { file, top_level, trust_gated }` (entries appended into a JSON file; `trust_gated` is Codex, which skips handlers whose position it has not been told to trust, so `hook_file::trust_positions` lets compile warn when a sync moves one) or `File { dir }` (each output a whole file); `None` when the target takes no hooks. `HookPlacement::file_path(name, HookRole)` names a file output. What a target accepts there is `mars_schema::hooks::targets::placement`; the two agree per target (a test pins it). `hook_file::write` / `remove_recorded` / `holds_recorded` edit a merge file; the compiler matches on the placement, adapters carry no hook methods |
+| `hook_file()` | `HookFile { file, top_level, trust_gated }`: the JSON file a merge target appends hook entries to (`trust_gated` is Codex, which skips handlers whose position it has not been told to trust, so `hook_file::trust_positions` lets compile warn when a sync moves one); `None` for a target that merges none. Which targets merge, what they accept, and the files of a file target (OpenCode, Pi) are `mars_schema::hooks::targets`; the two agree per target (a test pins it). `hook_file::write` / `remove_recorded` / `holds_recorded` edit a merge file; adapters carry no other hook methods |
 
 ## MCP Spec (`mcp_file.rs`)
 

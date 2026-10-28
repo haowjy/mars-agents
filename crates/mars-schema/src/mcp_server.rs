@@ -264,7 +264,7 @@ pub fn render_mcp_toml(def: &McpServerDef) -> String {
                         name,
                         match header {
                             HeaderValue::Literal(text) => text.as_str().into(),
-                            HeaderValue::Env { var, prefix } => env_ref(var, prefix),
+                            HeaderValue::Env { env, prefix } => env_ref(env.var_name(), prefix),
                         },
                     );
                 }

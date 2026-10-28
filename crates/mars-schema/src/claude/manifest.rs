@@ -22,7 +22,8 @@ pub struct ComponentLists {
     pub agents: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commands: Option<Vec<String>>,
-    /// The manifest declares `hooks` or `mcpServers`; neither is converted yet.
+    /// The manifest declares `hooks` (not converted yet) or `mcpServers` (read from the plugin's
+    /// own files by `claude::mcp`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hooks: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

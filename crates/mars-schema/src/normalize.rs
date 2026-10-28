@@ -302,6 +302,7 @@ fn finish_package<T: TreeSource>(
         .any(SchemaDiagnostic::is_error);
     if refused {
         prepared.definitions.clear();
+        prepared.mcp_servers.clear();
         prepared.payload.clear();
     }
 

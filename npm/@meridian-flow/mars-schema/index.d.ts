@@ -263,10 +263,38 @@ export type PreparedDefinition = {
   | { kind: "skill"; reading: DefinitionRead<SkillFields> }
 );
 
+export type McpHeaderValue =
+  | { literal: string }
+  /** `prefix` followed by the value of the environment variable `env.var`, read by the harness. */
+  | { env: { env: { from: "env"; var: string }; prefix: string } };
+
+export interface McpServerDef {
+  /** Overrides the directory name as the server's config key. */
+  name: string | null;
+  transport:
+    | { kind: "stdio"; command: string; args: string[]; env: { [name: string]: { from: "env"; var: string } } }
+    | { kind: "http"; url: string; headers: { [name: string]: McpHeaderValue } };
+  visibility: string;
+  targets: string[];
+}
+
+/** An MCP server translated from a foreign plugin, written as `mcp/<name>/mcp.toml`. */
+export interface PreparedMcpServer {
+  name: string;
+  /** The file that declared it (`.mcp.json`, `.claude-plugin/plugin.json`). */
+  source_path: string;
+  output_path: string;
+  /** The rendered `mcp.toml`. */
+  normalized_bytes: Uint8Array;
+  def: McpServerDef;
+}
+
 export interface Prepared {
   classification: Classification;
   manifest?: PreparedManifest;
   definitions: PreparedDefinition[];
+  /** A Claude plugin's `.mcp.json` and `plugin.json` servers, translated (`mcp.*` diagnostics report the rest). Absent when empty. */
+  mcp_servers?: PreparedMcpServer[];
   payload: { source_path: string; output_path: string }[];
   /** What `selectItems` reads of this package; pass this result to it whole. */
   selection: SelectionFacts;

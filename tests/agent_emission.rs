@@ -167,7 +167,7 @@ fn failed_native_agent_removal_tombstone_does_not_reclaim_canonical_path() {
     }
     fs::remove_file(source.join("agents/coder.md")).unwrap();
 
-    mars()
+    offline_mars(project.path())
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
@@ -198,7 +198,7 @@ fn failed_native_agent_removal_tombstone_does_not_reclaim_canonical_path() {
     let canonical = project.child(".mars/agents/coder.md");
     canonical.create_dir_all().unwrap();
     canonical.child("user.txt").write_str("unmanaged").unwrap();
-    mars()
+    offline_mars(project.path())
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()

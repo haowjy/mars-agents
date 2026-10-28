@@ -38,7 +38,7 @@ path = "{}"
         ))
         .unwrap();
 
-    mars()
+    offline_mars(dir.path())
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
@@ -52,7 +52,7 @@ fn validate_and_export_suppress_lossiness_warnings() {
     let dir = TempDir::new().unwrap();
     let project = setup_lossy_synced_project(&dir);
 
-    let output = mars()
+    let output = offline_mars(dir.path())
         .args(["validate", "--json", "--root", project.to_str().unwrap()])
         .output()
         .unwrap();
@@ -77,7 +77,7 @@ fn validate_and_export_suppress_lossiness_warnings() {
         "validate stderr must not contain lossiness summary: {stderr}"
     );
 
-    let output = mars()
+    let output = offline_mars(dir.path())
         .args(["export", "--root", project.to_str().unwrap()])
         .output()
         .unwrap();
@@ -137,13 +137,13 @@ fn check_surfaces_lossiness_summary_and_verbose_detail() {
     )
     .unwrap();
 
-    mars()
+    offline_mars(dir.path())
         .args(["check", pkg.to_str().unwrap()])
         .assert()
         .success()
         .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
 
-    mars()
+    offline_mars(dir.path())
         .args(["check", "--verbose", pkg.to_str().unwrap()])
         .assert()
         .success()
@@ -160,7 +160,7 @@ fn check_skips_agent_lossiness_when_emission_suppressed() {
     )
     .unwrap();
 
-    mars()
+    offline_mars(dir.path())
         .args(["check", pkg.to_str().unwrap()])
         .assert()
         .success()
@@ -172,7 +172,7 @@ fn sync_verbose_surfaces_meridian_only_detail() {
     let dir = TempDir::new().unwrap();
     let project = setup_lossy_synced_project(&dir);
 
-    mars()
+    offline_mars(dir.path())
         .args(["sync", "--verbose", "--root", project.to_str().unwrap()])
         .assert()
         .success()

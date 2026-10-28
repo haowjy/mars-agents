@@ -67,7 +67,7 @@ fn claude_native_content(project: &assert_fs::fixture::ChildPath, agent: &str) -
 }
 
 fn sync_project(project: &assert_fs::fixture::ChildPath, meridian_managed: Option<&str>) {
-    let mut cmd = mars();
+    let mut cmd = offline_mars(project.path());
     cmd.args(["sync", "--root", project.path().to_str().unwrap()]);
     match meridian_managed {
         Some(value) => {
@@ -266,7 +266,7 @@ path = "{}"
     )
     .unwrap();
 
-    mars()
+    offline_mars(project.path())
         .args([
             "link",
             ".claude",
@@ -478,7 +478,7 @@ path = "{}"
         "sync without .claude linked should not emit native agent"
     );
 
-    mars()
+    offline_mars(project.path())
         .args([
             "link",
             ".claude",
@@ -532,7 +532,7 @@ harnesses = ["claude", "codex"]
         .unwrap();
     write_claude_collision(&project);
 
-    mars()
+    offline_mars(project.path())
         .args(["link", ".codex", "--root", project.path().to_str().unwrap()])
         .env("MERIDIAN_MANAGED", "1")
         .assert()
@@ -580,7 +580,7 @@ path = "{}"
             .unwrap();
         write_claude_collision(&project);
 
-        mars()
+        offline_mars(project.path())
             .args(["link", target, "--root", project.path().to_str().unwrap()])
             .assert()
             .success();
@@ -633,7 +633,7 @@ path = "{}"
     )
     .unwrap();
 
-    mars()
+    offline_mars(project.path())
         .args(["sync", "--diff", "--root", project.path().to_str().unwrap()])
         .env("MERIDIAN_MANAGED", "1")
         .assert()
@@ -667,7 +667,7 @@ targets = [".claude"]
         .write_str("[settings]\ntargets = [\".claude\", \".codex\"]\n")
         .unwrap();
 
-    mars()
+    offline_mars(project.path())
         .args([
             "link",
             ".opencode",

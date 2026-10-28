@@ -438,18 +438,18 @@ const CURSOR: Table = &[
 ];
 
 /// Meridian Flow's own tools (mars-agents#207). Flow is a consumer, not a `HarnessId`, so
-/// its table is published in the vocabulary but never used to lower a native file. `search`
-/// is Flow's name for `grep`; `ask_user` maps to `ask`, which is not a capability alias because
-/// `ask` is a tool-policy action word.
+/// its table is published in the vocabulary but never used to lower a native file. Flow's
+/// tool keeps the capability's name, `ask_user`; `ask` is only a tool-policy action word. Flow
+/// ships no `glob` tool yet, so `glob` is absent.
 const FLOW: Table = &[
     ("read", Tools(&["read"])),
     ("write", Tools(&["write"])),
     ("edit", Tools(&["write"])),
     ("grep", Tools(&["grep"])),
-    ("glob", Tools(&["glob"])),
+    ("glob", Absent),
     ("ls", Tools(&["ls"])),
     ("skill", Tools(&["skill"])),
-    ("ask_user", Tools(&["ask"])),
+    ("ask_user", Tools(&["ask_user"])),
     (
         "agent",
         Tools(&[

@@ -257,7 +257,7 @@ The vocabulary also records, per host, which native tools a capability becomes. 
 - *absent*: the host has no such tool, so a deny is already met (`ls` on Claude, Codex and Cursor; `work` everywhere but Meridian Flow);
 - *no switch*: the host can do it but has no tool to turn off (Codex reads files through its shell).
 
-The per-harness names are in [Agent compilation](agent-compilation.md#tool-name-projection). Meridian Flow is not a harness; its tools are `read`, `write`, `glob`, `grep`, `ls`, `skill`, `ask`, `work`, and `spawn` with the `thread_*` family.
+The per-harness names are in [Agent compilation](agent-compilation.md#tool-name-projection). Meridian Flow is not a harness; its tools are `read`, `write`, `grep`, `ls`, `skill`, `ask_user`, `work`, and `spawn` with the `thread_*` family.
 
 ## The contract as data
 

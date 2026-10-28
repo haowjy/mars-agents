@@ -81,7 +81,8 @@ pub(crate) fn preflight_config_entries(
 ) -> Result<(), crate::error::MarsError> {
     use crate::compiler::hooks::{load_file_fragment, load_merge_fragment};
     use crate::error::{ConfigError, MarsError};
-    use crate::target::{HookFragmentMode, TargetRegistry};
+    use crate::target::TargetRegistry;
+    use mars_schema::hooks::{Placement, Tokens};
 
     let resolved = &targeted.resolved;
     let registry = TargetRegistry::new();
@@ -146,13 +147,19 @@ pub(crate) fn preflight_config_entries(
     for (dir, item) in targeted.target.selected_hooks() {
         let target_name = dir.target();
         let adapter = registry.get(target_name);
-        let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
-        let hook_dir = installed_token(ctx, dir);
-        let result = match mode {
-            Some(HookFragmentMode::MergeJson { events }) => {
-                load_merge_fragment(item, target_name, events, &hook_dir, diag, true).map(|_| ())
+        let installed = installed_token(ctx, dir);
+        let tokens = Tokens {
+            hook_dir: &installed,
+        };
+        let result = match mars_schema::hooks::placement(target_name) {
+            Some(Placement::Merge { events }) => {
+                load_merge_fragment(item, target_name, events, &tokens).map(|merged| {
+                    for event in &merged.unchecked_events {
+                        diag.warn("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
+                    }
+                })
             }
-            Some(HookFragmentMode::File) => {
+            Some(Placement::File) => {
                 if let Some(relative) =
                     adapter.and_then(|adapter| adapter.hook_file_dest_path(&item.def.name))
                 {
@@ -164,7 +171,7 @@ pub(crate) fn preflight_config_entries(
                         continue;
                     }
                 }
-                load_file_fragment(item, target_name, &hook_dir).map(|_| ())
+                load_file_fragment(item, target_name, &tokens).map(|_| ())
             }
             None => Err(MarsError::Config(ConfigError::Invalid {
                 message: format!(
@@ -219,28 +226,27 @@ pub(crate) fn lower_hook_entries(
     diag: &mut DiagnosticCollector,
 ) -> Vec<HookEntry> {
     let target_root = adapter.name();
-    let Some(crate::target::HookFragmentMode::MergeJson {
+    let Some(mars_schema::hooks::Placement::Merge {
         events: known_events,
-    }) = adapter.hook_fragment_mode()
+    }) = mars_schema::hooks::placement(target_root)
     else {
         return Vec::new();
     };
     let mut contributions = Vec::new();
     for (dir, item) in hooks {
-        match crate::compiler::hooks::load_merge_fragment(
-            item,
-            target_root,
-            known_events,
-            dir,
-            diag,
-            false,
-        ) {
+        let tokens = mars_schema::hooks::Tokens { hook_dir: dir };
+        match crate::compiler::hooks::load_merge_fragment(item, target_root, known_events, &tokens)
+        {
             Ok(fragment) => contributions.extend(
                 fragment
                     .events
                     .into_iter()
                     .filter(|(_, entries)| !entries.is_empty())
-                    .map(|(event, entries)| (item, event, entries)),
+                    .map(|(event, entries)| {
+                        // `to_json` sorts keys: the bytes mars has always written.
+                        let entries = entries.iter().map(|entry| entry.to_json()).collect();
+                        (item, event, entries)
+                    }),
             ),
             Err(error) => diag.error("hook-fragment", error.to_string()),
         }
@@ -365,7 +371,6 @@ pub(crate) fn compile_config_entries(
         let Some(adapter) = registry.get(target_root) else {
             continue;
         };
-        let mode = adapter.hook_fragment_mode();
         let installed_hooks = applied
             .planned
             .targeted
@@ -398,9 +403,12 @@ pub(crate) fn compile_config_entries(
 
         // Resolve and load whole-file hooks independently of merge ordering.
         let mut file_writes = Vec::new();
-        if mode == Some(crate::target::HookFragmentMode::File) {
+        if mars_schema::hooks::placement(target_root) == Some(mars_schema::hooks::Placement::File) {
             for (dir, item) in &installed_hooks {
-                let hook_dir = installed_token(ctx, dir);
+                let installed = installed_token(ctx, dir);
+                let tokens = mars_schema::hooks::Tokens {
+                    hook_dir: &installed,
+                };
                 let Some(relative_dest) = adapter.hook_file_dest_path(&item.def.name) else {
                     diag.error(
                         "hook-fragment",
@@ -410,7 +418,7 @@ pub(crate) fn compile_config_entries(
                     );
                     continue;
                 };
-                match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir) {
+                match crate::compiler::hooks::load_file_fragment(item, target_root, &tokens) {
                     Ok(content) => {
                         if let Some(problem) = adapter.hook_fragment_problem(&content) {
                             diag.warn(
@@ -419,7 +427,7 @@ pub(crate) fn compile_config_entries(
                                     "hook `{}` from `{}`: `{target_root}` fragment `{}` {problem}; the fragment will still be installed",
                                     item.def.name,
                                     item.source_name,
-                                    item.fragment_name(target_root),
+                                    item.fragment(target_root).file,
                                 ),
                             );
                         }

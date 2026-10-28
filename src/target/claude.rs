@@ -15,7 +15,7 @@ use crate::error::MarsError;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{HookEntry, HookFragmentMode, McpFile, McpLocation, SectionFormat, TargetAdapter};
+use super::{HookEntry, McpFile, McpLocation, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct ClaudeAdapter;
@@ -23,43 +23,6 @@ pub struct ClaudeAdapter;
 impl TargetAdapter for ClaudeAdapter {
     fn name(&self) -> &str {
         ".claude"
-    }
-
-    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
-        // https://code.claude.com/docs/en/hooks — verified 2026-07-24.
-        Some(HookFragmentMode::MergeJson {
-            events: &[
-                "SessionStart",
-                "Setup",
-                "UserPromptSubmit",
-                "UserPromptExpansion",
-                "PreToolUse",
-                "PermissionRequest",
-                "PermissionDenied",
-                "PostToolUse",
-                "PostToolUseFailure",
-                "PostToolBatch",
-                "SubagentStart",
-                "SubagentStop",
-                "TaskCreated",
-                "TaskCompleted",
-                "Stop",
-                "StopFailure",
-                "TeammateIdle",
-                "PreCompact",
-                "PostCompact",
-                "Elicitation",
-                "ElicitationResult",
-                "Notification",
-                "ConfigChange",
-                "InstructionsLoaded",
-                "CwdChanged",
-                "FileChanged",
-                "WorktreeCreate",
-                "WorktreeRemove",
-                "SessionEnd",
-            ],
-        })
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

@@ -44,7 +44,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — selected MCP servers and hooks → target config files
 - `mcp/` — MCP server item discovery, env-ref validation, collision detection
-- `hooks/` — fragment-manifest discovery, merge-fragment validation/substitution, and ordering
+- `hooks/` — hook discovery, fragment reading, and the location added to `mars-schema::hooks` diagnostics; the model and every hook rule are `mars-schema::hooks`
 - `variants/` — skill variant layout validation, indexing, projection
 
 ## Dual-Surface Compilation
@@ -183,15 +183,14 @@ installs it as a directory.
 
 ## Hooks Compilation (`hooks/`)
 
-Fragment-manifest discovery, validation, and loading. Discovers `hook.toml` items,
-validates merge-mode event keys against per-target allowlists, unwraps copy-paste
-wrappers, substitutes `${MARS_HOOK_DIR}` in all JSON string values and file-mode
-fragment text, and returns structured `HookFragment` or substituted file content.
-Placement and lock recording are handled by `config_entries/`.
-Dependency hook discovery is contextualized by `hooks::discover_resolved_hook_items` during target
-construction; callers must not expose derived staging paths in schema errors. Target construction
-derives the filter-facing `DiscoveredItem` from that strict parse instead of parsing `hook.toml`
-again.
+Hook discovery and fragment loading. The `hook.toml` model, its reader, each target root's
+placement and event allowlist, merge-fragment validation and `${MARS_HOOK_DIR}` substitution
+(`Tokens`) are `mars-schema::hooks`; the binary holds no copy of those rules. This module reads
+the bytes, calls the schema, and adds the location to its path-free diagnostics exactly once:
+the real path for the project's own hook, `source package <p> version <v>, hook <n>` for a
+dependency's (whose path is a staging directory that must never reach an error).
+Placement and lock recording are handled by `config_entries/`. Target construction derives the
+filter-facing `DiscoveredItem` from that strict parse instead of parsing `hook.toml` again.
 
 ## Variants (`variants/`)
 

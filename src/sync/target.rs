@@ -498,10 +498,9 @@ pub(crate) fn hook_target_items(
 ) -> Result<Vec<(String, DestPath, TargetItem)>, MarsError> {
     let target_roots = parsed
         .def
-        .targets
-        .keys()
-        .filter(|target| managed_targets.contains(target))
-        .cloned()
+        .select(managed_targets)
+        .into_iter()
+        .map(str::to_owned)
         .collect::<Vec<_>>();
     let source_hash = ContentHash::from(hash::compute_hash(&parsed.hook_dir, ItemKind::Hook)?);
     Ok(target_roots

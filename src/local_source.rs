@@ -114,13 +114,20 @@ fn binary_items(
         );
     }
     items.extend(
-        crate::compiler::hooks::discover_hook_items(root, "_self", 0, 0, diag)?
-            .into_iter()
-            .map(|hook| LocalDiscoveredItem {
-                discovered: hook.discovered_item(root),
-                root: root.to_path_buf(),
-                content: LocalItemContent::Hook(Box::new(hook)),
-            }),
+        crate::compiler::hooks::discover_hook_items(
+            root,
+            "_self",
+            crate::compiler::hooks::HookSource::Project,
+            0,
+            0,
+            diag,
+        )?
+        .into_iter()
+        .map(|hook| LocalDiscoveredItem {
+            discovered: hook.discovered_item(root),
+            root: root.to_path_buf(),
+            content: LocalItemContent::Hook(Box::new(hook)),
+        }),
     );
     items.extend(
         crate::compiler::mcp::discover_mcp_items(root, "_self", 0, 0, diag)?

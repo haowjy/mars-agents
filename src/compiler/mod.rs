@@ -26,23 +26,6 @@ pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
 
-/// Item names become one directory under a target; reject anything that could
-/// escape it.
-pub(crate) fn validate_path_component(name: &str) -> Result<(), &'static str> {
-    use std::path::Component;
-    if name.is_empty() {
-        return Err("must not be empty");
-    }
-    if name.contains(['/', '\\', '\0']) {
-        return Err("must be a single path component");
-    }
-    let mut components = std::path::Path::new(name).components();
-    match (components.next(), components.next()) {
-        (Some(Component::Normal(_)), None) => Ok(()),
-        _ => Err("must be a single path component"),
-    }
-}
-
 /// Say that an item's `visibility` is not `local` or `exported`; it is read as `local`.
 pub(crate) fn warn_unknown_visibility(
     unknown: &str,

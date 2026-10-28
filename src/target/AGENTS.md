@@ -34,7 +34,6 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `mcp_file()` | The adapter's one MCP spec (below); `None` when the target takes no MCP servers |
 | `write_hook_entries(write, project_root)` | Hook config file writes; MCP is reconciled by `mcp_file::reconcile` |
-| `hook_fragment_mode()` | Declares `MergeJson { events }` or `File` fragment placement |
 | `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
 | `hook_fragment_problem(content)` | Names a contract violation in a file-mode fragment; callers build the warning |
 | `hook_config_file_names()` | Config files mutated by merge-mode hook entries |

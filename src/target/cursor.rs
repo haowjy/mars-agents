@@ -12,9 +12,7 @@ use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_servers::{self, Flavor, McpRender};
 
-use super::{
-    HookEntry, HookFragmentMode, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter,
-};
+use super::{HookEntry, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct CursorAdapter;
@@ -22,36 +20,6 @@ pub struct CursorAdapter;
 impl TargetAdapter for CursorAdapter {
     fn name(&self) -> &str {
         ".cursor"
-    }
-
-    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
-        // cursor-agent 2026.07.16 installed-binary validator, extracted and
-        // verified by p5714 on 2026-07-24; p5695 provided the docs baseline.
-        Some(HookFragmentMode::MergeJson {
-            events: &[
-                "beforeShellExecution",
-                "beforeMCPExecution",
-                "afterShellExecution",
-                "afterMCPExecution",
-                "beforeReadFile",
-                "afterFileEdit",
-                "beforeTabFileRead",
-                "afterTabFileEdit",
-                "stop",
-                "beforeSubmitPrompt",
-                "afterAgentResponse",
-                "afterAgentThought",
-                "sessionStart",
-                "sessionEnd",
-                "preCompact",
-                "subagentStart",
-                "subagentStop",
-                "preToolUse",
-                "postToolUse",
-                "postToolUseFailure",
-                "workspaceOpen",
-            ],
-        })
     }
 
     fn skill_variant_key(&self) -> Option<&str> {

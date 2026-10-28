@@ -17,12 +17,6 @@ pub enum ConfigError {
     #[error("{message}")]
     Invalid { message: String },
 
-    #[error("{}: {message}", path.display())]
-    RemovedHookSchema {
-        path: PathBuf,
-        message: &'static str,
-    },
-
     #[error(transparent)]
     Filter(#[from] mars_schema::filter::FilterError),
 

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{HookFragmentMode, McpFile, McpLocation, SectionFormat, TargetAdapter};
+use super::{McpFile, McpLocation, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct PiAdapter;
@@ -19,10 +19,6 @@ pub struct PiAdapter;
 impl TargetAdapter for PiAdapter {
     fn name(&self) -> &str {
         ".pi"
-    }
-
-    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
-        Some(HookFragmentMode::File)
     }
 
     fn hook_file_dest_path(&self, name: &str) -> Option<PathBuf> {

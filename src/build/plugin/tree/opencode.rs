@@ -37,7 +37,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
 };
 
 fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
-    let fragment = hook.fragment_name(TARGET_ROOT);
+    let fragment = hook.fragment(TARGET_ROOT).file.clone();
     let path = hook.hook_dir.join(&fragment);
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
@@ -210,14 +210,14 @@ fn write_package(
         .into_iter()
         .map(|hook| HookData {
             name: hook.def.name.clone(),
-            fragment: hook.fragment_name(TARGET_ROOT),
+            fragment: hook.fragment(TARGET_ROOT).file.clone(),
         })
         .collect();
 
     let data = serde_json::to_string_pretty(&PluginData {
         plugin: &metadata.name,
         tokens: DirTokens {
-            hook_dir: crate::compiler::hooks::HOOK_DIR_TOKEN,
+            hook_dir: mars_schema::hooks::HOOK_DIR_TOKEN,
             mcp_dir: mars_schema::mcp_server::MCP_DIR_TOKEN,
         },
         skills,

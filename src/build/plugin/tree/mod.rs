@@ -317,7 +317,7 @@ pub(super) fn write_tree(
             Ok((
                 profile
                     .plugin_root
-                    .resolve(crate::compiler::hooks::HOOK_DIR_TOKEN, &dir.native()),
+                    .resolve(mars_schema::hooks::HOOK_DIR_TOKEN, &dir.native()),
                 hook,
             ))
         })
@@ -587,21 +587,12 @@ fn other_hook_fragments(
     hook: &crate::compiler::hooks::ParsedHookItem,
     target_dir: &str,
 ) -> Vec<PathBuf> {
-    let current = hook.def.targets[target_dir]
-        .fragment
-        .clone()
-        .unwrap_or_else(|| crate::compiler::hooks::default_fragment_name(target_dir));
+    let current = &hook.fragment(target_dir).file;
     hook.def
-        .targets
-        .iter()
-        .filter(|(target, _)| target.as_str() != target_dir)
-        .map(|(target, config)| {
-            config
-                .fragment
-                .clone()
-                .unwrap_or_else(|| crate::compiler::hooks::default_fragment_name(target))
-        })
-        .filter(|fragment| fragment != &current)
+        .fragments()
+        .filter(|(target, _)| *target != target_dir)
+        .map(|(_, fragment)| &fragment.file)
+        .filter(|file| *file != current)
         .map(PathBuf::from)
         .collect()
 }

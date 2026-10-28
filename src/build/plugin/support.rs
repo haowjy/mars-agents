@@ -98,7 +98,7 @@ fn warn_hooks_without_tree_fragment(
     let affected = human_list(&affected);
 
     for hook in exported_hooks {
-        if hook.def.targets.contains_key(target_dir) {
+        if hook.def.fragment(target_dir).is_some() {
             continue;
         }
         diag.warn(

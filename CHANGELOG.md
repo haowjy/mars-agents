@@ -7,6 +7,65 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-28
+
+### Added
+- `@meridian-flow/mars-schema` (WASM) exports `satisfies`, `satisfiesRequirement`, `selectVersion` and `selectItems`, so a caller that resolves a package's dependencies applies the same version and item-selection rules as `mars sync`.
+- `selectVersion({available, constraints, locked?})` answers `{pin}`, `{tag}` or `{untagged: true}`. It settles the constraints first, skips tags that are not versions, and treats `latest` as any version.
+- `selectItems({packages, root?, requests?})` takes each package's `prepare` result as it is. The root's manifest entries apply as the consumer's own requests, with their filters and `exclude`; root items have `package: null`. Input keys are snake_case, and an unknown key (a typo, `rename`) throws.
+- Every `@meridian-flow/mars-schema` export throws an `Error` with a `code`. The `prepare` result carries `selection`, the facts `selectItems` reads.
+- A dependency entry in a package manifest whose filter conflicts (for example `agents` plus `exclude`) warns with `dependency.filter-conflict`; the selection is unchanged.
+- Duplicate Agent and skill names across packages warn during sync; `selectItems` reports a root and a dependency item with one slug as `selection.duplicate-slug`.
+- Remote MCP servers: an `mcp.toml` with `url` (instead of `command`) and optional `headers` is registered as a Streamable HTTP server in every target. A header value is a literal or `{ from = "env", var = "X", prefix = "Bearer " }`; each harness gets its own spelling (`${VAR}`, `${env:VAR}`, `{env:VAR}`, Codex's `bearer_token_env_var` / `env_http_headers` / `http_headers`). OAuth is left to the harness. SSE is not supported. A field that doesn't apply to the server's transport (`args`/`env` on a `url` server, `headers` on a `command` server) warns and is ignored.
+- Importing a Claude plugin now brings its MCP servers: `.mcp.json` (with or without the `mcpServers` wrapper) and `plugin.json` `mcpServers` (inline, a path to a JSON file, or a list) become `mcp/<name>/mcp.toml` servers with `local` visibility, stdio and remote alike. A server Mars can't represent faithfully (SSE or WebSocket transport, `headersHelper`, `oauth` config, `${CLAUDE_PLUGIN_ROOT}`, `${VAR:-default}`, literal env values, `.mcpb` bundles, or a header carrying a credential Claude never sends to a remote server) is skipped with a warning naming the reason; harmless fields (`timeout`, `description`) are dropped with a warning. A bare skill repository's `.mcp.json` is not imported (it warns once).
+- `mars-schema` exports the MCP server vocabulary and parser (`mcp_server`: `McpServerDef`, `McpTransport`, `HeaderValue`, `EnvRef`, `parse_mcp_toml`), and `@meridian-flow/mars-schema`'s `prepare` and `normalize` results carry a Claude plugin's translated servers (`mcp_servers`, each with its rendered `mcp.toml`).
+
+### Changed
+- `mars-schema` (breaking for crate consumers) now owns the dependency-entry vocabulary (`names`, `filter`, `dependency`, `git_url`) and the version rules (`version`: `parse_constraint`, `parse_tag`, `satisfies`, `satisfies_requirement`, `settle`, `select`, `choose`). `select` takes `PreferLockThenLatest` or `LatestOnly`; `--frozen` is the binary's own concept. The manifest reading carries the package's `[dependencies]` and `[local-dependencies]` and keeps a dependency entry's `rename` order. `Selection` is now `SelectionResult`, and selection computes the registry order itself.
+- A `mars.toml` dependency entry with both `url` and `path`, or neither, is refused when the file is read.
+- A skill's own `skills:` frontmatter no longer pulls other skills. An Agent's `skills` still do.
+- `mars check` counts the skills the dependency graph installs, not every skill of a package that no filter reached, and shares one root-package selection path with install.
+- Two requests that pin different refs of one package fail as a version conflict that names the package, in any declaration order and even when a request selects nothing. A pin beside a semver range fails too.
+- `potential-version-drift` warns once per run, not once per resolve pass.
+- The `.pi` target now gets MCP servers in `.pi/mcp.json`.
+- A server that ships its own files (`${MARS_MCP_DIR}`) is written with an absolute path, so teams that commit `.mcp.json` see per-machine diffs for such servers.
+- A locked version that still meets every constraint is kept even when its tag has been deleted upstream; only `mars upgrade` moves it. `selectVersion` of `@meridian-flow/mars-schema` now answers `{ locked: true }` instead of `{ tag }` in that case (and whenever the lock holds, even if its tag still exists), which breaks a caller that reads `.tag`; and `read("mars.toml")` is typed `ManifestRead` with `dependencies` and `local-dependencies`. `selectItems` refuses an `mcp-server` in `extra_items`.
+- An MCP server that installs its own directory (`${MARS_MCP_DIR}`) needs a name of letters, digits, `-`, `_` and `.`, reported as `mcp.name-invalid` (was `mcp-invalid-name`). The plugin build reports what Codex cannot read as `mcp-lossy` (was `plugin-codex-mcp-env-rename`).
+
+- `@meridian-flow/mars-schema`'s `vocabulary().natives["meridian-flow"]` now matches the tools Flow ships: `ask_user` maps to `ask_user` (was `ask`, which stays a tool-policy action word only), and `glob` is `absent` because Flow has no glob tool yet. `grep` still maps to `grep`.
+
+### Removed
+- The `import.mcp-not-converted` warning ("MCP servers are not converted yet").
+
+### Fixed
+- `mars sync` with `agents = ["foo"]` (or `skills`) no longer also installs an item of the other kind named `foo`.
+- A dependency's Include filter now installs the package's bootstrap docs, as the resolver intended; a consumer's `exclude` of a bootstrap document holds when a skill ref pulls in its package.
+- A package reached through two paths of the dependency graph installs its own dependencies whichever path the resolver met first. A diamond through a filtered entry could drop them.
+- A dependency's broken `[local-dependencies]` entry warns instead of failing dependents' syncs.
+- A manifest `plugin` entry with a `dialect` warns, since the dialect is ignored there.
+- `parse_constraint` no longer overflows on `v` majors or minors past `u64::MAX`.
+- MCP servers now reach the harness. Mars writes Claude servers to the project's `.mcp.json`, Codex servers to `.codex/config.toml`, and Pi servers to `.pi/mcp.json`. It no longer writes `.claude/.mcp.json` or `.codex/codex_mcp.json`, which neither harness reads; the next sync removes mars's entries from those files and deletes a file only if it ends up empty.
+- Mars no longer overwrites or deletes an MCP entry it didn't write (#235). A same-named entry is kept with a warning (`mars sync --force` adopts it), and removal deletes only entries still equal to what mars wrote.
+- `mars sync` warns when a skill links into a sibling skill that the consumer excluded or renamed, or that a name collision renamed (`name__<source>`), and names the link to use instead. Before, these links broke after install with no warning.
+- A link to another skill's folder (`../c/`) no longer warns when the folder is installed.
+- The link check covers every skill the same way: `mars check`, `mars sync` and a project's `.mars-src` skills agree, for Mars-native packages as well as Claude ones. A link is judged against everything installed, so a link to a skill a local one shadows, or to another package's skill, is not reported.
+- `mars check` no longer fails a package whose dependency's Agent names a skill only the package ships; check and a consumer's `mars sync` now select the same way.
+- A consumer's `exclude` now holds when another dependency reaches the same package through an unfiltered entry, in `mars sync` and in the `selectItems` export of `@meridian-flow/mars-schema`.
+- The "upgrade available" hint after `mars sync` and the `UPDATEABLE` column of `mars outdated` no longer advertise a version that `mars upgrade` refuses because its `requires-mars` is too new.
+- A bare `host/path` URL in a dependency's `mars.toml` is fetched over `https://`, as it already was in a project's own `mars.toml`.
+- `mars add --only-skills --only-agents` reports the conflict against the real dependency name, not `cli`.
+- A cache that was cloned at one tag no longer fails every later fetch after upstream deletes that tag, so a dependency locked at a deleted tag keeps its lock and `mars upgrade` can move it.
+- `mars outdated` resolves the dependency graph as `mars sync` does, so its `UPDATEABLE` column honours version constraints from other packages and `mars.local.toml` overrides, and matches what `mars upgrade` picks. It fails like `sync` and `upgrade` when the graph cannot be resolved (for example an unreachable repository). A `?` row with a warning appears for a plugin-selected or `mars.local.toml`-overridden dependency, or when listing versions fails after the graph resolved.
+- `mars check` names the dependency that owns an Agent whose skill is missing, with a hint to use a version that ships it.
+- A dependency URL written as `user@host:path` or a bare `host:path` is treated as SSH for any user, not only `git@`. So `mars add bitbucket:owner/repo` now tries SSH to host `bitbucket` (it used to fail to parse); when that fails the error suggests `github:`, `gitlab:` or `owner/repo`.
+- The upgrade hint after `mars sync` and `mars outdated` work for dependencies on hosts other than github.com and gitlab.com, and over SSH.
+- `mars build plugin` no longer warns about links from the plugin's own skills to skills it ships from dependencies.
+- A link written inside an inline code span or an indented code block (`` `[x](../y/SKILL.md)` ``) is no longer reported as a skill link, and a code fence now closes only on a fence of the same kind.
+- A JSON MCP file Mars writes (`.mcp.json`, `.cursor/mcp.json`, `.pi/mcp.json`, `opencode.json`) ends with a newline.
+- Hook config files (`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json`) are now written through a symlink, keep their permissions, keep the order of your keys, and end with a newline. Before, a sync replaced a symlinked `settings.local.json` with a regular file, reset its mode to `0644` and sorted every key.
+- Removing the last MCP server no longer leaves an empty MCP config file: a file mars changed and left empty is deleted, and a file with other content is kept.
+- A malformed MCP or hook config file stops the sync with one `config error:` prefix (it was printed twice) and names the target that reads it.
+
 ## [0.23.4] - 2026-10-28
 
 ### Fixed

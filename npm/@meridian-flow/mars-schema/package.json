@@ -1,6 +1,6 @@
 {
   "name": "@meridian-flow/mars-schema",
-  "version": "0.23.4",
+  "version": "0.24.0",
   "description": "Mars agent schema reader and lossless editor",
   "license": "MIT",
   "repository": {

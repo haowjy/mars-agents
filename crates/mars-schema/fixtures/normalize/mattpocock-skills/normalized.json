@@ -243,16 +243,7 @@
           "edges": [],
           "uses_providers": []
         },
-        "diagnostics": {
-          "skills/misc/git-guardrails/SKILL.md": [
-            {
-              "code": "skill.needs-scripts",
-              "severity": "warning",
-              "path": [],
-              "message": "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run"
-            }
-          ]
-        }
+        "diagnostics": {}
       }
     }
   ],

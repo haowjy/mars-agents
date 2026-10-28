@@ -21,9 +21,7 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 use serde::Serialize;
 
-use crate::config::{
-    Config, EffectiveConfig, EffectiveDependency, LocalConfig, Settings, SourceSpec,
-};
+use crate::config::{Config, EffectiveConfig, EffectiveDependency, Settings, SourceSpec};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, LossinessMode};
 use crate::error::{ConfigError, MarsError};
 use crate::resolve::{PublishLens, ResolveOptions};
@@ -272,19 +270,13 @@ fn stage_plugin_inner(
     emit_missing_skill_warnings(&warnings, diag);
     materialize_rewritten_skills(&mut prepared_target.target)?;
 
-    let aliases = crate::models::merged_model_aliases(
-        &graph,
-        &effective,
-        &Config::default(),
-        &LocalConfig::default(),
-        diag,
-    );
+    let aliases = crate::models::merged_model_aliases(&graph, &effective, diag);
     let terms = tree::TermSet::new(package.requires_meridian.is_some());
     let tree_input = tree::TreeInput {
         metadata: &metadata,
         root_source: &root_source,
         agent_overlays: &manifest.agents,
-        settings_policies: &manifest.settings.model_policies,
+        settings_policies: manifest.settings.model_policies(),
         aliases: &aliases,
         graph: &graph,
         target: &prepared_target.target,
@@ -437,6 +429,8 @@ fn implicit_consumer_config(
             ),
             ..Settings::default()
         },
+        models: lens.effective.models.clone(),
+        agents: lens.effective.agents.clone(),
         skills: lens.effective.skills.clone(),
     })
 }

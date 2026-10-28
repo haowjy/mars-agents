@@ -23,12 +23,13 @@ use crate::target::ConfigEntry;
 use mars_schema::HarnessId;
 use mars_schema::plugin_metadata::GeneratedRootFile;
 
+/// A tree's rewrite of the lowered agent document, given the authored frontmatter.
 pub(super) type AgentPolicy = fn(
-    &str,
+    &mut mars_schema::frontmatter::Frontmatter,
     &mars_schema::frontmatter::Frontmatter,
     &TargetItem,
     &mut DiagnosticCollector,
-) -> Result<String, MarsError>;
+);
 
 pub(super) type ConfigWriter = fn(
     &TreeProfile,
@@ -198,6 +199,7 @@ pub(super) struct TreeProfile {
     pub(super) root_file: RootFile,
     pub(super) dropped_agent_fields: &'static [&'static str],
     pub(super) approximate_lowers_to_dropped: bool,
+    /// `None` keeps the native lowering as is.
     pub(super) agents: Option<AgentPolicy>,
     pub(super) native_model_aliases: &'static [&'static str],
     pub(super) plugin_root: PluginRoot,
@@ -334,14 +336,19 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         display_name: "OpenCode",
         notes: SupportNotes {
             skills: Some("registered by `index.mjs`"),
+            agents: Some(
+                "registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance; `harness-overrides.opencode` keys other than `permission` are dropped with warning",
+            ),
             hooks: Some("each fragment needs a default `{id, setup}` export"),
             mcp: Some("registered by `index.mjs`"),
-            ..SupportNotes::none()
         },
         verification: VerificationRow {
             install: verification(VerificationLevel::Live, " (`git+file://`)"),
             skills: verification(VerificationLevel::Live, ", with `resources/`"),
-            agents: None,
+            agents: Some(verification(
+                VerificationLevel::Live,
+                " (`<plugin>:<agent>` spawned as a subagent; `task: deny` resolved as `subagent` deny)",
+            )),
             hooks: verification(VerificationLevel::Live, " (git install, CommonJS script)"),
             mcp: verification(VerificationLevel::Live, " (`<plugin>:<server>`)"),
         },

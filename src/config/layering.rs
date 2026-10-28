@@ -2,7 +2,9 @@ use indexmap::IndexMap;
 
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
-use super::{AgentOverlay, AgentOverlayTools, LocalConfig, LocalSettings, Settings, SkillOverlay};
+use super::{
+    AgentOverlay, AgentOverlayTools, Config, LocalConfig, LocalSettings, Settings, SkillOverlay,
+};
 use mars_schema::permission_set::{PermissionSet, compose_permission_sets};
 
 fn overlay_map_replace_by_key<V: Clone>(
@@ -18,17 +20,17 @@ fn overlay_map_replace_by_key<V: Clone>(
 
 pub fn overlay_models_replace_by_key(
     base: &IndexMap<String, crate::models::ModelAlias>,
-    local: &LocalConfig,
+    higher: &IndexMap<String, crate::models::ModelAlias>,
 ) -> IndexMap<String, crate::models::ModelAlias> {
-    overlay_map_replace_by_key(base, &local.models)
+    overlay_map_replace_by_key(base, higher)
 }
 
 pub fn overlay_agent_overlays(
     base: &IndexMap<String, AgentOverlay>,
-    local: &LocalConfig,
+    higher_overlays: &IndexMap<String, AgentOverlay>,
 ) -> IndexMap<String, AgentOverlay> {
     let mut merged = base.clone();
-    for (name, higher) in &local.agents {
+    for (name, higher) in higher_overlays {
         let overlay = match base.get(name) {
             Some(lower) => compose_agent_overlay(lower, higher),
             None => higher.clone(),
@@ -90,8 +92,90 @@ fn compose_optional_permission_sets<T: Clone + Eq>(
     }
 }
 
-pub fn merged_settings(settings: &Settings, local: &LocalConfig) -> Settings {
-    local.settings.overlay_settings(settings).0
+/// Everything the three config files contribute, composed bottom to top:
+/// user `config.toml` < `mars.toml` < `mars.local.toml`.
+pub(super) struct ComposedLayers {
+    pub settings: Settings,
+    pub target_source: TargetSource,
+    pub models: IndexMap<String, crate::models::ModelAlias>,
+    pub agents: IndexMap<String, AgentOverlay>,
+    pub skills: IndexMap<String, SkillOverlay>,
+}
+
+pub(super) fn compose_layers(
+    config: &Config,
+    local: &LocalConfig,
+    user: &LocalConfig,
+) -> ComposedLayers {
+    let (settings, target_source) = [
+        &user.settings,
+        &LocalSettings::from(&config.settings),
+        &local.settings,
+    ]
+    .into_iter()
+    .fold(
+        (Settings::default(), TargetSource::default()),
+        |(settings, _), layer| layer.overlay_settings(&settings),
+    );
+    // The fold's target source is only right for its last step, which sees the project's targets as the base.
+    ComposedLayers {
+        settings,
+        target_source,
+        models: overlay_models_replace_by_key(
+            &overlay_models_replace_by_key(&user.models, &config.models),
+            &local.models,
+        ),
+        agents: overlay_agent_overlays(
+            &overlay_agent_overlays(&user.agents, &config.agents),
+            &local.agents,
+        ),
+        skills: overlay_skill_overlays(
+            &overlay_skill_overlays(&user.skills, &config.skills),
+            &local.skills,
+        ),
+    }
+}
+
+impl From<&Settings> for LocalSettings {
+    /// A project's `[settings]` as a layer: every field it sets, no more.
+    fn from(project: &Settings) -> Self {
+        let Settings {
+            managed_root,
+            targets,
+            models_cache_ttl_hours,
+            min_mars_version,
+            default_harness,
+            default_model,
+            default_network,
+            network_allow,
+            network_deny,
+            harness_order,
+            provider_order,
+            catalog_providers,
+            agent_emission,
+            meridian,
+            model_policies,
+            unknown,
+        } = project.clone();
+        LocalSettings {
+            managed_root,
+            targets,
+            models_cache_ttl_hours,
+            min_mars_version,
+            default_harness,
+            default_model,
+            default_network,
+            network_allow: Some(network_allow),
+            network_deny: Some(network_deny),
+            harness_order,
+            provider_order,
+            catalog_providers,
+            agent_emission,
+            meridian,
+            model_policies,
+            unknown,
+        }
+    }
 }
 
 impl LocalSettings {
@@ -140,7 +224,7 @@ impl LocalSettings {
             target_source.origin = TargetOrigin::Local;
         }
         if let Some(value) = self.models_cache_ttl_hours {
-            merged.models_cache_ttl_hours = value;
+            merged.models_cache_ttl_hours = Some(value);
         }
         if let Some(value) = &self.min_mars_version {
             merged.min_mars_version = Some(value.clone());
@@ -179,7 +263,7 @@ impl LocalSettings {
             merged.meridian.fanout = Some(value.clone());
         }
         if let Some(value) = &self.model_policies {
-            merged.model_policies = value.clone();
+            merged.model_policies = Some(value.clone());
         }
 
         (merged, target_source)

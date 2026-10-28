@@ -7,6 +7,32 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.23.3] - 2026-10-28
+
+### Added
+- The user `config.toml` (`$MARS_CONFIG_DIR/config.toml`, else the platform `mars/config.toml`) accepts the same `[settings]`, `[models]`, `[agents]` and `[skills]` sections as `mars.local.toml`, so one file replaces per-project copies. It ranks below `mars.toml`: `user config.toml < mars.toml < mars.local.toml < CLI`. `[overrides]` is rejected there with an error that points to the project's `mars.local.toml`.
+
+### Changed
+- A user `config.toml` key that Mars once ignored with a warning (`default_model` and other `[settings]` keys) now applies. Unknown keys no longer warn, as in `mars.local.toml`.
+- A TOML parse error in any config file reads `failed to parse <path>: …`, and a read failure carries the file path.
+
+## [0.23.2] - 2026-10-28
+
+### Fixed
+- `mars check` no longer warns "has a model policy for alias `X`, which is not a catalog alias here" for aliases a dependency defines; it reads them from `mars.lock`, as `mars sync` does. When the lock records no dependencies, the warning says their catalogs were not consulted.
+
+## [0.23.1] - 2026-10-27
+
+### Fixed
+- Importing a Claude plugin no longer warns about a link from one skill to another when the link still resolves after install. It warns when the target skill is not imported or the link breaks, and names the link to use instead.
+- Links from a root `SKILL.md`, and links into a nested skill's folder, are now checked; they used to break after install with no warning.
+- Importing a Claude skill that mentions `scripts/` no longer warns `skill.needs-scripts` ("runs scripts; … will not work until scripts can run"); the check is removed.
+
+## [0.23.0] - 2026-10-27
+
+### Added
+- `mars build plugin` now registers the package's agents in the OpenCode plugin. OpenCode lists each as `<plugin>:<agent>` and can spawn it as a subagent. See [plugin authoring](https://github.com/haowjy/mars-agents/blob/main/docs/plugin-authoring.md#opencode-agents).
+
 ## [0.22.0] - 2026-10-27
 
 ### Upgrade notes

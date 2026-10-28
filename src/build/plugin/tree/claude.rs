@@ -9,7 +9,6 @@ use super::super::spec::{
     Finish, NameRule, PluginHarnessSpec, PluginRoot, RootFile, TreeProfile,
     valid_claude_plugin_name,
 };
-use super::invalid_item;
 
 const NATIVE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku"];
 pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
@@ -112,14 +111,11 @@ fn write_plugin_mcp_json(
 }
 
 fn apply_agent_policy(
-    lowered: &str,
+    plugin: &mut mars_schema::frontmatter::Frontmatter,
     source: &mars_schema::frontmatter::Frontmatter,
     item: &TargetItem,
     diag: &mut DiagnosticCollector,
-) -> Result<String, MarsError> {
-    let mut plugin = mars_schema::frontmatter::parse(lowered)
-        .map_err(|error| invalid_item("agent", item, error.to_string()))?;
-
+) {
     // The universal agent schema does not interpret these Claude-native fields,
     // but Claude plugins do. Preserve only the documented plugin-safe subset.
     for field in [
@@ -141,16 +137,8 @@ fn apply_agent_policy(
 
     for &field in PROFILE.dropped_agent_fields {
         if source.get(field).is_some() {
-            diag.warn(
-                "plugin-agent-field-dropped",
-                format!(
-                    "agent `{}`: `{field}` is ignored by Claude plugin agents and was dropped",
-                    item.id.name
-                ),
-            );
+            super::warn_agent_field_dropped(diag, item.id.name.as_str(), field, "Claude");
         }
         plugin.remove(field);
     }
-
-    Ok(plugin.render())
 }

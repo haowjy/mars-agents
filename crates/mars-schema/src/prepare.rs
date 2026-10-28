@@ -310,29 +310,40 @@ pub(crate) fn prepare_root(
                 .is_none_or(|selection| selection.contains(&definition.source_path))
         })
         .collect::<Vec<_>>();
-    let selected_paths = selected
-        .iter()
-        .map(|definition| definition.source_path.as_str())
-        .collect::<BTreeSet<_>>();
     let shaping = Shaping::of(&classification, options.migrate);
     let definitions = if can_read_definitions {
         selected
             .iter()
             .map(|definition| {
-                prepare_definition(
-                    source,
-                    definition,
-                    shaping,
-                    all,
-                    &selected_paths,
-                    &mut diagnostics,
-                    &mut changes,
-                )
+                prepare_definition(source, definition, shaping, &mut diagnostics, &mut changes)
             })
             .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
+    if let Shaping::Foreign(Dialect::Claude | Dialect::AgentSkills) = shaping {
+        let selected_paths = selected
+            .iter()
+            .map(|definition| definition.source_path.as_str())
+            .collect::<BTreeSet<_>>();
+        for (definition, prepared) in selected.iter().zip(&definitions) {
+            let Reading::Skill(DefinitionRead {
+                body: Some(body), ..
+            }) = &prepared.reading
+            else {
+                continue;
+            };
+            diagnostics
+                .entry(definition.source_path.clone())
+                .or_default()
+                .extend(crate::claude::checks::reference_diagnostics(
+                    definition,
+                    body,
+                    all,
+                    &selected_paths,
+                ));
+        }
+    }
 
     let payload = if can_read_definitions {
         payload_paths(
@@ -518,8 +529,6 @@ fn prepare_definition(
     source: &impl TreeSource,
     selected: &SelectedDefinition,
     shaping: Shaping,
-    all: &[SelectedDefinition],
-    selected_paths: &BTreeSet<&str>,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
     changes: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedDefinition {
@@ -569,8 +578,7 @@ fn prepare_definition(
                 }
             },
             Shaping::Foreign(dialect) => {
-                let translated =
-                    translate_foreign(text, dialect, selected, all, selected_paths, &bytes);
+                let translated = translate_foreign(text, dialect, selected, &bytes);
                 notes = translated.changes;
                 findings = translated.findings;
                 (translated.bytes, translated.change)
@@ -641,8 +649,6 @@ fn translate_foreign(
     text: &str,
     dialect: Dialect,
     selected: &SelectedDefinition,
-    all: &[SelectedDefinition],
-    selected_paths: &BTreeSet<&str>,
     bytes: &[u8],
 ) -> Translated {
     let claude = matches!(dialect, Dialect::Claude | Dialect::AgentSkills);
@@ -671,8 +677,6 @@ fn translate_foreign(
         findings.extend(crate::claude::checks::skill_checks(
             selected,
             &lifted.frontmatter,
-            all,
-            selected_paths,
         ));
     }
     let (bytes, change) = if lifted.changed || repaired {

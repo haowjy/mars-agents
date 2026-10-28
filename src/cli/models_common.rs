@@ -17,8 +17,8 @@ pub(super) fn models_cache_ttl_hours(
     project_config: Option<&crate::config::LoadedProjectConfig>,
 ) -> u32 {
     project_config
-        .map(|loaded| loaded.effective.settings.models_cache_ttl_hours)
-        .unwrap_or_else(|| crate::config::Settings::default().models_cache_ttl_hours)
+        .map(|loaded| loaded.effective.settings.models_cache_ttl_hours())
+        .unwrap_or_else(|| crate::config::Settings::default().models_cache_ttl_hours())
 }
 
 pub(super) fn catalog_providers(

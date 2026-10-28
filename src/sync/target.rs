@@ -943,6 +943,8 @@ mod tests {
         let config = EffectiveConfig {
             dependencies: config_dependencies,
             settings: Settings::default(),
+            models: indexmap::IndexMap::new(),
+            agents: indexmap::IndexMap::new(),
             skills: indexmap::IndexMap::new(),
         };
         let graph = ResolvedGraph {

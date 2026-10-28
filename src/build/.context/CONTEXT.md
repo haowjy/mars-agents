@@ -47,7 +47,7 @@ selected hook directory and every token-using MCP server directory is copied. Th
 resolves `${MARS_MCP_DIR}` to `{token}/mcp/<name>` for a token tree and leaves it for the
 runtime-resolved tree.
 `tree::write_tree` is the sole item loop. The OpenCode finish writer emits
-an npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills and MCP
+an npm-shaped package with a fixed `index.mjs`; at runtime it registers the built skills, agents and MCP
 servers and imports every targeted hook from in-memory TypeScript data URLs. A heuristic
 default-export check warns but never removes a hook; hook-directory substitution is JavaScript-string
 encoded before import, and each hook's load and setup are isolated so a failure does not block later

@@ -505,6 +505,8 @@ pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<P
     let config = crate::config::EffectiveConfig {
         dependencies: indexmap::IndexMap::new(),
         settings: crate::config::Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
     let rooted = crate::resolve::RootedSourceRef {

@@ -9,11 +9,13 @@ use crate::error::MarsError;
 use crate::target::opencode::{McpServer, OpencodeAdapter};
 use crate::target::{ConfigEntry, TargetAdapter};
 use mars_schema::HarnessId;
+use mars_schema::frontmatter::Frontmatter;
 use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
 
 use super::super::metadata::PackageMetadata;
 use super::super::spec::{Finish, PluginRoot, RootFile, TreeProfile};
-use super::WrittenTreeContents;
+use super::{LoweredAgent, WrittenTreeContents};
+use crate::sync::target::TargetItem;
 
 const TARGET_ROOT: &str = ".opencode";
 const INDEX_TEMPLATE: &str = include_str!("../opencode/index.mjs");
@@ -27,7 +29,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     },
     dropped_agent_fields: &[],
     approximate_lowers_to_dropped: false,
-    agents: None,
+    agents: Some(keep_plugin_agent_fields),
     native_model_aliases: &[],
     plugin_root: PluginRoot::RuntimeResolved,
     check_hook,
@@ -100,6 +102,7 @@ struct PluginData<'a> {
     /// Authored directory markers the runtime substitutes per installed file.
     tokens: DirTokens,
     skills: Vec<SkillData>,
+    agents: Vec<AgentData>,
     mcp: Vec<&'a str>,
     hooks: Vec<HookData>,
 }
@@ -120,6 +123,35 @@ struct SkillData {
     description: Option<String>,
 }
 
+/// One agent for `ctx.agent`'s `editor.update`: the fields of OpenCode's `Agent.Info` that the
+/// native lowering produces.
+#[derive(Serialize)]
+struct AgentData {
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<ModelData>,
+    system: String,
+    permissions: Vec<PermissionRule>,
+}
+
+#[derive(Serialize)]
+struct ModelData {
+    #[serde(rename = "providerID")]
+    provider_id: String,
+    id: String,
+}
+
+#[derive(Serialize)]
+struct PermissionRule {
+    action: String,
+    resource: String,
+    effect: String,
+}
+
 #[derive(Serialize)]
 struct HookData {
     name: String,
@@ -131,7 +163,7 @@ fn write_package(
     root: &Path,
     metadata: &PackageMetadata,
     contents: &WrittenTreeContents<'_>,
-    _diag: &mut DiagnosticCollector,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let manifest = PackageManifest {
         name: &metadata.name,
@@ -150,6 +182,13 @@ fn write_package(
         .map(|name| skill_data(root, name))
         .collect::<Result<Vec<_>, _>>()?;
     skills.sort_by(|left, right| left.directory.cmp(&right.directory));
+
+    let mut agents = contents
+        .agents
+        .iter()
+        .map(|agent| agent_data(&metadata.name, agent, diag))
+        .collect::<Vec<_>>();
+    agents.sort_by(|left, right| left.id.cmp(&right.id));
 
     let mut mcp = contents
         .config_entries
@@ -191,6 +230,7 @@ fn write_package(
             mcp_dir: crate::compiler::mcp::MCP_DIR_TOKEN,
         },
         skills,
+        agents,
         mcp,
         hooks,
     })
@@ -227,4 +267,94 @@ fn skill_data(root: &Path, directory: &str) -> Result<SkillData, MarsError> {
         name: fields.name.unwrap_or_else(|| directory.to_string()),
         description: fields.description,
     })
+}
+
+/// The frontmatter keys `ctx.agent` takes; `name` and `permission` are read apart from the
+/// plain strings. Any other key, from the lowering or an author override, is dropped.
+const AGENT_KEYS: &[&str] = &["name", "description", "mode", "model", "permission"];
+
+fn keep_plugin_agent_fields(
+    doc: &mut Frontmatter,
+    _source: &Frontmatter,
+    item: &TargetItem,
+    diag: &mut DiagnosticCollector,
+) {
+    for key in doc.keys() {
+        if !AGENT_KEYS.contains(&key.as_str()) {
+            super::warn_agent_field_dropped(diag, item.id.name.as_str(), &key, "OpenCode");
+            doc.remove(&key);
+        }
+    }
+}
+
+/// One lowered agent as `ctx.agent` data. OpenCode loads no agent files from a plugin, and the
+/// fixed `index.mjs` reads only `DATA`, so the lowered agent travels as data.
+fn agent_data(plugin: &str, agent: &LoweredAgent, diag: &mut DiagnosticCollector) -> AgentData {
+    let doc = &agent.doc;
+    let text = |key: &str| doc.get(key).and_then(serde_yaml::Value::as_str);
+    // OpenCode's own agent files default to `all`; a plugin agent defaults to `primary`,
+    // which the `subagent` tool refuses.
+    let model = text("model")
+        .and_then(|model| model.split_once('/'))
+        .map(|(provider, id)| ModelData {
+            provider_id: provider.to_string(),
+            id: id.to_string(),
+        });
+    let permissions = match doc.get("permission") {
+        Some(serde_yaml::Value::Mapping(map)) => permission_rules(&agent.name, map, diag),
+        Some(_) => {
+            super::warn_agent_field_dropped(diag, &agent.name, "permission", "OpenCode");
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
+    AgentData {
+        id: format!("{plugin}:{}", agent.name),
+        name: agent.name.clone(),
+        description: text("description").map(str::to_string),
+        mode: text("mode").unwrap_or("all").to_string(),
+        model,
+        system: doc.body().to_string(),
+        permissions,
+    }
+}
+
+/// OpenCode's `permission` map as `Agent.Info` rules: `tool: effect` or `tool: {pattern: effect}`.
+/// The lowering writes v1 keys, which OpenCode's file loader translates and `ctx.agent` does not.
+fn permission_rules(
+    agent: &str,
+    map: &serde_yaml::Mapping,
+    diag: &mut DiagnosticCollector,
+) -> Vec<PermissionRule> {
+    let mut rules = Vec::new();
+    for (action, value) in map {
+        let Some(action) = action.as_str() else {
+            super::warn_agent_field_dropped(diag, agent, "permission", "OpenCode");
+            continue;
+        };
+        let v2_action = mars_schema::tool_natives::opencode_v2_action(action);
+        let entries: Vec<(Option<&str>, &serde_yaml::Value)> = match value {
+            serde_yaml::Value::Mapping(patterns) => patterns
+                .iter()
+                .map(|(resource, effect)| (resource.as_str(), effect))
+                .collect(),
+            effect => vec![(Some("*"), effect)],
+        };
+        for (resource, effect) in entries {
+            match (resource, effect.as_str()) {
+                (Some(resource), Some(effect)) => rules.push(PermissionRule {
+                    action: v2_action.to_string(),
+                    resource: resource.to_string(),
+                    effect: effect.to_string(),
+                }),
+                _ => super::warn_agent_field_dropped(
+                    diag,
+                    agent,
+                    &format!("permission.{action}"),
+                    "OpenCode",
+                ),
+            }
+        }
+    }
+    rules
 }

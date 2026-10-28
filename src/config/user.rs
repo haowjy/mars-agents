@@ -1,40 +1,20 @@
-use std::collections::BTreeMap;
-
-use serde::Deserialize;
-
-use mars_schema::network::{NetworkHost, NetworkPolicy};
-use mars_schema::permission_set::PermissionSet;
+use std::path::PathBuf;
 
 use crate::error::{ConfigError, MarsError};
 
-#[derive(Debug, Default, Deserialize)]
-struct UserConfigFile {
-    #[serde(default)]
-    settings: UserNetworkSettings,
-    #[serde(flatten)]
-    ignored: BTreeMap<String, toml::Value>,
+use super::LocalConfig;
+
+/// The user's `config.toml`: the `mars.local.toml` schema, layered beneath `mars.toml`.
+#[derive(Debug, Clone, Default)]
+pub struct UserConfig {
+    /// Names the file in warnings; empty when no user file exists, and then nothing warns.
+    pub path: PathBuf,
+    pub local: LocalConfig,
+    /// `[settings]` keys that describe one project, removed from `local` and reported by name.
+    pub ignored_settings: Vec<&'static str>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct UserNetworkSettings {
-    #[serde(default, alias = "default-network")]
-    default_network: Option<NetworkPolicy>,
-    #[serde(default, rename = "network-allow", alias = "network_allow")]
-    network_allow: PermissionSet<NetworkHost>,
-    #[serde(default, rename = "network-deny", alias = "network_deny")]
-    network_deny: PermissionSet<NetworkHost>,
-    #[serde(flatten)]
-    ignored: BTreeMap<String, toml::Value>,
-}
-
-pub(super) struct UserNetworkConfig {
-    pub(super) default_network: Option<NetworkPolicy>,
-    pub(super) network_allow: PermissionSet<NetworkHost>,
-    pub(super) network_deny: PermissionSet<NetworkHost>,
-    pub(super) warnings: Vec<String>,
-}
-
-pub(super) fn load() -> Result<Option<UserNetworkConfig>, MarsError> {
+pub(super) fn load() -> Result<UserConfig, MarsError> {
     let directory =
         crate::platform::config::mars_config_dir().ok_or_else(|| ConfigError::Invalid {
             message: "cannot determine config directory; set MARS_CONFIG_DIR".to_string(),
@@ -42,39 +22,37 @@ pub(super) fn load() -> Result<Option<UserNetworkConfig>, MarsError> {
     let path = directory.join("config.toml");
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => {
-            return Err(MarsError::Io {
-                operation: "read user config".to_string(),
-                path,
-                source,
-            });
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(UserConfig::default());
         }
+        Err(source) => return Err(super::read_error(&path, source)),
     };
-    let user: UserConfigFile = toml::from_str(&content).map_err(|error| ConfigError::Invalid {
-        message: format!("failed to parse user config {}: {error}", path.display()),
-    })?;
-    let mut warnings = user
-        .ignored
-        .keys()
-        .map(|key| {
-            format!(
-                "user config {}: `{key}` is ignored; only [settings] network defaults are supported",
+    let mut local: LocalConfig = super::parse_without_removed_visibility(&content, &path)?;
+    super::validate_agent_overlays(&path, &local.agents)?;
+    // A user-wide override would point every project at a local checkout unseen.
+    if !local.overrides.is_empty() {
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "{}: [overrides] is not accepted in the user config; put it in the project's mars.local.toml",
                 path.display()
-            )
-        })
-        .collect::<Vec<_>>();
-    warnings.extend(user.settings.ignored.keys().map(|key| {
-        format!(
-            "user config {}: [settings].{key} is ignored; accepted keys: {}",
-            path.display(),
-            super::NETWORK_SETTINGS_KEYS,
-        )
-    }));
-    Ok(Some(UserNetworkConfig {
-        default_network: user.settings.default_network,
-        network_allow: user.settings.network_allow,
-        network_deny: user.settings.network_deny,
-        warnings,
-    }))
+            ),
+        }
+        .into());
+    }
+    let settings = &mut local.settings;
+    let mut ignored_settings = Vec::new();
+    if settings.managed_root.take().is_some() {
+        ignored_settings.push("managed_root");
+    }
+    if settings.targets.take().is_some() {
+        ignored_settings.push("targets");
+    }
+    if settings.min_mars_version.take().is_some() {
+        ignored_settings.push("min_mars_version");
+    }
+    Ok(UserConfig {
+        path,
+        local,
+        ignored_settings,
+    })
 }

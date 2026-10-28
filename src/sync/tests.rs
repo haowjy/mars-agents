@@ -135,6 +135,8 @@ fn make_graph_config(
     let config = EffectiveConfig {
         dependencies: config_dependencies,
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
     (
@@ -329,15 +331,14 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
     let mut fixture = TestFixture::new();
     let source_a = fixture.add_source(&[("coder.md", "---\nname: coder\n---\n# A\n")], &[]);
     let source_b = fixture.add_source(&[("coder.md", "---\nname: coder\n---\n# B\n")], &[]);
-    let (graph, effective) = make_graph_config(
+    let (graph, mut effective) = make_graph_config(
         &fixture,
         vec![
             ("source-a", source_a, FilterMode::All),
             ("source-b", source_b, FilterMode::All),
         ],
     );
-    let mut config = Config::default();
-    config.agents.insert(
+    effective.agents.insert(
         "coder".into(),
         crate::config::AgentOverlay {
             model: Some("gpt55".into()),
@@ -349,7 +350,7 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
         crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
     let resolved = ResolvedState {
         loaded: LoadedConfig {
-            config,
+            config: Config::default(),
             local: LocalConfig::default(),
             effective,
             old_lock: LockFile::empty(),
@@ -742,6 +743,8 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
         &Config {
             dependencies: Default::default(),
             settings: Settings::default(),
+            models: indexmap::IndexMap::new(),
+            agents: indexmap::IndexMap::new(),
             ..Config::default()
         },
     )
@@ -921,6 +924,8 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
             },
         )]),
         settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
         skills: indexmap::IndexMap::new(),
     };
 

@@ -170,14 +170,6 @@ fn lift_skill(
 
     // `allowed-tools` is a turn-scoped grant that restricts nothing, and schema v1 has no
     // skill tool rules, so the keys go rather than becoming a restriction.
-    let names_bash = ["allowed-tools", "allowed_tools"]
-        .iter()
-        .filter_map(|key| fm.get(key))
-        .any(|value| {
-            tool_policy::tool_entries(value)
-                .iter()
-                .any(|entry| entry.starts_with("Bash"))
-        });
     let dropped = remove_keys(fm, crate::skill::tool_keys());
     if !dropped.is_empty() {
         changed = true;
@@ -188,13 +180,6 @@ fn lift_skill(
                 "removed {}: schema v1 has no skill tool rules, and Claude's `allowed-tools` grants without restricting",
                 dropped.join(", ")
             ),
-        );
-    }
-    if names_bash || fm.body().contains("scripts/") {
-        warn(
-            findings,
-            "skill.needs-scripts",
-            "runs scripts; the instructions load and the scripts stay readable, but the parts that run code will not work until scripts can run".into(),
         );
     }
 

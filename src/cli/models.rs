@@ -1240,6 +1240,10 @@ fn determine_source(
         return "consumer (mars.toml)".to_string();
     }
 
+    if project_config.user.local.models.contains_key(name) {
+        return format!("user ({})", project_config.user.path.display());
+    }
+
     "dependency".to_string()
 }
 

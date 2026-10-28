@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-10-28
+
+### Fixed
+- `settings.provider_order` no longer warns about providers Mars has seen, such as `opencode-go` or `xai`, on every launch. `mars models list` warns once about an entry Mars has not seen, such as the typo `anthropc`. `models resolve`, sync and launch bundles no longer print this warning.
+
 ## [0.24.1] - 2026-10-28
 
 ### Fixed

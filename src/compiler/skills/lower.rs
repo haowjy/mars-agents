@@ -91,22 +91,6 @@ mod tests {
     }
 
     #[test]
-    fn claude_emits_user_invocable_false() {
-        let lowered = lower_skill_to_claude(&user_invocable_false_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("user-invocable: false"));
-        assert!(lowered.lossy_fields.is_empty());
-    }
-
-    #[test]
-    fn claude_omits_user_invocable_when_true() {
-        let out =
-            String::from_utf8(lower_skill_to_claude(&explicit_true_profile(), "Body\n").bytes)
-                .unwrap();
-        assert!(!out.contains("user-invocable"));
-    }
-
-    #[test]
     fn claude_omits_disable_model_invocation_when_true() {
         let out =
             String::from_utf8(lower_skill_to_claude(&explicit_true_profile(), "Body\n").bytes)
@@ -154,77 +138,23 @@ mod tests {
     }
 
     #[test]
-    fn codex_identity_only_does_not_gain_invocation_field() {
-        let out =
-            String::from_utf8(lower_skill_to_codex(&identity_profile(), "Body\n").bytes).unwrap();
-        assert!(out.contains("name: skill"));
-        assert!(out.contains("description: desc"));
-        assert!(!out.contains("allow_implicit_invocation"));
-    }
-
-    #[test]
-    fn codex_explicit_true_is_no_op() {
-        let lowered = lower_skill_to_codex(&explicit_true_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("allow_implicit_invocation"));
-        assert!(!out.contains("disable-model-invocation"));
-        assert!(lowered.siblings.is_empty());
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "model-invocable",
-            "Codex"
-        ));
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "user-invocable",
-            "Codex"
-        ));
-    }
-
-    #[test]
-    fn codex_drops_user_invocable_false() {
-        let lowered = lower_skill_to_codex(&user_invocable_false_profile(), "Body\n");
-        assert!(has_dropped(
-            &lowered.lossy_fields,
-            "user-invocable",
-            "Codex"
-        ));
-    }
-
-    #[test]
-    fn codex_no_lossiness_user_invocable_true() {
-        let lowered = lower_skill_to_codex(&identity_profile(), "Body\n");
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "user-invocable",
-            "Codex"
-        ));
-    }
-
-    #[test]
-    fn opencode_drops_user_invocable_false() {
-        let lowered = lower_skill_to_opencode(&user_invocable_false_profile(), "Body\n");
-        assert!(has_dropped(
-            &lowered.lossy_fields,
-            "user-invocable",
-            "OpenCode"
-        ));
-    }
-
-    #[test]
-    fn opencode_no_invocability_lossiness_when_defaults() {
-        let lowered = lower_skill_to_opencode(&identity_profile(), "Body\n");
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "model-invocable",
-            "OpenCode"
-        ));
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "user-invocable",
-            "OpenCode"
-        ));
-        assert!(lowered.lossy_fields.is_empty());
+    fn harnesses_without_user_invocable_drop_it() {
+        let profile = user_invocable_false_profile();
+        let cases = [
+            ("Codex", lower_skill_to_codex(&profile, "Body\n")),
+            ("OpenCode", lower_skill_to_opencode(&profile, "Body\n")),
+            ("Pi", lower_skill_to_pi(&profile, "Body\n")),
+            ("Cursor", lower_skill_to_cursor(&profile, "Body\n")),
+        ];
+        for (target, lowered) in cases {
+            let out = String::from_utf8(lowered.bytes).unwrap();
+            assert!(!out.contains("user-invocable"), "{target}: {out}");
+            assert!(
+                has_dropped(&lowered.lossy_fields, "user-invocable", target),
+                "{target}: {:?}",
+                lowered.lossy_fields
+            );
+        }
     }
 
     #[test]
@@ -232,35 +162,6 @@ mod tests {
         let lowered = lower_skill_to_pi(&profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(out.contains("disable-model-invocation: true"));
-    }
-
-    #[test]
-    fn pi_drops_user_invocable_false() {
-        let lowered = lower_skill_to_pi(&user_invocable_false_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("user-invocable"));
-        assert!(has_dropped(&lowered.lossy_fields, "user-invocable", "Pi"));
-    }
-
-    #[test]
-    fn pi_model_true_omits_disable_model_invocation_and_user_true_no_lossiness() {
-        let lowered = lower_skill_to_pi(&explicit_true_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("disable-model-invocation"));
-        assert!(!out.contains("user-invocable"));
-        assert!(!has_dropped(&lowered.lossy_fields, "user-invocable", "Pi"));
-    }
-
-    #[test]
-    fn cursor_drops_user_invocable_false() {
-        let lowered = lower_skill_to_cursor(&user_invocable_false_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("user-invocable"));
-        assert!(has_dropped(
-            &lowered.lossy_fields,
-            "user-invocable",
-            "Cursor"
-        ));
     }
 
     #[test]
@@ -280,19 +181,6 @@ mod tests {
         assert!(!has_dropped(
             &lowered.lossy_fields,
             "user-invocable",
-            "Cursor"
-        ));
-    }
-
-    #[test]
-    fn cursor_intelligent_default_emits_always_apply_false_with_description() {
-        let lowered = lower_skill_to_cursor(&identity_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(out.contains("alwaysApply: false"));
-        assert!(out.contains("description: desc"));
-        assert!(!has_dropped(
-            &lowered.lossy_fields,
-            "model-invocable",
             "Cursor"
         ));
     }

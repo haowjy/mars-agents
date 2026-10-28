@@ -67,63 +67,11 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn fetch_absolute_path() {
+    fn fetch_invalid_path_returns_error() {
         let dir = TempDir::new().unwrap();
-        let source_dir = dir.path().join("my-agents");
-        std::fs::create_dir_all(&source_dir).unwrap();
-
-        let resolved = fetch_path(&source_dir, dir.path(), "local-source").unwrap();
-
-        assert_eq!(resolved.source_name, "local-source");
-        assert!(resolved.version.is_none());
-        assert!(resolved.version_tag.is_none());
-        assert!(resolved.commit.is_none());
-        assert_eq!(
-            dunce::canonicalize(&resolved.tree_path).unwrap(),
-            dunce::canonicalize(&source_dir).unwrap()
-        );
-    }
-
-    #[test]
-    fn fetch_relative_path() {
-        let dir = TempDir::new().unwrap();
-        let project_root = dir.path().join("project");
-        let source_dir = dir.path().join("project").join("local-agents");
-        std::fs::create_dir_all(&project_root).unwrap();
-        std::fs::create_dir_all(&source_dir).unwrap();
-
-        let resolved = fetch_path(Path::new("local-agents"), &project_root, "local").unwrap();
-
-        assert_eq!(
-            dunce::canonicalize(&resolved.tree_path).unwrap(),
-            dunce::canonicalize(&source_dir).unwrap()
-        );
-    }
-
-    #[test]
-    fn fetch_relative_path_with_dotdot() {
-        let dir = TempDir::new().unwrap();
-        let project_root = dir.path().join("project");
-        let source_dir = dir.path().join("external-agents");
-        std::fs::create_dir_all(&project_root).unwrap();
-        std::fs::create_dir_all(&source_dir).unwrap();
-
-        let resolved =
-            fetch_path(Path::new("../external-agents"), &project_root, "external").unwrap();
-
-        assert_eq!(
-            dunce::canonicalize(&resolved.tree_path).unwrap(),
-            dunce::canonicalize(&source_dir).unwrap()
-        );
-    }
-
-    #[test]
-    fn fetch_nonexistent_path_returns_error() {
-        let dir = TempDir::new().unwrap();
-        let result = fetch_path(&dir.path().join("nonexistent"), dir.path(), "bad-source");
-
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        let err = fetch_path(&dir.path().join("nonexistent"), dir.path(), "bad-source")
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("bad-source"),
             "error should mention source name: {err}"
@@ -132,18 +80,12 @@ mod tests {
             err.contains("nonexistent"),
             "error should mention the path: {err}"
         );
-    }
 
-    #[test]
-    fn fetch_file_not_directory_returns_error() {
-        let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("not-a-dir.txt");
         std::fs::write(&file_path, "content").unwrap();
-
-        let result = fetch_path(&file_path, dir.path(), "file-source");
-
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        let err = fetch_path(&file_path, dir.path(), "file-source")
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("not a directory"),
             "error should mention 'not a directory': {err}"

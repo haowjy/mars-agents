@@ -695,15 +695,12 @@ mod tests {
             Some("plugins/foo")
         );
         assert_eq!(parsed.name, "repo/plugins/foo");
-    }
 
-    #[test]
-    fn parse_github_alias_with_subpath() {
-        let parsed = parse("github:owner/repo/plugins/foo").unwrap();
-        assert_eq!(parsed.format, SourceFormat::GitHubAlias);
-        assert_eq!(parsed.url.as_deref(), Some("https://github.com/owner/repo"));
+        let alias = parse("github:owner/repo/plugins/foo").unwrap();
+        assert_eq!(alias.format, SourceFormat::GitHubAlias);
+        assert_eq!(alias.url.as_deref(), Some("https://github.com/owner/repo"));
         assert_eq!(
-            parsed.subpath.as_ref().map(SourceSubpath::as_str),
+            alias.subpath.as_ref().map(SourceSubpath::as_str),
             Some("plugins/foo")
         );
     }
@@ -747,18 +744,15 @@ mod tests {
             parsed.subpath.as_ref().map(SourceSubpath::as_str),
             Some("plugins/foo")
         );
-    }
 
-    #[test]
-    fn parse_gitlab_plain_repo_url_custom_host() {
-        let parsed = parse("https://gitlab.example.com/group/subgroup/repo").unwrap();
-        assert_eq!(parsed.format, SourceFormat::GitLabUrl);
+        let plain = parse("https://gitlab.example.com/group/subgroup/repo").unwrap();
+        assert_eq!(plain.format, SourceFormat::GitLabUrl);
         assert_eq!(
-            parsed.url.as_deref(),
+            plain.url.as_deref(),
             Some("https://gitlab.example.com/group/subgroup/repo")
         );
-        assert!(parsed.subpath.is_none());
-        assert_eq!(parsed.name, "repo");
+        assert!(plain.subpath.is_none());
+        assert_eq!(plain.name, "repo");
     }
 
     #[test]
@@ -771,6 +765,15 @@ mod tests {
         );
         assert!(parsed.subpath.is_none());
         assert_eq!(parsed.name, "pkg");
+
+        let generic = parse("git://127.0.0.1:19421/group/pkg.git").unwrap();
+        assert_eq!(generic.format, SourceFormat::GenericGit);
+        assert_eq!(
+            generic.url.as_deref(),
+            Some("git://127.0.0.1:19421/group/pkg.git")
+        );
+        assert!(generic.subpath.is_none());
+        assert_eq!(generic.name, "pkg");
     }
 
     #[test]
@@ -783,41 +786,26 @@ mod tests {
     }
 
     #[test]
-    fn parse_generic_git_preserves_explicit_port() {
-        let parsed = parse("git://127.0.0.1:19421/group/pkg.git").unwrap();
-        assert_eq!(parsed.format, SourceFormat::GenericGit);
-        assert_eq!(
-            parsed.url.as_deref(),
-            Some("git://127.0.0.1:19421/group/pkg.git")
-        );
-        assert!(parsed.subpath.is_none());
-        assert_eq!(parsed.name, "pkg");
-    }
-
-    #[test]
     fn parse_fragment_ref_beats_legacy_at_version() {
         let parsed = parse("owner/repo#feature/x").unwrap();
         assert_eq!(parsed.version.as_deref(), Some("feature/x"));
         assert_eq!(parsed.url.as_deref(), Some("https://github.com/owner/repo"));
-    }
 
-    #[test]
-    fn parse_legacy_at_version_still_supported() {
-        let parsed = parse("owner/repo@v1.2.3").unwrap();
-        assert_eq!(parsed.version.as_deref(), Some("v1.2.3"));
-        assert_eq!(parsed.url.as_deref(), Some("https://github.com/owner/repo"));
+        // The legacy `@version` form is still accepted.
+        let legacy = parse("owner/repo@v1.2.3").unwrap();
+        assert_eq!(legacy.version.as_deref(), Some("v1.2.3"));
+        assert_eq!(legacy.url.as_deref(), Some("https://github.com/owner/repo"));
     }
 
     #[test]
     fn rejects_archive_download_url() {
-        let err = parse("https://github.com/owner/repo/archive/refs/heads/main.zip").unwrap_err();
-        assert!(matches!(err, ParseError::UnsupportedSource { .. }));
-    }
-
-    #[test]
-    fn rejects_file_download_url() {
-        let err = parse("https://raw.githubusercontent.com/owner/repo/main/SKILL.md").unwrap_err();
-        assert!(matches!(err, ParseError::UnsupportedSource { .. }));
+        for url in [
+            "https://github.com/owner/repo/archive/refs/heads/main.zip",
+            "https://raw.githubusercontent.com/owner/repo/main/SKILL.md",
+        ] {
+            let err = parse(url).unwrap_err();
+            assert!(matches!(err, ParseError::UnsupportedSource { .. }), "{url}");
+        }
     }
 
     #[test]

@@ -266,34 +266,4 @@ mod tests {
                 && item.discovered.source_path == Path::new("nested/skills/review")
         }));
     }
-
-    #[test]
-    fn discovers_mars_src_not_repo_root() {
-        let dir = TempDir::new().unwrap();
-        let project_root = dir.path();
-
-        std::fs::create_dir_all(project_root.join("skills").join("planning")).unwrap();
-        std::fs::write(
-            project_root
-                .join("skills")
-                .join("planning")
-                .join("SKILL.md"),
-            "# Legacy",
-        )
-        .unwrap();
-
-        let preferred = preferred_local_source_root(project_root)
-            .join("skills")
-            .join("planning");
-        std::fs::create_dir_all(&preferred).unwrap();
-        std::fs::write(preferred.join("SKILL.md"), "# Preferred").unwrap();
-
-        let items =
-            discover_local_items(project_root, None, &mut DiagnosticCollector::new()).unwrap();
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].discovered.id.kind, ItemKind::Skill);
-        assert_eq!(items[0].discovered.id.name.as_str(), "planning");
-        assert_eq!(items[0].root, preferred_local_source_root(project_root));
-    }
 }

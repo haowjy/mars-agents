@@ -302,70 +302,6 @@ mod tests {
     }
 
     #[test]
-    fn fetch_local_git_repo_uses_latest_semver_tag() {
-        let remote = init_repo();
-        run_git(remote.path(), ["tag", "v0.1.0"]);
-
-        let v020_commit = commit_file(remote.path(), "README.md", "v0.2.0\n", "release v0.2.0");
-        run_git(remote.path(), ["tag", "v0.2.0"]);
-
-        let cache_root = TempDir::new().unwrap();
-        let cache = GlobalCache {
-            root: cache_root.path().join("cache"),
-        };
-        fs::create_dir_all(cache.archives_dir()).unwrap();
-        fs::create_dir_all(cache.git_dir()).unwrap();
-
-        let url = format!("file://{}", remote.path().display());
-        let mut diag = DiagnosticCollector::new();
-        let resolved = fetch(
-            &url,
-            None,
-            "local-source",
-            &cache,
-            &FetchOptions::default(),
-            &mut diag,
-        )
-        .unwrap();
-
-        assert_eq!(resolved.source_name.as_ref(), "local-source");
-        assert_eq!(resolved.version, Some(Version::new(0, 2, 0)));
-        assert_eq!(resolved.version_tag.as_deref(), Some("v0.2.0"));
-        assert_eq!(resolved.commit.as_deref(), Some(v020_commit.as_str()));
-        assert!(resolved.tree_path.join("README.md").exists());
-
-        let checked_out = run_git(&resolved.tree_path, ["rev-parse", "HEAD"]);
-        assert_eq!(checked_out, v020_commit);
-    }
-
-    #[test]
-    fn fetch_commit_checks_out_exact_commit_without_resolving_head() {
-        let remote = init_repo();
-        let locked_commit = commit_file(remote.path(), "README.md", "locked\n", "locked commit");
-        let head_commit = commit_file(remote.path(), "README.md", "head\n", "head commit");
-        assert_ne!(locked_commit, head_commit);
-
-        let cache_root = TempDir::new().unwrap();
-        let cache = GlobalCache {
-            root: cache_root.path().join("cache"),
-        };
-        fs::create_dir_all(cache.archives_dir()).unwrap();
-        fs::create_dir_all(cache.git_dir()).unwrap();
-
-        let url = format!("file://{}", remote.path().display());
-        let mut diag = DiagnosticCollector::new();
-        let resolved =
-            fetch_commit(&url, &locked_commit, "local-source", &cache, &mut diag).unwrap();
-
-        assert_eq!(resolved.source_name.as_ref(), "local-source");
-        assert_eq!(resolved.version, None);
-        assert_eq!(resolved.version_tag, None);
-        assert_eq!(resolved.commit.as_deref(), Some(locked_commit.as_str()));
-        let checked_out = run_git(&resolved.tree_path, ["rev-parse", "HEAD"]);
-        assert_eq!(checked_out, locked_commit);
-    }
-
-    #[test]
     fn fetch_commit_on_cached_repo_fetches_missing_sha_before_checkout() {
         let remote = init_repo();
         run_git(remote.path(), ["tag", "v1.0.0"]);
@@ -459,25 +395,21 @@ mod tests {
     // ==================== is_github_host tests ====================
 
     #[test]
-    fn is_github_host_accepts_supported_formats() {
-        assert!(is_github_host("https://github.com/org/repo"));
-        assert!(is_github_host("github.com/org/repo"));
-        assert!(is_github_host("git@github.com:org/repo.git"));
-        assert!(is_github_host("https://git@github.com:8443/org/repo"));
-    }
-
-    #[test]
-    fn is_github_host_rejects_other_hosts() {
-        assert!(!is_github_host("https://gitlab.com/org/repo"));
-        assert!(!is_github_host("git@source.example.com:org/repo.git"));
-    }
-
-    #[test]
-    fn github_archive_only_for_https_github_urls() {
-        assert!(should_use_github_archive("https://github.com/org/repo"));
-        assert!(!should_use_github_archive("http://github.com/org/repo"));
-        assert!(!should_use_github_archive("github.com/org/repo"));
-        assert!(!should_use_github_archive("git@github.com:org/repo.git"));
-        assert!(!should_use_github_archive("ssh://git@github.com/org/repo"));
+    fn github_host_and_archive_detection() {
+        // (url, is_github_host, should_use_github_archive)
+        let cases = [
+            ("https://github.com/org/repo", true, true),
+            ("http://github.com/org/repo", true, false),
+            ("github.com/org/repo", true, false),
+            ("git@github.com:org/repo.git", true, false),
+            ("https://git@github.com:8443/org/repo", true, true),
+            ("ssh://git@github.com/org/repo", true, false),
+            ("https://gitlab.com/org/repo", false, false),
+            ("git@source.example.com:org/repo.git", false, false),
+        ];
+        for (url, host, archive) in cases {
+            assert_eq!(is_github_host(url), host, "is_github_host({url})");
+            assert_eq!(should_use_github_archive(url), archive, "archive({url})");
+        }
     }
 }

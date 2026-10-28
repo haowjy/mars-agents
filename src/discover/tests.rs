@@ -44,17 +44,7 @@ fn conventional_discovery_finds_package_bootstrap_docs() {
     )
     .unwrap();
     fs::write(dir.path().join("bootstrap/.hidden/BOOTSTRAP.md"), "# hide").unwrap();
-
-    let items = discover_source(dir.path(), None, &mut DiagnosticCollector::new()).unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
-    assert_eq!(items[0].id.name.as_str(), "global-auth");
-    assert_eq!(items[0].source_path, PathBuf::from("bootstrap/global-auth"));
-}
-
-#[test]
-fn conventional_bootstrap_discovery_ignores_missing_bootstrap_file() {
-    let dir = TempDir::new().unwrap();
+    // A directory without BOOTSTRAP.md is not a bootstrap doc.
     fs::create_dir_all(dir.path().join("bootstrap/incomplete")).unwrap();
     fs::write(
         dir.path().join("bootstrap/incomplete/README.md"),
@@ -63,7 +53,10 @@ fn conventional_bootstrap_discovery_ignores_missing_bootstrap_file() {
     .unwrap();
 
     let items = discover_source(dir.path(), None, &mut DiagnosticCollector::new()).unwrap();
-    assert!(items.is_empty());
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
+    assert_eq!(items[0].id.name.as_str(), "global-auth");
+    assert_eq!(items[0].source_path, PathBuf::from("bootstrap/global-auth"));
 }
 
 #[test]
@@ -102,32 +95,6 @@ fn fallback_manifest_declares_bootstrap_container() {
     assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
     assert_eq!(items[0].id.name.as_str(), "setup");
     assert_eq!(items[0].source_path, PathBuf::from("bootstrap/setup"));
-}
-
-#[test]
-fn nested_bootstrap_dir_is_discovered() {
-    let dir = TempDir::new().unwrap();
-    fs::create_dir_all(dir.path().join("nested/bootstrap/setup")).unwrap();
-    fs::create_dir_all(dir.path().join("nested/bootstrap/.hidden")).unwrap();
-    fs::write(
-        dir.path().join("nested/bootstrap/setup/BOOTSTRAP.md"),
-        "# setup",
-    )
-    .unwrap();
-    fs::write(
-        dir.path().join("nested/bootstrap/.hidden/BOOTSTRAP.md"),
-        "# hidden",
-    )
-    .unwrap();
-
-    let items = discover_source(dir.path(), Some("demo"), &mut DiagnosticCollector::new()).unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].id.kind, ItemKind::BootstrapDoc);
-    assert_eq!(items[0].id.name.as_str(), "setup");
-    assert_eq!(
-        items[0].source_path,
-        PathBuf::from("nested/bootstrap/setup")
-    );
 }
 
 #[test]

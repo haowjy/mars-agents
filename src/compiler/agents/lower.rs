@@ -165,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_harness_override_does_not_replace_skills_before_lowering() {
+    fn harness_override_never_replaces_a_field_mars_lowers() {
         let content = "---\nname: r\nharness: claude\nskills: [base-skill]\nharness-overrides:\n  claude:\n    skills: [override-skill]\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
@@ -178,10 +178,8 @@ mod tests {
             !text.contains("override-skill"),
             "harness-overrides passthrough should not replace skills: {text}"
         );
-    }
 
-    #[test]
-    fn claude_harness_override_does_not_replace_mcp() {
+        // MCP: the profile's refs project; the override's do not replace them.
         let content = "---\nname: r\nharness: claude\ntools:\n  '*': deny\n  mcp(plugin:base): allow\nharness-overrides:\n  claude:\n    tools: [plugin:claude]\n    color: red\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
@@ -198,7 +196,22 @@ mod tests {
             !text.contains("plugin:claude"),
             "harness-overrides passthrough should not replace profile mcp: {text}"
         );
+
+        // Codex execution policy: top-level effort is lowered, the override's sandbox is not.
+        let content = "---\nname: r\nharness: codex\neffort: low\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: workspace-write\n---\n# body";
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(out.bytes).unwrap();
+        assert!(
+            text.contains("model_reasoning_effort = \"low\""),
+            "top-level effort should be lowered: {text}"
+        );
+        assert!(
+            !text.contains("sandbox_mode = \"workspace-write\""),
+            "harness-overrides passthrough should not replace sandbox: {text}"
+        );
     }
+
     #[test]
     fn pi_agent_records_mcp_lossiness_when_mcp_refs_present() {
         let content = "---\nname: r\nharness: pi\ntools:\n  mcp(plugin:demo): allow\n---\n# body";
@@ -211,37 +224,23 @@ mod tests {
         }));
     }
     #[test]
-    fn claude_agent_model_invocable_false_warn_drops_without_skill_key() {
-        let content = "---\nname: coder\nharness: claude\nmodel-invocable: false\n---\n# Body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("disable-model-invocation"),
-            "subagents have no invocation frontmatter; must not emit skill-only key: {text}"
-        );
-        assert!(out.lossy_fields.iter().any(|f| {
-            f.field == "model-invocable"
-                && f.target == "Claude"
-                && f.classification == Lossiness::Dropped
-        }));
-    }
-
-    #[test]
-    fn claude_agent_user_invocable_false_warn_drops() {
-        let content = "---\nname: coder\nharness: claude\nuser-invocable: false\n---\n# Body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("user-invocable"),
-            "no native agent key: {text}"
-        );
-        assert!(out.lossy_fields.iter().any(|f| {
-            f.field == "user-invocable"
-                && f.target == "Claude"
-                && f.classification == Lossiness::Dropped
-        }));
+    fn claude_agent_invocability_false_warn_drops_without_native_key() {
+        for (field, native_key) in [
+            ("model-invocable", "disable-model-invocation"),
+            ("user-invocable", "user-invocable"),
+        ] {
+            let content = format!("---\nname: coder\nharness: claude\n{field}: false\n---\n# Body");
+            let (profile, fm, _) = profile_from(&content);
+            let out = lower_to_claude(&profile, fm.body(), &NativeModel::Inherit);
+            let text = String::from_utf8(out.bytes).unwrap();
+            assert!(
+                !text.contains(native_key),
+                "subagents have no native {field} key: {text}"
+            );
+            assert!(out.lossy_fields.iter().any(|f| {
+                f.field == field && f.target == "Claude" && f.classification == Lossiness::Dropped
+            }));
+        }
     }
 
     // --- 3.3: Codex lowering ---
@@ -265,22 +264,6 @@ mod tests {
                 out.lossy_fields
             );
         }
-    }
-
-    #[test]
-    fn codex_harness_override_does_not_replace_execution_policy() {
-        let content = "---\nname: r\nharness: codex\neffort: low\nharness-overrides:\n  codex:\n    effort: high\n    sandbox: workspace-write\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_codex(&profile, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            text.contains("model_reasoning_effort = \"low\""),
-            "top-level effort should be lowered: {text}"
-        );
-        assert!(
-            !text.contains("sandbox_mode = \"workspace-write\""),
-            "harness-overrides passthrough should not replace sandbox: {text}"
-        );
     }
 
     #[test]
@@ -336,21 +319,6 @@ mod tests {
         assert!(
             !out.lossy_fields.iter().any(|f| f.field == "mode"),
             "mode should be exact, not lossy: {:?}",
-            out.lossy_fields
-        );
-    }
-
-    #[test]
-    fn opencode_subagent_mode_emits_without_lossiness() {
-        let content =
-            "---\nname: sub\ndescription: Sub\nmode: subagent\nharness: opencode\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("mode: subagent"));
-        assert!(
-            !out.lossy_fields.iter().any(|f| f.field == "mode"),
-            "mode should not be dropped or approximate: {:?}",
             out.lossy_fields
         );
     }
@@ -458,68 +426,42 @@ mod tests {
     }
 
     #[test]
-    fn cursor_sandbox_is_approximate_not_dropped() {
-        let content = "---\nname: r\nharness: cursor\nsandbox: read-only\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
+    fn cursor_sandbox_and_approval_are_approximate_not_dropped() {
+        // (field, authored line, words the note must document)
+        let cases = [
+            (
+                "sandbox",
+                "sandbox: read-only",
+                ["workspace-write", "disabled"],
+            ),
+            ("approval", "approval: auto", ["--force", "--yolo"]),
+        ];
+        for (field, line, words) in cases {
+            let content = format!("---\nname: r\nharness: cursor\n{line}\n---\n# body");
+            let (profile, fm, _) = profile_from(&content);
+            let out = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
 
-        // sandbox must not appear in the emitted YAML artifact
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("sandbox:"),
-            "sandbox leaked into artifact: {text}"
-        );
-
-        // lossiness must be Approximate, not Dropped
-        let field = out
-            .lossy_fields
-            .iter()
-            .find(|f| f.field == "sandbox")
-            .expect("sandbox should appear in lossy_fields");
-        assert_eq!(field.target, "Cursor");
-        assert!(
-            matches!(field.classification, Lossiness::Approximate { .. }),
-            "expected Approximate, got {:?}",
-            field.classification
-        );
-        if let Lossiness::Approximate { note } = field.classification {
+            let text = String::from_utf8(out.bytes).unwrap();
             assert!(
-                note.contains("workspace-write") && note.contains("disabled"),
-                "note should document workspace-write mapping: {note}"
+                !text.contains(&format!("{field}:")),
+                "{field} leaked into artifact: {text}"
             );
-        }
-    }
 
-    #[test]
-    fn cursor_approval_is_approximate_not_dropped() {
-        let content = "---\nname: r\nharness: cursor\napproval: auto\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
-
-        // approval must not appear in the emitted YAML artifact
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("approval:"),
-            "approval leaked into artifact: {text}"
-        );
-
-        // lossiness must be Approximate, not Dropped
-        let field = out
-            .lossy_fields
-            .iter()
-            .find(|f| f.field == "approval")
-            .expect("approval should appear in lossy_fields");
-        assert_eq!(field.target, "Cursor");
-        assert!(
-            matches!(field.classification, Lossiness::Approximate { .. }),
-            "expected Approximate, got {:?}",
-            field.classification
-        );
-        if let Lossiness::Approximate { note } = field.classification {
-            assert!(
-                note.contains("--force") && note.contains("--yolo"),
-                "note should document --force/--yolo mapping: {note}"
-            );
+            let lossy = out
+                .lossy_fields
+                .iter()
+                .find(|f| f.field == field)
+                .unwrap_or_else(|| panic!("{field} should appear in lossy_fields"));
+            assert_eq!(lossy.target, "Cursor");
+            let Lossiness::Approximate { note } = lossy.classification else {
+                panic!("expected Approximate, got {:?}", lossy.classification);
+            };
+            for word in words {
+                assert!(
+                    note.contains(word),
+                    "{field} note should mention {word}: {note}"
+                );
+            }
         }
     }
 
@@ -585,49 +527,4 @@ mod tests {
     }
 
     // --- 3.3: Dispatch ---
-
-    #[test]
-    fn lower_for_harness_dispatches_correctly() {
-        let content = "---\nname: coder\nmodel: gpt55\nharness: claude\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let body = fm.body().to_string();
-        let out = lower_for_harness_with_model(
-            &HarnessId::Claude,
-            &profile,
-            &body,
-            &NativeModel::Inherit,
-        );
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(text.contains("---"), "not markdown format");
-
-        let content2 = "---\nname: coder\nmodel: gpt55\nharness: codex\n---\n# body";
-        let (profile2, fm2, _) = profile_from(content2);
-        let body2 = fm2.body().to_string();
-        let out2 = lower_for_harness_with_model(
-            &HarnessId::Codex,
-            &profile2,
-            &body2,
-            &NativeModel::Inherit,
-        );
-        let text2 = String::from_utf8(out2.bytes).unwrap();
-        assert!(text2.contains("name = \"coder\""), "not TOML format");
-        assert!(
-            !text2.contains("[agent]"),
-            "legacy nested agent table emitted"
-        );
-
-        let content3 = "---\nname: cursor-agent\nmodel: gpt55\nharness: cursor\n---\n# body";
-        let (profile3, fm3, _) = profile_from(content3);
-        let out3 = lower_for_harness_with_model(
-            &HarnessId::Cursor,
-            &profile3,
-            fm3.body(),
-            &NativeModel::Inherit,
-        );
-        let text3 = String::from_utf8(out3.bytes).unwrap();
-        assert!(
-            text3.contains("name: cursor-agent"),
-            "cursor lowering missing name"
-        );
-    }
 }

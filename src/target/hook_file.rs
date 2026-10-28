@@ -191,3 +191,86 @@ pub(super) fn sweep_events(
     doc.drop_section_if_empty();
     doc.save(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn write_appends_opaque_entries_in_call_order() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("hooks.json");
+        for script in ["/old/hooks/audit/run.sh", "/new/hooks/audit/run.sh"] {
+            let hook = HookEntry {
+                name: "audit".to_string(),
+                native_event: "PreToolUse".to_string(),
+                entries: vec![serde_json::json!({"command": format!("bash '{script}'")})],
+            };
+            write(&path, &[hook], &[]).unwrap();
+        }
+
+        let json: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let commands: Vec<_> = json["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["command"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                "bash '/old/hooks/audit/run.sh'",
+                "bash '/new/hooks/audit/run.sh'"
+            ]
+        );
+    }
+
+    /// An entry edited since mars wrote it is not removed, and the file is not rewritten at all.
+    #[test]
+    fn divergent_structural_removal_does_not_rewrite_the_file() {
+        // (target, file contents, recorded entries for `hook:<event>:audit`)
+        let cases = [
+            (
+                ".claude",
+                br#"{"hooks":{"SessionStart":[{"hooks":[{"command":"edited"}]}]},"keep":true}"#
+                    .as_slice(),
+                serde_json::json!([{"hooks":[{"command":"original"}]}]),
+            ),
+            (
+                ".cursor",
+                br#"{"version":1,"hooks":{"SessionStart":[{"command":"edited"}]},"keep":true}"#
+                    .as_slice(),
+                serde_json::json!([{"command":"original"}]),
+            ),
+        ];
+        for (target, original, recorded) in cases {
+            let tmp = TempDir::new().unwrap();
+            let path = tmp.path().join("hooks.json");
+            std::fs::write(&path, original).unwrap();
+            // Pin the mtime in the past so a rewrite is visible without sleeping.
+            let pinned = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(pinned)
+                .unwrap();
+            let records = BTreeMap::from([(
+                "hook:SessionStart:audit".to_string(),
+                ConfigEntryRecord {
+                    emitted_json: Some(recorded.to_string()),
+                },
+            )]);
+
+            remove_recorded(&path, &records, target, &mut DiagnosticCollector::new()).unwrap();
+
+            assert_eq!(std::fs::read(&path).unwrap(), original, "{target}");
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().modified().unwrap(),
+                pinned,
+                "{target}"
+            );
+        }
+    }
+}

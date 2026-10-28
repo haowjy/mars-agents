@@ -155,37 +155,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn divergent_structural_removal_does_not_rewrite_hooks() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("hooks.json");
-        let original =
-            br#"{"version":1,"hooks":{"sessionStart":[{"command":"edited"}]},"keep":true}"#;
-        std::fs::write(&path, original).unwrap();
-        let before_modified = std::fs::metadata(&path).unwrap().modified().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let records = std::collections::BTreeMap::from([(
-            "hook:sessionStart:audit".to_string(),
-            crate::lock::ConfigEntryRecord {
-                emitted_json: Some(serde_json::json!([{"command":"original"}]).to_string()),
-            },
-        )]);
-
-        super::super::hook_file::remove_recorded(
-            &path,
-            &records,
-            ".cursor",
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        )
-        .unwrap();
-
-        assert_eq!(std::fs::read(&path).unwrap(), original);
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().modified().unwrap(),
-            before_modified
-        );
-    }
-
-    #[test]
     fn removal_prunes_empty_hooks_object() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("hooks.json");

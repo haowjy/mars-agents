@@ -30,6 +30,26 @@ pub struct TargetState {
     // Keep exported graph hooks even when none of the managed targets select
     // one of their fragments. Plugin diagnostics need to report that omission.
     exported_hooks: Vec<crate::compiler::hooks::ParsedHookItem>,
+    // Dependency hooks whose `hook.toml` failed validation, until `settle_invalid_hooks`.
+    invalid_hooks: Vec<InvalidDependencyHook>,
+    // Dependency hooks standing on what the last lock installed.
+    kept_hooks: Vec<KeptHook>,
+}
+
+#[derive(Debug, Clone)]
+struct InvalidDependencyHook {
+    source_name: SourceName,
+    name: String,
+    message: String,
+}
+
+/// A dependency hook whose `hook.toml` no longer validates. It keeps what the previous lock
+/// installed: its per-target directories (never copied from the invalid source), and,
+/// downstream, its merge entries and file outputs. See `compiler::config_entries`.
+#[derive(Debug, Clone)]
+pub(crate) struct KeptHook {
+    pub name: String,
+    pub dirs: Vec<PackageDir>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +86,56 @@ impl TargetState {
         for mcp in &mut self.selected_mcp {
             rebase(&mut mcp.item.source_path, from, to);
         }
+    }
+
+    /// Decide what each invalid dependency hook keeps from `old_lock` and say so; `None`
+    /// (a build with no previous install) keeps nothing.
+    pub(crate) fn settle_invalid_hooks(
+        &mut self,
+        old_lock: Option<&crate::lock::LockFile>,
+        managed_targets: &[String],
+        diag: &mut DiagnosticCollector,
+    ) {
+        let lock_index = old_lock.map(crate::lock::LockIndex::new);
+        for invalid in std::mem::take(&mut self.invalid_hooks) {
+            let dirs: Vec<PackageDir> = managed_targets
+                .iter()
+                .filter_map(|target| PackageDir::new(ItemKind::Hook, target, &invalid.name))
+                .filter(|dir| {
+                    let dest = dir.canonical();
+                    !self.items.contains_key(&dest)
+                        && lock_index
+                            .as_ref()
+                            .and_then(|index| {
+                                index.find_output(crate::lock::CANONICAL_TARGET_ROOT, &dest)
+                            })
+                            .is_some_and(|locked| locked.source == invalid.source_name)
+                })
+                .collect();
+            let outcome = if dirs.is_empty() {
+                "it was never installed, so nothing is installed"
+            } else {
+                "keeping what the last sync installed"
+            };
+            diag.warn(
+                "hook-invalid-kept",
+                format!("{}; {outcome}", invalid.message),
+            );
+            if !dirs.is_empty() {
+                self.kept_hooks.push(KeptHook {
+                    name: invalid.name,
+                    dirs,
+                });
+            }
+        }
+    }
+
+    pub(crate) fn kept_hooks(&self) -> &[KeptHook] {
+        &self.kept_hooks
+    }
+
+    pub(crate) fn kept_dirs(&self) -> impl Iterator<Item = &PackageDir> {
+        self.kept_hooks.iter().flat_map(|hook| &hook.dirs)
     }
 
     pub(crate) fn exported_hooks(&self) -> &[crate::compiler::hooks::ParsedHookItem] {
@@ -219,6 +289,8 @@ impl TargetState {
             selected_hooks: IndexMap::new(),
             selected_mcp: Vec::new(),
             exported_hooks: Vec::new(),
+            invalid_hooks: Vec::new(),
+            kept_hooks: Vec::new(),
         }
     }
 }
@@ -295,6 +367,8 @@ pub fn build_with_collisions_and_diag(
         selected_hooks: IndexMap::new(),
         selected_mcp: Vec::new(),
         exported_hooks: Vec::new(),
+        invalid_hooks: Vec::new(),
+        kept_hooks: Vec::new(),
     };
     let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
@@ -316,9 +390,10 @@ pub fn build_with_collisions_and_diag(
         let source_config = config.dependencies.get(source_name);
 
         // Removed hook schemas are a compatibility error even when dependency
-        // filters select no hook. Strict parsing also supplies hook discovery,
-        // avoiding a second lenient hook.toml parse for filters.
-        let parsed_hooks = crate::compiler::hooks::discover_resolved_hook_items(
+        // filters select no hook. Discovery also supplies the hooks for filters,
+        // avoiding a second hook.toml parse. Any other invalid `hook.toml` leaves
+        // its hook out and the sync going: see `settle_invalid_hooks`.
+        let hook_results = crate::compiler::hooks::discover_resolved_hook_items(
             node,
             source_name,
             dependency_depths.get(source_name).copied().unwrap_or(1),
@@ -328,6 +403,19 @@ pub fn build_with_collisions_and_diag(
                 .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1),
             diag,
         )?;
+        let mut parsed_hooks = Vec::new();
+        for result in hook_results {
+            match result {
+                Ok(hook) => parsed_hooks.push(hook),
+                Err(invalid) => target.invalid_hooks.push(InvalidDependencyHook {
+                    source_name: source_name.clone(),
+                    name: invalid.name,
+                    message: crate::compiler::hooks::error_message(invalid.error)
+                        .trim_end()
+                        .to_string(),
+                }),
+            }
+        }
         let discovered_hooks = parsed_hooks
             .iter()
             .map(|hook| hook.discovered_item(&node.rooted_ref.package_root))

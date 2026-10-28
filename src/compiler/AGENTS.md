@@ -161,8 +161,22 @@ values instead of rediscovering package config entries. After target sync, sync 
 or a token-naming MCP server's entry unless target sync recorded installing that directory, so an
 unmanaged or user-edited copy keeps the entry out with a `hook-not-installed` / `mcp-not-installed`
 warning naming the path; target sync's `target-unmanaged-collision` or `target-divergent` warning
-says why. A token-free server has no directory to check. `lower_hook_entries` owns
-native merge-fragment loading and hook ordering; `lower_mcp_servers` lowers servers. MCP collisions resolve once per target in
+says why. A token-free server has no directory to check. `config_entries/render.rs`
+preflight reads, validates and renders every selected hook once (`RenderedHooks`); compile reuses
+that result, and `lower_merge_fragments` orders merge fragments (`lower_hook_entries` is the same
+for a plugin build, which has no preflight). `config_entries/file_hooks.rs` owns file-placement
+outputs: what the old lock says a hook owns on a target (every non-canonical output but its
+directory copy, so a hook may own several files) and writing them. `lower_mcp_servers` lowers servers.
+A target whose merge-file hook entries equal the lock's records, and whose file still holds
+them, is not rewritten (Codex keys trust on entry position).
+
+A dependency hook whose `hook.toml` fails validation (D19) is `KeptHook` in `TargetState`:
+`sync::diff` keeps its `.mars` directories as the lock has them, compile carries its merge
+records (re-appended from the record if the file is rewritten for another reason) and file
+outputs, and target sync re-projects the unchanged directory as for any unchanged item. A hook
+never installed installs nothing; both warn `hook-invalid-kept`. A dependency hook in the
+removed schema, and any invalid project hook, still fail the sync. A dependency's unknown
+top-level key and unknown merge-fragment event warn (`Origin::Dependency`) and install. MCP collisions resolve once per target in
 `TargetState`, so the winning server's directory and config entry come from the same selection.
 Each selected item arrives with its directory token, the `${MARS_HOOK_DIR}` /
 `${MARS_MCP_DIR}` replacement, so installed copies and plugin trees share one lowering path.

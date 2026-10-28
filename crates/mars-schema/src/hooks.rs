@@ -27,8 +27,9 @@ pub const REMOVED_SCHEMA_MESSAGE: &str = "uses the removed v0.11.0 hook schema (
 /// `Diagnostic` code of a `hook.toml` in the removed v0.11.0 schema.
 pub const REMOVED_SCHEMA_CODE: &str = "hook.removed-schema";
 
-/// Where a `hook.toml` came from. Reserved for the dependency reading to differ from the
-/// project's own; both are strict today.
+/// Where a `hook.toml` came from. The project's own is strict. A dependency's is lenient
+/// where one author's slip should not stop a sync: an unknown top-level key is ignored and
+/// a merge fragment's unknown event is skipped, each with a warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     Local,
@@ -249,6 +250,11 @@ struct RawHookDef {
     order: i32,
 }
 
+impl RawHookDef {
+    /// The top-level keys above, for a dependency's reading to tell an unknown one.
+    const KEYS: [&'static str; 4] = ["name", "visibility", "targets", "order"];
+}
+
 /// Whether `hook.toml` text is in the schema Mars 0.11 removed. Text that is not TOML is
 /// not.
 pub fn uses_removed_schema(text: &str) -> bool {
@@ -286,7 +292,7 @@ fn failed(code: &str, message: impl Into<String>) -> HookRead {
 }
 
 /// Read a `hook.toml`. `dir_name` names the hook when the file does not.
-pub fn read(text: &str, dir_name: &str, _origin: Origin) -> HookRead {
+pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
     let value: toml::Value = match toml::from_str(text) {
         Ok(value) => value,
         Err(error) => return failed("hook.parse", format!("failed to parse: {error}")),
@@ -294,7 +300,31 @@ pub fn read(text: &str, dir_name: &str, _origin: Origin) -> HookRead {
     if is_removed_schema(&value) {
         return failed(REMOVED_SCHEMA_CODE, REMOVED_SCHEMA_MESSAGE);
     }
-    let raw: RawHookDef = match toml::from_str(text) {
+    let mut diagnostics = Vec::new();
+    let raw: Result<RawHookDef, _> = match origin {
+        Origin::Local => toml::from_str(text),
+        Origin::Dependency => {
+            let mut value = value;
+            if let Some(table) = value.as_table_mut() {
+                let unknown: Vec<String> = table
+                    .keys()
+                    .filter(|key| !RawHookDef::KEYS.contains(&key.as_str()))
+                    .cloned()
+                    .collect();
+                for key in unknown {
+                    table.remove(&key);
+                    diagnostics.push(SchemaDiagnostic::new(
+                        "hook.unknown-key",
+                        Severity::Warning,
+                        Vec::new(),
+                        format!("ignoring unknown key `{key}`"),
+                    ));
+                }
+            }
+            value.try_into()
+        }
+    };
+    let raw = match raw {
         Ok(raw) => raw,
         Err(error) => return failed("hook.parse", format!("failed to parse: {error}")),
     };
@@ -338,7 +368,7 @@ pub fn read(text: &str, dir_name: &str, _origin: Origin) -> HookRead {
             order: raw.order,
             targets,
         }),
-        diagnostics: Vec::new(),
+        diagnostics,
         unknown_visibility,
     }
 }
@@ -382,6 +412,8 @@ fn validate_fragment_path(path: &str) -> Result<(), &'static str> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MergeFragment {
     pub events: BTreeMap<String, Vec<OrderedValue>>,
+    /// Unknown events a dependency's fragment lists, left out of `events`.
+    pub skipped_events: Vec<String>,
     /// Events the target does not list that `unchecked = true` let through.
     pub unchecked_events: Vec<String>,
 }
@@ -399,6 +431,7 @@ pub fn merge_fragment(
     target_root: &str,
     known_events: &[&str],
     fragment: &Fragment,
+    origin: Origin,
     tokens: &Tokens<'_>,
 ) -> Result<MergeFragment, FragmentError> {
     let err = |message: String| FragmentError(message);
@@ -421,8 +454,13 @@ pub fn merge_fragment(
     let sorted: BTreeMap<_, _> = object.into_iter().collect();
     let mut events = BTreeMap::new();
     let mut unchecked_events = Vec::new();
+    let mut skipped_events = Vec::new();
     for (event, entries) in sorted {
         if !known_events.contains(&event.as_str()) {
+            if !fragment.is_unchecked() && origin == Origin::Dependency {
+                skipped_events.push(event);
+                continue;
+            }
             if !fragment.is_unchecked() {
                 return Err(err(format!(
                     "unknown event `{event}` for target `{target_root}`; valid events: {}; use `unchecked = true` to pass a newer native event through verbatim",
@@ -439,6 +477,7 @@ pub fn merge_fragment(
     }
     Ok(MergeFragment {
         events,
+        skipped_events,
         unchecked_events,
     })
 }
@@ -527,8 +566,15 @@ mod tests {
             r#"const SCRIPT = "${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh";"#
         );
         let text = r#"{"Stop":[{"hooks":[{"command":"${MARS_HOOK_DIR}/run.sh"}]}]}"#;
-        let merged =
-            merge_fragment(text, ".claude", events(".claude"), &fragment(None), &t).unwrap();
+        let merged = merge_fragment(
+            text,
+            ".claude",
+            events(".claude"),
+            &fragment(None),
+            Origin::Local,
+            &t,
+        )
+        .unwrap();
         assert_eq!(
             serde_json::to_string(&merged.events["Stop"]).unwrap(),
             r#"[{"hooks":[{"command":"${CLAUDE_PLUGIN_ROOT}/hooks/audit/run.sh"}]}]"#
@@ -546,6 +592,7 @@ mod tests {
             ".claude",
             events(".claude"),
             &fragment(None),
+            Origin::Local,
             &tokens(),
         )
         .unwrap();
@@ -563,19 +610,42 @@ mod tests {
     fn merge_refuses_unknown_events_unless_unchecked() {
         let text = r#"{"Bogus":[]}"#;
         let known = events(".codex");
-        let error = merge_fragment(text, ".codex", known, &fragment(None), &tokens())
-            .unwrap_err()
-            .to_string();
+        let error = merge_fragment(
+            text,
+            ".codex",
+            known,
+            &fragment(None),
+            Origin::Local,
+            &tokens(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(error.starts_with("unknown event `Bogus` for target `.codex`"));
-        let merged =
-            merge_fragment(text, ".codex", known, &fragment(Some(true)), &tokens()).unwrap();
+        let merged = merge_fragment(
+            text,
+            ".codex",
+            known,
+            &fragment(Some(true)),
+            Origin::Local,
+            &tokens(),
+        )
+        .unwrap();
         assert_eq!(merged.unchecked_events, ["Bogus"]);
     }
 
     #[test]
     fn merge_refuses_non_objects_and_non_arrays() {
         let known = events(".claude");
-        let run = |text| merge_fragment(text, ".claude", known, &fragment(None), &tokens());
+        let run = |text| {
+            merge_fragment(
+                text,
+                ".claude",
+                known,
+                &fragment(None),
+                Origin::Local,
+                &tokens(),
+            )
+        };
         assert!(run("[]").is_err());
         assert!(run("nope").is_err());
         assert!(run(r#"{"Stop":{}}"#).is_err());

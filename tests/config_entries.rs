@@ -2,6 +2,8 @@ mod common;
 
 #[path = "config_entries/file_hooks.rs"]
 mod file_hooks;
+#[path = "config_entries/kept_hooks.rs"]
+mod kept_hooks;
 #[path = "config_entries/mcp.rs"]
 mod mcp;
 #[path = "config_entries/merge_hooks.rs"]

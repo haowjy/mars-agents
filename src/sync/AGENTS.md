@@ -148,6 +148,10 @@ not; plugin builds read that list for omission diagnostics, and sync never reads
 selections survive an install skip; post-target-sync lowering asks one gate whether target sync's
 own `synced_outputs` recorded this target installing the record's directory, and withholds the
 entry with a path-bearing warning when it did not. Config lowering must not rediscover items.
+A dependency hook whose `hook.toml` is invalid is not selected: `settle_invalid_hooks` (called by
+`build_target` with the old lock) turns it into a `KeptHook` over the directories the lock holds for
+that package, or warns and installs nothing. `diff::compute` emits those directories as unchanged
+and never orphans them, whatever the disk or the invalid source holds.
 
 Plugin builds and sync both call `build_target_state` (graph collection, optional local extension,
 MCP collision resolution and the winning servers' directory items) and then `apply_target_renames`. Between

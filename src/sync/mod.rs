@@ -658,6 +658,12 @@ pub(crate) fn build_target(
         },
     )?;
 
+    built.target.settle_invalid_hooks(
+        Some(&resolved.loaded.old_lock),
+        &resolved.loaded.effective.settings.managed_targets(),
+        diag,
+    );
+
     // Prevent managed installs from overwriting unmanaged files. This runs over
     // every item, hook and MCP directories included, and before renames rewrite
     // references, so a pruned item is neither referenced nor installed.
@@ -927,7 +933,7 @@ pub(crate) fn sync_targets(
         crate::compiler::AgentSurfacePolicy::EmitAll => &applied.applied.outcomes,
     };
     let mut orphan_preserve_paths =
-        crate::compiler::config_entries::file_hook_output_preserve_paths(old_lock);
+        crate::compiler::config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);
     for (target, paths) in crate::compiler::native_agent_orphan_preserve_paths(old_lock, &targets) {
         orphan_preserve_paths
             .entry(target)

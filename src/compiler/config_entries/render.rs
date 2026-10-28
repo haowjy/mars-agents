@@ -1,0 +1,285 @@
+//! Hook preflight: read, validate and render every selected hook once, before any mutation.
+//! Compile reuses the result.
+
+use std::collections::{BTreeSet, HashMap};
+
+use super::file_hooks::fragment_file_path;
+use super::installed_token;
+use crate::compiler::hooks::{ParsedHookItem, error_message};
+use crate::diagnostic::DiagnosticCollector;
+use crate::sync::package_dir::PackageDir;
+use crate::target::{HOOK_KEY_PREFIX, HookEntry, HookPlacement, MCP_KEY_PREFIX, TargetAdapter};
+use crate::types::MarsContext;
+use mars_schema::hooks::MergeFragment;
+
+/// One selected hook's output for its target, validated and ready to place.
+pub(crate) enum RenderedHook {
+    Merge(MergeFragment),
+    File { path: String, content: String },
+}
+
+/// Every selected hook's output, by the hook's canonical directory, as preflight rendered it.
+pub(crate) struct RenderedHooks(HashMap<String, RenderedHook>);
+
+impl RenderedHooks {
+    /// The output of a hook preflight selected. Compile only asks for selected hooks.
+    pub(crate) fn get(&self, dir: &PackageDir) -> &RenderedHook {
+        self.0
+            .get(dir.canonical().as_str())
+            .expect("preflight rendered every selected hook")
+    }
+}
+
+/// Validate and render every selected hook, and check the destinations config entries will
+/// touch, before the apply phase.
+///
+/// This is deliberately separate from config emission so an invalid hook
+/// cannot leave canonical or target state partially mutated.
+pub(crate) fn preflight_config_entries(
+    ctx: &MarsContext,
+    targeted: &crate::sync::TargetedState,
+    diag: &mut DiagnosticCollector,
+) -> Result<RenderedHooks, crate::error::MarsError> {
+    use crate::compiler::hooks::{load_file_fragment, load_merge_fragment};
+    use crate::error::{ConfigError, MarsError};
+    use crate::target::TargetRegistry;
+    use mars_schema::hooks::{Placement, Tokens};
+
+    let resolved = &targeted.resolved;
+    let registry = TargetRegistry::new();
+    let mut errors = Vec::new();
+    let mut rendered = HashMap::new();
+    // Targets whose MCP file / hook files this sync reads: those the old lock
+    // has records on, and those with something selected.
+    let mut mcp_targets: BTreeSet<String> = BTreeSet::new();
+    let mut hook_targets: BTreeSet<String> = BTreeSet::new();
+    for (target, records) in &resolved.loaded.old_lock.config_entries {
+        if records.keys().any(|key| key.starts_with(MCP_KEY_PREFIX)) {
+            mcp_targets.insert(target.clone());
+        }
+        if records.keys().any(|key| key.starts_with(HOOK_KEY_PREFIX)) {
+            hook_targets.insert(target.clone());
+        }
+    }
+    hook_targets.extend(
+        targeted
+            .target
+            .selected_hooks()
+            .map(|(dir, _)| dir.target().to_string()),
+    );
+    mcp_targets.extend(targeted.target.selected_mcp_targets().map(str::to_string));
+    for target_name in mcp_targets.union(&hook_targets) {
+        let touches_mcp = mcp_targets.contains(target_name);
+        let touches_hooks = hook_targets.contains(target_name);
+        let target_dir = ctx.project_root.join(target_name);
+        if let Err(error) = validate_destination_path(&ctx.project_root, &target_dir, true) {
+            errors.push(error);
+            continue;
+        }
+        if let Some(adapter) = registry.get(target_name) {
+            if touches_mcp && let Some(file) = adapter.mcp_file() {
+                let location = &file.at;
+                let path = ctx.project_root.join(location.path);
+                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                    errors.push(error);
+                } else if let Err(error) = crate::target::mcp_file::validate(location, &path) {
+                    errors.push(format!(
+                        "target `{target_name}` reads MCP servers from `{}`: {}",
+                        location.path,
+                        error_message(error)
+                    ));
+                }
+            }
+            if touches_hooks
+                && let Some(HookPlacement::Merge { file, .. }) = adapter.hook_placement()
+            {
+                let path = target_dir.join(file);
+                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                    errors.push(error);
+                }
+                if let Err(error) = crate::target::hook_file::validate(&path) {
+                    errors.push(error_message(error));
+                }
+            }
+        }
+    }
+    for (dir, item) in targeted.target.selected_hooks() {
+        let target_name = dir.target();
+        let adapter = registry.get(target_name);
+        let installed = installed_token(ctx, dir);
+        let tokens = Tokens {
+            hook_dir: &installed,
+        };
+        let result = match mars_schema::hooks::placement(target_name) {
+            Some(Placement::Merge { events }) => {
+                load_merge_fragment(item, target_name, events, &tokens).map(|merged| {
+                    for event in &merged.unchecked_events {
+                        diag.warn("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
+                    }
+                    for event in &merged.skipped_events {
+                        diag.warn("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
+                    }
+                    RenderedHook::Merge(merged)
+                })
+            }
+            Some(Placement::File) => {
+                let Some(path) = adapter.and_then(|adapter| fragment_file_path(adapter, &item.def.name))
+                else {
+                    errors.push(format!(
+                        "target `{target_name}` declares file-mode hooks without a placement path"
+                    ));
+                    continue;
+                };
+                let destination = ctx.project_root.join(target_name).join(&path);
+                if let Err(error) = validate_destination_path(&ctx.project_root, &destination, false)
+                {
+                    errors.push(error);
+                    continue;
+                }
+                load_file_fragment(item, target_name, &tokens).map(|content| {
+                    if let Some(problem) =
+                        mars_schema::hooks::file_fragment_problem(target_name, &content)
+                    {
+                        diag.warn(
+                            "hook-fragment-contract",
+                            format!(
+                                "hook `{}` from `{}`: `{target_name}` fragment `{}` {problem}; the fragment will still be installed",
+                                item.def.name,
+                                item.source_name,
+                                item.fragment(target_name).file,
+                            ),
+                        );
+                    }
+                    RenderedHook::File { path, content }
+                })
+            }
+            None => Err(MarsError::Config(ConfigError::Invalid {
+                message: format!(
+                    "hook `{}`: target `{target_name}` has no hook fragment mechanism",
+                    item.def.name
+                ),
+            })),
+        };
+        match result {
+            Ok(hook) => {
+                rendered.insert(dir.canonical().as_str().to_string(), hook);
+            }
+            Err(error) => errors.push(error_message(error)),
+        }
+    }
+    if errors.is_empty() {
+        Ok(RenderedHooks(rendered))
+    } else {
+        Err(MarsError::Config(ConfigError::Invalid {
+            message: errors.join("\n"),
+        }))
+    }
+}
+
+/// Read and lower a plugin build's mergeable hook entries for one target.
+///
+/// The caller supplies each hook's directory token: the replacement for
+/// `${MARS_HOOK_DIR}` in its native fragment.
+pub(crate) fn lower_hook_entries(
+    hooks: &[(String, &ParsedHookItem)],
+    adapter: &dyn TargetAdapter,
+    diag: &mut DiagnosticCollector,
+) -> Vec<HookEntry> {
+    let target_root = adapter.name();
+    let Some(mars_schema::hooks::Placement::Merge {
+        events: known_events,
+    }) = mars_schema::hooks::placement(target_root)
+    else {
+        return Vec::new();
+    };
+    let mut fragments = Vec::new();
+    for (dir, item) in hooks {
+        let tokens = mars_schema::hooks::Tokens { hook_dir: dir };
+        match crate::compiler::hooks::load_merge_fragment(item, target_root, known_events, &tokens)
+        {
+            Ok(fragment) => fragments.push((*item, fragment)),
+            Err(error) => diag.error("hook-fragment", error.to_string()),
+        }
+    }
+    let fragments: Vec<_> = fragments
+        .iter()
+        .map(|(item, fragment)| (*item, fragment))
+        .collect();
+    lower_merge_fragments(&fragments)
+}
+
+/// Order validated merge fragments deterministically and lower them to one entry per
+/// (hook, event).
+pub(crate) fn lower_merge_fragments(
+    fragments: &[(&ParsedHookItem, &MergeFragment)],
+) -> Vec<HookEntry> {
+    let mut contributions = Vec::new();
+    for (item, fragment) in fragments {
+        contributions.extend(
+            fragment
+                .events
+                .iter()
+                .filter(|(_, entries)| !entries.is_empty())
+                .map(|(event, entries)| {
+                    // `to_json` sorts keys: the bytes mars has always written.
+                    let entries: Vec<_> = entries.iter().map(|entry| entry.to_json()).collect();
+                    (*item, event, entries)
+                }),
+        );
+    }
+
+    contributions.sort_by(|(left, left_event, _), (right, right_event, _)| {
+        (
+            left.package_depth,
+            left.decl_order,
+            left.def.order,
+            left.def.name.as_str(),
+            left_event.as_str(),
+        )
+            .cmp(&(
+                right.package_depth,
+                right.decl_order,
+                right.def.order,
+                right.def.name.as_str(),
+                right_event.as_str(),
+            ))
+    });
+    contributions
+        .into_iter()
+        .map(|(item, event, entries)| HookEntry {
+            name: item.def.name.clone(),
+            native_event: event.clone(),
+            entries,
+        })
+        .collect()
+}
+
+fn validate_destination_path(
+    root: &std::path::Path,
+    destination: &std::path::Path,
+    directory: bool,
+) -> Result<(), String> {
+    let relative = destination.strip_prefix(root).unwrap_or(destination);
+    let mut current = root.to_path_buf();
+    let components: Vec<_> = relative.components().collect();
+    for (index, component) in components.iter().enumerate() {
+        current.push(component);
+        let is_destination = index + 1 == components.len();
+        let Ok(metadata) = std::fs::metadata(&current) else {
+            continue;
+        };
+        let expects_directory = !is_destination || directory;
+        if metadata.is_dir() != expects_directory {
+            let expected = if expects_directory {
+                "directory"
+            } else {
+                "file"
+            };
+            return Err(format!(
+                "destination `{}` must be a {expected}",
+                current.display()
+            ));
+        }
+    }
+    Ok(())
+}

@@ -133,9 +133,28 @@ pub fn compute(
         }
     }
 
+    // A kept hook's directories stay as the lock has them, whatever the disk or the
+    // (invalid) source holds.
+    let mut kept = std::collections::HashSet::new();
+    for dir in target.kept_dirs() {
+        let dest = dir.canonical();
+        if let Some(locked) = lock_index.find_output(CANONICAL_TARGET_ROOT, &dest) {
+            items.push(DiffEntry::Unchanged {
+                target: crate::sync::target::package_dir_target_item(
+                    dir,
+                    Path::new(""),
+                    &locked.source,
+                    &locked.source_checksum,
+                ),
+                locked,
+            });
+            kept.insert(dest);
+        }
+    }
+
     // Find orphans: items in lock but not in target
     for (dest_path, locked_item) in lock.canonical_flat_items() {
-        if !target.items.contains_key(&dest_path) {
+        if !target.items.contains_key(&dest_path) && !kept.contains(&dest_path) {
             items.push(DiffEntry::Orphan {
                 locked: locked_item,
             });

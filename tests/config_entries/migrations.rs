@@ -358,7 +358,8 @@ fn malformed_dependency_hook_error_names_package_and_hook_not_staging_path() {
         .unwrap();
 
     sync(&project)
-        .failure()
+        .success()
+        .stderr(predicate::str::contains("nothing is installed"))
         .stderr(predicate::str::contains(
             "source package `base` version `0.8.9`, hook `audit`: failed to parse",
         ))

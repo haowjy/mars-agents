@@ -78,6 +78,40 @@ pub(crate) fn write(
     doc.save(path)
 }
 
+/// Whether the file at `path` still holds every entry `records` say mars wrote. A sync that
+/// changes nothing and finds this true leaves the file alone.
+pub(crate) fn holds_recorded(path: &Path, records: &BTreeMap<String, ConfigEntryRecord>) -> bool {
+    let Ok(Some(doc)) = load(path) else {
+        return false;
+    };
+    let Some(section) = doc.section() else {
+        return false;
+    };
+    records.iter().all(|(key, record)| {
+        let Some((event, _)) = key
+            .strip_prefix(HOOK_KEY_PREFIX)
+            .and_then(|rest| rest.split_once(':'))
+        else {
+            return true;
+        };
+        let Ok(expected) = serde_json::from_str::<Vec<Value>>(&record.emitted_json) else {
+            return true;
+        };
+        let Some(OrderedValue::Array(current)) = section.get(event) else {
+            return false;
+        };
+        let mut remaining = current.clone();
+        expected.into_iter().all(|entry| {
+            let entry = to_ordered(entry);
+            remaining
+                .iter()
+                .position(|candidate| *candidate == entry)
+                .map(|index| remaining.remove(index))
+                .is_some()
+        })
+    })
+}
+
 /// Remove the entries `records` say mars wrote, wherever they still equal what
 /// was recorded; an entry that has changed is left, with a warning, and the
 /// package entry is appended beside it. The file is saved only if something went.

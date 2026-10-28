@@ -8,7 +8,7 @@ Target-specific lowering for `.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`,
 TargetRegistry → TargetAdapter trait → per-target implementations
     ↓
 default_dest_path()  → where items go
-write_hook_entries(ConfigWrite, …) → hook config files; MCP goes through mcp_file::reconcile
+hook_placement()    → where hooks live (merge file or file dir); MCP goes through mcp_file::reconcile
 skill_variant_key()  → which skill variant directory to use
 ```
 
@@ -33,11 +33,7 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `skill_variant_key()` | Which `variants/<key>/` directory this target consumes |
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `mcp_file()` | The adapter's one MCP spec (below); `None` when the target takes no MCP servers |
-| `write_hook_entries(write, project_root)` | Hook config file writes; MCP is reconciled by `mcp_file::reconcile` |
-| `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
-| `hook_fragment_problem(content)` | Names a contract violation in a file-mode fragment; callers build the warning |
-| `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
-| `remove_owned_hook_entries(token, records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |
+| `hook_placement()` | `HookPlacement::Merge { file, top_level }` (entries appended into a JSON file) or `File { dir }` (each output a whole file); `None` when the target takes no hooks. `HookPlacement::file_path(name, HookRole)` names a file output. What a target accepts there is `mars_schema::hooks::placement`; the two agree per target (a test pins it). `hook_file::write` / `remove_recorded` / `holds_recorded` edit a merge file; the compiler matches on the placement, adapters carry no hook methods |
 
 ## MCP Spec (`mcp_file.rs`)
 

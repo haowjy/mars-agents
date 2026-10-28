@@ -104,7 +104,8 @@ fn compile_inner(
     }
 
     // Hook schemas and native allowlists are resolved before any mutation.
-    config_entries::preflight_config_entries(ctx, &planned.targeted, diag)?;
+    let rendered_hooks =
+        config_entries::render::preflight_config_entries(ctx, &planned.targeted, diag)?;
 
     if enforce_diagnostic_gate {
         diag.fail_on_errors()?;
@@ -185,6 +186,7 @@ fn compile_inner(
         &synced.applied,
         &mut ownership_lock,
         &synced.target_outcomes,
+        &rendered_hooks,
         request.options.dry_run,
         request.options.force,
         diag,

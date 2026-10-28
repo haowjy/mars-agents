@@ -3,7 +3,8 @@
 //! Scans a directory as a mars source package
 //! (`agents/*.md`, `skills/*/SKILL.md`, or a flat root `SKILL.md`)
 //! and validates structure, frontmatter, and internal skill dependencies.
-//! No config or lock file needed — works on raw source directories.
+//! No config or lock file needed — works on raw source directories. A `mars.lock`, when
+//! present, supplies dependency model aliases for the model-policy check.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -57,10 +58,21 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
     let (lens, prepared) = crate::resolve::PublishLens::load(&authored_base, &mut publish_diag)?;
     let mut report = check_prepared(&prepared, &authored_base, &lens, &mut publish_diag)?;
+    let lock = crate::lock::load_for_runtime_aliases(&authored_base)?;
     let known_aliases = crate::models::merged_runtime_aliases(
-        &Default::default(),
+        &lock.dependency_model_aliases,
         lens.manifest.as_ref().map(|config| &config.models),
     );
+    let unsynced = lock.dependencies.is_empty()
+        && lens
+            .manifest
+            .as_ref()
+            .is_some_and(|config| !config.dependencies.is_empty());
+    let unconsulted = if unsynced {
+        " (mars.lock records no dependencies, so their catalogs were not consulted; run `mars sync` first)"
+    } else {
+        ""
+    };
     for definition in &prepared.definitions {
         let Reading::Agent(reading) = &definition.reading else {
             continue;
@@ -73,7 +85,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
                 && !known_aliases.contains_key(&policy.match_value)
             {
                 report.warnings.push(format!(
-                    "{}: agent `{}` has a model policy for alias `{}`, which is not a catalog alias here",
+                    "{}: agent `{}` has a model policy for alias `{}`, which is not a catalog alias here{unconsulted}",
                     definition.source_path, definition.slug, policy.match_value
                 ));
             }

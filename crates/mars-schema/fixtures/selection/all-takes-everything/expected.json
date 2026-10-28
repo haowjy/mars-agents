@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "package": "p",
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "p",
+      "kind": "skill",
+      "slug": "planning",
+      "path": "skills/planning",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "p",
+      "kind": "hook",
+      "slug": "autosync",
+      "path": "hooks/autosync",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

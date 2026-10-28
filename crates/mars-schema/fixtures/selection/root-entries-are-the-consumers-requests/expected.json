@@ -1,0 +1,46 @@
+{
+  "items": [
+    {
+      "package": null,
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": null,
+      "kind": "skill",
+      "slug": "shared",
+      "path": "skills/shared",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "lib",
+      "kind": "skill",
+      "slug": "shared",
+      "path": "skills/shared",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": [
+    {
+      "code": "selection.duplicate-slug",
+      "severity": "warning",
+      "path": [],
+      "message": "skill `shared` is installed from the root package, lib"
+    }
+  ]
+}

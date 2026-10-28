@@ -79,19 +79,6 @@ impl PublishLens {
     }
 }
 
-/// Resolve the dependency graph consumers of this publish lens will see.
-///
-/// This lens reads only `mars.toml`: local dependencies and `mars.local.toml`
-/// overrides are development inputs, so they cannot affect a published package.
-/// It also resolves without a lock or staging root, leaving the package's
-/// `mars.lock` and `.mars/` tree untouched. Source fetches use the global cache.
-pub fn resolve_publish_graph(
-    lens: &PublishLens,
-    diag: &mut DiagnosticCollector,
-) -> Result<ResolvedGraph, MarsError> {
-    resolve_publish_graph_from_config(lens, &lens.effective, &ResolveOptions::default(), diag)
-}
-
 /// Resolve a caller-provided consumer view through the same publish lens.
 ///
 /// Plugin builds use this to resolve an implicit consumer configuration before

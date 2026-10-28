@@ -1,18 +1,25 @@
 # src/resolve/ — Package Resolution
 
-Dependency resolution with semver constraints. 14 source files + tests, ~9700 lines.
+Dependency resolution with semver constraints (the grammar and the version choice are `mars_schema::version`). `select` adapts the settled graph to the pure selection pass in `mars_schema::selection`.
 
 ## Mental Model
 
-Two-phase algorithm:
+Two phases. The resolver chooses versions and prepares each package (a package's manifest entries and filters
+are read from `ResolvedNode.prepared`, once); it never chooses items. Once the graph settles, selection runs
+once over it:
 
 ```
 Phase 1: Bottom-up package resolution (with restart loop)
   mars.toml dependencies → resolve_package_bottom_up() → registry
 
-Phase 2: DFS item traversal
-  seeded items → parse skill deps → resolve skill refs → graph
+Phase 2: selection (pure, no restarts)
+  settled graph → mars_schema::selection::select → ResolvedGraph.selection
 ```
+
+`select.rs` is the adapter: it builds the `GraphView` (requests, packages in registry order, each
+package's prepared result and edges, and the bootstrap documents and hooks found in its tree) and
+passes it to the crate, which owns the rule. Sync, `mars check` and the plugin build read
+`graph.selection`; none of them re-applies a filter.
 
 ### Restart Algorithm
 
@@ -96,17 +103,16 @@ the same plugin again without fetching, and the lock builder reads `plugin` and 
 
 ## Provider traits
 
-`VersionLister` lists remote versions and `SourceFetcher` obtains concrete checkouts. Production
-manifest semantics do not use `ManifestReader`; its implementation remains test scaffolding for
-resolver fixtures that inject manifests without authored files.
+`VersionLister` lists remote versions and `SourceFetcher` obtains concrete checkouts. A package's
+manifest is read from its tree like any other file; resolver test fixtures write a `mars.toml` into
+the tree (`write_manifest` in `tests/mod.rs`).
 
 ## Types
 
 - `PendingSource` — unresolved dependency request and its declared/effective identities
-- `PendingItem` — selected Agent or skill waiting for DFS traversal
 - `ResolvedNode` — source identity, immutable authored origin, prepared result and parsed manifest
-- `ResolvedGraph` — final nodes, filters and deterministic order
-- `ResolverContext` — restart, constraint and traversal state
+- `ResolvedGraph` — final nodes, `selection` and deterministic order
+- `ResolverContext` — registry, package states, id index, version constraints and overrides
 
 `ResolvedGraph::dependency_depths()` and `dependency_decl_orders()` derive traversal properties
 from the graph plus direct dependency order.
@@ -125,7 +131,16 @@ resolution use the same source provider and prepared-node path as sync.
 
 ## Item Resolution
 
-Resolved item traversal is DFS from seeded agent/skill requests. A skill ref `x__p` that no package ships is deferred (`resolve_skill_ref` returns `None`) when the requesting package's `uses-providers` lists `p`, and is `SkillNotFound` otherwise; the resolver never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator reports what is actually provided. Source items themselves come from `src/discover/`'s convention walk; this phase parses skill frontmatter deps and resolves those references transitively. Version conflicts between packages produce errors (local items skip conflicts).
+Selection is `mars_schema::selection::select`; the rule is documented there. In short: the consumer's
+requests, and the unfiltered entries reached from an unfiltered request through unfiltered entries,
+seed items; a transitive manifest's filtered entry seeds nothing and its `exclude` blocks nothing;
+the skills a selected Agent names resolve requester-first, then through its dependencies, then in the crate's depth-first registry order (the binary hands over a set). A skill ref `x__p` that no package ships
+is skipped when the requesting package's `uses-providers` lists `p`, and is `SkillNotFound`
+otherwise (`resolve()` turns the selection's first `missing_skills` entry into that error); selection
+never reads `.mars/provided.lock`, so the answer depends on the package alone, and sync's validator
+reports what is actually provided. Source items come from `Prepared.definitions` and, for the kinds
+the crate does not prepare (bootstrap documents, hooks), from `src/discover/`'s convention walk.
+Every constraint on a package must hold on the ref it settles at, whether or not it selects anything: a ref pin holds only at that ref, a range never at a pin, `latest` anywhere (and warns beside a pin). `mars_schema::version::settle` refuses two pins, or a pin beside a range, before any fetch; a constraint arriving after the package resolved re-runs resolution (path sources aside). `validate_all_constraints` re-checks the settled graph and emits the drift warning.
 
 ## Patterns
 
@@ -134,7 +149,6 @@ Resolved item traversal is DFS from seeded agent/skill requests. A skill ref `x_
 struct FakeProvider;
 impl VersionLister for FakeProvider { ... }
 impl SourceFetcher for FakeProvider { ... }
-impl ManifestReader for FakeProvider { ... }
 let graph = resolve(&config, &FakeProvider, Some(&lock), &options, &mut diag)?;
 ```
 

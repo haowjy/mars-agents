@@ -40,7 +40,7 @@ Two subdirectories:
 
 - `git.rs` — version listing, fetching via git CLI
 - `git_cli.rs` — git command construction and execution
-- `canonical.rs` — URL canonicalization (strip `.git`, normalize protocols)
+- Git URL canonicalization (strip `.git`, normalize protocols) is `mars_schema::git_url`
 - `parse.rs` — source URL parsing and validation
 - `path.rs` — local path source resolution
 - `archive.rs` — tarball download and extraction (for registry sources)

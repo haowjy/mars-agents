@@ -1,0 +1,5 @@
+[package]
+name = "a"
+version = "1.0.0"
+schema = 1
+uses-providers = ["meridian"]

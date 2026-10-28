@@ -13,8 +13,6 @@ use crate::resolve::{SourceFetcher, VersionLister};
 use crate::source::{self, AvailableVersion, GlobalCache, ResolvedRef};
 use crate::types::CommitHash;
 use crate::types::SourceUrl;
-#[cfg(test)]
-use crate::{config::Manifest, resolve::ManifestReader};
 
 /// Real source provider that delegates to the source module.
 ///
@@ -112,18 +110,5 @@ impl SourceFetcher for RealSourceProvider<'_> {
         _diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
         source::path::fetch_path(path, self.project_root, source_name)
-    }
-}
-
-#[cfg(test)]
-impl ManifestReader for RealSourceProvider<'_> {
-    fn read_manifest(
-        &self,
-        source_tree: &Path,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<Option<Manifest>, MarsError> {
-        let (manifest, diagnostics) = crate::config::load_manifest(source_tree)?;
-        diag.extend(diagnostics);
-        Ok(manifest)
     }
 }

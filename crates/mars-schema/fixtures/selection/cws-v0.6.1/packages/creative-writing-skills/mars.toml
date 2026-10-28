@@ -1,0 +1,62 @@
+[package]
+name = "creative-writing-skills"
+version = "0.6.1"
+schema = 1
+description = "Composable agents and skills for creative writing projects. The muse agent is the primary entry point: a creative partner that brainstorms, drafts, critiques, and maintains your story's knowledge base. On claude.ai (skills only), activate the creative-writing-muse skill instead."
+authors = ["Jimmy Yao <dev.jimm.py@gmail.com>"]
+homepage = "https://github.com/haowjy/creative-writing-skills"
+license = "Apache-2.0"
+requires-mars = ">=0.20.0"
+requires-meridian = ">=0.15.0"
+
+[plugin]
+
+[dependencies.meridian-base]
+url = "https://github.com/haowjy/meridian-base"
+version = ">=0.13.0, <0.14.0"
+# The plugin ships what cw shipped — this package's agents plus the shared
+# skills and delegates they name — not Meridian's operational surface or its
+# hooks. Include mode rather than `exclude` is what keeps the context-autosync
+# hook out. These lists hold what Mars cannot infer from frontmatter: the prose
+# mentions of an agent or skill. A `skills:` dep in a frontmatter block is
+# resolved on its own. `scripts/check_refs.py` fails CI when a shipped file
+# names an item that is missing here, so widen these rather than deleting the
+# reference.
+agents = [
+    "cold-reader",
+    "explorer",
+    "kb-lead",
+    "kb-maintainer",
+    "session-miner",
+]
+skills = [
+    "correct",
+    "grill",
+    "grill-with-docs",
+    "information-hierarchy",
+    "intent-modeling",
+    "knowledge-layers",
+    "llm-writing",
+    "md-validation",
+    "qi-layer",
+    "qi-maintenance",
+    "reflect",
+    "shared-dao",
+    "structured-artifact",
+    "zoom-out",
+]
+
+[dependencies.writing-sync]
+url = "https://github.com/haowjy/writing-sync"
+version = ">=0.1.1"
+
+[local-dependencies.meridian-prompter]
+url = "https://github.com/haowjy/meridian-prompter"
+
+[settings]
+targets = [
+    ".claude",
+    ".codex",
+]
+models_cache_ttl_hours = 24
+agent_emission = "always"

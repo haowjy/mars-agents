@@ -127,11 +127,11 @@ self items (only `.mars-src`'s are), as in v0.19.0.
   (foreign bytes under a recorded name are replaced) and re-taken by the next sync.
 - **Ref reporting** (`validate::validate_skill_refs`): the one reporter of skill refs against what
   is installed, and the only place that combines a package's declaration with this machine. A ref a
-  package defers to a provider (`validate::deferred_provider`: the name is `<x>__<p>` and the
+  package defers to a provider (`mars_schema::provider::deferred_provider`: the name is `<x>__<p>` and the
   package lists `p`) is satisfied where `ProvidedNames::provides` says the skill is installed, and
   warns `provided-skill-unavailable` where it is not; a provided name the package does not declare
   warns `provided-skill-undeclared`; anything else is `missing-skill`. The resolver and `mars check`
-  ask only `deferred_provider`, because they judge a ref by its package alone and must give the same
+  ask only the selection pass (which defers through `deferred_provider`), because they judge a ref by its package alone and must give the same
   verdict on every machine.
 
 `TargetState` also carries parsed hooks and MCP servers selected for each managed target, one

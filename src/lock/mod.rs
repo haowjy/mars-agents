@@ -10,8 +10,9 @@ use crate::diagnostic::Diagnostic;
 use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
 use crate::types::{
-    CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceOrigin, SourceSubpath, SourceUrl,
+    CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceOrigin, SourceUrl,
 };
+use mars_schema::names::SourceSubpath;
 
 /// The complete lock file — ownership registry for all managed items.
 ///
@@ -308,6 +309,7 @@ pub struct LockedContent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedItemV2 {
     pub source: SourceName,
+    #[serde(with = "lock_kind")]
     pub kind: ItemKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
@@ -396,6 +398,7 @@ pub struct ConfigEntryRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedItem {
     pub source: SourceName,
+    #[serde(with = "lock_kind")]
     pub kind: ItemKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
@@ -407,6 +410,28 @@ pub struct LockedItem {
 // Re-export ItemKind and ItemId from types — they're shared vocabulary,
 // not lock-specific. This preserves `use mars_schema::item::ItemKind` compatibility.
 pub use crate::types::ItemId;
+
+/// `kind` as `mars.lock` spells it. Mars ≤0.21 reads lowercase kinds only (`bootstrapdoc`,
+/// `mcpserver`), so those stay what this version writes; it reads both spellings.
+mod lock_kind {
+    use mars_schema::item::ItemKind;
+    use serde::de::IntoDeserializer;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(kind: &ItemKind, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&kind.to_string().replace('-', ""))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ItemKind, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let kebab = match text.as_str() {
+            "mcpserver" => "mcp-server",
+            "bootstrapdoc" => "bootstrap-doc",
+            other => other,
+        };
+        ItemKind::deserialize(kebab.into_deserializer())
+    }
+}
 
 const LOCK_FILE: &str = "mars.lock";
 /// Current lock file schema version.
@@ -443,6 +468,7 @@ struct OutputRecordV2 {
 #[derive(Deserialize)]
 struct LockedItemV2Wire {
     source: SourceName,
+    #[serde(with = "lock_kind")]
     kind: ItemKind,
     #[serde(default)]
     version: Option<String>,
@@ -1401,13 +1427,13 @@ pub fn item_key(id: &ItemId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::source::ResolvedRef;
     use crate::sync::apply::{ActionOutcome, ActionTaken, ApplyResult};
-    use crate::types::{ItemName, SourceId, SourceUrl};
+    use crate::types::{SourceId, SourceUrl};
+    use mars_schema::names::ItemName;
     use tempfile::TempDir;
 
     fn sample_lock() -> LockFile {
@@ -1740,7 +1766,7 @@ installed_checksum = "sha256:bbb"
     fn roundtrip_lock_file() {
         let mut lock = sample_lock();
         let mut nested = lock.dependencies["base"].clone();
-        nested.subpath = Some(crate::types::SourceSubpath::new(r"plugins\foo").unwrap());
+        nested.subpath = Some(mars_schema::names::SourceSubpath::new(r"plugins\foo").unwrap());
         lock.dependencies.insert("nested".into(), nested);
         let dir = TempDir::new().unwrap();
         write(dir.path(), &lock).unwrap();
@@ -2060,7 +2086,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2169,7 +2195,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2249,7 +2275,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2534,7 +2560,7 @@ installed_checksum = "sha256:222"
                 source_name: git_name.clone(),
                 source_id: SourceId::git_with_subpath(
                     git_url.clone(),
-                    Some(crate::types::SourceSubpath::new("plugins/base").unwrap()),
+                    Some(mars_schema::names::SourceSubpath::new("plugins/base").unwrap()),
                 ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/base"),
@@ -2542,7 +2568,7 @@ installed_checksum = "sha256:222"
                     package_root: PathBuf::from("/tmp/cache/base/plugins/base"),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::prepared_with_deps(&[]),
                 resolved_ref: ResolvedRef {
                     source_name: git_name.clone(),
                     version: Some(semver::Version::new(1, 2, 3)),
@@ -2551,7 +2577,6 @@ installed_checksum = "sha256:222"
                     tree_path: PathBuf::from("/tmp/cache/base"),
                 },
                 manifest: None,
-                deps: vec![],
             },
         );
         nodes.insert(
@@ -2560,7 +2585,7 @@ installed_checksum = "sha256:222"
                 source_name: path_name.clone(),
                 source_id: SourceId::Path {
                     canonical: path_canonical.clone(),
-                    subpath: Some(crate::types::SourceSubpath::new("plugins/local").unwrap()),
+                    subpath: Some(mars_schema::names::SourceSubpath::new("plugins/local").unwrap()),
                     plugin: None,
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
@@ -2569,7 +2594,7 @@ installed_checksum = "sha256:222"
                     package_root: PathBuf::from("/tmp/cache/local/plugins/local"),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::prepared_with_deps(&[]),
                 resolved_ref: ResolvedRef {
                     source_name: path_name.clone(),
                     version: None,
@@ -2578,14 +2603,13 @@ installed_checksum = "sha256:222"
                     tree_path: PathBuf::from("/tmp/cache/local"),
                 },
                 manifest: None,
-                deps: vec![],
             },
         );
 
         let graph = ResolvedGraph {
             nodes,
             order: vec![git_name.clone(), path_name.clone()],
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2625,7 +2649,7 @@ installed_checksum = "sha256:222"
         assert_eq!(
             base.subpath
                 .as_ref()
-                .map(crate::types::SourceSubpath::as_str),
+                .map(mars_schema::names::SourceSubpath::as_str),
             Some("plugins/base")
         );
         assert_eq!(base.version.as_deref(), Some("v1.2.3"));
@@ -2637,7 +2661,7 @@ installed_checksum = "sha256:222"
             local
                 .subpath
                 .as_ref()
-                .map(crate::types::SourceSubpath::as_str),
+                .map(mars_schema::names::SourceSubpath::as_str),
             Some("plugins/local")
         );
         assert_eq!(
@@ -2661,7 +2685,7 @@ installed_checksum = "sha256:222"
                     package_root: PathBuf::from("/tmp/cache/base"),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::prepared_with_deps(&[]),
                 resolved_ref: ResolvedRef {
                     source_name: source_name.clone(),
                     version: None,
@@ -2670,14 +2694,13 @@ installed_checksum = "sha256:222"
                     tree_path: PathBuf::from("/tmp/cache/base"),
                 },
                 manifest: None,
-                deps: vec![],
             },
         );
 
         let graph = ResolvedGraph {
             nodes,
             order: vec![source_name.clone()],
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2700,7 +2723,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2780,7 +2803,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -2816,7 +2839,7 @@ installed_checksum = "sha256:222"
         let graph = ResolvedGraph {
             nodes: IndexMap::new(),
             order: Vec::new(),
-            filters: HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };

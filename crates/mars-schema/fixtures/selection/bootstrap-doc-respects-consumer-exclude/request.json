@@ -1,0 +1,22 @@
+{
+  "requests": [
+    {
+      "name": "a"
+    },
+    {
+      "name": "b",
+      "exclude": [
+        "intro"
+      ]
+    }
+  ],
+  "extra_items": {
+    "b": [
+      {
+        "kind": "bootstrap-doc",
+        "slug": "intro",
+        "path": "bootstrap/intro"
+      }
+    ]
+  }
+}

@@ -329,7 +329,7 @@ fn finish_package<T: TreeSource>(
     let manifest_name = prepared
         .manifest
         .as_ref()
-        .and_then(|manifest| manifest.reading.fields.as_ref())
+        .and_then(|manifest| manifest.reading.package.fields.as_ref())
         .map(|package| package.name.clone())
         .unwrap_or_else(|| repository_name(request));
     let selected_items = prepared
@@ -392,6 +392,7 @@ fn generated_manifest(
     let mut reading = crate::manifest::read(&text);
     // A package with no declared version is not a defect of the generated file.
     reading
+        .package
         .diagnostics
         .retain(|diagnostic| diagnostic.code != "manifest.version-missing");
     PreparedManifest {

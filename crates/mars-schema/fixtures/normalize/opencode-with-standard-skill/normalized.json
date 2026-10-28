@@ -205,6 +205,30 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "reviewer",
+              "output_path": "agents/reviewer.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "fmt",
+              "output_path": "skills/fmt/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "lint",
+              "output_path": "skills/lint/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {},
         "changes": {
           "agents/reviewer.md": [

@@ -173,6 +173,24 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "old",
+              "output_path": "agents/old.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "review",
+              "output_path": "skills/review/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {},
         "changes": {
           "agents/old.md": [

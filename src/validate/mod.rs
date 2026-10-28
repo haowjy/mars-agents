@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::lock::ItemId;
-use crate::types::ItemName;
 use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
 /// Warning from dependency validation.
 ///
@@ -82,62 +82,18 @@ impl ValidationWarning {
     }
 }
 
-/// The provider a ref is deferred to, when the requesting package declares it.
-///
-/// The package-only half of a ref's validity: `<x>__<p>` is valid wherever `p` supplies it when
-/// the package lists `p` in `[package] uses-providers`. The resolver and `mars check` ask only
-/// this question, so a package resolves the same on every machine; sync's validator is the one
-/// reporter that also knows what this machine installed.
-///
-/// `declared` is the requesting package's `uses-providers`: `Some` for a package (a dependency,
-/// or a package repository's own items), `None` for a consumer project's local items, which need
-/// no declaration.
-pub(crate) fn deferred_provider<'a>(name: &'a str, declared: Option<&[String]>) -> Option<&'a str> {
-    let provider = mars_schema::provider::provider_of(name)?;
-    declared?
-        .iter()
-        .any(|declared| declared == provider)
-        .then_some(provider)
-}
-
-/// The hint for a `<skill>__<provider>` ref that no package ships and no package declares.
-///
-/// A name can look exactly like a host provider's and still be a typo, so the hint is
-/// conditional. `mars check` and the resolver's `SkillNotFound` print this one text.
-pub(crate) fn undeclared_provider_hint(provider: &str) -> String {
-    format!(
-        "if `{provider}` is a host that provides this skill, declare it in `[package] uses-providers`; otherwise check the name"
-    )
-}
-
 /// Parse skill dependencies from an Agent file.
 ///
-/// The callers read files Mars or a provider wrote — an installed Agent under `.mars/`, or the
-/// staged copy a sync filters — so the read tolerates a pre-v1 spelling. Returns the `skills`
-/// list, or an empty vec if there is no frontmatter, no `skills` field, or malformed YAML, and
-/// reads only the frontmatter block between `---` delimiters, not the full markdown body.
-pub fn parse_item_skill_deps(item_path: &Path) -> Result<Vec<String>, MarsError> {
-    let content = std::fs::read_to_string(item_path)?;
+/// The callers read files Mars or a provider wrote — an installed Agent under `.mars/` — so the
+/// read tolerates a pre-v1 spelling. Returns the `skills` list, or an empty vec if there is no
+/// frontmatter, no `skills` field, or malformed YAML, and reads only the frontmatter block
+/// between `---` delimiters, not the full markdown body.
+pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
+    let content = std::fs::read_to_string(agent_path)?;
     Ok(mars_schema::read::installed_agent(&content)
         .fields
         .map(|profile| profile.skills.all())
         .unwrap_or_default())
-}
-
-/// Parse skill dependencies from an agent's frontmatter.
-///
-/// Returns a list of skill names from the `skills:` YAML field.
-pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
-    parse_item_skill_deps(agent_path)
-}
-/// Extract skills list from prepared package content, which is already schema v1.
-///
-/// Defensive: returns empty vec on any parse failure.
-pub(crate) fn extract_skills_from_content(content: &str) -> Vec<String> {
-    mars_schema::agent::read(content)
-        .fields
-        .map(|profile| profile.skills.all())
-        .unwrap_or_default()
 }
 
 /// Check that agent→skill references resolve.

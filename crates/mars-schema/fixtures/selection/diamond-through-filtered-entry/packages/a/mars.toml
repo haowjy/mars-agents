@@ -1,0 +1,10 @@
+[package]
+name = "a"
+version = "1.0.0"
+schema = 1
+
+[dependencies.d1]
+path = "../d1"
+
+[dependencies.d2]
+path = "../d2"

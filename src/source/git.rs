@@ -19,15 +19,6 @@ pub struct FetchOptions {
     /// Used for lock replay to guarantee reproducible content.
     pub preferred_commit: Option<CommitHash>,
 }
-/// Parse a tag name as a semver version tag.
-///
-/// Accepts: `v1.0.0`, `v0.5.2`, `1.0.0`
-/// Rejects: `latest`, `nightly-2024`, or any non-semver tag.
-pub(crate) fn parse_semver_tag(tag: &str) -> Option<semver::Version> {
-    let version_str = tag.strip_prefix('v').unwrap_or(tag);
-    semver::Version::parse(version_str).ok()
-}
-
 /// Return a Git-CLI-fetchable remote URL from a source URL or canonical identity.
 ///
 /// Source identities intentionally canonicalize GitHub/GitLab HTTPS URLs to
@@ -57,7 +48,7 @@ fn resolve_version(
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedVersion, MarsError> {
     if let Some(version_req) = version_req {
-        if let Some(requested_version) = parse_semver_tag(version_req) {
+        if let Some(requested_version) = mars_schema::version::parse_tag(version_req) {
             let tags = ls_remote_tags(url)?;
             let selected = tags
                 .into_iter()
@@ -287,20 +278,6 @@ mod tests {
         run_git(repo, ["commit", "-m", message]);
         run_git(repo, ["rev-parse", "HEAD"])
     }
-    // ==================== parse_semver_tag tests ====================
-
-    #[test]
-    fn parse_semver_v_prefixed() {
-        let v = parse_semver_tag("v1.2.3").unwrap();
-        assert_eq!(v, semver::Version::new(1, 2, 3));
-    }
-
-    #[test]
-    fn parse_semver_no_prefix() {
-        let v = parse_semver_tag("0.5.2").unwrap();
-        assert_eq!(v, semver::Version::new(0, 5, 2));
-    }
-
     #[test]
     fn ls_remote_tags_filters_sorts_and_skips_peeled_refs() {
         let repo = init_repo();

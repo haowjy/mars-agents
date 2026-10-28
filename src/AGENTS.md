@@ -68,7 +68,7 @@ sync/build → resolve ← source
 | New harness | `harness/registry.rs`, `target/` adapter, `compiler/agents/lower.rs` |
 | New plugin harness / tree | `build/plugin/spec.rs` (one harness row); for a new tree, one profile plus writer in `build/plugin/tree/`, one `TREE_PROFILES` entry, and the root file it generates declared in `crates/mars-schema/src/plugin_metadata.rs`'s `GENERATED_ROOT_FILES`, which a `spec` test checks against every tree row |
 | New CLI command | `cli/mod.rs` (enum + dispatch), `cli/<cmd>.rs` |
-| Marketplace plugin dependency (entry, identity, acquisition, lock) | `config/mod.rs` (`InstallDep.plugin`, validation), `types.rs` (`SourceId`), `resolve/plugin.rs`, `lock/mod.rs` (`LockedSource`), `cli/add.rs` |
+| Marketplace plugin dependency (entry, identity, acquisition, lock) | `mars_schema::dependency` (`Entry.plugin`, `validate_plugin_selector`), `config/mod.rs`, `types.rs` (`SourceId`), `resolve/plugin.rs`, `lock/mod.rs` (`LockedSource`), `cli/add.rs` |
 | Config schema change | `config/mod.rs`, `config/routing_settings.rs` |
 | Sync pipeline phase | `sync/mod.rs` (phase struct + function) |
 | Model resolution | `models/mod.rs`, `models/availability.rs` |

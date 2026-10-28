@@ -213,6 +213,36 @@
             "output_path": "skills/git-guardrails/scripts/guard.sh"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "diagnose",
+              "output_path": "skills/diagnose/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "git-guardrails",
+              "output_path": "skills/git-guardrails/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "grill-me",
+              "output_path": "skills/grill-me/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "tdd",
+              "output_path": "skills/tdd/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

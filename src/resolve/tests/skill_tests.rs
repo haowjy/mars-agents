@@ -34,50 +34,6 @@ fn skill_not_found_has_requester_and_search_context() {
 }
 
 #[test]
-fn excluded_skill_not_reintroduced_from_frontmatter_reference() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-    write_minimal_package_marker(&tree);
-    write_agent(&tree, "coder", &["forbidden"]);
-    write_skill_with_deps(&tree, "forbidden", &["missing-skill"]);
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_source("a", tree, None);
-
-    let mut dependencies = IndexMap::new();
-    dependencies.insert(
-        SourceName::from("a"),
-        EffectiveDependency {
-            declared_source_id: SourceId::git_with_subpath(
-                SourceUrl::from("https://example.com/a.git"),
-                None,
-            ),
-            source_id: SourceId::git_with_subpath(
-                SourceUrl::from("https://example.com/a.git"),
-                None,
-            ),
-            spec: git_spec("https://example.com/a.git", Some("v1.0.0")),
-            subpath: None,
-            filter: FilterMode::Exclude(vec!["forbidden".into()]),
-            rename: RenameMap::new(),
-            dialect: None,
-        },
-    );
-    let config = EffectiveConfig {
-        dependencies,
-        settings: Settings::default(),
-        models: indexmap::IndexMap::new(),
-        agents: indexmap::IndexMap::new(),
-        skills: indexmap::IndexMap::new(),
-    };
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    assert!(graph.nodes.contains_key("a"));
-}
-
-#[test]
 fn skill_resolution_prefers_dependency_closure_over_insertion_order() {
     let dir = TempDir::new().unwrap();
     let requester_tree = dir.path().join("requester");
@@ -121,24 +77,19 @@ fn skill_resolution_prefers_dependency_closure_over_insertion_order() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
-    let planning_include = FilterMode::Include {
-        agents: Vec::new(),
-        skills: vec![ItemName::from("planning")],
+    // The agent's `planning` ref lands in its own dependency, not in a sibling the consumer
+    // happens to list first. (The sibling installs its own `planning` because the consumer
+    // asked for everything in it.)
+    let pulled_by_coder = |package: &str| {
+        graph.selection.items.iter().any(|item| {
+            item.package.as_deref() == Some(package)
+                && item.slug == "planning"
+                && item
+                    .required_by
+                    .iter()
+                    .any(|requester| matches!(requester, mars_schema::selection::Requester::Item { slug, .. } if slug == "coder"))
+        })
     };
-    assert!(
-        graph
-            .filters
-            .get("my-dep")
-            .is_some_and(|filters| filters.contains(&planning_include)),
-        "expected planning include filter on my-dep; got {:?}",
-        graph.filters.get("my-dep")
-    );
-    assert!(
-        !graph
-            .filters
-            .get("sibling")
-            .is_some_and(|filters| filters.contains(&planning_include)),
-        "did not expect planning include filter on sibling; got {:?}",
-        graph.filters.get("sibling")
-    );
+    assert!(pulled_by_coder("my-dep"), "{:?}", graph.selection.items);
+    assert!(!pulled_by_coder("sibling"), "{:?}", graph.selection.items);
 }

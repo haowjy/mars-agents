@@ -1,0 +1,24 @@
+{
+  "requests": [
+    {
+      "name": "p",
+      "agents": [
+        "foo"
+      ]
+    }
+  ],
+  "extra_items": {
+    "p": [
+      {
+        "kind": "bootstrap-doc",
+        "slug": "intro",
+        "path": "bootstrap/intro"
+      },
+      {
+        "kind": "hook",
+        "slug": "autosync",
+        "path": "hooks/autosync"
+      }
+    ]
+  }
+}

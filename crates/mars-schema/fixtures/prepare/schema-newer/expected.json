@@ -28,5 +28,10 @@
   },
   "definitions": [],
   "payload": [],
+  "selection": {
+    "definitions": [],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {}
 }

@@ -127,6 +127,24 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "review",
+              "output_path": "agents/review.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "review",
+              "output_path": "skills/review/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

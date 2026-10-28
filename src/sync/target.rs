@@ -4,21 +4,21 @@ use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 
-use crate::config::{EffectiveConfig, FilterMode};
+use crate::config::EffectiveConfig;
 use crate::diagnostic::{DiagnosticCategory, DiagnosticCollector};
 use crate::discover;
 use crate::error::MarsError;
 use crate::hash;
 use crate::lock::ItemId;
 use crate::resolve::ResolvedGraph;
-use crate::sync::filter::apply_filter;
 use crate::sync::ownership::Ownership;
 use crate::sync::package_dir::PackageDir;
-use crate::types::{ContentHash, DestPath, ItemName, RenameMap, SourceName};
+use crate::types::{ContentHash, DestPath, SourceName};
+use mars_schema::names::{ItemName, RenameMap};
 
 /// What the `.mars/` canonical store should look like after sync.
 ///
-/// Built from the resolved graph with intent-based filtering applied.
+/// Built from the resolved graph's selection.
 #[derive(Debug, Clone)]
 pub struct TargetState {
     /// Keyed by dest_path (relative to `.mars/`).
@@ -304,6 +304,13 @@ pub fn build_with_collisions_and_diag(
     let dependency_depths = graph.dependency_depths(&config.dependencies);
     let decl_orders = graph.dependency_decl_orders(&config.dependencies);
 
+    let selected: HashSet<(&str, ItemKind, &str)> = graph
+        .selection
+        .items
+        .iter()
+        .filter_map(|item| Some((item.package.as_deref()?, item.kind, item.slug.as_str())))
+        .collect();
+
     for source_name in &graph.order {
         let node = &graph.nodes[source_name];
         let source_config = config.dependencies.get(source_name);
@@ -328,9 +335,7 @@ pub fn build_with_collisions_and_diag(
         let discovered = discover::package_items(
             &node.rooted_ref.package_root,
             Some(source_name.as_str()),
-            node.prepared
-                .as_ref()
-                .expect("production graph nodes retain prepared packages"),
+            &node.prepared,
             Some(&discovered_hooks),
             diag,
         )?;
@@ -366,17 +371,9 @@ pub fn build_with_collisions_and_diag(
             ),
         }
 
-        let Some(filtered) = apply_source_filters(
-            graph,
-            source_name,
-            source_config,
-            &discovered,
-            &node.rooted_ref.package_root,
-        )?
-        else {
-            // No materialization request reached this transitive source.
-            continue;
-        };
+        let filtered = discovered.iter().filter(|item| {
+            selected.contains(&(source_name.as_str(), item.id.kind, item.id.name.as_str()))
+        });
 
         let renames = source_config
             .map(|s| &s.rename)
@@ -493,25 +490,6 @@ pub(crate) fn mcp_config_targets(managed_targets: &[String]) -> Vec<String> {
         })
         .cloned()
         .collect()
-}
-
-pub(crate) fn apply_source_filters(
-    graph: &ResolvedGraph,
-    source_name: &SourceName,
-    source_config: Option<&crate::config::EffectiveDependency>,
-    discovered: &[discover::DiscoveredItem],
-    package_root: &Path,
-) -> Result<Option<Vec<discover::DiscoveredItem>>, MarsError> {
-    let Some(filters) = graph
-        .filters
-        .get(source_name)
-        .filter(|filters| !filters.is_empty())
-        .cloned()
-        .or_else(|| source_config.map(|source| vec![source.filter.clone()]))
-    else {
-        return Ok(None);
-    };
-    apply_filter_union(discovered, &filters, package_root).map(Some)
 }
 
 pub(crate) fn hook_target_items(
@@ -631,34 +609,6 @@ fn rename_destination_collisions(
     }
 
     Ok(renames)
-}
-
-fn apply_filter_union(
-    discovered: &[discover::DiscoveredItem],
-    filters: &[FilterMode],
-    package_root: &Path,
-) -> Result<Vec<discover::DiscoveredItem>, MarsError> {
-    if filters.is_empty() {
-        return Ok(discovered.to_vec());
-    }
-
-    let mut union: HashSet<(ItemKind, ItemName, PathBuf)> = HashSet::new();
-    for filter in filters {
-        let filtered = apply_filter(discovered, filter, package_root)?;
-        union.extend(
-            filtered
-                .iter()
-                .map(|item| (item.id.kind, item.id.name.clone(), item.source_path.clone())),
-        );
-    }
-
-    Ok(discovered
-        .iter()
-        .filter(|item| {
-            union.contains(&(item.id.kind, item.id.name.clone(), item.source_path.clone()))
-        })
-        .cloned()
-        .collect())
 }
 
 /// Existing on-disk destination that is not lock-managed.
@@ -885,6 +835,7 @@ mod tests {
     use crate::source::ResolvedRef;
     use crate::types::SourceId;
     use indexmap::IndexMap;
+    use mars_schema::filter::FilterMode;
     use std::fs;
     use tempfile::TempDir;
 
@@ -951,7 +902,6 @@ mod tests {
                         tree_path: tree.path().to_path_buf(),
                     },
                     manifest: None,
-                    deps: vec![],
                 },
             );
             order.push(name.into());
@@ -995,19 +945,19 @@ mod tests {
             );
         }
 
-        let graph = ResolvedGraph {
-            nodes,
-            order,
-            filters: std::collections::HashMap::new(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
         let config = EffectiveConfig {
             dependencies: config_dependencies,
             settings: Settings::default(),
             models: indexmap::IndexMap::new(),
             agents: indexmap::IndexMap::new(),
             skills: indexmap::IndexMap::new(),
+        };
+        let graph = ResolvedGraph {
+            selection: crate::resolve::select_for_test(&config, &nodes),
+            nodes,
+            order,
+            version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
         (graph, config)
     }
@@ -1027,7 +977,7 @@ mod tests {
                 package_root: root.clone(),
                 plugin: None,
             },
-            prepared: None,
+            prepared: crate::resolve::prepared_with_deps(deps),
             resolved_ref: ResolvedRef {
                 source_name: name.into(),
                 version: None,
@@ -1036,7 +986,6 @@ mod tests {
                 tree_path: root,
             },
             manifest: None,
-            deps: deps.iter().map(|dep| (*dep).into()).collect(),
         }
     }
 
@@ -1102,7 +1051,7 @@ mod tests {
             let graph = ResolvedGraph {
                 order: graph_order.clone(),
                 nodes,
-                filters: HashMap::new(),
+                selection: Default::default(),
                 version_constraints: HashMap::new(),
                 unreadable_hook_surfaces: std::collections::BTreeMap::new(),
             };
@@ -1590,47 +1539,6 @@ mod tests {
         assert!(renames.is_empty());
         assert_eq!(target.items.len(), 1);
         assert!(target.items.contains_key("agents/coder.md"));
-    }
-
-    #[test]
-    fn build_unions_multiple_include_filters_for_same_source() {
-        let tree = make_source_tree(
-            &[],
-            &[
-                ("skill-a", "# Skill A"),
-                ("skill-b", "# Skill B"),
-                ("skill-c", "# Skill C"),
-            ],
-        );
-
-        let (mut graph, config) =
-            make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
-        graph.filters.insert(
-            "base".into(),
-            vec![
-                FilterMode::Include {
-                    agents: vec![],
-                    skills: vec!["skill-a".into(), "skill-b".into()],
-                },
-                FilterMode::Include {
-                    agents: vec![],
-                    skills: vec!["skill-b".into(), "skill-c".into()],
-                },
-            ],
-        );
-
-        let (target, renames, _) = build_with_collisions_and_diag(
-            &graph,
-            &config,
-            &test_local_source(),
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
-        assert!(renames.is_empty());
-        assert_eq!(target.items.len(), 3);
-        assert!(target.items.contains_key("skills/skill-a"));
-        assert!(target.items.contains_key("skills/skill-b"));
-        assert!(target.items.contains_key("skills/skill-c"));
     }
 
     #[test]

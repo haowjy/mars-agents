@@ -19,9 +19,10 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::platform::cache::safe_component;
 use crate::resolve::RootedSourceRef;
-use crate::types::{RenameMap, SourceName};
+use crate::types::SourceName;
 use mars_schema::frontmatter::Frontmatter;
 use mars_schema::item::ItemKind;
+use mars_schema::names::RenameMap;
 
 pub(crate) use overlay::{apply_skill_overlay, skill_overlay_lookup_name};
 
@@ -74,10 +75,7 @@ pub(crate) fn materialize_prepared_graph(
 ) -> Result<(), MarsError> {
     let empty_renames = RenameMap::new();
     for (source_name, node) in &mut graph.nodes {
-        let prepared = node
-            .prepared
-            .as_ref()
-            .expect("production graph nodes retain prepared packages");
+        let prepared = &node.prepared;
         let renames = effective
             .dependencies
             .get(source_name)

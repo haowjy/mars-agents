@@ -459,6 +459,42 @@
           }
         ],
         "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "agent",
+              "slug": "denies-only",
+              "output_path": "agents/denies-only.md",
+              "skills": []
+            },
+            {
+              "kind": "agent",
+              "slug": "everything",
+              "output_path": "agents/everything.md",
+              "skills": []
+            },
+            {
+              "kind": "agent",
+              "slug": "list",
+              "output_path": "agents/list.md",
+              "skills": []
+            },
+            {
+              "kind": "agent",
+              "slug": "spaced",
+              "output_path": "agents/spaced.md",
+              "skills": []
+            },
+            {
+              "kind": "agent",
+              "slug": "untouched",
+              "output_path": "agents/untouched.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           "agents/everything.md": [
             {

@@ -1,0 +1,42 @@
+{
+  "items": [
+    {
+      "package": "p",
+      "kind": "agent",
+      "slug": "a",
+      "path": "agents/a.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "p",
+      "kind": "agent",
+      "slug": "b",
+      "path": "agents/b.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "p",
+      "kind": "skill",
+      "slug": "s1",
+      "path": "skills/s1",
+      "required_by": [
+        {
+          "by": "item",
+          "package": "p",
+          "kind": "agent",
+          "slug": "a"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

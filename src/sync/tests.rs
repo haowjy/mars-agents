@@ -7,6 +7,8 @@ use crate::resolve::{ResolvedGraph, ResolvedNode};
 use crate::sync::target::TargetItem;
 use crate::types::{ContentHash, DestPath};
 use indexmap::IndexMap;
+use mars_schema::dependency::Entry;
+use mars_schema::filter::{FilterConfig, FilterMode};
 use mars_schema::item::ItemKind;
 use std::fs;
 use std::path::PathBuf;
@@ -104,7 +106,6 @@ fn make_graph_config(
                     tree_path: tree_path.clone(),
                 },
                 manifest: None,
-                deps: vec![],
             },
         );
         order.push(name.into());
@@ -125,54 +126,46 @@ fn make_graph_config(
                 spec: SourceSpec::Path(tree_path),
                 subpath: None,
                 filter,
-                rename: crate::types::RenameMap::new(),
+                rename: mars_schema::names::RenameMap::new(),
                 dialect: None,
             },
         );
     }
 
+    let config = EffectiveConfig {
+        dependencies: config_dependencies,
+        settings: Settings::default(),
+        models: indexmap::IndexMap::new(),
+        agents: indexmap::IndexMap::new(),
+        skills: indexmap::IndexMap::new(),
+    };
     (
         ResolvedGraph {
+            selection: crate::resolve::select_for_test(&config, &nodes),
             nodes,
             order,
-            filters: std::collections::HashMap::new(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         },
-        EffectiveConfig {
-            dependencies: config_dependencies,
-            settings: Settings::default(),
-            models: indexmap::IndexMap::new(),
-            agents: indexmap::IndexMap::new(),
-            skills: indexmap::IndexMap::new(),
-        },
+        config,
     )
 }
 
-fn path_dependency_entry(path: &std::path::Path) -> DependencyEntry {
-    DependencyEntry {
-        url: None,
-        path: Some(path.to_path_buf()),
-        subpath: None,
-        version: None,
-        dialect: None,
-        plugin: None,
-        filter: FilterConfig::default(),
-        unknown: Default::default(),
-    }
+fn path_dependency_entry(path: &std::path::Path) -> Entry {
+    Entry::at_path(path.to_path_buf())
 }
 
-fn git_dependency_entry(url: &str, version: &str, filter: FilterConfig) -> DependencyEntry {
-    DependencyEntry {
-        url: Some(url.into()),
-        path: None,
-        subpath: None,
+fn git_dependency_entry(
+    url: &str,
+    version: &str,
+    filter: FilterConfig,
+) -> mars_schema::dependency::RawEntry {
+    Entry {
         version: Some(version.to_string()),
-        dialect: None,
-        plugin: None,
         filter,
-        unknown: Default::default(),
+        ..Entry::git(url)
     }
+    .into()
 }
 
 fn create_sync_plan(sync_diff: &diff::SyncDiff, options: &SyncOptions) -> plan::SyncPlan {
@@ -188,18 +181,18 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         &[("planning", "# Planning A")],
     );
     let source_b = fixture.add_source(&[], &[("planning", "# Planning B")]);
-    let (mut graph, mut effective) = make_graph_config(
+    fs::write(
+        fixture.tree_path(source_a).join("mars.toml"),
+        "[package]\nname = \"source-a\"\nversion = \"1.0.0\"\n\n[dependencies.source-b]\npath = \"../source-b\"\n",
+    )
+    .unwrap();
+    let (graph, mut effective) = make_graph_config(
         &fixture,
         vec![
             ("source-a", source_a, FilterMode::All),
             ("source-b", source_b, FilterMode::All),
         ],
     );
-    graph
-        .nodes
-        .get_mut(&SourceName::from("source-a"))
-        .unwrap()
-        .deps = vec!["source-b".into()];
     effective
         .dependencies
         .get_mut(&SourceName::from("source-b"))
@@ -541,7 +534,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     package_root: PathBuf::from(format!("/tmp/{name}")),
                     plugin: None,
                 },
-                prepared: None,
+                prepared: crate::resolve::prepared_with_deps(&[]),
                 resolved_ref: crate::source::ResolvedRef {
                     source_name: (*name).into(),
                     version: Some(version),
@@ -550,7 +543,6 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     tree_path: PathBuf::from(format!("/tmp/{name}")),
                 },
                 manifest: None,
-                deps: vec![],
             },
         );
         order.push((*name).into());
@@ -559,7 +551,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
     ResolvedGraph {
         nodes,
         order,
-        filters: std::collections::HashMap::new(),
+        selection: Default::default(),
         version_constraints: std::collections::HashMap::new(),
         unreadable_hook_surfaces: std::collections::BTreeMap::new(),
     }
@@ -627,16 +619,7 @@ fn planned_bump_entries_bump_all_outdated_pins() {
     );
     config.dependencies.insert(
         "floating".into(),
-        DependencyEntry {
-            url: Some("https://example.com/floating.git".into()),
-            path: None,
-            subpath: None,
-            version: None,
-            dialect: None,
-            filter: FilterConfig::default(),
-            plugin: None,
-            unknown: Default::default(),
-        },
+        Entry::git("https://example.com/floating.git").into(),
     );
 
     let graph = graph_with_versions(&[
@@ -714,7 +697,7 @@ fn planned_bump_entries_noop_when_already_latest() {
 
 #[test]
 fn planned_bump_entries_preserve_filters_and_renames() {
-    let mut rename = crate::types::RenameMap::new();
+    let mut rename = mars_schema::names::RenameMap::new();
     rename.insert("coder".into(), "coder-v2".into());
 
     let mut config = Config::default();
@@ -758,8 +741,10 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
     crate::config::save(
         project_root.path(),
         &Config {
-            dependencies: IndexMap::new(),
+            dependencies: Default::default(),
             settings: Settings::default(),
+            models: indexmap::IndexMap::new(),
+            agents: indexmap::IndexMap::new(),
             ..Config::default()
         },
     )
@@ -934,7 +919,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
                 spec: SourceSpec::Path(tree_path.clone()),
                 subpath: None,
                 filter: FilterMode::All,
-                rename: crate::types::RenameMap::new(),
+                rename: mars_schema::names::RenameMap::new(),
                 dialect: Some(mars_schema::dialect::Dialect::Claude),
             },
         )]),
@@ -963,7 +948,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
             prepared.rooted,
             prepared.prepared,
             &cfg.skills,
-            &crate::types::RenameMap::new(),
+            &mars_schema::names::RenameMap::new(),
             &staging_root,
             &mut diag,
         )

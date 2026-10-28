@@ -1,0 +1,13 @@
+[package]
+name = "writing-sync"
+version = "0.2.0"
+description = "Destination sync skills for writing projects. Google Drive reading copies now; other destinations later."
+schema = 1
+requires-mars = ">=0.20.0"
+
+[settings]
+targets = [
+    ".claude",
+    ".codex",
+]
+models_cache_ttl_hours = 24

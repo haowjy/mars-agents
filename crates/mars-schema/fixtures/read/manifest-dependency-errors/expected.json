@@ -1,0 +1,87 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "closure"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ],
+    [
+      "schema",
+      1
+    ]
+  ],
+  "fields": {
+    "name": "closure",
+    "version": "1.0.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "dependency.source",
+      "severity": "error",
+      "path": [
+        "dependencies",
+        "both"
+      ],
+      "message": "source `both` has both `url` and `path` — pick one"
+    },
+    {
+      "code": "dependency.source",
+      "severity": "error",
+      "path": [
+        "dependencies",
+        "neither"
+      ],
+      "message": "source `neither` has neither `url` nor `path` — one is required"
+    },
+    {
+      "code": "dependency.plugin-selector",
+      "severity": "error",
+      "path": [
+        "dependencies",
+        "market-subpath"
+      ],
+      "message": "source `market-subpath` has both `plugin` and `subpath` — a marketplace is read at the root of its source, and the marketplace entry says where the plugin is"
+    },
+    {
+      "code": "dependency.dialect-ignored",
+      "severity": "warning",
+      "path": [
+        "dependencies",
+        "market-dialect"
+      ],
+      "message": "source `market-dialect` has both `plugin` and `dialect`; the dialect is ignored"
+    },
+    {
+      "code": "dependency.invalid",
+      "severity": "error",
+      "path": [
+        "dependencies",
+        "bad-type"
+      ],
+      "message": "dependencies.bad-type: invalid type: integer `7`, expected a string\nin `url`"
+    },
+    {
+      "code": "dependency.source",
+      "severity": "warning",
+      "path": [
+        "local-dependencies",
+        "local-both"
+      ],
+      "message": "source `local-both` has both `url` and `path` — pick one"
+    }
+  ],
+  "dependencies": {
+    "market-dialect": {
+      "url": "https://example.com/m.git",
+      "plugin": "writer"
+    },
+    "fine": {
+      "path": "../fine"
+    }
+  }
+}

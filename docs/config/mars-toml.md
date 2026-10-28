@@ -311,6 +311,8 @@ These combinations are **rejected** at config load and CLI parse time:
 
 When no filter fields are set, all agents and skills from the source are installed (**All** mode).
 
+A filter applies to the entry that declares it. Your own entries select items; an entry in a dependency's `mars.toml` selects nothing when it has a filter, and its `exclude` blocks nothing for you. Only an unfiltered entry of a dependency pulls that package's items in. Bootstrap documents travel with any requested part of a package. Your `exclude` also keeps an item out when an Agent's skill ref would pull it in.
+
 #### Include mode behavior
 
 When `agents` and/or `skills` lists are provided:

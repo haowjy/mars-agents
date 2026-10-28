@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "version.pin-beside-range",
+    "message": "`mars.toml` requires ref:dev, but `a` requires ^1"
+  }
+}

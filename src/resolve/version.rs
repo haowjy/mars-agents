@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
+use mars_schema::version::SelectionPolicy as Choosing;
+use mars_schema::version::{Constraint, SelectError, effective_policy, select, settle};
 use semver::{Version, VersionReq};
 
 use crate::diagnostic::DiagnosticCollector;
@@ -12,7 +14,7 @@ use crate::types::{SourceId, SourceName, SourceUrl};
 use super::EngineExclusions;
 use super::SourceProvider;
 use super::package::PendingSource;
-use super::types::{ResolveOptions, ResolvedNode, VersionConstraint, VersionSelectionPolicy};
+use super::types::{ResolveOptions, ResolvedNode, SelectionPolicy};
 
 /// Resolve a single source to a concrete version/ref.
 pub(crate) fn resolve_single_source(
@@ -20,7 +22,7 @@ pub(crate) fn resolve_single_source(
     provider: &dyn SourceProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
-    constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
     exclusions: &EngineExclusions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
@@ -34,8 +36,8 @@ pub(crate) fn resolve_single_source(
             // Lock is consulted for normal sync and frozen lock-exact mode; upgrade
             // targets intentionally ignore lock replay.
             let locked_source = match selection_policy {
-                VersionSelectionPolicy::LatestOnly => None,
-                VersionSelectionPolicy::PreferLockThenLatest | VersionSelectionPolicy::LockOnly => {
+                SelectionPolicy::LatestOnly => None,
+                SelectionPolicy::PreferLockThenLatest | SelectionPolicy::LockOnly => {
                     locked_source_for_pending(pending, locked, selection_policy, diag)?
                 }
             };
@@ -59,7 +61,7 @@ pub(crate) fn resolve_single_source(
 fn locked_source_for_pending<'a>(
     pending: &PendingSource,
     locked: Option<&'a LockFile>,
-    selection_policy: VersionSelectionPolicy,
+    selection_policy: SelectionPolicy,
     diag: &mut DiagnosticCollector,
 ) -> Result<Option<&'a LockedSource>, MarsError> {
     let Some(lock) = locked else {
@@ -76,7 +78,7 @@ fn locked_source_for_pending<'a>(
 
     let locked_identity = locked_source_identity_string(locked_source);
     let expected_identity = pending.source_id.to_string();
-    if selection_policy == VersionSelectionPolicy::LockOnly {
+    if selection_policy == SelectionPolicy::LockOnly {
         return Err(MarsError::FrozenViolation {
             message: format!(
                 "--frozen lock entry for source `{}` does not match current source identity (lock: {locked_identity}, current: {expected_identity})",
@@ -129,8 +131,8 @@ pub(super) fn locked_source_matches_pending(
 }
 
 fn git_urls_equivalent(locked_url: &SourceUrl, pending_url: &SourceUrl) -> bool {
-    crate::source::canonical::canonicalize_git_url(locked_url.as_ref())
-        == crate::source::canonical::canonicalize_git_url(pending_url.as_ref())
+    mars_schema::git_url::canonicalize_git_url(locked_url.as_ref())
+        == mars_schema::git_url::canonicalize_git_url(pending_url.as_ref())
 }
 
 fn locked_source_identity_string(locked_source: &LockedSource) -> String {
@@ -203,15 +205,15 @@ fn resolve_ref_pin_source(
     ref_name: &str,
     provider: &dyn SourceProvider,
     locked_source: Option<&LockedSource>,
-    selection_policy: VersionSelectionPolicy,
+    selection_policy: SelectionPolicy,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     let locked_commit = locked_source.and_then(|source| source.commit.as_deref());
     let locked_selector = locked_source.and_then(|source| source.version.as_deref());
     let selector_matches_lock = locked_selector.is_some_and(|selector| selector == ref_name);
     let preferred_commit = match selection_policy {
-        VersionSelectionPolicy::LatestOnly => None,
-        VersionSelectionPolicy::PreferLockThenLatest => {
+        SelectionPolicy::LatestOnly => None,
+        SelectionPolicy::PreferLockThenLatest => {
             if locked_commit.is_some() && !selector_matches_lock {
                 let lock_selector_desc = locked_selector.unwrap_or("<missing>");
                 diag.warn(
@@ -225,7 +227,7 @@ fn resolve_ref_pin_source(
                 locked_commit
             }
         }
-        VersionSelectionPolicy::LockOnly => {
+        SelectionPolicy::LockOnly => {
             let source = locked_source.ok_or_else(|| MarsError::FrozenViolation {
                 message: format!(
                     "--frozen requires lock entry for ref-pinned source `{name}` ({url})"
@@ -259,7 +261,7 @@ fn resolve_ref_pin_source(
         return match provider.fetch_git_commit(url, commit, name.as_ref(), diag) {
             Ok(resolved_ref) => Ok(annotate_refpin_resolution(resolved_ref, ref_name)),
             Err(err @ MarsError::LockedCommitUnreachable { .. })
-                if selection_policy == VersionSelectionPolicy::LockOnly =>
+                if selection_policy == SelectionPolicy::LockOnly =>
             {
                 Err(err)
             }
@@ -292,36 +294,23 @@ fn resolve_untagged_source(
     provider: &dyn SourceProvider,
     locked_commit: Option<&str>,
     locked_commit_unreachable: bool,
-    selection_policy: VersionSelectionPolicy,
+    selection_policy: Choosing,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     // No semver tags → treat as "latest commit", with locked-commit replay.
     let preferred_commit = match selection_policy {
-        VersionSelectionPolicy::LatestOnly => None,
-        VersionSelectionPolicy::PreferLockThenLatest => {
+        Choosing::LatestOnly => None,
+        Choosing::PreferLockThenLatest => {
             if locked_commit_unreachable {
                 None
             } else {
                 locked_commit
             }
         }
-        VersionSelectionPolicy::LockOnly => {
-            let commit = locked_commit.ok_or_else(|| MarsError::FrozenViolation {
-                message: format!(
-                    "--frozen requires locked commit for untagged source `{name}` ({url})"
-                ),
-            })?;
-            Some(commit)
-        }
     };
     if let Some(commit) = preferred_commit {
         match provider.fetch_git_commit(url, commit, name.as_ref(), diag) {
             Ok(resolved) => return Ok(resolved),
-            Err(err @ MarsError::LockedCommitUnreachable { .. })
-                if selection_policy == VersionSelectionPolicy::LockOnly =>
-            {
-                return Err(err);
-            }
             Err(MarsError::LockedCommitUnreachable {
                 commit,
                 url: source_url,
@@ -347,30 +336,27 @@ fn resolve_untagged_source(
 pub(crate) fn resolve_git_source(
     name: &SourceName,
     url: &SourceUrl,
-    constraints: &[(String, VersionConstraint)],
+    constraints: &[(String, Constraint)],
     provider: &dyn SourceProvider,
     locked_source: Option<&LockedSource>,
-    selection_policy: VersionSelectionPolicy,
+    selection_policy: SelectionPolicy,
     exclusions: &EngineExclusions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let has_latest_constraint = constraints
+    let requests: Vec<(&str, &Constraint)> = constraints
         .iter()
-        .any(|(_, constraint)| matches!(constraint, VersionConstraint::Latest));
-
-    // If any constraint is a ref pin, use the first pin encountered
-    // (multiple ref pins for the same source is likely an error, but we'll use first).
-    if let Some(ref_name) = constraints
-        .iter()
-        .find_map(|(_, constraint)| match constraint {
-            VersionConstraint::RefPin(ref_name) => Some(ref_name.as_str()),
-            _ => None,
-        })
+        .map(|(requester, constraint)| (requester.as_str(), constraint))
+        .collect();
+    if let Some(reference) =
+        settle(&requests).map_err(|error| ResolutionError::VersionConflict {
+            name: name.to_string(),
+            message: error.to_string(),
+        })?
     {
         return resolve_ref_pin_source(
             name,
             url,
-            ref_name,
+            reference,
             provider,
             locked_source,
             selection_policy,
@@ -384,7 +370,7 @@ pub(crate) fn resolve_git_source(
     let semver_reqs: Vec<(&str, &VersionReq)> = constraints
         .iter()
         .filter_map(|(requester, c)| match c {
-            VersionConstraint::Semver(req) => Some((requester.as_str(), req)),
+            Constraint::Semver(req) => Some((requester.as_str(), req)),
             _ => None,
         })
         .collect();
@@ -401,9 +387,15 @@ pub(crate) fn resolve_git_source(
         .as_ref()
         .is_some_and(|version| exclusions.contains_key(&(name.clone(), version.clone())));
 
-    if selection_policy == VersionSelectionPolicy::LockOnly
-        && (locked_version_raw.is_some() || !semver_reqs.is_empty())
-    {
+    if selection_policy == SelectionPolicy::LockOnly {
+        if locked_version_raw.is_none() && semver_reqs.is_empty() {
+            let locked_commit = locked_commit.ok_or_else(|| MarsError::FrozenViolation {
+                message: format!(
+                    "--frozen requires locked commit for unpinned source `{name}` ({url})"
+                ),
+            })?;
+            return provider.fetch_git_commit(url, locked_commit, name.as_ref(), diag);
+        }
         let source = locked_source.ok_or_else(|| MarsError::FrozenViolation {
             message: format!("--frozen requires lock entry for source `{name}` ({url})"),
         })?;
@@ -447,24 +439,13 @@ pub(crate) fn resolve_git_source(
         return Ok(resolved);
     }
 
-    if selection_policy == VersionSelectionPolicy::LockOnly
-        && locked_version_raw.is_none()
-        && semver_reqs.is_empty()
-    {
-        let locked_commit = locked_source
-            .and_then(|source| source.commit.as_deref())
-            .ok_or_else(|| MarsError::FrozenViolation {
-                message: format!(
-                    "--frozen requires locked commit for unpinned source `{name}` ({url})"
-                ),
-            })?;
-        let resolved = provider.fetch_git_commit(url, locked_commit, name.as_ref(), diag)?;
-        return Ok(resolved);
-    }
+    let Some(choosing) = selection_policy.choosing() else {
+        unreachable!("--frozen returned above");
+    };
 
     let mut locked_commit_unreachable = false;
-    if selection_policy == VersionSelectionPolicy::PreferLockThenLatest
-        && !has_latest_constraint
+    let select_policy = effective_policy(choosing, &requests);
+    if select_policy == Choosing::PreferLockThenLatest
         && !locked_is_excluded
         && let (Some(locked_version), Some(locked_commit)) =
             (locked_version.as_ref(), locked_commit)
@@ -498,37 +479,28 @@ pub(crate) fn resolve_git_source(
 
     // List available versions
     let available = provider.list_versions(url)?;
-    if available.is_empty() {
+    let Some(selected) = select_version(
+        name,
+        &available,
+        &requests,
+        locked_version.as_ref(),
+        choosing,
+        exclusions,
+    )?
+    else {
         return resolve_untagged_source(
             name,
             url,
             provider,
             locked_commit,
             locked_commit_unreachable,
-            selection_policy,
+            choosing,
             diag,
         );
-    }
-
-    // Select version
-    let select_policy = if selection_policy == VersionSelectionPolicy::PreferLockThenLatest
-        && has_latest_constraint
-    {
-        VersionSelectionPolicy::LatestOnly
-    } else {
-        selection_policy
     };
-    let selected = select_version(
-        name,
-        &available,
-        &semver_reqs,
-        locked_version.as_ref(),
-        select_policy,
-        exclusions,
-    )?;
 
     let should_try_locked_commit = !locked_commit_unreachable
-        && select_policy != VersionSelectionPolicy::LatestOnly
+        && select_policy != Choosing::LatestOnly
         && locked_commit.is_some()
         && locked_version
             .as_ref()
@@ -542,11 +514,6 @@ pub(crate) fn resolve_git_source(
 
     match provider.fetch_git_version(url, selected, name.as_ref(), preferred_commit, diag) {
         Ok(resolved) => Ok(resolved),
-        Err(err @ MarsError::LockedCommitUnreachable { .. })
-            if selection_policy == VersionSelectionPolicy::LockOnly =>
-        {
-            Err(err)
-        }
         Err(MarsError::LockedCommitUnreachable {
             commit,
             url: source_url,
@@ -563,117 +530,72 @@ pub(crate) fn resolve_git_source(
     }
 }
 
-/// Select a concrete version from available versions, respecting constraints.
-///
-/// - PreferLockThenLatest: use compatible locked version, fallback to newest compatible.
-/// - LatestOnly: pick newest compatible and ignore lock.
-/// - LockOnly: require compatible locked version and error otherwise.
+/// Select a concrete version from available versions, respecting constraints and the sources'
+/// engine exclusions; the rule is `mars_schema::version::select`, this maps its refusals to
+/// the resolver's errors. `None` is a repository with no version tags.
 pub(crate) fn select_version<'a>(
     source_name: &SourceName,
     available: &'a [AvailableVersion],
-    constraints: &[(&str, &VersionReq)],
+    constraints: &[(&str, &Constraint)],
     locked: Option<&Version>,
-    selection_policy: VersionSelectionPolicy,
+    selection_policy: Choosing,
     exclusions: &EngineExclusions,
-) -> Result<&'a AvailableVersion, MarsError> {
-    // Find all versions satisfying all constraints
-    let satisfying: Vec<&AvailableVersion> = available
-        .iter()
-        .filter(|av| {
-            if exclusions.contains_key(&(source_name.clone(), av.version.clone())) {
-                return false;
-            }
-            if constraints.is_empty() {
-                return true;
-            }
-            constraints.iter().all(|(_, req)| req.matches(&av.version))
-        })
+) -> Result<Option<&'a AvailableVersion>, MarsError> {
+    let versions: Vec<Version> = available.iter().map(|av| av.version.clone()).collect();
+    let excluded: HashSet<Version> = exclusions
+        .keys()
+        .filter(|(name, _)| name == source_name)
+        .map(|(_, version)| version.clone())
         .collect();
-
-    if satisfying.is_empty() {
-        // Build helpful error message listing all constraints
-        let constraint_desc: Vec<String> = constraints
-            .iter()
-            .map(|(requester, req)| format!("  `{requester}` requires {req}"))
-            .collect();
-
-        let available_desc: Vec<String> =
-            available.iter().map(|av| av.version.to_string()).collect();
-
-        return Err(ResolutionError::VersionConflict {
+    match select(&versions, constraints, locked, selection_policy, &excluded) {
+        Ok(index) => Ok(index.map(|index| &available[index])),
+        Err(error @ SelectError::NoSatisfying { .. }) => Err(ResolutionError::VersionConflict {
             name: source_name.to_string(),
-            message: format!(
-                "no version satisfies all constraints:\n{}\navailable versions: [{}]",
-                constraint_desc.join("\n"),
-                available_desc.join(", ")
-            ),
+            message: error.to_string(),
         }
-        .into());
-    }
-
-    let locked_satisfying = locked.and_then(|locked_ver| {
-        satisfying
-            .iter()
-            .find(|av| av.version == *locked_ver)
-            .copied()
-    });
-    let newest_satisfying = satisfying.last().copied().expect("satisfying is non-empty");
-
-    match selection_policy {
-        VersionSelectionPolicy::PreferLockThenLatest => {
-            Ok(locked_satisfying.unwrap_or(newest_satisfying))
-        }
-        VersionSelectionPolicy::LatestOnly => Ok(newest_satisfying),
-        VersionSelectionPolicy::LockOnly => {
-            if let Some(locked_selected) = locked_satisfying {
-                Ok(locked_selected)
-            } else if let Some(locked_ver) = locked {
-                Err(MarsError::FrozenViolation {
-                    message: format!(
-                        "--frozen lock version {locked_ver} for `{source_name}` is incompatible with current constraints or unavailable"
-                    ),
-                })
-            } else {
-                Err(MarsError::FrozenViolation {
-                    message: format!(
-                        "--frozen requires lock version for `{source_name}` but no lock version was found"
-                    ),
-                })
-            }
-        }
+        .into()),
     }
 }
 
-/// Validate that all constraints are satisfied by the resolved versions.
-///
-/// This catches cases where a source was resolved before all constraints
-/// were known (e.g., a later transitive dep adds a new constraint on an
-/// already-resolved source).
+/// The settled graph's last word on version agreement: every constraint holds on the ref its
+/// package ended at. `settle` and the re-resolution keep that true as constraints arrive, so a
+/// failure here would be a resolver bug. A `Latest` beside a pin holds but drifts, and warns once
+/// here, not per resolution pass.
 pub(crate) fn validate_all_constraints(
     nodes: &IndexMap<SourceName, ResolvedNode>,
-    constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
+    diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     for (name, constraint_list) in constraints {
-        let node = match nodes.get(name) {
-            Some(n) => n,
-            None => continue, // Should not happen, but be safe
+        let Some(node) = nodes.get(name) else {
+            continue;
         };
+        let resolved = &node.resolved_ref;
+        let pinned = resolved
+            .version
+            .is_none()
+            .then_some(resolved.version_tag.as_deref())
+            .flatten();
 
-        // Only validate semver constraints against resolved versions
-        if let Some(ref resolved_ver) = node.resolved_ref.version {
-            for (requester, constraint) in constraint_list {
-                if let VersionConstraint::Semver(req) = constraint
-                    && !req.matches(resolved_ver)
-                {
+        for (requester, constraint) in constraint_list {
+            match (constraint, &resolved.version, pinned) {
+                (Constraint::Semver(req), Some(version), _) if !req.matches(version) => {
                     return Err(ResolutionError::VersionConflict {
                         name: name.to_string(),
                         message: format!(
-                            "resolved version {resolved_ver} does not satisfy \
+                            "resolved version {version} does not satisfy \
                              constraint {req} (required by `{requester}`)"
                         ),
                     }
                     .into());
                 }
+                (Constraint::Latest, _, Some(pin)) => diag.warn(
+                    "potential-version-drift",
+                    format!(
+                        "potential version drift: package '{name}' requested as latest by {requester} but pinned to ref:{pin}"
+                    ),
+                ),
+                _ => {}
             }
         }
     }

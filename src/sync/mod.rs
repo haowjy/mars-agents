@@ -1,7 +1,6 @@
 use mars_schema::item::ItemKind;
 pub mod apply;
 pub mod diff;
-pub mod filter;
 mod local_items;
 pub mod mutation;
 pub(crate) mod ownership;
@@ -165,7 +164,7 @@ pub(crate) struct ResolvedState {
     pub preparation: crate::platform::fs::PendingStagingGeneration,
 }
 
-/// Phase 3: Desired target state after discovery + filtering.
+/// Phase 3: Desired target state after discovery; the graph's selection already applied the filters.
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
@@ -268,7 +267,7 @@ fn build_recovery_halt(
                 .graph
                 .nodes
                 .values()
-                .filter(|candidate| candidate.deps.contains(source_name))
+                .filter(|candidate| candidate.deps().any(|dep| &dep == source_name))
                 .map(|candidate| candidate.source_name.to_string())
                 .collect();
             let upgrade_cmd =
@@ -1233,7 +1232,7 @@ fn planned_bump_entries(
     config: &Config,
     graph: &ResolvedGraph,
     mode: &ResolutionMode,
-) -> Vec<(SourceName, crate::config::DependencyEntry)> {
+) -> Vec<(SourceName, mars_schema::dependency::Entry)> {
     let ResolutionMode::Maximize {
         targets,
         bump: true,
@@ -1260,7 +1259,8 @@ fn planned_bump_entries(
             if entry.version.as_deref() == Some(resolved_tag.as_str()) {
                 return None;
             }
-            let mut bumped = entry.clone();
+            let mut bumped =
+                mars_schema::dependency::Entry::from_raw(name.as_ref(), entry.clone()).ok()?;
             bumped.version = Some(resolved_tag.clone());
             Some((name.clone(), bumped))
         })
@@ -1268,10 +1268,11 @@ fn planned_bump_entries(
 }
 
 fn constraint_needs_bump(current: Option<&str>, resolved: &semver::Version) -> bool {
-    match crate::resolve::parse_version_constraint(current) {
-        crate::resolve::VersionConstraint::Semver(req) => !req.matches(resolved),
-        crate::resolve::VersionConstraint::Latest
-        | crate::resolve::VersionConstraint::RefPin(_) => false,
+    match mars_schema::version::parse_constraint(current) {
+        mars_schema::version::Constraint::Semver(req) => !req.matches(resolved),
+        mars_schema::version::Constraint::Latest | mars_schema::version::Constraint::RefPin(_) => {
+            false
+        }
     }
 }
 

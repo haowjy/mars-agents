@@ -1,0 +1,31 @@
+[package]
+name = "closure"
+version = "1.0.0"
+schema = 1
+
+[dependencies.both]
+url = "https://example.com/a.git"
+path = "../a"
+
+[dependencies.neither]
+version = "v1"
+
+[dependencies.market-subpath]
+url = "https://example.com/m.git"
+plugin = "writer"
+subpath = "inner"
+
+[dependencies.market-dialect]
+url = "https://example.com/m.git"
+plugin = "writer"
+dialect = "claude"
+
+[dependencies.bad-type]
+url = 7
+
+[dependencies.fine]
+path = "../fine"
+
+[local-dependencies.local-both]
+url = "https://example.com/a.git"
+path = "../a"

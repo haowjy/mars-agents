@@ -4,20 +4,20 @@
 
 use std::path::PathBuf;
 
-use crate::config::{Config, DependencyEntry, FilterConfig, LocalConfig, OverrideEntry};
+use crate::config::{Config, LocalConfig, OverrideEntry};
 use crate::error::{ConfigError, MarsError};
-use crate::types::{ItemName, RenameMap, SourceName};
+use crate::types::SourceName;
+use mars_schema::dependency::{Entry, RawEntry};
+use mars_schema::filter::FilterConfig;
+use mars_schema::names::{ItemName, RenameMap};
 
 /// Config mutation to apply atomically under flock.
 #[derive(Debug, Clone)]
 pub enum ConfigMutation {
     /// Add or update a dependency in mars.toml.
-    UpsertDependency {
-        name: SourceName,
-        entry: Box<DependencyEntry>,
-    },
+    UpsertDependency { name: SourceName, entry: Box<Entry> },
     /// Add or update multiple dependencies in mars.toml atomically under one sync lock.
-    BatchUpsert(Vec<(SourceName, DependencyEntry)>),
+    BatchUpsert(Vec<(SourceName, Entry)>),
     /// Remove a dependency from mars.toml.
     RemoveDependency { name: SourceName },
     /// Add or update an override in mars.local.toml.
@@ -133,15 +133,16 @@ pub(crate) fn apply_local_mutation(local: &mut LocalConfig, mutation: &ConfigMut
 fn apply_dependency_upsert(
     config: &mut Config,
     name: &SourceName,
-    entry: &DependencyEntry,
+    entry: &Entry,
 ) -> DependencyUpsertChange {
     if let Some(existing) = config.dependencies.get_mut(name) {
         let old_version = existing.version.clone();
         let old_filter = existing.filter.clone();
 
         // Merge: update location fields, preserve user customizations
-        existing.url = entry.url.clone();
-        existing.path = entry.path.clone();
+        let location = RawEntry::from(entry);
+        existing.url = location.url;
+        existing.path = location.path;
         existing.version = entry.version.clone();
         existing.plugin = entry.plugin.clone();
         // Atomic filter replacement: when any filter field is set on the
@@ -165,7 +166,9 @@ fn apply_dependency_upsert(
             new_filter: existing.filter.clone(),
         }
     } else {
-        config.dependencies.insert(name.clone(), entry.clone());
+        config
+            .dependencies
+            .insert(name.clone(), RawEntry::from(entry));
         DependencyUpsertChange {
             name: name.clone(),
             already_exists: false,
@@ -189,18 +192,13 @@ mod tests {
     fn apply_mutation_atomic_filter_replacement() {
         let mut config = Config::default();
         // First add with agents filter
-        let entry1 = DependencyEntry {
-            url: Some("https://github.com/org/base.git".into()),
-            path: None,
-            subpath: None,
+        let entry1 = Entry {
             version: Some("v1".into()),
-            dialect: None,
             filter: FilterConfig {
                 agents: Some(vec!["reviewer".into()]),
                 ..FilterConfig::default()
             },
-            plugin: None,
-            unknown: Default::default(),
+            ..Entry::git("https://github.com/org/base.git")
         };
         apply_mutation(
             &mut config,
@@ -213,18 +211,13 @@ mod tests {
         assert!(config.dependencies["base"].filter.agents.is_some());
 
         // Re-add with only_skills — should atomically replace, clearing agents
-        let entry2 = DependencyEntry {
-            url: Some("https://github.com/org/base.git".into()),
-            path: None,
-            subpath: None,
+        let entry2 = Entry {
             version: Some("v1".into()),
-            dialect: None,
             filter: FilterConfig {
                 only_skills: true,
                 ..FilterConfig::default()
             },
-            plugin: None,
-            unknown: Default::default(),
+            ..Entry::git("https://github.com/org/base.git")
         };
         apply_mutation(
             &mut config,
@@ -247,18 +240,13 @@ mod tests {
     fn apply_mutation_preserves_filters_on_version_bump() {
         let mut config = Config::default();
         // Add with agents filter
-        let entry1 = DependencyEntry {
-            url: Some("https://github.com/org/base.git".into()),
-            path: None,
-            subpath: None,
+        let entry1 = Entry {
             version: Some("v1".into()),
-            dialect: None,
             filter: FilterConfig {
                 agents: Some(vec!["coder".into()]),
                 ..FilterConfig::default()
             },
-            plugin: None,
-            unknown: Default::default(),
+            ..Entry::git("https://github.com/org/base.git")
         };
         apply_mutation(
             &mut config,
@@ -270,15 +258,9 @@ mod tests {
         .unwrap();
 
         // Re-add with no filter (version bump only)
-        let entry2 = DependencyEntry {
-            url: Some("https://github.com/org/base.git".into()),
-            path: None,
-            subpath: None,
+        let entry2 = Entry {
             version: Some("v2".into()),
-            dialect: None,
-            filter: FilterConfig::default(),
-            plugin: None,
-            unknown: Default::default(),
+            ..Entry::git("https://github.com/org/base.git")
         };
         apply_mutation(
             &mut config,
@@ -304,19 +286,13 @@ mod tests {
         let mut rename_map = RenameMap::new();
         rename_map.insert("old".into(), "new".into());
 
-        let entry1 = DependencyEntry {
-            url: Some("https://github.com/org/base.git".into()),
-            path: None,
-            subpath: None,
-            version: None,
-            dialect: None,
+        let entry1 = Entry {
             filter: FilterConfig {
                 agents: Some(vec!["coder".into()]),
                 rename: Some(rename_map),
                 ..FilterConfig::default()
             },
-            plugin: None,
-            unknown: Default::default(),
+            ..Entry::git("https://github.com/org/base.git")
         };
         apply_mutation(
             &mut config,
@@ -328,18 +304,12 @@ mod tests {
         .unwrap();
 
         // Re-add with different filter — rename should be preserved
-        let entry2 = DependencyEntry {
-            url: Some("https://github.com/org/base.git".into()),
-            path: None,
-            subpath: None,
-            version: None,
-            dialect: None,
+        let entry2 = Entry {
             filter: FilterConfig {
                 only_skills: true,
                 ..FilterConfig::default()
             },
-            plugin: None,
-            unknown: Default::default(),
+            ..Entry::git("https://github.com/org/base.git")
         };
         apply_mutation(
             &mut config,
@@ -369,28 +339,16 @@ mod tests {
         let batch = vec![
             (
                 "base".into(),
-                DependencyEntry {
-                    url: Some("https://github.com/org/base.git".into()),
-                    path: None,
-                    subpath: None,
+                Entry {
                     version: Some("v1".into()),
-                    dialect: None,
-                    filter: FilterConfig::default(),
-                    plugin: None,
-                    unknown: Default::default(),
+                    ..Entry::git("https://github.com/org/base.git")
                 },
             ),
             (
                 "workflow".into(),
-                DependencyEntry {
-                    url: Some("https://github.com/org/workflow.git".into()),
-                    path: None,
-                    subpath: None,
+                Entry {
                     version: Some("v2".into()),
-                    dialect: None,
-                    filter: FilterConfig::default(),
-                    plugin: None,
-                    unknown: Default::default(),
+                    ..Entry::git("https://github.com/org/workflow.git")
                 },
             ),
         ];
@@ -404,18 +362,13 @@ mod tests {
     #[test]
     fn apply_mutation_returns_old_and_new_filters_for_readd() {
         let mut config = Config::default();
-        let entry1 = DependencyEntry {
-            url: Some("https://github.com/org/base.git".into()),
-            path: None,
-            subpath: None,
+        let entry1 = Entry {
             version: Some("v1".into()),
-            dialect: None,
             filter: FilterConfig {
                 agents: Some(vec!["reviewer".into()]),
                 ..FilterConfig::default()
             },
-            plugin: None,
-            unknown: Default::default(),
+            ..Entry::git("https://github.com/org/base.git")
         };
         apply_mutation(
             &mut config,
@@ -426,18 +379,13 @@ mod tests {
         )
         .unwrap();
 
-        let entry2 = DependencyEntry {
-            url: Some("https://github.com/org/base.git".into()),
-            path: None,
-            subpath: None,
+        let entry2 = Entry {
             version: Some("v2".into()),
-            dialect: None,
             filter: FilterConfig {
                 only_skills: true,
                 ..FilterConfig::default()
             },
-            plugin: None,
-            unknown: Default::default(),
+            ..Entry::git("https://github.com/org/base.git")
         };
         let changes = apply_mutation(
             &mut config,

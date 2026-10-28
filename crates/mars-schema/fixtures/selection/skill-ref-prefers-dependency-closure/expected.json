@@ -1,0 +1,53 @@
+{
+  "items": [
+    {
+      "package": "sibling",
+      "kind": "skill",
+      "slug": "planning",
+      "path": "skills/planning",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "requester",
+      "kind": "agent",
+      "slug": "coder",
+      "path": "agents/coder.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "my-dep",
+      "kind": "skill",
+      "slug": "planning",
+      "path": "skills/planning",
+      "required_by": [
+        {
+          "by": "package",
+          "package": "requester"
+        },
+        {
+          "by": "item",
+          "package": "requester",
+          "kind": "agent",
+          "slug": "coder"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": [
+    {
+      "code": "selection.duplicate-slug",
+      "severity": "warning",
+      "path": [],
+      "message": "skill `planning` is installed from sibling, my-dep"
+    }
+  ]
+}

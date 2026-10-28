@@ -142,6 +142,24 @@
             "output_path": "skills/pdf/scripts/extract.py"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "pdf",
+              "output_path": "skills/pdf/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "xlsx",
+              "output_path": "skills/xlsx/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     },
@@ -249,6 +267,18 @@
             "output_path": "skills/skill-creator/references/schema.md"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "skill-creator",
+              "output_path": "skills/skill-creator/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {}
       }
     }

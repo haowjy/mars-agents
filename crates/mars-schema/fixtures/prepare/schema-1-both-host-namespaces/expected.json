@@ -109,6 +109,18 @@
     }
   ],
   "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "demo",
+        "output_path": "agents/demo.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
   "diagnostics": {},
   "changes": {
     "agents/demo.md": [

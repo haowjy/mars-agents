@@ -27,7 +27,7 @@ pub(crate) fn declaration_ordered_dep_models(
             continue;
         };
 
-        let mut queue: VecDeque<SourceName> = sponsor_node.deps.iter().cloned().collect();
+        let mut queue: VecDeque<SourceName> = sponsor_node.deps().collect();
         let mut visited: HashSet<SourceName> = HashSet::new();
 
         while let Some(dep) = queue.pop_front() {
@@ -41,7 +41,7 @@ pub(crate) fn declaration_ordered_dep_models(
                 .or_insert(idx);
 
             if let Some(dep_node) = graph.nodes.get(&dep) {
-                queue.extend(dep_node.deps.iter().cloned());
+                queue.extend(dep_node.deps());
             }
         }
     }
@@ -57,8 +57,8 @@ pub(crate) fn declaration_ordered_dep_models(
     }
 
     for (name, node) in &graph.nodes {
-        for dep in &node.deps {
-            if graph.nodes.contains_key(dep) {
+        for dep in node.deps() {
+            if graph.nodes.contains_key(&dep) {
                 *in_degree.entry(name.clone()).or_insert(0) += 1;
                 adjacency.entry(dep.clone()).or_default().push(name.clone());
             }
@@ -127,11 +127,11 @@ pub(crate) fn merged_model_aliases(
 mod tests {
     use super::*;
     use crate::config::{
-        EffectiveConfig, EffectiveDependency, FilterMode, Manifest, PackageInfo, Settings,
-        SourceSpec,
+        EffectiveConfig, EffectiveDependency, Manifest, PackageInfo, Settings, SourceSpec,
     };
     use crate::resolve::{ResolvedGraph, ResolvedNode};
     use crate::types::SourceId;
+    use mars_schema::filter::FilterMode;
     use std::path::PathBuf;
 
     fn model_alias(model: &str) -> ModelAlias {
@@ -188,7 +188,7 @@ mod tests {
                 package_root: canonical.clone(),
                 plugin: None,
             },
-            prepared: None,
+            prepared: crate::resolve::prepared_with_deps(deps),
             resolved_ref: crate::source::ResolvedRef {
                 source_name: name.into(),
                 version: None,
@@ -197,7 +197,6 @@ mod tests {
                 tree_path: canonical,
             },
             manifest: with_models.then(|| manifest_with_models(name)),
-            deps: deps.iter().map(|dep| (*dep).into()).collect(),
         }
     }
 
@@ -221,7 +220,7 @@ mod tests {
                     spec: SourceSpec::Path(canonical),
                     subpath: None,
                     filter: FilterMode::All,
-                    rename: crate::types::RenameMap::new(),
+                    rename: mars_schema::names::RenameMap::new(),
                     dialect: None,
                 },
             );
@@ -248,7 +247,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["a".into(), "b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -269,7 +268,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "a".into(), "b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -290,7 +289,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -309,7 +308,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "a".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
@@ -331,7 +330,7 @@ mod tests {
         let graph = ResolvedGraph {
             nodes,
             order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
-            filters: std::collections::HashMap::new(),
+            selection: Default::default(),
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };

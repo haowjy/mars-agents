@@ -1,0 +1,19 @@
+[package]
+name = "closure"
+version = "1.0.0"
+schema = 1
+
+[dependencies.include-and-exclude]
+path = "../a"
+agents = ["coder"]
+exclude = ["draft"]
+
+[dependencies.both-categories]
+path = "../b"
+only_skills = true
+only_agents = true
+
+[dependencies.category-and-list]
+path = "../c"
+only_agents = true
+skills = ["review"]

@@ -11,8 +11,9 @@ use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::types::{SourceName, SourceOrigin};
-use crate::validate::{ValidationWarning, deferred_provider};
+use crate::validate::ValidationWarning;
 use mars_schema::item::ItemKind;
+use mars_schema::provider::deferred_provider;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
 /// reference skills that exist in the target state.
@@ -28,7 +29,7 @@ pub(crate) fn validate_skill_refs(
     provided: Option<&ProvidedNames>,
     local_declared: Option<&[String]>,
 ) -> Vec<ValidationWarning> {
-    use crate::validate::{extract_skills_from_content, find_suggestion};
+    use crate::validate::find_suggestion;
 
     let available_skills: HashSet<String> = target
         .items
@@ -62,7 +63,12 @@ pub(crate) fn validate_skill_refs(
             Some(content) => content.clone(),
             None => std::fs::read_to_string(&item.source_path).unwrap_or_default(),
         };
-        for skill_name in extract_skills_from_content(&content) {
+        // An Agent already in schema v1: it was prepared, then possibly rewritten.
+        let skills = mars_schema::agent::read(&content)
+            .fields
+            .map(|profile| profile.skills.all())
+            .unwrap_or_default();
+        for skill_name in skills {
             if available_skills.contains(&skill_name) {
                 continue;
             }

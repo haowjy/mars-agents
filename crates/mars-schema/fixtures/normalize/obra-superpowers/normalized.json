@@ -176,6 +176,30 @@
             "output_path": "skills/test-driven-development/references/tips.md"
           }
         ],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "brainstorming",
+              "output_path": "skills/brainstorming/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "test-driven-development",
+              "output_path": "skills/test-driven-development/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "using-git-worktrees",
+              "output_path": "skills/using-git-worktrees/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
         "diagnostics": {
           "hooks/hooks.json": [
             {

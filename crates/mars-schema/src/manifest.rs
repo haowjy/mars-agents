@@ -2,17 +2,31 @@
 //!
 //! The reading's `frontmatter` holds the `[package]` table's pairs, unknown keys included.
 
+use crate::dependency::Dependencies;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, child_path};
 use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue};
 use crate::package::PackageMetadata;
+use crate::read::DefinitionRead;
+use serde::Serialize;
 
-/// Read package identity while leaving consumer-only top-level tables outside the schema.
-pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
-    use crate::diagnostic::key_path;
+/// The reading of a `mars.toml`: the `[package]` table as every definition reading has it, and
+/// the dependency entries the package declares. The dependency keys are the file's spellings and
+/// are left out when empty.
+#[derive(Debug, Clone, Serialize)]
+pub struct ManifestRead {
+    #[serde(flatten)]
+    pub package: DefinitionRead<PackageMetadata>,
+    #[serde(flatten)]
+    pub dependencies: Dependencies,
+}
+
+/// Read package identity and dependency entries while leaving consumer-only top-level tables
+/// outside the schema.
+pub fn read(content: &str) -> ManifestRead {
     let value: toml::Value = match toml::from_str(content) {
         Ok(value) => value,
         Err(error) => {
-            return crate::read::DefinitionRead::unread(vec![SchemaDiagnostic::new(
+            return ManifestRead::unread(vec![SchemaDiagnostic::new(
                 "toml.invalid",
                 Severity::Error,
                 Vec::new(),
@@ -20,8 +34,39 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
             )]);
         }
     };
+    // `content` parsed as TOML above, so it parses here.
+    let document = content
+        .parse::<toml_edit::DocumentMut>()
+        .expect("content that parses as TOML parses as a document");
+    let mut reading = read_package(&document, &value);
+    let dependencies = if reading.fields.is_some() {
+        Dependencies::read(&document, &mut reading.diagnostics)
+    } else {
+        Dependencies::default()
+    };
+    ManifestRead {
+        package: reading,
+        dependencies,
+    }
+}
+
+impl ManifestRead {
+    /// A manifest that could not be read: no fields, only why.
+    pub fn unread(diagnostics: Vec<SchemaDiagnostic>) -> Self {
+        Self {
+            package: DefinitionRead::unread(diagnostics),
+            dependencies: Dependencies::default(),
+        }
+    }
+}
+
+fn read_package(
+    document: &toml_edit::DocumentMut,
+    value: &toml::Value,
+) -> DefinitionRead<PackageMetadata> {
+    use crate::diagnostic::key_path;
     let Some(package) = value.get("package").and_then(toml::Value::as_table) else {
-        return crate::read::DefinitionRead::unread(vec![SchemaDiagnostic::new(
+        return DefinitionRead::unread(vec![SchemaDiagnostic::new(
             "manifest.package-required",
             Severity::Error,
             key_path("package"),
@@ -43,7 +88,7 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
     // A newer schema's other fields may mean something this Mars cannot read, so the one thing
     // to say is to upgrade.
     if let Some(toml::Value::Integer(schema @ 2..)) = package.get("schema") {
-        return crate::read::DefinitionRead::unread(vec![SchemaDiagnostic::new(
+        return DefinitionRead::unread(vec![SchemaDiagnostic::new(
             "schema.newer",
             Severity::Error,
             child_path("package", "schema"),
@@ -135,8 +180,8 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
             None
         }
     };
-    crate::read::DefinitionRead {
-        frontmatter: package_pairs(content, &mut diagnostics),
+    DefinitionRead {
+        frontmatter: package_pairs(document, &mut diagnostics),
         fields,
         body: None,
         diagnostics,
@@ -147,14 +192,10 @@ pub fn read(content: &str) -> crate::read::DefinitionRead<PackageMetadata> {
 /// integer beyond ±(2^53 − 1), NaN, infinity, a `__proto__` key) leaves its pair out with a
 /// `toml.non-json-value` diagnostic; a datetime is its TOML text, a string.
 fn package_pairs(
-    content: &str,
+    document: &toml_edit::DocumentMut,
     diagnostics: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> Vec<(String, OrderedValue)> {
-    use toml_edit::{DocumentMut, Item};
-    // `content` already parsed as TOML, and `[package]` exists.
-    let Ok(document) = content.parse::<DocumentMut>() else {
-        return Vec::new();
-    };
+    use toml_edit::Item;
     let Some(package) = document.get("package").and_then(Item::as_table_like) else {
         return Vec::new();
     };

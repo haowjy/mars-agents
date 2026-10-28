@@ -148,7 +148,7 @@ mars upgrade [names...]
 |---|---|
 | `names` | Specific dependency names to upgrade (default: all) |
 
-Uses maximize strategy instead of minimum version selection. Only git sources with semver constraints are upgradeable; path sources have no version to maximize. It moves dependency versions and never edits definitions: for that, see [`mars migrate`](#mars-migrate).
+Takes the newest compatible version instead of keeping the locked one. Only git sources with semver constraints are upgradeable; path sources have no version to maximize. It moves dependency versions and never edits definitions: for that, see [`mars migrate`](#mars-migrate).
 
 A marketplace plugin is refreshed as a whole: Mars re-reads the marketplace at its ref, takes the plugin's current source from it and resolves the plugin's content commit anew, even when the marketplace itself did not change. A plugin whose source moved to another repository or path is reported (`plugin <name> of <dependency> moved: <old> -> <new>`).
 

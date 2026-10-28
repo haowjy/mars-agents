@@ -1,0 +1,8 @@
+[package]
+name = "d1"
+version = "1.0.0"
+schema = 1
+
+[dependencies.b]
+path = "../b"
+agents = ["b1"]

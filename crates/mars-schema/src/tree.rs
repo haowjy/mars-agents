@@ -157,6 +157,13 @@ pub struct TreePathError {
     pub reason: &'static str,
 }
 
+impl TreePathError {
+    /// A stable identifier for callers that map failures to their own codes.
+    pub fn code(&self) -> &'static str {
+        "tree.invalid-path"
+    }
+}
+
 fn validate_file_path(path: &str) -> Result<(), TreePathError> {
     let invalid = |reason| TreePathError {
         path: path.to_owned(),

@@ -1,0 +1,25 @@
+[package]
+name = "closure"
+version = "1.0.0"
+schema = 1
+
+[dependencies.base]
+url = "https://github.com/haowjy/meridian-base"
+version = ">=0.13.0, <0.14.0"
+agents = ["coder"]
+skills = ["review"]
+rename = { zeta = "z2", coder = "builder" }
+
+[dependencies.local]
+path = "../local"
+subpath = "pkg"
+exclude = ["draft"]
+
+[dependencies.market]
+url = "github.com/acme/market"
+plugin = "writer"
+only_skills = true
+future-key = 1
+
+[local-dependencies.helper]
+url = "https://github.com/haowjy/meridian-prompter"

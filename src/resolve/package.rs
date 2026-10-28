@@ -1,25 +1,23 @@
 use mars_schema::item::ItemKind;
-use std::collections::{HashMap, HashSet};
+use mars_schema::version::{Constraint, parse_constraint};
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::config::{
-    EffectiveConfig, FilterMode, GitSpec, Manifest, SourceSpec, source_id_for_spec,
-    validate_plugin_selector,
-};
+use crate::config::{EffectiveConfig, GitSpec, Manifest, SourceSpec, source_id_for_spec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
-use crate::error::{ConfigError, MarsError, ResolutionError};
+use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
-use crate::types::{ItemName, SourceId, SourceName, SourceSubpath};
+use crate::types::{SourceId, SourceName, SourceUrl};
 use indexmap::IndexMap;
+use mars_schema::dependency::Source;
+use mars_schema::names::{ItemName, SourceSubpath};
 
 use super::EngineExclusions;
 use super::SourceProvider;
-use super::constraint::parse_version_constraint;
 use super::context::ResolverContext;
-use super::filter::is_unfiltered_request;
 use super::requires::{EngineRequirementFailure, check_package_requirements};
-use super::types::{PendingItem, ResolveOptions, ResolvedNode, VersionConstraint};
+use super::types::{ResolveOptions, ResolvedNode};
 use super::version::resolve_single_source;
 
 /// Internal: a source waiting to be resolved.
@@ -32,8 +30,7 @@ pub(crate) struct PendingSource {
     pub(crate) source_id: SourceId,
     pub(crate) spec: SourceSpec,
     pub(crate) subpath: Option<SourceSubpath>,
-    pub(crate) constraint: VersionConstraint,
-    pub(crate) filter: FilterMode,
+    pub(crate) constraint: Constraint,
     pub(crate) required_by: String,
 }
 
@@ -41,9 +38,7 @@ pub(crate) struct PendingSource {
 pub(crate) enum PackageResolutionState {
     #[default]
     Resolved,
-    Resolving {
-        deferred_seed_requests: Vec<PendingSource>,
-    },
+    Resolving,
 }
 
 #[derive(Debug, Clone)]
@@ -51,32 +46,11 @@ pub(crate) struct RegisteredPackage {
     pub(crate) node: ResolvedNode,
     pub(crate) declared_source_id: SourceId,
     pub(crate) items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem>,
-    pub(crate) constraint: VersionConstraint,
-    pub(crate) is_local: bool,
 }
 
 impl RegisteredPackage {
     pub(crate) fn items(&self) -> impl Iterator<Item = &discover::DiscoveredItem> {
         self.items.values()
-    }
-
-    pub(crate) fn item(
-        &self,
-        kind: ItemKind,
-        name: &ItemName,
-    ) -> Option<&discover::DiscoveredItem> {
-        self.items.get(&(kind, name.clone()))
-    }
-
-    pub(crate) fn has_skill(&self, skill: &ItemName) -> bool {
-        self.skill_names().any(|name| name == skill)
-    }
-
-    pub(crate) fn skill_names(&self) -> impl Iterator<Item = &ItemName> {
-        self.items
-            .keys()
-            .filter(|(kind, _)| *kind == ItemKind::Skill)
-            .map(|(_, name)| name)
     }
 }
 
@@ -97,7 +71,6 @@ fn prepare_package(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_package_bottom_up(
     pending_src: &PendingSource,
-    seed_items: bool,
     provider: &dyn SourceProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
@@ -133,9 +106,6 @@ pub(crate) fn resolve_package_bottom_up(
         &pending_src.required_by,
         pending_src.constraint.clone(),
     );
-    if seed_items {
-        ctx.add_filter(&pending_src.name, pending_src.filter.clone());
-    }
 
     if matches!(
         ctx.package_states().get(&pending_src.name),
@@ -151,15 +121,15 @@ pub(crate) fn resolve_package_bottom_up(
         // the bottom-up phase from scratch. B1 (stale manifest-derived constraints) and
         // B2 (new deps not materialized) are both avoided by construction: the fresh
         // context has no stale state, and the override is used at first-resolution time
-        // (which runs the normal seeding path).
+        // (the normal first-resolution path).
         //
         // Fast paths that skip the check:
         //   Path sources — no version selection, never change.
-        //   RefPin constraints — fixed refs, semver re-selection doesn't apply.
         //   Semver(req) where existing version already satisfies req — adding that
         //     requirement cannot invalidate the currently selected version.
-        let needs_check = matches!(pending_src.spec, SourceSpec::Git(_))
-            && !matches!(pending_src.constraint, VersionConstraint::RefPin(_));
+        // A pin that differs from the settled ref, or a range beside a pin, is refused by
+        // `settle` in the re-resolution.
+        let needs_check = matches!(pending_src.spec, SourceSpec::Git(_));
 
         if needs_check {
             let existing_ref = ctx
@@ -169,7 +139,7 @@ pub(crate) fn resolve_package_bottom_up(
 
             // Fast path: semver constraint already satisfied → selection cannot change.
             let skip = match (&pending_src.constraint, &existing_ref) {
-                (VersionConstraint::Semver(req), Some(ref_)) => {
+                (Constraint::Semver(req), Some(ref_)) => {
                     ref_.version.as_ref().is_some_and(|v| req.matches(v))
                 }
                 _ => false, // Latest or no existing ref → must run full check
@@ -235,41 +205,18 @@ pub(crate) fn resolve_package_bottom_up(
             }
         }
 
-        if seed_items {
-            let package =
-                ctx.registry()
-                    .get(&pending_src.name)
-                    .ok_or_else(|| MarsError::Source {
-                        source_name: pending_src.name.to_string(),
-                        message: "resolved package missing from registry".to_string(),
-                    })?;
-            for pending_item in seed_items_for_request(pending_src, package) {
-                ctx.push_pending(pending_item);
-            }
-        }
         return Ok(());
     }
 
     if matches!(
         ctx.package_states().get(&pending_src.name),
-        Some(PackageResolutionState::Resolving { .. })
+        Some(PackageResolutionState::Resolving)
     ) {
-        if seed_items
-            && let Some(PackageResolutionState::Resolving {
-                deferred_seed_requests,
-            }) = ctx.package_states_mut().get_mut(&pending_src.name)
-        {
-            deferred_seed_requests.push(pending_src.clone());
-        }
         return Ok(());
     }
 
-    ctx.package_states_mut().insert(
-        pending_src.name.clone(),
-        PackageResolutionState::Resolving {
-            deferred_seed_requests: Vec::new(),
-        },
-    );
+    ctx.package_states_mut()
+        .insert(pending_src.name.clone(), PackageResolutionState::Resolving);
 
     // Check for a version override carried from a prior restart pass.
     // When the driver restarts after a would-change detection, it seeds the fresh
@@ -279,7 +226,7 @@ pub(crate) fn resolve_package_bottom_up(
     // having to trigger another restart. B1 and B2 are avoided because:
     //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
     //   B2: we fall through to normal first-resolution logic below, which runs the
-    //       same seed_items / filter path as any non-overridden first resolution.
+    //       same path as any non-overridden first resolution.
     let mut rejected: Vec<(String, Vec<EngineRequirementFailure>)> = Vec::new();
     let mut override_candidate =
         ctx.version_override(&pending_src.name)
@@ -292,18 +239,12 @@ pub(crate) fn resolve_package_bottom_up(
         let candidate = if let Some((resolved, rooted, _hook_surface)) = override_candidate.take() {
             let prepared =
                 prepare_package(&pending_src.name, rooted, effective_config, options, diag)?;
-            let manifest = test_manifest_fallback(
-                provider,
-                &prepared.rooted.authored_root,
-                prepared.manifest,
-                diag,
-            )?;
             (
                 resolved,
                 prepared.rooted,
                 prepared.hook_surface,
                 prepared.prepared,
-                manifest,
+                prepared.manifest,
             )
         } else {
             match resolve_single_source(
@@ -331,18 +272,12 @@ pub(crate) fn resolve_package_bottom_up(
                         options,
                         diag,
                     )?;
-                    let manifest = test_manifest_fallback(
-                        provider,
-                        &staged.rooted.authored_root,
-                        staged.manifest,
-                        diag,
-                    )?;
                     (
                         ref_,
                         staged.rooted,
                         staged.hook_surface,
                         staged.prepared,
-                        manifest,
+                        staged.manifest,
                     )
                 }
                 Err(MarsError::Resolution(ResolutionError::VersionConflict { .. }))
@@ -371,7 +306,7 @@ pub(crate) fn resolve_package_bottom_up(
 
         let label = candidate_version_label(&candidate.0);
         if options.version_selection_policy(&pending_src.name)
-            == super::types::VersionSelectionPolicy::LockOnly
+            == super::types::SelectionPolicy::LockOnly
         {
             return Err(MarsError::FrozenViolation {
                 message: format!(
@@ -464,10 +399,6 @@ pub(crate) fn resolve_package_bottom_up(
     }
     let manifest_requests =
         collect_manifest_requests(pending_src, &rooted_ref.authored_root, &manifest, options)?;
-    let deps = manifest_requests
-        .iter()
-        .map(|request| request.name.clone())
-        .collect();
 
     let discovered = discover::package_items(
         &rooted_ref.authored_root,
@@ -488,49 +419,20 @@ pub(crate) fn resolve_package_bottom_up(
                 source_name: pending_src.name.clone(),
                 source_id: pending_src.source_id.clone(),
                 rooted_ref,
-                prepared: Some(prepared),
+                prepared,
                 resolved_ref,
                 manifest,
-                deps,
             },
             declared_source_id: pending_src.declared_source_id.clone(),
             items,
-            constraint: pending_src.constraint.clone(),
-            is_local: matches!(pending_src.spec, SourceSpec::Path(_)),
         },
     );
     ctx.id_index_mut()
         .insert(pending_src.source_id.clone(), pending_src.name.clone());
 
-    // Version graph expansion is always required, but transitive item seeding is
-    // only allowed when this package has at least one unfiltered materialization
-    // request and the inbound path has remained unfiltered.
-    let seed_transitive_manifest_deps =
-        seed_items && package_has_unfiltered_materialization_request(ctx, &pending_src.name);
-    for request in manifest_requests
-        .iter()
-        .filter(|request| is_unfiltered_request(&request.filter))
-    {
-        let seed_request_items = seed_transitive_manifest_deps;
+    for request in &manifest_requests {
         resolve_package_bottom_up(
             request,
-            seed_request_items,
-            provider,
-            locked,
-            options,
-            effective_config,
-            diag,
-            ctx,
-            exclusions,
-        )?;
-    }
-    for request in manifest_requests
-        .iter()
-        .filter(|request| !is_unfiltered_request(&request.filter))
-    {
-        resolve_package_bottom_up(
-            request,
-            false,
             provider,
             locked,
             options,
@@ -541,58 +443,10 @@ pub(crate) fn resolve_package_bottom_up(
         )?;
     }
 
-    let mut deferred_seed_requests = Vec::new();
-    if let Some(PackageResolutionState::Resolving {
-        deferred_seed_requests: deferred,
-    }) = ctx.package_states_mut().remove(&pending_src.name)
-    {
-        deferred_seed_requests = deferred;
-    }
     ctx.package_states_mut()
         .insert(pending_src.name.clone(), PackageResolutionState::Resolved);
 
-    let pending_to_push = {
-        let package = ctx
-            .registry()
-            .get(&pending_src.name)
-            .ok_or_else(|| MarsError::Source {
-                source_name: pending_src.name.to_string(),
-                message: "resolved package missing from registry".to_string(),
-            })?;
-        let mut pending_to_push = Vec::new();
-        if seed_items {
-            pending_to_push.extend(seed_items_for_request(pending_src, package));
-        }
-        for deferred_request in deferred_seed_requests {
-            pending_to_push.extend(seed_items_for_request(&deferred_request, package));
-        }
-        pending_to_push
-    };
-    for pending_item in pending_to_push {
-        ctx.push_pending(pending_item);
-    }
-
     Ok(())
-}
-
-#[cfg(test)]
-fn test_manifest_fallback(
-    provider: &dyn SourceProvider,
-    authored_root: &Path,
-    manifest: Option<Manifest>,
-    diag: &mut DiagnosticCollector,
-) -> Result<Option<Manifest>, MarsError> {
-    Ok(provider.read_manifest(authored_root, diag)?.or(manifest))
-}
-
-#[cfg(not(test))]
-fn test_manifest_fallback(
-    _provider: &dyn SourceProvider,
-    _authored_root: &Path,
-    manifest: Option<Manifest>,
-    _diag: &mut DiagnosticCollector,
-) -> Result<Option<Manifest>, MarsError> {
-    Ok(manifest)
 }
 
 fn candidate_version_label(resolved: &crate::source::ResolvedRef) -> String {
@@ -624,18 +478,16 @@ fn describe_engine_failures(failures: &[EngineRequirementFailure]) -> String {
 fn engine_unsatisfiable_error(
     name: &SourceName,
     exclusions: &EngineExclusions,
-    constraints: &HashMap<SourceName, Vec<(String, VersionConstraint)>>,
+    constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
 ) -> Option<ResolutionError> {
     let mut rejected = exclusions
         .iter()
         .filter(|((source, version), _)| {
             source == name
                 && constraints.get(name).is_none_or(|constraints| {
-                    constraints.iter().all(|(_, constraint)| match constraint {
-                        VersionConstraint::Semver(requirement) => requirement.matches(version),
-                        VersionConstraint::Latest => true,
-                        VersionConstraint::RefPin(_) => false,
-                    })
+                    constraints
+                        .iter()
+                        .all(|(_, constraint)| mars_schema::version::satisfies(constraint, version))
                 })
         })
         .map(|((_, version), failures)| (version, failures))
@@ -655,76 +507,6 @@ fn engine_unsatisfiable_error(
     })
 }
 
-fn package_has_unfiltered_materialization_request(
-    ctx: &ResolverContext,
-    package: &SourceName,
-) -> bool {
-    ctx.materialization_filters()
-        .get(package)
-        .is_some_and(|filters| filters.iter().any(is_unfiltered_request))
-}
-
-pub(crate) fn seed_items_for_request(
-    pending_src: &PendingSource,
-    package: &RegisteredPackage,
-) -> Vec<PendingItem> {
-    let mut selected: Vec<&discover::DiscoveredItem> = Vec::new();
-    match &pending_src.filter {
-        FilterMode::All => {
-            selected.extend(package.items());
-        }
-        FilterMode::Include { agents, skills } => {
-            let wanted_agents: HashSet<ItemName> = agents.iter().cloned().collect();
-            let wanted_skills: HashSet<ItemName> = skills.iter().cloned().collect();
-            selected.extend(package.items().filter(|item| match item.id.kind {
-                ItemKind::Agent => wanted_agents.contains(&item.id.name),
-                ItemKind::Skill => wanted_skills.contains(&item.id.name),
-                // Package-level bootstrap docs are passive package content:
-                // if any part of the package is requested, seed them with the
-                // selected agents/skills so they can materialize.
-                ItemKind::BootstrapDoc => true,
-                // New active/config kinds are not yet selectable via Include filter.
-                ItemKind::Hook | ItemKind::McpServer => false,
-            }));
-        }
-        FilterMode::Exclude(excluded) => {
-            selected.extend(package.items().filter(|item| {
-                let source_path = item.source_path.to_string_lossy();
-                !excluded.iter().any(|excluded_item| {
-                    excluded_item == &item.id.name
-                        || crate::target::paths_equivalent(excluded_item.as_ref(), &source_path)
-                })
-            }));
-        }
-        FilterMode::OnlySkills => {
-            selected.extend(
-                package
-                    .items()
-                    .filter(|item| item.id.kind == ItemKind::Skill),
-            );
-        }
-        FilterMode::OnlyAgents => {
-            selected.extend(
-                package
-                    .items()
-                    .filter(|item| item.id.kind == ItemKind::Agent),
-            );
-        }
-    }
-
-    selected
-        .into_iter()
-        .map(|item| PendingItem {
-            package: pending_src.name.clone(),
-            item: item.id.name.clone(),
-            kind: item.id.kind,
-            constraint: pending_src.constraint.clone(),
-            required_by: pending_src.required_by.clone(),
-            is_local: package.is_local,
-        })
-        .collect()
-}
-
 pub(crate) fn collect_manifest_requests(
     pending_src: &PendingSource,
     package_root: &Path,
@@ -738,43 +520,22 @@ pub(crate) fn collect_manifest_requests(
     for (dep_name, dep_spec) in &manifest_data.dependencies {
         let dep_name_typed = SourceName::from(dep_name.clone());
         let dep_subpath = dep_spec.subpath.clone();
-        let dep_filter = dep_spec.filter.to_mode();
-        validate_plugin_selector(
-            dep_name,
-            dep_spec.plugin.as_deref(),
-            dep_subpath.as_ref(),
-            None,
-        )?;
 
-        let (declared_spec, declared_constraint) = match (&dep_spec.url, &dep_spec.path) {
-            (Some(url), None) => (
+        let (declared_spec, declared_constraint) = match &dep_spec.source {
+            Source::Git { url } => (
                 SourceSpec::Git(GitSpec {
-                    url: url.clone(),
+                    url: SourceUrl::from(url.as_str()),
                     version: dep_spec.version.clone(),
                 }),
-                parse_version_constraint(dep_spec.version.as_deref()),
+                parse_constraint(dep_spec.version.as_deref()),
             ),
-            (None, Some(path)) => {
+            Source::Path { path } => {
                 let resolved_path = if path.is_absolute() {
                     path.clone()
                 } else {
                     package_root.join(path)
                 };
-                (SourceSpec::Path(resolved_path), VersionConstraint::Latest)
-            }
-            (Some(_), Some(_)) => {
-                return Err(ConfigError::Invalid {
-                    message: format!("source `{dep_name}` has both `url` and `path` — pick one"),
-                }
-                .into());
-            }
-            (None, None) => {
-                return Err(ConfigError::Invalid {
-                    message: format!(
-                        "source `{dep_name}` has neither `url` nor `path` — one is required"
-                    ),
-                }
-                .into());
+                (SourceSpec::Path(resolved_path), Constraint::Latest)
             }
         };
         let declared_source_id = source_id_for_spec(
@@ -785,7 +546,7 @@ pub(crate) fn collect_manifest_requests(
         );
         let (dep_spec_resolved, dep_constraint) =
             if let Some(path) = options.source_overrides.get(&dep_name_typed) {
-                (SourceSpec::Path(path.clone()), VersionConstraint::Latest)
+                (SourceSpec::Path(path.clone()), Constraint::Latest)
             } else {
                 (declared_spec, declared_constraint)
             };
@@ -802,7 +563,6 @@ pub(crate) fn collect_manifest_requests(
             spec: dep_spec_resolved,
             subpath: dep_subpath,
             constraint: dep_constraint,
-            filter: dep_filter,
             required_by: pending_src.name.to_string(),
         });
     }

@@ -4,4 +4,5 @@
 pub(crate) mod checks;
 pub(crate) mod discover;
 pub mod manifest;
+pub(crate) mod mcp;
 pub(crate) mod translate;

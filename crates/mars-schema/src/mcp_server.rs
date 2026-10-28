@@ -39,7 +39,8 @@ impl EnvRef {
 }
 
 /// How a server is reached.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum McpTransport {
     /// A local process the harness launches and talks to over stdio.
     Stdio {
@@ -60,7 +61,8 @@ pub enum McpTransport {
 }
 
 /// A request header's value.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum HeaderValue {
     Literal(String),
     /// `prefix` followed by the value of the referenced environment variable,
@@ -72,7 +74,7 @@ pub enum HeaderValue {
 }
 
 /// Parsed content of a single `mcp/<name>/mcp.toml`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct McpServerDef {
     /// Overrides the server's directory name as its config key.
     pub name: Option<String>,
@@ -206,4 +208,69 @@ pub fn parse_mcp_toml(text: &str) -> Result<ParsedMcpToml, McpParseError> {
         },
         ignored_fields,
     })
+}
+
+/// The `mcp.toml` text for `def`: what [`parse_mcp_toml`] reads back as `def`. The one renderer,
+/// for the import's staged files and the bytes `normalize` reports.
+pub fn render_mcp_toml(def: &McpServerDef) -> String {
+    use toml_edit::{DocumentMut, InlineTable, Value, value};
+
+    let env_ref = |var: &str, prefix: &str| {
+        let mut table = InlineTable::new();
+        table.insert("from", "env".into());
+        table.insert("var", var.into());
+        if !prefix.is_empty() {
+            table.insert("prefix", prefix.into());
+        }
+        Value::InlineTable(table)
+    };
+    let mut doc = DocumentMut::new();
+    if let Some(name) = &def.name {
+        doc["name"] = value(name.as_str());
+    }
+    doc["visibility"] = value(def.visibility.as_str());
+    if !def.targets.is_empty() {
+        doc["targets"] = value(
+            def.targets
+                .iter()
+                .map(String::as_str)
+                .collect::<toml_edit::Array>(),
+        );
+    }
+    match &def.transport {
+        McpTransport::Stdio { command, args, env } => {
+            doc["command"] = value(command.as_str());
+            if !args.is_empty() {
+                doc["args"] = value(
+                    args.iter()
+                        .map(String::as_str)
+                        .collect::<toml_edit::Array>(),
+                );
+            }
+            if !env.is_empty() {
+                let mut table = InlineTable::new();
+                for (name, reference) in env {
+                    table.insert(name, env_ref(reference.var_name(), ""));
+                }
+                doc["env"] = value(table);
+            }
+        }
+        McpTransport::Http { url, headers } => {
+            doc["url"] = value(url.as_str());
+            if !headers.is_empty() {
+                let mut table = InlineTable::new();
+                for (name, header) in headers {
+                    table.insert(
+                        name,
+                        match header {
+                            HeaderValue::Literal(text) => text.as_str().into(),
+                            HeaderValue::Env { var, prefix } => env_ref(var, prefix),
+                        },
+                    );
+                }
+                doc["headers"] = value(table);
+            }
+        }
+    }
+    doc.to_string()
 }

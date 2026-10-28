@@ -11,69 +11,15 @@
 /// - Produce `MarsTargetMcpEntry` per target for adapter config writing
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use mars_schema::mcp_server::{McpServerDef, parse_mcp_toml};
 
 use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 
 // ---------------------------------------------------------------------------
-// Schema types
+// Discovered items
 // ---------------------------------------------------------------------------
-
-/// A symbolic environment reference.
-///
-/// `from = "env"` is the only supported kind in V0.
-/// The value is never resolved — it flows through as a reference.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "from")]
-pub enum EnvRef {
-    /// Read from the process environment at the harness's runtime.
-    #[serde(rename = "env")]
-    Env {
-        /// Name of the environment variable.
-        var: String,
-    },
-}
-
-impl EnvRef {
-    /// Return the environment variable name for preflight checking.
-    pub fn var_name(&self) -> &str {
-        match self {
-            EnvRef::Env { var } => var.as_str(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct RawMcpServerDef {
-    #[serde(default)]
-    name: Option<String>,
-    command: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    env: indexmap::IndexMap<String, EnvRef>,
-    #[serde(default = "crate::compiler::visibility::default_visibility")]
-    visibility: String,
-    #[serde(default)]
-    targets: Vec<String>,
-}
-
-/// Parsed content of a single `mcp/<name>/mcp.toml`.
-#[derive(Debug, Clone)]
-pub struct McpServerDef {
-    /// Command to launch the MCP server.
-    pub command: String,
-    /// Arguments to pass to the command.
-    pub args: Vec<String>,
-    /// Symbolic environment references.
-    pub env: indexmap::IndexMap<String, EnvRef>,
-    /// Whether this server crosses package boundaries.
-    pub visibility: Visibility,
-    /// Optional target filter — if absent, applies to all targets.
-    pub targets: Vec<String>,
-}
 
 /// A discovered MCP server item with provenance.
 #[derive(Debug, Clone)]
@@ -82,6 +28,8 @@ pub struct ParsedMcpItem {
     pub name: String,
     /// Parsed definition.
     pub def: McpServerDef,
+    /// Whether this server crosses package boundaries.
+    pub visibility: Visibility,
     /// Source package name this item came from.
     pub source_name: String,
     /// Authored definition used for content diagnostics.
@@ -138,25 +86,19 @@ pub(crate) fn discover_mcp_items(
             .to_string_lossy();
 
         let raw = std::fs::read_to_string(&toml_path).map_err(MarsError::from)?;
-        let raw_def: RawMcpServerDef = toml::from_str(&raw).map_err(|e| {
+        let def = parse_mcp_toml(&raw).map_err(|e| {
             MarsError::Config(ConfigError::Invalid {
                 message: format!("failed to parse {}: {e}", toml_path.display()),
             })
         })?;
-        let resolved_name = raw_def.name.as_deref().unwrap_or(&server_name).to_string();
-        let def = McpServerDef {
-            command: raw_def.command,
-            args: raw_def.args,
-            env: raw_def.env,
-            visibility: Visibility::parse(
-                &raw_def.visibility,
-                "MCP server",
-                &resolved_name,
-                source_name,
-                diag,
-            ),
-            targets: raw_def.targets,
-        };
+        let resolved_name = def.name.as_deref().unwrap_or(&server_name).to_string();
+        let visibility = Visibility::parse(
+            &def.visibility,
+            "MCP server",
+            &resolved_name,
+            source_name,
+            diag,
+        );
         // Only a server that installs its own directory needs a name that is a
         // safe path component; a token-free server is only a config entry.
         if def_uses_dir_token(&def)
@@ -176,6 +118,7 @@ pub(crate) fn discover_mcp_items(
         items.push(ParsedMcpItem {
             name: resolved_name,
             def,
+            visibility,
             source_name: source_name.to_string(),
             source_path: toml_path,
             depth,

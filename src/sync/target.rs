@@ -359,7 +359,7 @@ pub fn build_with_collisions_and_diag(
                 let is_direct = dependency_depths.get(source_name) == Some(&1);
                 for item in items {
                     if is_direct
-                        || item.def.visibility == crate::compiler::visibility::Visibility::Exported
+                        || item.visibility == crate::compiler::visibility::Visibility::Exported
                     {
                         target.select_mcp(item, &mcp_target_roots);
                     }

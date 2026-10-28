@@ -473,12 +473,8 @@ impl Problems<'_, '_> {
                 "has an `env` that is not a map".into(),
             ),
         }
-        Some(McpTransport::Stdio {
-            command: command?,
-            args,
-            env,
-        })
-        .filter(|_| !self.failed)
+        let command = command?;
+        (!self.failed).then_some(McpTransport::Stdio { command, args, env })
     }
 
     fn http(&mut self, config: &Map<String, Value>) -> Option<McpTransport> {
@@ -541,7 +537,8 @@ impl Problems<'_, '_> {
                 "has `headers` that is not a map".into(),
             ),
         }
-        Some(McpTransport::Http { url: url?, headers }).filter(|_| !self.failed)
+        let url = url?;
+        (!self.failed).then_some(McpTransport::Http { url, headers })
     }
 }
 

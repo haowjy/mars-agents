@@ -514,7 +514,7 @@ pub(crate) fn payload_paths<'a>(
     payload.into_iter().collect()
 }
 
-pub(crate) fn join(parent: &str, child: &str) -> String {
+pub fn join(parent: &str, child: &str) -> String {
     match (parent.is_empty(), child.is_empty()) {
         (true, _) => child.to_owned(),
         (_, true) => parent.to_owned(),

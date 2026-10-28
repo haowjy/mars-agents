@@ -659,7 +659,14 @@ pub(crate) fn build_target(
         &local_source,
         diag,
         |target_state, diag| {
-            local_items::merge_local_items(ctx, &resolved, local_items, request, target_state, diag)
+            local_items::merge_local_items(
+                ctx,
+                &resolved,
+                &local_items,
+                request,
+                target_state,
+                diag,
+            )
         },
     )?;
 
@@ -701,7 +708,7 @@ pub(crate) fn build_target(
             .map(|package| package.uses_providers.as_slice()),
     );
 
-    validate::report_skill_links(&target_state, &resolved.graph, None, diag);
+    validate::report_skill_links(&target_state, &resolved.graph, &local_items, diag);
 
     validate::warn_config_dangles_after_rename(
         &renames,

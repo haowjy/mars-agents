@@ -357,14 +357,16 @@ pub(crate) fn prepare_authored(
 }
 
 /// `prepare_authored` as `mars migrate` runs it: preparation also rewrites what a schema 1 file
-/// can still need, because the migration writes the result back to the authored file.
+/// can still need, because the migration writes the result back to the authored file. The
+/// package's own link verdict is added, since the migration is run in the package.
 pub(crate) fn prepare_authored_for_migration(
     root: &Path,
     context: PrepareContext,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?;
-    let prepared = mars_schema::prepare::prepare_for_migration(&source, context, None);
+    let mut prepared = mars_schema::prepare::prepare_for_migration(&source, context, None);
+    mars_schema::links::package(&mut prepared);
     reported(root, source, prepared, diag)
 }
 
@@ -372,15 +374,12 @@ pub(crate) fn prepare_authored_for_migration(
 fn reported(
     root: &Path,
     source: DiskTreeSource,
-    mut prepared: Prepared,
+    prepared: Prepared,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     if let Some(error) = source.take_error() {
         return Err(error);
     }
-    // The verdict on the package's own layout. A dependency gets none here: `sync` judges its
-    // links against what the consumer installs.
-    mars_schema::links::package(&mut prepared);
     // A package carries its manifest; authored content has none to name it by.
     let package_name = prepared
         .manifest
@@ -401,7 +400,11 @@ pub(crate) fn prepare_project(
     root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> Result<(Prepared, Option<Vec<u8>>), MarsError> {
-    let prepared = prepare_authored(root, PrepareContext::Project, None, diag)?;
+    let source = DiskTreeSource::new(root)?;
+    let mut prepared = mars_schema::prepare::prepare(&source, PrepareContext::Project, None);
+    // `mars check` judges the package's own layout; a sync judges installed trees.
+    mars_schema::links::package(&mut prepared);
+    let prepared = reported(root, source, prepared, diag)?;
     let manifest = match &prepared.manifest {
         Some(manifest) => Some(manifest.normalized_bytes.clone()),
         None => match fs::read(root.join("mars.toml")) {
@@ -495,7 +498,7 @@ pub(crate) fn report_diagnostics(
 }
 
 /// A project's own source file, by its real path.
-fn source_label(root: &Path) -> impl Fn(&str) -> String + '_ {
+pub(crate) fn source_label(root: &Path) -> impl Fn(&str) -> String + '_ {
     move |relative| format!("source `{}`", root.join(relative).display())
 }
 

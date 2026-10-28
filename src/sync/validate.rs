@@ -7,13 +7,17 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
+use crate::local_source::{LocalDiscoveredItem, LocalItemContent};
 use crate::provided::ProvidedNames;
 use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
-use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
+use crate::sync::target::{
+    CollisionRename, ExplicitRename, RenamableKind, TargetState, default_dest_path,
+};
 use crate::types::{DestPath, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
-use mars_schema::item::ItemKind;
+use mars_schema::item::{DefinitionKind, ItemKind};
+use mars_schema::prepare::PreparedDefinition;
 use mars_schema::provider::deferred_provider;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
@@ -176,16 +180,17 @@ pub(crate) fn warn_config_dangles_after_rename(
     }
 }
 
-/// Report the body links of every dependency skill that stop resolving once the skills are
+/// Report the body links of every installed skill that stop resolving once the skills are
 /// installed, judged against the whole installed tree (`target.items`, every source) after the
-/// consumer's filters, explicit renames and collision renames. A skill that is not installed has
-/// no links checked, though it can still be a link target. The rule and its coverage are
-/// `mars_schema::links::check`; the project's own `.mars-src` skills get the package-level
-/// verdict from `package_prepare`, and so does a plugin build's root, which `judged` names.
+/// consumer's filters, explicit renames and collision renames. That is the graph's packages
+/// (a plugin build's root among them) and `local_items`, the project's own `.mars-src` and
+/// package skills, which sync merged into `target`. A skill that is not installed has no links
+/// checked, though it can still be a link target. The rule and its coverage are
+/// `mars_schema::links::check`.
 pub(crate) fn report_skill_links(
     target: &TargetState,
     graph: &ResolvedGraph,
-    judged: Option<&SourceName>,
+    local_items: &[LocalDiscoveredItem],
     diag: &mut DiagnosticCollector,
 ) {
     let installed: Vec<&str> = target
@@ -206,16 +211,13 @@ pub(crate) fn report_skill_links(
         .collect();
 
     for (source_name, node) in &graph.nodes {
-        let prepared = &node.prepared;
-        if judged == Some(source_name) {
-            continue;
-        }
-        let dests = prepared
+        let skills = node
+            .prepared
             .definitions
             .iter()
             .map(|definition| {
                 let item = crate::discover::definition_item(definition, &definition.output_path);
-                skill_dests
+                let dest = skill_dests
                     .get(&(
                         source_name,
                         node.rooted_ref
@@ -223,22 +225,46 @@ pub(crate) fn report_skill_links(
                             .join(item.source_path)
                             .as_path(),
                     ))
-                    .map(|dest| dest.as_str())
+                    .map(|dest| dest.as_str());
+                (definition, dest)
             })
             .collect::<Vec<_>>();
-        let package = crate::package_prepare::dependency_name(prepared, source_name);
-        for (definition, found) in prepared.definitions.iter().zip(mars_schema::links::check(
-            &prepared.definitions,
-            &dests,
-            &installed,
-        )) {
-            for diagnostic in &found {
-                diag.schema(
-                    diagnostic,
-                    &format!("{package}: {}", definition.source_path),
-                    false,
-                );
-            }
+        let package = crate::package_prepare::dependency_name(&node.prepared, source_name);
+        for (definition, diagnostic) in mars_schema::links::check(&skills, &installed) {
+            diag.schema(
+                &diagnostic,
+                &format!("{package}: {}", definition.source_path),
+                false,
+            );
+        }
+    }
+
+    // Each authored root is its own package: a link's target is named by that root's layout.
+    let mut roots: Vec<(&Path, Vec<(&PreparedDefinition, DestPath)>)> = Vec::new();
+    for item in local_items {
+        let LocalItemContent::Prepared { definition, .. } = &item.content else {
+            continue;
+        };
+        if definition.kind != DefinitionKind::Skill {
+            continue;
+        }
+        let dest = default_dest_path(RenamableKind::Skill, &definition.slug);
+        match roots.iter_mut().find(|(root, _)| *root == item.root) {
+            Some((_, skills)) => skills.push((definition, dest)),
+            None => roots.push((&item.root, vec![(definition, dest)])),
+        }
+    }
+    for (root, skills) in &roots {
+        let skills = skills
+            .iter()
+            .map(|(definition, dest)| (*definition, Some(dest.as_str())))
+            .collect::<Vec<_>>();
+        for (definition, diagnostic) in mars_schema::links::check(&skills, &installed) {
+            diag.schema(
+                &diagnostic,
+                &crate::package_prepare::source_label(root)(&definition.source_path),
+                false,
+            );
         }
     }
 }

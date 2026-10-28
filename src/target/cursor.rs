@@ -48,8 +48,7 @@ impl TargetAdapter for CursorAdapter {
 }
 
 /// Cursor's `hooks.json` is a flat entry array and requires this version wrapper.
-pub(crate) const HOOKS_TOP_LEVEL: &[(&str, i64)] = &[("version", 1)]
-;
+pub(crate) const HOOKS_TOP_LEVEL: &[(&str, i64)] = &[("version", 1)];
 
 // ---------------------------------------------------------------------------
 // Cursor MCP — `mcp.json` entry shape

@@ -27,6 +27,9 @@ pub(crate) struct ConfigEntryCompilation {
     pub removed_outputs: Vec<(String, String)>,
 }
 
+/// The files the old lock says hooks own on file-placement targets: every output of a hook
+/// item on such a target except its directory copy, which target sync owns. A hook may own
+/// several files on one target; none is derived from its name.
 pub(crate) fn file_hook_output_preserve_paths(
     lock: &crate::lock::LockFile,
 ) -> HashMap<String, std::collections::HashSet<String>> {
@@ -37,26 +40,32 @@ pub(crate) fn file_hook_output_preserve_paths(
         .values()
         .filter(|item| item.kind == ItemKind::Hook)
     {
+        let dir_copies: Vec<PackageDir> = item
+            .outputs
+            .iter()
+            .filter(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
+            .filter_map(|output| PackageDir::parse_canonical(ItemKind::Hook, &output.dest_path))
+            .collect();
+        // A hook with no canonical output is a retry tombstone; target sync retries it.
+        if dir_copies.is_empty() {
+            continue;
+        }
         for output in item
             .outputs
             .iter()
             .filter(|output| output.target_root != crate::lock::CANONICAL_TARGET_ROOT)
         {
-            let Some(adapter) = registry.get(&output.target_root) else {
-                continue;
-            };
-            // The canonical record of a hook installed as one file names its
-            // package directory; the file that directory projects must stay.
-            let is_file_fragment = item.outputs.iter().any(|canonical| {
-                canonical.target_root == crate::lock::CANONICAL_TARGET_ROOT
-                    && PackageDir::parse_canonical(ItemKind::Hook, &canonical.dest_path)
-                        .filter(|dir| dir.belongs_to(&output.target_root))
-                        .and_then(|dir| fragment_file_path(adapter, dir.name()))
-                        .is_some_and(|path| {
-                            crate::target::dest_paths_equivalent(&path, output.dest_path.as_str())
-                        })
+            let places_files = registry.get(&output.target_root).is_some_and(|adapter| {
+                matches!(adapter.hook_placement(), Some(HookPlacement::File { .. }))
             });
-            if is_file_fragment {
+            let is_dir_copy = dir_copies.iter().any(|dir| {
+                dir.belongs_to(&output.target_root)
+                    && crate::target::dest_paths_equivalent(
+                        &dir.native(),
+                        output.dest_path.as_str(),
+                    )
+            });
+            if places_files && !is_dir_copy {
                 preserve
                     .entry(output.target_root.clone())
                     .or_default()
@@ -125,7 +134,8 @@ pub(crate) fn preflight_config_entries(
                     ));
                 }
             }
-            if touches_hooks && let Some(HookPlacement::Merge { file, .. }) = adapter.hook_placement()
+            if touches_hooks
+                && let Some(HookPlacement::Merge { file, .. }) = adapter.hook_placement()
             {
                 let path = target_dir.join(file);
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {

@@ -208,7 +208,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), original);
-        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -250,7 +253,14 @@ mod tests {
     fn schema_and_adapter_placements_agree_for_every_target() {
         use mars_schema::hooks::{Placement, placement};
         let registry = TargetRegistry::new();
-        for root in [".agents", ".claude", ".codex", ".opencode", ".pi", ".cursor"] {
+        for root in [
+            ".agents",
+            ".claude",
+            ".codex",
+            ".opencode",
+            ".pi",
+            ".cursor",
+        ] {
             let accepted = placement(root);
             let located = registry.get(root).unwrap().hook_placement();
             match (accepted, located) {

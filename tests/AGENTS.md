@@ -14,6 +14,8 @@ bucket is not a testing tier.
 - For local, non-network/non-Git CLI fixtures, use `common::offline_mars(root)`:
   temporary HOME/cache, empty PATH and offline behavior. Its environment lives
   under the fixture's excluded `.mars/test-env` directory.
+- CLI fixtures that need `git` (`file://` sources) use `isolated::mars()` (`tests/isolated/`):
+  per-process HOME, config and cache under `CARGO_TARGET_TMPDIR`, PATH kept.
 - Catalog/probe tests use local servers and fake executables with
   `configure_assert_cmd` / `mars_cmd`; explicitly control PATH. Never use a live
   model-backed agent as a test fixture. Bare `mars()` inherits the environment;

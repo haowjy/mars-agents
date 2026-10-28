@@ -37,17 +37,26 @@ pub(crate) fn count_compatible_upgrades(
                 .collect();
             let name = &node.source_name;
             match provider.list_versions(url) {
-                Ok(available) => upgrade_candidate(
+                Ok(available) => match upgrade_candidate(
                     name,
                     url,
                     subpath.as_ref(),
                     &available,
+                    Some(resolved),
                     &constraints,
                     provider,
                     options,
                     diag,
-                )
-                .is_some_and(|candidate| candidate.version > *resolved),
+                ) {
+                    Ok(candidate) => candidate.is_some(),
+                    Err(err) => {
+                        diag.warn(
+                            "upgrade-hint-unavailable",
+                            format!("could not check newer versions of `{name}` ({url}): {err}"),
+                        );
+                        false
+                    }
+                },
                 Err(err) => {
                     diag.warn(
                         "upgrade-hint-unavailable",

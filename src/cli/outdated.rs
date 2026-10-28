@@ -96,17 +96,27 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
         // `requires-*` this Mars meets.
         let parsed_constraint =
             mars_schema::version::parse_constraint(dep_entry.version.as_deref());
-        let updateable = crate::resolve::upgrade_candidate(
+        let locked_floor = mars_schema::version::parse_tag(&locked_version);
+        let updateable = match crate::resolve::upgrade_candidate(
             name,
             url,
             dep_entry.subpath.as_ref(),
             &versions,
+            locked_floor.as_ref(),
             &[("mars.toml", &parsed_constraint)],
             &provider,
             &crate::resolve::ResolveOptions::default(),
             &mut crate::diagnostic::DiagnosticCollector::new(),
-        )
-        .map_or_else(|| locked_version.clone(), |candidate| candidate.tag.clone());
+        ) {
+            Ok(Some(candidate)) => candidate.tag.clone(),
+            Ok(None) => locked_version.clone(),
+            Err(error) => {
+                output::print_warn(&format!(
+                    "could not check newer versions of `{name}`: {error}"
+                ));
+                "?".to_string()
+            }
+        };
 
         entries.push(OutdatedEntry {
             source: name.to_string(),

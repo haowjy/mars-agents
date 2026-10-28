@@ -428,18 +428,30 @@ fn check_skill_refs(
         .as_ref()
         .is_some_and(|config| config.package.is_some());
     for missing in &graph.selection.missing_skills {
-        let agent = &missing.agent;
         let skill = &missing.skill;
+        // An Agent of a dependency is that package's to fix, and the author's to work around.
+        let agent = match &missing.package {
+            Some(package) => format!("agent `{}` of dependency `{package}`", missing.agent),
+            None => format!("agent `{}`", missing.agent),
+        };
+        let remedy = match &missing.package {
+            Some(package) => {
+                format!("use a version of `{package}` that ships it, or add a dependency that does")
+            }
+            None => "add the skill's source package as a dependency, or remove the skill reference"
+                .to_string(),
+        };
         match &missing.hint {
             Some(hint) if has_package => errors.push(format!(
-                "agent `{agent}` references skill `{skill}`, which is not in this package or its dependencies; {hint}"
+                "{agent} references skill `{skill}`, which is not in this package or its dependencies; {hint}"
             )),
             _ if has_dependencies => errors.push(format!(
-                "agent `{agent}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
+                "{agent} references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: {remedy}",
                 format_searched_packages(&missing.searched, &graph)
             )),
             _ => warnings.push(format!(
-                "external dependency: `{skill}` (referenced by: {agent})"
+                "external dependency: `{skill}` (referenced by: {})",
+                missing.agent
             )),
         }
     }

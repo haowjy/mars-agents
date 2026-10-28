@@ -100,6 +100,7 @@ pub(crate) fn fetch_git_clone(
     sha.map(|sha| not_an_option("commit", sha)).transpose()?;
     let cache_name = git_cache_component(url)?;
     let cache_path = cache.git_dir().join(cache_name);
+    std::fs::create_dir_all(cache.git_dir())?;
 
     // Acquire per-entry lock to prevent cross-repo races on the same cache entry.
     // Held through fetch + checkout, released when _lock drops at function return.
@@ -116,6 +117,9 @@ pub(crate) fn fetch_git_clone(
             args.push("1");
         }
         if let Some(tag_name) = tag {
+            // `--branch <tag>` implies `--single-branch`, which pins the refspec to that one tag:
+            // once upstream deletes it, every later `fetch --prune-tags` fails.
+            args.push("--no-single-branch");
             args.push("--branch");
             args.push(tag_name);
         }

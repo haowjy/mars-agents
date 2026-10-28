@@ -461,7 +461,7 @@ struct LockFileWire {
     dependency_model_aliases: IndexMap<String, ModelAlias>,
 }
 
-/// The parts of a v2 lock (mars 0.23 and earlier) that still mean something: the
+/// The parts of a v2 lock (mars 0.11 and earlier) that still mean something: the
 /// resolved dependencies and their aliases. Everything else is dropped on load.
 #[derive(Deserialize)]
 struct LockFileV2Wire {
@@ -473,6 +473,7 @@ struct LockFileV2Wire {
 
 /// A config-entry record as an older mars may have written it, `emitted_json` included or not.
 #[derive(Deserialize)]
+#[serde(rename = "config entry record")]
 struct ConfigEntryRecordWire {
     #[serde(default)]
     emitted_json: Option<String>,
@@ -485,8 +486,8 @@ struct ConfigEntryRecordWire {
 /// Load the lock file from the given root directory.
 ///
 /// Returns an empty current-version lock if the file is absent.
-/// Version 2 is promoted in memory for one release; other older schemas fail
-/// with actionable re-sync guidance.
+/// A version 2 lock keeps only its dependencies and aliases; other older schemas
+/// fail with actionable re-sync guidance.
 pub fn load(root: &Path) -> Result<LockFile, MarsError> {
     let (lock, _) = load_with_diagnostics(root)?;
     Ok(lock)
@@ -533,9 +534,8 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
 
 /// Load the lock file and return any diagnostics produced while reading it.
 ///
-/// Version 2 locks are promoted in memory so one-release cleanup bridges can
-/// inspect their ownership records. Other version and schema failures are
-/// returned as actionable lock errors.
+/// Version 2 locks are reduced to their dependencies and aliases, with a warning.
+/// Other version and schema failures are returned as actionable lock errors.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let path = root.join(LOCK_FILE);
     let content = match std::fs::read_to_string(&path) {
@@ -656,11 +656,12 @@ fn v2_lock_dropped_warning() -> Diagnostic {
     lock_warning(
         "lock-v2-dropped",
         format!(
-            "mars.lock is version 2, written by mars 0.23 or earlier. This mars kept its dependency versions \
+            "mars.lock is version 2, written by mars 0.11 or earlier. This mars kept its dependency versions \
              but forgot which files and config entries it installed, and removed nothing. Installed files now \
-             count as local content: sync keeps them with a warning, and `{}` adopts them. Files of items no \
-             longer wanted, and MCP or hook entries in target config files, stay behind; delete them by hand. \
-             Syncing once with mars 0.24 first would have migrated the lock",
+             count as local content: sync keeps them with a warning, and `{}` adopts them, \
+             overwriting any local edits at those paths. Files of items no longer wanted, and MCP or hook \
+             entries in target config files, stay behind; delete them by hand. Syncing once with any mars \
+             from 0.12 to 0.24 first would have migrated the lock",
             crate::types::managed_cmd("mars sync --force")
         ),
     )
@@ -1504,6 +1505,7 @@ mod tests {
         )));
     }
 
+    #[cfg(unix)]
     #[test]
     fn directory_output_with_nested_dangling_symlink_has_no_checksum() {
         use std::os::unix::fs::symlink;

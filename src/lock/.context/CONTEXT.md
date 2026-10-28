@@ -46,7 +46,7 @@ Pending deletion is deliberately part of the same type because it changes the
 meaning of an existing path-ownership record. The enum makes a checksum
 unavailable in that state, so disk-content consumers must handle the lifecycle.
 
-A v2 lock (Mars 0.23 and earlier) has no such distinction: its checksum may be installed
+A v2 lock (Mars 0.11 and earlier) has no such distinction: its checksum may be installed
 content or a retry tombstone, and nothing on disk settles which. Mars 0.25 does not
 promote it. `load_with_diagnostics` keeps its dependencies and aliases, drops the items and
 config entries, and warns once, so the sync never fails; the files it described count as

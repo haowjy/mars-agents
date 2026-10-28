@@ -83,12 +83,6 @@ impl TargetAdapter for CursorAdapter {
                 path: ".cursor/mcp.json",
                 format: SectionFormat::JsonSection("mcpServers"),
             },
-            // v0.23 wrote its records here without `emitted_json`.
-            // Remove in 0.25.
-            legacy: Some(McpLocation {
-                path: ".cursor/mcp.json",
-                format: SectionFormat::JsonSection("mcpServers"),
-            }),
             render,
         })
     }
@@ -166,7 +160,7 @@ mod tests {
         let records = std::collections::BTreeMap::from([(
             "hook:sessionStart:audit".to_string(),
             crate::lock::ConfigEntryRecord {
-                emitted_json: Some(serde_json::json!([{"command":"original"}]).to_string()),
+                emitted_json: serde_json::json!([{"command":"original"}]).to_string(),
             },
         )]);
 
@@ -202,7 +196,7 @@ mod tests {
         let records = std::collections::BTreeMap::from([(
             "hook:sessionStart:audit".to_string(),
             crate::lock::ConfigEntryRecord {
-                emitted_json: Some(serde_json::json!([owned]).to_string()),
+                emitted_json: serde_json::json!([owned]).to_string(),
             },
         )]);
 

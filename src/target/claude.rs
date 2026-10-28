@@ -95,11 +95,6 @@ impl TargetAdapter for ClaudeAdapter {
                 path: ".mcp.json",
                 format: SectionFormat::JsonSection("mcpServers"),
             },
-            // Where mars wrote before. Remove in 0.25.
-            legacy: Some(McpLocation {
-                path: ".claude/.mcp.json",
-                format: SectionFormat::JsonSection("mcpServers"),
-            }),
             render: super::mcp_file::claude_render,
         })
     }
@@ -274,9 +269,7 @@ mod tests {
         let records = std::collections::BTreeMap::from([(
             "hook:SessionStart:audit".to_string(),
             crate::lock::ConfigEntryRecord {
-                emitted_json: Some(
-                    serde_json::json!([{"hooks":[{"command":"original"}]}]).to_string(),
-                ),
+                emitted_json: serde_json::json!([{"hooks":[{"command":"original"}]}]).to_string(),
             },
         )]);
 

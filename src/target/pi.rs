@@ -46,7 +46,6 @@ impl TargetAdapter for PiAdapter {
                 path: ".pi/mcp.json",
                 format: SectionFormat::JsonSection("mcpServers"),
             },
-            legacy: None,
             render: super::mcp_file::claude_render,
         })
     }

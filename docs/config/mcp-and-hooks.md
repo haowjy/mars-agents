@@ -68,10 +68,17 @@ An entry is Mars's only while its content still equals what Mars last wrote
 
 ### Upgrading
 
-Earlier releases wrote `.claude/.mcp.json` and `.codex/codex_mcp.json`, which
-neither harness read. The next sync removes Mars's entries from those files,
-leaves anything else in them, and deletes a file only if it ends up empty.
-Mars reads these locations until 0.25.
+**From Mars 0.23 or earlier.** Those releases wrote Claude servers to
+`.claude/.mcp.json` and Codex servers to `.codex/codex_mcp.json`, which neither harness
+read, and recorded MCP servers and old hooks in `mars.lock` by name, without
+`emitted_json`. Mars 0.25 no longer reads them or those files. It never fails the
+sync over them: it forgets the records, removes nothing, and warns
+(`lock-config-entries-dropped`) once, naming each entry. Delete leftovers by hand:
+the entries in those two files, `.codex/codex_hooks.json`, and the `hooks` object in
+`.opencode/opencode.json`. A version 2 `mars.lock` is read for its dependencies only
+(`lock-v2-dropped`): installed files count as local content, so the first sync
+warns about each and `mars sync --force` adopts them. Syncing once with Mars 0.24
+first migrates both cleanly.
 
 - The first sync overwrites any edit you made to a Cursor entry that an earlier
   release wrote (that release rewrote edited entries on every sync); from then
@@ -527,11 +534,9 @@ root, placed `mars-<name>.ts` path, and installed checksum. Removal deletes
 only that exact lock-owned output and leaves every other plugin or extension
 untouched.
 
-Until 0.25, Codex removal also recognizes v0.11.0 command-path entries containing
-`/hooks/<name>/`, including staging-path commands, from lock records that carry
-no emitted entry (hook records have carried one since v0.12.0). This migration
-sweep runs before fragment writes, with the OpenCode and legacy-Codex residue
-sweeps. Claude no longer has one.
+Removal matches recorded entries only. Command-path sweeps for hook records that
+carry no emitted entry (before v0.12.0) are gone; see
+[Upgrading](#upgrading) for what Mars does with such records.
 
 ## Collision Resolution
 

@@ -144,12 +144,6 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         &[]
     }
 
-    /// Legacy hook files touched only when old lock records lack structural
-    /// emission data. Remove in 0.25.
-    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
-        &[]
-    }
-
     /// Name what is wrong with an opaque file-mode hook fragment, if anything.
     ///
     /// Most targets treat file fragments as opaque text. Targets with a native

@@ -32,10 +32,6 @@ pub struct McpLocation {
 #[derive(Debug, Clone, Copy)]
 pub struct McpFile {
     pub at: McpLocation,
-    /// Where an older mars wrote entries, named by lock records that carry no
-    /// `emitted_json`. `None` means no such record can name a file: it is dropped.
-    /// Remove in 0.25.
-    pub legacy: Option<McpLocation>,
     pub render: fn(&McpServerEntry) -> McpRender,
 }
 
@@ -60,7 +56,7 @@ impl Rendered {
     /// The lock record: the canonical JSON of what is written.
     pub(crate) fn record(&self) -> ConfigEntryRecord {
         ConfigEntryRecord {
-            emitted_json: Some(self.value.to_string()),
+            emitted_json: self.value.to_string(),
         }
     }
 }
@@ -90,10 +86,6 @@ pub(crate) fn render_all(
 pub(crate) enum Ownership {
     /// No record: the entry is the user's.
     Unowned,
-    /// A record from before content ownership (no `emitted_json`): mars wrote
-    /// something under this name, in the file the spec's `legacy` names, but
-    /// cannot vouch for what is there now. Remove in 0.25.
-    Legacy,
     /// It equals what mars last wrote.
     Owned,
     /// Mars wrote it, and it has changed since.
@@ -104,12 +96,10 @@ pub(crate) fn ownership(record: Option<&ConfigEntryRecord>, current: &Value) -> 
     let Some(record) = record else {
         return Ownership::Unowned;
     };
-    match record.emitted_json.as_deref() {
-        None => Ownership::Legacy,
-        Some(json) if serde_json::from_str::<Value>(json).is_ok_and(|v| v == *current) => {
-            Ownership::Owned
-        }
-        Some(_) => Ownership::Edited,
+    if serde_json::from_str::<Value>(&record.emitted_json).is_ok_and(|v| v == *current) {
+        Ownership::Owned
+    } else {
+        Ownership::Edited
     }
 }
 
@@ -119,9 +109,9 @@ pub(crate) fn validate(location: &McpLocation, path: &Path) -> Result<(), MarsEr
     Doc::load(path, location.format).map(|_| ())
 }
 
-/// A file being edited: loaded once, saved at most once.
+/// The file being edited: loaded once, saved at most once. A file that does not
+/// exist loads as an empty document.
 struct Open {
-    at: McpLocation,
     path: PathBuf,
     doc: Doc,
     /// The file was there to load.
@@ -130,6 +120,17 @@ struct Open {
 }
 
 impl Open {
+    fn load(project_root: &Path, at: McpLocation) -> Result<Self, MarsError> {
+        let path = project_root.join(at.path);
+        let loaded = Doc::load(&path, at.format)?;
+        Ok(Self {
+            path,
+            existed: loaded.is_some(),
+            doc: loaded.unwrap_or_else(|| Doc::new(at.format)),
+            changed: false,
+        })
+    }
+
     fn remove(&mut self, name: &str) {
         self.changed |= self.doc.remove(name);
     }
@@ -137,34 +138,6 @@ impl Open {
     fn insert(&mut self, name: &str, value: Value) {
         self.doc.insert(name, value);
         self.changed = true;
-    }
-}
-
-/// The files one reconcile touches, each loaded once. A file that does not exist
-/// loads as an empty document.
-struct Files<'a> {
-    project_root: &'a Path,
-    open: Vec<Open>,
-}
-
-impl Files<'_> {
-    fn doc(&mut self, at: McpLocation) -> Result<&mut Open, MarsError> {
-        let index = match self.open.iter().position(|open| open.at == at) {
-            Some(index) => index,
-            None => {
-                let path = self.project_root.join(at.path);
-                let loaded = Doc::load(&path, at.format)?;
-                self.open.push(Open {
-                    at,
-                    path,
-                    existed: loaded.is_some(),
-                    doc: loaded.unwrap_or_else(|| Doc::new(at.format)),
-                    changed: false,
-                });
-                self.open.len() - 1
-            }
-        };
-        Ok(&mut self.open[index])
     }
 }
 
@@ -182,9 +155,8 @@ pub(crate) struct Reconciled {
 /// This is the one place an MCP entry is replaced or removed. An entry is
 /// mars's to touch only if the lock owns it and it still equals what mars wrote
 /// ([`Ownership::Owned`]). An edited entry stays, with a warning; a same-named
-/// entry the lock does not own stays too, until `--force` adopts it. A record
-/// from before content ownership ([`Ownership::Legacy`]) removes by name from
-/// the spec's `legacy` file, and deletes that file once it holds nothing.
+/// entry the lock does not own stays too, until `--force` adopts it. The file is
+/// deleted when this reconcile leaves it holding nothing but an empty section.
 ///
 /// On failure nothing is retired: the result is `previous`'s MCP records, so
 /// the next sync retries.
@@ -228,61 +200,30 @@ fn try_reconcile(
     force: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<Reconciled, MarsError> {
-    let mut files = Files {
-        project_root,
-        open: Vec::new(),
-    };
+    let mut open = Open::load(project_root, file.at)?;
     let wanted: BTreeSet<&str> = desired.iter().map(|server| server.name.as_str()).collect();
     let mut kept = BTreeSet::new();
 
-    // Records first: what the lock owns and mars no longer wants goes; a legacy
-    // record goes by name even where mars still wants the server, since the new
-    // write lands in another file.
+    // Records first: what the lock owns and mars no longer wants goes.
     for (&name, &record) in prior {
-        let stale = !wanted.contains(name);
-        let Some(at) = (if record.emitted_json.is_some() {
-            Some(file.at)
-        } else {
-            file.legacy
-        }) else {
+        if wanted.contains(name) {
             continue;
-        };
-        let open = files.doc(at)?;
+        }
         let Some(current) = open.doc.get(name) else {
             continue;
         };
         match ownership(Some(record), &current) {
-            Ownership::Legacy => {
-                // Remove in 0.25 with the legacy record. The record cannot say
-                // whether the entry was edited, so a difference from the new
-                // write is reported rather than silently replaced.
-                if let Some(server) = desired.iter().find(|server| server.name == name)
-                    && server.value != current
-                {
-                    diag.warn(
-                        "mcp-legacy-replaced",
-                        format!(
-                            "target `{target}` MCP server `{name}` in `{}` differs from what mars now writes; an older mars recorded it without its content, so the previous value (possibly hand-edited) is replaced",
-                            at.path
-                        ),
-                    );
-                }
-                open.remove(name);
-            }
-            Ownership::Owned if stale => open.remove(name),
-            Ownership::Edited if stale => {
+            Ownership::Owned => open.remove(name),
+            _ => {
                 diag.warn(
                     "mcp-divergent",
                     format!(
                         "target `{target}` MCP server `{name}` in `{}` was edited after mars wrote it (left in place; delete it by hand if unwanted)",
-                        at.path
+                        file.at.path
                     ),
                 );
                 kept.insert(name);
             }
-            // Still wanted: the write below replaces an owned entry and decides
-            // an edited one.
-            _ => {}
         }
     }
 
@@ -290,7 +231,6 @@ fn try_reconcile(
     for server in desired {
         let name = server.name.as_str();
         let recorded = prior.get(name).copied();
-        let open = files.doc(file.at)?;
         let existing = open.doc.get(name);
         let write = match &existing {
             Some(existing) if *existing == server.value => true,
@@ -308,7 +248,7 @@ fn try_reconcile(
                     );
                     false
                 }
-                Ownership::Unowned | Ownership::Legacy if force => {
+                Ownership::Unowned if force => {
                     diag.warn(
                         "mcp-unmanaged-adopted",
                         format!(
@@ -318,7 +258,7 @@ fn try_reconcile(
                     );
                     true
                 }
-                Ownership::Unowned | Ownership::Legacy => {
+                Ownership::Unowned => {
                     diag.warn(
                         "mcp-unmanaged-collision",
                         format!(
@@ -337,22 +277,18 @@ fn try_reconcile(
                 open.insert(name, server.value.clone());
             }
             records.insert(server.key(), server.record());
-        } else if let Some(record) = recorded.filter(|record| record.emitted_json.is_some()) {
+        } else if let Some(record) = recorded {
             // Still on disk as the lock recorded it.
             records.insert(server.key(), record.clone());
         }
     }
 
-    // The new file first: an entry is never gone from both before the old file
-    // is touched.
-    files.open.sort_by_key(|open| open.at != file.at);
-    for open in &files.open {
-        let legacy = open.at.path != file.at.path;
-        if open.existed && open.doc.is_empty() && (legacy || open.changed) {
-            // Holding nothing: the file an older mars wrote and no harness reads, or
-            // one this reconcile emptied. A file mars did not change is left alone.
+    // Only a file this reconcile changed can be deleted: one mars never touched
+    // may be the user's, empty on purpose.
+    if open.changed {
+        if open.existed && open.doc.is_empty() {
             std::fs::remove_file(&open.path)?;
-        } else if open.changed {
+        } else {
             open.doc.save(&open.path)?;
         }
     }
@@ -529,30 +465,6 @@ mod tests {
         assert!(
             text.contains("[mcp_servers.theirs]") && !text.contains("srv"),
             "{text}"
-        );
-    }
-
-    #[test]
-    fn an_old_record_moves_to_the_new_file_and_the_emptied_old_file_goes() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let old = tmp.path().join(".claude/.mcp.json");
-        let user = tmp.path().join(".codex/codex_mcp.json");
-        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(user.parent().unwrap()).unwrap();
-        std::fs::write(&old, r#"{"mcpServers":{"srv":{"command":"node"}}}"#).unwrap();
-        std::fs::write(&user, r#"{"mcpServers":{"srv":{},"theirs":{}}}"#).unwrap();
-        let legacy = BTreeMap::from([(
-            "mcp:srv".to_owned(),
-            ConfigEntryRecord { emitted_json: None },
-        )]);
-
-        remove(".claude", tmp.path(), legacy.clone());
-        remove(".codex", tmp.path(), legacy);
-
-        assert!(!old.exists());
-        assert_eq!(
-            read(&user),
-            serde_json::json!({"mcpServers": {"theirs": {}}})
         );
     }
 

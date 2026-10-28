@@ -90,7 +90,7 @@ installed_checksum = "sha256:eee555..."
 
 | Field | Type | Description |
 |---|---|---|
-| `version` | integer | Schema version (`3` is current; `2` is temporarily promoted on read) |
+| `version` | integer | Schema version (`3` is current; a `2` is read for its dependencies only) |
 | `dependencies` | table | Resolved source entries |
 | `dependency_model_aliases` | table | Dependency-only model alias winners (declaration-order merge) |
 | `items` | table | Logical items with source checksums and per-target output records |
@@ -194,9 +194,12 @@ under `.cursor`.
 
 The same rule applies to divergence checks for installed records. Canonical sync diff compares `.mars/` disk content only with installed `.mars` output records. Linked/native targets may have different compiled bytes and different `installed_checksum` values for the same relative `dest_path`. Pending-deletion records retain deletion authority without participating in checksum comparison. See `src/lock/.context/CONTEXT.md` and `src/target_sync/.context/CONTEXT.md`.
 
-Version 2 locks are accepted through a temporary promotion path. Mars checks
-each v2 output against disk: matching regular content becomes installed, while
-a missing, changed, or non-regular path becomes pending deletion.
+A version 2 lock (Mars 0.23 and earlier) cannot say whether an output's checksum is
+installed content or a retry tombstone, so Mars reads only its dependencies and model
+aliases, drops the items and config entries with a `lock-v2-dropped` warning, and
+removes nothing. Installed files then count as local content until `mars sync --force`
+adopts them. A config-entry record without `emitted_json` is dropped the same way
+(`lock-config-entries-dropped`).
 
 ## Building the Lock
 

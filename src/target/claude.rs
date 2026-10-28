@@ -95,11 +95,6 @@ impl TargetAdapter for ClaudeAdapter {
                 path: ".mcp.json",
                 format: SectionFormat::JsonSection("mcpServers"),
             },
-            // Where mars wrote before. Remove in 0.25.
-            legacy: Some(McpLocation {
-                path: ".claude/.mcp.json",
-                format: SectionFormat::JsonSection("mcpServers"),
-            }),
             render: super::mcp_file::claude_render,
         })
     }
@@ -274,9 +269,7 @@ mod tests {
         let records = std::collections::BTreeMap::from([(
             "hook:SessionStart:audit".to_string(),
             crate::lock::ConfigEntryRecord {
-                emitted_json: Some(
-                    serde_json::json!([{"hooks":[{"command":"original"}]}]).to_string(),
-                ),
+                emitted_json: serde_json::json!([{"hooks":[{"command":"original"}]}]).to_string(),
             },
         )]);
 
@@ -298,7 +291,7 @@ mod tests {
     fn write_hooks_never_name_matches_committed_settings_json() {
         let tmp = TempDir::new().unwrap();
 
-        // Without a legacy lock record, path-like user commands are not evidence
+        // Without a lock record, path-like user commands are not evidence
         // of ownership and the committed file must remain byte-for-byte intact.
         let stale = serde_json::json!({
             "hooks": {

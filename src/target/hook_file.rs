@@ -80,8 +80,7 @@ pub(super) fn write(
 
 /// Remove the entries `records` say mars wrote, wherever they still equal what
 /// was recorded; an entry that has changed is left, with a warning, and the
-/// package entry is appended beside it. A record without `emitted_json` names
-/// nothing to match. The file is saved only if something went.
+/// package entry is appended beside it. The file is saved only if something went.
 pub(super) fn remove_recorded(
     path: &Path,
     records: &BTreeMap<String, ConfigEntryRecord>,
@@ -102,11 +101,7 @@ pub(super) fn remove_recorded(
         else {
             continue;
         };
-        let Some(expected) = record
-            .emitted_json
-            .as_deref()
-            .and_then(|json| serde_json::from_str::<Vec<Value>>(json).ok())
-        else {
+        let Ok(expected) = serde_json::from_str::<Vec<Value>>(&record.emitted_json) else {
             continue;
         };
         let (removed, missing) = remove_entries(doc.section_mut(), event, &expected);
@@ -150,44 +145,4 @@ fn remove_entries(
         section.shift_remove(event);
     }
     (removed, expected.len() - removed)
-}
-
-/// Let `edit` rewrite each event's array as plain JSON values; it returns
-/// whether it changed anything. An event it empties is dropped, then the
-/// `hooks` object if that empties it. For the legacy sweeps that match entries
-/// by command path rather than by recorded content; the file is saved only if
-/// something changed.
-pub(super) fn sweep_events(
-    path: &Path,
-    mut edit: impl FnMut(&mut Vec<Value>) -> bool,
-) -> Result<(), MarsError> {
-    let Some(mut doc) = load(path)? else {
-        return Ok(());
-    };
-    let events: Vec<String> = doc
-        .section()
-        .map(|section| section.keys().cloned().collect())
-        .unwrap_or_default();
-    let mut changed = false;
-    for event in events {
-        let section = doc.section_mut();
-        let Some(OrderedValue::Array(items)) = section.get_mut(&event) else {
-            continue;
-        };
-        let mut values: Vec<Value> = items.iter().map(OrderedValue::to_json).collect();
-        if !edit(&mut values) {
-            continue;
-        }
-        changed = true;
-        if values.is_empty() {
-            section.shift_remove(&event);
-        } else {
-            *items = values.into_iter().map(to_ordered).collect();
-        }
-    }
-    if !changed {
-        return Ok(());
-    }
-    doc.drop_section_if_empty();
-    doc.save(path)
 }

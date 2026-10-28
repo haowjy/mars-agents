@@ -257,9 +257,9 @@ impl<'p> FileHookWrite<'p> {
 mod tests {
     use super::*;
 
-    fn record(value: Option<&str>) -> ConfigEntryRecord {
+    fn record(value: &str) -> ConfigEntryRecord {
         ConfigEntryRecord {
-            emitted_json: value.map(str::to_owned),
+            emitted_json: value.to_owned(),
         }
     }
 
@@ -271,13 +271,13 @@ mod tests {
             (
                 ".claude".to_owned(),
                 BTreeMap::from([
-                    ("mcp:old".to_owned(), record(None)),
-                    (AUDIT.to_owned(), record(Some("[]"))),
+                    ("mcp:old".to_owned(), record("{}")),
+                    (AUDIT.to_owned(), record("[]")),
                 ]),
             ),
             (
                 ".codex".to_owned(),
-                BTreeMap::from([(AUDIT.to_owned(), record(Some("[]")))]),
+                BTreeMap::from([(AUDIT.to_owned(), record("[]"))]),
             ),
         ]);
         let plan = RemovalPlan::build(&previous, &BTreeMap::new());
@@ -301,7 +301,7 @@ mod tests {
             retention.into_retained_records(),
             BTreeMap::from([(
                 ".claude".to_owned(),
-                BTreeMap::from([(AUDIT.to_owned(), record(Some("[]")))])
+                BTreeMap::from([(AUDIT.to_owned(), record("[]"))])
             )])
         );
         assert_eq!(
@@ -315,7 +315,7 @@ mod tests {
     fn mcp_records_are_not_in_the_plan() {
         let previous = BTreeMap::from([(
             ".claude".to_owned(),
-            BTreeMap::from([("mcp:old".to_owned(), record(None))]),
+            BTreeMap::from([("mcp:old".to_owned(), record("{}"))]),
         )]);
         let plan = RemovalPlan::build(&previous, &BTreeMap::new());
         let mut diag = DiagnosticCollector::new();

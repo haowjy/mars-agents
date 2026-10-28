@@ -192,9 +192,9 @@ impl Doc {
     pub(super) fn is_empty(&self) -> bool {
         match self {
             Self::Json(doc) => doc.is_empty(),
-            Self::Toml { doc, key } => doc
-                .iter()
-                .all(|(k, item)| k == *key && item.as_table_like().is_some_and(|t| t.is_empty())),
+            // Comments live in decor, not items: require the rendered text to be
+            // blank so a user's comment-only file is not deleted.
+            Self::Toml { doc, .. } => doc.to_string().trim().is_empty(),
         }
     }
 

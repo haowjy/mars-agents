@@ -37,10 +37,9 @@ paths match.
 - **Unscoped `dest_path` views are broad views only.** Use them for listing,
   diagnostics, or legacy compatibility, not for deciding whether a concrete
   target path is owned or unchanged.
-- **V2 promotion is the only legacy lifecycle inference seam.** Matching regular
-  files and directory manifests become installed. Absent, mismatched, symlinked,
-  unreadable, or unsupported paths become pending deletion. Remove the promotion
-  in 0.25, together with the #130 legacy-hook sweeps.
+- **State mars cannot interpret is dropped, never inferred.** A v2 lock keeps only its
+  dependencies and aliases, and a config-entry record without `emitted_json` is dropped,
+  each with one load warning; neither fails the sync or deletes anything.
 - **Marketplace plugins extend `LockedSource`, not the version.** `plugin` and `content {url,
   subpath, commit}` are optional and skipped when absent, so locks without plugins read and write
   unchanged at version 3. A plugin dependency's `url`, `version` and `commit` stay the marketplace's

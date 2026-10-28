@@ -68,18 +68,28 @@ An entry is Mars's only while its content still equals what Mars last wrote
 
 ### Upgrading
 
-Earlier releases wrote `.claude/.mcp.json` and `.codex/codex_mcp.json`, which
-neither harness read. The next sync removes Mars's entries from those files,
-leaves anything else in them, and deletes a file only if it ends up empty.
-Mars reads these locations until 0.25.
+**From Mars 0.23 or earlier.** Those releases wrote Claude servers to
+`.claude/.mcp.json` and Codex servers to `.codex/codex_mcp.json`, which neither harness
+read, and recorded MCP servers and old hooks in `mars.lock` by name, without
+`emitted_json`. Mars 0.25 no longer reads them or those files. It never fails the
+sync over them: it forgets the records, removes nothing, and warns
+(`lock-config-entries-dropped`) once, naming each entry. Delete leftovers by hand:
+the entries in those two files, `.codex/codex_hooks.json`, and the `hooks` object in
+`.opencode/opencode.json`.
 
-- The first sync overwrites any edit you made to a Cursor entry that an earlier
-  release wrote (that release rewrote edited entries on every sync); from then
-  on edits are kept.
+**From Mars 0.11 or earlier.** Those releases wrote a version 2 `mars.lock`, which Mars
+0.25 reads for its dependencies only (`lock-v2-dropped`): installed files count as local
+content, so the first sync warns about each and `mars sync --force` adopts them,
+overwriting any local edits at those paths. Syncing once with any Mars from 0.12 to 0.24
+first migrates the lock cleanly.
+
+- A Cursor entry an earlier release wrote is now treated as yours. If it differs
+  from what Mars writes, Mars keeps it and warns (`mcp-unmanaged-collision`) until
+  `mars sync --force` replaces it.
 - `.mcp.json` at the project root is new: a project that does not ignore it sees a
   new untracked file.
-- A file Mars created that ends up empty (`.mcp.json` as `{}`, a 0-byte
-  `.codex/config.toml`) is left in place, since nothing records that Mars created it.
+- When Mars removes its last entry and the MCP file holds nothing else, Mars deletes
+  the file. A file with other content, including only comments, stays.
 
 ## Tool-policy MCP references vs server definitions
 
@@ -527,11 +537,9 @@ root, placed `mars-<name>.ts` path, and installed checksum. Removal deletes
 only that exact lock-owned output and leaves every other plugin or extension
 untouched.
 
-Until 0.25, Codex removal also recognizes v0.11.0 command-path entries containing
-`/hooks/<name>/`, including staging-path commands, from lock records that carry
-no emitted entry (hook records have carried one since v0.12.0). This migration
-sweep runs before fragment writes, with the OpenCode and legacy-Codex residue
-sweeps. Claude no longer has one.
+Removal matches recorded entries only. Command-path sweeps for hook records that
+carry no emitted entry (before v0.12.0) are gone; see
+[Upgrading](#upgrading) for what Mars does with such records.
 
 ## Collision Resolution
 

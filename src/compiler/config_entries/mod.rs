@@ -114,32 +114,24 @@ pub(crate) fn preflight_config_entries(
             continue;
         }
         if let Some(adapter) = registry.get(target_name) {
-            let records = resolved.loaded.old_lock.config_entries.get(target_name);
-            let has_legacy_hooks = has_unrecorded(records, HOOK_KEY_PREFIX);
             if touches_mcp && let Some(file) = adapter.mcp_file() {
-                let has_legacy = has_unrecorded(records, MCP_KEY_PREFIX);
-                for location in
-                    std::iter::once(&file.at).chain(file.legacy.iter().filter(|_| has_legacy))
-                {
-                    let path = ctx.project_root.join(location.path);
-                    if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
-                        errors.push(error);
-                    } else if let Err(error) = crate::target::mcp_file::validate(location, &path) {
-                        errors.push(format!(
-                            "target `{target_name}` reads MCP servers from `{}`: {}",
-                            location.path,
-                            error_message(error)
-                        ));
-                    }
+                let location = &file.at;
+                let path = ctx.project_root.join(location.path);
+                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                    errors.push(error);
+                } else if let Err(error) = crate::target::mcp_file::validate(location, &path) {
+                    errors.push(format!(
+                        "target `{target_name}` reads MCP servers from `{}`: {}",
+                        location.path,
+                        error_message(error)
+                    ));
                 }
             }
-            let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-            if touches_hooks {
-                names.extend(adapter.hook_config_file_names());
-            }
-            if has_legacy_hooks {
-                names.extend(adapter.legacy_hook_config_file_names());
-            }
+            let names = if touches_hooks {
+                adapter.hook_config_file_names()
+            } else {
+                &[]
+            };
             for name in names {
                 let path = target_dir.join(name);
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
@@ -457,7 +449,8 @@ pub(crate) fn compile_config_entries(
                 (
                     hook.key(),
                     ConfigEntryRecord {
-                        emitted_json: serde_json::to_string(&hook.entries).ok(),
+                        emitted_json: serde_json::to_string(&hook.entries)
+                            .expect("JSON values serialize"),
                     },
                 )
             }))
@@ -591,16 +584,6 @@ pub(crate) fn compile_config_entries(
             .extend(records);
     }
     compiled
-}
-
-/// Whether `records` hold an entry with `prefix` from before content ownership
-/// (no `emitted_json`), which preflight must be able to clean up.
-fn has_unrecorded(records: Option<&BTreeMap<String, ConfigEntryRecord>>, prefix: &str) -> bool {
-    records.is_some_and(|records| {
-        records
-            .iter()
-            .any(|(key, record)| key.starts_with(prefix) && record.emitted_json.is_none())
-    })
 }
 
 /// Remove the hook entries `operation` names. Shared by sync and `mars unlink`.

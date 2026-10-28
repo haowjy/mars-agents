@@ -249,7 +249,7 @@ impl PortableHooks {
             let groups = groups
                 .into_iter()
                 .enumerate()
-                .map(|(i, group)| MatcherGroup::from_value(group, &format!("`hooks.{event}[{i}]`")))
+                .map(|(i, group)| MatcherGroup::from_value(group, &format!("hooks.{event}[{i}]")))
                 .collect::<Result<Vec<_>, _>>()?;
             events.insert(event, groups);
         }

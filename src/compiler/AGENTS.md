@@ -163,8 +163,13 @@ unmanaged or user-edited copy keeps the entry out with a `hook-not-installed` / 
 warning naming the path; target sync's `target-unmanaged-collision` or `target-divergent` warning
 says why. A token-free server has no directory to check. `config_entries/render.rs`
 preflight reads, validates and renders every selected hook once (`RenderedHooks`); compile reuses
-that result, and `lower_merge_fragments` orders merge fragments (`lower_hook_entries` is the same
-for a plugin build, which has no preflight). `config_entries/file_hooks.rs` owns file-placement
+that result, and `lower_merge_fragments` orders each hook's merge output (`lower_hook_entries` is
+the same for a plugin build, which has no preflight; there `${MARS_HOOK_TARGET}` is `plugin`).
+Preflight also says what `[hooks]` leaves out on every managed target (`hook-event-skipped`:
+a warning per skip for the project's own hooks, one info line per sync for dependencies) and
+a fragment replacing generated events (`hook-fragment-overrides`). After the writes, compile
+compares a trust-gated target's (event, group, handler) positions with those before the sync and
+warns `codex-hooks-need-trust` for any new or moved one. `config_entries/file_hooks.rs` owns file-placement
 outputs: what the old lock says a hook owns on a target (every non-canonical output but its
 directory copy, so a hook may own several files) and writing them. `lower_mcp_servers` lowers servers.
 A target whose merge-file hook entries equal the lock's records, and whose file still holds
@@ -197,9 +202,12 @@ installs it as a directory.
 
 ## Hooks Compilation (`hooks/`)
 
-Hook discovery and fragment loading. The `hook.toml` model, its reader, each target root's
-placement and event allowlist, merge-fragment validation and `${MARS_HOOK_DIR}` substitution
-(`Tokens`) are `mars-schema::hooks`; the binary holds no copy of those rules. This module reads
+Hook discovery and output loading. The `hook.toml` model, its reader, each target root's
+placement and event table, the `[hooks]` renderers, fragment validation and token substitution
+(`Tokens`) are `mars-schema::hooks`; the binary holds no copy of those rules. `load_merge_output`
+reads the fragment file when the hook declares one and asks the schema for the target's events;
+`check_hooks` is `mars check`'s hook pass (the `requires-mars >= 0.25.0` floor, `if` on a
+non-tool event, what Claude and Codex leave out). This module reads
 the bytes, calls the schema, and adds the location to its path-free diagnostics exactly once:
 the real path for the project's own hook, `source package <p> version <v>, hook <n>` for a
 dependency's (whose path is a staging directory that must never reach an error).

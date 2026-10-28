@@ -48,19 +48,7 @@ path = "{}"
 }
 
 #[test]
-fn sync_surfaces_lossiness_warnings() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_lossy_synced_project(&dir);
-
-    mars()
-        .args(["sync", "--root", project.to_str().unwrap()])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
-}
-
-#[test]
-fn validate_suppresses_lossiness_warnings() {
+fn validate_and_export_suppress_lossiness_warnings() {
     let dir = TempDir::new().unwrap();
     let project = setup_lossy_synced_project(&dir);
 
@@ -88,12 +76,6 @@ fn validate_suppresses_lossiness_warnings() {
         !stderr.contains(LOSSINESS_SUMMARY_SNIPPET),
         "validate stderr must not contain lossiness summary: {stderr}"
     );
-}
-
-#[test]
-fn export_suppresses_lossiness_warnings() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_lossy_synced_project(&dir);
 
     let output = mars()
         .args(["export", "--root", project.to_str().unwrap()])
@@ -146,7 +128,7 @@ agent_emission = "always"
 }
 
 #[test]
-fn check_surfaces_lossiness_for_configured_targets() {
+fn check_surfaces_lossiness_summary_and_verbose_detail() {
     let dir = TempDir::new().unwrap();
     let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
     std::fs::write(
@@ -160,6 +142,12 @@ fn check_surfaces_lossiness_for_configured_targets() {
         .assert()
         .success()
         .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
+
+    mars()
+        .args(["check", "--verbose", pkg.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET));
 }
 
 #[test]
@@ -186,23 +174,6 @@ fn sync_verbose_surfaces_meridian_only_detail() {
 
     mars()
         .args(["sync", "--verbose", "--root", project.to_str().unwrap()])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET));
-}
-
-#[test]
-fn check_verbose_surfaces_meridian_only_detail() {
-    let dir = TempDir::new().unwrap();
-    let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
-    std::fs::write(
-        pkg.join("mars.toml"),
-        "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
-    )
-    .unwrap();
-
-    mars()
-        .args(["check", "--verbose", pkg.to_str().unwrap()])
         .assert()
         .success()
         .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET));

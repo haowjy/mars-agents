@@ -503,55 +503,6 @@ path = "{}"
     );
 }
 
-#[test]
-fn agent_copy_link_lock_tracks_codex_native_output() {
-    const CODEX_AGENT: &str = r#"---
-name: explorer
-description: Codex explorer
-harness: codex
-model: gpt-5.3-codex
----
-# Explorer
-"#;
-
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("explorer", CODEX_AGENT)], &[]);
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = []
-
-[settings.meridian.agent_copy]
-harnesses = ["codex"]
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
-
-    mars()
-        .args(["link", ".codex", "--root", project.path().to_str().unwrap()])
-        .env("MERIDIAN_MANAGED", "1")
-        .assert()
-        .success();
-
-    assert!(
-        project.child(".codex/agents/explorer.toml").exists(),
-        "mars link .codex should materialize codex native agent"
-    );
-    assert!(
-        lock_has_codex_native_agent(&project, "explorer"),
-        "link should record codex native output against canonical .mars owner"
-    );
-}
-
 const CODEX_SECONDARY_AGENT: &str = r#"---
 name: integration-tester
 description: Runs integration tests
@@ -591,6 +542,10 @@ harnesses = ["claude", "codex"]
         project
             .child(".codex/agents/integration-tester.toml")
             .exists()
+    );
+    assert!(
+        lock_has_codex_native_agent(&project, "integration-tester"),
+        "link should record codex native output against canonical .mars owner"
     );
     assert_claude_collision_unchanged(&project);
 

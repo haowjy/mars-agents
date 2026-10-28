@@ -429,9 +429,13 @@ fn reconcile_selective_keeps_lock_when_native_remove_fails() {
     std::fs::write(&native_path, "# Native\n").unwrap();
     std::fs::set_permissions(&claude_agents, std::fs::Permissions::from_mode(0o555)).unwrap();
     let _restore_agents_dir = RestoreDirPerms {
-        path: claude_agents,
+        path: claude_agents.clone(),
         mode: 0o755,
     };
+    // Root ignores mode bits, so the removal would not fail; there is nothing to test.
+    if std::fs::write(claude_agents.join("probe"), "").is_ok() {
+        return;
+    }
 
     let lock = lock_with_target_outputs(&[".claude"], "agents/coder.md", "sha256:coder");
     let mut diag = DiagnosticCollector::new();

@@ -12,8 +12,9 @@
 pub mod agents;
 pub mod claude;
 pub mod codex;
+mod config_doc;
 pub mod cursor;
-mod mcp_doc;
+pub(crate) mod hook_file;
 pub mod mcp_file;
 pub mod opencode;
 pub mod pi;
@@ -21,43 +22,17 @@ pub mod pi;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-#[doc(hidden)]
-pub use crate::surface_ownership::retention::ConfigWrite;
-use crate::surface_ownership::retention::{RemovalOperation, RemovalReport, Surface};
+use crate::surface_ownership::retention::{ConfigWrite, RemovalOperation, RemovalReport};
 use crate::types::DestPath;
+pub use config_doc::SectionFormat;
 use mars_schema::item::ItemKind;
-pub use mcp_file::{McpFile, McpFormat, McpLocation};
+pub use mcp_file::{McpFile, McpLocation};
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
-/// A config entry to be written to a target's config file.
-///
-/// Adapters consume these entries to write or update target-specific config
-/// files (MCP JSON, hooks in settings.json, etc.).
-#[derive(Debug, Clone)]
-pub enum ConfigEntry {
-    /// An MCP server entry to register in the target's MCP config file.
-    McpServer(McpServerEntry),
-    /// A hook binding to register in the target's hook config.
-    Hook(HookEntry),
-}
-
-impl ConfigEntry {
-    /// Stable identity key for this entry (used by stale-cleanup logic).
-    pub(crate) fn surface(&self) -> Surface {
-        match self {
-            Self::McpServer(_) => Surface::Mcp,
-            Self::Hook(_) => Surface::Hook,
-        }
-    }
-
-    pub fn key(&self) -> String {
-        match self {
-            ConfigEntry::McpServer(e) => format!("mcp:{}", e.name),
-            ConfigEntry::Hook(e) => format!("hook:{}:{}", e.native_event, e.name),
-        }
-    }
-}
+/// Lock-record key prefixes: `mcp:<name>` for a server, `hook:<event>:<name>` for a hook.
+pub(crate) const MCP_KEY_PREFIX: &str = "mcp:";
+pub(crate) const HOOK_KEY_PREFIX: &str = "hook:";
 
 /// An MCP server entry ready to be written into a target config file.
 ///
@@ -80,6 +55,13 @@ pub struct HookEntry {
     pub native_event: String,
     /// Opaque native entries, in author-declared order.
     pub entries: Vec<serde_json::Value>,
+}
+
+impl HookEntry {
+    /// The lock-record key for this entry.
+    pub fn key(&self) -> String {
+        format!("{HOOK_KEY_PREFIX}{}:{}", self.native_event, self.name)
+    }
 }
 
 /// How a target consumes hook fragments.
@@ -138,18 +120,17 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     // Config-file writing
     // -----------------------------------------------------------------------
 
-    /// Write hook entries to this target's hook config file. MCP entries are
-    /// written by [`mcp_file::write_entries`] from [`Self::mcp_file`].
+    /// Write hook entries to this target's hook config file. MCP servers are
+    /// written by [`mcp_file::reconcile`] from [`Self::mcp_file`].
     ///
-    /// Returns the paths of files written, for lock tracking.
     /// Default: no-op — targets that don't use a config file leave this as-is.
     fn write_hook_entries(
         &self,
         write: ConfigWrite<'_>,
         project_root: &Path,
-    ) -> Result<Vec<PathBuf>, MarsError> {
-        let (_target_dir, _entries) = write.into_parts(project_root);
-        Ok(Vec::new())
+    ) -> Result<(), MarsError> {
+        let _ = write.into_parts(project_root);
+        Ok(())
     }
 
     /// The file this harness reads MCP servers from and how entries render
@@ -163,8 +144,8 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         &[]
     }
 
-    /// One-release legacy hook files touched only when old lock records lack
-    /// structural emission data.
+    /// Legacy hook files touched only when old lock records lack structural
+    /// emission data. Remove in 0.25.
     fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
         &[]
     }
@@ -186,115 +167,6 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     ) -> RemovalReport {
         let (_, _) = operation.into_parts(project_root);
         RemovalReport::confirmed()
-    }
-}
-
-/// The hooks in a write bound to the `Hook` surface, which holds nothing else.
-pub(crate) fn hooks_of(entries: &[ConfigEntry]) -> Vec<&HookEntry> {
-    entries
-        .iter()
-        .map(|entry| match entry {
-            ConfigEntry::Hook(hook) => hook,
-            ConfigEntry::McpServer(_) => unreachable!("a Hook write holds only hooks"),
-        })
-        .collect()
-}
-
-pub(crate) fn parse_json_file(path: &Path) -> Result<serde_json::Value, MarsError> {
-    let raw = std::fs::read_to_string(path)?;
-    serde_json::from_str(&raw).map_err(|error| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{} is not valid JSON: {error}", path.display()),
-        })
-    })
-}
-
-pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
-    if !path.is_file() {
-        return Ok(());
-    }
-    let root = parse_json_file(path)?;
-    let object = root.as_object().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{} is not a JSON object", path.display()),
-        })
-    })?;
-    if let Some(hooks) = object.get("hooks") {
-        let hooks = hooks.as_object().ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{}: hooks is not an object", path.display()),
-            })
-        })?;
-        if let Some((event, _)) = hooks.iter().find(|(_, value)| !value.is_array()) {
-            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{}: hooks.{event} is not an array", path.display()),
-            }));
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct JsonEventArrayUpdate {
-    pub changed: bool,
-    pub missing: usize,
-}
-
-pub(crate) fn append_json_event_entries(
-    hooks: &mut serde_json::Map<String, serde_json::Value>,
-    event: &str,
-    entries: &[serde_json::Value],
-    path: &Path,
-) -> Result<JsonEventArrayUpdate, MarsError> {
-    if entries.is_empty() {
-        return Ok(JsonEventArrayUpdate {
-            changed: false,
-            missing: 0,
-        });
-    }
-    let event_entries = hooks
-        .entry(event.to_string())
-        .or_insert_with(|| serde_json::json!([]))
-        .as_array_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{}: hooks.{event} is not an array", path.display()),
-            })
-        })?;
-    event_entries.extend(entries.iter().cloned());
-    Ok(JsonEventArrayUpdate {
-        changed: true,
-        missing: 0,
-    })
-}
-
-pub(crate) fn remove_json_event_entries(
-    hooks: &mut serde_json::Map<String, serde_json::Value>,
-    event: &str,
-    expected: &[serde_json::Value],
-) -> JsonEventArrayUpdate {
-    let Some(current) = hooks
-        .get_mut(event)
-        .and_then(serde_json::Value::as_array_mut)
-    else {
-        return JsonEventArrayUpdate {
-            changed: false,
-            missing: expected.len(),
-        };
-    };
-    let mut removed = 0;
-    for entry in expected {
-        if let Some(index) = current.iter().position(|candidate| candidate == entry) {
-            current.remove(index);
-            removed += 1;
-        }
-    }
-    if removed > 0 && current.is_empty() {
-        hooks.remove(event);
-    }
-    JsonEventArrayUpdate {
-        changed: removed > 0,
-        missing: expected.len() - removed,
     }
 }
 

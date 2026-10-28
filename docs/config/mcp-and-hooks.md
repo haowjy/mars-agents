@@ -71,12 +71,11 @@ An entry is Mars's only while its content still equals what Mars last wrote
 Earlier releases wrote `.claude/.mcp.json` and `.codex/codex_mcp.json`, which
 neither harness read. The next sync removes Mars's entries from those files,
 leaves anything else in them, and deletes a file only if it ends up empty.
-OpenCode servers a still-earlier release wrote under `mcpServers` are migrated
-to `mcp` the same way. The legacy locations are read for one release.
+Mars reads these locations until 0.25.
 
-- The first sync overwrites any edit you made to a Cursor entry, or to an OpenCode
-  entry still under `mcpServers`, that an earlier release wrote (those releases
-  rewrote edited entries on every sync); from then on edits are kept.
+- The first sync overwrites any edit you made to a Cursor entry that an earlier
+  release wrote (that release rewrote edited entries on every sync); from then
+  on edits are kept.
 - `.mcp.json` at the project root is new: a project that does not ignore it sees a
   new untracked file.
 - A file Mars created that ends up empty (`.mcp.json` as `{}`, a 0-byte
@@ -528,10 +527,11 @@ root, placed `mars-<name>.ts` path, and installed checksum. Removal deletes
 only that exact lock-owned output and leaves every other plugin or extension
 untouched.
 
-For one release, removal also recognizes v0.11.0 command-path entries containing
-`/hooks/<name>/`, including staging-path commands. This migration sweep runs
-before fragment writes and shares the next-release deletion ledger with the
-existing OpenCode and legacy-Codex residue sweeps.
+Until 0.25, Codex removal also recognizes v0.11.0 command-path entries containing
+`/hooks/<name>/`, including staging-path commands, from lock records that carry
+no emitted entry (hook records have carried one since v0.12.0). This migration
+sweep runs before fragment writes, with the OpenCode and legacy-Codex residue
+sweeps. Claude no longer has one.
 
 ## Collision Resolution
 

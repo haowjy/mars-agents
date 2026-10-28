@@ -1,7 +1,7 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
-use crate::target::{ConfigEntry, McpServerEntry};
+use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
 use mars_schema::mcp_servers::{Flavor, render};
 use mars_schema::plugin_metadata::CLAUDE_ROOT_FILE;
@@ -41,24 +41,23 @@ fn check_hook(_hook: &crate::compiler::hooks::ParsedHookItem, _diag: &mut Diagno
 fn write_config_entries(
     _profile: &TreeProfile,
     root: &std::path::Path,
-    entries: &[ConfigEntry],
+    mcp: &[McpServerEntry],
+    hooks: &[HookEntry],
     harnesses: &[&'static PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let (mcp, hooks) = super::standard_config_entries(entries);
-
     if !mcp.is_empty() {
-        write_plugin_mcp_json(&root.join(".mcp.json"), &mcp, harnesses, diag)?;
+        write_plugin_mcp_json(&root.join(".mcp.json"), mcp, harnesses, diag)?;
     }
     if !hooks.is_empty() {
-        crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), &hooks)?;
+        crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), hooks)?;
     }
     Ok(())
 }
 
 fn write_plugin_mcp_json(
     path: &std::path::Path,
-    servers: &[&McpServerEntry],
+    servers: &[McpServerEntry],
     harnesses: &[&'static PluginHarnessSpec],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {

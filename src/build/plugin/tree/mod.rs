@@ -8,7 +8,7 @@ use crate::error::{ConfigError, MarsError};
 use crate::resolve::ResolvedGraph;
 use crate::sync::rewrite::RenameIndex;
 use crate::sync::target::{CollisionRename, TargetItem, TargetState};
-use crate::target::{ConfigEntry, HookEntry, McpServerEntry};
+use crate::target::McpServerEntry;
 use crate::types::SourceName;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
@@ -35,7 +35,7 @@ pub(super) struct WrittenTreeContents<'a> {
     pub skills: &'a [String],
     pub agents: &'a [LoweredAgent],
     pub hooks: &'a [&'a crate::compiler::hooks::ParsedHookItem],
-    pub config_entries: &'a [ConfigEntry],
+    pub mcp_servers: &'a [McpServerEntry],
 }
 
 pub(super) struct BuiltTree {
@@ -71,7 +71,7 @@ pub(super) fn pretty_json_bytes(
 /// Render servers through the sync adapter's own MCP spec, keyed by name.
 pub(super) fn render_servers(
     adapter: &dyn crate::target::TargetAdapter,
-    servers: &[&McpServerEntry],
+    servers: &[McpServerEntry],
 ) -> serde_json::Map<String, serde_json::Value> {
     let file = adapter
         .mcp_file()
@@ -108,20 +108,6 @@ pub(super) fn write_standard_manifest(
         },
         manifest_description,
     )
-}
-
-pub(super) fn standard_config_entries(
-    entries: &[ConfigEntry],
-) -> (Vec<&McpServerEntry>, Vec<&HookEntry>) {
-    let mut mcp = Vec::new();
-    let mut hooks = Vec::new();
-    for entry in entries {
-        match entry {
-            ConfigEntry::McpServer(entry) => mcp.push(entry),
-            ConfigEntry::Hook(entry) => hooks.push(entry),
-        }
-    }
-    (mcp, hooks)
 }
 
 /// The one warning for an authored agent field a plugin tree cannot carry.
@@ -356,24 +342,26 @@ pub(super) fn write_tree(
     let adapter = registry
         .get(descriptor.target_dir)
         .expect("compiler harness descriptor names a registered target");
-    let entries = crate::compiler::config_entries::lower_config_entries_for_target(
-        &hooks, &mcp, adapter, diag,
-    );
-    (profile.write_config)(profile, root, &entries, input.harnesses, diag)?;
+    let mcp_servers = crate::compiler::config_entries::lower_mcp_servers(&mcp);
+    let hook_entries = crate::compiler::config_entries::lower_hook_entries(&hooks, adapter, diag);
+    (profile.write_config)(
+        profile,
+        root,
+        &mcp_servers,
+        &hook_entries,
+        input.harnesses,
+        diag,
+    )?;
     let hook_items = hooks.iter().map(|(_, hook)| *hook).collect::<Vec<_>>();
     let contents = WrittenTreeContents {
         skills: &skill_names,
         agents: &agents,
         hooks: &hook_items,
-        config_entries: &entries,
+        mcp_servers: &mcp_servers,
     };
     summary.skills = contents.skills.len();
     summary.hooks = contents.hooks.len();
-    summary.mcp_servers = contents
-        .config_entries
-        .iter()
-        .filter(|entry| matches!(entry, ConfigEntry::McpServer(_)))
-        .count();
+    summary.mcp_servers = contents.mcp_servers.len();
 
     finish(profile, root, input.metadata, &contents, diag)?;
 

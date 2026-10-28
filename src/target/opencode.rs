@@ -16,7 +16,7 @@ use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
 use mars_schema::mcp_servers::{McpRender, env_map, header_map};
 
-use super::{HookFragmentMode, McpFile, McpFormat, McpLocation, McpServerEntry, TargetAdapter};
+use super::{HookFragmentMode, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
 
 const MCP_SECTION: &str = "mcp";
 
@@ -89,13 +89,9 @@ impl TargetAdapter for OpencodeAdapter {
         Some(McpFile {
             at: McpLocation {
                 path: ".opencode/opencode.json",
-                format: McpFormat::JsonSection(MCP_SECTION),
+                format: SectionFormat::JsonSection(MCP_SECTION),
             },
-            // Before the `mcp` section existed, mars wrote `mcpServers`.
-            legacy: Some(McpLocation {
-                path: ".opencode/opencode.json",
-                format: McpFormat::JsonSection("mcpServers"),
-            }),
+            legacy: None,
             render,
         })
     }
@@ -142,57 +138,26 @@ fn is_managed_hook_command_for(command: &str, hook_name: &str) -> bool {
 }
 
 /// Removal-only residue cleanup. Versions before native hook authoring wrote
-/// an invalid `hooks` object into `opencode.json`. Delete this sweep after one
-/// release.
+/// an invalid `hooks` object into `opencode.json`. Remove in 0.25.
 fn remove_hook_residue(
     prior_records: &BTreeMap<String, crate::lock::ConfigEntryRecord>,
     target_dir: &Path,
 ) -> Result<(), MarsError> {
-    let path = target_dir.join("opencode.json");
-    if !path.is_file() {
-        return Ok(());
-    }
-
-    let mut root = super::parse_json_file(&path)?;
-
-    let root_obj = match root.as_object_mut() {
-        Some(o) => o,
-        None => return Ok(()),
-    };
-
     let hook_names: Vec<&str> = prior_records
         .keys()
-        .filter_map(|k| {
-            let rest = k.strip_prefix("hook:")?;
-            let (_, name) = rest.split_once(':')?;
-            Some(name)
-        })
+        .filter_map(|k| k.strip_prefix(super::HOOK_KEY_PREFIX)?.split_once(':'))
+        .map(|(_, name)| name)
         .collect();
-
-    if !hook_names.is_empty()
-        && let Some(hooks_map) = root_obj.get_mut("hooks").and_then(|v| v.as_object_mut())
-    {
-        for commands in hooks_map
-            .values_mut()
-            .filter_map(|value| value.as_array_mut())
-        {
-            for name in &hook_names {
-                remove_managed_hook_commands(commands, name);
-            }
-        }
-        hooks_map.retain(|_, value| !value.as_array().is_some_and(Vec::is_empty));
-        if hooks_map.is_empty() {
-            root_obj.remove("hooks");
-        }
+    if hook_names.is_empty() {
+        return Ok(());
     }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-    Ok(())
+    super::hook_file::sweep_events(&target_dir.join("opencode.json"), |commands| {
+        let before = commands.len();
+        for name in &hook_names {
+            remove_managed_hook_commands(commands, name);
+        }
+        commands.len() != before
+    })
 }
 
 // ---------------------------------------------------------------------------

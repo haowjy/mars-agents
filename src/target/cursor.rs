@@ -5,7 +5,7 @@
 /// Cursor-native lowering:
 /// - MCP: writes to `mcp.json` (mcpServers section), env vars as `${env:VAR}` syntax
 ///
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::MarsError;
 use crate::types::DestPath;
@@ -13,7 +13,7 @@ use mars_schema::item::ItemKind;
 use mars_schema::mcp_servers::{self, Flavor, McpRender};
 
 use super::{
-    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpServerEntry, TargetAdapter,
+    HookEntry, HookFragmentMode, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter,
 };
 
 #[derive(Debug)]
@@ -69,29 +69,25 @@ impl TargetAdapter for CursorAdapter {
         &self,
         write: crate::surface_ownership::retention::ConfigWrite<'_>,
         project_root: &Path,
-    ) -> Result<Vec<PathBuf>, MarsError> {
-        let (target_dir, entries) = write.into_parts(project_root);
-        let hooks = super::hooks_of(&entries);
-        let mut written = Vec::new();
-        if !hooks.is_empty() {
-            let path = target_dir.join("hooks.json");
-            write_cursor_hooks_json(&path, &hooks)?;
-            written.push(path);
+    ) -> Result<(), MarsError> {
+        let (target_dir, hooks) = write.into_parts(project_root);
+        if hooks.is_empty() {
+            return Ok(());
         }
-        Ok(written)
+        write_cursor_hooks_json(&target_dir.join("hooks.json"), &hooks)
     }
 
     fn mcp_file(&self) -> Option<McpFile> {
         Some(McpFile {
             at: McpLocation {
                 path: ".cursor/mcp.json",
-                format: McpFormat::JsonSection("mcpServers"),
+                format: SectionFormat::JsonSection("mcpServers"),
             },
             // v0.23 wrote its records here without `emitted_json`.
-            // Delete after one release.
+            // Remove in 0.25.
             legacy: Some(McpLocation {
                 path: ".cursor/mcp.json",
-                format: McpFormat::JsonSection("mcpServers"),
+                format: SectionFormat::JsonSection("mcpServers"),
             }),
             render,
         })
@@ -107,7 +103,12 @@ impl TargetAdapter for CursorAdapter {
         diag: &mut crate::diagnostic::DiagnosticCollector,
     ) -> crate::surface_ownership::retention::RemovalReport {
         let (target_dir, removal) = operation.into_parts(project_root);
-        match remove_owned_cursor_hooks(&removal.prior_records, &target_dir, diag) {
+        match super::hook_file::remove_recorded(
+            &target_dir.join("hooks.json"),
+            &removal.prior_records,
+            ".cursor",
+            diag,
+        ) {
             Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
             Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
                 error,
@@ -118,106 +119,8 @@ impl TargetAdapter for CursorAdapter {
 }
 
 // Cursor uses a flat entry array and requires the version wrapper.
-pub(crate) fn write_cursor_hooks_json(path: &Path, hooks: &[&HookEntry]) -> Result<(), MarsError> {
-    let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(path)?
-    } else {
-        serde_json::json!({})
-    };
-    let root_object = root.as_object_mut().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{} is not a JSON object", path.display()),
-        })
-    })?;
-    root_object.insert("version".into(), serde_json::json!(1));
-    let hooks_map = root_object
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{}: hooks is not an object", path.display()),
-            })
-        })?;
-    for hook in hooks {
-        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, path)?;
-    }
-    crate::fs::atomic_write(
-        path,
-        serde_json::to_string_pretty(&root)
-            .map_err(|error| {
-                MarsError::Config(crate::error::ConfigError::Invalid {
-                    message: format!("failed to serialize {}: {error}", path.display()),
-                })
-            })?
-            .as_bytes(),
-    )?;
-    Ok(())
-}
-
-fn remove_owned_cursor_hooks(
-    records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
-    target_dir: &Path,
-    diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<(), MarsError> {
-    let path = target_dir.join("hooks.json");
-    if !path.is_file() {
-        return Ok(());
-    }
-    let mut root = super::parse_json_file(&path)?;
-    let mut changed = false;
-    if let Some(hooks_map) = root
-        .get_mut("hooks")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        for (key, record) in records {
-            let Some((event, name)) = key
-                .strip_prefix("hook:")
-                .and_then(|rest| rest.split_once(':'))
-            else {
-                continue;
-            };
-            let Some(expected) = record
-                .emitted_json
-                .as_deref()
-                .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
-            else {
-                continue;
-            };
-            let update = super::remove_json_event_entries(hooks_map, event, &expected);
-            changed |= update.changed;
-            if update.missing > 0 {
-                diag.warn(
-                    "config-divergence",
-                    format!(
-                        "config-divergence: managed hook `{name}` diverged in target `.cursor` at `{}`; preserving edited config and appending the package entry",
-                        path.display()
-                    ),
-                );
-            }
-        }
-    }
-    if changed
-        && root
-            .get("hooks")
-            .and_then(serde_json::Value::as_object)
-            .is_some_and(serde_json::Map::is_empty)
-    {
-        root.as_object_mut().unwrap().remove("hooks");
-    }
-    if !changed {
-        return Ok(());
-    }
-    crate::fs::atomic_write(
-        &path,
-        serde_json::to_string_pretty(&root)
-            .map_err(|error| {
-                MarsError::Config(crate::error::ConfigError::Invalid {
-                    message: format!("failed to serialize {}: {error}", path.display()),
-                })
-            })?
-            .as_bytes(),
-    )
+pub(crate) fn write_cursor_hooks_json(path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
+    super::hook_file::write(path, hooks, &[("version", serde_json::json!(1))])
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +152,6 @@ fn render(server: &McpServerEntry) -> McpRender {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
 
     #[test]
@@ -268,9 +170,10 @@ mod tests {
             },
         )]);
 
-        remove_owned_cursor_hooks(
+        super::super::hook_file::remove_recorded(
+            &path,
             &records,
-            tmp.path(),
+            ".cursor",
             &mut crate::diagnostic::DiagnosticCollector::new(),
         )
         .unwrap();
@@ -303,9 +206,10 @@ mod tests {
             },
         )]);
 
-        remove_owned_cursor_hooks(
+        super::super::hook_file::remove_recorded(
+            &path,
             &records,
-            tmp.path(),
+            ".cursor",
             &mut crate::diagnostic::DiagnosticCollector::new(),
         )
         .unwrap();

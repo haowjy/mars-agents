@@ -194,7 +194,7 @@ under `.cursor`.
 
 The same rule applies to divergence checks for installed records. Canonical sync diff compares `.mars/` disk content only with installed `.mars` output records. Linked/native targets may have different compiled bytes and different `installed_checksum` values for the same relative `dest_path`. Pending-deletion records retain deletion authority without participating in checksum comparison. See `src/lock/.context/CONTEXT.md` and `src/target_sync/.context/CONTEXT.md`.
 
-A version 2 lock (Mars 0.23 and earlier) cannot say whether an output's checksum is
+A version 2 lock (Mars 0.11 and earlier) cannot say whether an output's checksum is
 installed content or a retry tombstone, so Mars reads only its dependencies and model
 aliases, drops the items and config entries with a `lock-v2-dropped` warning, and
 removes nothing. Installed files then count as local content until `mars sync --force`

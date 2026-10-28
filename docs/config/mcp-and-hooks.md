@@ -75,18 +75,21 @@ read, and recorded MCP servers and old hooks in `mars.lock` by name, without
 sync over them: it forgets the records, removes nothing, and warns
 (`lock-config-entries-dropped`) once, naming each entry. Delete leftovers by hand:
 the entries in those two files, `.codex/codex_hooks.json`, and the `hooks` object in
-`.opencode/opencode.json`. A version 2 `mars.lock` is read for its dependencies only
-(`lock-v2-dropped`): installed files count as local content, so the first sync
-warns about each and `mars sync --force` adopts them. Syncing once with Mars 0.24
-first migrates both cleanly.
+`.opencode/opencode.json`.
 
-- The first sync overwrites any edit you made to a Cursor entry that an earlier
-  release wrote (that release rewrote edited entries on every sync); from then
-  on edits are kept.
+**From Mars 0.11 or earlier.** Those releases wrote a version 2 `mars.lock`, which Mars
+0.25 reads for its dependencies only (`lock-v2-dropped`): installed files count as local
+content, so the first sync warns about each and `mars sync --force` adopts them,
+overwriting any local edits at those paths. Syncing once with any Mars from 0.12 to 0.24
+first migrates the lock cleanly.
+
+- A Cursor entry an earlier release wrote is now treated as yours. If it differs
+  from what Mars writes, Mars keeps it and warns (`mcp-unmanaged-collision`) until
+  `mars sync --force` replaces it.
 - `.mcp.json` at the project root is new: a project that does not ignore it sees a
   new untracked file.
-- A file Mars created that ends up empty (`.mcp.json` as `{}`, a 0-byte
-  `.codex/config.toml`) is left in place, since nothing records that Mars created it.
+- When Mars removes its last entry and the MCP file holds nothing else, Mars deletes
+  the file. A file with other content, including only comments, stays.
 
 ## Tool-policy MCP references vs server definitions
 

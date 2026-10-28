@@ -291,7 +291,7 @@ mod tests {
     fn write_hooks_never_name_matches_committed_settings_json() {
         let tmp = TempDir::new().unwrap();
 
-        // Without a legacy lock record, path-like user commands are not evidence
+        // Without a lock record, path-like user commands are not evidence
         // of ownership and the committed file must remain byte-for-byte intact.
         let stale = serde_json::json!({
             "hooks": {

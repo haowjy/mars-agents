@@ -146,8 +146,41 @@ export interface ManifestFields {
   "requires-meridian"?: string;
 }
 
+/**
+ * A `[dependencies]` or `[local-dependencies]` entry, in the file's spellings. Exactly one of
+ * `url` and `path` is set; a bare `host/path` URL comes back as `https://host/path`. A key Mars
+ * does not read is passed through, so a caller can warn.
+ */
+export interface DependencyEntry {
+  url?: string;
+  path?: string;
+  subpath?: string;
+  version?: string;
+  dialect?: Dialect;
+  plugin?: string;
+  agents?: string[];
+  skills?: string[];
+  exclude?: string[];
+  rename?: { [from: string]: string };
+  only_skills?: boolean;
+  only_agents?: boolean;
+  [unknown: string]: JsonValue | undefined;
+}
+
+/**
+ * The reading of `mars.toml`: the `[package]` table as any definition reading, and the
+ * dependencies the package declares in declaration order, one `selectVersion` call per entry. A
+ * table is omitted when empty, and both when `fields` is `null`. An entry that breaks a rule is
+ * left out with a `dependency.*` diagnostic (an error in `[dependencies]`, a warning in
+ * `[local-dependencies]`, which a dependent never installs from).
+ */
+export interface ManifestRead extends DefinitionRead<ManifestFields> {
+  dependencies?: { [name: string]: DependencyEntry };
+  "local-dependencies"?: { [name: string]: DependencyEntry };
+}
+
 export type Reading =
-  | DefinitionRead<ManifestFields>
+  | ManifestRead
   | DefinitionRead<AgentFields>
   | DefinitionRead<SkillFields>;
 
@@ -155,7 +188,7 @@ export type Reading =
  * Read one file; the package-relative `path` picks the reader. Any path other than
  * `mars.toml`, `agents/<slug>.md` or `skills/<slug>/SKILL.md` throws.
  */
-export function read(path: "mars.toml", text: string): DefinitionRead<ManifestFields>;
+export function read(path: "mars.toml", text: string): ManifestRead;
 export function read(path: `agents/${string}.md`, text: string): DefinitionRead<AgentFields>;
 export function read(path: `skills/${string}/SKILL.md`, text: string): DefinitionRead<SkillFields>;
 export function read(path: string, text: string): Reading;
@@ -247,7 +280,7 @@ export interface PreparedManifest {
   source_path?: string;
   output_path: string;
   normalized_bytes: Uint8Array;
-  reading: DefinitionRead<ManifestFields>;
+  reading: ManifestRead;
   change: ChangeRecord;
 }
 
@@ -484,17 +517,18 @@ export function satisfiesRequirement(requirement: string, version: string): bool
 /**
  * Which ref a package ends at, from every constraint on it and the repository's tags. Settles
  * first (one branch or commit pin wins; two pins, or a pin beside a semver range, throw), then
- * chooses among `available`: `locked` when it meets every range, else the newest tag that does.
- * A `latest` (or `null`) constraint allows any tag and makes the newest win over `locked`. A tag
- * that is not a version (`nightly`) is ignored, and with none left the result is `untagged`:
- * the default branch. Constraints are `[requester, version | null]` as the manifests spell them
+ * keeps `locked` (`{ locked: true }`) when it meets every range, even if `available` no longer
+ * lists its tag (only an upgrade moves a lock), else chooses the newest tag in `available` that
+ * meets them. A `latest` (or `null`) constraint allows any tag and makes the newest win over
+ * `locked`. A tag that is not a version (`nightly`) is ignored, and with none left the result is
+ * `untagged`: the default branch. Constraints are `[requester, version | null]` as the manifests spell them
  * (`v2`, `^1.2`, `>=0.5`, a branch, `latest`); see `satisfies` for the grammar.
  */
 export function selectVersion(input: {
   available: string[];
   constraints: [requester: string, version: string | null][];
   locked?: string;
-}): { pin: string } | { tag: string } | { untagged: true };
+}): { pin: string } | { locked: true } | { tag: string } | { untagged: true };
 
 /** An entry's filter, as `requests` take it. `rename` is not here: selection ignores it, so it is refused. */
 export interface FilterConfig {
@@ -505,6 +539,7 @@ export interface FilterConfig {
   only_agents?: boolean;
 }
 
+/** `selectItems` decides only agents, skills and bootstrap documents; the caller selects hooks and MCP servers, and an `mcp-server` in `extra_items` throws. */
 export type ItemKind = "agent" | "skill" | "hook" | "mcp-server" | "bootstrap-doc";
 
 /**

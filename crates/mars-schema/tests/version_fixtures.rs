@@ -85,6 +85,7 @@ fn run(input: &Value) -> Value {
                 .collect();
             match choose(&tags, &constraints, locked.as_ref(), policy, &excluded) {
                 Ok(Chosen::Pin(reference)) => json!({ "pin": reference }),
+                Ok(Chosen::Locked) => json!({ "locked": true }),
                 Ok(Chosen::Tag(tag)) => json!({ "tag": tag }),
                 Ok(Chosen::Untagged) => json!({ "untagged": true }),
                 Err(error) => error_json(error.code(), &error),

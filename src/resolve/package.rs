@@ -1,16 +1,15 @@
 use mars_schema::item::ItemKind;
-use mars_schema::version::{Constraint, parse_constraint};
+use mars_schema::version::Constraint;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::config::{EffectiveConfig, GitSpec, Manifest, SourceSpec, source_id_for_spec};
+use crate::config::{EffectiveConfig, Manifest, SourceSpec, entry_source};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
-use crate::types::{SourceId, SourceName, SourceUrl};
+use crate::types::{SourceId, SourceName};
 use indexmap::IndexMap;
-use mars_schema::dependency::Source;
 use mars_schema::names::{ItemName, SourceSubpath};
 
 use super::EngineExclusions;
@@ -305,9 +304,7 @@ pub(crate) fn resolve_package_bottom_up(
         }
 
         let label = candidate_version_label(&candidate.0);
-        if options.version_selection_policy(&pending_src.name)
-            == super::types::SelectionPolicy::LockOnly
-        {
+        if options.version_mode(&pending_src.name) == super::types::VersionMode::Frozen {
             return Err(MarsError::FrozenViolation {
                 message: format!(
                     "--frozen locked source `{}` version {label} is incompatible: {}",
@@ -518,51 +515,19 @@ pub(crate) fn collect_manifest_requests(
         return Ok(requests);
     };
     for (dep_name, dep_spec) in &manifest_data.dependencies {
-        let dep_name_typed = SourceName::from(dep_name.clone());
-        let dep_subpath = dep_spec.subpath.clone();
-
-        let (declared_spec, declared_constraint) = match &dep_spec.source {
-            Source::Git { url } => (
-                SourceSpec::Git(GitSpec {
-                    url: SourceUrl::from(url.as_str()),
-                    version: dep_spec.version.clone(),
-                }),
-                parse_constraint(dep_spec.version.as_deref()),
-            ),
-            Source::Path { path } => {
-                let resolved_path = if path.is_absolute() {
-                    path.clone()
-                } else {
-                    package_root.join(path)
-                };
-                (SourceSpec::Path(resolved_path), Constraint::Latest)
-            }
-        };
-        let declared_source_id = source_id_for_spec(
+        let name = SourceName::from(dep_name.clone());
+        let source = entry_source(
+            dep_spec,
             package_root,
-            &declared_spec,
-            dep_subpath.clone(),
-            dep_spec.plugin.as_deref(),
-        );
-        let (dep_spec_resolved, dep_constraint) =
-            if let Some(path) = options.source_overrides.get(&dep_name_typed) {
-                (SourceSpec::Path(path.clone()), Constraint::Latest)
-            } else {
-                (declared_spec, declared_constraint)
-            };
-        let effective_source_id = source_id_for_spec(
-            package_root,
-            &dep_spec_resolved,
-            dep_subpath.clone(),
-            dep_spec.plugin.as_deref(),
+            options.source_overrides.get(&name).map(PathBuf::as_path),
         );
         requests.push(PendingSource {
-            name: dep_name_typed,
-            declared_source_id,
-            source_id: effective_source_id,
-            spec: dep_spec_resolved,
-            subpath: dep_subpath,
-            constraint: dep_constraint,
+            name,
+            declared_source_id: source.declared_source_id,
+            source_id: source.source_id,
+            constraint: source.spec.constraint(),
+            spec: source.spec,
+            subpath: dep_spec.subpath.clone(),
             required_by: pending_src.name.to_string(),
         });
     }

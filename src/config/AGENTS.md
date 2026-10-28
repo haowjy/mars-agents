@@ -33,7 +33,8 @@ pipeline operates on EffectiveConfig only
 so config-saving commands round-trip authored values without making publish metadata a sync
 boundary. Typed plugin metadata and harness specs live in `build/plugin/metadata.rs`; plugin build
 validation owns their defaults and semantics, while `mars check` converts the same validation
-error into a warning. Dependency `load_manifest()` reads package metadata through `mars-schema`;
+error into a warning. A dependency's package metadata is read by `mars-schema` (`prepare`), and `parse_prepared_manifest`
+interprets only what the crate does not read (`[models]`);
 raw plugin-only values cannot block dependency consumption even when their shape is invalid for a
 plugin build.
 
@@ -71,15 +72,17 @@ list from the raw project/local config; empty lists and replacement tables are s
   Network-looking unknowns are retained and warned (`unknown-network-key`) because silently
   dropping a deny would fail open.
 - Removed `[settings.model_visibility]` is an error only for the consumer's
-  project `mars.toml` and `mars.local.toml`. `load_manifest` parses only
+  project `mars.toml` and `mars.local.toml`. `parse_prepared_manifest` parses only
   exported package sections, ignoring an upstream package's consumer settings.
 
 ## Dependency Entry Validation
 
-- `url` XOR `path` (not both, not neither)
-- Include filters (`agents`/`skills`) XOR `exclude` (not both)
-- `only_skills` XOR `only_agents` (not both)
-- Category flags cannot combine with include/exclude lists
+`mars_schema::dependency::Entry::read(name, raw, Strictness)` owns every entry rule: `url` XOR
+`path`, a bare `host/path` URL spelled `https://`, the plugin-selector rule, and a consistent
+filter. The consumer's `mars.toml` (`merge_with_root`) and `mars add` read with `Strictness::Consumer`
+(every rule refuses); a package's manifest reads with `Package` inside the crate (a conflicting
+filter or a `plugin` with `dialect` warns). `entry_source` turns a read entry into the identities and
+`SourceSpec` the resolver fetches; the consumer and manifest requests both go through it.
 
 ## Link Normalization (`targets.rs`)
 

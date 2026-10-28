@@ -43,7 +43,7 @@
       ]
     },
     "market": {
-      "url": "github.com/acme/market",
+      "url": "https://github.com/acme/market",
       "plugin": "writer",
       "only_skills": true,
       "future-key": 1

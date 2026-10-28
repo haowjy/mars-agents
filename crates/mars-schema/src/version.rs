@@ -4,8 +4,10 @@
 //! `requires-meridian` ([`satisfies_requirement`]) are different grammars: a bare `0.20` is the
 //! caret range `^0.20` in the first and `>=0.20.0` in the second. Everything here is pure; the
 //! caller supplies the tag list and acts on the choice. [`choose`] is the whole decision: the
-//! binary runs its two stages ([`settle`], then [`select`]) around its lock replay, and
-//! `selectVersion` of the WASM package runs both at once.
+//! binary runs its stages ([`settle`], the lock check [`keeps_lock`], then
+//! [`select`]) itself, because it replays the lock without listing tags, and `selectVersion` of
+//! the WASM package runs them all at once. A lock that holds is kept without asking whether its
+//! tag is still in the repository: only `mars upgrade` moves it.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -251,27 +253,42 @@ pub fn settle<'a>(constraints: &[(&str, &'a Constraint)]) -> Result<Option<&'a s
     Ok(Some(reference))
 }
 
-/// The policy [`select`] applies: a [`Constraint::Latest`] asks for the newest, so beside it
-/// `PreferLockThenLatest` becomes `LatestOnly`.
-pub fn effective_policy(
-    policy: SelectionPolicy,
+/// Whether `version` meets every semver range in `constraints` and is not in `excluded`.
+/// [`Constraint::Latest`] allows any version; a [`Constraint::RefPin`] must have been
+/// [settled](settle) already, so it is not read here.
+pub fn allows(
     constraints: &[(&str, &Constraint)],
-) -> SelectionPolicy {
-    let asks_latest = constraints
-        .iter()
-        .any(|(_, constraint)| matches!(constraint, Constraint::Latest));
-    if policy == SelectionPolicy::PreferLockThenLatest && asks_latest {
-        SelectionPolicy::LatestOnly
-    } else {
-        policy
-    }
+    version: &Version,
+    excluded: &HashSet<Version>,
+) -> bool {
+    !excluded.contains(version)
+        && constraints.iter().all(|(_, constraint)| match constraint {
+            Constraint::Semver(req) => req.matches(version),
+            _ => true,
+        })
 }
 
-/// Choose one of `available` that meets every semver constraint and is not in `excluded`, and
-/// return its index. The newest allowed wins whatever the order of `available`; of equal
-/// versions the later one does. `Ok(None)` is a repository with no version tags: the caller
-/// takes its default branch. [`Constraint::Latest`] allows any version (see [`effective_policy`]),
-/// and a [`Constraint::RefPin`] must have been [settled](settle) already, so it is not read here.
+/// Whether the lock is kept: `policy` prefers it (a [`Constraint::Latest`] asks for the newest, so
+/// beside one `PreferLockThenLatest` prefers nothing) and the locked version is allowed. It does
+/// not ask whether the tag is still in the repository, so the answer needs no tag list and a tag
+/// deleted upstream keeps the lock. `--frozen` is the binary's own rule and asks [`allows`].
+pub fn keeps_lock(
+    constraints: &[(&str, &Constraint)],
+    locked: &Version,
+    policy: SelectionPolicy,
+    excluded: &HashSet<Version>,
+) -> bool {
+    policy == SelectionPolicy::PreferLockThenLatest
+        && !constraints
+            .iter()
+            .any(|(_, constraint)| matches!(constraint, Constraint::Latest))
+        && allows(constraints, locked, excluded)
+}
+
+/// Choose one of `available` that [`allows`] and return its index. The newest allowed wins
+/// whatever the order of `available`; of equal versions the later one does. A `locked` that is
+/// among `available` and that [`keeps_lock`] wins instead.
+/// `Ok(None)` is a repository with no version tags: the caller takes its default branch.
 pub fn select(
     available: &[Version],
     constraints: &[(&str, &Constraint)],
@@ -282,41 +299,29 @@ pub fn select(
     if available.is_empty() {
         return Ok(None);
     }
-    let policy = effective_policy(policy, constraints);
-    let requirements: Vec<(&str, &VersionReq)> = constraints
-        .iter()
-        .filter_map(|&(requester, constraint)| match constraint {
-            Constraint::Semver(req) => Some((requester, req)),
-            _ => None,
-        })
-        .collect();
     let allowed: Vec<usize> = (0..available.len())
-        .filter(|&i| {
-            !excluded.contains(&available[i])
-                && requirements
-                    .iter()
-                    .all(|(_, req)| req.matches(&available[i]))
-        })
+        .filter(|&i| allows(constraints, &available[i], excluded))
         .collect();
 
     let Some(newest) = allowed.iter().copied().max_by_key(|&i| (&available[i], i)) else {
         let mut ascending = available.to_vec();
         ascending.sort();
         return Err(SelectError::NoSatisfying {
-            constraints: requirements
+            constraints: constraints
                 .iter()
-                .map(|(requester, req)| ((*requester).to_string(), (*req).clone()))
+                .filter_map(|&(requester, constraint)| match constraint {
+                    Constraint::Semver(req) => Some((requester.to_string(), req.clone())),
+                    _ => None,
+                })
                 .collect(),
             available: ascending,
         });
     };
 
-    let locked_allowed =
-        locked.and_then(|locked| allowed.iter().copied().find(|&i| available[i] == *locked));
-    match policy {
-        SelectionPolicy::PreferLockThenLatest => Ok(Some(locked_allowed.unwrap_or(newest))),
-        SelectionPolicy::LatestOnly => Ok(Some(newest)),
-    }
+    let kept = locked
+        .filter(|locked| keeps_lock(constraints, locked, policy, excluded))
+        .and_then(|locked| allowed.iter().copied().find(|&i| available[i] == *locked));
+    Ok(Some(kept.unwrap_or(newest)))
 }
 
 /// What a package ends at.
@@ -326,6 +331,9 @@ pub enum Chosen<'a> {
     Pin(&'a str),
     /// One of the tags offered.
     Tag(&'a str),
+    /// The locked version, which is kept ([`keeps_lock`]) whether or not the repository still has
+    /// its tag.
+    Locked,
     /// No version tags: the default branch.
     Untagged,
 }
@@ -350,8 +358,9 @@ impl ChooseError {
 }
 
 /// The whole decision for one package, from every constraint on it and the tags the repository
-/// has: [`settle`] first (a pin ends it), then [`select`] among the tags that are versions. A tag
-/// that is not one (`nightly`) is ignored, as the binary ignores it when it lists a repository.
+/// has: [`settle`] first (a pin ends it), then the lock if it is kept, then
+/// [`select`] among the tags that are versions. A tag that is not one (`nightly`) is ignored, as
+/// the binary ignores it when it lists a repository.
 pub fn choose<'a>(
     tags: &'a [String],
     constraints: &[(&str, &'a Constraint)],
@@ -366,6 +375,9 @@ pub fn choose<'a>(
         .iter()
         .filter_map(|tag| Some((tag.as_str(), parse_tag(tag)?)))
         .unzip();
-    Ok(select(&versions, constraints, locked, policy, excluded)?
+    if locked.is_some_and(|locked| keeps_lock(constraints, locked, policy, excluded)) {
+        return Ok(Chosen::Locked);
+    }
+    Ok(select(&versions, constraints, None, policy, excluded)?
         .map_or(Chosen::Untagged, |index| Chosen::Tag(names[index])))
 }

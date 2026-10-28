@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "package": "a",
+      "kind": "agent",
+      "slug": "top",
+      "path": "agents/top.md",
+      "required_by": [
+        {
+          "by": "consumer"
+        }
+      ]
+    },
+    {
+      "package": "b",
+      "kind": "skill",
+      "slug": "y",
+      "path": "skills/y",
+      "required_by": [
+        {
+          "by": "consumer"
+        },
+        {
+          "by": "package",
+          "package": "a"
+        }
+      ]
+    }
+  ],
+  "missing_skills": [],
+  "diagnostics": []
+}

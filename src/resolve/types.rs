@@ -227,6 +227,8 @@ pub struct ResolveOptions {
     pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     pub(crate) prepared_sources:
         indexmap::IndexMap<SourceName, std::sync::Arc<mars_schema::prepare::Prepared>>,
+    /// The package selected for, when it is not a node of the graph. See [`Self::with_root`].
+    pub(crate) root: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
 }
 
 impl Default for ResolveOptions {
@@ -239,53 +241,28 @@ impl Default for ResolveOptions {
             ignore_requires_meridian: false,
             source_overrides: indexmap::IndexMap::new(),
             prepared_sources: indexmap::IndexMap::new(),
+            root: None,
         }
     }
 }
 
-/// How a source's version relates to the lock: the schema crate's choices, plus `--frozen`,
-/// which replays the lock exactly and is the resolver's own rule, not a way of choosing.
+/// How a source's version is decided: the schema crate's choice among tags, or `--frozen`, which
+/// replays the lock exactly and is the resolver's own rule, not a way of choosing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SelectionPolicy {
-    PreferLockThenLatest,
-    LatestOnly,
-    LockOnly,
-}
-
-impl SelectionPolicy {
-    /// The crate's policy; `None` under `--frozen`, which never chooses.
-    pub(crate) fn choosing(self) -> Option<mars_schema::version::SelectionPolicy> {
-        use mars_schema::version::SelectionPolicy as Choosing;
-        match self {
-            Self::PreferLockThenLatest => Some(Choosing::PreferLockThenLatest),
-            Self::LatestOnly => Some(Choosing::LatestOnly),
-            Self::LockOnly => None,
-        }
-    }
+pub(crate) enum VersionMode {
+    Choose(mars_schema::version::SelectionPolicy),
+    Frozen,
 }
 
 impl ResolveOptions {
     pub fn sync() -> Self {
-        Self {
-            mode: ResolveMode::Sync,
-            mars_version: None,
-            meridian_version: None,
-            ignore_requires_mars: false,
-            ignore_requires_meridian: false,
-            source_overrides: indexmap::IndexMap::new(),
-            prepared_sources: indexmap::IndexMap::new(),
-        }
+        Self::default()
     }
 
     pub fn frozen() -> Self {
         Self {
             mode: ResolveMode::Frozen,
-            mars_version: None,
-            meridian_version: None,
-            ignore_requires_mars: false,
-            ignore_requires_meridian: false,
-            source_overrides: indexmap::IndexMap::new(),
-            prepared_sources: indexmap::IndexMap::new(),
+            ..Self::default()
         }
     }
 
@@ -295,13 +272,20 @@ impl ResolveOptions {
                 targets,
                 bump_direct_constraints,
             },
-            mars_version: None,
-            meridian_version: None,
-            ignore_requires_mars: false,
-            ignore_requires_meridian: false,
-            source_overrides: indexmap::IndexMap::new(),
-            prepared_sources: indexmap::IndexMap::new(),
+            ..Self::default()
         }
+    }
+
+    /// Select as the install of `root`, a package that is not itself in the graph (`mars check`
+    /// resolves a package's `[dependencies]` as its consumer would). Its items and its Agents'
+    /// skill refs take part in the one selection, so a ref only the root ships is found. The unresolved refs stay in `ResolvedGraph::selection`
+    /// for the caller to judge instead of failing resolution.
+    pub(crate) fn with_root(
+        mut self,
+        root: std::sync::Arc<mars_schema::prepare::Prepared>,
+    ) -> Self {
+        self.root = Some(root);
+        self
     }
 
     pub(crate) fn with_source_overrides(
@@ -349,14 +333,15 @@ impl ResolveOptions {
         }
     }
 
-    pub(crate) fn version_selection_policy(&self, source_name: &SourceName) -> SelectionPolicy {
+    pub(crate) fn version_mode(&self, source_name: &SourceName) -> VersionMode {
+        use mars_schema::version::SelectionPolicy;
         match &self.mode {
-            ResolveMode::Frozen => SelectionPolicy::LockOnly,
+            ResolveMode::Frozen => VersionMode::Frozen,
             ResolveMode::Upgrade { .. } if self.is_upgrade_target(source_name) => {
-                SelectionPolicy::LatestOnly
+                VersionMode::Choose(SelectionPolicy::LatestOnly)
             }
             ResolveMode::Sync | ResolveMode::Upgrade { .. } => {
-                SelectionPolicy::PreferLockThenLatest
+                VersionMode::Choose(SelectionPolicy::PreferLockThenLatest)
             }
         }
     }
@@ -381,7 +366,16 @@ pub(crate) fn prepared_with_deps(deps: &[&str]) -> std::sync::Arc<mars_schema::p
     });
     std::sync::Arc::new(mars_schema::prepare::Prepared {
         classification: mars_schema::prepare::Classification::Empty,
-        selection: mars_schema::prepare::selection_facts(manifest.as_ref(), &[]),
+        selection: mars_schema::selection::SelectionFacts {
+            edges: deps
+                .iter()
+                .map(|dep| mars_schema::selection::Request {
+                    name: (*dep).to_string(),
+                    filter: mars_schema::filter::FilterMode::All,
+                })
+                .collect(),
+            ..Default::default()
+        },
         manifest,
         definitions: Vec::new(),
         payload: Vec::new(),

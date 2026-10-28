@@ -3,7 +3,8 @@
 //! Algorithm:
 //! 1. Resolve package refs/versions (lock-preferred latest-compatible for git sources)
 //! 2. Resolve package manifests bottom-up, recording each package's manifest entries
-//! 3. Once the graph settles, select the items it installs (`select`, a pure pass)
+//! 3. Once the graph settles, select the items it installs (`select`, a pure pass, once; the
+//!    package being checked is its root when `ResolveOptions::root` names one)
 //! 4. Order the packages alphabetically for sync (`selection` orders its own registry)
 //!
 //! Uses `semver` crate for all version parsing. No custom version logic.
@@ -17,9 +18,9 @@ mod publish;
 mod requires;
 mod select;
 mod types;
+mod upgrade;
 mod version;
 
-use mars_schema::version::{Constraint, parse_constraint};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -33,14 +34,14 @@ pub(crate) use requires::{
 };
 #[cfg(test)]
 pub(crate) use select::select_for_test;
-pub(crate) use select::select_published;
 pub use types::*;
+pub(crate) use upgrade::upgrade_candidate;
 
 pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
 #[cfg(test)]
 pub(crate) use path::apply_subpath;
 
-use crate::config::{EffectiveConfig, SourceSpec};
+use crate::config::EffectiveConfig;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
@@ -48,7 +49,7 @@ use crate::source::{AvailableVersion, ResolvedRef};
 use crate::types::SourceName;
 use crate::types::SourceUrl;
 use package::resolve_package_bottom_up;
-use version::validate_all_constraints;
+use version::warn_version_drift;
 
 type EngineExclusions =
     HashMap<(SourceName, semver::Version), Vec<requires::EngineRequirementFailure>>;
@@ -158,27 +159,19 @@ pub fn resolve(
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedGraph, MarsError> {
     // Build direct requests (stable across restarts — determined by config + options).
-    let direct_requests: Vec<PendingSource> = {
-        let mut reqs = Vec::new();
-        for (name, source) in &config.dependencies {
-            let constraint = match &source.spec {
-                SourceSpec::Git(git) => {
-                    options.direct_constraint_for(name, parse_constraint(git.version.as_deref()))
-                }
-                SourceSpec::Path(_) => Constraint::Latest,
-            };
-            reqs.push(PendingSource {
-                name: name.clone(),
-                declared_source_id: source.declared_source_id.clone(),
-                source_id: source.source_id.clone(),
-                spec: source.spec.clone(),
-                subpath: source.subpath.clone(),
-                constraint,
-                required_by: "mars.toml".to_string(),
-            });
-        }
-        reqs
-    };
+    let direct_requests: Vec<PendingSource> = config
+        .dependencies
+        .iter()
+        .map(|(name, source)| PendingSource {
+            name: name.clone(),
+            declared_source_id: source.declared_source_id.clone(),
+            source_id: source.source_id.clone(),
+            constraint: options.direct_constraint_for(name, source.spec.constraint()),
+            spec: source.spec.clone(),
+            subpath: source.subpath.clone(),
+            required_by: "mars.toml".to_string(),
+        })
+        .collect();
 
     // Version overrides carried across restarts:
     // package → (correct ref, correct rooted package).
@@ -257,11 +250,14 @@ pub fn resolve(
         }
     };
 
-    let selection = select::select_registry(config, ctx.registry());
+    let selection = select::select_registry(config, ctx.registry(), options.root.as_deref());
     for diagnostic in &selection.diagnostics {
         diag.schema(diagnostic, "selection", false);
     }
-    if let Some(missing) = selection.missing_skills.first() {
+    // With a root, the caller judges the refs the selection could not resolve.
+    if options.root.is_none()
+        && let Some(missing) = selection.missing_skills.first()
+    {
         return Err(ResolutionError::SkillNotFound {
             skill: missing.skill.clone(),
             required_by: match &missing.package {
@@ -276,7 +272,7 @@ pub fn resolve(
     let version_constraints = ctx.version_constraints().clone();
     let graph = ctx.into_graph(selection);
 
-    validate_all_constraints(&graph.nodes, &version_constraints, diag)?;
+    warn_version_drift(&graph.nodes, &version_constraints, diag);
     diag.reconcile_engine_fallbacks(&graph);
 
     Ok(graph)

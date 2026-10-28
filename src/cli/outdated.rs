@@ -27,6 +27,7 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
     let config = crate::config::load(&ctx.project_root)?;
     let cache = crate::source::GlobalCache::new()?;
 
+    let provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
     let mut entries = Vec::new();
 
     for (name, dep_entry) in &config.dependencies {
@@ -91,19 +92,21 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
             .map(|v| v.tag.clone())
             .unwrap_or_else(|| "-".to_string());
 
-        // Find latest version matching current constraint
+        // The version `mars upgrade` would pick: the newest the constraint allows whose
+        // `requires-*` this Mars meets.
         let parsed_constraint =
             mars_schema::version::parse_constraint(dep_entry.version.as_deref());
-        let updateable = match &parsed_constraint {
-            mars_schema::version::Constraint::Semver(req) => versions
-                .iter()
-                .filter(|v| req.matches(&v.version))
-                .max_by(|a, b| a.version.cmp(&b.version))
-                .map(|v| v.tag.clone())
-                .unwrap_or_else(|| locked_version.clone()),
-            mars_schema::version::Constraint::Latest => latest.clone(),
-            mars_schema::version::Constraint::RefPin(_) => locked_version.clone(),
-        };
+        let updateable = crate::resolve::upgrade_candidate(
+            name,
+            url,
+            dep_entry.subpath.as_ref(),
+            &versions,
+            &[("mars.toml", &parsed_constraint)],
+            &provider,
+            &crate::resolve::ResolveOptions::default(),
+            &mut crate::diagnostic::DiagnosticCollector::new(),
+        )
+        .map_or_else(|| locked_version.clone(), |candidate| candidate.tag.clone());
 
         entries.push(OutdatedEntry {
             source: name.to_string(),

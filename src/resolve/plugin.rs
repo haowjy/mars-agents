@@ -14,7 +14,7 @@ use mars_schema::inspect::{Hint, InspectedPlugin, Kind, PluginHint, inspect};
 use super::SourceProvider;
 use super::package::PendingSource;
 use super::path::apply_subpath;
-use super::types::{PluginRoot, ResolveOptions, RootedSourceRef, SelectionPolicy};
+use super::types::{PluginRoot, ResolveOptions, RootedSourceRef, VersionMode};
 use super::version::locked_source_matches_pending;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
@@ -24,6 +24,7 @@ use crate::source::ResolvedRef;
 use crate::types::{CommitHash, SourceId, SourceUrl};
 use mars_schema::git_url::canonicalize_git_url;
 use mars_schema::names::SourceSubpath;
+use mars_schema::version::SelectionPolicy;
 
 /// Root `pending`'s package in the resolved source `marketplace`: at the plugin it names in the
 /// marketplace the source holds, or at the source below its `subpath`. A dependency that names no
@@ -210,8 +211,8 @@ fn replayable_commit(
     url: &SourceUrl,
     subpath: Option<&SourceSubpath>,
 ) -> Result<Option<CommitHash>, MarsError> {
-    let policy = options.version_selection_policy(&pending.name);
-    if policy == SelectionPolicy::LatestOnly {
+    let mode = options.version_mode(&pending.name);
+    if mode == VersionMode::Choose(SelectionPolicy::LatestOnly) {
         return Ok(None);
     }
     let replay = locked_source(pending, locked)
@@ -223,7 +224,7 @@ fn replayable_commit(
             }) && content.subpath.as_ref() == subpath
         })
         .and_then(|content| content.commit.clone());
-    if replay.is_none() && policy == SelectionPolicy::LockOnly {
+    if replay.is_none() && mode == VersionMode::Frozen {
         return Err(MarsError::FrozenViolation {
             message: format!(
                 "--frozen requires a locked content commit for plugin `{}` of `{}`",
@@ -257,7 +258,7 @@ fn fetch_content(
             Err(MarsError::LockedCommitUnreachable {
                 commit,
                 url: source_url,
-            }) if options.version_selection_policy(&pending.name) != SelectionPolicy::LockOnly => {
+            }) if options.version_mode(&pending.name) != VersionMode::Frozen => {
                 diag.warn(
                     "locked-commit-unreachable",
                     format!(

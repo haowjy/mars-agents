@@ -1,3 +1,14 @@
+/// A bare `host/path` URL (`github.com/org/repo`) spelled with `https://`; any other URL is
+/// returned as written. Reading an entry applies it, so a consumer's `mars.toml` and a dependency's
+/// manifest fetch the same repository from the same text.
+pub fn with_default_scheme(url: &str) -> String {
+    if !url.contains("://") && !url.starts_with("git@") && url.contains('/') && url.contains('.') {
+        format!("https://{url}")
+    } else {
+        url.to_string()
+    }
+}
+
 /// Canonicalize a git URL for identity comparison and cache keying.
 ///
 /// SSH and HTTPS forms of the same repo produce the same canonical form.

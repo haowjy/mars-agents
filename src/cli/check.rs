@@ -390,12 +390,12 @@ fn has_package_dependencies(lens: &crate::resolve::PublishLens) -> bool {
 
 /// Report the skill refs of the package's Agents that installing it would not find.
 ///
-/// Check answers with install's rule: the package is selected whole as a consumer's only request,
-/// and its Agents' refs resolve through the package, its dependencies and the rest of the graph.
-/// It judges a ref by the package alone and ignores `.mars/provided.lock`, so a package passes or
-/// fails the same on every machine. A package with `[dependencies]` resolves them first and fails
-/// closed; a package without them cannot know what the consumer adds, so an unknown skill is a
-/// warning.
+/// Check answers with install's rule: the package is the root of one selection over its resolved
+/// `[dependencies]`, selected whole, and its Agents' refs resolve through the package, its
+/// dependencies and the rest of the graph. It judges a ref by the package alone and ignores
+/// `.mars/provided.lock`, so a package passes or fails the same on every machine. A package with
+/// `[dependencies]` fails closed; a package without them cannot know what the consumer adds, so an
+/// unknown skill is a warning.
 fn check_skill_refs(
     prepared: &mars_schema::prepare::Prepared,
     lens: &crate::resolve::PublishLens,
@@ -403,41 +403,40 @@ fn check_skill_refs(
     warnings: &mut Vec<String>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) {
-    let graph = if has_package_dependencies(lens) {
-        // Uses only `[dependencies]`: the lens drops `[local-dependencies]` and `mars.local.toml`.
-        let options = crate::resolve::ResolveOptions::default();
-        match crate::resolve::resolve_publish_graph_from_config(
-            lens,
-            &lens.effective,
-            &options,
-            diag,
-        ) {
-            Ok(graph) => Some(graph),
-            Err(error) => {
-                errors.push(format!(
-                    "dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
-                ));
-                return;
-            }
+    let has_dependencies = has_package_dependencies(lens);
+    // Uses only `[dependencies]`: the lens drops `[local-dependencies]` and `mars.local.toml`.
+    // Without a `[package]` they are not a publishable package's, and nothing is fetched.
+    let mut effective = lens.effective.clone();
+    if !has_dependencies {
+        effective.dependencies.clear();
+    }
+    let options =
+        crate::resolve::ResolveOptions::default().with_root(std::sync::Arc::new(prepared.clone()));
+    let graph = match crate::resolve::resolve_publish_graph_from_config(
+        lens, &effective, &options, diag,
+    ) {
+        Ok(graph) => graph,
+        Err(error) => {
+            errors.push(format!(
+                "dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
+            ));
+            return;
         }
-    } else {
-        None
     };
     let has_package = lens
         .manifest
         .as_ref()
         .is_some_and(|config| config.package.is_some());
-    let selection = crate::resolve::select_published(prepared, graph.as_ref());
-    for missing in selection.missing_skills {
+    for missing in &graph.selection.missing_skills {
         let agent = &missing.agent;
         let skill = &missing.skill;
-        match missing.hint {
+        match &missing.hint {
             Some(hint) if has_package => errors.push(format!(
                 "agent `{agent}` references skill `{skill}`, which is not in this package or its dependencies; {hint}"
             )),
-            _ if graph.is_some() => errors.push(format!(
+            _ if has_dependencies => errors.push(format!(
                 "agent `{agent}` references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: add the skill's source package as a dependency, or remove the skill reference",
-                format_searched_packages(&missing.searched, graph.as_ref())
+                format_searched_packages(&missing.searched, &graph)
             )),
             _ => warnings.push(format!(
                 "external dependency: `{skill}` (referenced by: {agent})"
@@ -447,14 +446,12 @@ fn check_skill_refs(
 }
 
 /// The packages a ref was looked up in (this package first), with the versions that resolved.
-fn format_searched_packages(
-    searched: &[String],
-    graph: Option<&crate::resolve::ResolvedGraph>,
-) -> String {
+fn format_searched_packages(searched: &[String], graph: &crate::resolve::ResolvedGraph) -> String {
     std::iter::once("(this package)".to_string())
         .chain(searched.iter().map(|name| {
             let version = graph
-                .and_then(|graph| graph.nodes.get(name.as_str()))
+                .nodes
+                .get(name.as_str())
                 .and_then(|node| node.resolved_ref.version.as_ref());
             match version {
                 Some(version) => format!("{name}@{version}"),

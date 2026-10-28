@@ -10,7 +10,7 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
 use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
-use mars_schema::dependency::{Entry, RawEntry, Source};
+use mars_schema::dependency::{Entry, RawEntry, Source, Strictness};
 use mars_schema::dialect::Dialect;
 use mars_schema::filter::FilterMode;
 use mars_schema::manifest::ManifestRead;
@@ -690,25 +690,6 @@ pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsErr
     Ok(config)
 }
 
-/// Load source manifest data from mars.toml in a source tree root.
-///
-/// Returns `None` when mars.toml is absent or when it has no `[package]`
-/// section (consumer config only).
-///
-#[cfg(test)]
-pub fn load_manifest(source_root: &Path) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
-    let path = source_root.join(CONFIG_FILE);
-    match std::fs::read_to_string(&path) {
-        Ok(content) => parse_manifest(&content, &path),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((None, Vec::new())),
-        Err(source) => Err(MarsError::Io {
-            operation: "read manifest config".to_string(),
-            path,
-            source,
-        }),
-    }
-}
-
 /// Interpret consumer-owned manifest sections from bytes already normalized by
 /// `mars-schema`. Schema diagnostics are supplied by the prepared result and are
 /// deliberately not regenerated here.
@@ -732,29 +713,6 @@ pub(crate) fn parse_prepared_manifest(
         dependencies: reading.dependencies.dependencies.clone(),
         models: parsed.models,
     }))
-}
-
-#[cfg(test)]
-fn parse_manifest(
-    content: &str,
-    path: &Path,
-) -> Result<(Option<Manifest>, Vec<Diagnostic>), MarsError> {
-    let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
-    let parsed: toml::Value = toml::from_str(content).map_err(crate::error::ConfigError::Parse)?;
-    if parsed.get("package").is_none() {
-        return Ok((None, Vec::new()));
-    }
-    let reading = mars_schema::manifest::read(content);
-    for diagnostic in &reading.package.diagnostics {
-        diagnostics.schema(diagnostic, &format!("manifest `{}`", path.display()), false);
-    }
-    if reading.package.fields.is_none() {
-        return Ok((None, diagnostics.drain()));
-    }
-    Ok((
-        parse_prepared_manifest(content, path, &reading)?,
-        diagnostics.drain(),
-    ))
 }
 
 /// Load mars.local.toml (returns Default if absent).
@@ -1181,39 +1139,22 @@ pub fn merge_with_root(
 
         // The file holds entries as written; the rules every reader shares apply here, where
         // an entry is used, so `mars remove` can still repair a bad one.
-        let entry = Entry::from_raw(name.as_ref(), entry.clone()).map_err(ConfigError::from)?;
-
-        let base_spec = match &entry.source {
-            Source::Git { url } => SourceSpec::Git(GitSpec {
-                url: SourceUrl::from(url.as_str()),
-                version: entry.version.clone(),
-            }),
-            Source::Path { path } => SourceSpec::Path(path.clone()),
-        };
-
-        // Validate filter combinations
-        entry
-            .filter
-            .validate(name.as_ref())
+        let (entry, _) = Entry::read(name.as_ref(), entry.clone(), Strictness::Consumer)
             .map_err(ConfigError::from)?;
 
         let filter = entry.filter.to_mode();
-
         let rename = entry.filter.rename.clone().unwrap_or_default();
-
         let subpath = entry.subpath.clone();
-        let declared_source_id =
-            source_id_for_spec(root, &base_spec, subpath.clone(), entry.plugin.as_deref());
-
-        // Check if this source has a local override
-        let spec = if let Some(ov) = local.overrides.get(name) {
-            SourceSpec::Path(ov.path.clone())
-        } else {
-            base_spec
-        };
         let dialect = entry.dialect;
-        let effective_source_id =
-            source_id_for_spec(root, &spec, subpath.clone(), entry.plugin.as_deref());
+        let EntrySource {
+            declared_source_id,
+            source_id: effective_source_id,
+            spec,
+        } = entry_source(
+            &entry,
+            root,
+            local.overrides.get(name).map(|ov| ov.path.as_path()),
+        );
 
         dependencies.insert(
             name.clone(),
@@ -1272,6 +1213,65 @@ fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
     }
 }
 
+/// Where an entry's package comes from, whichever manifest holds the entry.
+pub(crate) struct EntrySource {
+    /// The identity the entry declares, before any local override.
+    pub(crate) declared_source_id: SourceId,
+    /// The identity fetched this run.
+    pub(crate) source_id: SourceId,
+    /// What to fetch: the entry's source, or a local override's path.
+    pub(crate) spec: SourceSpec,
+}
+
+/// Read an entry of the manifest in `base_dir` (a relative `path` is relative to it), with the
+/// local path override for its name if there is one.
+pub(crate) fn entry_source(
+    entry: &Entry,
+    base_dir: &Path,
+    override_path: Option<&Path>,
+) -> EntrySource {
+    let declared = match &entry.source {
+        Source::Git { url } => SourceSpec::Git(GitSpec {
+            url: SourceUrl::from(url.as_str()),
+            version: entry.version.clone(),
+        }),
+        Source::Path { path } => SourceSpec::Path(if path.is_absolute() {
+            path.clone()
+        } else {
+            base_dir.join(path)
+        }),
+    };
+    let declared_source_id = source_id_for_spec(
+        base_dir,
+        &declared,
+        entry.subpath.clone(),
+        entry.plugin.as_deref(),
+    );
+    let spec = override_path.map_or(declared, |path| SourceSpec::Path(path.to_path_buf()));
+    let source_id = source_id_for_spec(
+        base_dir,
+        &spec,
+        entry.subpath.clone(),
+        entry.plugin.as_deref(),
+    );
+    EntrySource {
+        declared_source_id,
+        source_id,
+        spec,
+    }
+}
+
+impl SourceSpec {
+    /// The version constraint a request for this source carries: a git source's `version`; a path
+    /// has none.
+    pub(crate) fn constraint(&self) -> mars_schema::version::Constraint {
+        match self {
+            Self::Git(git) => mars_schema::version::parse_constraint(git.version.as_deref()),
+            Self::Path(_) => mars_schema::version::Constraint::Latest,
+        }
+    }
+}
+
 pub(crate) fn source_id_for_spec(
     root: &Path,
     spec: &SourceSpec,
@@ -1307,16 +1307,10 @@ fn migrate_legacy_source_urls(config: &mut Config) {
         .values_mut()
         .chain(config.local_dependencies.values_mut())
     {
-        if let Some(url) = &mut dep.url
-            && should_upgrade_legacy_git_url(url)
-        {
-            *url = format!("https://{url}");
+        if let Some(url) = &mut dep.url {
+            *url = mars_schema::git_url::with_default_scheme(url);
         }
     }
-}
-
-fn should_upgrade_legacy_git_url(url: &str) -> bool {
-    !url.contains("://") && !url.starts_with("git@") && url.contains('/') && url.contains('.')
 }
 
 /// Write mars.toml, changing only what differs from the file as it stands.
@@ -1340,7 +1334,6 @@ mod tests {
     use super::*;
     use crate::models::{ModelAlias, ModelSpec};
     use mars_schema::model_policy::ModelPolicyMatchType;
-    use mars_schema::names::ItemName;
     use tempfile::TempDir;
 
     #[test]
@@ -1811,73 +1804,6 @@ url = "git@github.com:org/base.git"
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found"), "should be NotFound: {err}");
-    }
-
-    #[test]
-    fn load_manifest_returns_none_without_package() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-"#,
-        )
-        .unwrap();
-
-        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
-        assert!(diagnostics.is_empty());
-        assert!(manifest.is_none());
-    }
-
-    #[test]
-    fn load_manifest_returns_package_and_dependencies() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[package]
-name = "pkg"
-version = "1.2.3"
-schema = 1
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = ">=1.0.0"
-skills = ["frontend-design"]
-"#,
-        )
-        .unwrap();
-
-        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
-        assert!(diagnostics.is_empty());
-        let manifest = manifest.unwrap();
-        assert_eq!(manifest.package.name, "pkg");
-        assert_eq!(manifest.package.version, "1.2.3");
-        assert!(manifest.dependencies.contains_key("base"));
-        assert_eq!(
-            manifest.dependencies["base"].filter.skills.as_deref(),
-            Some(&[ItemName::from("frontend-design")][..])
-        );
-    }
-
-    #[test]
-    fn load_manifest_io_error_includes_operation_and_path() {
-        let dir = TempDir::new().unwrap();
-        let config_path = dir.path().join("mars.toml");
-        std::fs::create_dir(&config_path).unwrap();
-
-        let err = load_manifest(dir.path()).unwrap_err();
-        let msg = err.to_string();
-
-        assert!(
-            msg.contains("read manifest config"),
-            "error should include operation context: {msg}"
-        );
-        assert!(
-            msg.contains("mars.toml"),
-            "error should include config path: {msg}"
-        );
     }
 
     #[test]
@@ -3325,36 +3251,6 @@ url = "https://github.com/org/prompter.git"
         assert_eq!(effective.dependencies.len(), 2);
         assert!(effective.dependencies.contains_key("base"));
         assert!(effective.dependencies.contains_key("prompter"));
-    }
-
-    #[test]
-    fn local_dependencies_not_exported_to_manifest() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[package]
-name = "my-package"
-version = "1.0.0"
-schema = 1
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-
-[local-dependencies.prompter]
-url = "https://github.com/org/prompter.git"
-"#,
-        )
-        .unwrap();
-
-        let (manifest, diagnostics) = load_manifest(dir.path()).unwrap();
-        assert!(diagnostics.is_empty());
-        let manifest = manifest.unwrap();
-
-        // Only base should be in manifest, not prompter
-        assert_eq!(manifest.dependencies.len(), 1);
-        assert!(manifest.dependencies.contains_key("base"));
-        assert!(!manifest.dependencies.contains_key("prompter"));
     }
 
     #[test]

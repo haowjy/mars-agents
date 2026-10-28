@@ -27,6 +27,7 @@ pub mod frontmatter;
 mod invocability;
 pub mod item;
 mod lift;
+pub mod links;
 pub mod markdown;
 
 pub mod mcp;

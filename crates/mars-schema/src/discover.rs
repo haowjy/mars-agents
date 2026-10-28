@@ -515,10 +515,10 @@ pub(crate) fn payload_paths<'a>(
 }
 
 pub(crate) fn join(parent: &str, child: &str) -> String {
-    if parent.is_empty() {
-        child.to_owned()
-    } else {
-        format!("{parent}/{child}")
+    match (parent.is_empty(), child.is_empty()) {
+        (true, _) => child.to_owned(),
+        (_, true) => parent.to_owned(),
+        _ => format!("{parent}/{child}"),
     }
 }
 

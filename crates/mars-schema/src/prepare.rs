@@ -96,6 +96,9 @@ pub struct PreparedDefinition {
     pub slug: String,
     pub source_path: String,
     pub output_path: String,
+    /// A skill's folder in the package tree (empty for a root skill); `None` for an agent.
+    #[serde(skip)]
+    pub skill_root: Option<String>,
     /// The normalized file; crosses to JavaScript as a `Uint8Array`.
     #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
@@ -337,30 +340,6 @@ pub(crate) fn prepare_root(
     } else {
         Vec::new()
     };
-    if let Shaping::Foreign(Dialect::Claude | Dialect::AgentSkills) = shaping {
-        let selected_paths = selected
-            .iter()
-            .map(|definition| definition.source_path.as_str())
-            .collect::<BTreeSet<_>>();
-        for (definition, prepared) in selected.iter().zip(&definitions) {
-            let Reading::Skill(DefinitionRead {
-                body: Some(body), ..
-            }) = &prepared.reading
-            else {
-                continue;
-            };
-            diagnostics
-                .entry(definition.source_path.clone())
-                .or_default()
-                .extend(crate::claude::checks::reference_diagnostics(
-                    definition,
-                    body,
-                    all,
-                    &selected_paths,
-                ));
-        }
-    }
-
     let payload = if can_read_definitions {
         payload_paths(
             source,
@@ -571,6 +550,7 @@ fn prepare_definition(
             slug: selected.slug.clone(),
             source_path: selected.source_path.clone(),
             output_path: selected.output_path.clone(),
+            skill_root: selected.skill_root.clone(),
             normalized_bytes: Vec::new(),
             reading: unreadable(
                 selected.kind,
@@ -648,6 +628,7 @@ fn prepare_definition(
         slug: selected.slug.clone(),
         source_path: selected.source_path.clone(),
         output_path: selected.output_path.clone(),
+        skill_root: selected.skill_root.clone(),
         normalized_bytes,
         reading,
         change,

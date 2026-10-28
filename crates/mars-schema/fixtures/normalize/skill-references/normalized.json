@@ -149,10 +149,10 @@
               "message": "links to `../../scripts/build.sh`, which is outside the skill and is not imported"
             },
             {
-              "code": "skill.reference-to-skill",
+              "code": "skill.outside-reference",
               "severity": "warning",
               "path": [],
-              "message": "links to `../dropped/SKILL.md`, a file of skill `dropped`, which is not imported; stored it would be `skills/dropped/SKILL.md`"
+              "message": "links to `../dropped/SKILL.md`, which is outside the skill and is not imported"
             }
           ]
         }

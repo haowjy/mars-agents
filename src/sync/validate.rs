@@ -4,13 +4,14 @@
 //! Called from `build_target` against the post-prune, post-rewrite target state.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::provided::ProvidedNames;
 use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
-use crate::types::{SourceName, SourceOrigin};
+use crate::types::{DestPath, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
 use mars_schema::item::ItemKind;
 use mars_schema::provider::deferred_provider;
@@ -172,5 +173,72 @@ pub(crate) fn warn_config_dangles_after_rename(
     }
     for name in loaded.effective.skills.keys() {
         check(name, ItemKind::Skill, "[skills.<name>] overlay", diag);
+    }
+}
+
+/// Report the body links of every dependency skill that stop resolving once the skills are
+/// installed, judged against the whole installed tree (`target.items`, every source) after the
+/// consumer's filters, explicit renames and collision renames. A skill that is not installed has
+/// no links checked, though it can still be a link target. The rule and its coverage are
+/// `mars_schema::links::check`; the project's own `.mars-src` skills get the package-level
+/// verdict from `package_prepare`, and so does a plugin build's root, which `judged` names.
+pub(crate) fn report_skill_links(
+    target: &TargetState,
+    graph: &ResolvedGraph,
+    judged: Option<&SourceName>,
+    diag: &mut DiagnosticCollector,
+) {
+    let installed: Vec<&str> = target
+        .items
+        .values()
+        .map(|item| item.dest_path.as_str())
+        .collect();
+    let skill_dests: HashMap<(&SourceName, &Path), &DestPath> = target
+        .items
+        .values()
+        .filter(|item| item.id.kind == ItemKind::Skill)
+        .map(|item| {
+            (
+                (&item.source_name, item.source_path.as_path()),
+                &item.dest_path,
+            )
+        })
+        .collect();
+
+    for (source_name, node) in &graph.nodes {
+        let prepared = &node.prepared;
+        if judged == Some(source_name) {
+            continue;
+        }
+        let dests = prepared
+            .definitions
+            .iter()
+            .map(|definition| {
+                let item = crate::discover::definition_item(definition, &definition.output_path);
+                skill_dests
+                    .get(&(
+                        source_name,
+                        node.rooted_ref
+                            .package_root
+                            .join(item.source_path)
+                            .as_path(),
+                    ))
+                    .map(|dest| dest.as_str())
+            })
+            .collect::<Vec<_>>();
+        let package = crate::package_prepare::dependency_name(prepared, source_name);
+        for (definition, found) in prepared.definitions.iter().zip(mars_schema::links::check(
+            &prepared.definitions,
+            &dests,
+            &installed,
+        )) {
+            for diagnostic in &found {
+                diag.schema(
+                    diagnostic,
+                    &format!("{package}: {}", definition.source_path),
+                    false,
+                );
+            }
+        }
     }
 }

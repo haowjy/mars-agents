@@ -272,13 +272,7 @@ pub(crate) fn prepare_rooted(
         });
     };
     let prepared = package.prepared.clone();
-    let package_name = prepared
-        .manifest
-        .as_ref()
-        .and_then(|manifest| manifest.reading.package.fields.as_ref())
-        .map(|package| package.name.as_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(source_name.as_ref());
+    let package_name = dependency_name(&prepared, source_name);
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
@@ -287,6 +281,21 @@ pub(crate) fn prepare_rooted(
     );
 
     prepared_rooted(rooted, Arc::new(prepared), diag)
+}
+
+/// How diagnostics name a dependency: by its manifest, else by its source name; never by where
+/// the cache keeps its archive.
+pub(crate) fn dependency_name<'a>(
+    prepared: &'a Prepared,
+    source_name: &'a crate::types::SourceName,
+) -> &'a str {
+    prepared
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.reading.package.fields.as_ref())
+        .map(|package| package.name.as_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(source_name.as_ref())
 }
 
 /// A marketplace dependency installs one plugin, and the lock records which: the dependency
@@ -363,12 +372,15 @@ pub(crate) fn prepare_authored_for_migration(
 fn reported(
     root: &Path,
     source: DiskTreeSource,
-    prepared: Prepared,
+    mut prepared: Prepared,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     if let Some(error) = source.take_error() {
         return Err(error);
     }
+    // The verdict on the package's own layout. A dependency gets none here: `sync` judges its
+    // links against what the consumer installs.
+    mars_schema::links::package(&mut prepared);
     // A package carries its manifest; authored content has none to name it by.
     let package_name = prepared
         .manifest

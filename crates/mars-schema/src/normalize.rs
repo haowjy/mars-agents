@@ -67,6 +67,17 @@ pub struct Normalized {
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
 }
 
+impl Normalized {
+    /// Add each package's link verdict ([`crate::links::package`]). Normalizing leaves it out
+    /// because the binary judges a dependency's links against what the consumer installs; the
+    /// WASM export, which has no consumer, adds it.
+    pub fn report_links(&mut self) {
+        for package in &mut self.packages {
+            crate::links::package(&mut package.prepared);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct NormalizedPackage {
     /// The plugin name for a marketplace plugin, else the package name.

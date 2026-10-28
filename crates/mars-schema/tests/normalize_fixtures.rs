@@ -50,12 +50,14 @@ fn normalize_fixtures_match() {
         common::assert_file(&case.join("inspection.json"), &common::pretty(&inspection));
 
         let mut packages = Vec::new();
-        let normalized = normalize(&NormalizeRequest {
+        let mut normalized = normalize(&NormalizeRequest {
             tree: &tree,
             source: request.source.clone(),
             hint: request.hint.clone(),
             selection: request.selection.clone(),
         });
+        // As the WASM export returns it.
+        normalized.report_links();
         common::assert_file(
             &case.join("normalized.json"),
             &common::pretty(&common::without_bytes(&normalized)),
@@ -86,15 +88,14 @@ fn normalize_fixtures_match() {
                 ..Hint::default()
             };
             remote_inspections.insert(*plugin, inspect(remote, &hint));
-            remote_normalized.insert(
-                *plugin,
-                normalize(&NormalizeRequest {
-                    tree: remote,
-                    source: request.remote[*plugin].source.clone(),
-                    hint,
-                    selection: Selection::default(),
-                }),
-            );
+            let mut fetched = normalize(&NormalizeRequest {
+                tree: remote,
+                source: request.remote[*plugin].source.clone(),
+                hint,
+                selection: Selection::default(),
+            });
+            fetched.report_links();
+            remote_normalized.insert(*plugin, fetched);
         }
         if !remote_trees.is_empty() {
             common::assert_file(

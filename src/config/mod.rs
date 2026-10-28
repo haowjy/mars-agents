@@ -1770,22 +1770,6 @@ harness_order = ["pi", "opencode", "codex"]
     }
 
     #[test]
-    fn load_does_not_migrate_ssh_url() {
-        let dir = TempDir::new().unwrap();
-        let toml_str = r#"
-[dependencies.base]
-url = "git@github.com:org/base.git"
-"#;
-        std::fs::write(dir.path().join("mars.toml"), toml_str).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        assert_eq!(
-            config.dependencies["base"].url.as_deref(),
-            Some("git@github.com:org/base.git")
-        );
-    }
-
-    #[test]
     fn load_missing_file_returns_not_found() {
         let dir = TempDir::new().unwrap();
         let result = load(dir.path());

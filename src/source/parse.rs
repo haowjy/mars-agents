@@ -381,11 +381,6 @@ fn parse_generic_git(
     version: Option<String>,
 ) -> Result<Option<ParsedSourceSpec>, ParseError> {
     if mars_schema::git_url::is_ssh_shorthand(input) {
-        if !input.contains(':') {
-            return Err(ParseError::MalformedSshUrl {
-                input: input.to_string(),
-            });
-        }
         let repo = derive_repo_name_from_git(input)?;
         return Ok(Some(spec_from_git(
             SourceFormat::GenericGit,

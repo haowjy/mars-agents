@@ -252,7 +252,23 @@ fn try_reconcile(
             continue;
         };
         match ownership(Some(record), &current) {
-            Ownership::Legacy => open.remove(name),
+            Ownership::Legacy => {
+                // Remove in 0.25 with the legacy record. The record cannot say
+                // whether the entry was edited, so a difference from the new
+                // write is reported rather than silently replaced.
+                if let Some(server) = desired.iter().find(|server| server.name == name)
+                    && server.value != current
+                {
+                    diag.warn(
+                        "mcp-legacy-replaced",
+                        format!(
+                            "target `{target}` MCP server `{name}` in `{}` differs from what mars now writes; an older mars recorded it without its content, so the previous value (possibly hand-edited) is replaced",
+                            at.path
+                        ),
+                    );
+                }
+                open.remove(name);
+            }
             Ownership::Owned if stale => open.remove(name),
             Ownership::Edited if stale => {
                 diag.warn(
@@ -331,8 +347,10 @@ fn try_reconcile(
     // is touched.
     files.open.sort_by_key(|open| open.at != file.at);
     for open in &files.open {
-        if open.at.path != file.at.path && open.existed && open.doc.is_empty() {
-            // The file an older mars wrote and no harness reads, now holding nothing.
+        let legacy = open.at.path != file.at.path;
+        if open.existed && open.doc.is_empty() && (legacy || open.changed) {
+            // Holding nothing: the file an older mars wrote and no harness reads, or
+            // one this reconcile emptied. A file mars did not change is left alone.
             std::fs::remove_file(&open.path)?;
         } else if open.changed {
             open.doc.save(&open.path)?;

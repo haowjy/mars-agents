@@ -62,8 +62,9 @@ adapter that needs a different file or shape changes its spec, nothing else.
   (a record that never recorded content) are kept on write with a warning, and `--force` adopts
   them.
 - **Legacy**: a record with no `emitted_json` predates the spec. It is removed by name from
-  `legacy` (the adapter's earlier file, or the same file), and that file is deleted only if it
-  ends up empty. An adapter with no `legacy` drops such a record and touches no file, so
+  `legacy` (the adapter's earlier file, or the same file), warning `mcp-legacy-replaced` when
+  the entry differs from what mars now writes. Any file this reconcile changed is deleted if it
+  ends up empty (`{}`, an empty section, a 0-byte TOML); a file it did not change never is. An adapter with no `legacy` drops such a record and touches no file, so
   deleting a `legacy` spec later can never reach a user entry by name. Remove the `legacy`
   specs in 0.25 (`.context/TODO`).
 - The `mcpServers` family (Claude, Pi, Cursor, and the Claude/Codex plugin tree) has one codec,

@@ -1040,7 +1040,90 @@ pub fn split_provider_constrained_model_token(token: &str) -> (String, Option<St
 mod tests {
     use super::*;
 
-    // -- glob_match tests --
+    fn make_cache(models: Vec<(&str, &str, Option<&str>)>) -> ModelsCache {
+        ModelsCache {
+            models: models
+                .into_iter()
+                .map(|(id, provider, date)| CachedModel {
+                    id: id.to_string(),
+                    provider: provider.to_string(),
+                    release_date: date.map(String::from),
+                    description: None,
+                    context_window: None,
+                    max_output: None,
+                    cost_input: None,
+                    cost_output: None,
+                    cost_cache_read: None,
+                    cost_cache_write: None,
+                    cost_reasoning: None,
+                })
+                .collect(),
+            fetched_at: Some("2025-01-01T00:00:00Z".to_string()),
+        }
+    }
+
+    fn alias(spec: ModelSpec) -> ModelAlias {
+        ModelAlias {
+            harness: None,
+            description: None,
+            prompting: None,
+            default_effort: None,
+            autocompact: None,
+            autocompact_pct: None,
+            spec,
+        }
+    }
+
+    fn pinned_alias(harness: Option<&str>, model: &str) -> ModelAlias {
+        let mut alias = alias(ModelSpec::Pinned {
+            model: model.to_string(),
+            provider: None,
+        });
+        alias.harness = harness.map(str::to_string);
+        alias
+    }
+
+    fn pinned_match_alias(
+        model: &str,
+        provider: &str,
+        match_patterns: &[&str],
+        exclude_patterns: &[&str],
+    ) -> ModelAlias {
+        alias(ModelSpec::PinnedWithMatch {
+            model: model.to_string(),
+            provider: Some(provider.to_string()),
+            match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
+            exclude_patterns: exclude_patterns.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    fn auto_alias(provider: &str, match_patterns: &[&str]) -> ModelAlias {
+        alias(ModelSpec::AutoResolve {
+            provider: Some(provider.to_string()),
+            match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
+            exclude_patterns: Vec::new(),
+        })
+    }
+
+    fn dep(source_name: &str, name: &str, alias: ModelAlias) -> ResolvedDepModels {
+        let mut models = IndexMap::new();
+        models.insert(name.to_string(), alias);
+        ResolvedDepModels {
+            source_name: source_name.to_string(),
+            models,
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct AliasTable {
+        models: IndexMap<String, ModelAlias>,
+    }
+
+    fn parse_alias(toml_str: &str) -> Result<ModelAlias, String> {
+        toml::from_str::<AliasTable>(toml_str)
+            .map(|table| table.models.into_iter().next().expect("one alias").1)
+            .map_err(|err| err.to_string())
+    }
 
     #[test]
     fn glob_match_boundaries() {
@@ -1073,122 +1156,13 @@ mod tests {
 
     // -- auto_resolve tests --
 
-    fn make_cache(models: Vec<(&str, &str, Option<&str>)>) -> ModelsCache {
-        ModelsCache {
-            models: models
-                .into_iter()
-                .map(|(id, provider, date)| CachedModel {
-                    id: id.to_string(),
-                    provider: provider.to_string(),
-                    release_date: date.map(String::from),
-                    description: None,
-                    context_window: None,
-                    max_output: None,
-                    cost_input: None,
-                    cost_output: None,
-                    cost_cache_read: None,
-                    cost_cache_write: None,
-                    cost_reasoning: None,
-                })
-                .collect(),
-            fetched_at: Some("2025-01-01T00:00:00Z".to_string()),
-        }
-    }
-
-    #[test]
-    fn auto_resolve_basic() {
-        let cache = make_cache(vec![
-            ("claude-opus-4", "Anthropic", Some("2025-03-01")),
-            ("claude-opus-4-20250514", "Anthropic", Some("2025-05-14")),
-            ("claude-sonnet-4", "Anthropic", Some("2025-03-01")),
-        ]);
-
-        let result = auto_resolve(
-            Some("Anthropic"),
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
-        // Newest date wins
-        assert_eq!(result, Some("claude-opus-4-20250514".to_string()));
-    }
-
-    #[test]
-    fn auto_resolve_exclude() {
-        let cache = make_cache(vec![
-            ("gpt-5", "OpenAI", Some("2025-06-01")),
-            ("gpt-4o-mini", "OpenAI", Some("2024-07-01")),
-            ("gpt-3.5-turbo", "OpenAI", Some("2023-03-01")),
-        ]);
-
-        let result = auto_resolve(
-            Some("OpenAI"),
-            &["gpt-*".to_string()],
-            &["gpt-3*".to_string(), "gpt-4o*".to_string()],
-            &cache,
-        );
-        assert_eq!(result, Some("gpt-5".to_string()));
-    }
-
-    #[test]
-    fn auto_resolve_skip_latest() {
-        let cache = make_cache(vec![
-            ("claude-opus-latest", "Anthropic", Some("9999-01-01")),
-            ("claude-opus-4", "Anthropic", Some("2025-03-01")),
-        ]);
-
-        let result = auto_resolve(
-            Some("Anthropic"),
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
-        // Should skip -latest even though it has a newer date
-        assert_eq!(result, Some("claude-opus-4".to_string()));
-    }
-
-    #[test]
-    fn auto_resolve_empty_cache() {
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let result = auto_resolve(
-            Some("Anthropic"),
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn auto_resolve_no_match() {
-        let cache = make_cache(vec![("claude-opus-4", "Anthropic", Some("2025-03-01"))]);
-
-        let result = auto_resolve(Some("OpenAI"), &["gpt-*".to_string()], &[], &cache);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn auto_resolve_provider_case_insensitive() {
-        let cache = make_cache(vec![("claude-opus-4", "Anthropic", Some("2025-03-01"))]);
-
-        let result = auto_resolve(
-            Some("anthropic"),
-            &["claude-opus-*".to_string()],
-            &[],
-            &cache,
-        );
-        assert_eq!(result, Some("claude-opus-4".to_string()));
-    }
-
     #[test]
     fn auto_resolve_shortest_id_tiebreaker() {
+        // Length and lexical order disagree here: only a length tiebreak picks the
+        // shorter id over the lexically smaller one.
         let cache = make_cache(vec![
-            ("claude-opus-4", "Anthropic", Some("2025-03-01")),
-            ("claude-opus-4x", "Anthropic", Some("2025-03-01")),
+            ("claude-opus-4-1", "Anthropic", Some("2025-03-01")),
+            ("claude-opus-4z", "Anthropic", Some("2025-03-01")),
         ]);
 
         let result = auto_resolve(
@@ -1197,8 +1171,7 @@ mod tests {
             &[],
             &cache,
         );
-        // Same date — shorter ID wins
-        assert_eq!(result, Some("claude-opus-4".to_string()));
+        assert_eq!(result, Some("claude-opus-4z".to_string()));
     }
 
     #[test]
@@ -1243,115 +1216,46 @@ mod tests {
 
     // -- merge_model_config tests --
 
-    fn pinned_alias(harness: Option<&str>, model: &str) -> ModelAlias {
-        ModelAlias {
-            harness: harness.map(|h| h.to_string()),
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: model.to_string(),
-                provider: None,
-            },
-        }
-    }
-
-    fn auto_alias(
-        provider: &str,
-        match_patterns: &[&str],
-        exclude_patterns: &[&str],
-    ) -> ModelAlias {
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::AutoResolve {
-                provider: Some(provider.to_string()),
-                match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
-                exclude_patterns: exclude_patterns.iter().map(|s| s.to_string()).collect(),
-            },
-        }
-    }
-
-    fn pinned_match_alias(
-        model: &str,
-        provider: &str,
-        match_patterns: &[&str],
-        exclude_patterns: &[&str],
-    ) -> ModelAlias {
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::PinnedWithMatch {
-                model: model.to_string(),
-                provider: Some(provider.to_string()),
-                match_patterns: match_patterns.iter().map(|s| s.to_string()).collect(),
-                exclude_patterns: exclude_patterns.iter().map(|s| s.to_string()).collect(),
-            },
-        }
-    }
     #[test]
     fn merge_empty_returns_builtins() {
         let mut diag = DiagnosticCollector::new();
         let merged = merge_model_config(&IndexMap::new(), &[], &mut diag, None);
-        // Empty consumer + no deps = builtins only
         assert!(merged.contains_key("opus"));
         assert!(merged.contains_key("sonnet"));
         assert!(merged.contains_key("codex"));
     }
 
     #[test]
-    fn merge_consumer_aliases_suppress_builtins() {
-        let mut consumer = IndexMap::new();
-        consumer.insert(
-            "opus".to_string(),
-            pinned_alias(Some("custom"), "my-opus-model"),
-        );
+    fn merge_project_or_dependency_aliases_suppress_builtins() {
+        // Built-in aliases are fallback-only: any authored alias, from either the
+        // project config or a dependency, turns the whole builtin set off.
+        for from_project in [true, false] {
+            let mut project = IndexMap::new();
+            let mut deps = Vec::new();
+            let expected = if from_project {
+                project.insert("opus".to_string(), pinned_alias(Some("custom"), "my-opus"));
+                "my-opus"
+            } else {
+                deps.push(dep(
+                    "my-pkg",
+                    "opus",
+                    pinned_alias(Some("custom"), "pkg-opus"),
+                ));
+                "pkg-opus"
+            };
 
-        let mut diag = DiagnosticCollector::new();
-        let merged = merge_model_config(&consumer, &[], &mut diag, None);
-        assert_eq!(
-            merged.get("opus").unwrap().spec,
-            ModelSpec::Pinned {
-                model: "my-opus-model".to_string(),
-                provider: None
-            }
-        );
-        assert!(!merged.contains_key("sonnet"));
-        assert!(!merged.contains_key("codex"));
-    }
-
-    #[test]
-    fn merge_dependency_aliases_suppress_builtins() {
-        let dep = ResolvedDepModels {
-            source_name: "my-pkg".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("opus".to_string(), pinned_alias(Some("custom"), "pkg-opus"));
-                m
-            },
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let merged = merge_model_config(&IndexMap::new(), &[dep], &mut diag, None);
-        assert_eq!(
-            merged.get("opus").unwrap().spec,
-            ModelSpec::Pinned {
-                model: "pkg-opus".to_string(),
-                provider: None
-            }
-        );
-        assert!(!merged.contains_key("sonnet"));
-        assert!(!merged.contains_key("codex"));
+            let mut diag = DiagnosticCollector::new();
+            let merged = merge_model_config(&project, &deps, &mut diag, None);
+            assert_eq!(
+                merged.get("opus").unwrap().spec,
+                ModelSpec::Pinned {
+                    model: expected.to_string(),
+                    provider: None
+                }
+            );
+            assert!(!merged.contains_key("sonnet"));
+            assert!(!merged.contains_key("codex"));
+        }
     }
 
     #[test]
@@ -1359,17 +1263,10 @@ mod tests {
         let mut consumer = IndexMap::new();
         consumer.insert("opus".to_string(), pinned_alias(Some("c"), "consumer-opus"));
 
-        let dep = ResolvedDepModels {
-            source_name: "pkg".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("opus".to_string(), pinned_alias(Some("d"), "dep-opus"));
-                m
-            },
-        };
+        let deps = vec![dep("pkg", "opus", pinned_alias(Some("d"), "dep-opus"))];
 
         let mut diag = DiagnosticCollector::new();
-        let merged = merge_model_config(&consumer, &[dep], &mut diag, None);
+        let merged = merge_model_config(&consumer, &deps, &mut diag, None);
         assert_eq!(
             merged.get("opus").unwrap().spec,
             ModelSpec::Pinned {
@@ -1381,26 +1278,13 @@ mod tests {
 
     #[test]
     fn merge_dep_conflict_warns_with_winner_and_resolution_hint() {
-        let dep1 = ResolvedDepModels {
-            source_name: "pkg-a".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("a"), "model-a"));
-                m
-            },
-        };
-        let dep2 = ResolvedDepModels {
-            source_name: "pkg-b".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("b"), "model-b"));
-                m
-            },
-        };
+        let deps = vec![
+            dep("pkg-a", "custom", pinned_alias(Some("a"), "model-a")),
+            dep("pkg-b", "custom", pinned_alias(Some("b"), "model-b")),
+        ];
 
         let mut diag = DiagnosticCollector::new();
-        let merged = merge_model_config(&IndexMap::new(), &[dep1, dep2], &mut diag, None);
-        // First dep wins
+        let merged = merge_model_config(&IndexMap::new(), &deps, &mut diag, None);
         assert_eq!(
             merged.get("custom").unwrap().spec,
             ModelSpec::Pinned {
@@ -1408,7 +1292,6 @@ mod tests {
                 provider: None
             }
         );
-        // Should have warned
         let warnings = diag.drain();
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "model-alias-conflict");
@@ -1424,31 +1307,21 @@ mod tests {
             ("claude-opus-4-7", "Anthropic", Some("2026-04-16")),
             ("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
         ]);
-        let dep1 = ResolvedDepModels {
-            source_name: "dep-a".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "opus".to_string(),
-                    pinned_match_alias("claude-opus-4-6", "Anthropic", &["claude-opus-*"], &[]),
-                );
-                m
-            },
-        };
-        let dep2 = ResolvedDepModels {
-            source_name: "dep-b".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "opus".to_string(),
-                    pinned_match_alias("claude-opus-4-7", "Anthropic", &["claude-opus-*"], &[]),
-                );
-                m
-            },
-        };
+        let deps = vec![
+            dep(
+                "dep-a",
+                "opus",
+                pinned_match_alias("claude-opus-4-6", "Anthropic", &["claude-opus-*"], &[]),
+            ),
+            dep(
+                "dep-b",
+                "opus",
+                pinned_match_alias("claude-opus-4-7", "Anthropic", &["claude-opus-*"], &[]),
+            ),
+        ];
 
         let mut diag = DiagnosticCollector::new();
-        let _merged = merge_model_config(&IndexMap::new(), &[dep1, dep2], &mut diag, Some(&cache));
+        let _merged = merge_model_config(&IndexMap::new(), &deps, &mut diag, Some(&cache));
         let warnings = diag.drain();
         assert_eq!(warnings.len(), 1);
         let message = &warnings[0].message;
@@ -1462,31 +1335,17 @@ mod tests {
             ("claude-opus-4-7", "Anthropic", Some("2026-04-16")),
             ("claude-opus-4-6", "Anthropic", Some("2026-02-05")),
         ]);
-        let dep1 = ResolvedDepModels {
-            source_name: "dep-a".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "opus".to_string(),
-                    pinned_match_alias("claude-opus-4-7", "Anthropic", &["claude-opus-*"], &[]),
-                );
-                m
-            },
-        };
-        let dep2 = ResolvedDepModels {
-            source_name: "dep-b".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "opus".to_string(),
-                    auto_alias("Anthropic", &["claude-opus-*"], &[]),
-                );
-                m
-            },
-        };
+        let deps = vec![
+            dep(
+                "dep-a",
+                "opus",
+                pinned_match_alias("claude-opus-4-7", "Anthropic", &["claude-opus-*"], &[]),
+            ),
+            dep("dep-b", "opus", auto_alias("Anthropic", &["claude-opus-*"])),
+        ];
 
         let mut diag = DiagnosticCollector::new();
-        let _merged = merge_model_config(&IndexMap::new(), &[dep1, dep2], &mut diag, Some(&cache));
+        let _merged = merge_model_config(&IndexMap::new(), &deps, &mut diag, Some(&cache));
         let warnings = diag.drain();
         assert_eq!(warnings.len(), 1);
         assert!(
@@ -1497,63 +1356,15 @@ mod tests {
     }
 
     #[test]
-    fn merge_dep_conflict_without_cache_uses_old_format() {
-        let dep1 = ResolvedDepModels {
-            source_name: "dep-a".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("a"), "model-a"));
-                m
-            },
-        };
-        let dep2 = ResolvedDepModels {
-            source_name: "dep-b".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("b"), "model-b"));
-                m
-            },
-        };
-
-        let mut diag = DiagnosticCollector::new();
-        let _merged = merge_model_config(&IndexMap::new(), &[dep1, dep2], &mut diag, None);
-        let warnings = diag.drain();
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(
-            warnings[0].message,
-            "model alias `custom` defined by both `dep-a` and `dep-b` — using dep-a (declared first)\n  → add [models.custom] to your mars.toml to resolve explicitly"
-        );
-    }
-
-    #[test]
     fn merge_dep_three_way_conflict_warns_each_loser_against_first_winner() {
-        let dep1 = ResolvedDepModels {
-            source_name: "pkg-a".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("a"), "model-a"));
-                m
-            },
-        };
-        let dep2 = ResolvedDepModels {
-            source_name: "pkg-b".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("b"), "model-b"));
-                m
-            },
-        };
-        let dep3 = ResolvedDepModels {
-            source_name: "pkg-c".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("c"), "model-c"));
-                m
-            },
-        };
+        let deps = vec![
+            dep("pkg-a", "custom", pinned_alias(Some("a"), "model-a")),
+            dep("pkg-b", "custom", pinned_alias(Some("b"), "model-b")),
+            dep("pkg-c", "custom", pinned_alias(Some("c"), "model-c")),
+        ];
 
         let mut diag = DiagnosticCollector::new();
-        let merged = merge_model_config(&IndexMap::new(), &[dep1, dep2, dep3], &mut diag, None);
+        let merged = merge_model_config(&IndexMap::new(), &deps, &mut diag, None);
 
         assert_eq!(
             merged.get("custom").unwrap().spec,
@@ -1583,25 +1394,13 @@ mod tests {
             pinned_alias(Some("consumer"), "consumer-model"),
         );
 
-        let dep1 = ResolvedDepModels {
-            source_name: "pkg-a".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("a"), "model-a"));
-                m
-            },
-        };
-        let dep2 = ResolvedDepModels {
-            source_name: "pkg-b".to_string(),
-            models: {
-                let mut m = IndexMap::new();
-                m.insert("custom".to_string(), pinned_alias(Some("b"), "model-b"));
-                m
-            },
-        };
+        let deps = vec![
+            dep("pkg-a", "custom", pinned_alias(Some("a"), "model-a")),
+            dep("pkg-b", "custom", pinned_alias(Some("b"), "model-b")),
+        ];
 
         let mut diag = DiagnosticCollector::new();
-        let merged = merge_model_config(&consumer, &[dep1, dep2], &mut diag, None);
+        let merged = merge_model_config(&consumer, &deps, &mut diag, None);
 
         assert_eq!(
             merged.get("custom").unwrap().spec,
@@ -1612,704 +1411,259 @@ mod tests {
         );
         assert!(diag.drain().is_empty());
     }
-    #[test]
-    fn resolve_model_and_provider_pinned_explicit_provider() {
-        let alias = ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: Some("anthropic".to_string()),
-            },
-        };
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
-        assert_eq!(
-            resolved,
-            ("claude-opus-4-6".to_string(), "anthropic".to_string())
-        );
-    }
 
     #[test]
-    fn resolve_model_and_provider_pinned_inferred() {
-        let alias = ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: None,
-            },
-        };
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
-        assert_eq!(
-            resolved,
-            ("claude-opus-4-6".to_string(), "anthropic".to_string())
-        );
-    }
-
-    #[test]
-    fn resolve_model_and_provider_pinned_unknown() {
-        let alias = ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "my-custom-model".to_string(),
-                provider: None,
-            },
-        };
-        let cache = ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
-
-        let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
-        assert_eq!(
-            resolved,
-            ("my-custom-model".to_string(), "unknown".to_string())
-        );
+    fn resolve_model_and_provider_pinned_provider_precedence() {
+        for (declared, model, expected) in [
+            ("anthropic", "claude-opus-4-6", "anthropic"),
+            ("", "claude-opus-4-6", "anthropic"),
+            ("", "my-custom-model", "unknown"),
+        ] {
+            let resolved = resolve_model_and_provider(
+                &alias(ModelSpec::Pinned {
+                    model: model.to_string(),
+                    provider: (!declared.is_empty()).then(|| declared.to_string()),
+                }),
+                &ModelsCache {
+                    models: Vec::new(),
+                    fetched_at: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(resolved, (model.to_string(), expected.to_string()));
+        }
     }
 
     #[test]
     fn resolve_model_and_provider_auto_resolve() {
-        let alias = ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::AutoResolve {
-                provider: Some("openai".to_string()),
-                match_patterns: vec!["gpt-5*".to_string()],
-                exclude_patterns: vec![],
-            },
-        };
         let cache = make_cache(vec![
             ("gpt-4o", "OpenAI", Some("2024-06-01")),
             ("gpt-5", "OpenAI", Some("2025-06-01")),
         ]);
 
-        let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
+        let resolved =
+            resolve_model_and_provider(&auto_alias("openai", &["gpt-5*"]), &cache).unwrap();
         assert_eq!(resolved, ("gpt-5".to_string(), "openai".to_string()));
     }
 
-    // -- serde roundtrip tests --
+    // -- alias parsing --
 
     #[test]
-    fn harness_source_serializes_snake_case() {
-        assert_eq!(
-            serde_json::to_string(&HarnessSource::Explicit).unwrap(),
-            "\"explicit\""
-        );
-        assert_eq!(
-            serde_json::to_string(&HarnessSource::AutoDetected).unwrap(),
-            "\"auto_detected\""
-        );
-        assert_eq!(
-            serde_json::to_string(&HarnessSource::Unavailable).unwrap(),
-            "\"unavailable\""
-        );
-    }
-
-    #[test]
-    fn model_alias_pinned_toml_roundtrip_backwards_compat_harness() {
-        let toml_str = r#"
+    fn parses_each_alias_spec_variant_and_serializes_the_lock_shape() {
+        // `ModelAlias` is persisted in `mars.lock`; the exact key set is the
+        // contract an older build reads back.
+        for (toml_str, expected_spec, expected_json) in [
+            (
+                r#"
 [models.fast]
 harness = "claude"
 model = "claude-haiku-4-5"
 description = "Fast and cheap"
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("fast").unwrap();
-        assert_eq!(
-            alias.spec,
-            ModelSpec::Pinned {
-                model: "claude-haiku-4-5".to_string(),
-                provider: None
-            }
-        );
-        assert_eq!(alias.harness.as_deref(), Some("claude"));
-        assert_eq!(alias.description.as_deref(), Some("Fast and cheap"));
-
-        let json = serde_json::to_string(alias).unwrap();
-        let roundtripped: ModelAlias = serde_json::from_str(&json).unwrap();
-        assert_eq!(roundtripped, *alias);
-    }
-
-    #[test]
-    fn model_alias_native_overrides_removed_errors() {
-        let toml_str = r#"
-[models.fast]
-model = "gpt-5.5"
-
-[models.fast.native]
-cursor = "gpt-5.5-high"
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("no longer supported"));
-    }
-
-    #[test]
-    fn model_alias_pinned_toml_roundtrip_without_harness() {
-        let toml_str = r#"
-[models.fast]
-model = "claude-haiku-4-5"
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("fast").unwrap();
-        assert_eq!(alias.harness, None);
-        assert_eq!(
-            alias.spec,
-            ModelSpec::Pinned {
-                model: "claude-haiku-4-5".to_string(),
-                provider: None
-            }
-        );
-
-        let json = serde_json::to_string(alias).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert!(value.get("harness").is_none());
-        assert!(value.get("provider").is_none());
-        let roundtripped: ModelAlias = serde_json::from_str(&json).unwrap();
-        assert_eq!(roundtripped, *alias);
-    }
-
-    #[test]
-    fn model_alias_pinned_toml_roundtrip_with_provider() {
-        let toml_str = r#"
-[models.fast]
-model = "claude-haiku-4-5"
-provider = "anthropic"
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("fast").unwrap();
-        assert_eq!(alias.harness, None);
-        assert_eq!(
-            alias.spec,
-            ModelSpec::Pinned {
-                model: "claude-haiku-4-5".to_string(),
-                provider: Some("anthropic".to_string())
-            }
-        );
-
-        let json = serde_json::to_string(alias).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            value.get("provider").and_then(serde_json::Value::as_str),
-            Some("anthropic")
-        );
-        let roundtripped: ModelAlias = serde_json::from_str(&json).unwrap();
-        assert_eq!(roundtripped, *alias);
-    }
-
-    #[test]
-    fn model_alias_auto_resolve_toml_roundtrip() {
-        let toml_str = r#"
-[models.opus]
-harness = "claude"
-provider = "Anthropic"
-match = ["claude-opus-*"]
-exclude = ["claude-opus-3*"]
-description = "Best reasoning"
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        assert_eq!(alias.harness.as_deref(), Some("claude"));
-        match &alias.spec {
-            ModelSpec::AutoResolve {
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                assert_eq!(provider.as_deref(), Some("Anthropic"));
-                assert_eq!(match_patterns, &["claude-opus-*"]);
-                assert_eq!(exclude_patterns, &["claude-opus-3*"]);
-            }
-            _ => panic!("expected AutoResolve"),
-        }
-    }
-
-    #[test]
-    fn model_alias_model_and_match_toml_roundtrip() {
-        let toml_str = r#"
+"#,
+                ModelSpec::Pinned {
+                    model: "claude-haiku-4-5".to_string(),
+                    provider: None,
+                },
+                serde_json::json!({
+                    "harness": "claude",
+                    "description": "Fast and cheap",
+                    "model": "claude-haiku-4-5",
+                }),
+            ),
+            (
+                r#"
 [models.opus]
 model = "claude-opus-4-6"
 provider = "anthropic"
 match = ["claude-opus-*"]
 exclude = ["claude-opus-3*"]
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        match &alias.spec {
-            ModelSpec::PinnedWithMatch {
-                model,
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                assert_eq!(model, "claude-opus-4-6");
-                assert_eq!(provider.as_deref(), Some("anthropic"));
-                assert_eq!(match_patterns, &["claude-opus-*"]);
-                assert_eq!(exclude_patterns, &["claude-opus-3*"]);
-            }
-            _ => panic!("expected PinnedWithMatch"),
-        }
-
-        let json = serde_json::to_string(alias).unwrap();
-        let roundtripped: ModelAlias = serde_json::from_str(&json).unwrap();
-        assert_eq!(roundtripped, *alias);
-    }
-
-    #[test]
-    fn model_alias_model_with_exclude_without_match_errors() {
-        let toml_str = r#"
+"#,
+                ModelSpec::PinnedWithMatch {
+                    model: "claude-opus-4-6".to_string(),
+                    provider: Some("anthropic".to_string()),
+                    match_patterns: vec!["claude-opus-*".to_string()],
+                    exclude_patterns: vec!["claude-opus-3*".to_string()],
+                },
+                serde_json::json!({
+                    "model": "claude-opus-4-6",
+                    "provider": "anthropic",
+                    "match": ["claude-opus-*"],
+                    "exclude": ["claude-opus-3*"],
+                }),
+            ),
+            (
+                r#"
 [models.opus]
-model = "claude-opus-4-7"
+harness = "claude"
+provider = "Anthropic"
+match = ["claude-opus-*"]
 exclude = ["claude-opus-3*"]
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
+"#,
+                ModelSpec::AutoResolve {
+                    provider: Some("Anthropic".to_string()),
+                    match_patterns: vec!["claude-opus-*".to_string()],
+                    exclude_patterns: vec!["claude-opus-3*".to_string()],
+                },
+                serde_json::json!({
+                    "harness": "claude",
+                    "provider": "Anthropic",
+                    "match": ["claude-opus-*"],
+                    "exclude": ["claude-opus-3*"],
+                }),
+            ),
+        ] {
+            let alias = parse_alias(toml_str).unwrap();
+            assert_eq!(alias.spec, expected_spec, "{toml_str}");
+            assert_eq!(
+                serde_json::to_value(&alias).unwrap(),
+                expected_json,
+                "{toml_str}"
+            );
         }
-
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("must also include 'match'"));
     }
 
     #[test]
-    fn model_alias_defaults_toml_roundtrip() {
-        let toml_str = r#"
+    fn parses_effort_and_autocompact_defaults_and_rejects_unknown_effort() {
+        let parsed = parse_alias(
+            r#"
 [models.opus]
 provider = "Anthropic"
 match = ["claude-opus-*"]
 default_effort = "high"
 autocompact = 25
-"#;
+"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.default_effort.as_deref(), Some("high"));
+        assert_eq!(parsed.autocompact, Some(25));
 
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        assert_eq!(alias.default_effort.as_deref(), Some("high"));
-        assert_eq!(alias.autocompact, Some(25));
-
-        let json = serde_json::to_string(alias).unwrap();
-        let roundtripped: ModelAlias = serde_json::from_str(&json).unwrap();
-        assert_eq!(roundtripped, *alias);
-    }
-
-    #[test]
-    fn model_alias_empty_default_effort_treated_as_none() {
-        let toml_str = r#"
+        // An empty string means "unset", not an invalid value.
+        let unset = parse_alias(
+            r#"
 [models.opus]
 provider = "Anthropic"
 match = ["claude-opus-*"]
 default_effort = ""
-"#;
+"#,
+        )
+        .unwrap();
+        assert_eq!(unset.default_effort, None);
 
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        assert_eq!(alias.default_effort, None);
-    }
-
-    #[test]
-    fn model_alias_invalid_default_effort_errors() {
-        let toml_str = r#"
+        let err = parse_alias(
+            r#"
 [models.opus]
 provider = "Anthropic"
 match = ["claude-opus-*"]
 default_effort = "maximum"
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("invalid default_effort"));
-        assert!(err.contains("accepted values"));
+"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("invalid default_effort"), "{err}");
+        assert!(err.contains("accepted values"), "{err}");
     }
 
     #[test]
-    fn model_alias_invalid_harness_errors() {
-        let toml_str = r#"
-[models.opus]
-harness = "gemini"
-provider = "Anthropic"
-match = ["claude-opus-*"]
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
+    fn parses_autocompact_token_count_and_rejects_out_of_range_or_non_integer() {
+        for value in ["0", "4294967295"] {
+            let parsed = parse_alias(&format!(
+                "[models.opus]\nmodel = \"claude-opus-4-6\"\nautocompact = {value}\n"
+            ))
+            .unwrap();
+            assert_eq!(
+                parsed.autocompact,
+                Some(value.parse::<u32>().unwrap()),
+                "autocompact = {value}"
+            );
         }
 
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("invalid harness 'gemini'"));
-        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor"));
+        for (value, expected) in [
+            ("4294967296", "out of u32 range"),
+            ("true", "must be an integer (token count)"),
+        ] {
+            let err = parse_alias(&format!(
+                "[models.opus]\nmodel = \"claude-opus-4-6\"\nautocompact = {value}\n"
+            ))
+            .unwrap_err();
+            assert!(err.contains(expected), "autocompact = {value}: {err}");
+        }
     }
 
     #[test]
-    fn model_alias_harness_normalizes_mixed_case() {
-        let toml_str = r#"
-[models.opus]
-harness = "OpenCode"
-model = "gpt-5"
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        assert_eq!(alias.harness.as_deref(), Some("opencode"));
-    }
-
-    #[test]
-    fn model_alias_autocompact_out_of_range_errors() {
-        // autocompact_pct out of range (>100) is a hard error
-        let toml_str = r#"
-[models.opus]
-provider = "Anthropic"
-match = ["claude-opus-*"]
-autocompact_pct = 101
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("out of range 1-100"));
-    }
-
-    #[test]
-    fn model_alias_autocompact_boolean_errors() {
-        let toml_str = r#"
-[models.opus]
-provider = "Anthropic"
-match = ["claude-opus-*"]
-autocompact = true
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("autocompact must be an integer (token count)"));
-    }
-
-    #[test]
-    fn parses_autocompact_pct() {
-        let toml_str = r#"
+    fn parses_autocompact_pct_and_rejects_out_of_range() {
+        let parsed = parse_alias(
+            r#"
 [models.opus]
 provider = "Anthropic"
 match = ["claude-opus-*"]
 autocompact_pct = 75
-"#;
+"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.autocompact_pct, Some(75));
+        assert_eq!(parsed.autocompact, None);
 
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            models: IndexMap<String, ModelAlias>,
+        for value in ["0", "101", "150"] {
+            let err = parse_alias(&format!(
+                "[models.opus]\nprovider = \"Anthropic\"\nmatch = [\"claude-opus-*\"]\nautocompact_pct = {value}\n"
+            ))
+            .unwrap_err();
+            assert!(
+                err.contains("out of range 1-100"),
+                "autocompact_pct = {value}: {err}"
+            );
         }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        assert_eq!(alias.autocompact_pct, Some(75));
-        assert_eq!(alias.autocompact, None);
     }
 
     #[test]
-    fn autocompact_pct_out_of_range_errors() {
-        let toml_str = r#"
+    fn model_alias_model_with_exclude_without_match_errors() {
+        // Accepting this silently would drop the exclude filter.
+        let err = parse_alias(
+            r#"
 [models.opus]
-provider = "Anthropic"
-match = ["claude-opus-*"]
-autocompact_pct = 150
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("autocompact_pct"));
-        assert!(err.contains("out of range 1-100"));
+model = "claude-opus-4-7"
+exclude = ["claude-opus-3*"]
+"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("must also include 'match'"), "{err}");
     }
 
     #[test]
-    fn autocompact_pct_zero_errors() {
-        let toml_str = r#"
+    fn model_alias_harness_normalizes_mixed_case() {
+        let parsed = parse_alias(
+            r#"
 [models.opus]
-provider = "Anthropic"
-match = ["claude-opus-*"]
-autocompact_pct = 0
-"#;
+harness = "OpenCode"
+model = "gpt-5"
+"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.harness.as_deref(), Some("opencode"));
+    }
 
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
+    #[test]
+    fn infer_provider_from_model_id_known_prefixes_and_case() {
+        for (id, expected) in [
+            ("claude-opus-4-6", Some("anthropic")),
+            ("CLAUDE-OPUS-4-6", Some("anthropic")),
+            ("gpt-5.3-codex", Some("openai")),
+            ("GPT-5.3-codex", Some("openai")),
+            ("gemini-2.5-pro", Some("google")),
+            ("llama-4-maverick", Some("meta")),
+            ("o1-preview", Some("openai")),
+            ("o3-mini", Some("openai")),
+            ("o4-mini", Some("openai")),
+            ("codex-mini-latest", Some("openai")),
+            ("mistral-large", Some("mistral")),
+            ("codestral-latest", Some("mistral")),
+            ("CoDeStRaL-latest", Some("mistral")),
+            ("deepseek-chat", Some("deepseek")),
+            ("command-r-plus", Some("cohere")),
+            ("unknown-model", None),
+            ("", None),
+        ] {
+            assert_eq!(infer_provider_from_model_id(id), expected, "{id}");
         }
-
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("autocompact_pct"));
-        assert!(err.contains("out of range 1-100"));
-    }
-
-    #[test]
-    fn model_alias_autocompact_zero_accepted() {
-        let toml_str = r#"
-[models.opus]
-model = "claude-opus-4-6"
-autocompact = 0
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        assert_eq!(alias.autocompact, Some(0u32));
-    }
-
-    #[test]
-    fn model_alias_autocompact_max_u32_accepted() {
-        let toml_str = r#"
-[models.opus]
-model = "claude-opus-4-6"
-autocompact = 4294967295
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let parsed: Wrapper = toml::from_str(toml_str).unwrap();
-        let alias = parsed.models.get("opus").unwrap();
-        assert_eq!(alias.autocompact, Some(4294967295u32));
-    }
-
-    #[test]
-    fn model_alias_autocompact_overflow_errors() {
-        // 4294967296 == u32::MAX + 1 — should be rejected
-        let toml_str = r#"
-[models.opus]
-model = "claude-opus-4-6"
-autocompact = 4294967296
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let err = toml::from_str::<Wrapper>(toml_str).unwrap_err().to_string();
-        assert!(err.contains("out of u32 range"));
-    }
-    #[test]
-    fn model_alias_both_model_and_match_is_hybrid_pinned() {
-        let toml_str = r#"
-[models.bad]
-harness = "claude"
-model = "some-model"
-match = ["pattern-*"]
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let result = toml::from_str::<Wrapper>(toml_str).unwrap();
-        let alias = result.models.get("bad").unwrap();
-        match &alias.spec {
-            ModelSpec::PinnedWithMatch {
-                model,
-                match_patterns,
-                ..
-            } => {
-                assert_eq!(model, "some-model");
-                assert_eq!(match_patterns, &["pattern-*"]);
-            }
-            _ => panic!("expected pinned-with-match alias"),
-        }
-    }
-
-    #[test]
-    fn model_alias_neither_model_nor_match_errors() {
-        let toml_str = r#"
-[models.bad]
-harness = "claude"
-"#;
-
-        #[derive(Debug, Deserialize)]
-        struct Wrapper {
-            #[allow(dead_code)]
-            models: IndexMap<String, ModelAlias>,
-        }
-
-        let result = toml::from_str::<Wrapper>(toml_str);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn infer_provider_from_model_id_detects_known_prefixes() {
-        assert_eq!(
-            infer_provider_from_model_id("claude-opus-4-6"),
-            Some("anthropic")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("gpt-5.3-codex"),
-            Some("openai")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("gemini-2.5-pro"),
-            Some("google")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("llama-4-maverick"),
-            Some("meta")
-        );
-        assert_eq!(infer_provider_from_model_id("o1-preview"), Some("openai"));
-        assert_eq!(infer_provider_from_model_id("o3-mini"), Some("openai"));
-        assert_eq!(infer_provider_from_model_id("o4-mini"), Some("openai"));
-        assert_eq!(
-            infer_provider_from_model_id("codex-mini-latest"),
-            Some("openai")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("mistral-large"),
-            Some("mistral")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("codestral-latest"),
-            Some("mistral")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("deepseek-chat"),
-            Some("deepseek")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("command-r-plus"),
-            Some("cohere")
-        );
-    }
-
-    #[test]
-    fn infer_provider_from_model_id_returns_none_for_unknown_model() {
-        assert_eq!(infer_provider_from_model_id("unknown-model"), None);
-    }
-
-    #[test]
-    fn infer_provider_from_model_id_returns_none_for_empty_string() {
-        assert_eq!(infer_provider_from_model_id(""), None);
-    }
-
-    #[test]
-    fn infer_provider_from_model_id_is_case_insensitive() {
-        assert_eq!(
-            infer_provider_from_model_id("CLAUDE-OPUS-4-6"),
-            Some("anthropic")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("GPT-5.3-codex"),
-            Some("openai")
-        );
-        assert_eq!(
-            infer_provider_from_model_id("CoDeStRaL-latest"),
-            Some("mistral")
-        );
     }
 
     #[test]

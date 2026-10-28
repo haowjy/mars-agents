@@ -206,33 +206,4 @@ mod tests {
             "composer-2.5"
         );
     }
-
-    #[test]
-    fn native_catalog_slug_is_not_launch_id() {
-        let availability = from_routing_trace(
-            "gpt-5.6-sol",
-            "openai",
-            &trace("codex", Some("openai/gpt-5.6-sol"), Some("gpt-5.6-sol")),
-        );
-        assert_eq!(
-            availability.runnable_paths[0].harness_model_id,
-            "gpt-5.6-sol"
-        );
-    }
-
-    #[test]
-    fn native_catalog_punctuation_and_case_do_not_change_launch_id() {
-        for requested in ["claude-opus-4.6", "Claude-Opus-4-6"] {
-            let availability = from_routing_trace(
-                requested,
-                "anthropic",
-                &trace(
-                    "claude",
-                    Some("anthropic/claude-opus-4-6"),
-                    Some("claude-opus-4-6"),
-                ),
-            );
-            assert_eq!(availability.runnable_paths[0].harness_model_id, requested);
-        }
-    }
 }

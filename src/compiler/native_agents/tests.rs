@@ -374,18 +374,13 @@ fn emit_selective_fanout_agents_match_case_insensitively() {
     let fanout_agents = vec!["Reviewer".to_string()];
     let mut diag = DiagnosticCollector::new();
     let models_cache = empty_models_cache();
-    let ctx = NativeAgentCompileCtx {
-        project_root: dir.path(),
-        old_lock: &LockFile::empty(),
-        harness_scope: None,
-        configured_emit_harnesses: &[HarnessId::Claude],
-        options: NativeAgentSurfaceCompileOptions {
-            force: false,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            dry_run: false,
-        },
-        fanout_agents: &fanout_agents,
-    };
+    let empty_lock = LockFile::empty();
+    let ctx = native_ctx(
+        dir.path(),
+        &empty_lock,
+        &[HarnessId::Claude],
+        &fanout_agents,
+    );
     let mut router = test_router(&aliases, &models_cache);
     let records = compile_native_agents(
         &ctx,
@@ -476,6 +471,26 @@ fn parse_mars_agent(content: &str, stem: &str) -> MarsCanonicalAgent {
     }
 }
 
+fn native_ctx<'a>(
+    project_root: &'a Path,
+    old_lock: &'a LockFile,
+    configured_emit_harnesses: &'a [HarnessId],
+    fanout_agents: &'a [String],
+) -> NativeAgentCompileCtx<'a> {
+    NativeAgentCompileCtx {
+        project_root,
+        old_lock,
+        harness_scope: None,
+        configured_emit_harnesses,
+        options: NativeAgentSurfaceCompileOptions {
+            force: false,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            dry_run: false,
+        },
+        fanout_agents,
+    }
+}
+
 fn compile_emit_all_agents(
     dir: &Path,
     configured_harnesses: &[HarnessId],
@@ -484,18 +499,8 @@ fn compile_emit_all_agents(
 ) -> Vec<CompiledNativeOutput> {
     let mut diag = DiagnosticCollector::new();
     let models_cache = empty_models_cache();
-    let ctx = NativeAgentCompileCtx {
-        project_root: dir,
-        old_lock: &LockFile::empty(),
-        harness_scope: None,
-        configured_emit_harnesses: configured_harnesses,
-        options: NativeAgentSurfaceCompileOptions {
-            force: false,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            dry_run: false,
-        },
-        fanout_agents: &[],
-    };
+    let empty_lock = LockFile::empty();
+    let ctx = native_ctx(dir, &empty_lock, configured_harnesses, &[]);
     let mut router = test_router(aliases, &models_cache);
     compile_native_agents(
         &ctx,
@@ -531,18 +536,8 @@ fn compile_emit_all_opencode(
     if let Some(probe) = probe {
         router.session.set_opencode_probe_for_test(probe);
     }
-    let ctx = NativeAgentCompileCtx {
-        project_root: dir,
-        old_lock: &LockFile::empty(),
-        harness_scope: None,
-        configured_emit_harnesses: &[HarnessId::OpenCode],
-        options: NativeAgentSurfaceCompileOptions {
-            force: false,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            dry_run: false,
-        },
-        fanout_agents: &[],
-    };
+    let empty_lock = LockFile::empty();
+    let ctx = native_ctx(dir, &empty_lock, &[HarnessId::OpenCode], &[]);
     compile_native_agents(
         &ctx,
         &AgentSurfacePolicy::EmitAll,
@@ -632,7 +627,7 @@ fn opencode_native_emission_preserves_qualified_input_and_skips_unavailable_bare
 }
 
 #[test]
-fn emit_all_emits_every_agent_to_single_configured_claude_target() {
+fn emit_all_pins_a_model_only_when_it_resolves_to_the_target_harness() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
 
@@ -641,131 +636,61 @@ fn emit_all_emits_every_agent_to_single_configured_claude_target() {
         "opus".to_string(),
         pinned_alias_with_harness("claude-opus-4-6", "claude", None),
     );
+    aliases.insert(
+        "codex-model".to_string(),
+        pinned_alias_with_harness("gpt-5.3-codex", "codex", None),
+    );
 
-    let pinned = parse_mars_agent(
-        "---\nname: pinned-coder\nmodel: opus\n---\n# Pinned\n",
-        "pinned-coder",
-    );
-    let model_less = parse_mars_agent(
-        "---\nname: bare-agent\nmodel: gpt-5.3-codex\n---\n# Bare\n",
-        "bare-agent",
-    );
-    let agents = [pinned, model_less];
+    // (agent source, name, expected pinned model on the claude copy)
+    let cases = [
+        // No declared harness: the model decides.
+        ("model: opus", "pinned-coder", Some("claude-opus-4-6")),
+        ("model: gpt-5.3-codex", "bare-agent", None),
+        // An authored harness pin does not block coverage of other targets.
+        (
+            "harness: codex\nmodel: opus",
+            "product-lead",
+            Some("claude-opus-4-6"),
+        ),
+        // Declared claude harness: a foreign model is cleared, a matching one pins.
+        (
+            "harness: claude\nmodel: codex-model",
+            "foreign-worker",
+            None,
+        ),
+        (
+            "harness: claude\nmodel: opus",
+            "pinned-worker",
+            Some("claude-opus-4-6"),
+        ),
+        ("harness: claude", "bare-worker", None),
+    ];
+    let agents: Vec<_> = cases
+        .iter()
+        .map(|(front, name, _)| {
+            parse_mars_agent(&format!("---\nname: {name}\n{front}\n---\n# Body\n"), name)
+        })
+        .collect();
 
     let records = compile_emit_all_agents(dir.path(), &[HarnessId::Claude], &agents, &aliases);
-    assert_eq!(records.len(), 2);
+    assert_eq!(records.len(), cases.len());
     assert!(records.iter().all(|r| r.target_root == ".claude"));
+    assert!(!dir.path().join(".codex").exists());
 
-    let pinned_native =
-        std::fs::read_to_string(dir.path().join(".claude/agents/pinned-coder.md")).unwrap();
-    assert!(
-        pinned_native.contains("model: claude-opus-4-6"),
-        "resolved claude model should be pinned: {pinned_native}"
-    );
-
-    let bare_native =
-        std::fs::read_to_string(dir.path().join(".claude/agents/bare-agent.md")).unwrap();
-    assert!(
-        !bare_native.contains("model:"),
-        "non-claude model should emit model-less under claude: {bare_native}"
-    );
-}
-
-#[test]
-fn emit_all_emits_to_every_configured_target() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
-    std::fs::create_dir_all(dir.path().join(".codex/agents")).unwrap();
-
-    let agent = parse_mars_agent("---\nname: worker\nmodel: opus\n---\n# Worker\n", "worker");
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: Some("anthropic".to_string()),
-            },
-        },
-    );
-
-    let records = compile_emit_all_agents(
-        dir.path(),
-        &[HarnessId::Claude, HarnessId::Codex],
-        std::slice::from_ref(&agent),
-        &aliases,
-    );
-    assert_eq!(records.len(), 2);
-    assert!(dir.path().join(".claude/agents/worker.md").exists());
-    assert!(dir.path().join(".codex/agents/worker.toml").exists());
-}
-
-#[test]
-fn emit_all_with_empty_configured_targets_emits_nothing() {
-    let dir = TempDir::new().unwrap();
-    let agent = parse_mars_agent(
-        "---\nname: worker\nharness: claude\n---\n# Worker\n",
-        "worker",
-    );
-
-    let records = compile_emit_all_agents(
-        dir.path(),
-        &[],
-        std::slice::from_ref(&agent),
-        &IndexMap::new(),
-    );
-    assert!(records.is_empty());
-    assert!(!dir.path().join(".claude/agents/worker.md").exists());
-}
-
-#[test]
-fn emit_all_ignores_authored_harness_pin_for_coverage() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
-
-    let agent = parse_mars_agent(
-        "---\nname: product-lead\nharness: codex\nmodel: opus\n---\n# Lead\n",
-        "product-lead",
-    );
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: ModelSpec::Pinned {
-                model: "claude-opus-4-6".to_string(),
-                provider: Some("anthropic".to_string()),
-            },
-        },
-    );
-
-    let records = compile_emit_all_agents(
-        dir.path(),
-        &[HarnessId::Claude],
-        std::slice::from_ref(&agent),
-        &aliases,
-    );
-    assert_eq!(records.len(), 1);
-    assert!(dir.path().join(".claude/agents/product-lead.md").exists());
-    assert!(!dir.path().join(".codex/agents/product-lead.toml").exists());
-
-    let native =
-        std::fs::read_to_string(dir.path().join(".claude/agents/product-lead.md")).unwrap();
-    assert!(
-        native.contains("model: claude-opus-4-6"),
-        "authored codex pin should not block claude emission; model resolves via alias: {native}"
-    );
+    for (_, name, expected) in cases {
+        let native =
+            std::fs::read_to_string(dir.path().join(format!(".claude/agents/{name}.md"))).unwrap();
+        match expected {
+            Some(model) => assert!(
+                native.contains(&format!("model: {model}")),
+                "{name} should pin {model}: {native}"
+            ),
+            None => assert!(
+                !native.contains("model:"),
+                "{name} should emit model-less: {native}"
+            ),
+        }
+    }
 }
 
 fn compile_emit_all_with_overlays(
@@ -777,18 +702,8 @@ fn compile_emit_all_with_overlays(
 ) -> Vec<CompiledNativeOutput> {
     let mut diag = DiagnosticCollector::new();
     let models_cache = empty_models_cache();
-    let ctx = NativeAgentCompileCtx {
-        project_root: dir,
-        old_lock: &LockFile::empty(),
-        harness_scope: None,
-        configured_emit_harnesses: configured_harnesses,
-        options: NativeAgentSurfaceCompileOptions {
-            force: false,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            dry_run: false,
-        },
-        fanout_agents: &[],
-    };
+    let empty_lock = LockFile::empty();
+    let ctx = native_ctx(dir, &empty_lock, configured_harnesses, &[]);
     // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
     let resolved = resolve_native_agent_profiles(agents, overlays);
     let mut router = test_router(aliases, &models_cache);
@@ -824,18 +739,7 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
     let mut router = test_router(&aliases, &models_cache);
     let mut diag = DiagnosticCollector::new();
     let records = compile_native_agents(
-        &NativeAgentCompileCtx {
-            project_root: dir.path(),
-            old_lock: &lock,
-            harness_scope: None,
-            configured_emit_harnesses: &[HarnessId::Claude],
-            options: NativeAgentSurfaceCompileOptions {
-                force: false,
-                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-                dry_run: false,
-            },
-            fanout_agents: &[],
-        },
+        &native_ctx(dir.path(), &lock, &[HarnessId::Claude], &[]),
         &AgentSurfacePolicy::EmitAll,
         &[agent],
         &mut router,
@@ -948,134 +852,6 @@ fn emit_all_consumes_overlay_model_policies() {
 }
 
 #[test]
-fn emit_all_overlay_cross_harness_clears_foreign_declared_harness() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
-    std::fs::create_dir_all(dir.path().join(".codex/agents")).unwrap();
-
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
-    );
-    aliases.insert(
-        "codex-model".to_string(),
-        pinned_alias_with_harness("gpt-5.3-codex", "codex", None),
-    );
-
-    let agent = parse_mars_agent(
-        "---\nname: worker\nharness: codex\nmodel: codex-model\n---\n# Worker\n",
-        "worker",
-    );
-    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
-    overlays.insert(
-        "worker".to_string(),
-        crate::config::AgentOverlay {
-            model: Some("opus".to_string()),
-            ..Default::default()
-        },
-    );
-
-    let records = compile_emit_all_with_overlays(
-        dir.path(),
-        &[HarnessId::Claude, HarnessId::Codex],
-        std::slice::from_ref(&agent),
-        &aliases,
-        &overlays,
-    );
-    assert_eq!(records.len(), 2);
-    assert!(dir.path().join(".claude/agents/worker.md").exists());
-    assert!(dir.path().join(".codex/agents/worker.toml").exists());
-
-    let codex_native =
-        std::fs::read_to_string(dir.path().join(".codex/agents/worker.toml")).unwrap();
-    assert!(
-        !codex_native.contains("model"),
-        "overlay claude model must not leak into declared codex harness: {codex_native}"
-    );
-
-    let claude_native =
-        std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
-    assert!(
-        claude_native.contains("model: claude-opus-4-6"),
-        "claude harness should carry the overlay opus model: {claude_native}"
-    );
-}
-
-#[test]
-fn emit_all_hand_authored_cross_harness_clears_foreign_model() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
-
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "codex-model".to_string(),
-        pinned_alias_with_harness("gpt-5.3-codex", "codex", None),
-    );
-
-    let agent = parse_mars_agent(
-        "---\nname: worker\nharness: claude\nmodel: codex-model\n---\n# Worker\n",
-        "worker",
-    );
-
-    let records = compile_emit_all_agents(
-        dir.path(),
-        &[HarnessId::Claude],
-        std::slice::from_ref(&agent),
-        &aliases,
-    );
-    assert_eq!(records.len(), 1);
-    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
-    assert!(
-        !native.contains("model:"),
-        "declared claude harness with codex model must emit model-less: {native}"
-    );
-}
-
-#[test]
-fn emit_all_declared_harness_matching_model_still_pins() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
-
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
-    );
-
-    let pinned = parse_mars_agent(
-        "---\nname: pinned-worker\nharness: claude\nmodel: opus\n---\n# Pinned\n",
-        "pinned-worker",
-    );
-    let model_less = parse_mars_agent(
-        "---\nname: bare-worker\nharness: claude\n---\n# Bare\n",
-        "bare-worker",
-    );
-
-    let records = compile_emit_all_agents(
-        dir.path(),
-        &[HarnessId::Claude],
-        &[pinned, model_less],
-        &aliases,
-    );
-    assert_eq!(records.len(), 2);
-
-    let pinned_native =
-        std::fs::read_to_string(dir.path().join(".claude/agents/pinned-worker.md")).unwrap();
-    assert!(
-        pinned_native.contains("model: claude-opus-4-6"),
-        "matching harness+model should still pin: {pinned_native}"
-    );
-
-    let bare_native =
-        std::fs::read_to_string(dir.path().join(".claude/agents/bare-worker.md")).unwrap();
-    assert!(
-        !bare_native.contains("model:"),
-        "declared harness without model should emit model-less: {bare_native}"
-    );
-}
-
-#[test]
 fn emit_all_ignores_overlay_harness_for_model_resolution() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
@@ -1107,48 +883,6 @@ fn emit_all_ignores_overlay_harness_for_model_resolution() {
     assert!(
         !native.contains("model:"),
         "overlay.harness must be ignored; the codex model must not leak under claude: {native}"
-    );
-}
-
-#[test]
-fn emit_all_empty_overlay_leaves_lowered_output_unchanged() {
-    let dir_baseline = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir_baseline.path().join(".claude/agents")).unwrap();
-
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
-    );
-
-    let agent = parse_mars_agent(
-        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools:\n  '*': deny\n  Bash: allow\n---\n# Worker\n",
-        "worker",
-    );
-    compile_emit_all_with_overlays(
-        dir_baseline.path(),
-        &[HarnessId::Claude],
-        std::slice::from_ref(&agent),
-        &aliases,
-        &IndexMap::new(),
-    );
-    let baseline =
-        std::fs::read_to_string(dir_baseline.path().join(".claude/agents/worker.md")).unwrap();
-
-    let dir_empty = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir_empty.path().join(".claude/agents")).unwrap();
-    compile_emit_all_with_overlays(
-        dir_empty.path(),
-        &[HarnessId::Claude],
-        std::slice::from_ref(&agent),
-        &aliases,
-        &IndexMap::from([("worker".to_string(), crate::config::AgentOverlay::default())]),
-    );
-    let empty_overlay_native =
-        std::fs::read_to_string(dir_empty.path().join(".claude/agents/worker.md")).unwrap();
-    assert_eq!(
-        baseline, empty_overlay_native,
-        "default/empty overlay must not change lowered native output"
     );
 }
 
@@ -1200,120 +934,5 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
     assert!(
         !native.contains("Profile desc"),
         "profile description must be replaced: {native}"
-    );
-}
-
-#[test]
-fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
-
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
-    );
-
-    let agent = parse_mars_agent("---\nname: worker\nmodel: opus\n---\n# Worker\n", "worker");
-    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
-    overlays.insert(
-        "worker".to_string(),
-        crate::config::AgentOverlay {
-            user_invocable: Some(false),
-            ..Default::default()
-        },
-    );
-
-    let mut diag =
-        DiagnosticCollector::with_lossiness_mode(crate::diagnostic::LossinessMode::Surface);
-    let models_cache = empty_models_cache();
-    let ctx = NativeAgentCompileCtx {
-        project_root: dir.path(),
-        old_lock: &LockFile::empty(),
-        harness_scope: None,
-        configured_emit_harnesses: &[HarnessId::Claude],
-        options: NativeAgentSurfaceCompileOptions {
-            force: false,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-            dry_run: false,
-        },
-        fanout_agents: &[],
-    };
-    let resolved = resolve_native_agent_profiles(std::slice::from_ref(&agent), &overlays);
-    let mut router = test_router(&aliases, &models_cache);
-    let records = compile_native_agents(
-        &ctx,
-        &AgentSurfacePolicy::EmitAll,
-        &resolved,
-        &mut router,
-        &mut diag,
-    );
-    assert_eq!(records.len(), 1);
-
-    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
-    assert!(
-        !native.contains("user-invocable"),
-        "agents have no native user-invocable key: {native}"
-    );
-
-    let dropped: Vec<_> = diag
-        .drain()
-        .into_iter()
-        .filter(|d| d.code == "agent-field-dropped")
-        .collect();
-    assert_eq!(dropped.len(), 1, "overlay false must warn-drop on emit");
-    assert!(
-        dropped[0].message.contains("user-invocable"),
-        "expected user-invocable in lossiness summary: {}",
-        dropped[0].message
-    );
-}
-
-#[test]
-fn emit_all_merged_local_overlay_wins_for_description() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
-
-    let mut aliases = IndexMap::new();
-    aliases.insert(
-        "opus".to_string(),
-        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
-    );
-
-    let agent = parse_mars_agent(
-        "---\nname: worker\ndescription: Profile desc\nmodel: opus\n---\n# Worker\n",
-        "worker",
-    );
-
-    let mut base_agents = IndexMap::new();
-    base_agents.insert(
-        "worker".to_string(),
-        crate::config::AgentOverlay {
-            description: Some("mars.toml description".to_string()),
-            ..Default::default()
-        },
-    );
-    let mut local_agents = IndexMap::new();
-    local_agents.insert(
-        "worker".to_string(),
-        crate::config::AgentOverlay {
-            description: Some("mars.local.toml description".to_string()),
-            ..Default::default()
-        },
-    );
-    let merged = crate::config::overlay_agent_overlays(&base_agents, &local_agents);
-
-    let records = compile_emit_all_with_overlays(
-        dir.path(),
-        &[HarnessId::Claude],
-        std::slice::from_ref(&agent),
-        &aliases,
-        &merged,
-    );
-    assert_eq!(records.len(), 1);
-    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
-    assert!(
-        native.contains("description: mars.local.toml description"),
-        "mars.local.toml overlay must replace mars.toml for widened fields: {native}"
     );
 }

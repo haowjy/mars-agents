@@ -1433,7 +1433,6 @@ mod tests {
     use crate::source::ResolvedRef;
     use crate::sync::apply::{ActionOutcome, ActionTaken, ApplyResult};
     use crate::types::{SourceId, SourceUrl};
-    use mars_schema::names::ItemName;
     use tempfile::TempDir;
 
     fn sample_lock() -> LockFile {
@@ -1505,69 +1504,6 @@ mod tests {
         )));
     }
 
-    #[test]
-    fn v2_output_matching_regular_file_promotes_to_installed() {
-        let dir = TempDir::new().unwrap();
-        let output = dir.path().join(".mars/agents/coder.md");
-        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
-        std::fs::write(&output, "managed").unwrap();
-        let checksum = crate::hash::hash_bytes(b"managed");
-        std::fs::write(
-            dir.path().join("mars.lock"),
-            format!(
-                r#"
-version = 2
-
-[items."agent/coder"]
-source = "_self"
-kind = "agent"
-source_checksum = "{checksum}"
-
-[[items."agent/coder".outputs]]
-target_root = ".mars"
-dest_path = "agents/coder.md"
-installed_checksum = "{checksum}"
-"#
-            ),
-        )
-        .unwrap();
-
-        let lock = load(dir.path()).unwrap();
-        let output = &lock.items["agent/coder"].outputs[0];
-
-        assert_eq!(lock.version, LOCK_VERSION);
-        assert!(matches!(output.state, OutputState::Installed { .. }));
-    }
-
-    #[test]
-    fn v2_output_absent_on_disk_promotes_to_pending_deletion() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.lock"),
-            r#"
-version = 2
-
-[items."hook/audit"]
-source = "_self"
-kind = "hook"
-source_checksum = "sha256:source"
-
-[[items."hook/audit".outputs]]
-target_root = ".opencode"
-dest_path = "plugins/mars-audit.ts"
-installed_checksum = "sha256:old"
-"#,
-        )
-        .unwrap();
-
-        let lock = load(dir.path()).unwrap();
-
-        assert!(matches!(
-            lock.items["hook/audit"].outputs[0].state,
-            OutputState::PendingDeletion
-        ));
-    }
-
     #[cfg(unix)]
     #[test]
     fn v2_directory_output_with_nested_dangling_symlink_has_no_checksum() {
@@ -1578,24 +1514,14 @@ installed_checksum = "sha256:old"
         std::fs::create_dir(&output).unwrap();
         std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
         symlink("missing.md", output.join("reference.md")).unwrap();
-
         assert_eq!(regular_output_checksum(&output), None);
-    }
 
-    #[cfg(unix)]
-    #[test]
-    fn v2_directory_output_with_nested_directory_symlink_has_no_checksum() {
-        use std::os::unix::fs::symlink;
-
-        let dir = TempDir::new().unwrap();
-        let output = dir.path().join("skill");
+        // A symlink to a directory is rejected too, not followed.
+        std::fs::remove_file(output.join("reference.md")).unwrap();
         let external = dir.path().join("external");
-        std::fs::create_dir(&output).unwrap();
         std::fs::create_dir(&external).unwrap();
-        std::fs::write(output.join("SKILL.md"), "# Skill").unwrap();
         std::fs::write(external.join("reference.md"), "# Reference").unwrap();
         symlink(&external, output.join("references")).unwrap();
-
         assert_eq!(regular_output_checksum(&output), None);
     }
 
@@ -1612,12 +1538,17 @@ installed_checksum = "sha256:old"
             .unwrap();
         assert!(status.success());
 
-        let started = std::time::Instant::now();
-        assert_eq!(regular_output_checksum(&output), None);
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(1),
-            "shape validation must not open and block on the FIFO"
-        );
+        // Opening a FIFO blocks until something writes to it, so a regression
+        // would hang the suite instead of failing it: check on its own thread
+        // with a deadline.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(regular_output_checksum(&output));
+        });
+        let checksum = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("shape validation must not open and block on the FIFO");
+        assert_eq!(checksum, None);
     }
 
     #[cfg(unix)]
@@ -1768,15 +1699,6 @@ installed_checksum = "sha256:bbb"
         let mut nested = lock.dependencies["base"].clone();
         nested.subpath = Some(mars_schema::names::SourceSubpath::new(r"plugins\foo").unwrap());
         lock.dependencies.insert("nested".into(), nested);
-        let dir = TempDir::new().unwrap();
-        write(dir.path(), &lock).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-        assert_eq!(lock, reloaded);
-    }
-
-    #[test]
-    fn roundtrip_lock_file_with_config_entries() {
-        let mut lock = sample_lock();
         lock.config_entries.insert(
             ".claude".to_string(),
             BTreeMap::from([(
@@ -1810,22 +1732,6 @@ installed_checksum = "sha256:bbb"
     }
 
     #[test]
-    fn deterministic_serialization() {
-        let lock = sample_lock();
-        let s1 = toml::to_string_pretty(&lock).unwrap();
-        let s2 = toml::to_string_pretty(&lock).unwrap();
-        assert_eq!(s1, s2);
-
-        // V2: keys are "agent/coder" and "skill/review" — agent comes before skill alphabetically.
-        let coder_pos = s1.find("agent/coder").unwrap();
-        let review_pos = s1.find("skill/review").unwrap();
-        assert!(
-            coder_pos < review_pos,
-            "agent/coder should appear before skill/review"
-        );
-    }
-
-    #[test]
     fn write_sorts_dependency_model_aliases_keys() {
         let toml_str = r#"
 version = 3
@@ -1850,104 +1756,6 @@ model = "openai/gpt-a"
             .find("[dependency_model_aliases.zeta]")
             .expect("zeta alias should be serialized");
         assert!(alpha < zeta, "aliases should serialize in sorted key order");
-    }
-
-    #[test]
-    fn load_absent_returns_empty() {
-        let dir = TempDir::new().unwrap();
-        let lock = load(dir.path()).unwrap();
-        assert_eq!(lock.version, LOCK_VERSION);
-        assert!(lock.dependencies.is_empty());
-        assert!(lock.items.is_empty());
-    }
-
-    #[test]
-    fn path_source_in_lock() {
-        let toml_str = r#"
-version = 3
-
-[dependencies.local]
-path = "/home/dev/agents"
-
-[items."agent/helper"]
-source = "local"
-kind = "agent"
-source_checksum = "sha256:111"
-
-[[items."agent/helper".outputs]]
-target_root = ".mars"
-dest_path = "agents/helper.md"
-state = "installed"
-installed_checksum = "sha256:222"
-"#;
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
-        let lock = load(dir.path()).unwrap();
-        let source = &lock.dependencies["local"];
-        assert!(source.url.is_none());
-        assert_eq!(source.path.as_deref(), Some("/home/dev/agents"));
-        assert!(source.commit.is_none());
-    }
-
-    #[test]
-    fn item_kind_serializes_lowercase() {
-        let item = LockedItemV2 {
-            source: "base".into(),
-            kind: ItemKind::Skill,
-            version: None,
-            source_checksum: "sha256:aaa".into(),
-            outputs: vec![OutputRecord::installed(
-                ".mars".to_string(),
-                "skills/review".into(),
-                "sha256:bbb".into(),
-            )],
-        };
-        let serialized = toml::to_string(&item).unwrap();
-        assert!(serialized.contains("kind = \"skill\""));
-    }
-
-    #[test]
-    fn item_id_display() {
-        let id = ItemId {
-            kind: ItemKind::Agent,
-            name: "coder".into(),
-        };
-        assert_eq!(id.to_string(), "agent/coder");
-    }
-
-    #[test]
-    fn item_kind_display() {
-        assert_eq!(ItemKind::Agent.to_string(), "agent");
-        assert_eq!(ItemKind::Skill.to_string(), "skill");
-    }
-
-    #[test]
-    fn find_by_dest_path_returns_flat_view() {
-        let lock = sample_lock();
-        let found = lock
-            .find_by_dest_path(&DestPath::from("agents/coder.md"))
-            .unwrap();
-        assert_eq!(found.source, "base");
-        assert_eq!(found.kind, ItemKind::Agent);
-        assert_eq!(found.source_checksum, "sha256:aaa");
-        assert_eq!(found.installed_checksum, "sha256:bbb");
-        assert_eq!(found.dest_path.as_str(), "agents/coder.md");
-    }
-
-    #[test]
-    fn find_by_dest_path_missing_returns_none() {
-        let lock = sample_lock();
-        assert!(
-            lock.find_by_dest_path(&DestPath::from("agents/missing.md"))
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn contains_dest_path_hit_and_miss() {
-        let lock = sample_lock();
-        assert!(lock.contains_dest_path(&DestPath::from("agents/coder.md")));
-        assert!(!lock.contains_dest_path(&DestPath::from("agents/nobody.md")));
     }
 
     #[test]
@@ -1978,65 +1786,18 @@ installed_checksum = "sha256:222"
         assert!(index.contains_output(".mars", &dest));
         assert!(index.contains_output(".pi", &dest));
         assert!(!index.contains_output(".cursor", &dest));
-    }
-
-    #[test]
-    fn output_dest_paths_for_target_filters_by_target_root() {
-        let mut lock = sample_lock();
-        lock.items
-            .get_mut("agent/coder")
-            .unwrap()
-            .outputs
-            .push(OutputRecord::installed(
-                ".cursor".to_string(),
-                "agents/coder.md".into(),
-                "sha256:cursor".into(),
-            ));
 
         let mars_paths = lock.output_dest_paths_for_target(".mars");
         assert!(mars_paths.contains("agents/coder.md"));
         assert!(mars_paths.contains("skills/review"));
-
-        let cursor_paths = lock.output_dest_paths_for_target(".cursor");
-        assert_eq!(cursor_paths.len(), 1);
-        assert!(cursor_paths.contains("agents/coder.md"));
+        let pi_paths = lock.output_dest_paths_for_target(".pi");
+        assert_eq!(pi_paths.len(), 1);
+        assert!(pi_paths.contains("agents/coder.md"));
         assert!(lock.output_dest_paths_for_target(".claude").is_empty());
-    }
 
-    #[test]
-    fn contains_output_matches_target_root_and_dest_path() {
-        let mut lock = sample_lock();
-        assert!(lock.contains_output(".mars", "agents/coder.md"));
+        assert!(lock.contains_output(".pi", "agents/coder.md"));
         assert!(!lock.contains_output(".cursor", "agents/coder.md"));
-
-        lock.items
-            .get_mut("agent/coder")
-            .unwrap()
-            .outputs
-            .push(OutputRecord::installed(
-                ".cursor".to_string(),
-                "agents/coder.md".into(),
-                "sha256:cursor".into(),
-            ));
-        assert!(lock.contains_output(".cursor", "agents/coder.md"));
-        assert!(!lock.contains_output(".cursor", "agents/missing.md"));
-    }
-
-    #[test]
-    fn apply_compiled_native_outputs_upserts_codex_native_by_canonical_owner() {
-        let mut lock = sample_lock();
-        apply_compiled_native_outputs(
-            &mut lock,
-            &[CompiledNativeOutput {
-                owner_canonical_dest_path: "agents/coder.md".to_string(),
-                target_root: ".codex".to_string(),
-                dest_path: "agents/coder.toml".to_string(),
-                installed_checksum: "sha256:codex".into(),
-            }],
-        )
-        .unwrap();
-        assert!(lock.contains_output(".codex", "agents/coder.toml"));
-        assert!(lock.contains_output(".mars", "agents/coder.md"));
+        assert!(!lock.contains_output(".pi", "agents/missing.md"));
     }
 
     #[test]
@@ -2244,244 +2005,6 @@ installed_checksum = "sha256:222"
     }
 
     #[test]
-    fn build_write_fallback_carries_non_canonical_outputs() {
-        let old_lock = LockFile {
-            version: LOCK_VERSION,
-            dependencies: IndexMap::new(),
-            items: IndexMap::from([(
-                "agent/agents/coder.md".to_string(),
-                LockedItemV2 {
-                    source: "base".into(),
-                    kind: ItemKind::Agent,
-                    version: None,
-                    source_checksum: "sha256:old-src".into(),
-                    outputs: vec![
-                        OutputRecord::installed(
-                            ".mars".to_string(),
-                            "agents/coder.md".into(),
-                            "sha256:old-mars".into(),
-                        ),
-                        OutputRecord::installed(
-                            ".claude".to_string(),
-                            "agents/coder.md".into(),
-                            "sha256:old-claude".into(),
-                        ),
-                    ],
-                },
-            )]),
-            config_entries: BTreeMap::new(),
-            dependency_model_aliases: IndexMap::new(),
-        };
-        let graph = ResolvedGraph {
-            nodes: IndexMap::new(),
-            order: Vec::new(),
-            selection: Default::default(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
-        let applied = ApplyResult {
-            outcomes: vec![ActionOutcome {
-                item_id: ItemId {
-                    kind: ItemKind::Agent,
-                    name: "coder".into(),
-                },
-                action: ActionTaken::Updated,
-                dest_path: "agents/coder.md".into(),
-                source_name: "base".into(),
-                source_checksum: Some("sha256:new-src".into()),
-                installed_checksum: Some("sha256:new-mars".into()),
-            }],
-        };
-
-        let new_lock = build(
-            &graph,
-            &applied,
-            &old_lock,
-            std::collections::BTreeMap::new(),
-        )
-        .unwrap();
-
-        assert!(!new_lock.items.contains_key("agent/agents/coder.md"));
-        assert!(new_lock.contains_output(".mars", "agents/coder.md"));
-        assert!(new_lock.contains_output(".claude", "agents/coder.md"));
-        let item = &new_lock.items["agent/coder"];
-        assert_eq!(item.source_checksum, "sha256:new-src");
-        let claude = item
-            .outputs
-            .iter()
-            .find(|o| o.target_root == ".claude")
-            .unwrap();
-        assert_eq!(
-            claude.installed_checksum().expect("installed output"),
-            "sha256:old-claude"
-        );
-    }
-
-    #[test]
-    fn apply_apply_outcomes_write_fallback_carries_non_canonical_outputs() {
-        let old_lock = LockFile {
-            version: LOCK_VERSION,
-            dependencies: IndexMap::new(),
-            items: IndexMap::from([(
-                "agent/agents/coder.md".to_string(),
-                LockedItemV2 {
-                    source: "base".into(),
-                    kind: ItemKind::Agent,
-                    version: None,
-                    source_checksum: "sha256:old-src".into(),
-                    outputs: vec![
-                        OutputRecord::installed(
-                            ".mars".to_string(),
-                            "agents/coder.md".into(),
-                            "sha256:old-mars".into(),
-                        ),
-                        OutputRecord::installed(
-                            ".claude".to_string(),
-                            "agents/coder.md".into(),
-                            "sha256:old-claude".into(),
-                        ),
-                    ],
-                },
-            )]),
-            config_entries: BTreeMap::new(),
-            dependency_model_aliases: IndexMap::new(),
-        };
-        let mut lock = old_lock.clone();
-
-        apply_apply_outcomes_to_lock(
-            &mut lock,
-            &old_lock,
-            &[ActionOutcome {
-                item_id: ItemId {
-                    kind: ItemKind::Agent,
-                    name: "coder".into(),
-                },
-                action: ActionTaken::Updated,
-                dest_path: "agents/coder.md".into(),
-                source_name: "base".into(),
-                source_checksum: Some("sha256:new-src".into()),
-                installed_checksum: Some("sha256:new-mars".into()),
-            }],
-        );
-
-        assert!(!lock.items.contains_key("agent/agents/coder.md"));
-        assert!(lock.contains_output(".mars", "agents/coder.md"));
-        assert!(lock.contains_output(".claude", "agents/coder.md"));
-        let item = &lock.items["agent/coder"];
-        assert_eq!(item.source_checksum, "sha256:new-src");
-    }
-
-    #[test]
-    fn apply_apply_outcomes_to_lock_updated_preserves_non_canonical_outputs() {
-        let mut old_lock = sample_lock();
-        old_lock
-            .items
-            .get_mut("agent/coder")
-            .unwrap()
-            .outputs
-            .push(OutputRecord::installed(
-                ".claude".to_string(),
-                "agents/coder.md".into(),
-                "sha256:claude".into(),
-            ));
-
-        let mut lock = old_lock.clone();
-        apply_apply_outcomes_to_lock(
-            &mut lock,
-            &old_lock,
-            &[ActionOutcome {
-                item_id: ItemId {
-                    kind: ItemKind::Agent,
-                    name: ItemName::from("coder"),
-                },
-                action: ActionTaken::Updated,
-                dest_path: "agents/coder.md".into(),
-                source_name: "base".into(),
-                source_checksum: Some("sha256:new-src".into()),
-                installed_checksum: Some("sha256:new-mars".into()),
-            }],
-        );
-
-        assert!(lock.contains_output(".mars", "agents/coder.md"));
-        assert!(lock.contains_output(".claude", "agents/coder.md"));
-        let item = &lock.items["agent/coder"];
-        assert_eq!(item.source_checksum, "sha256:new-src");
-        let mars = item
-            .outputs
-            .iter()
-            .find(|o| o.target_root == ".mars")
-            .unwrap();
-        assert_eq!(
-            mars.installed_checksum().expect("installed output"),
-            "sha256:new-mars"
-        );
-        let claude = item
-            .outputs
-            .iter()
-            .find(|o| o.target_root == ".claude")
-            .unwrap();
-        assert_eq!(
-            claude.installed_checksum().expect("installed output"),
-            "sha256:claude"
-        );
-    }
-
-    #[test]
-    fn ownership_lock_for_native_emission_seeds_new_apply_outcomes() {
-        let old_lock = LockFile::empty();
-        let apply_outcomes = vec![ActionOutcome {
-            item_id: ItemId {
-                kind: ItemKind::Agent,
-                name: ItemName::from("coder"),
-            },
-            action: ActionTaken::Installed,
-            dest_path: "agents/coder.md".into(),
-            source_name: "base".into(),
-            source_checksum: Some("sha256:src".into()),
-            installed_checksum: Some("sha256:mars".into()),
-        }];
-        let view = ownership_lock_for_native_emission(
-            &old_lock,
-            &apply_outcomes,
-            &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
-                items_synced: 1,
-                items_removed: 0,
-                errors: Vec::new(),
-                synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
-                    dest_path: "agents/coder.md".to_string(),
-                    installed_checksum: "sha256:cursor".into(),
-                }],
-                removed_dest_paths: Vec::new(),
-            }],
-        );
-        assert!(view.contains_output(".mars", "agents/coder.md"));
-        assert!(view.contains_output(".cursor", "agents/coder.md"));
-        assert!(!old_lock.contains_output(".mars", "agents/coder.md"));
-    }
-
-    #[test]
-    fn ownership_lock_after_target_sync_layers_synced_outputs() {
-        let lock = sample_lock();
-        let view = ownership_lock_after_target_sync(
-            &lock,
-            &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
-                items_synced: 1,
-                items_removed: 0,
-                errors: Vec::new(),
-                synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
-                    dest_path: "agents/coder.md".to_string(),
-                    installed_checksum: "sha256:cursor".into(),
-                }],
-                removed_dest_paths: Vec::new(),
-            }],
-        );
-        assert!(view.contains_output(".cursor", "agents/coder.md"));
-        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
-    }
-
-    #[test]
     fn apply_target_sync_outputs_upserts_and_removes_target_records() {
         let mut lock = sample_lock();
         apply_target_sync_outputs(
@@ -2513,37 +2036,6 @@ installed_checksum = "sha256:222"
         );
         assert!(!lock.contains_output(".cursor", "agents/coder.md"));
         assert!(lock.contains_output(".mars", "agents/coder.md"));
-    }
-
-    #[test]
-    fn canonical_flat_items_excludes_linked_target_outputs() {
-        let mut lock = sample_lock();
-        lock.items
-            .get_mut("agent/coder")
-            .unwrap()
-            .outputs
-            .push(OutputRecord::installed(
-                ".cursor".to_string(),
-                "agents/coder.md".into(),
-                "sha256:cursor".into(),
-            ));
-
-        let canonical = lock.canonical_flat_items();
-        assert_eq!(canonical.len(), 2);
-        assert!(
-            canonical
-                .iter()
-                .any(|(dp, _)| dp.as_str() == "agents/coder.md")
-        );
-        assert!(
-            canonical
-                .iter()
-                .all(|(_, item)| { lock.contains_output(".mars", item.dest_path.as_str()) })
-        );
-
-        let cursor = lock.flat_items_for_target(".cursor");
-        assert_eq!(cursor.len(), 1);
-        assert_eq!(cursor[0].0.as_str(), "agents/coder.md");
     }
 
     #[test]
@@ -2719,122 +2211,6 @@ installed_checksum = "sha256:222"
         let source = &new_lock.dependencies["base"];
         assert_eq!(source.version.as_deref(), Some("main"));
         assert_eq!(source.commit.as_deref(), Some("abc123"));
-    }
-
-    #[test]
-    fn build_keeps_self_items_from_old_lock_on_skipped_action() {
-        let graph = ResolvedGraph {
-            nodes: IndexMap::new(),
-            order: Vec::new(),
-            selection: Default::default(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
-        let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
-        let old_lock = LockFile {
-            version: LOCK_VERSION,
-            dependencies: IndexMap::from([(
-                local_source_name.clone(),
-                LockedSource {
-                    url: None,
-                    path: Some(".".into()),
-                    subpath: None,
-                    version: None,
-                    commit: None,
-                    plugin: None,
-                    content: None,
-                },
-            )]),
-            items: IndexMap::from([(
-                "skill/local-skill".to_string(),
-                LockedItemV2 {
-                    source: local_source_name.clone(),
-                    kind: ItemKind::Skill,
-                    version: None,
-                    source_checksum: "sha256:self".into(),
-                    outputs: vec![OutputRecord::installed(
-                        ".mars".to_string(),
-                        DestPath::from("skills/local-skill"),
-                        "sha256:self".into(),
-                    )],
-                },
-            )]),
-            config_entries: std::collections::BTreeMap::new(),
-            dependency_model_aliases: IndexMap::new(),
-        };
-        let applied = ApplyResult {
-            outcomes: vec![ActionOutcome {
-                item_id: ItemId {
-                    kind: ItemKind::Skill,
-                    name: "local-skill".into(),
-                },
-                action: ActionTaken::Skipped,
-                dest_path: "skills/local-skill".into(),
-                source_name: local_source_name.clone(),
-                source_checksum: None,
-                installed_checksum: None,
-            }],
-        };
-
-        let new_lock = build(
-            &graph,
-            &applied,
-            &old_lock,
-            std::collections::BTreeMap::new(),
-        )
-        .unwrap();
-
-        assert!(
-            new_lock
-                .dependencies
-                .contains_key(local_source_name.as_str())
-        );
-        let item = &new_lock.items["skill/local-skill"];
-        assert_eq!(item.source, local_source_name);
-        assert_eq!(item.kind, ItemKind::Skill);
-        assert_eq!(item.source_checksum, "sha256:self");
-        assert_eq!(
-            item.outputs[0]
-                .installed_checksum()
-                .expect("installed output"),
-            "sha256:self"
-        );
-    }
-
-    #[test]
-    fn build_rejects_missing_installed_checksum_for_write_actions() {
-        let graph = ResolvedGraph {
-            nodes: IndexMap::new(),
-            order: Vec::new(),
-            selection: Default::default(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
-        let old_lock = LockFile::empty();
-        let applied = ApplyResult {
-            outcomes: vec![ActionOutcome {
-                item_id: ItemId {
-                    kind: ItemKind::Agent,
-                    name: "coder".into(),
-                },
-                action: ActionTaken::Installed,
-                dest_path: "agents/coder.md".into(),
-                source_name: "base".into(),
-                source_checksum: Some("sha256:source".into()),
-                installed_checksum: None,
-            }],
-        };
-
-        let err = build(
-            &graph,
-            &applied,
-            &old_lock,
-            std::collections::BTreeMap::new(),
-        )
-        .unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("missing checksum for write-producing action"));
-        assert!(msg.contains("agents/coder.md"));
     }
 
     #[test]

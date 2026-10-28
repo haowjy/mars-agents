@@ -666,7 +666,6 @@ pub(crate) fn build_target(
     // Prevent managed installs from overwriting unmanaged files. This runs over
     // every item, hook and MCP directories included, and before renames rewrite
     // references, so a pruned item is neither referenced nor installed.
-    let mut kept_unmanaged = Vec::new();
     for collision in target::check_unmanaged_collisions(
         managed_root,
         &resolved.loaded.ownership(),
@@ -681,7 +680,6 @@ pub(crate) fn build_target(
             ),
         );
         built.target.items.shift_remove(&collision.path);
-        kept_unmanaged.push(collision.path);
     }
 
     let PreparedTarget {
@@ -703,7 +701,7 @@ pub(crate) fn build_target(
             .map(|package| package.uses_providers.as_slice()),
     );
 
-    validate::report_skill_links(&target_state, &resolved.graph, &kept_unmanaged, diag);
+    validate::report_skill_links(&target_state, &resolved.graph, None, diag);
 
     validate::warn_config_dangles_after_rename(
         &renames,

@@ -201,11 +201,13 @@ pub fn prepare(argument: JsValue) -> Result<JsValue, JsValue> {
     let context = input
         .context
         .unwrap_or(mars_schema::prepare::PrepareContext::Package);
-    let prepared = if input.migrate {
+    let mut prepared = if input.migrate {
         mars_schema::prepare::prepare_for_migration(&tree, context, input.declared_dialect)
     } else {
         mars_schema::prepare::prepare(&tree, context, input.declared_dialect)
     };
+    // The verdict on the package's own layout; the binary leaves it to the consumer's install.
+    mars_schema::links::package(&mut prepared);
     to_js(&prepared)
 }
 
@@ -243,14 +245,15 @@ pub fn normalize(argument: JsValue) -> Result<JsValue, JsValue> {
     }
     let input: Input = parse_fields(argument)?;
     let tree = file_tree(input.tree)?;
-    to_js(&mars_schema::normalize::normalize(
-        &mars_schema::normalize::NormalizeRequest {
+    let mut normalized =
+        mars_schema::normalize::normalize(&mars_schema::normalize::NormalizeRequest {
             tree: &tree,
             source: input.source,
             hint: input.hint,
             selection: input.selection,
-        },
-    ))
+        });
+    normalized.report_links();
+    to_js(&normalized)
 }
 
 /// Whether `version` meets a dependency entry's `version` text (`null` or `"latest"` is any

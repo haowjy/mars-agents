@@ -13,7 +13,7 @@ use crate::sync::LoadedConfig;
 use crate::sync::target::{CollisionRename, ExplicitRename, TargetState};
 use crate::types::{DestPath, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
-use mars_schema::item::{DefinitionKind, ItemKind};
+use mars_schema::item::ItemKind;
 use mars_schema::provider::deferred_provider;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
@@ -176,39 +176,23 @@ pub(crate) fn warn_config_dangles_after_rename(
     }
 }
 
-/// Report the body links of every installed dependency skill that stop resolving once the skills
-/// are installed, judged against the whole installed tree (`target.items`, every source, plus the
-/// unmanaged paths sync left in place): after the consumer's filters, explicit renames and
-/// collision renames. This is the one reporter of
-/// these links for a dependency; `package_prepare` leaves them out (`Subject::Dependency`)
-/// because it only knows the package's own layout. A skill that is not installed has no links
-/// checked, though it can still be a link target.
-///
-/// The project's own `_self` skills are not checked here: they install under their default
-/// paths, never filtered or renamed, so the verdict `package_prepare` gives is already exact.
+/// Report the body links of every dependency skill that stop resolving once the skills are
+/// installed, judged against the whole installed tree (`target.items`, every source) after the
+/// consumer's filters, explicit renames and collision renames. A skill that is not installed has
+/// no links checked, though it can still be a link target. The rule and its coverage are
+/// `mars_schema::links::check`; the project's own `.mars-src` skills get the package-level
+/// verdict from `package_prepare`, and so does a plugin build's root, which `judged` names.
 pub(crate) fn report_skill_links(
     target: &TargetState,
     graph: &ResolvedGraph,
-    kept_unmanaged: &[DestPath],
+    judged: Option<&SourceName>,
     diag: &mut DiagnosticCollector,
 ) {
-    use mars_schema::links::{SkillView, skill_link_diagnostics};
-    use mars_schema::read::{DefinitionRead, Reading};
-
-    let dests: Vec<&str> = target
+    let installed: Vec<&str> = target
         .items
         .values()
         .map(|item| item.dest_path.as_str())
-        .chain(kept_unmanaged.iter().map(DestPath::as_str))
         .collect();
-    let installed = |path: &str| {
-        dests.iter().any(|dest| {
-            path == *dest
-                || path
-                    .strip_prefix(dest)
-                    .is_some_and(|rest| rest.starts_with('/'))
-        })
-    };
     let skill_dests: HashMap<(&SourceName, &Path), &DestPath> = target
         .items
         .values()
@@ -221,24 +205,17 @@ pub(crate) fn report_skill_links(
         })
         .collect();
 
-    struct Skill<'a> {
-        definition: &'a mars_schema::prepare::PreparedDefinition,
-        /// Where the skill is installed; `None` when a filter or a local item dropped it.
-        dest: Option<&'a str>,
-        stored: String,
-    }
-
     for (source_name, node) in &graph.nodes {
-        let Some(prepared) = &node.prepared else {
+        let prepared = &node.prepared;
+        if judged == Some(source_name) {
             continue;
-        };
-        let skills = prepared
+        }
+        let dests = prepared
             .definitions
             .iter()
-            .filter(|definition| definition.kind == DefinitionKind::Skill)
             .map(|definition| {
                 let item = crate::discover::definition_item(definition, &definition.output_path);
-                let dest = skill_dests
+                skill_dests
                     .get(&(
                         source_name,
                         node.rooted_ref
@@ -246,39 +223,19 @@ pub(crate) fn report_skill_links(
                             .join(item.source_path)
                             .as_path(),
                     ))
-                    .map(|dest| dest.as_str());
-                Skill {
-                    definition,
-                    dest,
-                    stored: dest
-                        .map_or_else(|| format!("skills/{}", definition.slug), str::to_owned),
-                }
-            })
-            .collect::<Vec<_>>();
-        let views = skills
-            .iter()
-            .map(|skill| SkillView {
-                slug: &skill.definition.slug,
-                source_root: skill.definition.skill_root.as_deref().unwrap_or_default(),
-                stored_root: &skill.stored,
-                installed: skill.dest.is_some(),
-                body: match &skill.definition.reading {
-                    Reading::Skill(DefinitionRead { body, .. }) if skill.dest.is_some() => {
-                        body.as_deref()
-                    }
-                    _ => None,
-                },
+                    .map(|dest| dest.as_str())
             })
             .collect::<Vec<_>>();
         let package = crate::package_prepare::dependency_name(prepared, source_name);
-        for (skill, found) in skills
-            .iter()
-            .zip(skill_link_diagnostics(&views, &installed))
-        {
+        for (definition, found) in prepared.definitions.iter().zip(mars_schema::links::check(
+            &prepared.definitions,
+            &dests,
+            &installed,
+        )) {
             for diagnostic in &found {
                 diag.schema(
                     diagnostic,
-                    &format!("{package}: {}", skill.definition.source_path),
+                    &format!("{package}: {}", definition.source_path),
                     false,
                 );
             }

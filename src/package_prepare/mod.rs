@@ -276,7 +276,7 @@ pub(crate) fn prepare_rooted(
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
-        &Subject::Dependency(package_name),
+        &Subject::Package(package_name),
         diag,
     );
 
@@ -372,12 +372,15 @@ pub(crate) fn prepare_authored_for_migration(
 fn reported(
     root: &Path,
     source: DiskTreeSource,
-    prepared: Prepared,
+    mut prepared: Prepared,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     if let Some(error) = source.take_error() {
         return Err(error);
     }
+    // The verdict on the package's own layout. A dependency gets none here: `sync` judges its
+    // links against what the consumer installs.
+    mars_schema::links::package(&mut prepared);
     // A package carries its manifest; authored content has none to name it by.
     let package_name = prepared
         .manifest
@@ -420,9 +423,6 @@ pub(crate) fn prepare_project(
 pub(crate) enum Subject<'a> {
     /// A package, named by its manifest; `mars migrate` runs in its repository.
     Package(&'a str),
-    /// A dependency of a sync: like a package, except its body links are judged by `sync`
-    /// against what the consumer's filters and renames install, not here against the package.
-    Dependency(&'a str),
     /// The project's own `.mars-src` content.
     AuthoredSource,
 }
@@ -444,11 +444,6 @@ pub(crate) fn report_diagnostics(
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
         for diagnostic in diagnostics {
-            if matches!(subject, Subject::Dependency(_))
-                && mars_schema::links::LINK_CODES.contains(&diagnostic.code.as_str())
-            {
-                continue;
-            }
             diag.schema(diagnostic, &context, false);
         }
     }
@@ -460,7 +455,7 @@ pub(crate) fn report_diagnostics(
         return;
     }
     let (name, migrate) = match subject {
-        Subject::Package(name) | Subject::Dependency(name) => (
+        Subject::Package(name) => (
             format!("package `{name}`"),
             "run `mars migrate` in its repository",
         ),

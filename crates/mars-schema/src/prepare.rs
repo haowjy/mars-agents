@@ -340,50 +340,6 @@ pub(crate) fn prepare_root(
     } else {
         Vec::new()
     };
-    if let Shaping::Foreign(Dialect::Claude | Dialect::AgentSkills) = shaping {
-        // Every discovered skill is a link owner; only the selected ones are installed, under
-        // their own output folder.
-        let bodies = selected
-            .iter()
-            .zip(&definitions)
-            .filter_map(|(definition, prepared)| match &prepared.reading {
-                Reading::Skill(DefinitionRead {
-                    body: Some(body), ..
-                }) => Some((definition.source_path.as_str(), body.as_str())),
-                _ => None,
-            })
-            .collect::<BTreeMap<_, _>>();
-        let skills = all
-            .iter()
-            .filter(|definition| definition.kind == DefinitionKind::Skill)
-            .filter(|definition| definition.skill_root.is_some())
-            .collect::<Vec<_>>();
-        let views = skills
-            .iter()
-            .map(|definition| crate::links::SkillView {
-                slug: &definition.slug,
-                source_root: definition.skill_root.as_deref().unwrap_or_default(),
-                stored_root: definition.output_root(),
-                installed: selected.contains(definition),
-                body: bodies.get(definition.source_path.as_str()).copied(),
-            })
-            .collect::<Vec<_>>();
-        let installed = |path: &str| {
-            views.iter().filter(|view| view.installed).any(|view| {
-                view.stored_root.is_empty()
-                    || path == view.stored_root
-                    || path.starts_with(&format!("{}/", view.stored_root))
-            })
-        };
-        let found = crate::links::skill_link_diagnostics(&views, &installed);
-        for (definition, found) in skills.iter().zip(found) {
-            diagnostics
-                .entry(definition.source_path.clone())
-                .or_default()
-                .extend(found);
-        }
-    }
-
     let payload = if can_read_definitions {
         payload_paths(
             source,

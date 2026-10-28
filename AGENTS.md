@@ -100,8 +100,10 @@ release heading to `CHANGELOG.md`. Check it locally with
 | `release:skip` | No release |
 
 **Minor and major releases collect on `release/v<X>.<Y>.0`.** Every PR merged to `main`
-with `release:minor`/`release:major` cuts its own release, so breaking work never merges to
-`main` piece by piece, even when it starts as one PR:
+with `release:minor`/`release:major` cuts its own release, so minor and major changes never
+merge to `main` piece by piece, even when one starts as a single PR. Each one goes to the open
+release branch, and any other minor or major change made before it ships joins the same
+branch. Patch-level changes still merge to `main` on their own:
 1. Create `release/v<X>.<Y>.0` from `main` if it doesn't exist (`release/v<X>.0.0` for a
    major) and push it. Once the first part has merged, open its PR to `main` as a draft. It
    carries the release label, the combined changelog and upgrade notes, and the whole-change
@@ -123,6 +125,9 @@ process.
 ## Releasing
 
 CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, renders changelog, commits, tags, and publishes to PyPI/npm/crates.io.
+
+**Straight to `main` without approval:** docs-only changes and tiny, obvious bug fixes. Every
+other merge to `main` needs Jimmy's approval in the current conversation.
 
 **Direct push ≠ release.** A push to `main` triggers a release only when the pushed commit is the merge of a PR labeled `release:*`. `release-on-main.yml` looks up the trigger commit's PR (`/commits/{sha}/pulls`); finding none, it sets `should_release=false` and runs CI only — no bump, no tag. Docs and other no-ceremony work can go straight to `main`.
 

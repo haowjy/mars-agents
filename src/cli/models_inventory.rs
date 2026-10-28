@@ -210,16 +210,6 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         }
         Err(err) => return Err(err),
     };
-    let unknown_providers = crate::routing::known_providers::unknown_provider_order_warnings(
-        settings.provider_order.as_deref().unwrap_or_default(),
-        &models::catalog_model_slugs(&cache),
-    );
-    if !json {
-        for message in &unknown_providers {
-            eprintln!("warning: {message}");
-        }
-    }
-    routing_diagnostics.extend(unknown_providers);
     let refresh =
         models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
     let mut session = CapabilitySession::collect(&CapabilityCollectionOptions {
@@ -227,6 +217,21 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         probe_refresh: refresh.probe_refresh,
     });
     let installed = session.installed_harnesses();
+    let provider_order = settings.provider_order.as_deref().unwrap_or_default();
+    if let Some(known) =
+        session.known_providers(provider_order, &models::catalog_model_slugs(&cache))
+    {
+        let unknown = crate::routing::known_providers::unknown_provider_order_warnings(
+            provider_order,
+            &known,
+        );
+        if !json {
+            for message in &unknown {
+                eprintln!("warning: {message}");
+            }
+        }
+        routing_diagnostics.extend(unknown);
+    }
     let (possible, listing_diagnostics) = {
         let mut source = SessionPossibleSource::new(&cache, &mut session, scope);
         let rows = source.all_rows();

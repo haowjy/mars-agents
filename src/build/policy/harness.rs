@@ -307,6 +307,7 @@ mod tests {
                 pi_probe_result: None,
                 cursor_probe_result: None,
                 catalog_model_slugs: None,
+                known_providers: None,
             },
         }
     }
@@ -750,6 +751,7 @@ mod tests {
                 pi_probe_result: None,
                 cursor_probe_result: Some(&cursor_probe),
                 catalog_model_slugs: None,
+                known_providers: None,
             },
         };
 

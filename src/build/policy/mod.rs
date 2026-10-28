@@ -277,6 +277,14 @@ pub fn resolve_policy(
         probe_refresh: input.models_refresh.probe_refresh,
     });
     let installed_harnesses = capability_session.installed_harnesses();
+    let known_providers = capability_session.known_providers(
+        effective_config
+            .settings
+            .provider_order
+            .as_deref()
+            .unwrap_or_default(),
+        &catalog_slugs,
+    );
     let native_auth = crate::harness::host::NativeAuthCache::default();
     let mut first_unverified = None;
     let mut selected = None;
@@ -324,6 +332,7 @@ pub fn resolve_policy(
                     pi_probe_result: None,
                     cursor_probe_result: None,
                     catalog_model_slugs: Some(catalog_slugs.as_slice()),
+                    known_providers: known_providers.as_ref(),
                 },
             },
             &mut probe_resolver,

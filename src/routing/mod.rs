@@ -231,6 +231,9 @@ pub struct RoutingInput<'a> {
     pub cursor_probe_result: Option<&'a CursorProbeResult>,
     /// Cached catalog slugs (`provider/model`) for full model-id matching on native harnesses.
     pub catalog_model_slugs: Option<&'a [String]>,
+    /// Providers Mars has observed, for `provider_order` warnings. `None` means pending (or not
+    /// computed): no warning.
+    pub known_providers: Option<&'a HashSet<String>>,
 }
 
 /// Permission is checked before installation, authentication, or support evidence.
@@ -386,10 +389,12 @@ where
 {
     let mut diagnostics = Vec::new();
     let provider_order = parse_settings_provider_order(input.settings_provider_order);
-    diagnostics.extend(known_providers::unknown_provider_order_warnings(
-        &provider_order,
-        input.catalog_model_slugs.unwrap_or_default(),
-    ));
+    if let Some(known) = input.known_providers {
+        diagnostics.extend(known_providers::unknown_provider_order_warnings(
+            &provider_order,
+            known,
+        ));
+    }
     let default_harness =
         normalize_config_default_harness(input.config_default_harness, &mut diagnostics);
     let constrained = !matches!(input.harness_scope, HarnessScope::Unrestricted)
@@ -1151,6 +1156,7 @@ mod tests {
             pi_probe_result,
             cursor_probe_result,
             catalog_model_slugs,
+            known_providers: None,
         }
     }
 
@@ -1676,6 +1682,7 @@ mod tests {
             pi_probe_result: Some(&pi_probe),
             cursor_probe_result: None,
             catalog_model_slugs: None,
+            known_providers: None,
         };
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);
@@ -1724,6 +1731,7 @@ mod tests {
             pi_probe_result: Some(&pi_probe),
             cursor_probe_result: None,
             catalog_model_slugs: None,
+            known_providers: None,
         };
 
         let trace = evaluate_candidates_with_auth(&input, always_authed);
@@ -1759,7 +1767,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_provider_order_entries_warn_but_do_not_block_routing() {
+    fn unknown_provider_order_entries_do_not_block_routing() {
         let installed = installed(&["opencode"]);
         let provider_order = vec!["future-provider".to_string()];
         let probe = OpenCodeProbeResult {
@@ -1782,6 +1790,7 @@ mod tests {
             pi_probe_result: None,
             cursor_probe_result: None,
             catalog_model_slugs: None,
+            known_providers: None,
         };
 
         let trace = evaluate_candidates_with_auth(&input, never_authed);

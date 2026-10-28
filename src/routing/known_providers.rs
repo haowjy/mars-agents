@@ -1,75 +1,58 @@
 //! Which providers Mars has observed, for judging `settings.provider_order` entries.
 //!
-//! A provider is known when it appears in the model catalog (the configured catalog providers
-//! and the providers of cached entries), in a cached harness probe listing (`opencode-go` from
+//! A provider is known when it appears in the model catalog (the default catalog providers and
+//! the providers of cached entries), in an OpenCode or Pi probe listing (`opencode-go` from
 //! `opencode-go/deepseek-v4.1-flash`), or as a harness's native provider. There is no list to
 //! maintain. Variants such as `openai-codex` are known through `slug::normalize_provider`.
 //!
-//! The catalog comes from the caller; probe listings are read from disk caches; this never probes. A probe-backed harness that is
-//! installed but has no usable cached listing (fresh cache, offline, probe failed) may still
-//! reveal the provider, so while any such harness is pending no entry is reported unknown.
+//! Pure: the caller (the capability session) supplies the catalog slugs and probe outcomes and
+//! passes the result in as `RoutingInput::known_providers`. Cursor is not a source: its slugs
+//! carry no provider prefix.
 
 use std::collections::HashSet;
 
-use crate::harness::host::{ExecutableResolver, ExecutableState, PathExecutableResolver};
-use crate::harness::registry::{self, HarnessClass};
-use crate::models::probes::{cursor_cache, opencode_cache, pi_cache};
-use mars_schema::HarnessId;
+use crate::harness::registry;
 
 use super::slug;
 
-/// Warnings for `provider_order` entries Mars has not observed. Empty while catalog or probe
-/// data is pending. `catalog_slugs` are the cached catalog's `provider/model` slugs.
-pub fn unknown_provider_order_warnings(order: &[String], catalog_slugs: &[String]) -> Vec<String> {
-    match observed_providers(catalog_slugs) {
-        Some(observed) => unknown_entries(order, &observed),
-        None => Vec::new(),
-    }
+/// What an installed probe-backed harness (OpenCode, Pi) has told us.
+pub enum ProbeListing {
+    /// Never probed: a listing may still reveal the provider.
+    NeverProbed,
+    /// The latest attempt failed and left no listing. Adds nothing, blocks nothing.
+    Failed,
+    Listed(Vec<String>),
 }
 
-/// `None` while the catalog is empty or an installed probe-backed harness has no usable cached
-/// listing.
-fn observed_providers(catalog_slugs: &[String]) -> Option<HashSet<String>> {
-    if catalog_slugs.is_empty() {
+/// The known providers, or `None` (pending) while the check could still be wrong: the catalog is
+/// empty or an installed probe-backed harness has never been probed. Only installed harnesses
+/// appear in `probes`.
+pub fn known_providers(
+    catalog_slugs: &[String],
+    probes: &[ProbeListing],
+) -> Option<HashSet<String>> {
+    if catalog_slugs.is_empty()
+        || probes
+            .iter()
+            .any(|p| matches!(p, ProbeListing::NeverProbed))
+    {
         return None;
     }
-    let mut observed: HashSet<String> = crate::models::default_catalog_providers()
+    let mut known: HashSet<String> = crate::models::default_catalog_providers()
         .into_iter()
         .collect();
-    observed.extend(slug_providers(catalog_slugs));
-    observed.extend(
+    known.extend(slug_providers(catalog_slugs));
+    known.extend(
         registry::descriptors()
             .iter()
             .filter_map(|d| registry::native_provider(d.id).map(str::to_string)),
     );
-
-    let mut probes_pending = false;
-    for descriptor in registry::descriptors() {
-        if !matches!(descriptor.class, HarnessClass::ProbeBacked { .. })
-            || !matches!(
-                PathExecutableResolver.resolve(descriptor.binary),
-                ExecutableState::Found { .. }
-            )
-        {
-            continue;
-        }
-        let slugs: Option<Vec<String>> = match descriptor.id {
-            HarnessId::OpenCode => {
-                opencode_cache::read_cached_probe_result_usable().map(|result| result.model_slugs)
-            }
-            HarnessId::Pi => pi_cache::read_cached_probe_result_usable()
-                .map(|result| result.model_slugs.into_iter().collect()),
-            HarnessId::Cursor => {
-                cursor_cache::read_cached_probe_result_usable().map(|result| result.slugs)
-            }
-            _ => None,
-        };
-        match slugs {
-            Some(slugs) => observed.extend(slug_providers(&slugs)),
-            None => probes_pending = true,
+    for probe in probes {
+        if let ProbeListing::Listed(slugs) = probe {
+            known.extend(slug_providers(slugs));
         }
     }
-    (!probes_pending).then_some(observed)
+    Some(known)
 }
 
 fn slug_providers(slugs: &[String]) -> impl Iterator<Item = String> + '_ {
@@ -78,15 +61,16 @@ fn slug_providers(slugs: &[String]) -> impl Iterator<Item = String> + '_ {
         .filter_map(|s| s.split_once('/').map(|(provider, _)| provider.to_string()))
 }
 
-fn unknown_entries(order: &[String], observed: &HashSet<String>) -> Vec<String> {
-    let observed: HashSet<String> = observed
+/// Warnings for `provider_order` entries absent from `known`.
+pub fn unknown_provider_order_warnings(order: &[String], known: &HashSet<String>) -> Vec<String> {
+    let known: HashSet<String> = known
         .iter()
         .map(|provider| slug::normalize_provider(provider))
         .collect();
     order
         .iter()
         .filter(|provider| !provider.trim().is_empty())
-        .filter(|provider| !observed.contains(&slug::normalize_provider(provider)))
+        .filter(|provider| !known.contains(&slug::normalize_provider(provider)))
         .map(|provider| {
             format!(
                 "settings.provider_order contains unknown provider `{provider}`; keeping it for forward-compat routing preferences"
@@ -99,12 +83,20 @@ fn unknown_entries(order: &[String], observed: &HashSet<String>) -> Vec<String> 
 mod tests {
     use super::*;
 
+    fn typo_warnings(probes: &[ProbeListing]) -> Option<usize> {
+        let catalog = ["openai/gpt-5".to_string()];
+        let order = ["opencode-go", "anthropc"].map(String::from);
+        known_providers(&catalog, probes).map(|k| unknown_provider_order_warnings(&order, &k).len())
+    }
+
     #[test]
-    fn observed_provider_is_known_and_typo_is_not() {
-        let observed = HashSet::from(["openai".to_string(), "opencode-go".to_string()]);
-        let order = ["opencode-go", "openai-codex", "anthropc"].map(String::from);
-        let warnings = unknown_entries(&order, &observed);
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("`anthropc`"));
+    fn suppression_rule() {
+        // Never probed: pending, so silent.
+        assert_eq!(typo_warnings(&[ProbeListing::NeverProbed]), None);
+        // Failed probe adds nothing; both entries are unknown.
+        assert_eq!(typo_warnings(&[ProbeListing::Failed]), Some(2));
+        // Observed in a listing: known, only the typo warns.
+        let listed = ProbeListing::Listed(vec!["opencode-go/deepseek".to_string()]);
+        assert_eq!(typo_warnings(&[listed]), Some(1));
     }
 }

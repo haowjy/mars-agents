@@ -15,7 +15,7 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 | File | Responsibility |
 |---|---|
 | `mod.rs` | Evaluator: `RoutingInput` → `RoutingTrace` |
-| `known_providers.rs` | Providers Mars has observed (catalog, cached probe listings, native); warns on unknown `provider_order` entries, silent while data is pending |
+| `known_providers.rs` | Pure: providers Mars has observed (catalog, OpenCode/Pi listings, native) from session-supplied data, and the `provider_order` warnings; silent while a probe-backed harness has never been probed |
 | `slug.rs` | Borrowed slug parsing, normalized matching |
 | `acceptance.rs` | Policy layer: `MatchPolicy`, `RejectionReason` |
 | `report.rs` | Serialization DTO: `RouteDecisionReport` |

@@ -306,6 +306,37 @@ impl CapabilitySession {
         }
     }
 
+    /// Providers Mars has observed, for `provider_order` warnings; `None` while pending.
+    /// With an empty order there is nothing to check, so no probe is loaded for it.
+    pub fn known_providers(
+        &mut self,
+        provider_order: &[String],
+        catalog_slugs: &[String],
+    ) -> Option<HashSet<String>> {
+        use crate::routing::known_providers::{ProbeListing, known_providers};
+        if provider_order.is_empty() {
+            return None;
+        }
+        let mut probes = Vec::new();
+        if self.installed.contains(HarnessId::OpenCode.as_str()) {
+            probes.push(match self.opencode_outcome() {
+                CachedProbeOutcome::Unavailable => ProbeListing::NeverProbed,
+                CachedProbeOutcome::Failed(_) => ProbeListing::Failed,
+                outcome => ProbeListing::Listed(outcome.result()?.model_slugs.clone()),
+            });
+        }
+        if self.installed.contains(HarnessId::Pi.as_str()) {
+            probes.push(match self.pi_outcome() {
+                CachedPiProbeOutcome::Unavailable => ProbeListing::NeverProbed,
+                CachedPiProbeOutcome::Failed(_) => ProbeListing::Failed,
+                outcome => {
+                    ProbeListing::Listed(outcome.result()?.model_slugs.iter().cloned().collect())
+                }
+            });
+        }
+        known_providers(catalog_slugs, &probes)
+    }
+
     pub fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
         self.opencode_outcome().result().cloned()
     }

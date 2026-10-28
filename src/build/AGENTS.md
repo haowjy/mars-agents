@@ -71,7 +71,7 @@ optional prose note live on the harness spec rows. Each README support cell is t
 plus the note, so the prose can qualify a finding but never contradict it, and the README freshness
 test renders the same tables. The Claude plugin MCP writer emits same-name environment pass-throughs
 as `env_vars` for Claude/Codex/Grok compatibility; renamed references retain Claude's `${VAR}` form
-and warn that Codex passes it literally. Sync renders the same server through the Claude adapter's `McpFile`, which uses `env` throughout.
+and warn (`mcp-lossy`, the code sync uses) that Codex passes it literally. Sync renders the same server through the Claude adapter's `McpFile`, which uses `env` throughout. Both call `mars_schema::mcp_servers::render`, with `Flavor::Plugin` here.
 
 The Cursor profile lowers native Cursor agents without an additional plugin field filter, uses no
 native model aliases, and writes `.cursor-plugin/plugin.json`, `mcp.json`, and versioned

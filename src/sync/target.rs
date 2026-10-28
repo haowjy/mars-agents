@@ -358,8 +358,7 @@ pub fn build_with_collisions_and_diag(
                 // servers reach only those, `exported` ones reach every depth.
                 let is_direct = dependency_depths.get(source_name) == Some(&1);
                 for item in items {
-                    if is_direct
-                        || item.visibility == crate::compiler::visibility::Visibility::Exported
+                    if is_direct || item.visibility == mars_schema::visibility::Visibility::Exported
                     {
                         target.select_mcp(item, &mcp_target_roots);
                     }
@@ -387,7 +386,7 @@ pub fn build_with_collisions_and_diag(
                     .iter()
                     .find(|hook| hook.hook_dir == hook_dir)
                     .expect("discovered hook directory has a parsed definition");
-                if parsed.def.visibility != crate::compiler::visibility::Visibility::Exported {
+                if parsed.def.visibility != mars_schema::visibility::Visibility::Exported {
                     continue;
                 }
                 target.exported_hooks.push(parsed.clone());

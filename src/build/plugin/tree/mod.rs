@@ -347,7 +347,7 @@ pub(super) fn write_tree(
             Ok((
                 profile
                     .plugin_root
-                    .resolve(crate::compiler::mcp::MCP_DIR_TOKEN, &dir.native()),
+                    .resolve(mars_schema::mcp_server::MCP_DIR_TOKEN, &dir.native()),
                 item,
             ))
         })

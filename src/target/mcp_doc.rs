@@ -161,8 +161,12 @@ impl Doc {
 
     pub(super) fn save(&self, path: &Path) -> Result<(), MarsError> {
         let content = match self {
-            Self::Json { root, .. } => serde_json::to_string_pretty(root)
-                .map_err(|e| invalid(format!("failed to serialize {}: {e}", path.display())))?,
+            Self::Json { root, .. } => {
+                let mut json = serde_json::to_string_pretty(root)
+                    .map_err(|e| invalid(format!("failed to serialize {}: {e}", path.display())))?;
+                json.push('\n');
+                json
+            }
             Self::Toml { doc, .. } => doc.to_string(),
         };
         // The file may be the user's, and a symlink to a shared one: write the

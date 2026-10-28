@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
+use mars_schema::mcp_servers::{self, Flavor, McpRender};
 
 use super::{
-    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpRender, McpServerEntry,
-    TargetAdapter,
+    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpServerEntry, TargetAdapter,
 };
 
 #[derive(Debug)]
@@ -240,11 +240,7 @@ fn remove_owned_cursor_hooks(
 // }
 
 fn render(server: &McpServerEntry) -> McpRender {
-    McpRender::exact(super::mcp_file::servers_entry(
-        server,
-        |var| format!("${{env:{var}}}"),
-        false,
-    ))
+    mcp_servers::render(&server.transport, Flavor::Cursor)
 }
 
 // ---------------------------------------------------------------------------

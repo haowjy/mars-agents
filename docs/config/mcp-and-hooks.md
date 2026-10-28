@@ -217,7 +217,7 @@ contributors' own, so it is left out with one `import.mcp-not-imported` warning.
 | Claude | Imported as |
 |---|---|
 | `command`, `args` | the same, stdio |
-| `env` value exactly `${VAR}` | an env reference to `VAR` |
+| `env` value exactly `${VAR}`, or a name in `env_vars` (a Mars-built plugin's same-name references) | an env reference to `VAR` |
 | `type` `http` or `streamable-http`, literal `url` | a remote server |
 | header that is literal, exactly `${VAR}`, or `<text>${VAR}` | a literal header, or an env header with that `prefix` |
 
@@ -234,7 +234,7 @@ imported to connect differently from what the plugin declares:
 | `mcp.default-value` | `${VAR:-default}` |
 | `mcp.interpolation-unsupported` | any other `${...}`, such as one inside `command` or `url` |
 | `mcp.literal-env` | an `env` value that is not `${VAR}` |
-| `mcp.name-invalid` | a name that cannot be a directory |
+| `mcp.name-invalid` | a name that cannot be a directory: letters, digits, `-`, `_` and `.`, starting with a letter or digit. Sync reports the same code for a server that installs its own directory (`${MARS_MCP_DIR}`) under another name |
 | `mcp.invalid-server` | a malformed server |
 
 `mcp.no-servers` marks a valid JSON file with no map of servers; `mcp.manifest-entry-unsupported` skips a `plugin.json` entry that is a `.mcpb` bundle, a URL or

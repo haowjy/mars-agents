@@ -221,7 +221,7 @@ fn write_package(
         plugin: &metadata.name,
         tokens: DirTokens {
             hook_dir: crate::compiler::hooks::HOOK_DIR_TOKEN,
-            mcp_dir: crate::compiler::mcp::MCP_DIR_TOKEN,
+            mcp_dir: mars_schema::mcp_server::MCP_DIR_TOKEN,
         },
         skills,
         agents,

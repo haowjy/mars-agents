@@ -32,6 +32,7 @@ pub mod markdown;
 
 pub mod mcp;
 pub mod mcp_server;
+pub mod mcp_servers;
 pub mod provider;
 pub mod tool_names;
 pub mod tool_natives;
@@ -52,3 +53,4 @@ pub mod prepare;
 mod set_aside;
 pub mod upgrade;
 pub mod version;
+pub mod visibility;

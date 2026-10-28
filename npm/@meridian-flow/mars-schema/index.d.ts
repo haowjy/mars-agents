@@ -263,7 +263,10 @@ export type PreparedDefinition = {
   | { kind: "skill"; reading: DefinitionRead<SkillFields> }
 );
 
-/** An MCP server translated from a foreign plugin, written as `mcp/<name>/mcp.toml`. */
+/**
+ * An MCP server translated from a foreign plugin, written as `mcp/<name>/mcp.toml`. The staged
+ * `mcp/<name>/mcp.toml`, not this list, is what `mars sync` installs from.
+ */
 export interface PreparedMcpServer {
   name: string;
   /** The file that declared it (`.mcp.json`, `.claude-plugin/plugin.json`). */
@@ -575,8 +578,9 @@ export interface SelectionResult {
 }
 
 /**
- * The Agents, skills and package-level documents an install of `root` and its dependencies
- * yields, and why each is selected. `{ root, packages }` is the whole call for an
+ * The Agents, skills and bootstrap documents an install of `root` and its dependencies
+ * yields, and why each is selected. Hooks and MCP servers are selected by `mars sync` (visibility
+ * and depth), so Flow and sync are guaranteed to agree only on these three kinds. `{ root, packages }` is the whole call for an
  * imported package: `root` is selected whole, and its manifest entries (`[dependencies]`, with
  * their filters and `exclude`) are applied as the consumer's own requests, so a filtered
  * dependency contributes what its filter names plus the skills the selected Agents name.

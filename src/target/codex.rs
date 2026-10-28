@@ -12,10 +12,10 @@ use crate::types::DestPath;
 use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::{HeaderValue, McpTransport};
+use mars_schema::mcp_servers::{McpRender, partition_env};
 
 use super::{
-    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpRender, McpServerEntry,
-    TargetAdapter,
+    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpServerEntry, TargetAdapter,
 };
 
 #[derive(Debug)]
@@ -120,7 +120,7 @@ fn render(server: &McpServerEntry) -> McpRender {
     match &server.transport {
         McpTransport::Stdio { command, args, env } => {
             let mut entry = serde_json::json!({ "command": command, "args": args });
-            let (forwarded, renamed) = super::mcp_file::partition_env(env);
+            let (forwarded, renamed) = partition_env(env);
             if !forwarded.is_empty() {
                 entry["env_vars"] = serde_json::json!(forwarded);
             }

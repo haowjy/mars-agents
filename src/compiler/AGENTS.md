@@ -46,7 +46,6 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `mcp/` — MCP server item discovery, env-ref validation, collision detection
 - `hooks/` — fragment-manifest discovery, merge-fragment validation/substitution, and ordering
 - `variants/` — skill variant layout validation, indexing, projection
-- `visibility/` — typed `local` / `exported` parsing for effectful items
 
 ## Dual-Surface Compilation
 
@@ -198,10 +197,11 @@ again.
 
 Skill variant layout validation, indexing, and projection per harness target.
 
-## Visibility (`visibility/`)
+## Visibility
 
-Hook and MCP manifests parse visibility once into `Visibility`. Unknown values warn and become
-`Local`; downstream selection only compares the enum with `Exported`.
+`mars_schema::visibility::Visibility` is the one type. A hook's or MCP server's authored value is parsed once; an
+unknown value warns (`warn_unknown_visibility`) and becomes `Local`; downstream selection only
+compares the enum with `Exported`.
 
 ## Patterns
 

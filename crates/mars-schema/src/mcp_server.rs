@@ -9,6 +9,8 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::visibility::Visibility;
+
 /// The authored placeholder for the directory a stdio server's files are
 /// installed in. A remote server has no such directory, so [`parse_mcp_toml`]
 /// rejects it there.
@@ -77,8 +79,7 @@ pub struct McpServerDef {
     /// Overrides the server's directory name as its config key.
     pub name: Option<String>,
     pub transport: McpTransport,
-    /// `local` or `exported`, as authored; the binary interprets it.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Optional target filter — if empty, applies to all targets.
     pub targets: Vec<String>,
 }
@@ -90,6 +91,9 @@ pub struct ParsedMcpToml {
     /// `headers` on a `command` server; `args` or `env` on a `url` server.
     /// Ignored, like an unknown key, so a stray field cannot drop a server.
     pub ignored_fields: Vec<&'static str>,
+    /// A `visibility` that is neither `local` nor `exported`, which [`McpServerDef::visibility`]
+    /// reads as `local`. The caller says so.
+    pub unknown_visibility: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -101,14 +105,9 @@ struct RawServer {
     args: Option<Vec<String>>,
     env: Option<IndexMap<String, EnvRef>>,
     headers: Option<IndexMap<String, toml::Value>>,
-    #[serde(default = "default_visibility")]
-    visibility: String,
+    visibility: Option<String>,
     #[serde(default)]
     targets: Vec<String>,
-}
-
-pub fn default_visibility() -> String {
-    "local".to_string()
 }
 
 /// Why an `mcp.toml` did not parse. The caller prefixes the file it came from.
@@ -197,14 +196,22 @@ pub fn parse_mcp_toml(text: &str) -> Result<ParsedMcpToml, McpParseError> {
             return fail("set exactly one of `command` or `url`, found neither");
         }
     };
+    let (visibility, unknown_visibility) = match raw.visibility {
+        None => (Visibility::Local, None),
+        Some(text) => match Visibility::parse(&text) {
+            Some(visibility) => (visibility, None),
+            None => (Visibility::Local, Some(text)),
+        },
+    };
     Ok(ParsedMcpToml {
         def: McpServerDef {
             name: raw.name,
             transport,
-            visibility: raw.visibility,
+            visibility,
             targets: raw.targets,
         },
         ignored_fields,
+        unknown_visibility,
     })
 }
 

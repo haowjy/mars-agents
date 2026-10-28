@@ -384,9 +384,9 @@ impl OutputRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigEntryRecord {
     /// Canonical JSON for the exact post-substitution entry the target wrote:
-    /// a hook's entry array, or OpenCode's `mcp` server object. Other MCP
-    /// records carry none; for OpenCode that means an older release wrote the
-    /// entry under `mcpServers`.
+    /// a hook's entry array, or an MCP server's entry. An entry on disk that
+    /// still equals it is mars's; one that differs was edited and is left alone.
+    /// A record with none was written by a release before content ownership.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted_json: Option<String>,
 }

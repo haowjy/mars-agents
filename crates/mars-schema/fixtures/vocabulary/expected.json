@@ -623,7 +623,7 @@
       "ask_user": {
         "kind": "tools",
         "tools": [
-          "ask"
+          "ask_user"
         ]
       },
       "edit": {
@@ -633,10 +633,7 @@
         ]
       },
       "glob": {
-        "kind": "tools",
-        "tools": [
-          "glob"
-        ]
+        "kind": "absent"
       },
       "grep": {
         "kind": "tools",

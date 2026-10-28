@@ -150,6 +150,15 @@ fn materialize_prepared_tree(
         }
         fs::copy(source, output)?;
     }
+    // Translated MCP servers go where authored ones live; prepare has already left out any server
+    // the package also ships under `mcp/<name>/`, so these never share a directory with one.
+    for server in &prepared.mcp_servers {
+        let output = destination.join(&server.output_path);
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(output, &server.normalized_bytes)?;
+    }
     // Hooks, bootstrap documents, MCP server directories and foreign source
     // manifests remain binary-owned package surfaces.
     for relative in ["hooks", "mcp"] {

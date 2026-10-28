@@ -128,6 +128,12 @@ fn normalize_fixtures_match() {
                         .definitions
                         .iter()
                         .map(|definition| (&definition.output_path, &definition.normalized_bytes)),
+                )
+                .chain(
+                    prepared
+                        .mcp_servers
+                        .iter()
+                        .map(|server| (&server.output_path, &server.normalized_bytes)),
                 );
             for (path, bytes) in files {
                 produced.insert(format!("{}/{path}", package.id), bytes.clone());

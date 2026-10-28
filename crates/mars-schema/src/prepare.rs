@@ -104,6 +104,19 @@ pub struct PreparedDefinition {
     pub change: ChangeRecord,
 }
 
+/// An MCP server translated from another dialect's declaration, as the `mcp/<name>/mcp.toml` it
+/// is written to. The same shape as a definition's output so a caller writes it the same way.
+#[derive(Debug, Clone, Serialize)]
+pub struct PreparedMcpServer {
+    pub name: String,
+    /// The file that declared the server (`.mcp.json`, `plugin.json`).
+    pub source_path: String,
+    pub output_path: String,
+    /// The rendered `mcp.toml`; crosses to JavaScript as a `Uint8Array`.
+    #[serde(with = "serde_bytes")]
+    pub normalized_bytes: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PayloadEntry {
     pub source_path: String,
@@ -116,6 +129,9 @@ pub struct Prepared {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manifest: Option<PreparedManifest>,
     pub definitions: Vec<PreparedDefinition>,
+    /// The MCP servers a foreign plugin declares, translated. Selection does not apply to them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<PreparedMcpServer>,
     pub payload: Vec<PayloadEntry>,
     /// What item selection reads of this package (see [`selection_facts`]).
     pub selection: SelectionFacts,
@@ -363,8 +379,28 @@ pub(crate) fn prepare_root(
         Vec::new()
     };
 
+    let mut mcp_servers = Vec::new();
     if can_read_definitions {
         report_unconverted(source, &dispatched, &mut diagnostics);
+        // A bare skill tree's `.mcp.json` is usually its contributors' own, not a plugin's.
+        if let Layout::Claude(spec) = &dispatched.layout
+            && !spec.is_bare_tree()
+        {
+            let imported = crate::claude::mcp::import(source, spec);
+            for (path, diagnostic) in imported.diagnostics {
+                push(&mut diagnostics, &path, diagnostic);
+            }
+            mcp_servers = imported
+                .servers
+                .into_iter()
+                .map(|server| PreparedMcpServer {
+                    output_path: format!("mcp/{}/mcp.toml", server.name),
+                    normalized_bytes: crate::mcp_server::render_mcp_toml(&server.def).into_bytes(),
+                    name: server.name,
+                    source_path: server.source_path,
+                })
+                .collect();
+        }
     }
     diagnostics.retain(|_, diagnostics| !diagnostics.is_empty());
     changes.retain(|_, diagnostics| !diagnostics.is_empty());
@@ -374,6 +410,7 @@ pub(crate) fn prepare_root(
         selection: selection_facts(manifest.as_ref(), &definitions),
         manifest,
         definitions,
+        mcp_servers,
         payload,
         diagnostics,
         changes,
@@ -384,7 +421,8 @@ pub(crate) fn prepare_root(
     }
 }
 
-/// Commands are dropped, and hooks and MCP servers are not converted yet.
+/// Commands are dropped and hooks are not converted yet. MCP servers are translated, not
+/// reported here (`claude::mcp`).
 fn report_unconverted(
     source: &impl TreeSource,
     dispatched: &Dispatched,
@@ -420,6 +458,13 @@ fn report_unconverted(
             ),
         );
     }
+    if spec.is_bare_tree() && source.is_file(".mcp.json") {
+        warn(
+            ".mcp.json",
+            "import.mcp-not-imported",
+            "this is a skill tree, not a Claude plugin (it has no `.claude-plugin/plugin.json`), so its MCP servers were not imported".into(),
+        );
+    }
     if source.is_file("hooks/hooks.json") || spec.hooks {
         let path = if source.is_file("hooks/hooks.json") {
             "hooks/hooks.json"
@@ -430,18 +475,6 @@ fn report_unconverted(
             path,
             "import.hooks-not-converted",
             "hooks are not converted yet".into(),
-        );
-    }
-    if source.is_file(".mcp.json") || spec.mcp {
-        let path = if source.is_file(".mcp.json") {
-            ".mcp.json"
-        } else {
-            crate::claude::manifest::PLUGIN_MANIFEST
-        };
-        warn(
-            path,
-            "import.mcp-not-converted",
-            "MCP servers are not converted yet".into(),
         );
     }
 }

@@ -1,1 +1,15 @@
-{"github": {"type": "http", "url": "https://example.invalid/mcp"}}
+{
+  "mcpServers": {
+    "github": {"type": "http", "url": "https://example.invalid/mcp", "headers": {"Authorization": "Bearer ${GITHUB_TOKEN}", "X-Region": "eu"}},
+    "replaced": {"type": "http", "url": "https://old.invalid/mcp"},
+    "docs": {"type": "http", "url": "https://docs.invalid/mcp"},
+    "indexer": {"command": "npx", "args": ["-y", "indexer"], "env": {"INDEX_KEY": "${INDEX_KEY}"}, "timeout": 30},
+    "events": {"type": "sse", "url": "https://events.invalid/sse"},
+    "rooted": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/server", "args": ["--data", "${CLAUDE_PLUGIN_DATA}"]},
+    "defaulted": {"type": "http", "url": "https://${HOST:-example.invalid}/mcp"},
+    "literal": {"command": "tool", "env": {"MODE": "fast", "TOKEN": "${TOKEN}"}},
+    "untyped": {"url": "https://untyped.invalid/mcp"},
+    "helper": {"type": "http", "url": "https://helper.invalid/mcp", "headersHelper": "./auth.sh", "oauth": {"clientId": "abc"}},
+    "bad name": {"command": "tool"}
+  }
+}

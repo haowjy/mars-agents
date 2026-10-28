@@ -204,6 +204,46 @@ for it. **OAuth is the harness's**: Mars writes nothing for it, and each harness
 starts its own flow the first time a server asks (Claude and Codex also need the
 user to approve or log in, as for any project server).
 
+### Importing a Claude plugin's MCP servers
+
+A Claude plugin's servers install like any other: Mars translates the plugin's `.mcp.json`
+(with or without the `mcpServers` wrapper) and `plugin.json` `mcpServers` (an inline map, a
+path to a JSON file inside the plugin, or a list of those; a `plugin.json` server replaces a
+`.mcp.json` server of the same name; manifest entries apply in array order) into
+`mcp/<name>/mcp.toml` with `visibility = "local"`. Only a Claude plugin (one with
+`.claude-plugin/plugin.json`) is imported: a bare skill tree's `.mcp.json` is usually its
+contributors' own, so it is left out with one `import.mcp-not-imported` warning.
+
+| Claude | Imported as |
+|---|---|
+| `command`, `args` | the same, stdio |
+| `env` value exactly `${VAR}` | an env reference to `VAR` |
+| `type` `http` or `streamable-http`, literal `url` | a remote server |
+| header that is literal, exactly `${VAR}`, or `<text>${VAR}` | a literal header, or an env header with that `prefix` |
+
+A server Mars cannot represent is left out whole, with one warning per offending field, rather than
+imported to connect differently from what the plugin declares:
+
+| Warning | Cause |
+|---|---|
+| `mcp.transport-unsupported` | `sse`, `ws`, `sdk` (or any other `type`) |
+| `mcp.url-without-type` | a `url` with no `type`, which Claude treats as invalid |
+| `mcp.field-unsupported` | `headersHelper`, `oauth` |
+| `mcp.plugin-variable` | `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, `${CLAUDE_PROJECT_DIR}`, `${user_config.*}` |
+| `mcp.credential-blocked` | a header that sends an environment variable Claude does not send to a remote server: its cloud, registry and CI credentials, and their prefix families (Anthropic, Claude Code, AWS, Azure, Google, Vault, OpenTelemetry), matched case-insensitively. Mars refuses a superset of Claude's set, so the server would otherwise connect differently |
+| `mcp.default-value` | `${VAR:-default}` |
+| `mcp.interpolation-unsupported` | any other `${...}`, such as one inside `command` or `url` |
+| `mcp.literal-env` | an `env` value that is not `${VAR}` |
+| `mcp.name-invalid` | a name that cannot be a directory |
+| `mcp.invalid-server` | a malformed server |
+
+`mcp.no-servers` marks a valid JSON file with no map of servers; `mcp.manifest-entry-unsupported` skips a `plugin.json` entry that is a `.mcpb` bundle, a URL or
+a missing file, and a marketplace entry's own `mcpServers`; `mcp.field-dropped` notes a field
+that does not affect how the server connects (`timeout`), and the server still imports. If the
+plugin also ships an `mcp/<name>/` directory, its `mcp.toml` is used and the Claude declaration is left
+out (`mcp.shadowed-by-authored`). Servers declared in an agent's frontmatter `mcpServers` are
+not imported; only their names carry over (`agent.mcp-not-converted`).
+
 ### Server files (`${MARS_MCP_DIR}`)
 
 An MCP server directory may ship the program it launches, not just `mcp.toml`:

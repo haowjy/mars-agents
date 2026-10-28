@@ -102,7 +102,7 @@ for (const name of cases("normalize")) {
   const expectedFiles = existsSync(expectedDir) ? tree(expectedDir) : new Map();
   let produced = 0;
   for (const pkg of packages) {
-    for (const file of [pkg.prepared.manifest, ...pkg.prepared.definitions].filter(Boolean)) {
+    for (const file of [pkg.prepared.manifest, ...pkg.prepared.definitions, ...(pkg.prepared.mcp_servers ?? [])].filter(Boolean)) {
       const want = expectedFiles.get(`${pkg.id}/${file.output_path}`);
       assert.ok(file.normalized_bytes instanceof Uint8Array, `normalize/${name} bytes are a Uint8Array`);
       assert.deepStrictEqual(Buffer.from(file.normalized_bytes), Buffer.from(want ?? []), `normalize/${name} ${pkg.id}/${file.output_path} bytes`);

@@ -263,10 +263,22 @@ export type PreparedDefinition = {
   | { kind: "skill"; reading: DefinitionRead<SkillFields> }
 );
 
+/** An MCP server translated from a foreign plugin, written as `mcp/<name>/mcp.toml`. */
+export interface PreparedMcpServer {
+  name: string;
+  /** The file that declared it (`.mcp.json`, `.claude-plugin/plugin.json`). */
+  source_path: string;
+  output_path: string;
+  /** The rendered `mcp.toml`. */
+  normalized_bytes: Uint8Array;
+}
+
 export interface Prepared {
   classification: Classification;
   manifest?: PreparedManifest;
   definitions: PreparedDefinition[];
+  /** A Claude plugin's `.mcp.json` and `plugin.json` servers, translated (`mcp.*` diagnostics report the rest). Absent when empty. */
+  mcp_servers?: PreparedMcpServer[];
   payload: { source_path: string; output_path: string }[];
   /** What `selectItems` reads of this package; pass this result to it whole. */
   selection: SelectionFacts;

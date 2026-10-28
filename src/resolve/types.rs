@@ -385,6 +385,7 @@ pub(crate) fn prepared_with_deps(deps: &[&str]) -> std::sync::Arc<mars_schema::p
         manifest,
         definitions: Vec::new(),
         payload: Vec::new(),
+        mcp_servers: Vec::new(),
         diagnostics: Default::default(),
         changes: Default::default(),
     })

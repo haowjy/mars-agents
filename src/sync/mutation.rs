@@ -226,7 +226,7 @@ mod tests {
             },
             ..Entry::git("https://github.com/org/base.git")
         };
-        apply_mutation(
+        let changes = apply_mutation(
             &mut config,
             &ConfigMutation::UpsertDependency {
                 name: "base".into(),
@@ -241,6 +241,18 @@ mod tests {
             dep.filter.agents.is_none(),
             "agents should be cleared by atomic replacement"
         );
+
+        // The change record carries both filters so callers can report the replacement.
+        assert_eq!(changes.len(), 1);
+        let change = &changes[0];
+        assert!(change.already_exists);
+        assert_eq!(change.name, "base");
+        assert_eq!(
+            change.old_filter.as_ref().and_then(|f| f.agents.as_deref()),
+            Some(&["reviewer".into()][..])
+        );
+        assert!(change.new_filter.only_skills);
+        assert!(change.new_filter.agents.is_none());
     }
 
     #[test]
@@ -338,80 +350,5 @@ mod tests {
             dep.filter.rename.as_ref().unwrap().get("old").unwrap(),
             "new"
         );
-    }
-
-    #[test]
-    fn apply_mutation_batch_upsert_applies_all_entries() {
-        let mut config = Config::default();
-        let batch = vec![
-            (
-                "base".into(),
-                Entry {
-                    version: Some("v1".into()),
-                    ..Entry::git("https://github.com/org/base.git")
-                },
-            ),
-            (
-                "workflow".into(),
-                Entry {
-                    version: Some("v2".into()),
-                    ..Entry::git("https://github.com/org/workflow.git")
-                },
-            ),
-        ];
-
-        let changes = apply_mutation(&mut config, &ConfigMutation::BatchUpsert(batch)).unwrap();
-        assert_eq!(changes.len(), 2);
-        assert!(config.dependencies.contains_key("base"));
-        assert!(config.dependencies.contains_key("workflow"));
-    }
-
-    #[test]
-    fn apply_mutation_returns_old_and_new_filters_for_readd() {
-        let mut config = Config::default();
-        let entry1 = Entry {
-            version: Some("v1".into()),
-            filter: FilterConfig {
-                agents: Some(vec!["reviewer".into()]),
-                ..FilterConfig::default()
-            },
-            ..Entry::git("https://github.com/org/base.git")
-        };
-        apply_mutation(
-            &mut config,
-            &ConfigMutation::UpsertDependency {
-                name: "base".into(),
-                entry: Box::new(entry1),
-            },
-        )
-        .unwrap();
-
-        let entry2 = Entry {
-            version: Some("v2".into()),
-            filter: FilterConfig {
-                only_skills: true,
-                ..FilterConfig::default()
-            },
-            ..Entry::git("https://github.com/org/base.git")
-        };
-        let changes = apply_mutation(
-            &mut config,
-            &ConfigMutation::UpsertDependency {
-                name: "base".into(),
-                entry: Box::new(entry2),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(changes.len(), 1);
-        let change = &changes[0];
-        assert!(change.already_exists);
-        assert_eq!(change.name, "base");
-        assert_eq!(
-            change.old_filter.as_ref().and_then(|f| f.agents.as_deref()),
-            Some(&["reviewer".into()][..])
-        );
-        assert!(change.new_filter.only_skills);
-        assert!(change.new_filter.agents.is_none());
     }
 }

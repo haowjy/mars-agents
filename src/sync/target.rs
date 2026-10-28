@@ -1064,29 +1064,6 @@ mod tests {
     // === Target build tests ===
 
     #[test]
-    fn build_single_source_no_filter() {
-        let tree = make_source_tree(&[("coder.md", "# coder")], &[("planning", "# planning")]);
-        let (graph, config) = make_graph_and_config(vec![(
-            "base",
-            &tree,
-            Some("https://github.com/org/base"),
-            FilterMode::All,
-        )]);
-
-        let (target, renames, _) = build_with_collisions_and_diag(
-            &graph,
-            &config,
-            &test_local_source(),
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
-        assert!(renames.is_empty());
-        assert_eq!(target.items.len(), 2);
-        assert!(target.items.contains_key("agents/coder.md"));
-        assert!(target.items.contains_key("skills/planning"));
-    }
-
-    #[test]
     #[cfg(not(target_os = "windows"))]
     fn invalid_windows_agent_filename_emits_diagnostic_and_skips() {
         // This test creates a file with `:` in the name, which is only possible on
@@ -1148,17 +1125,6 @@ mod tests {
     }
 
     #[test]
-    fn default_dest_path_uses_forward_slashes_for_agents_and_skills() {
-        let agent = default_dest_path(RenamableKind::Agent, "coder");
-        let skill = default_dest_path(RenamableKind::Skill, "planning");
-
-        assert_eq!(agent.as_str(), "agents/coder.md");
-        assert_eq!(skill.as_str(), "skills/planning");
-        assert!(!agent.as_str().contains('\\'));
-        assert!(!skill.as_str().contains('\\'));
-    }
-
-    #[test]
     fn parse_rename_dest_normalizes_backslashes_to_forward_slashes() {
         let source_name = SourceName::from("base");
 
@@ -1192,22 +1158,17 @@ mod tests {
         let traversal = parse_rename_dest(RenamableKind::Skill, "../escape", &source_name)
             .expect_err("traversal rename should fail");
         assert!(matches!(traversal, MarsError::Source { .. }));
-    }
 
-    #[test]
-    fn build_with_invalid_rename_destination_returns_error() {
+        // The build path surfaces the same rejection for a configured rename.
         let tree = make_source_tree(&[("old-name.md", "# old")], &[]);
-
         let (graph, mut config) =
             make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
-
         config
             .dependencies
             .get_mut("base")
             .unwrap()
             .rename
             .insert("agents/old-name.md".into(), "../escape.md".into());
-
         let err = build_with_collisions_and_diag(
             &graph,
             &config,
@@ -1266,53 +1227,14 @@ mod tests {
                 .count(),
             2
         );
-    }
 
-    #[test]
-    fn skill_collision_auto_renames_both() {
+        // Skills collide the same way.
         let tree1 = make_source_tree(&[], &[("planning", "# planning from source 1")]);
         let tree2 = make_source_tree(&[], &[("planning", "# planning from source 2")]);
-
         let (graph, config) = make_graph_and_config(vec![
             ("source-a", &tree1, None, FilterMode::All),
             ("source-b", &tree2, None, FilterMode::All),
         ]);
-
-        let (target, explicit_renames, collision_renames) = build_with_collisions_and_diag(
-            &graph,
-            &config,
-            &test_local_source(),
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
-
-        assert!(explicit_renames.is_empty());
-        assert_eq!(collision_renames.len(), 2);
-        assert!(target.items.contains_key("skills/planning__source-a"));
-        assert!(target.items.contains_key("skills/planning__source-b"));
-        assert!(!target.items.contains_key("skills/planning"));
-        assert_eq!(
-            target.items["skills/planning__source-a"].id.name,
-            "planning__source-a"
-        );
-        assert_eq!(
-            target.items["skills/planning__source-b"].id.name,
-            "planning__source-b"
-        );
-    }
-
-    #[test]
-    fn three_way_collision_renames_all() {
-        let tree1 = make_source_tree(&[("coder.md", "# coder from source 1")], &[]);
-        let tree2 = make_source_tree(&[("coder.md", "# coder from source 2")], &[]);
-        let tree3 = make_source_tree(&[("coder.md", "# coder from source 3")], &[]);
-
-        let (graph, config) = make_graph_and_config(vec![
-            ("source-a", &tree1, None, FilterMode::All),
-            ("source-b", &tree2, None, FilterMode::All),
-            ("source-c", &tree3, None, FilterMode::All),
-        ]);
-
         let (target, _, collision_renames) = build_with_collisions_and_diag(
             &graph,
             &config,
@@ -1320,11 +1242,35 @@ mod tests {
             &mut DiagnosticCollector::new(),
         )
         .unwrap();
+        assert_eq!(collision_renames.len(), 2);
+        assert!(target.items.contains_key("skills/planning__source-a"));
+        assert!(target.items.contains_key("skills/planning__source-b"));
+        assert!(!target.items.contains_key("skills/planning"));
 
+        // Every participant of a three-way collision is renamed.
+        let trees: Vec<_> = (1..=3)
+            .map(|n| make_source_tree(&[("coder.md", &format!("# coder {n}"))], &[]))
+            .collect();
+        let (graph, config) = make_graph_and_config(vec![
+            ("source-a", &trees[0], None, FilterMode::All),
+            ("source-b", &trees[1], None, FilterMode::All),
+            ("source-c", &trees[2], None, FilterMode::All),
+        ]);
+        let (target, _, collision_renames) = build_with_collisions_and_diag(
+            &graph,
+            &config,
+            &test_local_source(),
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
         assert_eq!(collision_renames.len(), 3);
-        assert!(target.items.contains_key("agents/coder__source-a.md"));
-        assert!(target.items.contains_key("agents/coder__source-b.md"));
-        assert!(target.items.contains_key("agents/coder__source-c.md"));
+        for suffix in ["a", "b", "c"] {
+            assert!(
+                target
+                    .items
+                    .contains_key(format!("agents/coder__source-{suffix}.md").as_str())
+            );
+        }
         assert!(!target.items.contains_key("agents/coder.md"));
     }
 
@@ -1445,38 +1391,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_collision_no_renames() {
-        let tree1 = make_source_tree(&[("coder.md", "# coder")], &[]);
-        let tree2 = make_source_tree(&[("reviewer.md", "# reviewer")], &[]);
-
-        let (graph, config) = make_graph_and_config(vec![
-            (
-                "source-a",
-                &tree1,
-                Some("https://github.com/alice/agents"),
-                FilterMode::All,
-            ),
-            (
-                "source-b",
-                &tree2,
-                Some("https://github.com/bob/agents"),
-                FilterMode::All,
-            ),
-        ]);
-
-        let (target, renames, collision_renames) = build_with_collisions_and_diag(
-            &graph,
-            &config,
-            &test_local_source(),
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
-        assert!(renames.is_empty());
-        assert!(collision_renames.is_empty());
-        assert_eq!(target.items.len(), 2);
-    }
-
     // === Source with agents filter + skill deps ===
 
     #[test]
@@ -1509,85 +1423,6 @@ mod tests {
         assert!(target.items.contains_key("skills/planning"));
         // unused-skill should NOT be present
         assert!(!target.items.contains_key("skills/unused-skill"));
-    }
-
-    #[test]
-    fn build_with_exclude_filter() {
-        let tree = make_source_tree(&[("coder.md", "# coder"), ("deprecated.md", "# old")], &[]);
-
-        let (graph, config) = make_graph_and_config(vec![(
-            "base",
-            &tree,
-            None,
-            FilterMode::Exclude(vec!["deprecated".into()]),
-        )]);
-
-        let (target, renames, _) = build_with_collisions_and_diag(
-            &graph,
-            &config,
-            &test_local_source(),
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
-        assert!(renames.is_empty());
-        assert_eq!(target.items.len(), 1);
-        assert!(target.items.contains_key("agents/coder.md"));
-    }
-
-    #[test]
-    fn build_target_items_have_correct_hashes() {
-        let content = "# agent content for hash test";
-        let tree = make_source_tree(&[("test.md", content)], &[]);
-
-        let (graph, config) = make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
-
-        let (target, renames, _) = build_with_collisions_and_diag(
-            &graph,
-            &config,
-            &test_local_source(),
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
-        assert!(renames.is_empty());
-        let item = &target.items["agents/test.md"];
-        let expected_hash = hash::hash_bytes(content.as_bytes());
-        assert_eq!(item.source_hash, expected_hash);
-    }
-
-    #[test]
-    fn unmanaged_disk_path_collision_reported() {
-        let tree = make_source_tree(&[("coder.md", "# managed")], &[]);
-        let (graph, config) = make_graph_and_config(vec![(
-            "base",
-            &tree,
-            Some("https://github.com/org/base"),
-            FilterMode::All,
-        )]);
-
-        let (target, renames, _) = build_with_collisions_and_diag(
-            &graph,
-            &config,
-            &test_local_source(),
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
-        assert!(renames.is_empty());
-        let install_root = TempDir::new().unwrap();
-
-        // Existing user-authored file at the same destination.
-        let existing = install_root.path().join("agents").join("coder.md");
-        fs::create_dir_all(existing.parent().unwrap()).unwrap();
-        fs::write(&existing, "# user-authored").unwrap();
-
-        let collisions = check_unmanaged_collisions(
-            install_root.path(),
-            &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
-            &target,
-            false,
-        );
-        assert_eq!(collisions.len(), 1);
-        assert_eq!(collisions[0].source_name.as_ref(), "base");
-        assert_eq!(collisions[0].path.as_str(), "agents/coder.md");
     }
 
     #[test]

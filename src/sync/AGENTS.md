@@ -139,7 +139,7 @@ record per target, each holding the `PackageDir` its copy installs at. A depende
 include filter (`agents`, `skills`, `only_skills`, `only_agents`) narrows its agents, skills and
 hooks but never its MCP servers: the filter names no server. Visibility, dependency collisions and local shadowing then choose the
 server's config entry once for both installation and config lowering. Only a target whose adapter
-writes an MCP config selects a server, and a winner becomes a target-scoped directory item when
+declares an `McpFile` selects a server (so `.pi` does too), and a winner becomes a target-scoped directory item when
 its `command` or `args` name `${MARS_MCP_DIR}`; a token-free server is a config entry alone. Its
 files, config entry, lock ownership, and pruning then all name the same winner, and
 `sync/package_dir.rs` owns every path and identifier for that copy. It separately

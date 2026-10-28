@@ -3,7 +3,7 @@
 /// Handles MCP server registration and hook binding for the Codex harness.
 ///
 /// Codex-native lowering:
-/// - MCP: writes to `codex_mcp.json` (mcpServers section), env vars as plain names
+/// - MCP: edits `[mcp_servers.<name>]` in `.codex/config.toml`, env vars forwarded by name
 /// - Hooks: writes to `hooks.json` with Codex command hook entries
 use std::path::{Path, PathBuf};
 
@@ -11,7 +11,10 @@ use crate::error::MarsError;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{ConfigEntry, HookEntry, HookFragmentMode, McpServerEntry, TargetAdapter};
+use super::{
+    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpRender, McpServerEntry,
+    TargetAdapter,
+};
 
 #[derive(Debug)]
 pub struct CodexAdapter;
@@ -53,52 +56,37 @@ impl TargetAdapter for CodexAdapter {
         }
     }
 
-    fn write_config_entries(
+    fn write_hook_entries(
         &self,
         write: crate::surface_ownership::retention::ConfigWrite<'_>,
         project_root: &Path,
     ) -> Result<Vec<PathBuf>, MarsError> {
         let (target_dir, entries) = write.into_parts(project_root);
+        let hooks = super::hooks_of(&entries);
         let mut written = Vec::new();
-
-        let mcp_servers: Vec<&McpServerEntry> = entries
-            .iter()
-            .filter_map(|e| {
-                if let ConfigEntry::McpServer(s) = e {
-                    Some(s)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let hooks: Vec<&HookEntry> = entries
-            .iter()
-            .filter_map(|e| {
-                if let ConfigEntry::Hook(h) = e {
-                    Some(h)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if !mcp_servers.is_empty() {
-            let path = (write_codex_mcp_json)(&target_dir, &mcp_servers)?;
-            written.push(path);
-        }
-
         if !hooks.is_empty() {
-            let path = (write_hooks_json)(&target_dir, &hooks)?;
-            written.push(path);
+            written.push(write_hooks_json(&target_dir, &hooks)?);
         }
-
         Ok(written)
     }
 
-    fn mcp_config_file_names(&self) -> &'static [&'static str] {
-        &["codex_mcp.json"]
+    fn mcp_file(&self) -> Option<McpFile> {
+        Some(McpFile {
+            // Codex reads `[mcp_servers.<name>]` from the project's
+            // `.codex/config.toml`, for trusted projects only.
+            at: McpLocation {
+                path: ".codex/config.toml",
+                format: McpFormat::TomlTable("mcp_servers"),
+            },
+            // Where mars wrote before. Delete after one release.
+            legacy: Some(McpLocation {
+                path: ".codex/codex_mcp.json",
+                format: McpFormat::JsonSection("mcpServers"),
+            }),
+            render,
+        })
     }
+
     fn hook_config_file_names(&self) -> &'static [&'static str] {
         &["hooks.json"]
     }
@@ -116,123 +104,36 @@ impl TargetAdapter for CodexAdapter {
         let (target_dir, removal) = operation.into_parts(project_root);
         remove_owned_codex_hooks(&removal.prior_records, &target_dir, diag)
     }
-
-    fn remove_config_entries(
-        &self,
-        operation: crate::surface_ownership::retention::RemovalOperation<'_>,
-        project_root: &Path,
-    ) -> crate::surface_ownership::retention::RemovalReport {
-        let (target_dir, removal) = operation.into_parts(project_root);
-        match remove_codex_mcp_entries(&removal.keys_to_remove, &target_dir) {
-            Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
-            Err(error) => crate::surface_ownership::retention::RemovalReport::failed(
-                error,
-                removal.prior_records.clone(),
-            ),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
-// Codex MCP — `codex_mcp.json` format
+// Codex MCP — `[mcp_servers.<name>]` entry shape
 // ---------------------------------------------------------------------------
 //
-// Codex uses plain environment variable names (no interpolation syntax).
-// Format:
-// {
-//   "mcpServers": {
-//     "server-name": {
-//       "command": "...",
-//       "args": [...],
-//       "env": ["ENV_VAR_NAME", ...]   ← list of var names, not map
-//     }
-//   }
-// }
+// Codex forwards an environment variable to the server by name, in
+// `env_vars = ["VAR"]`. A mapping from a differently named key cannot be
+// written, so a renamed reference is reported as lossy and dropped.
 
-fn write_codex_mcp_json(
-    target_dir: &Path,
-    servers: &[&McpServerEntry],
-) -> Result<PathBuf, MarsError> {
-    let path = target_dir.join("codex_mcp.json");
-
-    let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(&path)?
-    } else {
-        serde_json::json!({})
-    };
-
-    let mcp_obj = root
-        .as_object_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{} is not a JSON object", path.display()),
+fn render(server: &McpServerEntry) -> McpRender {
+    let mut entry = serde_json::json!({
+        "command": server.command,
+        "args": server.args,
+    });
+    let (forwarded, renamed) = super::mcp_file::partition_env(server);
+    if !forwarded.is_empty() {
+        entry["env_vars"] = serde_json::json!(forwarded);
+    }
+    McpRender {
+        value: entry,
+        lossy: renamed
+            .into_iter()
+            .map(|(key, variable)| {
+                format!(
+                    "Codex forwards `{variable}` by name and cannot set it as `{key}`; `{key}` is not set for the server."
+                )
             })
-        })?
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let mcp_map = mcp_obj.as_object_mut().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: mcpServers is not an object", path.display()),
-        })
-    })?;
-
-    for server in servers {
-        let mut entry = serde_json::json!({
-            "command": server.command,
-            "args": server.args,
-        });
-
-        // Codex env: list of variable names (not a map with values).
-        if !server.env.is_empty() {
-            let env_list: Vec<serde_json::Value> = server
-                .env
-                .values()
-                .map(|v| serde_json::Value::String(v.clone()))
-                .collect();
-            entry["env"] = serde_json::Value::Array(env_list);
-        }
-
-        mcp_map.insert(server.name.clone(), entry);
+            .collect(),
     }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-
-    Ok(path)
-}
-
-fn remove_codex_mcp_entries(entry_keys: &[String], target_dir: &Path) -> Result<(), MarsError> {
-    let path = target_dir.join("codex_mcp.json");
-    if !path.is_file() {
-        return Ok(());
-    }
-
-    let mut root = super::parse_json_file(&path)?;
-
-    if let Some(mcp_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("mcpServers"))
-        .and_then(|v| v.as_object_mut())
-    {
-        for key in entry_keys {
-            if let Some(name) = key.strip_prefix("mcp:") {
-                mcp_map.remove(name);
-            }
-        }
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -444,32 +345,12 @@ fn remove_owned_codex_hooks_from_file(
 mod tests {
     use super::*;
     use crate::surface_ownership::retention::{Surface, WritePermit};
+    use crate::target::ConfigEntry;
 
     fn write_permit(entries: &[ConfigEntry]) -> WritePermit<'static> {
         WritePermit::for_test("", entries[0].surface())
     }
-    use indexmap::IndexMap;
     use tempfile::TempDir;
-
-    fn make_mcp_entry(name: &str) -> ConfigEntry {
-        ConfigEntry::McpServer(McpServerEntry {
-            name: name.to_string(),
-            command: "npx".to_string(),
-            args: vec!["-y".to_string(), "some-mcp@latest".to_string()],
-            env: IndexMap::new(),
-        })
-    }
-
-    fn make_mcp_entry_with_env(name: &str) -> ConfigEntry {
-        let mut env = IndexMap::new();
-        env.insert("API_KEY".to_string(), "MY_SECRET".to_string());
-        ConfigEntry::McpServer(McpServerEntry {
-            name: name.to_string(),
-            command: "npx".to_string(),
-            args: vec![],
-            env,
-        })
-    }
 
     fn make_hook_entry(name: &str, native: &str) -> ConfigEntry {
         ConfigEntry::Hook(HookEntry {
@@ -492,55 +373,12 @@ mod tests {
     }
 
     #[test]
-    fn write_mcp_creates_codex_mcp_json() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CodexAdapter;
-        let entries = vec![make_mcp_entry("context7")];
-        let written = adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-        assert_eq!(written.len(), 1);
-        assert!(tmp.path().join("codex_mcp.json").exists());
-
-        let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["context7"].is_object());
-    }
-
-    #[test]
-    fn write_mcp_env_as_list_of_var_names() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CodexAdapter;
-        let entries = vec![make_mcp_entry_with_env("server")];
-        adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        // Codex: env is a list of variable names, not a map with values.
-        assert!(json["mcpServers"]["server"]["env"].is_array());
-        let env_arr = json["mcpServers"]["server"]["env"].as_array().unwrap();
-        assert!(env_arr.iter().any(|v| v.as_str() == Some("MY_SECRET")));
-    }
-
-    #[test]
     fn write_hooks_creates_hooks_json() {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
         let entries = vec![make_hook_entry("audit", "PreToolUse")];
         adapter
-            .write_config_entries(
+            .write_hook_entries(
                 write_permit(&entries)
                     .bind_config_entries(entries.clone())
                     .unwrap(),
@@ -566,7 +404,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let adapter = CodexAdapter;
         adapter
-            .write_config_entries(
+            .write_hook_entries(
                 WritePermit::for_test("", Surface::Hook)
                     .bind_config_entries(vec![make_hook_entry_with_path(
                         "audit",
@@ -578,7 +416,7 @@ mod tests {
             )
             .unwrap();
         adapter
-            .write_config_entries(
+            .write_hook_entries(
                 WritePermit::for_test("", Surface::Hook)
                     .bind_config_entries(vec![make_hook_entry_with_path(
                         "audit",
@@ -600,28 +438,6 @@ mod tests {
                 .unwrap()
                 .contains("/new/hooks/audit/")
         );
-    }
-
-    #[test]
-    fn remove_mcp_entries_removes_by_name() {
-        let tmp = TempDir::new().unwrap();
-        let adapter = CodexAdapter;
-        let entries = vec![make_mcp_entry("to-remove"), make_mcp_entry("to-keep")];
-        adapter
-            .write_config_entries(
-                write_permit(&entries)
-                    .bind_config_entries(entries.clone())
-                    .unwrap(),
-                tmp.path(),
-            )
-            .unwrap();
-
-        remove_codex_mcp_entries(&["mcp:to-remove".to_string()], tmp.path()).unwrap();
-
-        let raw = std::fs::read_to_string(tmp.path().join("codex_mcp.json")).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(json["mcpServers"]["to-remove"].is_null());
-        assert!(json["mcpServers"]["to-keep"].is_object());
     }
 
     #[test]

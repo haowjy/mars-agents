@@ -4,7 +4,7 @@
 //! Mutation boundaries derive paths and records from those operations; callers
 //! cannot provide an independent target or surface.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::DiagnosticCollector;
@@ -67,10 +67,11 @@ impl RemovalPlan {
                             removal.keys_to_remove.push(key.clone());
                         }
                     }
-                    // A changed MCP record may mean the entry moves (OpenCode's
-                    // native section). Remove the old one from where the old
-                    // record says it lives; the write then places the new one.
-                    Some(new) if surface == Surface::Mcp && new != record => {
+                    // A record without `emitted_json` predates content ownership
+                    // and may name another file; remove the entry from there.
+                    // Any other changed entry is replaced in place by the write.
+                    // Delete this arm with the legacy cleanup.
+                    Some(_) if surface == Surface::Mcp && record.emitted_json.is_none() => {
                         removal.keys_to_remove.push(key.clone());
                     }
                     Some(_) => {}
@@ -102,6 +103,7 @@ impl RemovalPlan {
             stale_keys,
         } = self;
         let mut outcomes = BTreeMap::new();
+        let mut kept_keys = BTreeSet::new();
         for ((target_root, surface), removal) in per_pair {
             let outcome = if removal.keys_to_remove.is_empty() {
                 RemovalOutcome::Confirmed
@@ -112,7 +114,10 @@ impl RemovalPlan {
                     removal: &removal,
                 };
                 match remove(operation, diag) {
-                    RemovalReport::Confirmed => RemovalOutcome::Confirmed,
+                    RemovalReport::Confirmed { kept } => {
+                        kept_keys.extend(kept.into_iter().map(|key| (target_root.clone(), key)));
+                        RemovalOutcome::Confirmed
+                    }
                     RemovalReport::Unconfirmed { message, retained } => {
                         diag.warn("config-entry-remove", message);
                         RemovalOutcome::Unconfirmed { retained }
@@ -125,10 +130,11 @@ impl RemovalPlan {
             let removed_keys: Vec<_> = keys
                 .into_iter()
                 .filter(|key| {
-                    !matches!(
-                        outcomes.get(&(target_root.clone(), Surface::of_key(key))),
-                        Some(RemovalOutcome::Unconfirmed { .. })
-                    )
+                    !kept_keys.contains(&(target_root.clone(), key.clone()))
+                        && !matches!(
+                            outcomes.get(&(target_root.clone(), Surface::of_key(key))),
+                            Some(RemovalOutcome::Unconfirmed { .. })
+                        )
                 })
                 .collect();
             if !removed_keys.is_empty() {
@@ -164,7 +170,9 @@ impl<'a> RemovalOperation<'a> {
 }
 
 pub enum RemovalReport {
-    Confirmed,
+    /// Nothing is left to retry. `kept` names entries left in place because the
+    /// user edited them; they are not reported as removed.
+    Confirmed { kept: BTreeSet<String> },
     Unconfirmed {
         message: String,
         retained: BTreeMap<String, ConfigEntryRecord>,
@@ -173,7 +181,12 @@ pub enum RemovalReport {
 
 impl RemovalReport {
     pub(crate) fn confirmed() -> Self {
-        Self::Confirmed
+        Self::Confirmed {
+            kept: BTreeSet::new(),
+        }
+    }
+    pub(crate) fn confirmed_keeping(kept: BTreeSet<String>) -> Self {
+        Self::Confirmed { kept }
     }
     pub(crate) fn failed(
         error: impl std::fmt::Display,
@@ -187,7 +200,7 @@ impl RemovalReport {
 
     pub(crate) fn context(self, context: impl std::fmt::Display) -> Self {
         match self {
-            Self::Confirmed => Self::Confirmed,
+            Self::Confirmed { kept } => Self::Confirmed { kept },
             Self::Unconfirmed { message, retained } => Self::Unconfirmed {
                 message: format!("{context}: {message}"),
                 retained,
@@ -340,7 +353,7 @@ mod tests {
     fn empty_removal_is_confirmed_without_invoking_closure() {
         let previous = BTreeMap::from([(
             ".claude".to_owned(),
-            BTreeMap::from([("mcp:kept".to_owned(), record(None))]),
+            BTreeMap::from([("mcp:kept".to_owned(), record(Some("{}")))]),
         )]);
         let desired = previous.clone();
         let plan = RemovalPlan::build(&previous, &desired);

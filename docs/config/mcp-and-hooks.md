@@ -4,9 +4,9 @@ Packages can ship MCP server registrations and lifecycle hooks alongside their
 agents and skills. Mars compiles these into target-specific config files during
 `mars sync`.
 
-- **MCP servers** are registered per harness target (`.claude/.mcp.json`,
-  `.codex/codex_mcp.json`, `.opencode/opencode.json`, etc.) from `mcp/<name>/mcp.toml`
-  package definitions.
+- **MCP servers** are registered per harness target, in the file that harness
+  reads (see [Where servers are written](#where-servers-are-written)), from
+  `mcp/<name>/mcp.toml` package definitions.
 - **MCP tool-policy refs** (`mcp(...)` entries in an Agent's `tools` map)
   gate which MCP tools an agent may use — separate from server registration.
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
@@ -19,10 +19,67 @@ agents and skills. Mars compiles these into target-specific config files during
 Config entries are tracked in `mars.lock` so Mars can clean them up
 automatically when a package is removed or updated.
 
-OpenCode uses its native `mcp` section. Stdio servers are written as
-`{ "type": "local", "command": ["..."], "environment": { "KEY": "{env:VAR}" } }`.
-When upgrading from a release that wrote `mcpServers`, the next sync migrates
-Mars-owned server names and preserves unrelated entries in either section.
+## Where servers are written
+
+Each target gets its servers in the file its harness reads, relative to the
+project root:
+
+| Target | File | Section | Env reference |
+|---|---|---|---|
+| `.claude` | `.mcp.json` | `mcpServers` | `${VAR}` |
+| `.codex` | `.codex/config.toml` | `[mcp_servers.<name>]` | `env_vars = ["VAR"]` |
+| `.opencode` | `.opencode/opencode.json` | `mcp` | `{env:VAR}` |
+| `.pi` | `.pi/mcp.json` | `mcpServers` | `${VAR}` |
+| `.cursor` | `.cursor/mcp.json` | `mcpServers` | `${env:VAR}` |
+
+Mars edits these files in place. Other keys, other servers, and (in
+`.codex/config.toml`) comments and key order survive. Stdio servers are written as
+`{ "command", "args", "env" }`; OpenCode as
+`{ "type": "local", "command": [...], "environment": {...} }`.
+
+**Codex** forwards an environment variable to the server by name, so
+`env_vars = ["VAR"]` covers an `env` entry whose key equals its variable. A
+renamed reference (`KEY = { var = "OTHER" }`) cannot be written; sync warns
+(`mcp-lossy`) and leaves that variable out.
+
+**Approval and trust are the user's.** Mars writes the entry but does not
+grant trust: Claude lists project `.mcp.json` servers as pending until you
+approve them, and Codex and Pi read a project's MCP config only for projects you
+have trusted.
+
+**OpenCode** keeps the `mcp.<name>` form. OpenCode 2 documents `mcp.servers.<name>`
+as its native shape and says the 1.x form "remains supported", while OpenCode 1
+reads only `mcp.<name>`, so the older form works on both.
+
+### Ownership
+
+An entry is Mars's only while its content still equals what Mars last wrote
+(`mars.lock` records it as `emitted_json`):
+
+- A server the lock does not own with the same name as a package server is
+  **kept**, with an `mcp-unmanaged-collision` warning. `mars sync --force` adopts it.
+  An entry identical to what Mars would write is adopted without a warning, and
+  `mars remove` deletes it.
+- An entry Mars wrote and you then edited is kept with `mcp-divergent`; `--force`
+  overwrites it.
+- Removing a package (or a server) deletes only entries that still equal what
+  Mars wrote; an edited one stays, with a warning.
+
+### Upgrading
+
+Earlier releases wrote `.claude/.mcp.json` and `.codex/codex_mcp.json`, which
+neither harness read. The next sync removes Mars's entries from those files,
+leaves anything else in them, and deletes a file only if it ends up empty.
+OpenCode servers a still-earlier release wrote under `mcpServers` are migrated
+to `mcp` the same way. The legacy locations are read for one release.
+
+- The first sync overwrites any edit you made to a Cursor entry, or to an OpenCode
+  entry still under `mcpServers`, that an earlier release wrote (those releases
+  rewrote edited entries on every sync); from then on edits are kept.
+- `.mcp.json` at the project root is new: a project that does not ignore it sees a
+  new untracked file.
+- A file Mars created that ends up empty (`.mcp.json` as `{}`, a 0-byte
+  `.codex/config.toml`) is left in place, since nothing records that Mars created it.
 
 ## Tool-policy MCP references vs server definitions
 
@@ -30,7 +87,7 @@ Two lanes work together but serve different purposes:
 
 | Lane | Authoring | What it does |
 |---|---|---|
-| **Server definitions** | `mcp/<name>/mcp.toml` in a package | Registers how to launch an MCP server in target config (`.mcp.json`, etc.) |
+| **Server definitions** | `mcp/<name>/mcp.toml` in a package | Registers how to launch an MCP server in the harness's MCP config |
 | **Tool-policy refs** | `tools: {mcp(server/tool): allow}` on agents | Grants or denies MCP tool access in the agent's tool policy |
 
 Whole-server **enablement** on Codex is governed by the server-definition lane (and
@@ -122,11 +179,12 @@ command = "node"
 args    = ["${MARS_MCP_DIR}/server.js"]
 ```
 
-`mars sync` installs the whole `mcp/<name>/` directory beside each target's
-config that writes an MCP config file (`.claude/mcp/echo/`, `.codex/mcp/echo/`,
-and so on) and replaces the token in `command` and `args` with that installed
-absolute path. A target whose adapter writes no MCP config (`.pi`, `.agents`)
-receives no directory. The server registered under a `name` override installs
+`mars sync` installs the whole `mcp/<name>/` directory inside each target
+that takes MCP servers (`.claude/mcp/echo/`, `.codex/mcp/echo/`, `.pi/mcp/echo/`,
+and so on) and replaces the token in `command` and `args` with that directory's
+absolute path (`/home/you/project/.claude/mcp/echo`), which works from any
+subdirectory or git worktree on the machine. A target that takes no MCP servers
+(`.agents`) receives no directory. The server registered under a `name` override installs
 under the registered name. Executable bits are preserved. Removing the server
 from the package prunes the installed directories on the next sync.
 
@@ -136,6 +194,11 @@ copies nothing. Because the registered name becomes one directory under each
 target, a token-using server's name must be a single path component: a name
 like `github/copilot` is skipped with a warning. A token-free server may use
 any name.
+
+A token server's entry therefore holds a machine path. `.claude/`, `.codex/`,
+`.pi/` and `.opencode/` are usually gitignored, but `.mcp.json` at the project root
+is not: a team that commits it should expect per-machine diffs for such
+servers, or gitignore `.mcp.json`.
 
 If something Mars does not own already occupies an installed path, sync warns,
 leaves that content untouched, and withholds the target's config entry so

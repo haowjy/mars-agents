@@ -1,14 +1,17 @@
-/// `.pi` target adapter stub.
+/// `.pi` target adapter.
 ///
-/// Future: Pi-native agent lowering and config-entry writing.
+/// Handles MCP server registration for the Pi harness.
 ///
-/// V0: stub only — no per-target behavior yet.
+/// Pi-native lowering:
+/// - MCP: writes `.pi/mcp.json` (`mcpServers` section) with `${VAR}` env
+///   interpolation. Pi reads project MCP servers only from trusted projects.
+/// - Hooks: whole-file extensions.
 use std::path::PathBuf;
 
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{HookFragmentMode, TargetAdapter};
+use super::{HookFragmentMode, McpFile, McpFormat, McpLocation, TargetAdapter};
 
 #[derive(Debug)]
 pub struct PiAdapter;
@@ -35,5 +38,16 @@ impl TargetAdapter for PiAdapter {
             ItemKind::Skill => Some(DestPath::from(format!("skills/{name}").as_str())),
             _ => None,
         }
+    }
+
+    fn mcp_file(&self) -> Option<McpFile> {
+        Some(McpFile {
+            at: McpLocation {
+                path: ".pi/mcp.json",
+                format: McpFormat::JsonSection("mcpServers"),
+            },
+            legacy: None,
+            render: super::mcp_file::braced_render,
+        })
     }
 }

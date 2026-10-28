@@ -45,7 +45,13 @@ fn write_config_entries(
     let (mcp, hooks) = super::standard_config_entries(entries);
 
     if !mcp.is_empty() {
-        crate::target::cursor::write_cursor_mcp_json(&root.join("mcp.json"), &mcp)?;
+        super::write_pretty_json(
+            &root.join("mcp.json"),
+            &serde_json::json!({
+                "mcpServers": super::render_servers(&crate::target::cursor::CursorAdapter, &mcp)
+            }),
+            "Cursor MCP configuration",
+        )?;
     }
     if !hooks.is_empty() {
         crate::target::cursor::write_cursor_hooks_json(&root.join("hooks/hooks.json"), &hooks)?;

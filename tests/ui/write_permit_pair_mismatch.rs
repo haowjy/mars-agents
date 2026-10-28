@@ -10,7 +10,7 @@ fn round_ten_attack(
 ) {
     // The old boundary accepted all three values. The new boundary accepts only
     // the bound operation plus the project root, so this cannot type-check.
-    let _ = adapter.write_config_entries(
+    let _ = adapter.write_hook_entries(
         authorized_write,
         unrelated_entries,
         independently_named_target,

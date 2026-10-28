@@ -352,5 +352,4 @@ mod tests {
             &manifest, "explorer", "claude"
         ));
     }
-
 }

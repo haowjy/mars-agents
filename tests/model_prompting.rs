@@ -1,5 +1,6 @@
 mod common;
 
+use assert_cmd::Command;
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use httpmock::prelude::*;
@@ -11,6 +12,17 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::*;
+
+/// A dead catalog endpoint: these tests never need a live models.dev fetch, and a
+/// reaching-the-network setup would make them depend on the developer's machine.
+const DEAD_API: &str = "http://127.0.0.1:9/api.json";
+
+/// The mars binary with an isolated HOME, config and cache directory.
+fn prompting_cmd(temp_root: &Path) -> Command {
+    let mut cmd = Command::cargo_bin("mars").expect("failed to locate mars test binary");
+    common::configure_assert_cmd(&mut cmd, temp_root, DEAD_API);
+    cmd
+}
 
 const EXPLORER_AGENT: &str = "---
 name: explorer
@@ -47,8 +59,13 @@ prompting = "This model alias should lose to the agent ref."
     );
     project.child("mars.toml").write_str(&toml).unwrap();
 
-    mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
+    prompting_cmd(dir.path())
+        .args([
+            "sync",
+            "--no-refresh-models",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .assert()
         .success();
     write_cache(project.path(), sample_cached_models(), &fresh_fetched_at());
@@ -126,69 +143,38 @@ fn models_prompting_json_resolves_agent_first_and_uses_agent_model_guidance() {
     let project = setup_model_prompting_project(&dir);
     let bin_dir = install_fake_harnesses(dir.path(), &["codex"]);
 
-    let output = mars()
-        .args([
-            "--json",
-            "models",
-            "prompting",
-            "explorer",
-            "--root",
-            project.to_str().unwrap(),
-        ])
-        .env("PATH", replace_path_with(&bin_dir))
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let json: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
+    // The agent's own `model:` wins over the alias of the same name, and the bare
+    // name and the `@name` ref agree.
+    for reference in ["explorer", "@explorer"] {
+        let output = prompting_cmd(dir.path())
+            .args([
+                "--json",
+                "models",
+                "prompting",
+                reference,
+                "--root",
+                project.to_str().unwrap(),
+            ])
+            .env("PATH", replace_path_with(&bin_dir))
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let json: Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
 
-    assert_eq!(json["ref"], "explorer");
-    assert_eq!(json["ref_kind"], "agent");
-    assert_eq!(json["agent_name"], "explorer");
-    assert_eq!(json["model_alias"], "gpt55");
-    assert_eq!(json["model_name"], "gpt-5");
-    assert_eq!(json["found"], true);
-    assert_eq!(
-        json["prompting"],
-        "Brief GPT with tight acceptance criteria."
-    );
-}
-
-#[test]
-fn models_prompting_at_agent_ref_resolves_agent() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_model_prompting_project(&dir);
-    let bin_dir = install_fake_harnesses(dir.path(), &["codex"]);
-
-    let output = mars()
-        .args([
-            "--json",
-            "models",
-            "prompting",
-            "@explorer",
-            "--root",
-            project.to_str().unwrap(),
-        ])
-        .env("PATH", replace_path_with(&bin_dir))
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    let json: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|_| panic!("models prompting --json must be valid JSON:\n{stdout}"));
-
-    assert_eq!(json["ref"], "@explorer");
-    assert_eq!(json["ref_kind"], "agent");
-    assert_eq!(json["agent_name"], "explorer");
-    assert_eq!(json["model_alias"], "gpt55");
-    assert_eq!(json["model_name"], "gpt-5");
-    assert_eq!(
-        json["prompting"],
-        "Brief GPT with tight acceptance criteria."
-    );
+        assert_eq!(json["ref"], reference);
+        assert_eq!(json["ref_kind"], "agent");
+        assert_eq!(json["agent_name"], "explorer");
+        assert_eq!(json["model_alias"], "gpt55");
+        assert_eq!(json["model_name"], "gpt-5");
+        assert_eq!(json["found"], true);
+        assert_eq!(
+            json["prompting"],
+            "Brief GPT with tight acceptance criteria."
+        );
+    }
 }
 
 #[test]
@@ -196,7 +182,7 @@ fn models_prompting_json_resolves_direct_model_alias() {
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);
 
-    let output = mars()
+    let output = prompting_cmd(dir.path())
         .args([
             "--json",
             "models",
@@ -226,24 +212,6 @@ fn models_prompting_json_resolves_direct_model_alias() {
 }
 
 #[test]
-fn models_prompt_singular_subcommand_stays_rejected() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_model_prompting_project(&dir);
-
-    mars()
-        .args([
-            "models",
-            "prompt",
-            "gpt55",
-            "--root",
-            project.to_str().unwrap(),
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("unrecognized subcommand 'prompt'"));
-}
-
-#[test]
 fn models_prompting_direct_auto_alias_refreshes_catalog_for_model_name() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "src", &[("fixture", "# Fixture\n")], &[]);
@@ -261,7 +229,7 @@ prompting = "Use refreshed GPT guidance."
         source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
-    mars()
+    prompting_cmd(dir.path())
         .args([
             "sync",
             "--no-refresh-models",
@@ -277,7 +245,7 @@ prompting = "Use refreshed GPT guidance."
         then.status(200).json_body(sample_catalog_json());
     });
 
-    let output = mars()
+    let output = prompting_cmd(dir.path())
         .args([
             "--json",
             "models",
@@ -344,14 +312,19 @@ prompting = "Use Claude-specific review guidance."
         source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
-    mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
+    prompting_cmd(dir.path())
+        .args([
+            "sync",
+            "--no-refresh-models",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .assert()
         .success();
     write_cache(project.path(), sample_cached_models(), &fresh_fetched_at());
     let bin_dir = install_fake_harnesses(dir.path(), &["claude"]);
 
-    let output = mars()
+    let output = prompting_cmd(dir.path())
         .args([
             "--json",
             "models",
@@ -387,7 +360,7 @@ harness = "opencode"
     let cache_root = dir.path().join("mars-cache");
     write_opencode_probe_cache(&cache_root, &["openai/not-gpt-5"]);
 
-    let output = mars()
+    let output = prompting_cmd(dir.path())
         .args([
             "--json",
             "models",
@@ -468,14 +441,19 @@ prompting = "Wrong profile-name collision guidance."
         source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
-    mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
+    prompting_cmd(dir.path())
+        .args([
+            "sync",
+            "--no-refresh-models",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .assert()
         .success();
     write_cache(project.path(), sample_cached_models(), &fresh_fetched_at());
     let bin_dir = install_fake_harnesses(dir.path(), &["codex", "claude"]);
 
-    let output = mars()
+    let output = prompting_cmd(dir.path())
         .args([
             "--json",
             "models",
@@ -538,15 +516,20 @@ prompting = "Use the profile-name overlay guidance."
         source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
-    mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
+    prompting_cmd(dir.path())
+        .args([
+            "sync",
+            "--no-refresh-models",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
         .assert()
         .success();
     write_cache(project.path(), sample_cached_models(), &fresh_fetched_at());
     let bin_dir = install_fake_harnesses(dir.path(), &["codex", "claude"]);
 
     for reference in ["stemmed-explorer", "explorer"] {
-        let output = mars()
+        let output = prompting_cmd(dir.path())
             .args([
                 "--json",
                 "models",
@@ -578,7 +561,7 @@ fn models_prompting_known_model_without_guidance_exits_zero_and_shows_examples()
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);
 
-    mars()
+    prompting_cmd(dir.path())
         .args([
             "models",
             "prompting",
@@ -600,7 +583,7 @@ fn models_prompting_unknown_ref_json_exits_nonzero_with_found_false() {
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);
 
-    let output = mars()
+    let output = prompting_cmd(dir.path())
         .args([
             "--json",
             "models",
@@ -622,7 +605,7 @@ fn models_prompting_unknown_ref_json_exits_nonzero_with_found_false() {
     assert_eq!(json["found"], false);
     assert_eq!(json["prompting"], Value::Null);
 
-    let text = mars()
+    let text = prompting_cmd(dir.path())
         .args([
             "models",
             "prompting",

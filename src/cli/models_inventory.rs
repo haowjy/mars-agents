@@ -217,21 +217,6 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         probe_refresh: refresh.probe_refresh,
     });
     let installed = session.installed_harnesses();
-    let provider_order = settings.provider_order.as_deref().unwrap_or_default();
-    if let Some(known) =
-        session.known_providers(provider_order, &models::catalog_model_slugs(&cache))
-    {
-        let unknown = crate::routing::known_providers::unknown_provider_order_warnings(
-            provider_order,
-            &known,
-        );
-        if !json {
-            for message in &unknown {
-                eprintln!("warning: {message}");
-            }
-        }
-        routing_diagnostics.extend(unknown);
-    }
     let (possible, listing_diagnostics) = {
         let mut source = SessionPossibleSource::new(&cache, &mut session, scope);
         let rows = source.all_rows();
@@ -259,6 +244,22 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             .collect::<Vec<_>>();
         (rows, diagnostics)
     };
+    let provider_order = settings.provider_order.as_deref().unwrap_or_default();
+    // Listing above has loaded the probes this reads; the check never loads any itself.
+    if let Some(known) =
+        session.known_providers(provider_order, &models::catalog_model_slugs(&cache))
+    {
+        let unknown = crate::routing::known_providers::unknown_provider_order_warnings(
+            provider_order,
+            &known,
+        );
+        if !json {
+            for message in &unknown {
+                eprintln!("warning: {message}");
+            }
+        }
+        routing_diagnostics.extend(unknown);
+    }
     let view = rules.project(&possible, scope);
     let diagnostics = view
         .diagnostics

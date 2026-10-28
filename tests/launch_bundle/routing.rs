@@ -713,7 +713,7 @@ model = "gpt-5.4-mini""#;
 }
 
 #[test]
-fn build_launch_bundle_provider_order_unknown_provider_warns_in_route_trace() {
+fn build_launch_bundle_provider_order_warning_never_loads_probes() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
     let agent_content = r#"---
@@ -760,11 +760,12 @@ model = "gpt-5.4-mini""#;
     let diagnostics = selected_attempt(&bundle)["diagnostics"]
         .as_array()
         .expect("route_trace.diagnostics should be array");
-    assert!(diagnostics.iter().any(|diagnostic| {
+    // The first attempt decides before any probe is loaded, and the warning never loads one.
+    assert!(!diagnostics.iter().any(|diagnostic| {
         diagnostic
             .as_str()
             .unwrap_or_default()
-            .contains("settings.provider_order contains unknown provider `future-provider`")
+            .contains("settings.provider_order contains unknown provider")
     }));
 }
 

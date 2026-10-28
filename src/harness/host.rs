@@ -307,7 +307,8 @@ impl CapabilitySession {
     }
 
     /// Providers Mars has observed, for `provider_order` warnings; `None` while pending.
-    /// With an empty order there is nothing to check, so no probe is loaded for it.
+    /// Reads only outcomes already loaded for routing or listing: a diagnostic must never
+    /// trigger a probe. A harness whose outcome isn't loaded counts as never probed.
     pub fn known_providers(
         &mut self,
         provider_order: &[String],
@@ -319,17 +320,17 @@ impl CapabilitySession {
         }
         let mut probes = Vec::new();
         if self.installed.contains(HarnessId::OpenCode.as_str()) {
-            probes.push(match self.opencode_outcome() {
-                CachedProbeOutcome::Unavailable => ProbeListing::NeverProbed,
-                CachedProbeOutcome::Failed(_) => ProbeListing::Failed,
-                outcome => ProbeListing::Listed(outcome.result()?.model_slugs.clone()),
+            probes.push(match self.loaded_opencode_outcome() {
+                None | Some(CachedProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
+                Some(CachedProbeOutcome::Failed(_)) => ProbeListing::Failed,
+                Some(outcome) => ProbeListing::Listed(outcome.result()?.model_slugs.clone()),
             });
         }
         if self.installed.contains(HarnessId::Pi.as_str()) {
-            probes.push(match self.pi_outcome() {
-                CachedPiProbeOutcome::Unavailable => ProbeListing::NeverProbed,
-                CachedPiProbeOutcome::Failed(_) => ProbeListing::Failed,
-                outcome => {
+            probes.push(match self.loaded_pi_outcome() {
+                None | Some(CachedPiProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
+                Some(CachedPiProbeOutcome::Failed(_)) => ProbeListing::Failed,
+                Some(outcome) => {
                     ProbeListing::Listed(outcome.result()?.model_slugs.iter().cloned().collect())
                 }
             });

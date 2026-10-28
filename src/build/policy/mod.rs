@@ -277,14 +277,6 @@ pub fn resolve_policy(
         probe_refresh: input.models_refresh.probe_refresh,
     });
     let installed_harnesses = capability_session.installed_harnesses();
-    let known_providers = capability_session.known_providers(
-        effective_config
-            .settings
-            .provider_order
-            .as_deref()
-            .unwrap_or_default(),
-        &catalog_slugs,
-    );
     let native_auth = crate::harness::host::NativeAuthCache::default();
     let mut first_unverified = None;
     let mut selected = None;
@@ -308,6 +300,15 @@ pub fn resolve_policy(
             ),
             &candidate.model,
             selected_alias_token(&candidate),
+        );
+        // Peeks at probes earlier attempts loaded; a first attempt sees none, so stays silent.
+        let known_providers = capability_session.known_providers(
+            effective_config
+                .settings
+                .provider_order
+                .as_deref()
+                .unwrap_or_default(),
+            &catalog_slugs,
         );
         let mut probe_resolver = SessionProbeResolver {
             session: &mut capability_session,

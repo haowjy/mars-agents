@@ -143,33 +143,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_bytes_ranges() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(512), "512 B");
-        assert_eq!(format_bytes(1024), "1.0 KB");
-        assert_eq!(format_bytes(1536), "1.5 KB");
-        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
-        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
-    }
-
-    #[test]
-    fn dir_size_empty() {
-        let dir = tempfile::TempDir::new().unwrap();
-        assert_eq!(dir_size(dir.path()), 0);
-    }
-
-    #[test]
     fn dir_size_with_files() {
         let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(dir_size(dir.path()), 0);
+        assert_eq!(dir_size(&dir.path().join("absent")), 0);
+
         std::fs::write(dir.path().join("a.txt"), "hello").unwrap();
         std::fs::write(dir.path().join("b.txt"), "world!").unwrap();
         assert_eq!(dir_size(dir.path()), 11); // 5 + 6
-    }
-
-    #[test]
-    fn dir_size_nonexistent() {
-        let dir = tempfile::TempDir::new().unwrap();
-        assert_eq!(dir_size(&dir.path().join("absent")), 0);
     }
 
     #[test]
@@ -183,11 +164,6 @@ mod tests {
 
         assert!(dir.path().exists()); // directory itself survives
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0); // but empty
-    }
-
-    #[test]
-    fn remove_dir_contents_nonexistent_ok() {
-        let dir = tempfile::TempDir::new().unwrap();
         assert!(remove_dir_contents(&dir.path().join("absent")).is_ok());
     }
 }

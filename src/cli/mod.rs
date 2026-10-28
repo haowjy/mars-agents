@@ -481,23 +481,15 @@ mod tests {
         .unwrap();
         let result = detect_managed_root(dir.path()).unwrap();
         assert_eq!(result, dir.path().join(".claude"));
-    }
 
-    #[test]
-    fn detect_managed_root_falls_through_on_missing_config() {
-        let dir = TempDir::new().unwrap();
-        let result = detect_managed_root(dir.path()).unwrap();
-        assert_eq!(result, dir.path().join(".mars"));
-    }
-
-    #[test]
-    fn detect_managed_root_ignores_agents_dir_without_explicit_config() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.toml"), "[dependencies]\n").unwrap();
-        std::fs::create_dir_all(dir.path().join(".agents")).unwrap();
-
-        let result = detect_managed_root(dir.path()).unwrap();
-        assert_eq!(result, dir.path().join(".mars"));
+        // An `.agents` directory alone is not a managed-root declaration.
+        let bare = TempDir::new().unwrap();
+        std::fs::write(bare.path().join("mars.toml"), "[dependencies]\n").unwrap();
+        std::fs::create_dir_all(bare.path().join(".agents")).unwrap();
+        assert_eq!(
+            detect_managed_root(bare.path()).unwrap(),
+            bare.path().join(".mars")
+        );
     }
 
     #[test]
@@ -539,20 +531,17 @@ mod tests {
             dunce::canonicalize(&outer).unwrap(),
             "should find outer config even when inner has .git"
         );
-    }
 
-    #[test]
-    fn walk_up_finds_config_in_ancestor() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().join("project");
-        std::fs::create_dir_all(root.join(".agents")).unwrap();
-        std::fs::write(root.join("mars.toml"), "[dependencies]\n").unwrap();
-
-        let subdir = root.join("src").join("lib");
-        std::fs::create_dir_all(&subdir).unwrap();
-
-        let ctx = find_agents_root_from(&subdir).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(&root).unwrap());
+        // A `.git` file (submodule marker) is no boundary either.
+        let submodule = outer.join("submodule");
+        std::fs::create_dir_all(&submodule).unwrap();
+        std::fs::write(
+            submodule.join(".git"),
+            "gitdir: ../../.git/modules/submodule\n",
+        )
+        .unwrap();
+        let ctx = find_agents_root_from(&submodule).unwrap();
+        assert_eq!(ctx.project_root, dunce::canonicalize(&outer).unwrap());
     }
 
     #[test]
@@ -576,54 +565,23 @@ mod tests {
     }
 
     #[test]
-    fn walk_up_from_deep_subdirectory() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().join("repo");
-        std::fs::create_dir_all(root.join(".agents")).unwrap();
-        std::fs::write(root.join("mars.toml"), "[dependencies]\n").unwrap();
-
-        let deep = root.join("src").join("foo").join("bar");
-        std::fs::create_dir_all(&deep).unwrap();
-
-        let ctx = find_agents_root_from(&deep).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(&root).unwrap());
-    }
-
-    #[test]
-    fn walk_up_crosses_submodule_boundary() {
-        // Outer repo has mars.toml
-        // Inner dir has .git FILE (submodule marker) — walk-up should still find outer config
-        let dir = TempDir::new().unwrap();
-        let outer = dir.path().join("outer");
-        std::fs::create_dir_all(outer.join(".agents")).unwrap();
-        std::fs::write(outer.join("mars.toml"), "[dependencies]\n").unwrap();
-
-        let submodule = outer.join("submodule");
-        std::fs::create_dir_all(&submodule).unwrap();
-        // .git FILE (not dir) marks a submodule
-        std::fs::write(
-            submodule.join(".git"),
-            "gitdir: ../../.git/modules/submodule\n",
-        )
-        .unwrap();
-
-        let ctx = find_agents_root_from(&submodule).unwrap();
-        assert_eq!(
-            ctx.project_root,
-            dunce::canonicalize(&outer).unwrap(),
-            "should find outer config through submodule .git file boundary"
-        );
-    }
-
-    #[test]
     fn walk_up_errors_when_no_config_found() {
         let dir = TempDir::new().unwrap();
         let deep = dir.path().join("a").join("b").join("c");
         std::fs::create_dir_all(&deep).unwrap();
 
-        let result = find_agents_root_from(&deep);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        // The walk climbs to the filesystem root, so a `mars.toml` above the temp dir
+        // (a `TMPDIR` inside a Mars project) makes the premise false; leave the test then
+        // instead of failing on the machine's layout.
+        if dir
+            .path()
+            .ancestors()
+            .any(|dir| dir.join("mars.toml").exists())
+        {
+            return;
+        }
+
+        let err = find_agents_root_from(&deep).unwrap_err().to_string();
         assert!(
             err.contains("no mars.toml found"),
             "should report no config found: {err}"

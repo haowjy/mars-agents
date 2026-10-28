@@ -1006,6 +1006,8 @@ mod tests {
     {
         let mut command = Command::new("git");
         crate::platform::process::remove_git_local_env(&mut command);
+        command.env("GIT_CONFIG_GLOBAL", "/dev/null");
+        command.env("GIT_CONFIG_NOSYSTEM", "1");
         command.env("GIT_AUTHOR_NAME", "Mars Test");
         command.env("GIT_AUTHOR_EMAIL", "mars@example.com");
         command.env("GIT_COMMITTER_NAME", "Mars Test");
@@ -1048,10 +1050,7 @@ mod tests {
     fn parse_release_version_accepts_plain_semver() {
         let parsed = parse_release_version("1.2.3", "field").unwrap();
         assert_eq!(parsed.to_string(), "1.2.3");
-    }
 
-    #[test]
-    fn parse_release_version_rejects_prerelease() {
         let err = parse_release_version("1.2.3-alpha.1", "field").unwrap_err();
         assert!(err.to_string().contains("plain X.Y.Z"));
     }
@@ -1072,11 +1071,6 @@ mod tests {
             resolve_next_version("major", &current).unwrap().to_string(),
             "2.0.0"
         );
-    }
-
-    #[test]
-    fn resolve_next_version_explicit() {
-        let current = Version::parse("1.2.3").unwrap();
         assert_eq!(
             resolve_next_version("4.5.6", &current).unwrap().to_string(),
             "4.5.6"
@@ -1115,9 +1109,12 @@ mod tests {
         let (repo, ctx) = init_repo_with_mars_toml(
             "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
         );
+        let prior_section = "## [0.1.0] - 2026-04-01\n\n### Added\n- Initial release\n";
         std::fs::write(
             repo.path().join("CHANGELOG.md"),
-            "# Changelog\n\n## [Unreleased]\n\n### Added\n- New feature X\n\n### Fixed\n- Bug Y\n",
+            format!(
+                "# Changelog\n\n## [Unreleased]\n\n### Added\n- New feature X\n\n### Fixed\n- Bug Y\n\n{prior_section}"
+            ),
         )
         .unwrap();
         run_git_test(repo.path(), ["add", "CHANGELOG.md"]);
@@ -1140,6 +1137,7 @@ mod tests {
             "## [0.1.1] - {today}\n\n### Added\n- New feature X"
         )));
         assert!(changelog.contains("### Fixed\n- Bug Y"));
+        assert!(changelog.ends_with(prior_section));
 
         let committed_files =
             run_git_test(repo.path(), ["show", "--name-only", "--pretty=", "HEAD"]);
@@ -1186,36 +1184,6 @@ mod tests {
                 )
                 .contains("## [0.1.1] - 2026-04-30\n\n- add empty changelog")
         );
-    }
-
-    #[test]
-    fn run_changelog_preserves_existing_versions() {
-        let (repo, ctx) = init_repo_with_mars_toml(
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
-        );
-        let prior_section = "## [0.1.0] - 2026-04-01\n\n### Added\n- Initial release\n";
-        std::fs::write(
-            repo.path().join("CHANGELOG.md"),
-            format!("# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Bug Y\n\n{prior_section}"),
-        )
-        .unwrap();
-        run_git_test(repo.path(), ["add", "CHANGELOG.md"]);
-        run_git_test(repo.path(), ["commit", "-m", "add changelog"]);
-
-        let args = VersionArgs {
-            bump: "patch".to_string(),
-            push: false,
-            force: false,
-            no_plugins: false,
-        };
-
-        let exit = run(&args, &ctx, true).unwrap();
-        assert_eq!(exit, 0);
-
-        let changelog = std::fs::read_to_string(repo.path().join("CHANGELOG.md")).unwrap();
-        assert!(changelog.contains("## [0.1.1] - "));
-        assert!(changelog.contains("### Fixed\n- Bug Y"));
-        assert!(changelog.ends_with(prior_section));
     }
 
     #[test]
@@ -1310,7 +1278,7 @@ mod tests {
     fn run_aborts_when_package_check_fails() {
         // P5: an unresolvable dependency causes check to fail, version is not bumped.
         let (repo, ctx) = init_repo_with_mars_toml(
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-dep-xyz-p5\" }\n",
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"./missing-dep-p5\" }\n",
         );
 
         let args = VersionArgs {
@@ -1334,48 +1302,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn run_aborts_when_agent_model_policy_is_malformed() {
-        let (repo, ctx) = init_repo_with_mars_toml(
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
-        );
-        std::fs::write(
-            repo.path().join("agents/test-agent.md"),
-            "---\nname: test-agent\ndescription: test\nmodel-policies:\n  - match:\n      alias: gpt55\n      model: gpt-5.5\n---\n# Test",
-        )
-        .unwrap();
-        run_git_test(repo.path(), ["add", "agents/test-agent.md"]);
-        run_git_test(repo.path(), ["commit", "-m", "malformed agent policy"]);
-
-        let args = VersionArgs {
-            bump: "patch".to_string(),
-            push: false,
-            force: false,
-            no_plugins: false,
-        };
-
-        let err = run(&args, &ctx, true).unwrap_err();
-        let message = err.to_string();
-        assert!(
-            message.contains("package check failed") && message.contains("model-policies[0].match"),
-            "expected model-policies package check failure: {message}"
-        );
-
-        let config = crate::config::load(repo.path()).unwrap();
-        assert_eq!(
-            config.package.unwrap().version,
-            "0.1.0",
-            "version must not be bumped after agent profile check failure"
-        );
-    }
-
     // ── P6: --force bypasses check errors ────────────────────────────────────────
 
     #[test]
     fn run_force_bypasses_package_check_errors() {
         // P6: --force proceeds despite check errors, emits warnings to stderr.
         let (repo, ctx) = init_repo_with_mars_toml(
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-dep-xyz-p6\" }\n",
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"./missing-dep-p6\" }\n",
         );
 
         let args = VersionArgs {

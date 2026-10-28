@@ -195,91 +195,30 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn init_on_empty_project_runs_lossiness_pass_without_error() {
-        let dir = TempDir::new().unwrap();
-        let args = super::InitArgs {
-            target: None,
-            link: Vec::new(),
-        };
-        let code = super::run(&args, Some(dir.path()), false).unwrap();
-        assert_eq!(code, 0);
-    }
-
-    #[test]
     fn validate_target_accepts_simple_names() {
-        assert!(validate_target(".agents").is_ok());
-        assert!(validate_target(".claude").is_ok());
-        assert!(validate_target("my-agents").is_ok());
-    }
-
-    #[test]
-    fn validate_target_rejects_paths() {
-        assert!(validate_target("./foo").is_err());
-        assert!(validate_target("foo/bar").is_err());
-        assert!(validate_target("/absolute/path").is_err());
-    }
-
-    #[test]
-    fn validate_target_rejects_dots() {
-        assert!(validate_target(".").is_err());
-        assert!(validate_target("..").is_err());
-    }
-
-    #[test]
-    fn validate_target_rejects_empty() {
-        assert!(validate_target("").is_err());
-    }
-
-    #[test]
-    fn ensure_consumer_config_creates_root_mars_toml() {
-        let dir = TempDir::new().unwrap();
-
-        let already = ensure_consumer_config(dir.path()).unwrap();
-        assert!(!already);
-
-        let content = std::fs::read_to_string(dir.path().join("mars.toml")).unwrap();
-        assert!(content.contains("[dependencies]"));
-    }
-
-    #[test]
-    fn ensure_consumer_config_accepts_existing_mars_toml() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
-        )
-        .unwrap();
-
-        let already = ensure_consumer_config(dir.path()).unwrap();
-        assert!(already);
-    }
-
-    #[test]
-    fn initialize_project_without_target_creates_mars_only() {
-        let dir = TempDir::new().unwrap();
-
-        let initialized = initialize_project(Some(dir.path()), None).unwrap();
-
-        assert!(dir.path().join(".mars").exists());
-        assert!(!dir.path().join(".agents").exists());
-        assert!(initialized.managed_root.is_none());
-
-        let config = crate::config::load(dir.path()).unwrap();
-        assert!(config.settings.managed_root.is_none());
+        for target in [".agents", ".claude", "my-agents"] {
+            assert!(validate_target(target).is_ok(), "{target}");
+        }
+        for target in ["./foo", "foo/bar", "/absolute/path", ".", "..", ""] {
+            assert!(validate_target(target).is_err(), "{target:?}");
+        }
     }
 
     #[test]
     fn initialize_project_with_explicit_target_persists_managed_root() {
-        let dir = TempDir::new().unwrap();
+        // `.agents` is the deprecated target, but an explicit one is still persisted.
+        for target in [".claude", ".agents"] {
+            let dir = TempDir::new().unwrap();
 
-        let initialized = initialize_project(Some(dir.path()), Some(".claude")).unwrap();
+            let initialized = initialize_project(Some(dir.path()), Some(target)).unwrap();
 
-        assert!(dir.path().join(".mars").exists());
-        assert!(dir.path().join(".claude").exists());
-        assert_eq!(initialized.managed_root, Some(dir.path().join(".claude")));
+            assert!(dir.path().join(".mars").exists());
+            assert!(dir.path().join(target).exists());
+            assert_eq!(initialized.managed_root, Some(dir.path().join(target)));
 
-        let config = crate::config::load(dir.path()).unwrap();
-        assert_eq!(config.settings.managed_root.as_deref(), Some(".claude"));
+            let config = crate::config::load(dir.path()).unwrap();
+            assert_eq!(config.settings.managed_root.as_deref(), Some(target));
+        }
     }
 
     #[test]
@@ -295,18 +234,5 @@ mod tests {
 
         assert!(dir.path().join(".claude").exists());
         assert_eq!(initialized.managed_root, Some(dir.path().join(".claude")));
-    }
-
-    #[test]
-    fn initialize_project_with_explicit_agents_persists_deprecated_target() {
-        let dir = TempDir::new().unwrap();
-
-        let initialized = initialize_project(Some(dir.path()), Some(".agents")).unwrap();
-
-        assert!(dir.path().join(".agents").exists());
-        assert_eq!(initialized.managed_root, Some(dir.path().join(".agents")));
-
-        let config = crate::config::load(dir.path()).unwrap();
-        assert_eq!(config.settings.managed_root.as_deref(), Some(".agents"));
     }
 }

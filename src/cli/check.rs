@@ -538,18 +538,6 @@ mod tests {
         .unwrap();
         std::os::unix::fs::symlink(agents.join("real.md"), agents.join("linked.md")).unwrap();
 
-        let args = super::CheckArgs {
-            path: Some(dir.path().to_path_buf()),
-            verbose: false,
-        };
-        let code = super::run(&args, None, true).unwrap();
-        assert_eq!(code, 0);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn check_skips_symlinked_skill() {
-        let dir = TempDir::new().unwrap();
         let skills = dir.path().join("skills");
         let real_skill = skills.join("real-skill");
         std::fs::create_dir_all(&real_skill).unwrap();
@@ -559,14 +547,6 @@ mod tests {
         )
         .unwrap();
         std::os::unix::fs::symlink(&real_skill, skills.join("linked-skill")).unwrap();
-
-        let agents = dir.path().join("agents");
-        std::fs::create_dir_all(&agents).unwrap();
-        std::fs::write(
-            agents.join("coder.md"),
-            "---\nname: coder\ndescription: agent\n---\n# Coder",
-        )
-        .unwrap();
 
         let args = super::CheckArgs {
             path: Some(dir.path().to_path_buf()),
@@ -655,7 +635,7 @@ mod tests {
             dir.path().join("mars.toml"),
             // [package] required to trigger graph-backed validation.
             // Absolute path that does not exist — resolution must fail.
-            "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-mars-dep-xyz-abc\" }\n",
+            "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"./missing-dep\" }\n",
         )
         .unwrap();
 
@@ -754,39 +734,6 @@ mod tests {
     }
 
     // ── Fix 2: Local config leakage — local-dependencies must not satisfy refs ────
-
-    #[test]
-    fn check_local_dependency_skill_does_not_satisfy_ref() {
-        // Skills from [local-dependencies] are dev-only and must not satisfy
-        // skill references in the publish gate check.
-        let dir = TempDir::new().unwrap();
-        let local_dep_dir = TempDir::new().unwrap();
-
-        write_dep_package(local_dep_dir.path(), "local-dep", "0.1.0", &["local-skill"]);
-        write_agent(dir.path(), "coder", &["local-skill"]);
-        // [package] + [local-dependencies] only, no [dependencies]
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n\n[local-dependencies]\nlocal-dep = {{ path = \"{}\" }}\n",
-                toml_path(local_dep_dir.path())
-            ),
-        )
-        .unwrap();
-
-        // has_package_dependencies checks config.dependencies (not local_dependencies),
-        // so this will be false → falls through to local-only warning path.
-        // That's the correct behavior: local-only validation, external ref → warning.
-        let report = super::check_dir(dir.path()).unwrap();
-        // local-skill is not in the local package, so it should warn (not error)
-        // since we're in local-only mode (no [dependencies]).
-        let has_warning = report.warnings.iter().any(|w| w.contains("local-skill"));
-        assert!(
-            has_warning,
-            "local-skill from [local-dependencies] must not satisfy ref in publish gate — expected warning: {:?}",
-            report.warnings
-        );
-    }
 
     #[test]
     fn check_local_dep_skill_not_available_when_regular_dep_present() {

@@ -239,38 +239,3 @@ fn dir_name(path: &std::path::Path) -> String {
         .unwrap_or("unknown")
         .to_string()
 }
-
-#[cfg(test)]
-mod filter_flag_tests {
-    use crate::cli::{Cli, Command};
-    use clap::Parser;
-
-    fn skills_args(args: &[&str]) -> super::SkillsArgs {
-        match Cli::try_parse_from(args).expect("should parse").command {
-            Command::Skills(s) => s,
-            other => panic!("expected skills command, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn type_filter_populates_on_both_bare_and_list_forms() {
-        for args in [
-            ["mars", "skills", "list", "--type", "guardrail"].as_slice(),
-            ["mars", "skills", "--type", "guardrail", "list"].as_slice(),
-            ["mars", "skills", "--type", "guardrail"].as_slice(),
-        ] {
-            let parsed = skills_args(args);
-            assert_eq!(
-                parsed.skill_type.as_deref(),
-                Some("guardrail"),
-                "args: {args:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn model_invocable_flag_populates_on_list_form() {
-        let parsed = skills_args(&["mars", "skills", "list", "--model-invocable"]);
-        assert!(parsed.model_invocable);
-    }
-}

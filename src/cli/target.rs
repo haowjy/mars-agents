@@ -30,21 +30,8 @@ mod tests {
     #[test]
     fn normalize_strips_trailing_slash() {
         assert_eq!(normalize_target_name(".claude/").unwrap(), ".claude");
-    }
-
-    #[test]
-    fn normalize_rejects_path() {
-        assert!(normalize_target_name("foo/bar").is_err());
-    }
-
-    #[test]
-    fn normalize_rejects_empty() {
-        assert!(normalize_target_name("").is_err());
-    }
-
-    #[test]
-    fn normalize_rejects_dots() {
-        assert!(normalize_target_name(".").is_err());
-        assert!(normalize_target_name("..").is_err());
+        for rejected in ["foo/bar", "", ".", ".."] {
+            assert!(normalize_target_name(rejected).is_err(), "{rejected:?}");
+        }
     }
 }

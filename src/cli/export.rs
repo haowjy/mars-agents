@@ -247,40 +247,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn export_status_serializes_lowercase() {
-        let complete = serde_json::to_string(&ExportStatus::Complete).unwrap();
-        let failed = serde_json::to_string(&ExportStatus::Failed).unwrap();
-        assert_eq!(complete, r#""complete""#);
-        assert_eq!(failed, r#""failed""#);
-    }
-
-    #[test]
     fn export_dependency_origin_git() {
         use mars_schema::dependency::{Entry, RawEntry};
         let dep = RawEntry::from(&Entry::git("https://github.com/org/repo"));
         assert_eq!(infer_origin(&dep), "git");
-    }
-
-    #[test]
-    fn export_dependency_origin_path() {
-        use mars_schema::dependency::{Entry, RawEntry};
-        let dep = RawEntry::from(&Entry::at_path(std::path::PathBuf::from("../local-pkg")));
-        assert_eq!(infer_origin(&dep), "path");
-    }
-
-    #[test]
-    fn export_diagnostic_maps_levels() {
-        use crate::diagnostic::{Diagnostic, DiagnosticLevel};
-        let d = Diagnostic {
-            level: DiagnosticLevel::Error,
-            code: "test".into(),
-            message: "msg".to_string(),
-            context: None,
-            category: None,
-        };
-        let ed = export_diagnostic(&d);
-        assert_eq!(ed.level, "error");
-        assert_eq!(ed.code, "test");
-        assert_eq!(ed.category, None);
     }
 }

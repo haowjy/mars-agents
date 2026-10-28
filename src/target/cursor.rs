@@ -231,14 +231,20 @@ fn remove_owned_cursor_hooks(
 //       "command": "...",
 //       "args": [...],
 //       "env": { "KEY": "${env:VAR_NAME}" }
+//     },
+//     "remote-name": {
+//       "url": "...",
+//       "headers": { "Authorization": "Bearer ${env:VAR_NAME}" }
 //     }
 //   }
 // }
 
 fn render(server: &McpServerEntry) -> McpRender {
-    McpRender::exact(super::mcp_file::stdio_entry(server, |var| {
-        format!("${{env:{var}}}")
-    }))
+    McpRender::exact(super::mcp_file::servers_entry(
+        server,
+        |var| format!("${{env:{var}}}"),
+        false,
+    ))
 }
 
 // ---------------------------------------------------------------------------

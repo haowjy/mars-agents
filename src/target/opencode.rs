@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
+use mars_schema::mcp_server::McpTransport;
 
 use super::{
     HookFragmentMode, McpFile, McpFormat, McpLocation, McpRender, McpServerEntry, TargetAdapter,
@@ -20,22 +21,36 @@ use super::{
 
 const MCP_SECTION: &str = "mcp";
 
-/// Render one server as an OpenCode `mcp` entry: a local command array with
-/// `{env:VAR}` environment references.
+/// Render one server as an OpenCode `mcp` entry with `{env:VAR}` references:
+/// `local` is a command array, `remote` a URL with headers.
 fn render(server: &McpServerEntry) -> McpRender {
-    let mut entry = serde_json::json!({
-        "type": "local",
-        "command": std::iter::once(&server.command).chain(&server.args).collect::<Vec<_>>(),
-    });
-    if !server.env.is_empty() {
-        entry["environment"] = server
-            .env
-            .iter()
-            .map(|(key, variable)| (key.clone(), format!("{{env:{variable}}}")))
-            .map(|(key, value)| (key, serde_json::Value::String(value)))
-            .collect::<serde_json::Map<_, _>>()
-            .into();
-    }
+    let interpolate = |var: &str| format!("{{env:{var}}}");
+    let entry = match &server.transport {
+        McpTransport::Stdio { command, args, env } => {
+            let mut entry = serde_json::json!({
+                "type": "local",
+                "command": std::iter::once(command).chain(args).collect::<Vec<_>>(),
+            });
+            if !env.is_empty() {
+                entry["environment"] = env
+                    .iter()
+                    .map(|(key, env_ref)| {
+                        (
+                            key.clone(),
+                            serde_json::Value::String(interpolate(env_ref.var_name())),
+                        )
+                    })
+                    .collect::<serde_json::Map<_, _>>()
+                    .into();
+            }
+            entry
+        }
+        McpTransport::Http { url, headers } => {
+            let mut entry = serde_json::json!({ "type": "remote", "url": url });
+            super::mcp_file::insert_headers(&mut entry, headers, interpolate);
+            entry
+        }
+    };
     McpRender::exact(entry)
 }
 

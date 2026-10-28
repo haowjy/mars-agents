@@ -473,9 +473,11 @@ mod tests {
     fn binding_rejects_entries_from_another_surface() {
         let entry = ConfigEntry::McpServer(crate::target::McpServerEntry {
             name: "server".to_owned(),
-            command: "server".to_owned(),
-            args: Vec::new(),
-            env: indexmap::IndexMap::new(),
+            transport: mars_schema::mcp_server::McpTransport::Stdio {
+                command: "server".to_owned(),
+                args: Vec::new(),
+                env: indexmap::IndexMap::new(),
+            },
         });
         let result =
             WritePermit::for_test(".opencode", Surface::Hook).bind_config_entries(vec![entry]);

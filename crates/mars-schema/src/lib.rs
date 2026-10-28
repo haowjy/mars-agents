@@ -30,6 +30,7 @@ mod lift;
 pub mod markdown;
 
 pub mod mcp;
+pub mod mcp_server;
 pub mod provider;
 pub mod tool_names;
 pub mod tool_natives;

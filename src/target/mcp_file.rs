@@ -11,6 +11,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use indexmap::IndexMap;
+use mars_schema::mcp_server::{EnvRef, HeaderValue, McpTransport};
 use serde_json::Value;
 
 use super::mcp_doc::Doc;
@@ -66,39 +68,87 @@ impl McpRender {
     }
 }
 
-/// An `mcpServers`-family entry: `{ command, args, env: { KEY: <interpolated var> } }`.
-/// Claude, Cursor and Pi share it and differ only in the interpolation.
-pub(super) fn stdio_entry(server: &McpServerEntry, interpolate: impl Fn(&str) -> String) -> Value {
-    let mut entry = serde_json::json!({
-        "command": server.command,
-        "args": server.args,
-    });
-    if !server.env.is_empty() {
-        entry["env"] = server
-            .env
-            .iter()
-            .map(|(key, variable)| (key.clone(), Value::String(interpolate(variable))))
-            .collect::<serde_json::Map<_, _>>()
-            .into();
+/// An `mcpServers`-family entry. Claude, Cursor and Pi share it and differ only
+/// in the interpolation and in whether a remote entry names `"type": "http"`:
+/// stdio is `{ command, args, env: { KEY: <var> } }`, remote is
+/// `{ url, headers: { NAME: <prefix><var> } }`.
+pub(super) fn servers_entry(
+    server: &McpServerEntry,
+    interpolate: impl Fn(&str) -> String,
+    typed_http: bool,
+) -> Value {
+    match &server.transport {
+        McpTransport::Stdio { command, args, env } => {
+            let mut entry = serde_json::json!({ "command": command, "args": args });
+            if !env.is_empty() {
+                entry["env"] = env
+                    .iter()
+                    .map(|(key, env_ref)| {
+                        (key.clone(), Value::String(interpolate(env_ref.var_name())))
+                    })
+                    .collect::<serde_json::Map<_, _>>()
+                    .into();
+            }
+            entry
+        }
+        McpTransport::Http { url, headers } => {
+            let mut entry = serde_json::json!({ "url": url });
+            if typed_http {
+                entry["type"] = "http".into();
+            }
+            insert_headers(&mut entry, headers, interpolate);
+            entry
+        }
     }
-    entry
+}
+
+/// Set `entry.headers` when there are any: a literal as written, an env
+/// header as its prefix followed by the harness's reference to the variable.
+pub(crate) fn insert_headers(
+    entry: &mut Value,
+    headers: &IndexMap<String, HeaderValue>,
+    interpolate: impl Fn(&str) -> String,
+) {
+    if headers.is_empty() {
+        return;
+    }
+    entry["headers"] = headers
+        .iter()
+        .map(|(name, value)| {
+            let text = match value {
+                HeaderValue::Literal(text) => text.clone(),
+                HeaderValue::Env { env, prefix } => {
+                    format!("{prefix}{}", interpolate(env.var_name()))
+                }
+            };
+            (name.clone(), Value::String(text))
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into();
 }
 
 /// The `${VAR}` rendering Claude and Pi share.
-pub(super) fn braced_render(server: &McpServerEntry) -> McpRender {
-    McpRender::exact(stdio_entry(server, |var| format!("${{{var}}}")))
+pub(crate) fn braced(var: &str) -> String {
+    format!("${{{var}}}")
 }
 
-/// Split a server's env by whether a harness can forward it by name: `key ==
-/// variable` is `forwarded`, anything else is `renamed` as `(key, variable)`.
-pub(crate) fn partition_env(server: &McpServerEntry) -> (Vec<&str>, Vec<(&str, &str)>) {
+/// The entry Claude and Pi share: `${VAR}` references, remote servers typed `http`.
+pub(super) fn braced_render(server: &McpServerEntry) -> McpRender {
+    McpRender::exact(servers_entry(server, braced, true))
+}
+
+/// Split a stdio server's env by whether a harness can forward it by name:
+/// `key == variable` is `forwarded`, anything else is `renamed` as
+/// `(key, variable)`.
+pub(crate) fn partition_env(env: &IndexMap<String, EnvRef>) -> (Vec<&str>, Vec<(&str, &str)>) {
     let mut forwarded = Vec::new();
     let mut renamed = Vec::new();
-    for (key, variable) in &server.env {
+    for (key, env_ref) in env {
+        let variable = env_ref.var_name();
         if key == variable {
-            forwarded.push(variable.as_str());
+            forwarded.push(variable);
         } else {
-            renamed.push((key.as_str(), variable.as_str()));
+            renamed.push((key.as_str(), variable));
         }
     }
     (forwarded, renamed)
@@ -339,12 +389,21 @@ mod tests {
     fn server(name: &str, env: &[(&str, &str)]) -> ConfigEntry {
         ConfigEntry::McpServer(McpServerEntry {
             name: name.to_owned(),
-            command: "node".to_owned(),
-            args: vec!["server.js".to_owned()],
-            env: env
-                .iter()
-                .map(|(key, var)| ((*key).to_owned(), (*var).to_owned()))
-                .collect(),
+            transport: McpTransport::Stdio {
+                command: "node".to_owned(),
+                args: vec!["server.js".to_owned()],
+                env: env
+                    .iter()
+                    .map(|(key, var)| {
+                        (
+                            (*key).to_owned(),
+                            mars_schema::mcp_server::EnvRef::Env {
+                                var: (*var).to_owned(),
+                            },
+                        )
+                    })
+                    .collect(),
+            },
         })
     }
 

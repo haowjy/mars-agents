@@ -11,6 +11,7 @@ use crate::sync::target::{CollisionRename, TargetItem, TargetState};
 use crate::target::{ConfigEntry, HookEntry, McpServerEntry};
 use crate::types::SourceName;
 use mars_schema::item::ItemKind;
+use mars_schema::mcp_server::McpTransport;
 
 use super::PluginComponents;
 use super::metadata::PackageMetadata;
@@ -673,7 +674,10 @@ fn warn_relative_mcp_args(
     diag: &mut DiagnosticCollector,
 ) {
     for item in items {
-        for arg in &item.def.args {
+        let McpTransport::Stdio { args, .. } = &item.def.transport else {
+            continue;
+        };
+        for arg in args {
             if ["./", "../", ".\\", "..\\"]
                 .iter()
                 .any(|prefix| arg.starts_with(prefix))

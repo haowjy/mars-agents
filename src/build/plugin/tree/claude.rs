@@ -1,9 +1,10 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
-use crate::target::mcp_file::partition_env;
+use crate::target::mcp_file::{braced, insert_headers, partition_env};
 use crate::target::{ConfigEntry, McpRender, McpServerEntry};
 use mars_schema::HarnessId;
+use mars_schema::mcp_server::{HeaderValue, McpTransport};
 use mars_schema::plugin_metadata::CLAUDE_ROOT_FILE;
 
 use super::super::spec::{
@@ -57,36 +58,57 @@ fn write_config_entries(
 }
 
 /// Render one server for a Claude plugin tree, which Claude, Codex and Grok
-/// share: a same-name reference is a pass-through list (`env_vars`); a renamed
-/// one stays a `${VAR}` interpolation, which Codex passes literally, so it is
-/// reported as lossy. This stays here, not in the harness `render`s, because
-/// the shared file needs `env_vars` alongside `env`.
+/// share. A stdio same-name reference is a pass-through list (`env_vars`); a
+/// renamed one stays a `${VAR}` interpolation, which Codex passes literally, so
+/// it is reported as lossy. A remote server is `type: http` with `${VAR}`
+/// headers, which Codex likewise passes literally. This stays here, not in the
+/// harness `render`s, because the shared file needs `env_vars` alongside `env`.
 fn render_plugin_mcp(server: &McpServerEntry) -> McpRender {
-    let mut entry = serde_json::json!({
-        "command": server.command,
-        "args": server.args,
-    });
-    let (forwarded, renamed) = partition_env(server);
-    if !renamed.is_empty() {
-        entry["env"] = renamed
-            .iter()
-            .map(|(key, variable)| ((*key).to_owned(), format!("${{{variable}}}").into()))
-            .collect::<serde_json::Map<_, _>>()
-            .into();
-    }
-    if !forwarded.is_empty() {
-        entry["env_vars"] = serde_json::json!(forwarded);
-    }
+    let (entry, lossy) = match &server.transport {
+        McpTransport::Stdio { command, args, env } => {
+            let mut entry = serde_json::json!({ "command": command, "args": args });
+            let (forwarded, renamed) = partition_env(env);
+            if !renamed.is_empty() {
+                entry["env"] = renamed
+                    .iter()
+                    .map(|(key, variable)| ((*key).to_owned(), braced(variable).into()))
+                    .collect::<serde_json::Map<_, _>>()
+                    .into();
+            }
+            if !forwarded.is_empty() {
+                entry["env_vars"] = serde_json::json!(forwarded);
+            }
+            let lossy = renamed
+                .into_iter()
+                .map(|(key, variable)| {
+                    format!(
+                        "Codex 0.164.0 passes `${{{variable}}}` literally instead of reading `{variable}`, so `{key}` is not set from it."
+                    )
+                })
+                .collect();
+            (entry, lossy)
+        }
+        McpTransport::Http { url, headers } => {
+            let mut entry = serde_json::json!({ "type": "http", "url": url });
+            insert_headers(&mut entry, headers, braced);
+            let lossy = headers
+                .iter()
+                .filter_map(|(name, value)| match value {
+                    HeaderValue::Env { env, .. } => {
+                        let var = env.var_name();
+                        Some(format!(
+                            "Codex 0.164.0 passes `${{{var}}}` literally instead of reading `{var}`, so header `{name}` is not set from it."
+                        ))
+                    }
+                    HeaderValue::Literal(_) => None,
+                })
+                .collect();
+            (entry, lossy)
+        }
+    };
     McpRender {
         value: entry,
-        lossy: renamed
-            .into_iter()
-            .map(|(key, variable)| {
-                format!(
-                    "Codex 0.164.0 passes `${{{variable}}}` literally instead of reading `{variable}`, so `{key}` is not set from it."
-                )
-            })
-            .collect(),
+        lossy,
     }
 }
 

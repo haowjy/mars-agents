@@ -92,6 +92,16 @@ token. The Claude/Codex/Grok tree writes
 runtime. Entries that do not use the token are written unchanged and ship no
 directory.
 
+## Remote MCP servers
+
+A server with `url` (and optional `headers`) instead of `command` ships as a remote
+entry: `type: http` in the Claude/Codex/Grok tree, `url` and `headers` in the Cursor
+tree, `type: remote` in the OpenCode `mcp.json`. It has no directory to install.
+An env header becomes `prefix${VAR}` (`prefix{env:VAR}` for OpenCode, whose
+`index.mjs` resolves it at runtime and drops a header whose variable is unset).
+Codex 0.164.0 passes `${VAR}` in the shared Claude tree literally, so the build warns
+once per env header when Codex is a target.
+
 ## MCP environment variables
 
 The shared Claude tree is consumed by Claude, Codex, and Grok. A same-name pass-through:

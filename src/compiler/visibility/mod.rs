@@ -1,8 +1,6 @@
 use crate::diagnostic::DiagnosticCollector;
 
-pub(crate) fn default_visibility() -> String {
-    "local".to_string()
-}
+pub(crate) use mars_schema::mcp_server::default_visibility;
 
 /// Whether an effectful package item crosses a package boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

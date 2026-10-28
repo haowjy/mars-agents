@@ -25,7 +25,6 @@ use crate::error::MarsError;
 pub use crate::surface_ownership::retention::ConfigWrite;
 use crate::surface_ownership::retention::{RemovalOperation, RemovalReport, Surface};
 use crate::types::DestPath;
-use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
 pub use mcp_file::{McpFile, McpFormat, McpLocation, McpRender};
 
@@ -68,12 +67,8 @@ impl ConfigEntry {
 pub struct McpServerEntry {
     /// Server name as it appears in the target config.
     pub name: String,
-    /// Launch command.
-    pub command: String,
-    /// Launch arguments.
-    pub args: Vec<String>,
-    /// Env vars: config key → environment variable name (symbolic, never resolved).
-    pub env: IndexMap<String, String>,
+    /// How the server is reached, with `${MARS_MCP_DIR}` already resolved.
+    pub transport: mars_schema::mcp_server::McpTransport,
 }
 
 /// A native fragment contribution ready to be merged into a target config.

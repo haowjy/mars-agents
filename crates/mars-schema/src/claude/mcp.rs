@@ -555,8 +555,9 @@ const PLUGIN_VARIABLES: [&str; 3] = [
 /// Environment variables Claude Code 2.1.312 reads as empty in a remote server's `url` and
 /// `headers`, extracted from its binary: Claude does not publish the full list (its docs name
 /// a few "such as" examples). Mars's renderers would send the real value, so these are refused.
+/// `NPM_TOKEN` and the proxy variables are named by the docs (<https://code.claude.com/docs/en/mcp>).
 /// The check is a deliberate superset of Claude's: see [`is_credential_variable`].
-const CREDENTIAL_VARIABLES: [&str; 109] = [
+const CREDENTIAL_VARIABLES: [&str; 113] = [
     "ANTHROPIC_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
     "CLAUDE_CODE_SESSIONS_OAUTH_TOKEN",
@@ -592,6 +593,10 @@ const CREDENTIAL_VARIABLES: [&str; 109] = [
     "HUGGING_FACE_HUB_TOKEN",
     "HUGGINGFACEHUB_API_TOKEN",
     "NODE_AUTH_TOKEN",
+    "NPM_TOKEN",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
     "NUGET_AUTH_TOKEN",
     "CARGO_REGISTRY_TOKEN",
     "TWINE_PASSWORD",

@@ -709,4 +709,3 @@ path = "run.sh"
         .stderr(predicate::str::contains("removed v0.11.0 hook schema"))
         .stderr(predicate::str::contains("native fragment"));
 }
-

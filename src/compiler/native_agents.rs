@@ -141,8 +141,6 @@ pub(crate) struct NativeModelRoutingRuntime<'a> {
     settings: crate::config::Settings,
     session: CapabilitySession,
     installed_for_native_targets: HashSet<String>,
-    /// Computed on first routing; `None` inside means pending.
-    known_providers: Option<Option<HashSet<String>>>,
     memo: HashMap<(String, String, Option<String>), Option<String>>,
 }
 
@@ -190,7 +188,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             settings: crate::config::Settings::default(),
             session,
             installed_for_native_targets,
-            known_providers: None,
             memo: HashMap::new(),
         }
     }
@@ -343,12 +340,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         let harness_order = self.routing_settings.harness_order_names();
         let default_harness = self.routing_settings.default_harness_name();
         let route_model_ids = self.route_model_ids(target_harness, &resolved.model_id);
-        if self.known_providers.is_none() {
-            self.known_providers = Some(self.session.known_providers(
-                provider_order.as_deref().unwrap_or_default(),
-                &self.catalog_model_slugs,
-            ));
-        }
 
         for route_model_id in route_model_ids {
             let input = crate::routing::RoutingInput {
@@ -372,7 +363,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 pi_probe_result: None,
                 cursor_probe_result: None,
                 catalog_model_slugs: Some(self.catalog_model_slugs.as_slice()),
-                known_providers: self.known_providers.as_ref().and_then(Option::as_ref),
             };
             let mut probe_resolver = NativeSessionProbeResolver {
                 session: &mut self.session,

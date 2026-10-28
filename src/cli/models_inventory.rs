@@ -249,7 +249,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
     if let Some(known) =
         session.known_providers(provider_order, &models::catalog_model_slugs(&cache))
     {
-        let unknown = crate::routing::known_providers::unknown_provider_order_warnings(
+        let unknown = crate::harness::known_providers::unknown_provider_order_warnings(
             provider_order,
             &known,
         );

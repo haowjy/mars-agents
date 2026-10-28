@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use crate::harness::registry;
 
-use super::slug;
+use crate::routing::slug;
 
 /// What an installed probe-backed harness (OpenCode, Pi) has told us.
 pub enum ProbeListing {

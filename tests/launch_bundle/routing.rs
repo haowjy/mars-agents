@@ -713,63 +713,6 @@ model = "gpt-5.4-mini""#;
 }
 
 #[test]
-fn build_launch_bundle_provider_order_warning_never_loads_probes() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
-    let agent_content = r#"---
-name: reviewer
-model: gptmini
----
-Review code changes."#;
-
-    let extra_toml = r#"[settings]
-provider_order = ["future-provider"]
-
-[models.gptmini]
-model = "gpt-5.4-mini""#;
-
-    let cache_root = temp.path().join("mars-cache");
-    write_opencode_probe_cache(
-        &cache_root,
-        now_unix_secs(),
-        json!({
-            "model_slugs": ["openai/gpt-5.4-mini"],
-            "model_probe_success": true,
-            "error": null
-        }),
-    );
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.env("MARS_CACHE_DIR", &cache_root);
-    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("confirmed")
-    );
-
-    let diagnostics = selected_attempt(&bundle)["diagnostics"]
-        .as_array()
-        .expect("route_trace.diagnostics should be array");
-    // The first attempt decides before any probe is loaded, and the warning never loads one.
-    assert!(!diagnostics.iter().any(|diagnostic| {
-        diagnostic
-            .as_str()
-            .unwrap_or_default()
-            .contains("settings.provider_order contains unknown provider")
-    }));
-}
-
-#[test]
 fn build_launch_bundle_nested_slug_model_id_does_not_flatten_into_bare_match() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);

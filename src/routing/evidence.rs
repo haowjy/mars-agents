@@ -21,7 +21,6 @@ pub struct RoutingEvidence<'a> {
     pub pi_probe_result: Option<&'a PiProbeResult>,
     pub cursor_probe_result: Option<&'a CursorProbeResult>,
     pub catalog_model_slugs: Option<&'a [String]>,
-    pub known_providers: Option<&'a HashSet<String>>,
 }
 
 impl<'a> RoutingEvidence<'a> {
@@ -44,7 +43,6 @@ impl<'a> RoutingEvidence<'a> {
             pi_probe_result: self.pi_probe_result,
             cursor_probe_result: self.cursor_probe_result,
             catalog_model_slugs: self.catalog_model_slugs,
-            known_providers: self.known_providers,
         }
     }
 }
@@ -58,7 +56,6 @@ pub struct RoutingSettingsEvidence<'a> {
     pub pi_probe_result: Option<&'a PiProbeResult>,
     pub cursor_probe_result: Option<&'a CursorProbeResult>,
     pub catalog_model_slugs: Option<&'a [String]>,
-    pub known_providers: Option<&'a HashSet<String>>,
     provider_order: Option<Vec<String>>,
     harness_order: Option<Vec<String>>,
     default_harness: Option<String>,
@@ -87,7 +84,6 @@ impl<'a> RoutingSettingsEvidence<'a> {
             pi_probe_result,
             cursor_probe_result,
             catalog_model_slugs,
-            known_providers: None,
             provider_order: routing_settings.provider_order_names(),
             harness_order: routing_settings.harness_order_names(),
             default_harness: routing_settings.default_harness_name(),
@@ -111,7 +107,6 @@ impl<'a> RoutingSettingsEvidence<'a> {
             pi_probe_result: self.pi_probe_result,
             cursor_probe_result: self.cursor_probe_result,
             catalog_model_slugs: self.catalog_model_slugs,
-            known_providers: self.known_providers,
         }
     }
 }

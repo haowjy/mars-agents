@@ -314,7 +314,7 @@ impl CapabilitySession {
         provider_order: &[String],
         catalog_slugs: &[String],
     ) -> Option<HashSet<String>> {
-        use crate::routing::known_providers::{ProbeListing, known_providers};
+        use crate::harness::known_providers::{ProbeListing, known_providers};
         if provider_order.is_empty() {
             return None;
         }

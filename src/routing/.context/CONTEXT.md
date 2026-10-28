@@ -39,7 +39,6 @@ Acceptance decisions belong to callers via `accept_route()` / `accept_assessment
 | `opencode_probe_result` | Cached OpenCode probe (provider/model evidence) |
 | `pi_probe_result` | Cached Pi probe (binary + help-surface compatibility) |
 | `catalog_model_slugs` | Cached models.dev `provider/model` slugs; native harnesses match here before auth-only fallback |
-| `known_providers` | Providers Mars has observed, computed by `CapabilitySession::known_providers`; `None` (pending) means no `provider_order` warning. Routing does no I/O to build it |
 
 When `settings.harness_order` is unset, `config/routing_settings` and `build/policy`
 inject [`default_harness_order_names()`](../../harness/registry.rs) — see

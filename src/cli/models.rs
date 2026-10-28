@@ -244,7 +244,6 @@ struct ResolveRuntime<'a> {
     auth: &'a NativeAuthCache,
     cache: &'a models::ModelsCache,
     catalog_model_slugs: &'a [String],
-    known_providers: Option<&'a HashSet<String>>,
     outcome: &'a models::RefreshOutcome,
     installed: &'a HashSet<String>,
     routing_settings: &'a ResolvedRoutingSettings,
@@ -262,7 +261,6 @@ struct RouteTraceInput<'a> {
     pi_probe_result: Option<&'a PiProbeResult>,
     cursor_probe_result: Option<&'a CursorProbeResult>,
     catalog_model_slugs: Option<&'a [String]>,
-    known_providers: Option<&'a HashSet<String>>,
     routing_settings: &'a ResolvedRoutingSettings,
 }
 
@@ -308,7 +306,6 @@ struct OutputPassthroughInput<'a> {
     installed: &'a HashSet<String>,
     capability_session: &'a mut CapabilitySession,
     catalog_model_slugs: Option<&'a [String]>,
-    known_providers: Option<&'a HashSet<String>>,
     routing_settings: &'a ResolvedRoutingSettings,
     cache_error: Option<&'a str>,
     routing_diagnostics: &'a [String],
@@ -318,7 +315,7 @@ struct OutputPassthroughInput<'a> {
 fn routing_settings_evidence<'a>(
     input: &'a RouteTraceInput<'a>,
 ) -> crate::routing::RoutingSettingsEvidence<'a> {
-    let mut evidence = crate::routing::RoutingSettingsEvidence::new(
+    crate::routing::RoutingSettingsEvidence::new(
         input.model_id,
         Some(input.provider_for_order),
         input.provider_constraint,
@@ -328,9 +325,7 @@ fn routing_settings_evidence<'a>(
         input.cursor_probe_result,
         input.catalog_model_slugs,
         input.routing_settings,
-    );
-    evidence.known_providers = input.known_providers;
-    evidence
+    )
 }
 
 fn route_trace_for_resolved_model_with_probes(
@@ -493,14 +488,6 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         probe_refresh: refresh.probe_refresh,
     });
     let installed = capability_session.installed_harnesses();
-    let all_catalog_slugs = cache_result
-        .as_ref()
-        .map(|(cache, _)| models::catalog_model_slugs(cache))
-        .unwrap_or_default();
-    let known_providers = capability_session.known_providers(
-        settings.provider_order.as_deref().unwrap_or_default(),
-        &all_catalog_slugs,
-    );
 
     // Step 1: exact alias lookup
     if let Some(alias) = merged.get(&args.name) {
@@ -538,7 +525,6 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             auth: &native_auth,
             cache,
             catalog_model_slugs,
-            known_providers: known_providers.as_ref(),
             outcome,
             installed: &installed,
             routing_settings: &routing_settings,
@@ -578,7 +564,6 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             pi_probe_result: None,
             cursor_probe_result: None,
             catalog_model_slugs: Some(catalog_slugs.as_slice()),
-            known_providers: known_providers.as_ref(),
             routing_settings: &routing_settings,
         };
         let route_trace = {
@@ -628,7 +613,6 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         installed: &installed,
         capability_session: &mut capability_session,
         catalog_model_slugs: passthrough_catalog_slugs.as_deref(),
-        known_providers: known_providers.as_ref(),
         routing_settings: &routing_settings,
         cache_error: cache_error.as_deref(),
         routing_diagnostics: &routing_diagnostics,
@@ -764,7 +748,6 @@ fn run_resolve_exact_alias(
             pi_probe_result: None,
             cursor_probe_result: None,
             catalog_model_slugs: Some(runtime.catalog_model_slugs),
-            known_providers: runtime.known_providers,
             routing_settings: runtime.routing_settings,
         };
         let mut probe_resolver = SessionProbeResolver {
@@ -1074,7 +1057,6 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         installed,
         capability_session,
         catalog_model_slugs,
-        known_providers,
         routing_settings,
         cache_error,
         routing_diagnostics,
@@ -1112,7 +1094,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         .as_deref()
         .or(provider_constraint.as_deref())
         .unwrap_or("unknown");
-    let mut routing_evidence = crate::routing::RoutingSettingsEvidence::new(
+    let routing_evidence = crate::routing::RoutingSettingsEvidence::new(
         &passthrough_model_id,
         Some(provider_for_order),
         provider_constraint.as_deref(),
@@ -1123,7 +1105,6 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         catalog_model_slugs,
         routing_settings,
     );
-    routing_evidence.known_providers = known_providers;
     let trace = {
         let mut probe_resolver = SessionProbeResolver {
             session: capability_session,

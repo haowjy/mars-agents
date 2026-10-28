@@ -301,15 +301,6 @@ pub fn resolve_policy(
             &candidate.model,
             selected_alias_token(&candidate),
         );
-        // Peeks at probes earlier attempts loaded; a first attempt sees none, so stays silent.
-        let known_providers = capability_session.known_providers(
-            effective_config
-                .settings
-                .provider_order
-                .as_deref()
-                .unwrap_or_default(),
-            &catalog_slugs,
-        );
         let mut probe_resolver = SessionProbeResolver {
             session: &mut capability_session,
         };
@@ -333,7 +324,6 @@ pub fn resolve_policy(
                     pi_probe_result: None,
                     cursor_probe_result: None,
                     catalog_model_slugs: Some(catalog_slugs.as_slice()),
-                    known_providers: known_providers.as_ref(),
                 },
             },
             &mut probe_resolver,

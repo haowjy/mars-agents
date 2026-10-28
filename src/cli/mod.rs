@@ -207,6 +207,7 @@ pub enum Command {
 /// the final exit code.
 pub fn dispatch(cli: Cli) -> i32 {
     let json = cli.json;
+    output::set_json_mode(json);
     match dispatch_result(cli) {
         Ok(code) => code,
         Err(err) => {

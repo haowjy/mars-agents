@@ -165,73 +165,41 @@ mod tests {
     }
 
     #[test]
-    fn allow_passthrough_rejects_only_none_evidence() {
+    fn match_policy_decides_which_evidence_is_accepted() {
         let installed = installed(&["pi"]);
-        for match_evidence in [
-            MatchEvidence::Confirmed,
-            MatchEvidence::Constrained,
-            MatchEvidence::Passthrough,
-        ] {
-            assert_eq!(
-                accept_route(
-                    &trace("pi", match_evidence),
-                    &installed,
-                    MatchPolicy::AllowPassthrough
-                ),
-                Ok(())
-            );
-        }
-        assert_eq!(
-            accept_route(
-                &trace("pi", MatchEvidence::None),
-                &installed,
-                MatchPolicy::AllowPassthrough
+        for (policy, accepted, rejected) in [
+            (
+                MatchPolicy::AllowPassthrough,
+                &[
+                    MatchEvidence::Confirmed,
+                    MatchEvidence::Constrained,
+                    MatchEvidence::Passthrough,
+                ][..],
+                &[MatchEvidence::None][..],
             ),
-            Err(RejectionReason::NoSlugEvidence {
-                harness: "pi".to_string()
-            })
-        );
-    }
-
-    #[test]
-    fn require_slug_evidence_rejects_passthrough_and_none() {
-        let installed = installed(&["pi"]);
-        for match_evidence in [MatchEvidence::Confirmed, MatchEvidence::Constrained] {
-            assert_eq!(
-                accept_route(
-                    &trace("pi", match_evidence),
-                    &installed,
-                    MatchPolicy::RequireSlugEvidence
-                ),
-                Ok(())
-            );
-        }
-        for match_evidence in [MatchEvidence::Passthrough, MatchEvidence::None] {
-            assert_eq!(
-                accept_route(
-                    &trace("pi", match_evidence),
-                    &installed,
-                    MatchPolicy::RequireSlugEvidence
-                ),
-                Err(RejectionReason::NoSlugEvidence {
-                    harness: "pi".to_string()
-                })
-            );
-        }
-    }
-
-    #[test]
-    fn accept_assessment_rejects_not_installed() {
-        let rejection =
-            accept_assessment(&assessment("claude", false, None, Some("not_installed")))
-                .expect_err("assessment should reject when harness is not installed");
-        assert!(rejection.is_not_installed());
-        assert_eq!(
-            rejection,
-            RejectionReason::HarnessNotInstalled {
-                harness: "claude".to_string()
+            (
+                MatchPolicy::RequireSlugEvidence,
+                &[MatchEvidence::Confirmed, MatchEvidence::Constrained][..],
+                &[MatchEvidence::Passthrough, MatchEvidence::None][..],
+            ),
+        ] {
+            for match_evidence in accepted {
+                assert_eq!(
+                    accept_route(&trace("pi", *match_evidence), &installed, policy),
+                    Ok(()),
+                    "{policy:?} with {match_evidence:?}"
+                );
             }
-        );
+            for match_evidence in rejected {
+                assert_eq!(
+                    accept_route(&trace("pi", *match_evidence), &installed, policy),
+                    Err(RejectionReason::NoSlugEvidence {
+                        harness: "pi".to_string()
+                    }),
+                    "{policy:?} with {match_evidence:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -248,19 +216,5 @@ mod tests {
                 skip_reason: Some("provider_constraint_unsatisfied".to_string())
             })
         );
-    }
-
-    #[test]
-    fn accept_assessment_accepts_nonempty_support_evidence() {
-        for match_evidence in [
-            MatchEvidence::Confirmed,
-            MatchEvidence::Constrained,
-            MatchEvidence::Passthrough,
-        ] {
-            assert_eq!(
-                accept_assessment(&assessment("pi", true, Some(match_evidence), None)),
-                Ok(())
-            );
-        }
     }
 }

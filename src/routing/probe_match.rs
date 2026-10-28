@@ -242,4 +242,15 @@ mod tests {
             Some("openai-codex/gpt-5.4-mini")
         );
     }
+
+    #[test]
+    fn provider_order_ranking_is_lenient_for_known_variants() {
+        let provider_order = vec!["openai".to_string(), "anthropic".to_string()];
+        assert_eq!(provider_order_rank("openai-codex", &provider_order), 0);
+        assert_eq!(provider_order_rank("anthropic-claude", &provider_order), 1);
+        assert_eq!(
+            provider_order_rank("openrouter", &provider_order),
+            usize::MAX
+        );
+    }
 }

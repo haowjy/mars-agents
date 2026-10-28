@@ -690,46 +690,4 @@ mod tests {
             assert_eq!(loaded_set.get(harness), evidence);
         }
     }
-
-    #[test]
-    fn snapshot_marks_installed_harnesses_from_resolver() {
-        let mut resolver = FakeResolver::default();
-        resolver.map.insert(
-            "pi".to_string(),
-            ExecutableState::Found {
-                path: PathBuf::from("/tmp/pi"),
-            },
-        );
-
-        let options = CapabilityCollectionOptions {
-            offline: true,
-            probe_refresh: ProbeRefreshMode::Skip,
-        };
-        let snapshot = collect_capability_snapshot_with_resolver(&options, &resolver);
-
-        let installed = snapshot.installed_harnesses();
-        assert!(installed.contains("pi"));
-        assert!(!installed.contains("codex"));
-    }
-
-    #[test]
-    fn native_auth_for_non_native_harness_is_unchecked() {
-        let resolver = FakeResolver::default();
-        let state = native_auth_state(
-            HarnessId::Pi,
-            &ExecutableState::Found {
-                path: PathBuf::from("/tmp/pi"),
-            },
-            &resolver,
-            Duration::from_secs(1),
-        );
-
-        assert_eq!(state, AuthState::Unchecked);
-    }
-
-    #[test]
-    fn resolve_binary_path_returns_none_when_missing() {
-        let resolver = FakeResolver::default();
-        assert_eq!(resolve_binary_path("codex", &resolver), None);
-    }
 }

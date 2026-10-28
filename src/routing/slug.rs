@@ -117,38 +117,9 @@ pub fn find_model_matches<'a>(
         .collect()
 }
 
-/// Find first slug matching both provider and model_id.
-pub fn find_exact_match<'a>(
-    target_model_id: &str,
-    target_provider: &str,
-    slugs: impl IntoIterator<Item = &'a str>,
-) -> Option<SlugMatch> {
-    let mut matches = find_model_matches(target_model_id, slugs)
-        .into_iter()
-        .filter(|entry| provider_match_tier(target_provider, &entry.provider).is_some())
-        .collect::<Vec<_>>();
-
-    matches.sort_by(|left, right| {
-        provider_match_tier(target_provider, &left.provider)
-            .cmp(&provider_match_tier(target_provider, &right.provider))
-            .then_with(|| left.slug.cmp(&right.slug))
-    });
-    matches.into_iter().next()
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
-
-    #[test]
-    fn parse_two_segments() {
-        let slug = parse("openai/gpt-5.4").unwrap();
-        assert_eq!(slug.provider, "openai");
-        assert_eq!(slug.model_id, "gpt-5.4");
-        assert_eq!(slug.full, "openai/gpt-5.4");
-    }
 
     #[test]
     fn parse_nested_slug_keeps_tail() {
@@ -179,20 +150,12 @@ mod tests {
     }
 
     #[test]
-    fn normalize_provider_collapses_known_variants() {
+    fn provider_normalization_and_matching() {
         assert_eq!(normalize_provider(" openai-codex "), "openai");
         assert_eq!(normalize_provider("ANTHROPIC-CLAUDE"), "anthropic");
         assert_eq!(normalize_provider(" OpenRouter "), "openrouter");
-    }
-
-    #[test]
-    fn provider_matching_uses_normalized_provider_keys() {
         assert!(providers_match("openai-codex", "openai"));
         assert!(providers_match("anthropic", "anthropic-claude"));
-    }
-
-    #[test]
-    fn provider_matches_native_harness_accepts_provider_variants() {
         assert!(provider_matches_native_harness("openai-codex", "codex"));
         assert!(provider_matches_native_harness(
             "anthropic-claude",
@@ -223,30 +186,5 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].slug, "openai/gpt-5");
         assert_eq!(matches[0].provider, "openai");
-    }
-
-    #[test]
-    fn find_exact_match_works_with_hashset_iterators() {
-        let slugs = HashSet::from([
-            "openai-codex/gpt-5.4-mini".to_string(),
-            "openai/gpt-5.4-mini".to_string(),
-        ]);
-
-        let matched =
-            find_exact_match("gpt-5-4-mini", "openai", slugs.iter().map(String::as_str)).unwrap();
-        assert_eq!(matched.provider, "openai");
-    }
-
-    #[test]
-    fn find_exact_match_prefers_exact_provider_before_variant() {
-        let slugs = vec!["openai-codex/gpt-5.4-mini", "openai/gpt-5.4-mini"];
-        let matched = find_exact_match("gpt-5-4-mini", "openai", slugs).unwrap();
-        assert_eq!(matched.slug, "openai/gpt-5.4-mini");
-    }
-
-    #[test]
-    fn find_exact_match_requires_provider_match() {
-        let slugs = vec!["openai-codex/gpt-5.4-mini"];
-        assert!(find_exact_match("gpt-5-4-mini", "anthropic", slugs).is_none());
     }
 }

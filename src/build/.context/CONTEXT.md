@@ -12,7 +12,7 @@ consumer over `PublishLens`, resolves before staging (so relative package depend
 their declared base), stages through resolve's shared rooted-package operation, and reuses sync's
 `TargetState`/`RenameIndex` to flatten the graph. `PreparedTarget` carries the dependency
 precedence used during rename application so tree writing cannot reconstruct a different order. It
-must not read `mars.local.toml`, `mars.lock`, `.mars/`, project target configuration, model
+must not read `mars.local.toml`, the user `config.toml`, `mars.lock`, `.mars/`, project target configuration, model
 caches, or installed harnesses. `plugin::output::stage` owns staging and sentinel publication;
 its lock-owning `StagedPlugin` alone replaces the destination when published.
 

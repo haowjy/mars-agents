@@ -743,7 +743,8 @@ mars build plugin [PATH] [--out <dir>]
 
 `PATH` defaults to the detected project root. With an explicit path the command can run outside
 a Mars project. The build uses only `mars.toml` publish state: it does not read `mars.local.toml`,
-`mars.lock`, `.mars/`, project target configuration, or installed harness model catalogs.
+the user `config.toml`, `mars.lock`, `.mars/`, project target configuration, or installed harness
+model catalogs.
 
 Without `--out`, `[plugin]` is required and the command writes `[plugin].dir` (default `plugin`).
 The configured build also writes the Claude and Cursor marketplace catalogs plus the root OpenCode
@@ -763,8 +764,8 @@ The output is an owned nested artifact:
 Only trees selected by `[plugin].harnesses` are written. The shared Claude tree contains native
 agents, skills, exported hooks, exported MCP servers, and `.claude-plugin/plugin.json`; Codex
 loads its skills, hooks, and MCP servers but not its agents. Cursor receives its native tree.
-OpenCode receives an npm-shaped package that registers skills and MCP servers and composes
-default-export hook fragments.
+OpenCode receives an npm-shaped package that registers skills, agents and MCP servers and
+composes default-export hook fragments.
 
 Mars records generated file hashes, input and dependency identities, version, and root-file
 ownership in the sentinel. It atomically replaces owned output, recovers interrupted staging, and

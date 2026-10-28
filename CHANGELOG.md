@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.23.4] - 2026-10-28
+
+### Fixed
+- A direct dependency's MCP servers with the default `local` visibility are now registered for its consumer, as the docs describe; before, only `exported` servers were. Every default-visibility server from a direct dependency now appears in the consumer's MCP config. Transitive dependencies still contribute only `exported` servers.
+
 ## [0.23.3] - 2026-10-28
 
 ### Added

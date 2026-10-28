@@ -25,11 +25,11 @@
 //! `emitted_json` authorizes only the legacy command-path cleanup associated
 //! with that recorded key.
 //!
-//! MCP servers are owned by name. On an MCP record, `emitted_json` only lets a
-//! target tell where and how it wrote the entry: OpenCode reads `None` as the
-//! legacy `mcpServers` section and `Some` as `mcp`. MCP records that change
-//! between syncs are removed before the rewrite, using the old record to find
-//! the entry; this is how OpenCode moves servers from `mcpServers` to `mcp`.
+//! MCP servers are matched by content too: a record's `emitted_json` is the
+//! entry mars wrote, so an entry on disk that still equals it is mars's to
+//! replace or remove, and one that differs was edited and is preserved. A
+//! record without `emitted_json` predates content ownership; it removes by name
+//! from the adapter's legacy file, if it has one (`target::mcp_file`).
 //!
 //! [`retention`] enforces the other half of the contract: each removal is a
 //! single-use operation that reports the records it could not confirm removing.

@@ -65,8 +65,17 @@ visibility = "exported"
     source_dir.to_path_buf()
 }
 
+/// The mars binary with no user `config.toml`: the developer's own settings must not reach a
+/// fixture. Helpers that test the user layer set `MARS_CONFIG_DIR` again.
 pub fn mars() -> Command {
-    Command::cargo_bin("mars").unwrap()
+    let mut cmd = Command::cargo_bin("mars").unwrap();
+    cmd.env("MARS_CONFIG_DIR", no_user_config_dir());
+    cmd
+}
+
+/// A config directory that is never created.
+pub fn no_user_config_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("no-user-config")
 }
 
 /// Offline CLI fixture; all writable environment state stays under this test root.

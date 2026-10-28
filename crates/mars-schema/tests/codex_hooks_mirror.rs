@@ -308,3 +308,20 @@ fn each_codex_event_is_a_field_of_the_mirror() {
         assert!(named.contains(event), "Codex ignores `{event}`");
     }
 }
+
+#[test]
+fn the_target_table_names_every_event_codex_reads() {
+    // `trust_positions` counts only these: a key Codex does not read needs no review.
+    let target = mars_schema::hooks::targets::target(".codex").unwrap();
+    let mirror = HookEventsToml::default();
+    for (event, _) in mirror.groups() {
+        assert!(
+            target.reads(event),
+            "the table does not know Codex's `{event}`"
+        );
+    }
+    let read = mirror.groups().len();
+    let known = target.profile.events.len() + target.other_events.len();
+    assert_eq!(known, read, "the table names an event Codex does not read");
+    assert!(!target.reads("Notification"));
+}

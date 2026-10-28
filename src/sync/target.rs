@@ -27,9 +27,9 @@ pub struct TargetState {
     // canonical path prunes `items` so post-sync lowering can report the missing winner.
     selected_hooks: IndexMap<DestPath, SelectedHook>,
     selected_mcp: Vec<SelectedMcp>,
-    // Keep exported graph hooks even when none of the managed targets select
-    // one of their fragments. Plugin diagnostics need to report that omission.
-    exported_hooks: Vec<crate::compiler::hooks::ParsedHookItem>,
+    // Every hook that passed the package filters and visibility, kept even when no managed
+    // target takes it: plugin diagnostics and the sync's skip report need that omission.
+    accepted_hooks: Vec<crate::compiler::hooks::ParsedHookItem>,
     // Dependency hooks whose `hook.toml` failed validation, until `settle_invalid_hooks`.
     invalid_hooks: Vec<InvalidDependencyHook>,
     // Dependency hooks standing on what the last lock installed.
@@ -81,7 +81,7 @@ impl TargetState {
         for hook in self.selected_hooks.values_mut() {
             rebase(&mut hook.item.hook_dir, from, to);
         }
-        for hook in &mut self.exported_hooks {
+        for hook in &mut self.accepted_hooks {
             rebase(&mut hook.hook_dir, from, to);
         }
         for mcp in &mut self.selected_mcp {
@@ -142,8 +142,13 @@ impl TargetState {
         self.kept_hooks.iter().flat_map(|hook| &hook.dirs)
     }
 
-    pub(crate) fn exported_hooks(&self) -> &[crate::compiler::hooks::ParsedHookItem] {
-        &self.exported_hooks
+    pub(crate) fn accepted_hooks(&self) -> &[crate::compiler::hooks::ParsedHookItem] {
+        &self.accepted_hooks
+    }
+
+    /// Record a local hook as accepted; dependency hooks are recorded as they are collected.
+    pub(crate) fn accept_hook(&mut self, hook: &crate::compiler::hooks::ParsedHookItem) {
+        self.accepted_hooks.push(hook.clone());
     }
 
     pub(crate) fn selected_hooks(
@@ -292,7 +297,7 @@ impl TargetState {
             items,
             selected_hooks: IndexMap::new(),
             selected_mcp: Vec::new(),
-            exported_hooks: Vec::new(),
+            accepted_hooks: Vec::new(),
             invalid_hooks: Vec::new(),
             kept_hooks: Vec::new(),
         }
@@ -370,7 +375,7 @@ pub fn build_with_collisions_and_diag(
         items: IndexMap::new(),
         selected_hooks: IndexMap::new(),
         selected_mcp: Vec::new(),
-        exported_hooks: Vec::new(),
+        accepted_hooks: Vec::new(),
         invalid_hooks: Vec::new(),
         kept_hooks: Vec::new(),
     };
@@ -494,7 +499,7 @@ pub fn build_with_collisions_and_diag(
                 if parsed.def.visibility != mars_schema::visibility::Visibility::Exported {
                     continue;
                 }
-                target.exported_hooks.push(parsed.clone());
+                target.accepted_hooks.push(parsed.clone());
                 for (target_name, _dest_path, target_item) in
                     hook_target_items(parsed, source_name, &managed_target_roots)?
                 {

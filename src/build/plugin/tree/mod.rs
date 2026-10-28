@@ -207,7 +207,7 @@ pub(super) fn check_sources(
         }
     }
 
-    for hook in input.target.exported_hooks() {
+    for hook in input.target.accepted_hooks() {
         warn_terms_in_tree(
             &hook.hook_dir,
             &format!("hooks/{}", hook.def.name),

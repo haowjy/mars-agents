@@ -32,7 +32,7 @@ pub(super) fn emit(
     diag: &mut DiagnosticCollector,
 ) {
     for built in built_trees {
-        warn_hooks_without_tree_fragment(harnesses, built, target.exported_hooks(), diag);
+        warn_hooks_without_tree_fragment(harnesses, built, target.accepted_hooks(), diag);
     }
 
     for harness in selected_harnesses(harnesses) {
@@ -86,7 +86,7 @@ fn count_items(target: &TargetState, kind: ItemKind) -> usize {
 fn warn_hooks_without_tree_fragment(
     harnesses: &[&'static PluginHarnessSpec],
     built: &BuiltTree,
-    exported_hooks: &[crate::compiler::hooks::ParsedHookItem],
+    accepted_hooks: &[crate::compiler::hooks::ParsedHookItem],
     diag: &mut DiagnosticCollector,
 ) {
     let target_dir = built.profile.descriptor().target_dir;
@@ -97,7 +97,7 @@ fn warn_hooks_without_tree_fragment(
         .collect::<Vec<_>>();
     let affected = human_list(&affected);
 
-    for hook in exported_hooks {
+    for hook in accepted_hooks {
         if !hook.def.select(&[target_dir.to_owned()]).is_empty() {
             continue;
         }

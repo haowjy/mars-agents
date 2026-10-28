@@ -270,9 +270,10 @@ pub(crate) fn compile_config_entries(
     let trust_before = trust_snapshots(ctx, &registry, &target_roots);
 
     // A target whose hook entries equal what the lock records, and whose file still holds
-    // them, is left alone: removing and re-appending them would rewrite the file and move
-    // entries (Codex keys its trust on entry position). A file that lost or edited an entry
-    // goes through removal, which warns of the divergence and appends the package entry.
+    // them in the order they would be written, is left alone: removing and re-appending them
+    // would rewrite the file and move entries (Codex keys its trust on entry position). A file
+    // that lost or edited an entry, or whose `order` changed, goes through removal, which
+    // warns of the divergence and appends the package entries in order.
     let hook_records = |records: Option<&BTreeMap<String, ConfigEntryRecord>>| {
         records
             .into_iter()
@@ -285,16 +286,17 @@ pub(crate) fn compile_config_entries(
     for target_root in pending_hooks.keys().cloned().collect::<Vec<_>>() {
         let desired = hook_records(desired_records.get(&target_root));
         let previous = hook_records(previous_records.get(&target_root));
-        let holds_previous = registry
-            .get(&target_root)
-            .and_then(|adapter| adapter.hook_file())
-            .is_some_and(|hook_file| {
-                crate::target::hook_file::holds_recorded(
-                    &ctx.project_root.join(&target_root).join(hook_file.file),
-                    &previous,
-                )
-            });
-        if holds_previous && desired == previous {
+        let holds_previous = desired == previous
+            && registry
+                .get(&target_root)
+                .and_then(|adapter| adapter.hook_file())
+                .is_some_and(|hook_file| {
+                    crate::target::hook_file::holds_recorded(
+                        &ctx.project_root.join(&target_root).join(hook_file.file),
+                        &pending_hooks[&target_root],
+                    )
+                });
+        if holds_previous {
             pending_hooks.remove(&target_root);
             unchanged_records.insert(target_root, desired);
         }
@@ -404,9 +406,12 @@ fn trust_snapshots(
         .iter()
         .filter_map(|root| {
             let hook_file = registry.get(root)?.hook_file().filter(|f| f.trust_gated)?;
+            let target = mars_schema::hooks::targets::target(root)?;
             let file = hook_file.file;
-            let positions =
-                crate::target::hook_file::trust_positions(&ctx.project_root.join(root).join(file));
+            let positions = crate::target::hook_file::trust_positions(
+                &ctx.project_root.join(root).join(file),
+                |event| target.reads(event),
+            );
             Some((root.clone(), (format!("{root}/{file}"), positions)))
         })
         .collect()

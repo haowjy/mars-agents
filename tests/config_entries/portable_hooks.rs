@@ -314,3 +314,113 @@ fn check_warns_about_the_floor_and_a_condition_that_never_runs() {
             "`.codex` does not run `Notification`",
         ));
 }
+
+fn echo_hook(order: i32, name: &str, command: &str) -> (String, String) {
+    (
+        name.to_owned(),
+        format!(
+            "order = {order}\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"{command}\"\n"
+        ),
+    )
+}
+
+fn write_echo(project: &assert_fs::fixture::ChildPath, order: i32, name: &str, command: &str) {
+    let (name, manifest) = echo_hook(order, name, command);
+    write_hook(project, &name, &manifest);
+}
+
+fn pre_tool_use(project: &assert_fs::fixture::ChildPath) -> Vec<String> {
+    commands(&json(project, ".codex/hooks.json"), "PreToolUse")
+}
+
+#[test]
+fn changing_order_reorders_the_installed_entries_at_once() {
+    let dir = TempDir::new().unwrap();
+    let project = project(&dir, "\".codex\"");
+    write_echo(&project, 0, "alpha", "echo alpha");
+    write_echo(&project, 1, "beta", "echo beta");
+    sync(&project).success();
+    assert_eq!(pre_tool_use(&project), ["echo alpha", "echo beta"]);
+
+    write_echo(&project, 5, "alpha", "echo alpha");
+    sync(&project).success();
+    assert_eq!(pre_tool_use(&project), ["echo beta", "echo alpha"]);
+
+    // Nothing changed: the file is not touched again.
+    let before = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
+    sync(&project).success();
+    assert_eq!(
+        fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap(),
+        before
+    );
+
+    // An unrelated hook no longer moves the others.
+    write_echo(&project, 9, "gamma", "echo gamma");
+    sync(&project).success();
+    assert_eq!(
+        pre_tool_use(&project),
+        ["echo beta", "echo alpha", "echo gamma"]
+    );
+}
+
+#[test]
+fn a_deleted_entry_shared_by_two_hooks_is_restored() {
+    let dir = TempDir::new().unwrap();
+    let project = project(&dir, "\".codex\"");
+    write_echo(&project, 0, "alpha", "echo same");
+    write_echo(&project, 1, "beta", "echo same");
+    sync(&project).success();
+    assert_eq!(pre_tool_use(&project), ["echo same", "echo same"]);
+
+    let path = project.child(".codex/hooks.json");
+    let mut settings = json(&project, ".codex/hooks.json");
+    settings["hooks"]["PreToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    path.write_str(&settings.to_string()).unwrap();
+
+    sync(&project).success();
+    assert_eq!(pre_tool_use(&project), ["echo same", "echo same"]);
+}
+
+#[test]
+fn a_portable_hook_that_renders_on_no_managed_target_is_reported() {
+    let dir = TempDir::new().unwrap();
+    let project = project(&dir, "\".codex\", \".pi\"");
+    write_hook(
+        &project,
+        "notify",
+        "[[hooks.Notification]]\n[[hooks.Notification.hooks]]\ntype = \"command\"\ncommand = \"echo n\"\n",
+    );
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains(
+            "hook `notify`: `.codex` does not run `Notification`",
+        ))
+        .stderr(predicate::str::contains(
+            "hook `notify`: `.pi` does not run `Notification`: mars does not render hooks for Pi yet",
+        ));
+}
+
+#[test]
+fn codex_trust_is_not_asked_for_an_event_codex_ignores() {
+    let dir = TempDir::new().unwrap();
+    let project = project(&dir, "\".codex\"");
+    write_hook(
+        &project,
+        "future",
+        "[targets.\".codex\"]\nfragment = \"c.json\"\nunchecked = true\n",
+    );
+    write_fragment(
+        &project,
+        "future",
+        "c.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"echo a"}]}],
+            "FutureEvent":[{"hooks":[{"type":"command","command":"echo b"}]}]}"#,
+    );
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("SessionStart[0][0]"))
+        .stderr(predicate::str::contains("FutureEvent[").not());
+}

@@ -78,38 +78,35 @@ pub(crate) fn write(
     doc.save(path)
 }
 
-/// Whether the file at `path` still holds every entry `records` say mars wrote. A sync that
-/// changes nothing and finds this true leaves the file alone.
-pub(crate) fn holds_recorded(path: &Path, records: &BTreeMap<String, ConfigEntryRecord>) -> bool {
+/// Whether the file at `path` already holds `hooks` as a sync would write them: per event,
+/// every entry present, in `hooks`' order. Other entries may sit between them. A sync that
+/// changes nothing and finds this true leaves the file alone; a file that lost an entry, or
+/// holds them in another order, is rewritten.
+///
+/// Entries are matched one by one in order, so two hooks with identical entries need two in
+/// the file.
+pub(crate) fn holds_recorded(path: &Path, hooks: &[HookEntry]) -> bool {
     let Ok(Some(doc)) = load(path) else {
         return false;
     };
     let Some(section) = doc.section() else {
         return false;
     };
-    records.iter().all(|(key, record)| {
-        let Some((event, _)) = key
-            .strip_prefix(HOOK_KEY_PREFIX)
-            .and_then(|rest| rest.split_once(':'))
-        else {
-            return true;
-        };
-        let Ok(expected) = serde_json::from_str::<Vec<Value>>(&record.emitted_json) else {
-            return true;
-        };
-        let Some(OrderedValue::Array(current)) = section.get(event) else {
+    let mut cursor: BTreeMap<&str, usize> = BTreeMap::new();
+    for hook in hooks.iter().filter(|hook| !hook.entries.is_empty()) {
+        let Some(OrderedValue::Array(current)) = section.get(&hook.native_event) else {
             return false;
         };
-        let mut remaining = current.clone();
-        expected.into_iter().all(|entry| {
-            let entry = to_ordered(entry);
-            remaining
-                .iter()
-                .position(|candidate| *candidate == entry)
-                .map(|index| remaining.remove(index))
-                .is_some()
-        })
-    })
+        let at = cursor.entry(hook.native_event.as_str()).or_default();
+        for entry in &hook.entries {
+            let entry = to_ordered(entry.clone());
+            let Some(found) = current[*at..].iter().position(|c| *c == entry) else {
+                return false;
+            };
+            *at += found + 1;
+        }
+    }
+    true
 }
 
 /// `(event, matcher group, handler)` → what sits there; see [`trust_positions`].
@@ -117,8 +114,10 @@ pub(crate) type TrustPositions = BTreeMap<(String, usize, usize), Value>;
 
 /// Where a handler sits in a hook file and what it is: `(event, matcher group, handler)` →
 /// the group's matcher and the handler. Codex keys its trust on exactly this, so an entry
-/// that moves or changes must be reviewed again. Empty when the file is missing or unreadable.
-pub(crate) fn trust_positions(path: &Path) -> TrustPositions {
+/// that moves or changes must be reviewed again. Only events `reads` accepts count: Codex
+/// ignores any other key, so a handler there needs no review. Empty when the file is missing
+/// or unreadable.
+pub(crate) fn trust_positions(path: &Path, reads: impl Fn(&str) -> bool) -> TrustPositions {
     let Ok(Some(doc)) = load(path) else {
         return BTreeMap::new();
     };
@@ -127,6 +126,9 @@ pub(crate) fn trust_positions(path: &Path) -> TrustPositions {
         let OrderedValue::Array(groups) = groups else {
             continue;
         };
+        if !reads(event) {
+            continue;
+        }
         for (g, group) in groups.iter().enumerate() {
             let group = group.to_json();
             let handlers = group.get("hooks").and_then(Value::as_array);
@@ -183,7 +185,7 @@ pub(crate) fn remove_recorded(
             diag.warn(
                 "config-divergence",
                 format!(
-                    "config-divergence: managed hook `{name}` diverged in target `{target}` at `{}`; preserving edited config and appending the package entry",
+                    "config-divergence: managed hook `{name}` diverged in target `{target}` at `{}`: an entry Mars wrote was edited or deleted; any edited version stays and the package entry is appended",
                     path.display()
                 ),
             );

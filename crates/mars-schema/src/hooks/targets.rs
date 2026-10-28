@@ -83,6 +83,9 @@ pub struct Target {
     pub verified_against: Option<&'static str>,
     pub placement: Placement,
     pub profile: Profile,
+    /// Events the harness reads that `profile.events` has no row for: they travel only in a
+    /// fragment marked `unchecked`.
+    pub other_events: &'static [&'static str],
 }
 
 /// Where a file-placement target's generated file gets its suffix: the hook name ends in
@@ -90,6 +93,11 @@ pub struct Target {
 const GENERATED_SUFFIX: &str = super::RESERVED_NAME_SUFFIX;
 
 impl Target {
+    /// Whether the harness reads `event` from its hook file; it ignores any other key.
+    pub fn reads(&self, event: &str) -> bool {
+        self.profile.events.iter().any(|e| e.name == event) || self.other_events.contains(&event)
+    }
+
     /// Whether the target installs whole files rather than merging entries.
     pub fn is_file(&self) -> bool {
         matches!(self.placement, Placement::File { .. })
@@ -202,6 +210,7 @@ const TARGETS: &[Target] = &[
             events: CLAUDE_EVENTS,
             rules: Rules::Claude,
         },
+        other_events: &[],
     },
     Target {
         root: ".codex",
@@ -211,6 +220,7 @@ const TARGETS: &[Target] = &[
             events: CODEX_EVENTS,
             rules: Rules::Codex,
         },
+        other_events: &["PreModelRequest", "PostModelRequest", "Interrupt"],
     },
     Target {
         root: ".cursor",
@@ -222,6 +232,7 @@ const TARGETS: &[Target] = &[
                 reason: "mars renders no generated hooks for Cursor before 0.26",
             },
         },
+        other_events: &[],
     },
     // The events a generated adapter handles are listed when its renderer lands.
     Target {
@@ -234,6 +245,7 @@ const TARGETS: &[Target] = &[
                 harness: "OpenCode",
             },
         },
+        other_events: &[],
     },
     Target {
         root: ".pi",
@@ -243,6 +255,7 @@ const TARGETS: &[Target] = &[
             events: &[],
             rules: Rules::TypeScript { harness: "Pi" },
         },
+        other_events: &[],
     },
 ];
 

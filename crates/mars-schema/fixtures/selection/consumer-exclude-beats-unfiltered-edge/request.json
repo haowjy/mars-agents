@@ -1,0 +1,6 @@
+{
+  "requests": [
+    { "name": "a" },
+    { "name": "b", "exclude": ["x"] }
+  ]
+}

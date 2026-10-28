@@ -112,14 +112,14 @@ Fetches sources, resolves concrete versions, and prepares each package.
 1. Fetch dependencies from EffectiveConfig
 2. Read `mars.toml` manifests in source trees to discover transitive dependencies (including transitive skill dependencies pulled in through agent declarations)
 3. Settle each package's constraints (`mars_schema::version::settle`: one pin, or a pin beside a range refuses)
-4. Select concrete versions (`mars_schema::version::select`, the rule below; `choose` is both steps for a caller with no lock to replay, such as the WASM package's `selectVersion`)
+4. Select concrete versions (`mars_schema::version::keeps_lock`, then `select`, the rule below; `choose` is all the steps for a caller with no tags to avoid listing, such as the WASM package's `selectVersion`)
 5. Select the items the consumer installs (`mars_schema::selection::select`, one pass over the settled graph; it computes the registry order skill refs resolve in)
 
 **Version selection strategy:**
 
 | Mode | Strategy | Used by |
 |---|---|---|
-| Normal | The locked version when it still satisfies every constraint, otherwise the newest compatible version | `mars sync`, `mars add` |
+| Normal | The locked version when it still satisfies every constraint (whether or not its tag still exists upstream), otherwise the newest compatible version | `mars sync`, `mars add` |
 | Maximize | The newest compatible version, ignoring the lock | `mars upgrade` |
 | Frozen | The locked version, or an error | `--frozen` |
 

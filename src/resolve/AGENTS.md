@@ -63,6 +63,12 @@ not rediscover or revalidate the settled graph.
 `ResolveOptions.prepared_sources` seeds a package already prepared by its caller. Plugin builds use
 this for their implicit root package so graph resolution does not prepare that root twice.
 
+`ResolveOptions.root` is a package selected for that is *not* a graph node (`mars check`: the package
+being published, whose `[dependencies]` are the config). Selection runs once per `resolve()`, with
+the root in it, so a skill ref only the root ships is found and `mars check` agrees with a
+consumer's sync. With a root, refs that resolve nowhere stay in `ResolvedGraph.selection` for the
+caller to judge instead of failing resolution.
+
 `ResolveOptions.source_overrides` applies local path overrides by source name while declared source
 identity remains separate. Removed hook schema state is binary-owned and recorded in
 `ResolvedGraph.unreadable_hook_surfaces`.

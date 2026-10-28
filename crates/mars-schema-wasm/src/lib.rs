@@ -277,10 +277,11 @@ pub fn satisfies_requirement(requirement: &str, version: &str) -> Result<bool, J
 }
 
 /// Which ref a package ends at: `{available, constraints, locked?}` to
-/// `{pin} | {tag} | {untagged: true}`. `available` is the repository's tags; one that is not a
-/// version (`nightly`) is ignored. `constraints` is every `[requester, version | null]` on the
-/// package, as the manifests spell them; `locked` is kept when it is allowed, else the newest
-/// allowed version is chosen. A refusal throws with a `version.*` code.
+/// `{pin} | {locked: true} | {tag} | {untagged: true}`. `available` is the repository's tags; one
+/// that is not a version (`nightly`) is ignored. `constraints` is every `[requester, version |
+/// null]` on the package, as the manifests spell them; `locked` is kept (`{locked: true}`, even
+/// if `available` no longer lists it) when it meets every range and no constraint is `latest`,
+/// else the newest allowed version is chosen. A refusal throws with a `version.*` code.
 #[wasm_bindgen(js_name = selectVersion)]
 pub fn select_version(argument: JsValue) -> Result<JsValue, JsValue> {
     use mars_schema::version::{Chosen, SelectionPolicy, require_tag};
@@ -294,6 +295,7 @@ pub fn select_version(argument: JsValue) -> Result<JsValue, JsValue> {
     #[serde(rename_all = "lowercase")]
     enum Choice<'a> {
         Pin(&'a str),
+        Locked(bool),
         Tag(&'a str),
         Untagged(bool),
     }
@@ -328,6 +330,7 @@ pub fn select_version(argument: JsValue) -> Result<JsValue, JsValue> {
     .map_err(|error| fail(error.code(), error))?;
     to_js(&match chosen {
         Chosen::Pin(reference) => Choice::Pin(reference),
+        Chosen::Locked => Choice::Locked(true),
         Chosen::Tag(tag) => Choice::Tag(tag),
         Chosen::Untagged => Choice::Untagged(true),
     })

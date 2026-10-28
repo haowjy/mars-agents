@@ -1,7 +1,8 @@
 //! One `[dependencies]` or `[local-dependencies]` entry, as a package manifest or a consumer
 //! `mars.toml` writes it: its source, selectors and filter, and the rules that hold wherever it is
-//! read. The consumer's configuration and a package's manifest reading both parse through
-//! [`Entry::from_raw`].
+//! read. The consumer's configuration, a package's manifest reading and `mars add` all read an
+//! entry through [`Entry::read`], which holds every rule and says, by [`Strictness`], which of them
+//! refuse and which only warn.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{SchemaDiagnostic, Severity, child_path};
 use crate::dialect::Dialect;
-use crate::filter::FilterConfig;
+use crate::filter::{FilterConfig, FilterError};
 use crate::names::SourceSubpath;
 
 /// Where an entry's package comes from: a git repository or a directory, never both.
@@ -40,7 +41,7 @@ pub struct Entry {
 
 /// The authored shape of an entry, before the rules that need its name. A consumer's `mars.toml`
 /// holds entries in this shape, so a file with a bad entry still loads and `mars remove` can repair
-/// it; [`Entry::from_raw`] applies the rules where an entry is used.
+/// it; [`Entry::read`] applies the rules where an entry is used.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RawEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -93,6 +94,9 @@ pub enum EntryError {
     NoSource { name: String },
     #[error(transparent)]
     PluginSelector(#[from] PluginSelectorError),
+    /// A filter that contradicts itself, refused under [`Strictness::Consumer`].
+    #[error(transparent)]
+    Filter(#[from] FilterError),
 }
 
 impl EntryError {
@@ -101,8 +105,27 @@ impl EntryError {
         match self {
             Self::BothSources { .. } | Self::NoSource { .. } => "dependency.source",
             Self::PluginSelector(_) => "dependency.plugin-selector",
+            Self::Filter(_) => "dependency.filter-conflict",
         }
     }
+}
+
+/// Who an entry is read for, which decides what a rule does when it breaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Strictness {
+    /// The project's own `mars.toml`, or an entry about to be written to it: every rule refuses.
+    Consumer,
+    /// A dependency's manifest, read as written: its dependents' syncs must not break on it, so a
+    /// conflicting filter warns (and `FilterConfig::to_mode` picks the mode it always has) and a
+    /// `plugin` entry's `dialect` is dropped with a warning.
+    Package,
+}
+
+/// A rule a [`Strictness::Package`] entry broke and was kept anyway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryWarning {
+    pub code: &'static str,
+    pub message: String,
 }
 
 impl Entry {
@@ -145,12 +168,30 @@ impl Entry {
         }
     }
 
-    /// Apply the rules every reader shares: exactly one of `url` and `path`, and a `plugin`
-    /// selector that does not contradict `subpath` or `dialect`. The filter's own consistency is
-    /// [`FilterConfig::validate`], which the caller applies where it refuses a conflict.
-    pub fn from_raw(name: &str, raw: RawEntry) -> Result<Self, EntryError> {
+    /// Read an authored entry under every rule: exactly one of `url` and `path`, a bare
+    /// `host/path` URL spelled with `https://` (see [`crate::git_url::with_default_scheme`]), a
+    /// `plugin` selector that does not contradict `subpath` or `dialect`, and a consistent filter
+    /// ([`FilterConfig::validate`]). `strictness` decides whether a broken filter or a `plugin`
+    /// with `dialect` refuses or warns; the rest refuse for every reader.
+    pub fn read(
+        name: &str,
+        mut raw: RawEntry,
+        strictness: Strictness,
+    ) -> Result<(Self, Vec<EntryWarning>), EntryError> {
+        let mut warnings = Vec::new();
+        if strictness == Strictness::Package && raw.plugin.is_some() && raw.dialect.take().is_some()
+        {
+            warnings.push(EntryWarning {
+                code: "dependency.dialect-ignored",
+                message: format!(
+                    "source `{name}` has both `plugin` and `dialect`; the dialect is ignored"
+                ),
+            });
+        }
         let source = match (raw.url, raw.path) {
-            (Some(url), None) => Source::Git { url },
+            (Some(url), None) => Source::Git {
+                url: crate::git_url::with_default_scheme(&url),
+            },
             (None, Some(path)) => Source::Path { path },
             (Some(_), Some(_)) => return Err(EntryError::BothSources { name: name.into() }),
             (None, None) => return Err(EntryError::NoSource { name: name.into() }),
@@ -161,7 +202,15 @@ impl Entry {
             raw.subpath.as_ref(),
             raw.dialect,
         )?;
-        Ok(Self {
+        match (raw.filter.validate(name), strictness) {
+            (Err(conflict), Strictness::Consumer) => return Err(conflict.into()),
+            (Err(conflict), Strictness::Package) => warnings.push(EntryWarning {
+                code: "dependency.filter-conflict",
+                message: conflict.to_string(),
+            }),
+            (Ok(()), _) => {}
+        }
+        let entry = Self {
             source,
             version: raw.version,
             subpath: raw.subpath,
@@ -169,7 +218,8 @@ impl Entry {
             plugin: raw.plugin,
             filter: raw.filter,
             unknown: raw.unknown,
-        })
+        };
+        Ok((entry, warnings))
     }
 }
 
@@ -274,7 +324,7 @@ fn read_table(
             .map_err(|error| format!("{key_path}: {}", error.to_string().trim_end())),
             Err(_) => Err(format!("{key_path}: must be a table")),
         };
-        let mut raw = match raw {
+        let raw = match raw {
             Ok(raw) => raw,
             Err(message) => {
                 diagnostics.push(SchemaDiagnostic::new(
@@ -286,27 +336,16 @@ fn read_table(
                 continue;
             }
         };
-        if raw.plugin.is_some() && raw.dialect.take().is_some() {
-            diagnostics.push(SchemaDiagnostic::new(
-                "dependency.dialect-ignored",
-                Severity::Warning,
-                path.clone(),
-                format!("source `{name}` has both `plugin` and `dialect`; the dialect is ignored"),
-            ));
-        }
-        match Entry::from_raw(name, raw) {
-            Ok(entry) => {
-                // A package's entry is read as written, and its dependents' syncs must not
-                // break on it: a conflicting filter warns, and `FilterConfig::to_mode` picks the
-                // mode it always has.
-                if let Err(conflict) = entry.filter.validate(name) {
-                    diagnostics.push(SchemaDiagnostic::new(
-                        "dependency.filter-conflict",
+        match Entry::read(name, raw, Strictness::Package) {
+            Ok((entry, warnings)) => {
+                diagnostics.extend(warnings.into_iter().map(|warning| {
+                    SchemaDiagnostic::new(
+                        warning.code,
                         Severity::Warning,
-                        path,
-                        conflict.to_string(),
-                    ));
-                }
+                        path.clone(),
+                        warning.message,
+                    )
+                }));
                 entries.insert(name.to_owned(), entry);
             }
             Err(error) => diagnostics.push(SchemaDiagnostic::new(

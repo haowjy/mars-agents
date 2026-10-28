@@ -1,0 +1,1 @@
+{"op":"select-version","tags":["v1.0.0","v1.1.0"],"constraints":[["requester-0","^1"]],"locked":"v1.0.0","excluded":["v1.0.0"]}

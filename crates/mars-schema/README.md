@@ -30,6 +30,7 @@ if let Reading::Agent(reading) = read("agents/coder.md", &text).unwrap() {
 | `fields` | the typed `AgentProfile`, `SkillProfile` or `PackageMetadata`; `None` when the file cannot be read at all |
 | `body` | every byte after the closing fence; `None` for `mars.toml` |
 | `diagnostics` | `SchemaDiagnostic { code, severity, path, message, range }` |
+| `dependencies`, `local-dependencies` | `mars.toml` only (`manifest::ManifestRead` flattens them beside the four fields above): the entries by name in declaration order, in the file's spellings, each read by `Entry::read`. A table is omitted when empty |
 
 The typed fields serialize with the spellings the file uses (kebab-case keys and values, `xhigh`, `read-only`); that serialization is the published shape, pinned by `fixtures/read/`. A refactor that changes it changes the contract. `agent::read`, `skill::read` and `manifest::read` are the three readers behind `read::read`, and nothing else in the workspace reads those keys. An installed `.mars/` tree is read with `read::installed_agent` and `read::installed_skill`, which upgrade a file whose strict reading reports a pre-v1 spelling, because those bytes are whatever Mars version installed them.
 

@@ -115,39 +115,56 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let available_skills: HashSet<String> =
             installed.skills.iter().map(|s| s.name.clone()).collect();
 
-        let agents_for_check: Vec<(String, std::path::PathBuf)> = installed
-            .agents
-            .iter()
-            .map(|a| (a.name.clone(), a.path.clone()))
-            .collect();
-
-        if let Ok(missing) = crate::validate::check_deps(&agents_for_check, &available_skills) {
-            for w in &missing {
-                if let crate::validate::ValidationWarning::MissingSkill {
-                    agent,
-                    skill_name,
-                    suggestion,
-                } = w
-                {
-                    let msg = match suggestion {
-                        Some(s) => format!(
-                            "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
-                            agent.name
-                        ),
-                        None => format!(
-                            "agent `{}` references missing skill `{skill_name}` — \
-                             add a source that provides it, or create it locally in skills/{skill_name}/",
-                            agent.name
-                        ),
-                    };
-                    // Doctor has no manifest to judge a declaration against, and no record to say
-                    // whether a host supplies the name: a provider-shaped name is indistinguishable
-                    // from a typo (`nope__meridain`), so it warns with the wording any missing
-                    // skill gets, where a plain name is an error.
-                    match mars_schema::provider::provider_of(skill_name) {
-                        Some(_) => warnings.push(msg),
-                        None => errors.push(msg),
+        // The rule `mars sync` applies to a ref, against what is installed. Doctor has no
+        // resolved graph, so a package's declaration is the project's own `[package]`.
+        let provided = crate::provided::ProvidedNames::load(
+            &ctx.project_root,
+            &mut crate::diagnostic::DiagnosticCollector::new(),
+        )?;
+        let declared = project_config
+            .as_ref()
+            .and_then(|layers| layers.config.package.as_ref())
+            .map(|package| package.uses_providers.as_slice());
+        for agent in &installed.agents {
+            // An unreadable agent file has no skills to check.
+            let skills = crate::validate::parse_agent_skills(&agent.path).unwrap_or_default();
+            for skill_name in skills {
+                let provided_here = provided.provides(&skill_name);
+                let Some(warning) = crate::validate::classify_skill_ref(
+                    crate::lock::ItemId {
+                        kind: mars_schema::item::ItemKind::Agent,
+                        name: agent.name.as_str().into(),
+                    },
+                    skill_name.clone(),
+                    &available_skills,
+                    declared,
+                    provided_here,
+                ) else {
+                    continue;
+                };
+                let mut msg = warning.message();
+                // A plain missing name is an error; a provider-shaped one could be a typo
+                // (`nope__meridain`) or a host's skill that is not installed, so it warns.
+                let is_error = matches!(
+                    warning,
+                    crate::validate::ValidationWarning::MissingSkill { .. }
+                ) && mars_schema::provider::provider_of(&skill_name).is_none();
+                let no_suggestion = matches!(
+                    warning,
+                    crate::validate::ValidationWarning::MissingSkill {
+                        suggestion: None,
+                        ..
                     }
+                );
+                if is_error {
+                    if no_suggestion {
+                        msg.push_str(&format!(
+                        " — add a source that provides it, or create it locally in skills/{skill_name}/"
+                        ));
+                    }
+                    errors.push(msg);
+                } else {
+                    warnings.push(msg);
                 }
             }
         }

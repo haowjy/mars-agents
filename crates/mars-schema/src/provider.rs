@@ -51,8 +51,8 @@ pub fn deferred_provider<'a>(name: &'a str, declared: Option<&[String]>) -> Opti
 /// The hint for a `<skill>__<provider>` ref that no package ships and no package declares.
 ///
 /// A name can look exactly like a host provider's and still be a typo, so the hint is
-/// conditional. `mars check` and selection's missing-skill report print this one text.
-pub fn undeclared_provider_hint(provider: &str) -> String {
+/// conditional. Selection's missing-skill report carries this one text (`MissingSkill::hint`), and `mars check` prints it.
+pub(crate) fn undeclared_provider_hint(provider: &str) -> String {
     format!(
         "if `{provider}` is a host that provides this skill, declare it in `[package] uses-providers`; otherwise check the name"
     )

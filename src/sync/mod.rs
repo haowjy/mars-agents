@@ -526,7 +526,7 @@ pub(crate) fn resolve_graph(
     let upgrades_available = if request.options.frozen || !request.options.check_upgrades {
         0
     } else {
-        upgrades::count_compatible_upgrades(&graph, &source_provider, diag)
+        upgrades::count_compatible_upgrades(&graph, &source_provider, &resolve_options, diag)
     };
 
     let bump_entries = planned_bump_entries(&loaded.config, &graph, &request.resolution);
@@ -1268,8 +1268,12 @@ fn planned_bump_entries(
             if entry.version.as_deref() == Some(resolved_tag.as_str()) {
                 return None;
             }
-            let mut bumped =
-                mars_schema::dependency::Entry::from_raw(name.as_ref(), entry.clone()).ok()?;
+            let (mut bumped, _) = mars_schema::dependency::Entry::read(
+                name.as_ref(),
+                entry.clone(),
+                mars_schema::dependency::Strictness::Consumer,
+            )
+            .ok()?;
             bumped.version = Some(resolved_tag.clone());
             Some((name.clone(), bumped))
         })
@@ -1277,12 +1281,8 @@ fn planned_bump_entries(
 }
 
 fn constraint_needs_bump(current: Option<&str>, resolved: &semver::Version) -> bool {
-    match mars_schema::version::parse_constraint(current) {
-        mars_schema::version::Constraint::Semver(req) => !req.matches(resolved),
-        mars_schema::version::Constraint::Latest | mars_schema::version::Constraint::RefPin(_) => {
-            false
-        }
-    }
+    let constraint = mars_schema::version::parse_constraint(current);
+    !mars_schema::version::allows(&[("", &constraint)], resolved, &Default::default())
 }
 
 fn has_version_changes(changes: &[DependencyUpsertChange]) -> bool {

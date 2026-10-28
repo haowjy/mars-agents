@@ -18,7 +18,6 @@ use crate::types::{DestPath, SourceName, SourceOrigin};
 use crate::validate::ValidationWarning;
 use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::prepare::PreparedDefinition;
-use mars_schema::provider::deferred_provider;
 
 /// Validate skill references: check that agents' `skills:` frontmatter entries
 /// reference skills that exist in the target state.
@@ -34,8 +33,6 @@ pub(crate) fn validate_skill_refs(
     provided: Option<&ProvidedNames>,
     local_declared: Option<&[String]>,
 ) -> Vec<ValidationWarning> {
-    use crate::validate::find_suggestion;
-
     let available_skills: HashSet<String> = target
         .items
         .values()
@@ -73,46 +70,16 @@ pub(crate) fn validate_skill_refs(
             .fields
             .map(|profile| profile.skills.all())
             .unwrap_or_default();
-        for skill_name in skills {
-            if available_skills.contains(&skill_name) {
-                continue;
-            }
-            let agent = item.id.clone();
+        warnings.extend(skills.into_iter().filter_map(|skill_name| {
             let provided_here = provided.is_some_and(|names| names.provides(&skill_name));
-            let warning = match mars_schema::provider::provider_of(&skill_name) {
-                // The package declares the provider: the ref is valid wherever it supplies the
-                // skill, and says so where it does not.
-                Some(provider) if deferred_provider(&skill_name, declared).is_some() => {
-                    if provided_here {
-                        continue;
-                    }
-                    ValidationWarning::ProvidedSkillUnavailable {
-                        agent,
-                        provider: provider.to_string(),
-                        skill_name,
-                    }
-                }
-                // Provided here. A consumer project's own items have no `[package]` table, so
-                // nothing needs declaring and the ref is satisfied; a package that does not
-                // declare the provider would not resolve it for consumers.
-                Some(provider) if provided_here => {
-                    if declared.is_none() {
-                        continue;
-                    }
-                    ValidationWarning::ProvidedSkillUndeclared {
-                        agent,
-                        provider: provider.to_string(),
-                        skill_name,
-                    }
-                }
-                _ => ValidationWarning::MissingSkill {
-                    agent,
-                    suggestion: find_suggestion(&skill_name, &available_skills),
-                    skill_name,
-                },
-            };
-            warnings.push(warning);
-        }
+            crate::validate::classify_skill_ref(
+                item.id.clone(),
+                skill_name,
+                &available_skills,
+                declared,
+                provided_here,
+            )
+        }));
     }
 
     warnings

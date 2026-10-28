@@ -151,7 +151,7 @@ pub struct Prepared {
 
 /// What item selection reads of a prepared package: its Agents' and skills' skill refs, and the
 /// `[dependencies]` entries and `uses-providers` its manifest reads.
-pub fn selection_facts(
+pub(crate) fn selection_facts(
     manifest: Option<&PreparedManifest>,
     definitions: &[PreparedDefinition],
 ) -> SelectionFacts {

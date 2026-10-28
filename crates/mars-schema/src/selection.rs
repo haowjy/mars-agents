@@ -47,7 +47,7 @@ pub struct Request {
 }
 
 /// An item of a package, found by the caller: what the crate does not prepare (bootstrap
-/// documents, hooks).
+/// documents, hooks). MCP servers are selected outside this pass, by the caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Item {
@@ -93,7 +93,27 @@ pub struct PackageView {
 #[serde(deny_unknown_fields)]
 pub struct PackageInput {
     prepared: PreparedInput,
+    #[serde(default, deserialize_with = "extra_items")]
     extra_items: Option<Vec<Item>>,
+}
+
+/// `extra_items` hold bootstrap documents and hooks; an MCP server in them is the caller's mistake,
+/// since selection never reads one.
+fn extra_items<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<Item>>, D::Error> {
+    let items = Option::<Vec<Item>>::deserialize(deserializer)?;
+    match items
+        .iter()
+        .flatten()
+        .find(|item| item.kind == ItemKind::McpServer)
+    {
+        Some(item) => Err(serde::de::Error::custom(format!(
+            "extra_items `{}`: MCP servers are not selected by selectItems",
+            item.slug
+        ))),
+        None => Ok(items),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,7 +278,9 @@ pub fn select(view: &GraphView) -> SelectionResult {
     let mut queue: VecDeque<Key> = VecDeque::new();
     for seed in &seeds {
         for entry in &entries[seed.package] {
-            if !seed_accepts(seed.filter, &entry.item) {
+            if !seed_accepts(seed.filter, &entry.item)
+                || is_excluded(&excluded, seed.package, &entry.item)
+            {
                 continue;
             }
             let key = (seed.package, entry.item.kind, entry.item.slug.as_str());

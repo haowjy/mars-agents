@@ -1,10 +1,8 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::MarsError;
 use crate::lock::ItemId;
-use mars_schema::item::ItemKind;
-use mars_schema::names::ItemName;
 
 /// Warning from dependency validation.
 ///
@@ -96,38 +94,54 @@ pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
         .unwrap_or_default())
 }
 
-/// Check that agent→skill references resolve.
+/// How one skill ref of an Agent is judged against the skills installed: `None` when it is
+/// satisfied. The one rule `mars sync` and `mars doctor` share.
 ///
-/// Reads YAML frontmatter from each agent .md file to extract `skills: [...]`.
-/// Checks each referenced skill name exists in `available_skills`.
-///
-/// Returns warnings, not errors — a missing skill doesn't prevent sync.
-pub fn check_deps(
-    agents: &[(String, PathBuf)],
+/// `declared` is the Agent's package's `uses-providers`: `Some` for a package, `None` for a
+/// consumer project's own items, which need no declaration. `provided_here` is whether this
+/// machine's `.mars/provided.lock` supplies the name.
+pub(crate) fn classify_skill_ref(
+    agent: ItemId,
+    skill_name: String,
     available_skills: &HashSet<String>,
-) -> Result<Vec<ValidationWarning>, MarsError> {
-    let mut warnings = Vec::new();
-
-    for (agent_name, agent_path) in agents {
-        // Defensive: if we can't read/parse the file, treat as no skills
-        let skills = parse_agent_skills(agent_path).unwrap_or_default();
-
-        for skill_name in skills {
-            if !available_skills.contains(&skill_name) {
-                let suggestion = find_suggestion(&skill_name, available_skills);
-                warnings.push(ValidationWarning::MissingSkill {
-                    agent: ItemId {
-                        kind: ItemKind::Agent,
-                        name: ItemName::from(agent_name.clone()),
-                    },
-                    skill_name,
-                    suggestion,
-                });
+    declared: Option<&[String]>,
+    provided_here: bool,
+) -> Option<ValidationWarning> {
+    if available_skills.contains(&skill_name) {
+        return None;
+    }
+    Some(match mars_schema::provider::provider_of(&skill_name) {
+        // The package declares the provider: the ref is valid wherever it supplies the skill, and
+        // says so where it does not.
+        Some(provider)
+            if mars_schema::provider::deferred_provider(&skill_name, declared).is_some() =>
+        {
+            if provided_here {
+                return None;
+            }
+            ValidationWarning::ProvidedSkillUnavailable {
+                agent,
+                provider: provider.to_string(),
+                skill_name,
             }
         }
-    }
-
-    Ok(warnings)
+        // Provided here. A consumer project's own items have no `[package]` table, so nothing
+        // needs declaring and the ref is satisfied; a package that does not declare the provider
+        // would not resolve it for consumers.
+        Some(provider) if provided_here => {
+            declared?;
+            ValidationWarning::ProvidedSkillUndeclared {
+                agent,
+                provider: provider.to_string(),
+                skill_name,
+            }
+        }
+        _ => ValidationWarning::MissingSkill {
+            agent,
+            suggestion: find_suggestion(&skill_name, available_skills),
+            skill_name,
+        },
+    })
 }
 
 /// Find a suggestion for a missing skill using substring matching.
@@ -155,6 +169,7 @@ pub(crate) fn find_suggestion(missing: &str, available: &HashSet<String>) -> Opt
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     // ── Validation tests ────────────────────────────────────────────
@@ -176,111 +191,6 @@ mod tests {
         let skills = parse_agent_skills(&path).unwrap();
         assert_eq!(skills, vec!["planning", "review"]);
     }
-    #[test]
-    fn all_skills_present_no_warnings() {
-        let dir = TempDir::new().unwrap();
-        let p = write_agent(
-            dir.path(),
-            "coder",
-            "---\nskills: [planning, review]\n---\n# Coder\n",
-        );
-
-        let agents = vec![("coder".to_string(), p)];
-        let skills: HashSet<String> = ["planning", "review"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn missing_skill_produces_warning() {
-        let dir = TempDir::new().unwrap();
-        let p = write_agent(
-            dir.path(),
-            "coder",
-            "---\nskills: [missing-skill]\n---\n# Coder\n",
-        );
-
-        let agents = vec![("coder".to_string(), p)];
-        let skills: HashSet<String> = HashSet::new();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        assert_eq!(warnings.len(), 1);
-        let ValidationWarning::MissingSkill {
-            agent,
-            skill_name,
-            suggestion,
-        } = &warnings[0]
-        else {
-            panic!("expected a missing-skill warning, got {:?}", warnings[0]);
-        };
-        assert_eq!(agent.name, "coder");
-        assert_eq!(agent.kind, ItemKind::Agent);
-        assert_eq!(skill_name, "missing-skill");
-        assert!(suggestion.is_none());
-    }
-
-    #[test]
-    fn unreferenced_skill_produces_no_warning() {
-        let dir = TempDir::new().unwrap();
-        let p = write_agent(dir.path(), "coder", "---\nskills: []\n---\n# Coder\n");
-
-        let agents = vec![("coder".to_string(), p)];
-        let skills: HashSet<String> = ["unused-skill"].iter().map(|s| s.to_string()).collect();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn agent_with_no_frontmatter_no_warnings() {
-        let dir = TempDir::new().unwrap();
-        let p = write_agent(dir.path(), "simple", "# Simple agent\n\nNo frontmatter.\n");
-
-        let agents = vec![("simple".to_string(), p)];
-        let skills: HashSet<String> = HashSet::new();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn agent_with_malformed_yaml_no_crash() {
-        let dir = TempDir::new().unwrap();
-        let p = write_agent(
-            dir.path(),
-            "broken",
-            "---\n{{invalid: yaml[[\n---\n# Broken\n",
-        );
-
-        let agents = vec![("broken".to_string(), p)];
-        let skills: HashSet<String> = HashSet::new();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        // Malformed YAML → empty skills → no missing skill warnings
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn missing_skill_with_suggestion() {
-        let dir = TempDir::new().unwrap();
-        let p = write_agent(dir.path(), "coder", "---\nskills: [plan]\n---\n# Coder\n");
-
-        let agents = vec![("coder".to_string(), p)];
-        let skills: HashSet<String> = ["planning"].iter().map(|s| s.to_string()).collect();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        assert_eq!(warnings.len(), 1); // 1 MissingSkill only
-
-        let ValidationWarning::MissingSkill { suggestion, .. } = &warnings[0] else {
-            panic!("expected a missing-skill warning, got {:?}", warnings[0]);
-        };
-        assert_eq!(suggestion.as_deref(), Some("planning"));
-    }
-
     #[test]
     fn suggestion_reverse_substring() {
         // "planning" contains "plan" → suggestion
@@ -314,74 +224,5 @@ mod tests {
     fn no_suggestion_when_no_match() {
         let available: HashSet<String> = ["review"].iter().map(|s| s.to_string()).collect();
         assert_eq!(find_suggestion("completely-different", &available), None);
-    }
-
-    #[test]
-    fn multiple_agents_multiple_warnings() {
-        let dir = TempDir::new().unwrap();
-        let p1 = write_agent(
-            dir.path(),
-            "coder",
-            "---\nskills: [missing-a, existing]\n---\n# Coder\n",
-        );
-        let p2 = write_agent(
-            dir.path(),
-            "reviewer",
-            "---\nskills: [missing-b]\n---\n# Reviewer\n",
-        );
-
-        let agents = vec![("coder".to_string(), p1), ("reviewer".to_string(), p2)];
-        let skills: HashSet<String> = ["existing", "orphan"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-
-        // Only MissingSkill warnings — no orphan warnings
-        assert_eq!(warnings.len(), 2); // missing-a, missing-b
-        assert!(
-            warnings
-                .iter()
-                .all(|w| matches!(w, ValidationWarning::MissingSkill { .. }))
-        );
-    }
-
-    #[test]
-    fn empty_agents_and_skills() {
-        let agents: Vec<(String, PathBuf)> = vec![];
-        let skills: HashSet<String> = HashSet::new();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn unreadable_agent_file_treated_as_no_skills() {
-        // Path to a file that doesn't exist — check_deps should not crash
-        let agents = vec![("ghost".to_string(), PathBuf::from("/nonexistent/ghost.md"))];
-        let skills: HashSet<String> = HashSet::new();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        assert!(warnings.is_empty());
-    }
-
-    #[test]
-    fn skills_with_dunder_prefix() {
-        let dir = TempDir::new().unwrap();
-        let p = write_agent(
-            dir.path(),
-            "coder",
-            "---\nskills:\n  - __meridian-spawn\n  - planning\n---\n# Coder\n",
-        );
-
-        let agents = vec![("coder".to_string(), p)];
-        let skills: HashSet<String> = ["__meridian-spawn", "planning"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let warnings = check_deps(&agents, &skills).unwrap();
-        assert!(warnings.is_empty());
     }
 }

@@ -13,16 +13,18 @@ use mars_schema::selection::{GraphView, Item, PackageView, Request, SelectionRes
 use crate::discover::DiscoveredItem;
 use crate::types::SourceName;
 
-/// Select from the registry the resolver settled and the consumer's own entries.
+/// Select from the registry the resolver settled and the consumer's own entries; `root` is the
+/// package being selected for, when it is not among the registry's.
 pub(super) fn select_registry(
     config: &crate::config::EffectiveConfig,
     registry: &IndexMap<SourceName, super::RegisteredPackage>,
+    root: Option<&Prepared>,
 ) -> SelectionResult {
     let packages = registry
         .iter()
         .map(|(name, package)| (name, &package.node, extra_items(package.items())))
         .collect();
-    select_packages(consumer_requests(config), packages)
+    select_packages(consumer_requests(config), root, packages)
 }
 
 /// Selection for a hand-built graph, whose bootstrap documents and hooks are found on disk.
@@ -45,32 +47,12 @@ pub(crate) fn select_for_test(
             (name, node, extra_items(items.iter()))
         })
         .collect();
-    select_packages(consumer_requests(config), packages)
-}
-
-/// What installing the package being published would select, for `mars check`.
-///
-/// The package is the root: selected whole, with its `[dependencies]` entries as the consumer's
-/// requests, so its filters apply and its Agents' skill refs resolve as they will on a
-/// consumer's machine. Bootstrap documents and hooks of the dependencies are not found: only the
-/// refs matter here.
-pub(crate) fn select_published(
-    prepared: &Prepared,
-    graph: Option<&super::ResolvedGraph>,
-) -> SelectionResult {
-    select(&GraphView {
-        requests: Vec::new(),
-        root: Some(package_view(prepared, Vec::new())),
-        packages: graph
-            .iter()
-            .flat_map(|graph| &graph.nodes)
-            .map(|(name, node)| (name.to_string(), package_view(&node.prepared, Vec::new())))
-            .collect(),
-    })
+    select_packages(consumer_requests(config), None, packages)
 }
 
 fn select_packages(
     requests: Vec<Request>,
+    root: Option<&Prepared>,
     packages: Vec<(&SourceName, &super::ResolvedNode, Vec<Item>)>,
 ) -> SelectionResult {
     let packages: HashMap<_, _> = packages
@@ -79,7 +61,7 @@ fn select_packages(
         .collect();
     select(&GraphView {
         requests,
-        root: None,
+        root: root.map(|prepared| package_view(prepared, Vec::new())),
         packages,
     })
 }

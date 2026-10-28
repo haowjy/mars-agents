@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn schema_and_adapter_placements_agree_for_every_target() {
-        use mars_schema::hooks::{Placement, placement};
+        use mars_schema::hooks::targets::{Placement, placement};
         let registry = TargetRegistry::new();
         for root in [
             ".agents",

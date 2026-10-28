@@ -10,11 +10,12 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::sync::package_dir::PackageDir;
 use crate::target::{HOOK_KEY_PREFIX, HookEntry, HookPlacement, MCP_KEY_PREFIX, TargetAdapter};
 use crate::types::MarsContext;
-use mars_schema::hooks::MergeFragment;
+use mars_schema::hooks::render::Skip;
+use mars_schema::hooks::{MergeOutput, Origin};
 
 /// One selected hook's output for its target, validated and ready to place.
 pub(crate) enum RenderedHook {
-    Merge(MergeFragment),
+    Merge(MergeOutput),
     File { path: String, content: String },
 }
 
@@ -40,15 +41,17 @@ pub(crate) fn preflight_config_entries(
     targeted: &crate::sync::TargetedState,
     diag: &mut DiagnosticCollector,
 ) -> Result<RenderedHooks, crate::error::MarsError> {
-    use crate::compiler::hooks::{load_file_fragment, load_merge_fragment};
+    use crate::compiler::hooks::{load_file_fragment, load_merge_output};
     use crate::error::{ConfigError, MarsError};
     use crate::target::TargetRegistry;
-    use mars_schema::hooks::{Placement, Tokens};
+    use mars_schema::hooks::Tokens;
+    use mars_schema::hooks::targets::{Placement, placement};
 
     let resolved = &targeted.resolved;
     let registry = TargetRegistry::new();
     let mut errors = Vec::new();
     let mut rendered = HashMap::new();
+    let mut reported: HashMap<(String, String), Vec<Skip>> = HashMap::new();
     // Targets whose MCP file / hook files this sync reads: those the old lock
     // has records on, and those with something selected.
     let mut mcp_targets: BTreeSet<String> = BTreeSet::new();
@@ -109,16 +112,23 @@ pub(crate) fn preflight_config_entries(
         let installed = installed_token(ctx, dir);
         let tokens = Tokens {
             hook_dir: &installed,
+            hook_target: target_name,
         };
-        let result = match mars_schema::hooks::placement(target_name) {
-            Some(Placement::Merge { events }) => {
-                load_merge_fragment(item, target_name, events, &tokens).map(|merged| {
+        let result = match placement(target_name) {
+            Some(Placement::Merge { .. }) => {
+                load_merge_output(item, target_name, &tokens).map(|merged| {
                     for event in &merged.unchecked_events {
                         diag.warn("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                     }
                     for event in &merged.skipped_events {
                         diag.warn("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
                     }
+                    if let Some(fragment) = item.fragment(target_name) {
+                        for event in &merged.overrides {
+                            diag.info("hook-fragment-overrides", format!("hook `{}` from `{}`: `{target_name}` fragment `{}` replaces the generated `{event}` entries", item.def.name, item.source_name, fragment.file));
+                        }
+                    }
+                    reported.insert((hook_key(item), target_name.to_owned()), merged.skips.clone());
                     RenderedHook::Merge(merged)
                 })
             }
@@ -146,7 +156,7 @@ pub(crate) fn preflight_config_entries(
                                 "hook `{}` from `{}`: `{target_name}` fragment `{}` {problem}; the fragment will still be installed",
                                 item.def.name,
                                 item.source_name,
-                                item.fragment(target_name).file,
+                                item.fragment(target_name).map_or("", |f| f.file.as_str()),
                             ),
                         );
                     }
@@ -168,6 +178,12 @@ pub(crate) fn preflight_config_entries(
         }
     }
     if errors.is_empty() {
+        report_skips(
+            targeted,
+            &resolved.loaded.effective.settings.managed_targets(),
+            reported,
+            diag,
+        );
         Ok(RenderedHooks(rendered))
     } else {
         Err(MarsError::Config(ConfigError::Invalid {
@@ -176,42 +192,109 @@ pub(crate) fn preflight_config_entries(
     }
 }
 
+/// What a hook's `[hooks]` leaves out, said for every managed target whether or not the hook
+/// was selected there (D10). The project's own hooks warn, each skip once. A dependency's
+/// hooks are the consumer's to accept, not fix: one summary line per sync.
+fn report_skips(
+    targeted: &crate::sync::TargetedState,
+    managed: &[String],
+    mut reported: HashMap<(String, String), Vec<Skip>>,
+    diag: &mut DiagnosticCollector,
+) {
+    let mut seen = BTreeSet::new();
+    let mut from_dependencies = Vec::new();
+    for (_, item) in targeted.target.selected_hooks() {
+        if item.def.portable().is_none() || !seen.insert(hook_key(item)) {
+            continue;
+        }
+        for target in managed {
+            let skips = reported
+                .remove(&(hook_key(item), target.clone()))
+                .unwrap_or_else(|| item.def.skips_for(target));
+            if skips.is_empty() {
+                continue;
+            }
+            let lines: Vec<String> = skips.iter().map(skip_text).collect();
+            match item.origin {
+                Origin::Local => {
+                    for line in lines {
+                        diag.warn(
+                            "hook-event-skipped",
+                            format!("hook `{}`: `{target}` {line}", item.def.name),
+                        );
+                    }
+                }
+                Origin::Dependency => from_dependencies.push(format!(
+                    "{}/{} on `{target}` ({} left out)",
+                    item.source_name,
+                    item.def.name,
+                    lines.len()
+                )),
+            }
+        }
+    }
+    if !from_dependencies.is_empty() {
+        diag.info(
+            "hook-event-skipped",
+            format!(
+                "some events or handlers of dependency hooks have no counterpart on a managed target: {}",
+                from_dependencies.join(", ")
+            ),
+        );
+    }
+}
+
+fn skip_text(skip: &Skip) -> String {
+    match &skip.event {
+        Some(event) => format!("does not run `{event}`: {}", skip.reason),
+        None => format!("gets no generated hooks: {}", skip.reason),
+    }
+}
+
+/// A hook, for grouping what is said about it: its package and name.
+fn hook_key(item: &ParsedHookItem) -> String {
+    format!("{}/{}", item.source_name, item.def.name)
+}
+
 /// Read and lower a plugin build's mergeable hook entries for one target.
 ///
 /// The caller supplies each hook's directory token: the replacement for
-/// `${MARS_HOOK_DIR}` in its native fragment.
+/// `${MARS_HOOK_DIR}` in its native fragment. `${MARS_HOOK_TARGET}` is `plugin` there: the
+/// tree is shared by every harness that reads it.
 pub(crate) fn lower_hook_entries(
     hooks: &[(String, &ParsedHookItem)],
     adapter: &dyn TargetAdapter,
     diag: &mut DiagnosticCollector,
 ) -> Vec<HookEntry> {
     let target_root = adapter.name();
-    let Some(mars_schema::hooks::Placement::Merge {
-        events: known_events,
-    }) = mars_schema::hooks::placement(target_root)
-    else {
+    if !matches!(
+        mars_schema::hooks::targets::placement(target_root),
+        Some(mars_schema::hooks::targets::Placement::Merge { .. })
+    ) {
         return Vec::new();
-    };
-    let mut fragments = Vec::new();
+    }
+    let mut outputs = Vec::new();
     for (dir, item) in hooks {
-        let tokens = mars_schema::hooks::Tokens { hook_dir: dir };
-        match crate::compiler::hooks::load_merge_fragment(item, target_root, known_events, &tokens)
-        {
-            Ok(fragment) => fragments.push((*item, fragment)),
+        let tokens = mars_schema::hooks::Tokens {
+            hook_dir: dir,
+            hook_target: "plugin",
+        };
+        match crate::compiler::hooks::load_merge_output(item, target_root, &tokens) {
+            Ok(output) => outputs.push((*item, output)),
             Err(error) => diag.error("hook-fragment", error.to_string()),
         }
     }
-    let fragments: Vec<_> = fragments
+    let outputs: Vec<_> = outputs
         .iter()
-        .map(|(item, fragment)| (*item, fragment))
+        .map(|(item, output)| (*item, output))
         .collect();
-    lower_merge_fragments(&fragments)
+    lower_merge_fragments(&outputs)
 }
 
 /// Order validated merge fragments deterministically and lower them to one entry per
 /// (hook, event).
 pub(crate) fn lower_merge_fragments(
-    fragments: &[(&ParsedHookItem, &MergeFragment)],
+    fragments: &[(&ParsedHookItem, &MergeOutput)],
 ) -> Vec<HookEntry> {
     let mut contributions = Vec::new();
     for (item, fragment) in fragments {

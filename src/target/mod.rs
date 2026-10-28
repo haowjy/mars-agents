@@ -61,7 +61,7 @@ impl HookEntry {
 }
 
 /// Where a target keeps hooks on disk. Which events or files it accepts is
-/// `mars_schema::hooks::placement`; the two agree per target (pinned by a test).
+/// `mars_schema::hooks::targets::placement`; the two agree per target (pinned by a test).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookPlacement {
     /// Events are appended into `file`, under the target root, after setting the
@@ -135,7 +135,7 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     // -----------------------------------------------------------------------
 
     /// Where this target keeps hooks on disk; `None` when it takes none. What it
-    /// accepts there is `mars_schema::hooks::placement`. MCP servers are
+    /// accepts there is `mars_schema::hooks::targets::placement`. MCP servers are
     /// reconciled by [`mcp_file::reconcile`] from [`Self::mcp_file`].
     fn hook_placement(&self) -> Option<HookPlacement> {
         None

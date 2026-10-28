@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use mars_schema::diagnostic::Severity;
-use mars_schema::hooks::{self, Fragment, HookDef, MergeFragment, Origin, Tokens};
+use mars_schema::hooks::{self, Fragment, HookDef, MergeOutput, Origin, Tokens};
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
@@ -37,12 +37,18 @@ impl ParsedHookItem {
         }
     }
 
-    /// The fragment table this hook declares for `target`. Callers reach a target through
-    /// the hook's selection, so the table exists.
-    pub(crate) fn fragment(&self, target: &str) -> &Fragment {
-        self.def
+    /// The fragment file of a hook selected for a file target, which only a fragment table
+    /// selects.
+    pub(crate) fn fragment_file(&self, target: &str) -> &str {
+        &self
             .fragment(target)
-            .expect("a hook is only handled for targets it declares")
+            .expect("a file target is selected for a hook only by its fragment table")
+            .file
+    }
+
+    /// The fragment table this hook declares for `target`; a `[hooks]`-only hook has none.
+    pub(crate) fn fragment(&self, target: &str) -> Option<&Fragment> {
+        self.def.fragment(target)
     }
 }
 
@@ -180,7 +186,7 @@ fn load_hook_item(
         .filter(|diagnostic| diagnostic.severity == Severity::Warning)
     {
         diag.warn(
-            "hook-unknown-key",
+            diagnostic_code(&diagnostic.code),
             format!(
                 "{}: {}",
                 located(&toml_path, &dir_name, source_name, source),
@@ -223,6 +229,15 @@ fn load_hook_item(
         hook_dir: hook_dir.to_path_buf(),
         origin,
     }))
+}
+
+/// The sync diagnostic code for a schema warning: an unknown event is `hook-event-skipped`,
+/// any other `hook.<name>` is `hook-<name>`.
+fn diagnostic_code(code: &str) -> String {
+    match code {
+        "hook.unknown-event" => "hook-event-skipped".to_owned(),
+        other => other.replace('.', "-"),
+    }
 }
 
 /// Where a `hook.toml` is, for a message: its path for the project's hook, the package,
@@ -271,25 +286,33 @@ fn invalid_manifest(
     ConfigError::Invalid { message }.into()
 }
 
-/// Read and validate a merge-mode fragment of an installed hook.
-pub fn load_merge_fragment(
+/// The events a merge target takes of an installed hook: its `[hooks]` rendered, with its
+/// fragment's events laid over them.
+pub fn load_merge_output(
     item: &ParsedHookItem,
     target_name: &str,
-    known_events: &[&str],
     tokens: &Tokens<'_>,
-) -> Result<MergeFragment, MarsError> {
-    let fragment = item.fragment(target_name);
-    let path = item.hook_dir.join(&fragment.file);
-    let text = read_fragment(&path)?;
-    hooks::merge_fragment(
-        &text,
-        target_name,
-        known_events,
-        fragment,
-        item.origin,
-        tokens,
-    )
-    .map_err(|error| invalid(&path, &error.to_string()))
+) -> Result<MergeOutput, MarsError> {
+    let fragment = item
+        .fragment(target_name)
+        .map(|fragment| {
+            let path = item.hook_dir.join(&fragment.file);
+            read_fragment(&path).map(|text| (path, text))
+        })
+        .transpose()?;
+    item.def
+        .merge_output(
+            target_name,
+            fragment.as_ref().map(|(_, text)| text.as_str()),
+            item.origin,
+            tokens,
+        )
+        .map_err(|error| {
+            let path = fragment
+                .as_ref()
+                .map_or_else(|| item.hook_dir.join("hook.toml"), |(path, _)| path.clone());
+            invalid(&path, &error.to_string())
+        })
 }
 
 /// Load a file-mode fragment and apply the same textual path substitution used
@@ -299,10 +322,9 @@ pub fn load_file_fragment(
     target_name: &str,
     tokens: &Tokens<'_>,
 ) -> Result<String, MarsError> {
-    let fragment = item.fragment(target_name);
-    fragment
-        .reject_unchecked_for_file(target_name)
-        .map_err(|message| invalid(&item.hook_dir.join("hook.toml"), &message))?;
+    let fragment = item
+        .fragment(target_name)
+        .expect("a file target is selected for a hook only by its fragment table");
     let path = item.hook_dir.join(&fragment.file);
     Ok(tokens.substitute(&read_fragment(&path)?))
 }

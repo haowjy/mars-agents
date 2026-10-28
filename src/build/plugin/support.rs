@@ -98,7 +98,7 @@ fn warn_hooks_without_tree_fragment(
     let affected = human_list(&affected);
 
     for hook in exported_hooks {
-        if hook.def.fragment(target_dir).is_some() {
+        if !hook.def.select(&[target_dir.to_owned()]).is_empty() {
             continue;
         }
         diag.warn(

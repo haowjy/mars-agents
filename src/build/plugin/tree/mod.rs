@@ -588,12 +588,12 @@ fn other_hook_fragments(
     hook: &crate::compiler::hooks::ParsedHookItem,
     target_dir: &str,
 ) -> Vec<PathBuf> {
-    let current = &hook.fragment(target_dir).file;
+    let current = hook.fragment(target_dir).map(|fragment| &fragment.file);
     hook.def
         .fragments()
         .filter(|(target, _)| *target != target_dir)
         .map(|(_, fragment)| &fragment.file)
-        .filter(|file| *file != current)
+        .filter(|file| Some(*file) != current)
         .map(PathBuf::from)
         .collect()
 }

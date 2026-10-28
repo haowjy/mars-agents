@@ -37,7 +37,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
 };
 
 fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
-    let fragment = hook.fragment(TARGET_ROOT).file.clone();
+    let fragment = hook.fragment_file(TARGET_ROOT).to_owned();
     let path = hook.hook_dir.join(&fragment);
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
@@ -210,7 +210,7 @@ fn write_package(
         .into_iter()
         .map(|hook| HookData {
             name: hook.def.name.clone(),
-            fragment: hook.fragment(TARGET_ROOT).file.clone(),
+            fragment: hook.fragment_file(TARGET_ROOT).to_owned(),
         })
         .collect();
 

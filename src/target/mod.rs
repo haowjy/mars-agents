@@ -12,8 +12,9 @@
 pub mod agents;
 pub mod claude;
 pub mod codex;
+mod config_doc;
 pub mod cursor;
-mod mcp_doc;
+pub(crate) mod hook_file;
 pub mod mcp_file;
 pub mod opencode;
 pub mod pi;
@@ -23,8 +24,9 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::surface_ownership::retention::{ConfigWrite, RemovalOperation, RemovalReport};
 use crate::types::DestPath;
+pub use config_doc::SectionFormat;
 use mars_schema::item::ItemKind;
-pub use mcp_file::{McpFile, McpFormat, McpLocation};
+pub use mcp_file::{McpFile, McpLocation};
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
@@ -165,104 +167,6 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     ) -> RemovalReport {
         let (_, _) = operation.into_parts(project_root);
         RemovalReport::confirmed()
-    }
-}
-
-pub(crate) fn parse_json_file(path: &Path) -> Result<serde_json::Value, MarsError> {
-    let raw = std::fs::read_to_string(path)?;
-    serde_json::from_str(&raw).map_err(|error| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{} is not valid JSON: {error}", path.display()),
-        })
-    })
-}
-
-pub(crate) fn validate_json_config_file(path: &Path) -> Result<(), MarsError> {
-    if !path.is_file() {
-        return Ok(());
-    }
-    let root = parse_json_file(path)?;
-    let object = root.as_object().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{} is not a JSON object", path.display()),
-        })
-    })?;
-    if let Some(hooks) = object.get("hooks") {
-        let hooks = hooks.as_object().ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{}: hooks is not an object", path.display()),
-            })
-        })?;
-        if let Some((event, _)) = hooks.iter().find(|(_, value)| !value.is_array()) {
-            return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{}: hooks.{event} is not an array", path.display()),
-            }));
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct JsonEventArrayUpdate {
-    pub changed: bool,
-    pub missing: usize,
-}
-
-pub(crate) fn append_json_event_entries(
-    hooks: &mut serde_json::Map<String, serde_json::Value>,
-    event: &str,
-    entries: &[serde_json::Value],
-    path: &Path,
-) -> Result<JsonEventArrayUpdate, MarsError> {
-    if entries.is_empty() {
-        return Ok(JsonEventArrayUpdate {
-            changed: false,
-            missing: 0,
-        });
-    }
-    let event_entries = hooks
-        .entry(event.to_string())
-        .or_insert_with(|| serde_json::json!([]))
-        .as_array_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{}: hooks.{event} is not an array", path.display()),
-            })
-        })?;
-    event_entries.extend(entries.iter().cloned());
-    Ok(JsonEventArrayUpdate {
-        changed: true,
-        missing: 0,
-    })
-}
-
-pub(crate) fn remove_json_event_entries(
-    hooks: &mut serde_json::Map<String, serde_json::Value>,
-    event: &str,
-    expected: &[serde_json::Value],
-) -> JsonEventArrayUpdate {
-    let Some(current) = hooks
-        .get_mut(event)
-        .and_then(serde_json::Value::as_array_mut)
-    else {
-        return JsonEventArrayUpdate {
-            changed: false,
-            missing: expected.len(),
-        };
-    };
-    let mut removed = 0;
-    for entry in expected {
-        if let Some(index) = current.iter().position(|candidate| candidate == entry) {
-            current.remove(index);
-            removed += 1;
-        }
-    }
-    if removed > 0 && current.is_empty() {
-        hooks.remove(event);
-    }
-    JsonEventArrayUpdate {
-        changed: removed > 0,
-        missing: expected.len() - removed,
     }
 }
 

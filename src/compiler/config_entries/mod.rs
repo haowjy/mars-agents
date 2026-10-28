@@ -141,7 +141,7 @@ pub(crate) fn preflight_config_entries(
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
                     errors.push(error);
                 }
-                if let Err(error) = crate::target::validate_json_config_file(&path) {
+                if let Err(error) = crate::target::hook_file::validate(&path) {
                     errors.push(error.to_string());
                 }
             }

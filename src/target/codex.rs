@@ -14,9 +14,7 @@ use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::{HeaderValue, McpTransport};
 use mars_schema::mcp_servers::{McpRender, partition_env};
 
-use super::{
-    HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, McpServerEntry, TargetAdapter,
-};
+use super::{HookFragmentMode, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct CodexAdapter;
@@ -67,7 +65,7 @@ impl TargetAdapter for CodexAdapter {
         if hooks.is_empty() {
             return Ok(());
         }
-        write_hooks_json(&target_dir, &hooks)
+        super::hook_file::write(&target_dir.join("hooks.json"), &hooks, &[])
     }
 
     fn mcp_file(&self) -> Option<McpFile> {
@@ -76,12 +74,12 @@ impl TargetAdapter for CodexAdapter {
             // `.codex/config.toml`, for trusted projects only.
             at: McpLocation {
                 path: ".codex/config.toml",
-                format: McpFormat::TomlTable("mcp_servers"),
+                format: SectionFormat::TomlTable("mcp_servers"),
             },
             // Where mars wrote before. Remove in 0.25.
             legacy: Some(McpLocation {
                 path: ".codex/codex_mcp.json",
-                format: McpFormat::JsonSection("mcpServers"),
+                format: SectionFormat::JsonSection("mcpServers"),
             }),
             render,
         })
@@ -196,43 +194,6 @@ fn render_remote(url: &str, headers: &IndexMap<String, HeaderValue>) -> McpRende
 //   }
 // }
 
-fn write_hooks_json(target_dir: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
-    let path = target_dir.join("hooks.json");
-
-    let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(&path)?
-    } else {
-        serde_json::json!({})
-    };
-
-    let hooks_section = root
-        .as_object_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{} is not a JSON object", path.display()),
-            })
-        })?
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let hooks_map = hooks_section.as_object_mut().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: hooks is not an object", path.display()),
-        })
-    })?;
-
-    for hook in hooks {
-        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, &path)?;
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(&path, content.as_bytes())
-}
-
 fn remove_managed_hook_entries(bindings: &mut Vec<serde_json::Value>, hook_name: &str) -> bool {
     let mut removed = false;
     bindings.retain_mut(|binding| {
@@ -272,7 +233,7 @@ fn remove_owned_codex_hooks(
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> crate::surface_ownership::retention::RemovalReport {
     if let Err(error) =
-        remove_owned_codex_hooks_from_file(records, &target_dir.join("hooks.json"), Some(diag))
+        super::hook_file::remove_recorded(&target_dir.join("hooks.json"), records, ".codex", diag)
     {
         return crate::surface_ownership::retention::RemovalReport::failed(error, records.clone());
     }
@@ -286,96 +247,24 @@ fn remove_owned_codex_hooks(
     if legacy_records.is_empty() {
         return crate::surface_ownership::retention::RemovalReport::confirmed();
     }
-    match remove_owned_codex_hooks_from_file(
-        &legacy_records,
-        &target_dir.join("codex_hooks.json"),
-        None,
-    ) {
+    let names: Vec<&str> = legacy_records
+        .keys()
+        .filter_map(|key| key.strip_prefix(super::HOOK_KEY_PREFIX)?.split_once(':'))
+        .map(|(_, name)| name)
+        .collect();
+    let sweep = |file: &str| {
+        super::hook_file::sweep_events(&target_dir.join(file), |bindings| {
+            names.iter().fold(false, |changed, name| {
+                remove_managed_hook_entries(bindings, name) | changed
+            })
+        })
+    };
+    match sweep("hooks.json").and_then(|()| sweep("codex_hooks.json")) {
         Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
         Err(error) => {
             crate::surface_ownership::retention::RemovalReport::failed(error, legacy_records)
         }
     }
-}
-
-fn remove_owned_codex_hooks_from_file(
-    records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
-    path: &Path,
-    mut diag: Option<&mut crate::diagnostic::DiagnosticCollector>,
-) -> Result<(), MarsError> {
-    if !path.is_file() {
-        return Ok(());
-    }
-    let mut root = super::parse_json_file(path)?;
-    let mut changed = false;
-    if let Some(hooks_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("hooks"))
-        .and_then(|v| v.as_object_mut())
-    {
-        let mut emptied_events = std::collections::BTreeSet::new();
-        for (key, record) in records.iter().filter(|(key, _)| key.starts_with("hook:")) {
-            let Some((event, name)) = key
-                .strip_prefix("hook:")
-                .and_then(|rest| rest.split_once(':'))
-            else {
-                continue;
-            };
-            if let Some(expected) = record
-                .emitted_json
-                .as_deref()
-                .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
-            {
-                let update = super::remove_json_event_entries(hooks_map, event, &expected);
-                changed |= update.changed;
-                if update.missing > 0
-                    && let Some(diag) = diag.as_deref_mut()
-                {
-                    diag.warn(
-                        "config-divergence",
-                        format!(
-                            "config-divergence: managed hook `{name}` diverged in target `.codex` at `{}`; preserving edited config and appending the package entry",
-                            path.display()
-                        ),
-                    );
-                }
-            } else {
-                for (event, value) in hooks_map.iter_mut() {
-                    if let Some(bindings) = value.as_array_mut() {
-                        let before = bindings.len();
-                        changed |= remove_managed_hook_entries(bindings, name);
-                        if before > 0 && bindings.is_empty() {
-                            emptied_events.insert(event.clone());
-                        }
-                    }
-                }
-            }
-        }
-        for event in emptied_events {
-            hooks_map.remove(&event);
-        }
-    }
-    if changed
-        && root
-            .get("hooks")
-            .and_then(|v| v.as_object())
-            .is_some_and(serde_json::Map::is_empty)
-    {
-        root.as_object_mut().unwrap().remove("hooks");
-    }
-    if !changed {
-        return Ok(());
-    }
-    crate::fs::atomic_write(
-        path,
-        serde_json::to_string_pretty(&root)
-            .map_err(|e| {
-                MarsError::Config(crate::error::ConfigError::Invalid {
-                    message: format!("failed to serialize {}: {e}", path.display()),
-                })
-            })?
-            .as_bytes(),
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +275,7 @@ fn remove_owned_codex_hooks_from_file(
 mod tests {
     use super::*;
     use crate::surface_ownership::retention::WritePermit;
+    use crate::target::HookEntry;
     use tempfile::TempDir;
 
     fn make_hook_entry(name: &str, native: &str) -> HookEntry {

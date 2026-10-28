@@ -833,7 +833,7 @@ fn unconfirmed_opencode_legacy_sweep_suppresses_replacement_file_hook() {
         .unwrap();
     project
         .child(".opencode/opencode.json")
-        .write_str("{}")
+        .write_str(r#"{"hooks":{"tool:before":["bash '/cache/hooks/audit/run.sh'"]}}"#)
         .unwrap();
 
     let target_dir = project.child(".opencode");

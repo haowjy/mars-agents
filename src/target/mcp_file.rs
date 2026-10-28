@@ -14,27 +14,18 @@ use std::path::{Path, PathBuf};
 use mars_schema::mcp_servers::{Flavor, McpRender, render};
 use serde_json::Value;
 
-use super::mcp_doc::Doc;
+use super::config_doc::{Doc, SectionFormat};
 use super::{MCP_KEY_PREFIX, McpServerEntry};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::ConfigEntryRecord;
-
-/// How the file holds its MCP servers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum McpFormat {
-    /// A JSON object at this top-level key maps server name to entry.
-    JsonSection(&'static str),
-    /// A TOML table at this top-level key holds one `[key.<name>]` table per server.
-    TomlTable(&'static str),
-}
 
 /// A file and the format of its MCP section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct McpLocation {
     /// Path relative to the project root.
     pub path: &'static str,
-    pub format: McpFormat,
+    pub format: SectionFormat,
 }
 
 /// Where a harness reads MCP servers and how an entry renders there.

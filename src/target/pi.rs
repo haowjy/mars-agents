@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{HookFragmentMode, McpFile, McpFormat, McpLocation, TargetAdapter};
+use super::{HookFragmentMode, McpFile, McpLocation, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct PiAdapter;
@@ -44,7 +44,7 @@ impl TargetAdapter for PiAdapter {
         Some(McpFile {
             at: McpLocation {
                 path: ".pi/mcp.json",
-                format: McpFormat::JsonSection("mcpServers"),
+                format: SectionFormat::JsonSection("mcpServers"),
             },
             legacy: None,
             render: super::mcp_file::claude_render,

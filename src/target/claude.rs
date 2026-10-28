@@ -11,11 +11,11 @@
 /// - Env references: rendered as `${VAR_NAME}` for Claude Desktop config compat
 use std::path::Path;
 
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{HookEntry, HookFragmentMode, McpFile, McpFormat, McpLocation, TargetAdapter};
+use super::{HookEntry, HookFragmentMode, McpFile, McpLocation, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct ClaudeAdapter;
@@ -93,12 +93,12 @@ impl TargetAdapter for ClaudeAdapter {
             // servers; mars does not.
             at: McpLocation {
                 path: ".mcp.json",
-                format: McpFormat::JsonSection("mcpServers"),
+                format: SectionFormat::JsonSection("mcpServers"),
             },
             // Where mars wrote before. Remove in 0.25.
             legacy: Some(McpLocation {
                 path: ".claude/.mcp.json",
-                format: McpFormat::JsonSection("mcpServers"),
+                format: SectionFormat::JsonSection("mcpServers"),
             }),
             render: super::mcp_file::claude_render,
         })
@@ -140,40 +140,7 @@ impl TargetAdapter for ClaudeAdapter {
 /// }
 /// ```
 pub(crate) fn write_hooks_settings(path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
-    let mut root: serde_json::Value = if path.is_file() {
-        super::parse_json_file(path)?
-    } else {
-        serde_json::json!({})
-    };
-
-    let hooks_section = root
-        .as_object_mut()
-        .ok_or_else(|| {
-            MarsError::Config(crate::error::ConfigError::Invalid {
-                message: format!("{} is not a JSON object", path.display()),
-            })
-        })?
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let hooks_map = hooks_section.as_object_mut().ok_or_else(|| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("{}: hooks is not an object", path.display()),
-        })
-    })?;
-
-    for hook in hooks {
-        super::append_json_event_entries(hooks_map, &hook.native_event, &hook.entries, path)?;
-    }
-
-    let content = serde_json::to_string_pretty(&root).map_err(|e| {
-        MarsError::Config(crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize {}: {e}", path.display()),
-        })
-    })?;
-    crate::fs::atomic_write(path, content.as_bytes())?;
-
-    Ok(())
+    super::hook_file::write(path, hooks, &[])
 }
 
 fn remove_owned_claude_hooks(
@@ -181,9 +148,10 @@ fn remove_owned_claude_hooks(
     target_dir: &Path,
     diag: &mut crate::diagnostic::DiagnosticCollector,
 ) -> crate::surface_ownership::retention::RemovalReport {
-    match remove_owned_claude_hooks_from_file(
-        records,
+    match super::hook_file::remove_recorded(
         &target_dir.join("settings.local.json"),
+        records,
+        ".claude",
         diag,
     ) {
         Ok(()) => crate::surface_ownership::retention::RemovalReport::confirmed(),
@@ -191,71 +159,6 @@ fn remove_owned_claude_hooks(
             crate::surface_ownership::retention::RemovalReport::failed(error, records.clone())
         }
     }
-}
-
-fn remove_owned_claude_hooks_from_file(
-    records: &std::collections::BTreeMap<String, crate::lock::ConfigEntryRecord>,
-    path: &Path,
-    diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<(), MarsError> {
-    if !path.is_file() {
-        return Ok(());
-    }
-    let mut root = super::parse_json_file(path)?;
-    let mut changed = false;
-    if let Some(hooks_map) = root
-        .as_object_mut()
-        .and_then(|o| o.get_mut("hooks"))
-        .and_then(|v| v.as_object_mut())
-    {
-        for (key, record) in records.iter().filter(|(key, _)| key.starts_with("hook:")) {
-            let Some((event, name)) = key
-                .strip_prefix("hook:")
-                .and_then(|rest| rest.split_once(':'))
-            else {
-                continue;
-            };
-            let Some(expected) = record
-                .emitted_json
-                .as_deref()
-                .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(json).ok())
-            else {
-                continue;
-            };
-            let update = super::remove_json_event_entries(hooks_map, event, &expected);
-            changed |= update.changed;
-            if update.missing > 0 {
-                diag.warn(
-                    "config-divergence",
-                    format!(
-                        "config-divergence: managed hook `{name}` diverged in target `.claude` at `{}`; preserving edited config and appending the package entry",
-                        path.display()
-                    ),
-                );
-            }
-        }
-    }
-    if changed
-        && root
-            .get("hooks")
-            .and_then(|v| v.as_object())
-            .is_some_and(serde_json::Map::is_empty)
-    {
-        root.as_object_mut().unwrap().remove("hooks");
-    }
-    if !changed {
-        return Ok(());
-    }
-    crate::fs::atomic_write(
-        path,
-        serde_json::to_string_pretty(&root)
-            .map_err(|e| {
-                MarsError::Config(ConfigError::Invalid {
-                    message: format!("failed to serialize {}: {e}", path.display()),
-                })
-            })?
-            .as_bytes(),
-    )
 }
 
 // ---------------------------------------------------------------------------

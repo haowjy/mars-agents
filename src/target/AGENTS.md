@@ -47,7 +47,7 @@ Each adapter declares one `McpFile`: the project-relative path of the file its
 harness reads, the format of the section (`JsonSection(key)` or `TomlTable(key)`),
 and `render`, which turns an `McpServerEntry` into the native value plus
 lossiness. Preflight, the reconcile and the lock record all derive from it
-(`mcp_file.rs`; `mcp_doc.rs` reads and edits either format as JSON values). An
+(`mcp_file.rs`; `config_doc.rs` reads and edits either format as JSON values). An
 adapter that needs a different file or shape changes its spec, nothing else.
 
 - **One call per target**: `mcp_file::reconcile(file, project_root, target, previous, desired,
@@ -75,13 +75,15 @@ adapter that needs a different file or shape changes its spec, nothing else.
   `env_map`/`header_map`/`partition_env` from the codec. `McpRender::lossy` holds full sentences
   everywhere; sync and the plugin tree report them as `mcp-lossy`.
 
-- **Files**: `mcp_doc` holds JSON as `OrderedValue` so a rewrite keeps the user's key order
+- **Files**: `config_doc` holds JSON as `OrderedValue` so a rewrite keeps the user's key order
   (the crate does not enable `serde_json/preserve_order`; that would reorder every JSON
-  output). A symlinked destination is written through to its target, so the link survives.
+  output). A symlinked destination is written through to its target, so the link survives, and
+  an existing file keeps its permissions. Hook config files load, validate and save through the
+  same `JsonDoc` (`hook_file.rs`), so they get the same guarantees.
 
 Hooks do not use the spec: their event-array semantics differ. Hooks are unkeyed array
 elements, so a write cannot replace one in place; they keep the retention plan
-(`surface_ownership::retention`): remove every recorded entry, then append.
+(`surface_ownership::retention`): remove every recorded entry, then append (`hook_file.rs`).
 
 Two entry types flow through lowering:
 - `McpServerEntry { name, transport }` — `transport` is the schema's `McpTransport` (stdio command/args/env, or http url/headers) with symbolic variable names; `${MARS_MCP_DIR}` is already replaced with an absolute path in stdio

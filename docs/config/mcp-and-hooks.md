@@ -35,7 +35,8 @@ project root:
 Mars edits these files in place. Other keys, other servers, and (in
 `.codex/config.toml`) comments and key order survive. Stdio servers are written as
 `{ "command", "args", "env" }`; OpenCode as
-`{ "type": "local", "command": [...], "environment": {...} }`.
+`{ "type": "local", "command": [...], "environment": {...} }`. Remote servers are
+covered under [Remote servers](#remote-servers).
 
 **Codex** forwards an environment variable to the server by name, so
 `env_vars = ["VAR"]` covers an `env` entry whose key equals its variable. A
@@ -161,6 +162,45 @@ MCP servers: every server a dependency makes visible to you is registered
 (all of a direct dependency's servers, and only the `exported` ones of a
 transitive dependency). `exclude` matches agents and skills only, so there is
 currently no way to drop one server from a dependency.
+
+### Remote servers
+
+A server with `url` instead of `command` is a remote server over Streamable HTTP.
+Set exactly one of the two; both or neither is a parse error naming the file.
+
+```toml
+# mcp/cloudflare/mcp.toml
+url = "https://mcp.cloudflare.com/mcp"
+
+# Optional headers: a literal, or a value read from the environment.
+# `prefix` (optional, literal) is written before the variable's value.
+headers = { "X-Region" = "us", Authorization = { from = "env", var = "DOCS_TOKEN", prefix = "Bearer " } }
+```
+
+`args` and `env` belong to `command` servers and `headers` to `url` servers; the
+wrong one is a parse error. `${MARS_MCP_DIR}` is for `command` servers only: in a
+remote server's `url` or headers it is an error, because a remote server has no
+directory and the token would reach the harness unreplaced. Header env refs get
+the same `mcp-env-missing` check as `env`.
+
+| Target | Remote entry | Env header |
+|---|---|---|
+| `.claude` | `{"type": "http", "url", "headers"}` | `prefix${VAR}` |
+| `.cursor` | `{"url", "headers"}` | `prefix${env:VAR}` |
+| `.opencode` | `{"type": "remote", "url", "headers"}` | `prefix{env:VAR}` |
+| `.pi` | `{"url", "headers"}` | `prefix${VAR}` |
+| `.codex` | `url`, `http_headers`, `env_http_headers`, `bearer_token_env_var` | see below |
+
+**Codex** reads a header from the environment whole (`env_http_headers`, no
+prefix). The one prefixed form it has is `bearer_token_env_var`, which Mars writes
+for `Authorization` with `prefix = "Bearer "`. Any other header with a prefix has
+no Codex spelling: sync warns (`mcp-lossy`) and leaves that header out.
+
+There is no SSE: Codex lists `type = "sse"` as Streamable HTTP, Pi rejects it,
+OpenCode has no SSE transport and Claude deprecates it, so `mcp.toml` cannot ask
+for it. **OAuth is the harness's**: Mars writes nothing for it, and each harness
+starts its own flow the first time a server asks (Claude and Codex also need the
+user to approve or log in, as for any project server).
 
 ### Server files (`${MARS_MCP_DIR}`)
 

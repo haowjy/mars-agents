@@ -2557,6 +2557,7 @@ installed_checksum = "sha256:222"
         nodes.insert(
             git_name.clone(),
             ResolvedNode {
+                fetch_url: None,
                 source_name: git_name.clone(),
                 source_id: SourceId::git_with_subpath(
                     git_url.clone(),
@@ -2582,6 +2583,7 @@ installed_checksum = "sha256:222"
         nodes.insert(
             path_name.clone(),
             ResolvedNode {
+                fetch_url: None,
                 source_name: path_name.clone(),
                 source_id: SourceId::Path {
                     canonical: path_canonical.clone(),
@@ -2677,6 +2679,7 @@ installed_checksum = "sha256:222"
         nodes.insert(
             source_name.clone(),
             ResolvedNode {
+                fetch_url: None,
                 source_name: source_name.clone(),
                 source_id: SourceId::git_with_subpath("https://example.com/base.git".into(), None),
                 rooted_ref: crate::resolve::RootedSourceRef {

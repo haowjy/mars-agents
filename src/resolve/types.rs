@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 
 use crate::config::{EffectiveDependency, Manifest};
 use crate::source::ResolvedRef;
-use crate::types::{SourceId, SourceName};
+use crate::types::{SourceId, SourceName, SourceUrl};
 use mars_schema::claude::manifest::PluginSource;
 
 /// The resolved dependency graph — all sources with concrete versions.
@@ -131,7 +131,12 @@ pub struct EngineFallback {
 #[derive(Debug, Clone)]
 pub struct ResolvedNode {
     pub source_name: SourceName,
+    /// Canonical identity: compare it, never fetch with it (scheme and user are stripped).
     pub source_id: SourceId,
+    /// The URL the resolver fetched this git source with, as the entry spelled it. The only locator
+    /// for any git call after resolve (version listing, upgrade check, HEAD lookup). `None` for
+    /// a path source.
+    pub fetch_url: Option<SourceUrl>,
     pub rooted_ref: RootedSourceRef,
     /// Crate-owned semantic preparation result for this authored package.
     pub prepared: std::sync::Arc<mars_schema::prepare::Prepared>,

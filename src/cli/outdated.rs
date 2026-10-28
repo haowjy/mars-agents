@@ -105,13 +105,13 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
                 continue;
             }
         };
-        let crate::types::SourceId::Git { url, .. } = &node.source_id else {
+        let Some(fetch_url) = &node.fetch_url else {
             continue;
         };
 
         if versions.is_empty() {
             // Untagged repo — compare locked commit vs current HEAD
-            let current_head = crate::source::git::ls_remote_head(url.as_ref())
+            let current_head = crate::source::git::ls_remote_head(fetch_url.as_ref())
                 .map(|sha| {
                     if sha.len() >= 12 {
                         sha[..12].to_string()

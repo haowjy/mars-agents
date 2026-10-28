@@ -868,6 +868,7 @@ mod tests {
             nodes.insert(
                 name.into(),
                 ResolvedNode {
+                    fetch_url: None,
                     source_name: name.into(),
                     source_id: if let Some(u) = url {
                         SourceId::git_with_subpath(crate::types::SourceUrl::from(u), None)
@@ -956,6 +957,7 @@ mod tests {
     fn graph_node(name: &str, deps: &[&str]) -> ResolvedNode {
         let root = PathBuf::from(format!("/tmp/{name}"));
         ResolvedNode {
+            fetch_url: None,
             source_name: name.into(),
             source_id: SourceId::Path {
                 canonical: root.clone(),

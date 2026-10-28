@@ -14,13 +14,20 @@ pub fn with_default_scheme(url: &str) -> String {
     }
 }
 
-/// A filesystem path or `file:` URL, which never takes a scheme: `/abs`, `./rel`, `../up`, `~/x`,
-/// a drive letter (`C:/x`, `C:\x`).
+/// A filesystem path or `file:` URL, which never takes a scheme. Git's own rule: with a colon, it
+/// is local only if a `/` comes before the first one (`./a:b`, `~/x:y`) or it opens with a drive
+/// letter (`C:/x`, `C:\x`); so `~user@host:repo` is SSH. Without a colon, a leading `/`, `.` or `~`.
 fn is_local_path(url: &str) -> bool {
     let bytes = url.as_bytes();
-    url.starts_with(['/', '.', '~'])
-        || url.starts_with("file:")
+    if url.starts_with("file:")
         || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+    {
+        return true;
+    }
+    match url.split_once(':') {
+        Some((before_colon, _)) => before_colon.contains('/'),
+        None => url.starts_with(['/', '.', '~']),
+    }
 }
 
 /// Git's scp-like SSH form: `user@host:path` whatever the path (`git@host:/srv/repo.git` included),
@@ -374,6 +381,9 @@ mod tests {
             "github.com:org/repo",
             "example.com:123team/repo",
             "host:~user/repo",
+            "~user@host:repo",
+            "./a:b",
+            "~/x:y",
             "[::1]:8080/org/repo.git",
             "localhost:8080/repo",
             "C:/x/repo.d",
@@ -412,6 +422,7 @@ mod tests {
             "example.com:123team/repo",
             "host:/srv/repo.git",
             "host:~user/repo",
+            "~user@host:repo",
         ] {
             assert!(is_ssh_shorthand(url), "{url}");
         }
@@ -421,6 +432,8 @@ mod tests {
             "@host:org/repo",
             "ssh://git@host/org/repo",
             "/srv/repo:x",
+            "./a:b",
+            "~/x:y",
             "C:/x",
             "\\\\?\\C:\\x",
             "file:/x",

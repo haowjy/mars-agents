@@ -176,6 +176,7 @@ mod tests {
     fn resolved_node(name: &str, deps: &[&str], with_models: bool) -> ResolvedNode {
         let canonical = PathBuf::from(format!("/tmp/{name}"));
         ResolvedNode {
+            fetch_url: None,
             source_name: name.into(),
             source_id: SourceId::Path {
                 canonical: canonical.clone(),

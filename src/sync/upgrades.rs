@@ -26,16 +26,19 @@ pub(crate) fn check_upgrade(
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<Option<UpgradeCheck>, MarsError> {
-    let SourceId::Git {
-        url,
-        subpath,
-        plugin: None,
-    } = &node.source_id
+    let (
+        Some(fetch_url),
+        SourceId::Git {
+            subpath,
+            plugin: None,
+            ..
+        },
+    ) = (&node.fetch_url, &node.source_id)
     else {
         return Ok(None);
     };
     let name = &node.source_name;
-    let available = provider.list_versions(url)?;
+    let available = provider.list_versions(fetch_url)?;
     let constraints: Vec<(&str, &Constraint)> = graph
         .version_constraints
         .get(name)
@@ -46,7 +49,7 @@ pub(crate) fn check_upgrade(
     let candidate = match node.resolved_ref.version.as_ref() {
         Some(resolved) => upgrade_candidate(
             name,
-            url,
+            fetch_url,
             subpath.as_ref(),
             &available,
             Some(resolved),

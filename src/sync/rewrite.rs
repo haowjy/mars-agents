@@ -466,6 +466,7 @@ mod tests {
         nodes.insert(
             SourceName::from(source_name),
             crate::resolve::ResolvedNode {
+                fetch_url: None,
                 source_name: source_name.into(),
                 source_id: SourceId::Path {
                     canonical: root.to_path_buf(),
@@ -712,6 +713,7 @@ mod tests {
         nodes.insert(
             SourceName::from("source-a"),
             crate::resolve::ResolvedNode {
+                fetch_url: None,
                 source_name: "source-a".into(),
                 source_id: SourceId::Path {
                     canonical: dir.path().to_path_buf(),

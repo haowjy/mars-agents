@@ -93,6 +93,15 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     report
         .warnings
         .extend(requires_mars_warning(&prepared, &lens));
+    let requires_mars = lens
+        .manifest
+        .as_ref()
+        .and_then(|config| config.package.as_ref())
+        .map(|package| package.requires_mars.as_deref());
+    let (hook_errors, hook_warnings) =
+        crate::compiler::hooks::check_hooks(&authored_base, requires_mars, &mut publish_diag)?;
+    report.errors.extend(hook_errors);
+    report.warnings.extend(hook_warnings);
     report
         .warnings
         .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);

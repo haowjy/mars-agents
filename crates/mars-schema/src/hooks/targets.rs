@@ -140,6 +140,10 @@ pub fn placement(target_root: &str) -> Option<Placement> {
     }
 }
 
+/// The targets that render a `[hooks]` table today. OpenCode and Pi join when their
+/// generated TypeScript lands; Cursor in 0.26.
+pub const PORTABLE_TARGETS: &[&str] = &[".claude", ".codex"];
+
 /// The harness version the target's table was last verified against.
 pub fn verified_against(target_root: &str) -> Option<&'static str> {
     match target_root {

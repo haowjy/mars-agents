@@ -53,6 +53,7 @@ impl TargetAdapter for ClaudeAdapter {
         Some(HookPlacement::Merge {
             file: "settings.local.json",
             top_level: &[],
+            trust_gated: false,
         })
     }
 }

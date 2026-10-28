@@ -263,6 +263,10 @@ pub(crate) fn compile_config_entries(
         };
     }
 
+    // Codex skips a hook it has not been told to trust, keyed on its position in the file;
+    // `hooks.json` before this sync is what the user last reviewed.
+    let trust_before = trust_snapshots(ctx, &registry, &target_roots);
+
     // A target whose hook entries equal what the lock records, and whose file still holds
     // them, is left alone: removing and re-appending them would rewrite the file and move
     // entries (Codex keys its trust on entry position). A file that lost or edited an entry
@@ -380,7 +384,60 @@ pub(crate) fn compile_config_entries(
             .or_default()
             .extend(records);
     }
+    warn_untrusted(
+        &trust_before,
+        &trust_snapshots(ctx, &registry, &target_roots),
+        diag,
+    );
     compiled
+}
+
+/// Per trust-gated target root: its hook file's display path and handler positions.
+type TrustSnapshots = BTreeMap<String, (String, crate::target::hook_file::TrustPositions)>;
+
+/// The handler positions of each managed target whose harness gates hooks on trust.
+fn trust_snapshots(
+    ctx: &MarsContext,
+    registry: &TargetRegistry,
+    target_roots: &[String],
+) -> TrustSnapshots {
+    target_roots
+        .iter()
+        .filter_map(|root| {
+            let Some(HookPlacement::Merge {
+                file,
+                trust_gated: true,
+                ..
+            }) = registry.get(root)?.hook_placement()
+            else {
+                return None;
+            };
+            let positions =
+                crate::target::hook_file::trust_positions(&ctx.project_root.join(root).join(file));
+            Some((root.clone(), (format!("{root}/{file}"), positions)))
+        })
+        .collect()
+}
+
+/// Say which hooks the harness will skip until the user trusts them again (D10).
+fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut DiagnosticCollector) {
+    for (root, (file, positions)) in after {
+        let Some((_, previous)) = before.get(root) else {
+            continue;
+        };
+        let changed = crate::target::hook_file::untrusted_positions(previous, positions);
+        if changed.is_empty() {
+            continue;
+        }
+        diag.warn(
+            "codex-hooks-need-trust",
+            format!(
+                "`{file}` has {} new or moved hook handler(s) ({}); `{root}` skips them until you review them in its `/hooks` screen",
+                changed.len(),
+                changed.join(", ")
+            ),
+        );
+    }
 }
 
 /// Remove the hook entries `operation` names. Shared by sync and `mars unlink`.
@@ -528,7 +585,10 @@ fn apply_replacement_writes(
             continue;
         };
         let keys: Vec<String> = write.hooks().iter().map(HookEntry::key).collect();
-        let Some(HookPlacement::Merge { file, top_level }) = adapter.hook_placement() else {
+        let Some(HookPlacement::Merge {
+            file, top_level, ..
+        }) = adapter.hook_placement()
+        else {
             continue;
         };
         let (target_dir, hooks) = write.into_parts(&ctx.project_root);

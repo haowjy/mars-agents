@@ -112,6 +112,45 @@ pub(crate) fn holds_recorded(path: &Path, records: &BTreeMap<String, ConfigEntry
     })
 }
 
+/// `(event, matcher group, handler)` → what sits there; see [`trust_positions`].
+pub(crate) type TrustPositions = BTreeMap<(String, usize, usize), Value>;
+
+/// Where a handler sits in a hook file and what it is: `(event, matcher group, handler)` →
+/// the group's matcher and the handler. Codex keys its trust on exactly this, so an entry
+/// that moves or changes must be reviewed again. Empty when the file is missing or unreadable.
+pub(crate) fn trust_positions(path: &Path) -> TrustPositions {
+    let Ok(Some(doc)) = load(path) else {
+        return BTreeMap::new();
+    };
+    let mut positions = BTreeMap::new();
+    for (event, groups) in doc.section().into_iter().flatten() {
+        let OrderedValue::Array(groups) = groups else {
+            continue;
+        };
+        for (g, group) in groups.iter().enumerate() {
+            let group = group.to_json();
+            let handlers = group.get("hooks").and_then(Value::as_array);
+            for (h, handler) in handlers.into_iter().flatten().enumerate() {
+                positions.insert(
+                    (event.clone(), g, h),
+                    serde_json::json!([group.get("matcher"), handler]),
+                );
+            }
+        }
+    }
+    positions
+}
+
+/// The positions in `after` that hold something `before` did not: a new handler, or one that
+/// moved or changed. A handler that only went away needs no new trust.
+pub(crate) fn untrusted_positions(before: &TrustPositions, after: &TrustPositions) -> Vec<String> {
+    after
+        .iter()
+        .filter(|(position, content)| before.get(*position) != Some(*content))
+        .map(|((event, group, handler), _)| format!("{event}[{group}][{handler}]"))
+        .collect()
+}
+
 /// Remove the entries `records` say mars wrote, wherever they still equal what
 /// was recorded; an entry that has changed is left, with a warning, and the
 /// package entry is appended beside it. The file is saved only if something went.
@@ -278,7 +317,8 @@ mod tests {
             registry.get(".claude").unwrap().hook_placement(),
             Some(HookPlacement::Merge {
                 file: "settings.local.json",
-                top_level: &[]
+                top_level: &[],
+                trust_gated: false,
             })
         );
     }

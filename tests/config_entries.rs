@@ -12,5 +12,7 @@ mod merge_hooks;
 mod migrations;
 #[path = "config_entries/ownership.rs"]
 mod ownership;
+#[path = "config_entries/portable_hooks.rs"]
+mod portable_hooks;
 #[path = "config_entries/support.rs"]
 mod support;

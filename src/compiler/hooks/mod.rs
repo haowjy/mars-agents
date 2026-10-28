@@ -339,3 +339,57 @@ fn invalid(path: &Path, message: &str) -> MarsError {
         message: format!("{}: {message}", path.display()),
     })
 }
+
+/// The first Mars that reads `[hooks]`; older ones reject the whole `hook.toml` and, with it,
+/// the sync.
+const PORTABLE_HOOKS_MARS_FLOOR: &str = "0.25.0";
+
+/// What `mars check` says about a package's own hooks: `(errors, warnings)`. The author can
+/// fix every one, so a hook that renders nowhere or loses a handler is a warning, not a note.
+pub(crate) fn check_hooks(
+    package_root: &Path,
+    requires_mars: Option<Option<&str>>,
+    diag: &mut DiagnosticCollector,
+) -> Result<(Vec<String>, Vec<String>), MarsError> {
+    let items = match discover_hook_items(
+        package_root,
+        "this package",
+        HookSource::Project,
+        0,
+        0,
+        diag,
+    ) {
+        Ok(items) => items,
+        Err(error) => return Ok((vec![error_message(error)], Vec::new())),
+    };
+    let mut warnings = Vec::new();
+    for item in &items {
+        let Some(portable) = item.def.portable() else {
+            continue;
+        };
+        let name = &item.def.name;
+        if let Some(requirement) = requires_mars {
+            warnings.extend(mars_schema::package::requires_mars_floor_warning(
+                requirement,
+                PORTABLE_HOOKS_MARS_FLOOR,
+                &format!("hook `{name}` uses `[hooks]`, which a Mars before {PORTABLE_HOOKS_MARS_FLOOR} rejects, failing the whole sync"),
+            ));
+        }
+        for event in portable.conditions_on_non_tool_events() {
+            warnings.push(format!(
+                "hook `{name}`: `if` on `{event}` never matches: Claude does not run a handler with `if` on a non-tool event"
+            ));
+        }
+        // Only the targets that render `[hooks]` today have a reason an author can act on;
+        // OpenCode, Pi and Cursor report "not rendered yet" at sync.
+        for target in mars_schema::hooks::targets::PORTABLE_TARGETS {
+            for skip in item.def.skips_for(target) {
+                warnings.push(format!(
+                    "hook `{name}`: `{target}` {}",
+                    crate::compiler::config_entries::render::skip_text(&skip)
+                ));
+            }
+        }
+    }
+    Ok((Vec::new(), warnings))
+}

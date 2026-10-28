@@ -43,6 +43,7 @@ impl TargetAdapter for CursorAdapter {
         Some(HookPlacement::Merge {
             file: "hooks.json",
             top_level: HOOKS_TOP_LEVEL,
+            trust_gated: false,
         })
     }
 }

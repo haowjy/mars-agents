@@ -244,7 +244,7 @@ fn report_skips(
     }
 }
 
-fn skip_text(skip: &Skip) -> String {
+pub(crate) fn skip_text(skip: &Skip) -> String {
     match &skip.event {
         Some(event) => format!("does not run `{event}`: {}", skip.reason),
         None => format!("gets no generated hooks: {}", skip.reason),

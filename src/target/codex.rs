@@ -48,6 +48,7 @@ impl TargetAdapter for CodexAdapter {
         Some(HookPlacement::Merge {
             file: "hooks.json",
             top_level: &[],
+            trust_gated: true,
         })
     }
 }

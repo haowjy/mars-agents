@@ -69,6 +69,9 @@ pub enum HookPlacement {
     Merge {
         file: &'static str,
         top_level: &'static [(&'static str, i64)],
+        /// The harness skips hooks it has not been told to trust, keyed on their position in
+        /// `file` (Codex): a sync that moves or adds one says so.
+        trust_gated: bool,
     },
     /// Each output is a whole file in `dir`, under the target root.
     File { dir: &'static str },

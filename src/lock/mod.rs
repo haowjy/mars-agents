@@ -1505,6 +1505,7 @@ mod tests {
         )));
     }
 
+    #[cfg(unix)]
     #[test]
     fn directory_output_with_nested_dangling_symlink_has_no_checksum() {
         use std::os::unix::fs::symlink;

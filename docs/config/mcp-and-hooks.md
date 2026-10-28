@@ -174,12 +174,14 @@ url = "https://mcp.cloudflare.com/mcp"
 
 # Optional headers: a literal, or a value read from the environment.
 # `prefix` (optional, literal) is written before the variable's value.
+# A literal containing `${…}` or `{env:…}` is written as-is; Claude, Cursor, Pi and OpenCode
+# expand it at runtime, Codex does not.
 headers = { "X-Region" = "us", Authorization = { from = "env", var = "DOCS_TOKEN", prefix = "Bearer " } }
 ```
 
 `args` and `env` belong to `command` servers and `headers` to `url` servers; the
-wrong one is a parse error. `${MARS_MCP_DIR}` is for `command` servers only: in a
-remote server's `url` or headers it is an error, because a remote server has no
+wrong one is ignored with an `mcp-ignored-field` warning. `${MARS_MCP_DIR}` is for `command` servers only: anywhere in a
+remote server's `url` or headers (including a `prefix`) it is a parse error, because a remote server has no
 directory and the token would reach the harness unreplaced. Header env refs get
 the same `mcp-env-missing` check as `env`.
 
@@ -188,7 +190,7 @@ the same `mcp-env-missing` check as `env`.
 | `.claude` | `{"type": "http", "url", "headers"}` | `prefix${VAR}` |
 | `.cursor` | `{"url", "headers"}` | `prefix${env:VAR}` |
 | `.opencode` | `{"type": "remote", "url", "headers"}` | `prefix{env:VAR}` |
-| `.pi` | `{"url", "headers"}` | `prefix${VAR}` |
+| `.pi` | `{"type": "http", "url", "headers"}` | `prefix${VAR}` |
 | `.codex` | `url`, `http_headers`, `env_http_headers`, `bearer_token_env_var` | see below |
 
 **Codex** reads a header from the environment whole (`env_http_headers`, no

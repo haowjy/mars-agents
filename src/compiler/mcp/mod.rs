@@ -8,10 +8,14 @@
 /// - Preserve env references symbolically (mars never resolves secrets)
 /// - Warn (or error under `--strict`) when an env var is absent at sync time
 /// - Provide parsed MCP items for per-target collision resolution
-/// - Produce `MarsTargetMcpEntry` per target for adapter config writing
+/// - Lower each item to a `McpServerEntry { name, transport }` per target for
+///   adapter config writing
 use std::path::Path;
 
-use mars_schema::mcp_server::{HeaderValue, McpServerDef, McpTransport, parse_mcp_toml};
+pub(crate) use mars_schema::mcp_server::MCP_DIR_TOKEN;
+use mars_schema::mcp_server::{
+    HeaderValue, McpServerDef, McpTransport, ParsedMcpToml, parse_mcp_toml,
+};
 
 use crate::compiler::visibility::Visibility;
 use crate::diagnostic::DiagnosticCollector;
@@ -86,24 +90,23 @@ pub(crate) fn discover_mcp_items(
             .to_string_lossy();
 
         let raw = std::fs::read_to_string(&toml_path).map_err(MarsError::from)?;
-        let def = parse_mcp_toml(&raw).map_err(|e| {
+        let ParsedMcpToml {
+            def,
+            ignored_fields,
+        } = parse_mcp_toml(&raw).map_err(|e| {
             MarsError::Config(ConfigError::Invalid {
                 message: format!("failed to parse {}: {e}", toml_path.display()),
             })
         })?;
         let resolved_name = def.name.as_deref().unwrap_or(&server_name).to_string();
-        if let McpTransport::Http { url, headers } = &def.transport
-            && (url.contains(MCP_DIR_TOKEN)
-                || headers.values().any(
-                    |value| matches!(value, HeaderValue::Literal(text) if text.contains(MCP_DIR_TOKEN)),
-                ))
-        {
-            return Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "{}: {MCP_DIR_TOKEN} applies only to a server with `command`; a remote server has no directory",
+        for field in ignored_fields {
+            diag.warn(
+                "mcp-ignored-field",
+                format!(
+                    "{}: `{field}` does not apply to this server's transport and is ignored",
                     toml_path.display()
                 ),
-            }));
+            );
         }
         let visibility = Visibility::parse(
             &def.visibility,
@@ -215,7 +218,7 @@ pub fn check_env_refs(
             McpTransport::Http { headers, .. } => headers
                 .iter()
                 .filter_map(|(key, value)| match value {
-                    HeaderValue::Env { var, .. } => Some((key.as_str(), var.as_str())),
+                    HeaderValue::Env { env, .. } => Some((key.as_str(), env.var_name())),
                     HeaderValue::Literal(_) => None,
                 })
                 .collect(),
@@ -240,9 +243,6 @@ pub fn check_env_refs(
 // ---------------------------------------------------------------------------
 // Target lowering
 // ---------------------------------------------------------------------------
-
-/// The authored placeholder for the directory an MCP server's files are installed in.
-pub(crate) const MCP_DIR_TOKEN: &str = "${MARS_MCP_DIR}";
 
 fn substitute_mcp_dir(text: &str, mcp_dir: &str) -> String {
     text.replace(MCP_DIR_TOKEN, mcp_dir)

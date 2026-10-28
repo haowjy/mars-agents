@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use indexmap::IndexMap;
-use mars_schema::mcp_server::{HeaderValue, McpTransport};
+use mars_schema::mcp_server::{EnvRef, HeaderValue, McpTransport};
 use serde_json::Value;
 
 use super::mcp_doc::Doc;
@@ -69,13 +69,13 @@ impl McpRender {
 }
 
 /// An `mcpServers`-family entry. Claude, Cursor and Pi share it and differ only
-/// in the interpolation and in whether a remote entry names its `type`:
+/// in the interpolation and in whether a remote entry names `"type": "http"`:
 /// stdio is `{ command, args, env: { KEY: <var> } }`, remote is
 /// `{ url, headers: { NAME: <prefix><var> } }`.
 pub(super) fn servers_entry(
     server: &McpServerEntry,
     interpolate: impl Fn(&str) -> String,
-    http_type: Option<&str>,
+    typed_http: bool,
 ) -> Value {
     match &server.transport {
         McpTransport::Stdio { command, args, env } => {
@@ -93,8 +93,8 @@ pub(super) fn servers_entry(
         }
         McpTransport::Http { url, headers } => {
             let mut entry = serde_json::json!({ "url": url });
-            if let Some(kind) = http_type {
-                entry["type"] = kind.into();
+            if typed_http {
+                entry["type"] = "http".into();
             }
             insert_headers(&mut entry, headers, interpolate);
             entry
@@ -117,7 +117,9 @@ pub(crate) fn insert_headers(
         .map(|(name, value)| {
             let text = match value {
                 HeaderValue::Literal(text) => text.clone(),
-                HeaderValue::Env { var, prefix } => format!("{prefix}{}", interpolate(var)),
+                HeaderValue::Env { env, prefix } => {
+                    format!("{prefix}{}", interpolate(env.var_name()))
+                }
             };
             (name.clone(), Value::String(text))
         })
@@ -130,25 +132,23 @@ pub(crate) fn braced(var: &str) -> String {
     format!("${{{var}}}")
 }
 
-/// Pi's entry: the `mcpServers` shape, remote servers without a `type`.
+/// The entry Claude and Pi share: `${VAR}` references, remote servers typed `http`.
 pub(super) fn braced_render(server: &McpServerEntry) -> McpRender {
-    McpRender::exact(servers_entry(server, braced, None))
+    McpRender::exact(servers_entry(server, braced, true))
 }
 
 /// Split a stdio server's env by whether a harness can forward it by name:
 /// `key == variable` is `forwarded`, anything else is `renamed` as
-/// `(key, variable)`. A remote server has no env.
-pub(crate) fn partition_env(server: &McpServerEntry) -> (Vec<&str>, Vec<(&str, &str)>) {
+/// `(key, variable)`.
+pub(crate) fn partition_env(env: &IndexMap<String, EnvRef>) -> (Vec<&str>, Vec<(&str, &str)>) {
     let mut forwarded = Vec::new();
     let mut renamed = Vec::new();
-    if let McpTransport::Stdio { env, .. } = &server.transport {
-        for (key, env_ref) in env {
-            let variable = env_ref.var_name();
-            if key == variable {
-                forwarded.push(variable);
-            } else {
-                renamed.push((key.as_str(), variable));
-            }
+    for (key, env_ref) in env {
+        let variable = env_ref.var_name();
+        if key == variable {
+            forwarded.push(variable);
+        } else {
+            renamed.push((key.as_str(), variable));
         }
     }
     (forwarded, renamed)

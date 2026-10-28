@@ -243,7 +243,7 @@ fn render(server: &McpServerEntry) -> McpRender {
     McpRender::exact(super::mcp_file::servers_entry(
         server,
         |var| format!("${{env:{var}}}"),
-        None,
+        false,
     ))
 }
 

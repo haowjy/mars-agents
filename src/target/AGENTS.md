@@ -64,11 +64,14 @@ adapter that needs a different file or shape changes its spec, nothing else.
   `RemovalPlan` pre-removes only these records (the one arm in `surface_ownership::retention`
   to delete with the legacy cleanup), so a changed record with content is never removed before
   its write. Delete the `legacy` specs one release after they ship.
-- The Claude plugin tree has its own renderer (`build/plugin/tree/claude.rs`), which differs
-  only in `env_vars` for same-name references; it shares `mcp_file::partition_env` with Codex.
-  `McpRender::lossy` holds full sentences everywhere.
-- `mcp_file::stdio_entry` is the `mcpServers`-family entry builder (Claude, Cursor, Pi); Claude
-  and Pi share `braced_render`.
+- The Claude plugin tree has its own renderer (`build/plugin/tree/claude.rs`): it adds
+  `env_vars` for same-name stdio references (sharing `mcp_file::partition_env` with Codex) and
+  writes remote servers as `type: http` with `${VAR}` headers, which Codex passes literally (a
+  lossy warning). `McpRender::lossy` holds full sentences everywhere.
+- `mcp_file::servers_entry` is the `mcpServers`-family entry builder (Claude, Cursor, Pi) for
+  both transports; `insert_headers` writes a remote server's `headers`. Claude and Pi share
+  `braced_render` (`${VAR}`, remote typed `http`); Cursor passes `typed_http: false` because it
+  is not known to accept `type`. Codex renders remote servers itself (`render_remote`).
 
 - **Files**: `mcp_doc` holds JSON as `OrderedValue` so a rewrite keeps the user's key order
   (the crate does not enable `serde_json/preserve_order`; that would reorder every JSON
@@ -77,7 +80,7 @@ adapter that needs a different file or shape changes its spec, nothing else.
 Hooks do not use the spec: their event-array semantics differ.
 
 Two entry types flow through adapters:
-- `McpServerEntry` — name, command, args, env (symbolic variable names); `${MARS_MCP_DIR}` is already replaced with an absolute path
+- `McpServerEntry { name, transport }` — `transport` is the schema's `McpTransport` (stdio command/args/env, or http url/headers) with symbolic variable names; `${MARS_MCP_DIR}` is already replaced with an absolute path in stdio
 - `HookEntry` — hook name, native event name, and an opaque `Vec<Value>` of entries (post-substitution); structural removal matches these exact entries by JSON equality
 
 The permit and removal token are sealed proofs issued by `surface_ownership::retention`; adapter removals cannot bypass outcome recording, and config writes cannot bypass suppression.

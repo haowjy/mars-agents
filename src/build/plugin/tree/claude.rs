@@ -65,9 +65,9 @@ fn write_config_entries(
 /// harness `render`s, because the shared file needs `env_vars` alongside `env`.
 fn render_plugin_mcp(server: &McpServerEntry) -> McpRender {
     let (entry, lossy) = match &server.transport {
-        McpTransport::Stdio { command, args, .. } => {
+        McpTransport::Stdio { command, args, env } => {
             let mut entry = serde_json::json!({ "command": command, "args": args });
-            let (forwarded, renamed) = partition_env(server);
+            let (forwarded, renamed) = partition_env(env);
             if !renamed.is_empty() {
                 entry["env"] = renamed
                     .iter()
@@ -94,9 +94,12 @@ fn render_plugin_mcp(server: &McpServerEntry) -> McpRender {
             let lossy = headers
                 .iter()
                 .filter_map(|(name, value)| match value {
-                    HeaderValue::Env { var, .. } => Some(format!(
-                        "Codex 0.164.0 passes `${{{var}}}` literally instead of reading `{var}`, so header `{name}` is not set from it."
-                    )),
+                    HeaderValue::Env { env, .. } => {
+                        let var = env.var_name();
+                        Some(format!(
+                            "Codex 0.164.0 passes `${{{var}}}` literally instead of reading `{var}`, so header `{name}` is not set from it."
+                        ))
+                    }
                     HeaderValue::Literal(_) => None,
                 })
                 .collect();

@@ -118,9 +118,9 @@ impl TargetAdapter for CodexAdapter {
 
 fn render(server: &McpServerEntry) -> McpRender {
     match &server.transport {
-        McpTransport::Stdio { command, args, .. } => {
+        McpTransport::Stdio { command, args, env } => {
             let mut entry = serde_json::json!({ "command": command, "args": args });
-            let (forwarded, renamed) = super::mcp_file::partition_env(server);
+            let (forwarded, renamed) = super::mcp_file::partition_env(env);
             if !forwarded.is_empty() {
                 entry["env_vars"] = serde_json::json!(forwarded);
             }
@@ -154,16 +154,17 @@ fn render_remote(url: &str, headers: &IndexMap<String, HeaderValue>) -> McpRende
             HeaderValue::Literal(text) => {
                 literals.insert(name.clone(), text.as_str().into());
             }
-            HeaderValue::Env { var, prefix } if prefix.is_empty() => {
-                from_env.insert(name.clone(), var.as_str().into());
+            HeaderValue::Env { env, prefix } if prefix.is_empty() => {
+                from_env.insert(name.clone(), env.var_name().into());
             }
-            HeaderValue::Env { var, prefix }
+            HeaderValue::Env { env, prefix }
                 if name.eq_ignore_ascii_case("authorization") && prefix == "Bearer " =>
             {
-                entry["bearer_token_env_var"] = var.as_str().into();
+                entry["bearer_token_env_var"] = env.var_name().into();
             }
-            HeaderValue::Env { var, prefix } => lossy.push(format!(
-                "Codex reads header `{name}` from `{var}` whole and cannot prepend `{prefix}`; `{name}` is not set for the server."
+            HeaderValue::Env { env, prefix } => lossy.push(format!(
+                "Codex reads header `{name}` from `{}` whole and cannot prepend `{prefix}`; `{name}` is not set for the server.",
+                env.var_name()
             )),
         }
     }

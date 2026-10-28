@@ -1,6 +1,6 @@
 # src/routing/ — Harness Candidate Evaluation
 
-Single candidate evaluator for harness selection. 4 files + `.context/`, ~2200 lines.
+Single candidate evaluator for harness selection. 5 files + `.context/`, ~2200 lines.
 
 ## Mental Model
 
@@ -15,6 +15,7 @@ RoutingInput → evaluate_candidates() → RoutingTrace → accept_route() → d
 | File | Responsibility |
 |---|---|
 | `mod.rs` | Evaluator: `RoutingInput` → `RoutingTrace` |
+| `known_providers.rs` | Providers Mars has observed (catalog, cached probe listings, native); warns on unknown `provider_order` entries, silent while data is pending |
 | `slug.rs` | Borrowed slug parsing, normalized matching |
 | `acceptance.rs` | Policy layer: `MatchPolicy`, `RejectionReason` |
 | `report.rs` | Serialization DTO: `RouteDecisionReport` |

@@ -61,6 +61,14 @@ impl CachedPiProbeOutcome {
     }
 }
 
+/// Return the cached Pi probe result if usable, even when stale.
+///
+/// This helper is read-only and never triggers a probe refresh.
+pub fn read_cached_probe_result_usable() -> Option<PiProbeResult> {
+    let entry = read_cache_tolerant()?;
+    entry.result.filter(|result| is_usable_result(Some(result)))
+}
+
 fn should_probe_pi(installed: &HashSet<String>, is_offline: bool) -> bool {
     !is_offline && installed.contains("pi")
 }

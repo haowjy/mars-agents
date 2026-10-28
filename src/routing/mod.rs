@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 pub mod acceptance;
 pub mod evidence;
+pub mod known_providers;
 pub mod probe_match;
 pub mod report;
 pub mod slug;
@@ -384,8 +385,11 @@ where
     P: ProbeResolver + ?Sized,
 {
     let mut diagnostics = Vec::new();
-    let provider_order =
-        parse_settings_provider_order(input.settings_provider_order, &mut diagnostics);
+    let provider_order = parse_settings_provider_order(input.settings_provider_order);
+    diagnostics.extend(known_providers::unknown_provider_order_warnings(
+        &provider_order,
+        input.catalog_model_slugs.unwrap_or_default(),
+    ));
     let default_harness =
         normalize_config_default_harness(input.config_default_harness, &mut diagnostics);
     let constrained = !matches!(input.harness_scope, HarnessScope::Unrestricted)
@@ -988,45 +992,13 @@ fn match_evidence_for_match(provider_constraint: Option<&str>) -> MatchEvidence 
     }
 }
 
-fn parse_settings_provider_order(
-    provider_order: Option<&[String]>,
-    diagnostics: &mut Vec<String>,
-) -> Vec<String> {
-    let Some(provider_order) = provider_order else {
-        return Vec::new();
-    };
-
+fn parse_settings_provider_order(provider_order: Option<&[String]>) -> Vec<String> {
     provider_order
+        .unwrap_or_default()
         .iter()
-        .filter_map(|provider| {
-            let normalized = provider.trim().to_ascii_lowercase();
-            if normalized.is_empty() {
-                return None;
-            }
-            if !is_known_provider_or_variant(&normalized) {
-                diagnostics.push(format!(
-                    "settings.provider_order contains unknown provider `{provider}`; keeping it for forward-compat routing preferences"
-                ));
-            }
-            Some(normalized)
-        })
+        .map(|provider| provider.trim().to_ascii_lowercase())
+        .filter(|provider| !provider.is_empty())
         .collect()
-}
-
-fn is_known_provider_or_variant(provider: &str) -> bool {
-    matches!(
-        provider,
-        "anthropic"
-            | "openai"
-            | "google"
-            | "meta"
-            | "mistral"
-            | "deepseek"
-            | "cohere"
-            | "openrouter"
-            | "openai-codex"
-            | "anthropic-claude"
-    )
 }
 
 fn effective_provider_for_order(input: &RoutingInput<'_>) -> Option<String> {
@@ -1816,10 +1788,6 @@ mod tests {
 
         assert_eq!(trace.harness, "opencode");
         assert_eq!(trace.match_evidence, MatchEvidence::Confirmed);
-        assert!(trace.diagnostics.iter().any(|diagnostic| {
-            diagnostic
-                .contains("settings.provider_order contains unknown provider `future-provider`")
-        }));
     }
 
     #[test]

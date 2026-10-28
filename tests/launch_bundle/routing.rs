@@ -1,7 +1,9 @@
 // qa-validated: harness-order-settings-audit
 // qa-validated: capability-cache-resolver-routing-gaps
 
-use super::common::{selected_attempt, setup_bundle_project};
+use super::common::{
+    install_fake_harnesses, replace_path_with, selected_attempt, setup_bundle_project,
+};
 use crate::test_common::{API_PATH, fresh_fetched_at, mars_cmd, sample_catalog_json, write_cache};
 use assert_fs::TempDir;
 use assert_fs::fixture::PathChild;
@@ -16,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[test]
 fn build_launch_bundle_cli_model_override_uses_provider_harness_before_profile_harness() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["claude", "codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -71,7 +73,7 @@ model = "gpt-5""#;
 #[test]
 fn build_launch_bundle_uses_alias_provider_when_auto_resolve_misses_model_cache() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex", "pi"]);
     let agent_content = r#"---
 name: reviewer
 model: openai_alias
@@ -112,7 +114,7 @@ fn build_launch_bundle_model_source_precedence_cli_then_profile_then_settings() 
     ];
     for (harness, profile_model, cli_model, default_model, token, source) in cases {
         let temp = TempDir::new().unwrap();
-        let bin_dir = install_fake_harnesses(&temp, &[harness]);
+        let bin_dir = install_fake_harnesses(temp.path(), &[harness]);
         let model_line = profile_model
             .map(|m| format!("model: {m}\n"))
             .unwrap_or_default();
@@ -141,7 +143,7 @@ fn build_launch_bundle_pi_harness_resolves_qualified_harness_model() {
     // A bare and a provider-qualified `--model` both reach the same Pi slug.
     for model_arg in ["gpt-5.4-mini", "openai-codex/gpt-5.4-mini"] {
         let temp = TempDir::new().unwrap();
-        let bin_dir = install_fake_harnesses(&temp, &["pi"]);
+        let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
         let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -183,7 +185,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_invalid_settings_default_harness_warns_and_falls_back_to_default() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -234,7 +236,7 @@ default_harness = "invalid-harness""#;
 #[test]
 fn build_launch_bundle_uses_settings_harness_order_before_default_harness() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -311,7 +313,7 @@ default_harness = "claude""#;
 #[test]
 fn build_launch_bundle_local_settings_harness_order_overrides_project_order() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -358,7 +360,7 @@ harness_order = ["codex", "pi"]"#,
 #[test]
 fn build_launch_bundle_fails_when_local_settings_cannot_parse() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -388,7 +390,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_rejects_legacy_lock_missing_dependency_alias_authority() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -494,7 +496,7 @@ model = "gpt-5.4-mini""#;
 #[test]
 fn build_launch_bundle_nested_slug_model_id_does_not_flatten_into_bare_match() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: gptmini
@@ -561,7 +563,7 @@ model = "gpt-5.4-mini""#;
 #[test]
 fn build_launch_bundle_cli_harness_override_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode", "codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "opencode", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -626,7 +628,7 @@ harness_order = ["pi", "opencode"]"#;
 #[test]
 fn build_launch_bundle_profile_harness_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["claude", "codex", "opencode"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex", "opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -682,7 +684,7 @@ harness_order = ["codex", "opencode"]"#;
 #[test]
 fn build_launch_bundle_alias_harness_beats_settings_harness_order() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode", "codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "opencode", "codex"]);
     let agent_content = r#"---
 name: reviewer
 model: bundlealias
@@ -745,7 +747,7 @@ harness = "codex""#;
 #[test]
 fn build_launch_bundle_all_invalid_harness_order_warns_and_falls_through_to_default_harness() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -795,7 +797,7 @@ default_harness = "pi""#;
 #[test]
 fn build_launch_bundle_resolves_harness_model_from_cached_opencode_probe() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -887,7 +889,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_google_model_prefers_pi_and_never_gemini_harness() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "gemini"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "gemini"]);
     let agent_content = r#"---
 name: reviewer
 model: gemini-2.5-pro
@@ -919,7 +921,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_builtin_gemini_model_alias_resolves_to_google_model_and_pi_harness() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "gemini"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "gemini"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -969,7 +971,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_cursor_effort_probe_unavailable_errors_with_probe_message() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
 
     let server = MockServer::start();
     server.mock(|when, then| {
@@ -1128,7 +1130,7 @@ Review code changes."#;
 #[test]
 fn build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5.4-mini
@@ -1181,7 +1183,7 @@ targets = [".opencode", ".agents"]"#;
 #[test]
 fn build_launch_bundle_model_policy_fallback_uses_linked_harness() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt55
@@ -1241,7 +1243,7 @@ model = "claude-opus-4-6""#;
 #[test]
 fn build_launch_bundle_model_policy_fallback_walks_chain() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt55
@@ -1288,7 +1290,7 @@ model = "claude-opus-4-6""#;
 #[test]
 fn build_launch_bundle_model_policy_fallback_exhaustion_errors() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt55
@@ -1327,7 +1329,7 @@ model = "gpt-5.4-mini""#;
 #[test]
 fn build_launch_bundle_cli_model_override_does_not_apply_model_policy_fallback() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["claude"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
     let agent_content = r#"---
 name: reviewer
 model: sonnet
@@ -1372,7 +1374,7 @@ model = "claude-opus-4-6""#;
 #[test]
 fn build_launch_bundle_settings_default_harness_accepts_case_insensitive_name() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt-5
@@ -1411,7 +1413,7 @@ default_harness = "Pi""#;
 #[test]
 fn build_launch_bundle_synthesizes_opencode_model_when_cache_missing() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["opencode"]);
     let agent_content = r#"---
 name: reviewer
 model: gpt5
@@ -1462,7 +1464,7 @@ model = "gpt-5""#;
 #[test]
 fn build_launch_bundle_overlay_model_overrides_profile_model() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -1497,7 +1499,7 @@ model = "gpt55""#;
 #[test]
 fn build_launch_bundle_local_overlay_replaces_base_scalars_by_name() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["codex", "pi"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["codex", "pi"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -1550,7 +1552,7 @@ model = "gptmini""#,
 #[test]
 fn overlay_pi_preference_stops_before_native_auth() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "codex"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "codex"]);
     let agent_content = "---\nname: reviewer\nmodel: gpt-5\n---\nReview code changes.";
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
@@ -1623,103 +1625,42 @@ provider = "openai""#;
     );
 }
 
-fn install_fake_harnesses(temp: &TempDir, harnesses: &[&str]) -> PathBuf {
-    let bin_dir = temp.path().join("harness-bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-
-    for harness in harnesses {
-        #[cfg(windows)]
-        {
-            let script = if *harness == "pi" {
-                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai-codex gpt-5.4-mini\r\n  echo openai-codex gpt-5.5\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
-            } else if *harness == "opencode" {
-                "@echo off\r\nif \"%~1\"==\"models\" (\r\n  echo openai/gpt-5\r\n  echo openai/gpt-5.4-mini\r\n  echo openai/gpt-5.5\r\n  echo anthropic/claude-opus-4-6\r\n  echo anthropic/claude-opus-4-7\r\n  echo google/gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
-            } else if *harness == "cursor" {
-                "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n  echo gpt-5.4-mini - OpenAI\r\n  echo gpt-5.5 - OpenAI\r\n  echo gpt-5.5-high - OpenAI\r\n  echo gpt-5.5-low - OpenAI\r\n  echo gpt-5.5-turbo-high - OpenAI\r\n  echo claude-opus-4-7 - Anthropic\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
-            } else {
-                "@echo off\r\nexit /b 0\r\n"
-            };
-            fs::write(bin_dir.join(format!("{harness}.bat")), script).unwrap();
-        }
-        #[cfg(not(windows))]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let path = bin_dir.join(harness);
-            let script = if *harness == "pi" {
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai-codex gpt-5.4-mini' \\\n    'openai-codex gpt-5.5' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
-            } else if *harness == "opencode" {
-                "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' \\\n    'openai/gpt-5' \\\n    'openai/gpt-5.4-mini' \\\n    'openai/gpt-5.5' \\\n    'anthropic/claude-opus-4-6' \\\n    'anthropic/claude-opus-4-7' \\\n    'google/gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
-            } else if *harness == "cursor" {
-                "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'gpt-5.4-mini - OpenAI' \\\n    'gpt-5.5 - OpenAI' \\\n    'gpt-5.5-high - OpenAI' \\\n    'gpt-5.5-low - OpenAI' \\\n    'gpt-5.5-turbo-high - OpenAI' \\\n    'claude-opus-4-7 - Anthropic'\n  exit 0\nfi\nexit 0\n"
-            } else {
-                "#!/bin/sh\nexit 0\n"
-            };
-            fs::write(&path, script).unwrap();
-            let mut perms = fs::metadata(&path).unwrap().permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(path, perms).unwrap();
-        }
-    }
-
-    bin_dir
-}
-
+/// The common fake harnesses, except that the named `codex`/`claude` fail their auth check.
 fn install_fake_harnesses_with_auth_failures(
     temp: &TempDir,
     harnesses: &[&str],
     auth_failures: &[&str],
 ) -> PathBuf {
-    let bin_dir = temp.path().join("harness-bin-auth");
-    fs::create_dir_all(&bin_dir).unwrap();
-
-    for harness in harnesses {
-        let fail_auth = auth_failures.contains(harness);
+    let bin_dir = install_fake_harnesses(temp.path(), harnesses);
+    for harness in harnesses.iter().filter(|h| auth_failures.contains(h)) {
+        let (win, unix) = match *harness {
+            "codex" => (
+                "@echo off\r\nif \"%~1 %~2\"==\"login status\" exit /b 1\r\nexit /b 0\r\n",
+                "#!/bin/sh\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then\n  exit 1\nfi\nexit 0\n",
+            ),
+            "claude" => (
+                "@echo off\r\nif \"%~1 %~2\"==\"auth status\" exit /b 1\r\nexit /b 0\r\n",
+                "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then\n  exit 1\nfi\nexit 0\n",
+            ),
+            other => panic!("no auth-failure script for {other}"),
+        };
         #[cfg(windows)]
         {
-            let script = if *harness == "pi" {
-                "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai-codex gpt-5.4-mini\r\n  echo openai-codex gpt-5.5\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
-            } else if *harness == "opencode" {
-                "@echo off\r\nif \"%~1\"==\"models\" (\r\n  echo openai/gpt-5\r\n  echo openai/gpt-5.4-mini\r\n  echo openai/gpt-5.5\r\n  echo anthropic/claude-opus-4-6\r\n  echo anthropic/claude-opus-4-7\r\n  echo google/gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
-            } else if *harness == "cursor" {
-                "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n  echo gpt-5.4-mini - OpenAI\r\n  echo gpt-5.5 - OpenAI\r\n  echo gpt-5.5-high - OpenAI\r\n  echo gpt-5.5-low - OpenAI\r\n  echo gpt-5.5-turbo-high - OpenAI\r\n  echo claude-opus-4-7 - Anthropic\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
-            } else if fail_auth && *harness == "codex" {
-                "@echo off\r\nif \"%~1 %~2\"==\"login status\" exit /b 1\r\nexit /b 0\r\n"
-            } else if fail_auth && *harness == "claude" {
-                "@echo off\r\nif \"%~1 %~2\"==\"auth status\" exit /b 1\r\nexit /b 0\r\n"
-            } else {
-                "@echo off\r\nexit /b 0\r\n"
-            };
-            fs::write(bin_dir.join(format!("{harness}.bat")), script).unwrap();
+            let _ = unix;
+            fs::write(bin_dir.join(format!("{harness}.bat")), win).unwrap();
         }
         #[cfg(not(windows))]
         {
             use std::os::unix::fs::PermissionsExt;
-            let script = if *harness == "pi" {
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai-codex gpt-5.4-mini' \\\n    'openai-codex gpt-5.5' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
-            } else if *harness == "opencode" {
-                "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' \\\n    'openai/gpt-5' \\\n    'openai/gpt-5.4-mini' \\\n    'openai/gpt-5.5' \\\n    'anthropic/claude-opus-4-6' \\\n    'anthropic/claude-opus-4-7' \\\n    'google/gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
-            } else if *harness == "cursor" {
-                "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'gpt-5.4-mini - OpenAI' \\\n    'gpt-5.5 - OpenAI' \\\n    'gpt-5.5-high - OpenAI' \\\n    'gpt-5.5-low - OpenAI' \\\n    'gpt-5.5-turbo-high - OpenAI' \\\n    'claude-opus-4-7 - Anthropic'\n  exit 0\nfi\nexit 0\n"
-            } else if fail_auth && *harness == "codex" {
-                "#!/bin/sh\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then\n  exit 1\nfi\nexit 0\n"
-            } else if fail_auth && *harness == "claude" {
-                "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then\n  exit 1\nfi\nexit 0\n"
-            } else {
-                "#!/bin/sh\nexit 0\n"
-            };
+            let _ = win;
             let path = bin_dir.join(harness);
-            fs::write(&path, script).unwrap();
+            fs::write(&path, unix).unwrap();
             let mut perms = fs::metadata(&path).unwrap().permissions();
             perms.set_mode(0o755);
             fs::set_permissions(path, perms).unwrap();
         }
     }
-
     bin_dir
-}
-
-fn replace_path_with(bin_dir: &Path) -> String {
-    bin_dir.to_string_lossy().into_owned()
 }
 
 fn install_fake_harnesses_with_custom_opencode_models(
@@ -1727,7 +1668,7 @@ fn install_fake_harnesses_with_custom_opencode_models(
     harnesses: &[&str],
     opencode_models: &[&str],
 ) -> PathBuf {
-    let bin_dir = install_fake_harnesses(temp, harnesses);
+    let bin_dir = install_fake_harnesses(temp.path(), harnesses);
     if harnesses.contains(&"opencode") {
         write_opencode_models_harness(&bin_dir, opencode_models);
     }

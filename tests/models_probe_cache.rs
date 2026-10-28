@@ -12,7 +12,7 @@ use tempfile::TempDir;
 use common::fresh_fetched_at;
 
 fn mars_cmd() -> Command {
-    Command::cargo_bin("mars").unwrap()
+    common::mars()
 }
 
 fn write_mars_toml(dir: &Path, content: &str) {

@@ -126,7 +126,7 @@ from the graph plus direct dependency order.
 ## Publish lens
 
 `PublishLens` prepares the authored root and builds the consumer-facing config from normalized
-manifest bytes. It ignores `mars.local.toml` and clears local dependencies. Plugin and check graph
+manifest bytes. It ignores `mars.local.toml` and the user `config.toml`, and clears local dependencies. Plugin and check graph
 resolution use the same source provider and prepared-node path as sync.
 
 ## Version Policy

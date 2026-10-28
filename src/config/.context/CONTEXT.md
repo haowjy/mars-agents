@@ -8,7 +8,7 @@ Config loading, schema, and routing config boundaries.
 |---|---|
 | `mod.rs` | `mars.toml` schema (`Settings`, `Config`), load/save, `EffectiveConfig` |
 | `layering.rs` | Project/local replacement plus permission-set composition |
-| `user.rs` | Restricted user `config.toml` network tier and ignored-key warnings |
+| `user.rs` | The user `config.toml`, parsed as a `LocalConfig` (lowest layer); rejects `[overrides]`, drops and warns on `managed_root`, `targets` and `min_mars_version` |
 | `targets.rs` | Link normalization — raw target strings → typed `NormalizedLink` / `EffectiveLinks` |
 | `routing_settings.rs` | Raw `Settings` → typed routing input with shared diagnostics |
 | `migrations/link.rs` | Legacy link normalization (historical compat for old config forms) |

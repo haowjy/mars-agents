@@ -69,6 +69,30 @@ OpenCode's default allow, unless the agent's own `permission` denies them. Permi
 translated to the plugin API's spellings (`bash` → `shell`, `task` → `subagent`, `write` and
 `patch` → `edit`). The agent's `mode` defaults to `all` so the `subagent` tool can spawn it.
 
+An OpenCode agent gets a model only when its `model:` names an alias in the package's own
+`[models]` that sets `harness = "opencode"` and a fixed `model` with a provider prefix:
+
+```toml
+# mars.toml
+[models.oc-sonnet]
+harness = "opencode"
+model = "anthropic/claude-sonnet-4-5"
+```
+
+```yaml
+# agents/reviewer.md frontmatter
+model: oc-sonnet
+```
+
+Any other `model:` (an alias the package doesn't define, an alias with `match` patterns instead
+of a fixed `model`, an id without a provider prefix, an alias for another harness) registers
+the agent without a model, and OpenCode runs it on the user's default model. The build reports
+this as a `plugin-model-default` info diagnostic, not a warning. This is deliberate: the same
+model may reach a user through Anthropic, OpenRouter, opencode-go or another provider, and Mars
+can't know which one that user has. An agent's `model-policies` fallbacks are not applied in
+the plugin either; Meridian evaluates them when it launches the agent, and a plugin loaded by
+OpenCode alone has no Meridian.
+
 ## MCP server files
 
 A server may ship its own files beside `mcp.toml` and name them with

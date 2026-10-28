@@ -11,7 +11,7 @@ persist only the user's config mutation.
 The pipeline is implemented as typed phase functions in `src/sync/mod.rs`. Each phase consumes the prior phase's output struct by value (move semantics, no cloning).
 
 ```
-mars.toml + mars.local.toml
+user config.toml + mars.toml + mars.local.toml
         │
         ▼
 ┌─────────────────┐
@@ -80,7 +80,7 @@ A `DiagnosticCollector` is threaded through all phases. No `eprintln!` in librar
 
 ### 1. Load Config (`load_config`)
 
-Acquires `.mars/sync.lock` via advisory file locking, then loads `mars.toml` and `mars.local.toml`. If the command includes a mutation and `mars.toml` doesn't exist, an empty config is created (auto-init for `mars add` on a fresh project).
+Acquires `.mars/sync.lock` via advisory file locking, then loads `mars.toml`, `mars.local.toml` and the user `config.toml` (`$MARS_CONFIG_DIR/config.toml`, else the platform `mars/config.toml`). If the command includes a mutation and `mars.toml` doesn't exist, an empty config is created (auto-init for `mars add` on a fresh project).
 
 Under the sync lock, applies the command's mutation atomically:
 
@@ -94,7 +94,7 @@ Under the sync lock, applies the command's mutation atomically:
 
 For `UpsertDependency`, filter replacement is atomic: if any filter field is present in the new entry, the entire filter config replaces the existing one. If no filter fields are set (e.g., version bump only), existing filters are preserved.
 
-Then merges `mars.toml` with `mars.local.toml` overrides into `EffectiveConfig`. For each dependency:
+Then folds the layers into `EffectiveConfig`, lowest first: user `config.toml`, `mars.toml`, then `mars.local.toml` (`config::layering::compose_layers`). For each dependency:
 
 - Validates `url` XOR `path` (exactly one required)
 - Validates filter combinations (see [configuration.md](../config/mars-toml.md#filter-mode-rules))

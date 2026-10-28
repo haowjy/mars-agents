@@ -159,25 +159,21 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
         }
     });
 
-    let provider_order = settings.provider_order.as_ref().map(|order| ParsedProviderOrder {
-        providers: order
-            .iter()
-            .filter_map(|provider| {
-                let normalized = provider.trim().to_ascii_lowercase();
-                if normalized.is_empty() {
-                    return None;
-                }
-                if !is_known_provider_or_variant(&normalized) {
-                    diagnostics.push(RoutingConfigDiagnostic {
-                        message: format!(
-                            "settings.provider_order contains unknown provider `{provider}`; keeping it for forward-compat routing preferences"
-                        ),
-                    });
-                }
-                Some(normalized)
-            })
-            .collect(),
-    });
+    let provider_order = settings
+        .provider_order
+        .as_ref()
+        .map(|order| ParsedProviderOrder {
+            providers: order
+                .iter()
+                .filter_map(|provider| {
+                    let normalized = provider.trim().to_ascii_lowercase();
+                    if normalized.is_empty() {
+                        return None;
+                    }
+                    Some(normalized)
+                })
+                .collect(),
+        });
 
     let harness_scope = settings.effective_links().harness_scope();
 
@@ -189,22 +185,6 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
         target_source: Default::default(),
         diagnostics,
     }
-}
-
-fn is_known_provider_or_variant(provider: &str) -> bool {
-    matches!(
-        provider,
-        "anthropic"
-            | "openai"
-            | "google"
-            | "meta"
-            | "mistral"
-            | "deepseek"
-            | "cohere"
-            | "openrouter"
-            | "openai-codex"
-            | "anthropic-claude"
-    )
 }
 
 #[cfg(test)]

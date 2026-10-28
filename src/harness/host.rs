@@ -306,6 +306,38 @@ impl CapabilitySession {
         }
     }
 
+    /// Providers Mars has observed, for `provider_order` warnings; `None` while pending.
+    /// Reads only outcomes already loaded for routing or listing: a diagnostic must never
+    /// trigger a probe. A harness whose outcome isn't loaded counts as never probed.
+    pub fn known_providers(
+        &mut self,
+        provider_order: &[String],
+        catalog_slugs: &[String],
+    ) -> Option<HashSet<String>> {
+        use crate::harness::known_providers::{ProbeListing, known_providers};
+        if provider_order.is_empty() {
+            return None;
+        }
+        let mut probes = Vec::new();
+        if self.installed.contains(HarnessId::OpenCode.as_str()) {
+            probes.push(match self.loaded_opencode_outcome() {
+                None | Some(CachedProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
+                Some(CachedProbeOutcome::Failed(_)) => ProbeListing::Failed,
+                Some(outcome) => ProbeListing::Listed(outcome.result()?.model_slugs.clone()),
+            });
+        }
+        if self.installed.contains(HarnessId::Pi.as_str()) {
+            probes.push(match self.loaded_pi_outcome() {
+                None | Some(CachedPiProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
+                Some(CachedPiProbeOutcome::Failed(_)) => ProbeListing::Failed,
+                Some(outcome) => {
+                    ProbeListing::Listed(outcome.result()?.model_slugs.iter().cloned().collect())
+                }
+            });
+        }
+        known_providers(catalog_slugs, &probes)
+    }
+
     pub fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
         self.opencode_outcome().result().cloned()
     }

@@ -1,4 +1,5 @@
 mod common;
+mod isolated;
 
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
@@ -7,6 +8,7 @@ use std::fs;
 use toml::Value;
 
 use common::*;
+use isolated::mars;
 
 #[test]
 fn full_pipeline_with_local_package_and_custom_target() {

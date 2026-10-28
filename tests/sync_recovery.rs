@@ -392,45 +392,6 @@ fn dependency_rename_to_custom_canonical_path_survives_interrupted_apply() {
 }
 
 #[test]
-fn interrupted_destination_move_preserves_old_claim_until_removal() {
-    let dir = TempDir::new().unwrap();
-    let config = |dest: &str| {
-        format!(
-            "[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={{muse='{dest}/muse.md'}}\n"
-        )
-    };
-    dir.child("mars.toml").write_str(&config("old")).unwrap();
-    dir.child("source/mars.toml")
-        .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
-        .unwrap();
-    dir.child("source/agents/muse.md")
-        .write_str("# Muse\n")
-        .unwrap();
-    sync(dir.path()).assert().success();
-    let old_lock = fs::read(dir.path().join("mars.lock")).unwrap();
-    dir.child("mars.toml").write_str(&config("new")).unwrap();
-    dir.child(".mars-src/skills/craft/SKILL.md")
-        .write_str("# Craft\n")
-        .unwrap();
-    dir.child(".mars/skills")
-        .write_str("obstruction\n")
-        .unwrap();
-    sync(dir.path()).assert().failure();
-    assert!(dir.path().join(".mars/new/muse.md").is_file());
-    assert!(dir.path().join(".mars/old/muse.md").is_file());
-    assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), old_lock);
-    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
-    sync(dir.path()).assert().success();
-    assert!(!dir.path().join(".mars/old/muse.md").exists());
-    let recovered = lock::load(dir.path()).unwrap();
-    assert!(recovered.contains_output(".mars", "new/muse.md"));
-    assert!(!recovered.contains_output(".mars", "old/muse.md"));
-    let bytes = fs::read(dir.path().join("mars.lock")).unwrap();
-    sync(dir.path()).assert().success();
-    assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), bytes);
-}
-
-#[test]
 fn recovered_install_replaces_pending_deletion_for_the_same_path() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
@@ -491,6 +452,10 @@ fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
             sync(dir.path()).assert().failure();
             assert!(dir.path().join(format!(".mars/{dest}/muse.md")).is_file());
             assert_eq!(fs::read(dir.path().join("mars.lock")).ok(), old_lock);
+            if established {
+                // The committed destination stays on disk until the move completes.
+                assert!(dir.path().join(".mars/committed/muse.md").is_file());
+            }
         }
         fs::remove_file(dir.path().join(".mars/skills")).unwrap();
         sync(dir.path()).assert().success();

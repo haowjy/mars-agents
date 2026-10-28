@@ -170,3 +170,134 @@ fn resync_without_changes_leaves_the_merge_file_untouched() {
         before
     );
 }
+
+/// A dependency hook `hooks/protect` that installs as `guard` for `.codex`.
+fn write_renamed_guard(source: &assert_fs::fixture::ChildPath, manifest: &str) {
+    write_hook(source, "protect", manifest);
+    write_fragment(
+        source,
+        "protect",
+        "codex.json",
+        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"printf guard"}]}]}"#,
+    );
+}
+
+const RENAMED: &str = "name = \"guard\"\nvisibility = \"exported\"\n[targets.\".codex\"]\n";
+
+#[test]
+fn a_renamed_dependency_hook_stays_kept_when_its_toml_stops_parsing() {
+    let dir = TempDir::new().unwrap();
+    let (project, source) = project_with_dependency(&dir, "\".codex\"");
+    write_renamed_guard(&source, RENAMED);
+    sync(&project).success();
+    let installed = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
+    assert!(installed.contains("printf guard"));
+
+    write_renamed_guard(&source, &format!("{RENAMED}[[[broken\n"));
+    for _ in 0..2 {
+        sync(&project)
+            .success()
+            .stderr(predicate::str::contains(
+                "keeping what the last sync installed",
+            ))
+            .stderr(predicate::str::contains("never installed").not());
+        assert_eq!(
+            fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap(),
+            installed
+        );
+    }
+}
+
+#[test]
+fn a_dependency_fragment_that_stops_loading_keeps_the_install_and_names_the_package() {
+    let dir = TempDir::new().unwrap();
+    let (project, source) = project_with_dependency(&dir, "\".codex\"");
+    write_guard(
+        &source,
+        VALID
+            .replace("[targets.\".opencode\"]\nfragment = \"plugin.ts\"\n", "")
+            .as_str(),
+    );
+    sync(&project).success();
+    let installed = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
+
+    // A fragment of the wrong shape, then one that is gone.
+    for broken in [Some(r#"{"Stop": {}}"#), None] {
+        match broken {
+            Some(text) => write_fragment(&source, "guard", "codex.json", text),
+            None => fs::remove_file(source.child("hooks/guard/codex.json").path()).unwrap(),
+        }
+        sync(&project)
+            .success()
+            .stderr(predicate::str::contains(
+                "source package `tool`, hook `guard`, `codex.json`",
+            ))
+            .stderr(predicate::str::contains(
+                "keeping what the last sync installed",
+            ))
+            .stderr(predicate::str::contains(".staging").not());
+        assert_eq!(
+            fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap(),
+            installed
+        );
+    }
+}
+
+#[test]
+fn the_projects_own_fragment_that_does_not_load_still_fails_the_sync() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".codex\"]\n")
+        .unwrap();
+    write_hook(&project, "mine", "[targets.\".codex\"]\n");
+    write_fragment(&project, "mine", "codex.json", r#"{"Stop": {}}"#);
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains("must be an array"));
+}
+
+#[test]
+fn an_invalid_dependency_hook_the_consumer_excludes_is_removed_and_not_reported() {
+    let dir = TempDir::new().unwrap();
+    let (project, source) = project_with_dependency(&dir, "\".codex\"");
+    write_guard(&source, "visibility = \"exported\"\n[targets.\".codex\"]\n");
+    sync(&project).success();
+    assert!(
+        fs::read_to_string(project.child(".codex/hooks.json").path())
+            .unwrap()
+            .contains("printf guard")
+    );
+
+    write_guard(
+        &source,
+        "visibility = \"exported\"\n[targets.\".codex\"]\nbogus = 1\n",
+    );
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\n[dependencies]\ntool = {{ path = \"{}\", exclude = [\"guard\"] }}\n",
+            portable_path(source.path())
+        ))
+        .unwrap();
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("hook-invalid-kept").not())
+        .stderr(predicate::str::contains("keeping").not());
+    assert!(
+        !fs::read_to_string(project.child(".codex/hooks.json").path())
+            .map(|text| text.contains("printf guard"))
+            .unwrap_or(false)
+    );
+    project
+        .child(".codex/hooks/guard")
+        .assert(predicate::path::missing());
+
+    // A hook the dependency does not export is never the consumer's to hear about.
+    write_hook(&source, "internal", "[targets.\".codex\"]\nbogus = 1\n");
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("internal").not());
+}

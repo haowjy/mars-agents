@@ -53,14 +53,67 @@ pub enum HookSource<'a> {
     Dependency { version: &'a str },
 }
 
-/// A `hook.toml` that failed validation. `error` carries its location; `name` is the hook's
-/// name when the file said one, else its directory's.
+/// A dependency hook that failed validation. `error` carries its location.
+///
+/// What the file says about itself is read leniently, since it may not parse: the last
+/// install is found from it, but a kept hook is only ever one the old lock installed.
 #[derive(Debug)]
 pub struct InvalidHook {
-    pub name: String,
+    /// What selection knows the hook by (see `discover::hook_slug`).
+    pub slug: String,
+    /// The names the last sync may have installed it under: the `name` the file still
+    /// declares, then its directory's. A hook is found by the first one the lock holds.
+    pub installed_names: Vec<String>,
+    /// The file still declares `visibility = "exported"`: a hook that is not exported was
+    /// not installed for this consumer.
+    pub exported: bool,
     pub error: MarsError,
     /// The file is in the schema Mars 0.11 removed.
     pub removed_schema: bool,
+}
+
+impl InvalidHook {
+    /// A `hook.toml` that does not read.
+    fn unreadable(text: &str, dir_name: &str, error: MarsError, removed_schema: bool) -> Self {
+        let mut installed_names: Vec<String> = declared(text, "name").into_iter().collect();
+        installed_names.push(dir_name.to_owned());
+        installed_names.dedup();
+        Self {
+            slug: crate::discover::hook_slug(text, dir_name),
+            installed_names,
+            exported: declared(text, "visibility").as_deref() == Some("exported"),
+            error,
+            removed_schema,
+        }
+    }
+
+    /// A hook that read but fails to render.
+    fn unrenderable(item: &ParsedHookItem, error: MarsError) -> Self {
+        Self {
+            slug: item.def.name.clone(),
+            installed_names: vec![item.def.name.clone()],
+            exported: item.def.visibility == mars_schema::visibility::Visibility::Exported,
+            error,
+            removed_schema: false,
+        }
+    }
+}
+
+/// A top-level string `key` of a `hook.toml`, read even when the rest does not parse: the
+/// first `key = "…"` line before the first table, which is where an author puts it.
+fn declared(text: &str, key: &str) -> Option<String> {
+    let value = |text: &str| {
+        toml::from_str::<toml::Value>(text)
+            .ok()?
+            .get(key)?
+            .as_str()
+            .map(str::to_owned)
+    };
+    value(text).or_else(|| {
+        text.lines()
+            .take_while(|line| !line.trim_start().starts_with('['))
+            .find_map(value)
+    })
 }
 
 /// The project's own hooks: the first invalid one is an error.
@@ -93,6 +146,7 @@ pub(crate) fn discover_resolved_hook_items(
     source_name: &crate::types::SourceName,
     package_depth: usize,
     decl_order: usize,
+    managed_targets: &[String],
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<Result<ParsedHookItem, InvalidHook>>, MarsError> {
     let version = node
@@ -116,14 +170,20 @@ pub(crate) fn discover_resolved_hook_items(
     )?;
     let mut checked = Vec::with_capacity(hooks.len());
     for hook in hooks {
-        match hook {
+        checked.push(match hook {
             Err(InvalidHook {
                 error,
                 removed_schema: true,
                 ..
             }) => return Err(error),
-            other => checked.push(other),
-        }
+            // The one place a dependency's hook is judged invalid: it must also render on
+            // every managed target it is installed for.
+            Ok(item) => match render_check(&item, managed_targets) {
+                Ok(()) => Ok(item),
+                Err(error) => Err(InvalidHook::unrenderable(&item, error)),
+            },
+            invalid => invalid,
+        });
     }
     Ok(checked)
 }
@@ -191,13 +251,10 @@ fn load_hook_item(
         .iter()
         .find(|diagnostic| diagnostic.severity == Severity::Error)
     {
-        return Ok(Err(InvalidHook {
-            name: toml::from_str::<toml::Value>(&text)
-                .ok()
-                .and_then(|value| value.get("name")?.as_str().map(str::to_owned))
-                .unwrap_or(dir_name.clone()),
-            removed_schema: error.code.as_str() == hooks::REMOVED_SCHEMA_CODE,
-            error: invalid_manifest(
+        return Ok(Err(InvalidHook::unreadable(
+            &text,
+            &dir_name,
+            invalid_manifest(
                 &toml_path,
                 &dir_name,
                 source_name,
@@ -205,7 +262,8 @@ fn load_hook_item(
                 error.code.as_str(),
                 error.message(),
             ),
-        }));
+            error.code.as_str() == hooks::REMOVED_SCHEMA_CODE,
+        )));
     }
     let def = read
         .def
@@ -287,34 +345,51 @@ pub fn load_output(
 ) -> Result<HookOutput, MarsError> {
     let fragment = item
         .fragment(target.root)
-        .map(|fragment| {
-            let path = item.hook_dir.join(&fragment.file);
-            read_fragment(&path).map(|text| (path, text))
-        })
+        .map(|fragment| read_fragment(item, &fragment.file))
         .transpose()?;
     item.def
-        .output(
-            target,
-            fragment.as_ref().map(|(_, text)| text.as_str()),
-            item.origin,
-            tokens,
-        )
+        .output(target, fragment.as_deref(), item.origin, tokens)
         .map_err(|error| {
-            let path = fragment
-                .as_ref()
-                .map_or_else(|| item.hook_dir.join("hook.toml"), |(path, _)| path.clone());
-            invalid(&path, &error.to_string())
+            let file = fragment.as_ref().map_or("hook.toml", |_| {
+                item.fragment(target.root).map_or("", |f| &f.file)
+            });
+            fragment_error(item, file, &error.to_string())
         })
 }
 
-fn read_fragment(path: &Path) -> Result<String, MarsError> {
-    std::fs::read_to_string(path)
-        .map_err(|error| invalid(path, &format!("failed to read fragment: {error}")))
+/// Whether a dependency hook renders on every managed target it is installed for. The tokens
+/// only change string values, so none are needed to find a fragment that cannot load.
+fn render_check(item: &ParsedHookItem, managed_targets: &[String]) -> Result<(), MarsError> {
+    for root in item.def.select(managed_targets) {
+        let Some(target) = hooks::targets::target(root) else {
+            return Err(fragment_error(
+                item,
+                "hook.toml",
+                &format!("target `{root}` has no hook fragment mechanism"),
+            ));
+        };
+        load_output(item, target, &Tokens::default())?;
+    }
+    Ok(())
 }
 
-fn invalid(path: &Path, message: &str) -> MarsError {
+fn read_fragment(item: &ParsedHookItem, file: &str) -> Result<String, MarsError> {
+    std::fs::read_to_string(item.hook_dir.join(file))
+        .map_err(|error| fragment_error(item, file, &format!("failed to read fragment: {error}")))
+}
+
+/// A hook's file that cannot be used, located by its path for the project's hook and by its
+/// package and hook for a dependency's, whose path is a staging directory.
+fn fragment_error(item: &ParsedHookItem, file: &str, message: &str) -> MarsError {
+    let located = match item.origin {
+        Origin::Local => item.hook_dir.join(file).display().to_string(),
+        Origin::Dependency => format!(
+            "source package `{}`, hook `{}`, `{file}`",
+            item.source_name, item.def.name
+        ),
+    };
     MarsError::Config(ConfigError::Invalid {
-        message: format!("{}: {message}", path.display()),
+        message: format!("{located}: {message}"),
     })
 }
 

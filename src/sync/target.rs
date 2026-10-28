@@ -39,7 +39,8 @@ pub struct TargetState {
 #[derive(Debug, Clone)]
 struct InvalidDependencyHook {
     source_name: SourceName,
-    name: String,
+    /// Names the last sync may have installed the hook under, most likely first.
+    installed_names: Vec<String>,
     message: String,
 }
 
@@ -98,35 +99,38 @@ impl TargetState {
     ) {
         let lock_index = old_lock.map(crate::lock::LockIndex::new);
         for invalid in std::mem::take(&mut self.invalid_hooks) {
-            let dirs: Vec<PackageDir> = managed_targets
-                .iter()
-                .filter_map(|target| PackageDir::new(ItemKind::Hook, target, &invalid.name))
-                .filter(|dir| {
-                    let dest = dir.canonical();
-                    !self.items.contains_key(&dest)
-                        && lock_index
-                            .as_ref()
-                            .and_then(|index| {
-                                index.find_output(crate::lock::CANONICAL_TARGET_ROOT, &dest)
-                            })
-                            .is_some_and(|locked| locked.source == invalid.source_name)
+            // The hook is whatever the old lock installed from this package under one of its
+            // names: its file no longer says which.
+            let kept = invalid.installed_names.iter().find_map(|name| {
+                let dirs: Vec<PackageDir> = managed_targets
+                    .iter()
+                    .filter_map(|target| PackageDir::new(ItemKind::Hook, target, name))
+                    .filter(|dir| {
+                        let dest = dir.canonical();
+                        !self.items.contains_key(&dest)
+                            && lock_index
+                                .as_ref()
+                                .and_then(|index| {
+                                    index.find_output(crate::lock::CANONICAL_TARGET_ROOT, &dest)
+                                })
+                                .is_some_and(|locked| locked.source == invalid.source_name)
+                    })
+                    .collect();
+                (!dirs.is_empty()).then(|| KeptHook {
+                    name: name.clone(),
+                    dirs,
                 })
-                .collect();
-            let outcome = if dirs.is_empty() {
-                "it was never installed, so nothing is installed"
-            } else {
+            });
+            let outcome = if kept.is_some() {
                 "keeping what the last sync installed"
+            } else {
+                "no installed copy of it was found, so nothing is installed"
             };
             diag.warn(
                 "hook-invalid-kept",
                 format!("{}; {outcome}", invalid.message),
             );
-            if !dirs.is_empty() {
-                self.kept_hooks.push(KeptHook {
-                    name: invalid.name,
-                    dirs,
-                });
-            }
+            self.kept_hooks.extend(kept);
         }
     }
 
@@ -401,19 +405,32 @@ pub fn build_with_collisions_and_diag(
                 .get(source_name)
                 .copied()
                 .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1),
+            &managed_target_roots,
             diag,
         )?;
         let mut parsed_hooks = Vec::new();
         for result in hook_results {
             match result {
                 Ok(hook) => parsed_hooks.push(hook),
-                Err(invalid) => target.invalid_hooks.push(InvalidDependencyHook {
-                    source_name: source_name.clone(),
-                    name: invalid.name,
-                    message: crate::compiler::hooks::error_message(invalid.error)
-                        .trim_end()
-                        .to_string(),
-                }),
+                // A hook the consumer filtered out or is not shown is not theirs to hear about,
+                // and keeps nothing.
+                Err(invalid)
+                    if invalid.exported
+                        && selected.contains(&(
+                            source_name.as_str(),
+                            ItemKind::Hook,
+                            invalid.slug.as_str(),
+                        )) =>
+                {
+                    target.invalid_hooks.push(InvalidDependencyHook {
+                        source_name: source_name.clone(),
+                        installed_names: invalid.installed_names,
+                        message: crate::compiler::hooks::error_message(invalid.error)
+                            .trim_end()
+                            .to_string(),
+                    })
+                }
+                Err(_) => {}
             }
         }
         let discovered_hooks = parsed_hooks

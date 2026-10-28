@@ -125,7 +125,11 @@ pub(crate) fn preflight_config_entries(
                     if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
                         errors.push(error);
                     } else if let Err(error) = crate::target::mcp_file::validate(location, &path) {
-                        errors.push(error.to_string());
+                        errors.push(format!(
+                            "target `{target_name}` reads MCP servers from `{}`: {}",
+                            location.path,
+                            error_message(error)
+                        ));
                     }
                 }
             }
@@ -142,7 +146,7 @@ pub(crate) fn preflight_config_entries(
                     errors.push(error);
                 }
                 if let Err(error) = crate::target::hook_file::validate(&path) {
-                    errors.push(error.to_string());
+                    errors.push(error_message(error));
                 }
             }
         }
@@ -178,7 +182,7 @@ pub(crate) fn preflight_config_entries(
             })),
         };
         if let Err(error) = result {
-            errors.push(error.to_string());
+            errors.push(error_message(error));
         }
     }
     if errors.is_empty() {
@@ -187,6 +191,15 @@ pub(crate) fn preflight_config_entries(
         Err(MarsError::Config(ConfigError::Invalid {
             message: errors.join("\n"),
         }))
+    }
+}
+
+/// An error's message without its `config error:` prefix: preflight wraps the
+/// joined messages in one `ConfigError::Invalid`, which supplies it.
+fn error_message(error: crate::error::MarsError) -> String {
+    match error {
+        crate::error::MarsError::Config(crate::error::ConfigError::Invalid { message }) => message,
+        other => other.to_string(),
     }
 }
 

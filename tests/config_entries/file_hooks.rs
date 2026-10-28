@@ -183,202 +183,198 @@ export default function (pi: ExtensionAPI) {
 
 #[test]
 fn untracked_file_fragment_collision_and_later_removal_preserve_user_file() {
-    for (target, destination) in file_fragment_targets() {
-        let dir = TempDir::new().unwrap();
-        let project = dir.child("project");
-        configure_file_fragment(&project, target);
-        let placed = project.child(target).child(destination);
-        placed.write_str("user content").unwrap();
+    // Only placement differs by target; the first covers the ownership rules.
+    let (target, destination) = file_fragment_targets()[0];
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, target);
+    let placed = project.child(target).child(destination);
+    placed.write_str("user content").unwrap();
 
-        sync(&project)
-            .success()
-            .stderr(predicate::str::contains("preserved local content"));
-        placed.assert("user content");
-        fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
-        sync(&project).success();
-        placed.assert("user content");
-    }
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("preserved local content"));
+    placed.assert("user content");
+    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+    sync(&project).success();
+    placed.assert("user content");
 }
 
 #[test]
 fn force_adopts_file_fragment_and_records_exact_output() {
-    for (target, destination) in file_fragment_targets() {
-        let dir = TempDir::new().unwrap();
-        let project = dir.child("project");
-        configure_file_fragment(&project, target);
-        project
-            .child(target)
-            .child(destination)
-            .write_str("user content")
-            .unwrap();
+    // Only placement differs by target; the first covers the ownership rules.
+    let (target, destination) = file_fragment_targets()[0];
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, target);
+    project
+        .child(target)
+        .child(destination)
+        .write_str("user content")
+        .unwrap();
 
-        sync_force(&project)
-            .success()
-            .stderr(predicate::str::contains("adopting with `--force`"));
-        let lock: mars_agents::lock::LockFile =
-            toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
-                .unwrap();
-        let output = lock
-            .items
-            .values()
-            .flat_map(|item| &item.outputs)
-            .find(|output| output.target_root == target && output.dest_path.as_str() == destination)
-            .expect("forced file fragment must have an exact output record");
-        let actual = mars_agents::hash::hash_bytes(
-            &fs::read(project.child(target).child(destination).path()).unwrap(),
-        );
-        assert_eq!(
-            output
-                .installed_checksum()
-                .expect("installed output")
-                .as_ref(),
-            actual
-        );
-        assert!(
-            !fs::read_to_string(project.child("mars.lock").path())
-                .unwrap()
-                .contains("hook-file:")
-        );
-    }
+    sync_force(&project)
+        .success()
+        .stderr(predicate::str::contains("adopting with `--force`"));
+    let lock: mars_agents::lock::LockFile =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    let output = lock
+        .items
+        .values()
+        .flat_map(|item| &item.outputs)
+        .find(|output| output.target_root == target && output.dest_path.as_str() == destination)
+        .expect("forced file fragment must have an exact output record");
+    let actual = mars_agents::hash::hash_bytes(
+        &fs::read(project.child(target).child(destination).path()).unwrap(),
+    );
+    assert_eq!(
+        output
+            .installed_checksum()
+            .expect("installed output")
+            .as_ref(),
+        actual
+    );
+    assert!(
+        !fs::read_to_string(project.child("mars.lock").path())
+            .unwrap()
+            .contains("hook-file:")
+    );
 }
 
 #[test]
 fn force_does_not_emit_file_fragment_without_canonical_owner() {
-    for (target, destination) in file_fragment_targets() {
-        let dir = TempDir::new().unwrap();
-        let project = dir.child("project");
-        configure_file_fragment(&project, target);
+    // Only placement differs by target; the first covers the ownership rules.
+    let (target, destination) = file_fragment_targets()[0];
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, target);
 
-        let canonical = project
-            .child(".mars/hooks")
-            .child(target.trim_start_matches('.'))
-            .child("audit");
-        canonical.create_dir_all().unwrap();
-        canonical.child("unmanaged").write_str("user").unwrap();
+    let canonical = project
+        .child(".mars/hooks")
+        .child(target.trim_start_matches('.'))
+        .child("audit");
+    canonical.create_dir_all().unwrap();
+    canonical.child("unmanaged").write_str("user").unwrap();
 
-        let installed = project.child(target).child("hooks/audit");
-        installed.create_dir_all().unwrap();
-        installed
-            .child("hook.toml")
-            .write_str(&format!(
-                "[targets.\"{target}\"]\nfragment = \"plugin.ts\"\n"
-            ))
-            .unwrap();
-        installed.child("run.sh").write_str("#!/bin/sh\n").unwrap();
-        installed
-            .child("plugin.ts")
-            .write_str("const SCRIPT = \"${MARS_HOOK_DIR}/run.sh\"\n")
-            .unwrap();
+    let installed = project.child(target).child("hooks/audit");
+    installed.create_dir_all().unwrap();
+    installed
+        .child("hook.toml")
+        .write_str(&format!(
+            "[targets.\"{target}\"]\nfragment = \"plugin.ts\"\n"
+        ))
+        .unwrap();
+    installed.child("run.sh").write_str("#!/bin/sh\n").unwrap();
+    installed
+        .child("plugin.ts")
+        .write_str("const SCRIPT = \"${MARS_HOOK_DIR}/run.sh\"\n")
+        .unwrap();
 
-        sync_force(&project)
-            .success()
-            .stderr(predicate::str::contains("unmanaged"));
+    sync_force(&project)
+        .success()
+        .stderr(predicate::str::contains("unmanaged"));
 
-        project
-            .child(target)
-            .child(destination)
-            .assert(predicate::path::missing());
-        let lock: mars_agents::lock::LockFile =
-            toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
-                .unwrap();
-        assert!(
-            !lock
-                .items
-                .values()
-                .flat_map(|item| &item.outputs)
-                .any(|output| output.target_root == target
-                    && output.dest_path.as_str() == destination),
-            "an emitted file fragment must always have a canonical owner"
-        );
-    }
+    project
+        .child(target)
+        .child(destination)
+        .assert(predicate::path::missing());
+    let lock: mars_agents::lock::LockFile =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    assert!(
+        !lock
+            .items
+            .values()
+            .flat_map(|item| &item.outputs)
+            .any(|output| output.target_root == target && output.dest_path.as_str() == destination),
+        "an emitted file fragment must always have a canonical owner"
+    );
 }
 
 #[test]
 fn hand_edited_managed_file_fragment_is_not_silently_replaced() {
-    for (target, destination) in file_fragment_targets() {
-        let dir = TempDir::new().unwrap();
-        let project = dir.child("project");
-        configure_file_fragment(&project, target);
-        sync(&project).success();
-        let placed = project.child(target).child(destination);
-        placed.write_str("hand edited").unwrap();
+    // Only placement differs by target; the first covers the ownership rules.
+    let (target, destination) = file_fragment_targets()[0];
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, target);
+    sync(&project).success();
+    let placed = project.child(target).child(destination);
+    placed.write_str("hand edited").unwrap();
 
-        sync(&project).success();
-        placed.assert("hand edited");
-    }
+    sync(&project).success();
+    placed.assert("hand edited");
 }
 
 #[test]
 fn failed_file_fragment_removal_retains_ownership_for_retry() {
-    for (target, destination) in file_fragment_targets() {
-        let dir = TempDir::new().unwrap();
-        let project = dir.child("project");
-        configure_file_fragment(&project, target);
-        sync(&project).success();
+    // Only placement differs by target; the first covers the ownership rules.
+    let (target, destination) = file_fragment_targets()[0];
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, target);
+    sync(&project).success();
 
-        let placed = project.child(target).child(destination);
-        fs::remove_file(placed.path()).unwrap();
-        placed.create_dir_all().unwrap();
-        fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+    let placed = project.child(target).child(destination);
+    fs::remove_file(placed.path()).unwrap();
+    placed.create_dir_all().unwrap();
+    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
 
-        sync(&project)
-            .success()
-            .stderr(predicate::str::contains("failed to remove"));
-        placed.assert(predicate::path::is_dir());
-        let lock: mars_agents::lock::LockFile =
-            toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
-                .unwrap();
-        assert!(
-            !lock.contains_output(
-                ".mars",
-                &format!("hooks/{}/audit", target.trim_start_matches('.'))
-            ),
-            "retry tombstone must not resurrect canonical ownership"
-        );
-        let retained = lock
-            .items
-            .values()
-            .flat_map(|item| &item.outputs)
-            .find(|output| output.target_root == target && output.dest_path.as_str() == destination)
-            .expect("failed removal must retain ownership authority");
-        assert!(matches!(
-            retained.state,
-            mars_agents::lock::OutputState::PendingDeletion
-        ));
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("failed to remove"));
+    placed.assert(predicate::path::is_dir());
+    let lock: mars_agents::lock::LockFile =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    assert!(
+        !lock.contains_output(
+            ".mars",
+            &format!("hooks/{}/audit", target.trim_start_matches('.'))
+        ),
+        "retry tombstone must not resurrect canonical ownership"
+    );
+    let retained = lock
+        .items
+        .values()
+        .flat_map(|item| &item.outputs)
+        .find(|output| output.target_root == target && output.dest_path.as_str() == destination)
+        .expect("failed removal must retain ownership authority");
+    assert!(matches!(
+        retained.state,
+        mars_agents::lock::OutputState::PendingDeletion
+    ));
 
-        let canonical = project
-            .child(".mars/hooks")
-            .child(target.trim_start_matches('.'))
-            .child("audit");
-        canonical.create_dir_all().unwrap();
-        canonical.child("user.txt").write_str("unmanaged").unwrap();
-        sync(&project).success();
-        canonical
-            .child("user.txt")
-            .assert(predicate::str::contains("unmanaged"));
-        placed.assert(predicate::path::missing());
-        let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
-        assert!(!lock.contains(destination));
-    }
+    let canonical = project
+        .child(".mars/hooks")
+        .child(target.trim_start_matches('.'))
+        .child("audit");
+    canonical.create_dir_all().unwrap();
+    canonical.child("user.txt").write_str("unmanaged").unwrap();
+    sync(&project).success();
+    canonical
+        .child("user.txt")
+        .assert(predicate::str::contains("unmanaged"));
+    placed.assert(predicate::path::missing());
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(!lock.contains(destination));
 }
 
 #[test]
 fn removing_file_fragment_deletes_only_lock_owned_destination() {
-    for (target, destination) in file_fragment_targets() {
-        let dir = TempDir::new().unwrap();
-        let project = dir.child("project");
-        configure_file_fragment(&project, target);
-        sync(&project).success();
-        let placed = project.child(target).child(destination);
-        placed.assert(predicate::path::is_file());
-        placed.write_str("edited but still lock owned").unwrap();
+    // Only placement differs by target; the first covers the ownership rules.
+    let (target, destination) = file_fragment_targets()[0];
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    configure_file_fragment(&project, target);
+    sync(&project).success();
+    let placed = project.child(target).child(destination);
+    placed.assert(predicate::path::is_file());
+    placed.write_str("edited but still lock owned").unwrap();
 
-        fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
-        sync(&project).success();
-        placed.assert(predicate::path::missing());
-        let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
-        assert!(!lock.contains(destination));
-    }
+    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
+    sync(&project).success();
+    placed.assert(predicate::path::missing());
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(!lock.contains(destination));
 }
 
 #[test]

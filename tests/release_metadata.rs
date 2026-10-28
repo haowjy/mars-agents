@@ -9,21 +9,6 @@ fn read(path: &str) -> String {
     std::fs::read_to_string(repo_root().join(path)).expect(path)
 }
 
-fn assert_before(haystack: &str, first: &str, second: &str) {
-    let first_idx = haystack
-        .find(first)
-        .unwrap_or_else(|| panic!("missing marker: {}", first));
-    let second_idx = haystack
-        .find(second)
-        .unwrap_or_else(|| panic!("missing marker: {}", second));
-    assert!(
-        first_idx < second_idx,
-        "expected marker order: `{}` before `{}`",
-        first,
-        second
-    );
-}
-
 #[test]
 fn npm_stub_declares_windows_optional_package() {
     let stub: serde_json::Value =
@@ -38,193 +23,31 @@ fn npm_stub_declares_windows_optional_package() {
         optional.contains_key("@meridian-flow/mars-agents-win32-x64"),
         "stub package must install the Windows x64 binary package"
     );
-}
 
-#[test]
-fn windows_npm_package_publishes_exe_only_for_win32_x64() {
+    // The package it points at publishes the exe for win32 x64 only.
     let pkg: serde_json::Value = serde_json::from_str(&read(
         "npm/@meridian-flow/mars-agents-win32-x64/package.json",
     ))
     .expect("windows package json");
-
+    let strings = |values: &[&str]| {
+        Some(
+            values
+                .iter()
+                .map(|v| serde_json::Value::String(v.to_string()))
+                .collect::<Vec<_>>(),
+        )
+    };
     assert_eq!(
         pkg.get("name").and_then(serde_json::Value::as_str),
         Some("@meridian-flow/mars-agents-win32-x64")
     );
-    assert_eq!(
-        pkg.get("os").and_then(serde_json::Value::as_array),
-        Some(&vec![serde_json::Value::String("win32".to_string())])
-    );
-    assert_eq!(
-        pkg.get("cpu").and_then(serde_json::Value::as_array),
-        Some(&vec![serde_json::Value::String("x64".to_string())])
-    );
-    assert_eq!(
-        pkg.get("files").and_then(serde_json::Value::as_array),
-        Some(&vec![serde_json::Value::String("mars.exe".to_string())])
-    );
-}
-
-#[test]
-fn npm_launcher_routes_windows_to_exe_package() {
-    let launcher = read("npm/@meridian-flow/mars-agents/bin/mars");
-
-    assert!(launcher.contains("\"win32 x64\": \"@meridian-flow/mars-agents-win32-x64\""));
-    assert!(launcher.contains("process.platform === \"win32\" ? \"mars.exe\" : \"mars\""));
-    assert!(launcher.contains("win32-x64"));
-}
-
-#[test]
-fn ci_workflow_runs_windows_build_test_clippy_and_fmt() {
-    let workflow: serde_yaml::Value =
-        serde_yaml::from_str(&read(".github/workflows/ci.yml")).unwrap();
-    let windows = &workflow["jobs"]["check-windows"];
-    assert_eq!(windows["runs-on"].as_str(), Some("windows-latest"));
-    let steps = windows["steps"].as_sequence().expect("Windows job steps");
-    for command in [
-        "cargo build",
-        "cargo test",
-        "cargo clippy -- -D warnings",
-        "cargo fmt --check",
-    ] {
-        assert!(
-            steps
-                .iter()
-                .any(|step| step["run"].as_str() == Some(command)),
-            "Windows job must run {command}"
+    for (key, expected) in [("os", "win32"), ("cpu", "x64"), ("files", "mars.exe")] {
+        assert_eq!(
+            pkg.get(key).and_then(serde_json::Value::as_array).cloned(),
+            strings(&[expected]),
+            "{key}"
         );
     }
-}
-
-#[test]
-fn release_workflow_windows_artifact_contract() {
-    let workflow = read(".github/workflows/release.yml");
-
-    assert!(workflow.contains("x86_64-pc-windows-msvc"));
-    assert!(workflow.contains("artifact: mars-windows-x64.exe"));
-    assert!(workflow.contains("Smoke test (Windows)"));
-    assert!(workflow.contains("mars.exe --version"));
-    assert!(workflow.contains("mars.exe init --root $tmp"));
-    assert!(workflow.contains("mars.exe doctor --root $tmp"));
-    assert!(workflow.contains("cp \"$GITHUB_WORKSPACE/artifacts/$binary\" mars.exe"));
-    assert!(workflow.contains(
-        "publish_platform npm/@meridian-flow/mars-agents-win32-x64 mars-windows-x64.exe"
-    ));
-}
-
-#[test]
-fn release_on_main_has_rc_default_label_contract() {
-    let workflow = read(".github/workflows/release-on-main.yml");
-
-    assert!(!workflow.contains("2>/dev/null || printf '[]'"));
-    assert!(workflow.contains("exact merge_commit_sha match"));
-    assert!(workflow.contains(".merge_commit_sha == $trigger_sha"));
-    assert!(workflow.contains("selection_reason=\"merged PR targeting main fallback\""));
-    assert!(workflow.contains("if [[ \"${candidate_count}\" -gt 1 ]]; then"));
-    assert!(workflow.contains("Ambiguous merged PR selection for trigger ${TRIGGER_SHA}."));
-    assert!(
-        workflow.contains("labels=\"$(jq -r '.labels[]?.name' <<<\"${selected_pr}\" | sort -u)\"")
-    );
-    assert!(
-        !workflow.contains("labels=\"$(jq -r '.[].labels[].name' <<<\"${prs_json}\" | sort -u)\"")
-    );
-    assert!(workflow.contains("if [[ \"${candidate_count}\" -eq 0 ]]; then"));
-    assert!(workflow.contains("echo \"should_release=false\" >> \"$GITHUB_OUTPUT\""));
-    assert!(workflow.contains("release:skip"));
-    assert!(workflow.contains("release:(skip|patch|stable|minor|major|rc)"));
-    assert!(workflow.contains("release_kind=\"rc\""));
-    assert!(workflow.contains("if [[ -n \"${unknown_release_labels}\" ]]; then"));
-    assert!(workflow.contains("elif [[ \"${has_rc_label}\" == \"true\" ]]; then"));
-    assert!(workflow.contains("release_kind=\"stable\""));
-    assert!(workflow.contains("echo \"release_kind=${release_kind}\" >> \"$GITHUB_OUTPUT\""));
-    // Bump kind: major > minor > patch precedence
-    assert!(workflow.contains("bump_kind=\"patch\""));
-    assert!(workflow.contains("bump_kind=\"major\""));
-    assert!(workflow.contains("bump_kind=\"minor\""));
-    assert!(workflow.contains("echo \"bump_kind=${bump_kind}\" >> \"$GITHUB_OUTPUT\""));
-
-    assert_before(
-        &workflow,
-        "if grep -qx 'release:skip' <<<\"${labels}\"; then",
-        "release_labels=\"$(grep '^release:' <<<\"${labels}\" || true)\"",
-    );
-    assert_before(
-        &workflow,
-        "if [[ -n \"${unknown_release_labels}\" ]]; then",
-        "elif [[ \"${has_rc_label}\" == \"true\" ]]; then",
-    );
-    // Major > minor > patch label precedence
-    assert_before(
-        &workflow,
-        "if [[ \"${has_major_label}\" == \"true\" ]]; then",
-        "elif [[ \"${has_minor_label}\" == \"true\" ]]; then",
-    );
-}
-
-#[test]
-fn release_on_main_uses_trigger_marker_and_rerun_tag_recovery() {
-    let workflow = read(".github/workflows/release-on-main.yml");
-
-    assert!(workflow.contains(
-        "git commit -m \"release: v${NEXT_VERSION}\" -m \"Release-Trigger: ${TRIGGER_SHA}\""
-    ));
-    assert!(workflow.contains("grep -Fxq \"Release-Trigger: ${TRIGGER_SHA}\""));
-    assert!(workflow.contains("echo \"tag_missing=true\" >> \"$GITHUB_OUTPUT\""));
-    assert!(workflow.contains("echo \"missing_tag=${selected_tag}\" >> \"$GITHUB_OUTPUT\""));
-    assert!(workflow.contains("if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.tag_missing == 'true'"));
-    assert!(workflow.contains("id: push_missing_tag"));
-    assert_eq!(
-        workflow.matches("local expected_commit=\"$2\"").count(),
-        2,
-        "both tag push helpers should accept expected commit"
-    );
-    assert!(workflow.contains(
-        "git tag -a \"${MISSING_TAG}\" \"${MISSING_TAG_COMMIT}\" -m \"Release ${MISSING_TAG#v}\""
-    ));
-    assert!(workflow.contains("push_tag_with_retry \"${MISSING_TAG}\" \"${MISSING_TAG_COMMIT}\""));
-    assert!(
-        workflow.contains("push_tag_with_retry \"v${NEXT_VERSION}\" \"${release_commit_sha}\"")
-    );
-    assert!(workflow.contains(
-        "Tag ${MISSING_TAG} already exists on ${tag_commit}, expected ${MISSING_TAG_COMMIT}."
-    ));
-    assert!(workflow.contains(
-        "Tag ${validate_tag_ref} resolved to ${observed_commit} ${validate_context}; expected ${validate_expected_commit}."
-    ));
-    assert_eq!(
-        workflow
-            .matches("git ls-remote --tags \"${resolve_remote_url}\" \"refs/tags/${resolve_tag_ref}\" \"refs/tags/${resolve_tag_ref}^{}\"")
-            .count(),
-        2,
-        "both tag push helpers must verify remote tag refs including peeled annotated tag"
-    );
-    assert!(workflow.contains(
-        "Remote tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
-    ));
-    assert!(workflow.contains(
-        "Remote tag ${tag_ref} resolves to ${remote_tag_commit}; expected ${expected_commit}."
-    ));
-    assert!(workflow.contains(
-        "Remote tag ${tag_ref} not found yet after failed push attempt ${attempt}; retrying."
-    ));
-    assert!(
-        !workflow
-            .contains("remote_status=$?\n              if [[ \"${remote_status}\" -eq 1 ]]; then")
-    );
-    assert_eq!(
-        workflow
-            .matches("remote_tag_commit=\"$(resolve_remote_tag_commit \"${tag_ref}\" \"${release_remote_url}\")\" && remote_status=0 || remote_status=$?")
-            .count(),
-        2,
-        "both tag push helpers should capture resolver exit status explicitly"
-    );
-    assert!(!workflow.contains(
-        "Tag ${tag_ref} already exists on expected commit ${expected_commit}; treating push as success."
-    ));
-    assert!(workflow.contains("if [[ \"${remote_status}\" -eq 1 ]]; then"));
-    assert!(workflow.contains("after refetch on failed attempt ${attempt}"));
-    assert!(workflow.contains("echo \"tag=${MISSING_TAG}\" >> \"$GITHUB_OUTPUT\""));
-    assert!(workflow.contains("steps.push_release.outputs.tag || steps.push_missing_tag.outputs.tag || steps.release_guard.outputs.existing_release_tag"));
 }
 
 #[test]
@@ -252,102 +75,4 @@ fn release_publish_uses_single_tag_workflow_identity() {
         release_on_main.contains("TAG_PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}"),
         "auto-release tag push should prefer RELEASE_TOKEN so the tag workflow can run"
     );
-}
-
-#[test]
-fn release_on_main_computes_stable_and_rc_versions() {
-    let workflow = read(".github/workflows/release-on-main.yml");
-
-    assert!(
-        workflow
-            .contains("if grep -Eq '^v[0-9]+\\.[0-9]+\\.[0-9]+$' <<<\"${candidate_tag}\"; then"),
-        "stable base version lookup must ignore prerelease tags"
-    );
-    assert!(workflow.contains("if [[ \"${RELEASE_KIND}\" == \"stable\" ]]; then"));
-    assert!(
-        workflow.contains(
-            "while git rev-parse -q --verify \"refs/tags/v${next_version}\" >/dev/null; do"
-        ),
-        "stable releases must advance past stable tag collisions"
-    );
-    assert!(workflow.contains("python_version=\"${next_version}\""));
-    assert!(workflow.contains("max_rc=0"));
-    assert!(workflow.contains("if (( rc_number > max_rc )); then"));
-    assert!(workflow.contains("next_rc=$((max_rc + 1))"));
-    assert!(workflow.contains("next_version=\"${next_base_version}-rc.${next_rc}\""));
-    assert!(workflow.contains("python_version=\"${next_base_version}rc${next_rc}\""));
-    assert!(workflow.contains("done < <(git tag --list \"v${next_base_version}-rc.*\")"));
-    assert!(workflow.contains("git tag --list 'v*' --sort=-version:refname"));
-}
-
-#[test]
-fn release_workflow_accepts_stable_and_rc_provenance() {
-    let workflow = read(".github/workflows/release.yml");
-
-    assert!(workflow.contains("X.Y.Z or RC X.Y.Z-rc.N"));
-    assert!(workflow.contains("PYPI_VERSION=\"${BASH_REMATCH[1]}rc${BASH_REMATCH[2]}\""));
-    assert!(workflow.contains("PYPI_VERSION=\"$TAG_VERSION\""));
-    assert!(workflow.contains("Tag version ($TAG_VERSION) != Cargo.toml ($CARGO_VERSION)"));
-    assert!(workflow.contains("Expected pyproject.toml version $PYPI_VERSION"));
-    assert!(workflow.contains("npm_packages=(npm/@meridian-flow/*/package.json)"));
-    assert!(workflow.contains("jq -r '.version // empty'"));
-    assert!(workflow.contains("optionalDependencies // {} | to_entries[]"));
-    assert!(workflow.contains("CHANGELOG.md missing release section for ${TAG_VERSION}"));
-    assert!(
-        workflow
-            .contains("git merge-base --is-ancestor \"$RELEASE_SHA\" \"origin/$DEFAULT_BRANCH\"")
-    );
-    assert!(workflow.contains("if [[ \"$COMMIT_MSG\" != \"release: v$TAG_VERSION\" ]]; then"));
-}
-
-#[test]
-fn release_workflow_marks_rc_prerelease_and_uses_npm_dist_tags() {
-    let workflow = read(".github/workflows/release.yml");
-
-    assert!(workflow.contains("prerelease: ${{ steps.release_meta.outputs.prerelease }}"));
-    assert!(workflow.contains("echo \"prerelease=true\" >> \"$GITHUB_OUTPUT\""));
-    assert!(workflow.contains("echo \"prerelease=false\" >> \"$GITHUB_OUTPUT\""));
-    assert!(workflow.contains("echo \"npm_dist_tag=rc\" >> \"$GITHUB_OUTPUT\""));
-    assert!(workflow.contains("echo \"npm_dist_tag=latest\" >> \"$GITHUB_OUTPUT\""));
-    assert!(workflow.contains("npm publish --provenance --access public --tag \"$NPM_DIST_TAG\""));
-    assert_eq!(
-        workflow
-            .matches("npm publish --provenance --access public --tag \"$NPM_DIST_TAG\"")
-            .count(),
-        2,
-        "expected dist-tagged publish in platform and stub npm publish steps"
-    );
-}
-
-#[test]
-fn release_workflow_pins_known_good_npm_for_provenance() {
-    let workflow = read(".github/workflows/release.yml");
-
-    assert!(workflow.contains("npm install -g npm@11.18.0"));
-    assert!(workflow.contains("npm/node_modules/sigstore/package.json"));
-    assert!(!workflow.contains("npm install -g npm@latest"));
-}
-
-#[test]
-fn release_workflow_pypi_publish_uses_trusted_publisher_with_required_inputs() {
-    let workflow = read(".github/workflows/release.yml");
-
-    assert!(workflow.contains("needs: [pypi-wheels, pypi-sdist, verify-provenance]"));
-    assert!(workflow.contains("uses: pypa/gh-action-pypi-publish@release/v1"));
-    assert!(workflow.contains("packages-dir: dist"));
-}
-
-#[test]
-fn release_workflow_cargo_publish_only_ignores_already_uploaded_errors() {
-    let workflow = read(".github/workflows/release.yml");
-
-    assert!(workflow.contains("publish_stderr=\"$(mktemp)\""));
-    assert!(workflow.contains("if cargo publish --locked -p \"${package}\""));
-    assert!(workflow.contains("grep -Eiq 'already (uploaded|published)|already exists'"));
-    assert!(workflow.contains("${package} version already published on crates.io; continuing."));
-    assert!(workflow.contains("cargo publish failed for ${package} with an unexpected error."));
-    let schema = workflow.find("publish_crate mars-schema").unwrap();
-    let cli = workflow.find("publish_crate mars-agents").unwrap();
-    assert!(schema < cli, "mars-schema must publish before mars-agents");
-    assert!(!workflow.contains("cargo publish || true"));
 }

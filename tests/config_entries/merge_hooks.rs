@@ -246,29 +246,58 @@ fn invalid_fragments_fail_preflight_without_mutation() {
 
 #[test]
 fn unknown_event_is_strict_by_default_and_unchecked_warns_and_passes() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = [\".claude\"]\n")
-        .unwrap();
-    write_hook(&project, "future", "[targets.\".claude\"]\n");
-    write_fragment(&project, "future", "claude.json", r#"{"FutureEvent":[]}"#);
-    sync(&project)
-        .failure()
-        .stderr(predicate::str::contains("valid events: SessionStart"))
-        .stderr(predicate::str::contains("unchecked = true"));
-    project
-        .child("hooks/future/hook.toml")
-        .write_str("[targets.\".claude\"]\nunchecked = true\n")
-        .unwrap();
-    sync(&project).success().stderr(predicate::str::contains(
-        "passes unknown event `FutureEvent`",
-    ));
-    project
-        .child(".claude/settings.local.json")
-        .assert(predicate::path::missing());
+    // (target, fragment file, fragment body)
+    for (target, file, fragment) in [
+        (".claude", "claude.json", r#"{"FutureEvent":[]}"#),
+        (
+            ".cursor",
+            "cursor.json",
+            r#"{"FutureEvent":[{"command":"true"}]}"#,
+        ),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        project.create_dir_all().unwrap();
+        project
+            .child("mars.toml")
+            .write_str(&format!("[settings]\ntargets = [\"{target}\"]\n"))
+            .unwrap();
+        write_hook(&project, "future", &format!("[targets.\"{target}\"]\n"));
+        write_fragment(&project, "future", file, fragment);
+        let refused = sync(&project).failure();
+        if target == ".claude" {
+            refused
+                .stderr(predicate::str::contains("valid events: SessionStart"))
+                .stderr(predicate::str::contains("unchecked = true"));
+        } else {
+            // Cursor's allowlist is camelCase.
+            refused
+                .stderr(predicate::str::contains(
+                    "valid events: beforeShellExecution, beforeMCPExecution",
+                ))
+                .stderr(predicate::str::contains("sessionStart"))
+                .stderr(predicate::str::contains("preToolUse"));
+        }
+        project
+            .child("hooks/future/hook.toml")
+            .write_str(&format!("[targets.\"{target}\"]\nunchecked = true\n"))
+            .unwrap();
+        let passed = sync(&project).success();
+        if target == ".claude" {
+            passed.stderr(predicate::str::contains(
+                "passes unknown event `FutureEvent`",
+            ));
+            project
+                .child(".claude/settings.local.json")
+                .assert(predicate::path::missing());
+        } else {
+            let json: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(project.child(".cursor/hooks.json").path()).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(json["hooks"]["FutureEvent"][0]["command"], "true");
+        }
+    }
 }
 
 #[test]
@@ -358,6 +387,9 @@ fn structural_ownership_preserves_edited_and_user_entries_and_prunes_emptied_eve
 fn stale_hook_diagnostics_distinguish_planned_and_unconfirmed_removals() {
     use std::os::unix::fs::PermissionsExt;
 
+    if !read_only_dirs_are_enforced() {
+        return;
+    }
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -577,41 +609,6 @@ fn cursor_fragments_emit_flat_versioned_entries_and_preserve_user_entries() {
 }
 
 #[test]
-fn cursor_allowlist_is_camel_case_and_unchecked_passes_unknown_events() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = [\".cursor\"]\n")
-        .unwrap();
-    write_hook(&project, "future", "[targets.\".cursor\"]\n");
-    write_fragment(
-        &project,
-        "future",
-        "cursor.json",
-        r#"{"FutureEvent":[{"command":"true"}]}"#,
-    );
-    sync(&project)
-        .failure()
-        .stderr(predicate::str::contains(
-            "valid events: beforeShellExecution, beforeMCPExecution",
-        ))
-        .stderr(predicate::str::contains("sessionStart"))
-        .stderr(predicate::str::contains("preToolUse"));
-    project
-        .child("hooks/future/hook.toml")
-        .write_str("[targets.\".cursor\"]\nunchecked = true\n")
-        .unwrap();
-    sync(&project).success();
-    let json: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project.child(".cursor/hooks.json").path()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(json["hooks"]["FutureEvent"][0]["command"], "true");
-}
-
-#[test]
 fn all_merge_destinations_are_validated_before_the_first_write() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
@@ -650,6 +647,21 @@ fn all_merge_destinations_are_validated_before_the_first_write() {
     project
         .child(".claude/settings.local.json")
         .assert(r#"{"hooks":[]}"#);
+    project
+        .child(".mars/hooks/claude/audit")
+        .assert(predicate::path::missing());
+
+    // A directory where the config file belongs is refused the same way.
+    fs::remove_file(project.child(".claude/settings.local.json").path()).unwrap();
+    project
+        .child(".claude/settings.local.json")
+        .create_dir_all()
+        .unwrap();
+    sync(&project)
+        .failure()
+        .stderr(predicate::str::contains("settings.local.json"))
+        .stderr(predicate::str::contains("file"));
+    project.child(".mcp.json").assert(r#"{"sentinel":"mcp"}"#);
     project
         .child(".mars/hooks/claude/audit")
         .assert(predicate::path::missing());

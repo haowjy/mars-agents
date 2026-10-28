@@ -80,8 +80,12 @@ pub fn mars() -> Command {
     let cache = root.join("cache");
     fs::create_dir_all(&cache).expect("failed to create empty cache dir");
     let mut cmd = Command::cargo_bin("mars").unwrap();
+    // A developer's global git config (`commit.gpgsign`, `core.hooksPath`) must not reach the
+    // commits and tags the fixtures make.
     cmd.env("MARS_CONFIG_DIR", root.join("config-never-created"))
-        .env("MARS_CACHE_DIR", cache);
+        .env("MARS_CACHE_DIR", cache)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
     cmd
 }
 

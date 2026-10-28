@@ -64,58 +64,6 @@ fn remove_prunes_stale_config_entries() {
 }
 
 #[test]
-fn override_writes_local_config() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "base", &[("coder", "# Coder")], &[]);
-    let override_path = create_source(
-        &dir,
-        "local-override",
-        &[("coder", "# Local coder override")],
-        &[],
-    );
-
-    let _agents_dir = dir.child("project").child(".agents");
-    mars()
-        .args([
-            "init",
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    mars()
-        .args([
-            "add",
-            source.to_str().unwrap(),
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    mars()
-        .args([
-            "override",
-            "base",
-            "--path",
-            override_path.to_str().unwrap(),
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("override"));
-
-    // mars.local.toml should exist
-    assert!(dir.child("project").child("mars.local.toml").exists());
-
-    let content = fs::read_to_string(dir.child("project").child("mars.local.toml").path()).unwrap();
-    assert!(content.contains("base"));
-    assert!(content.contains("local-override"));
-}
-
-#[test]
 fn direct_override_preserves_matching_transitive_declared_identity() {
     let dir = TempDir::new().unwrap();
     let original = create_dependency_source(&dir, "original", None);

@@ -7,6 +7,12 @@ use tempfile::tempdir;
 
 #[test]
 fn target_scope_retains_the_winning_field_and_file() {
+    // The library reads the user config from `MARS_CONFIG_DIR`; point it at an empty
+    // directory so the developer's own `config.toml` never reaches the fixtures. This is
+    // the only test in the binary, so nothing else reads the environment concurrently.
+    let user_config = tempdir().unwrap();
+    unsafe { std::env::set_var("MARS_CONFIG_DIR", user_config.path()) };
+
     for (project, local, field, origin, permitted) in [
         ("", "", LinkSource::None, TargetOrigin::Unset, None),
         (

@@ -331,6 +331,11 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
             "suggested: `mars upgrade base --bump` or `mars remove base`",
         ))
         .stderr(predicate::str::contains(".mars/staging").not());
+
+    // `--force` does not bypass the removed schema.
+    sync_force(&project)
+        .failure()
+        .stderr(predicate::str::contains("removed v0.11.0 hook schema"));
 }
 
 #[test]
@@ -365,25 +370,6 @@ fn filtered_transitive_removed_hook_error_hides_staging_path() {
         ))
         .stderr(predicate::str::contains("removed v0.11.0 hook schema"))
         .stderr(predicate::str::contains(".mars/staging").not());
-}
-
-#[test]
-fn sync_force_still_rejects_removed_hook_schema() {
-    let dir = TempDir::new().unwrap();
-    let legacy = write_legacy_hook_source(&dir, "base");
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            "[dependencies.base]\npath = \"{}\"\n\n[settings]\ntargets = [\".claude\"]\n",
-            portable_path(&legacy)
-        ))
-        .unwrap();
-
-    sync_force(&project)
-        .failure()
-        .stderr(predicate::str::contains("removed v0.11.0 hook schema"));
 }
 
 #[test]
@@ -798,6 +784,9 @@ fn malformed_opencode_legacy_sweep_cannot_replace_file_hook() {
 fn unconfirmed_opencode_legacy_sweep_suppresses_replacement_file_hook() {
     use std::os::unix::fs::PermissionsExt;
 
+    if !read_only_dirs_are_enforced() {
+        return;
+    }
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     configure_file_fragment(&project, ".opencode");

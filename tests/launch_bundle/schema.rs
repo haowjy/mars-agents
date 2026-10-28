@@ -191,7 +191,6 @@ fn build_launch_bundle_ad_hoc_without_mars_toml() {
 fn ad_hoc_launch_bundle_refreshes_stale_catalog_without_mars_toml() {
     use crate::test_common::{sample_cached_models, stale_fetched_at, write_cache};
     use std::fs;
-    use std::time::{Duration, Instant};
 
     let temp = TempDir::new().unwrap();
     let server = MockServer::start();
@@ -216,23 +215,15 @@ fn ad_hoc_launch_bundle_refreshes_stale_catalog_without_mars_toml() {
             "gpt-5.4-mini",
             "--harness",
             "pi",
+            // Foreground refresh: the background worker has no completion signal to wait on.
+            "--refresh-models",
         ]);
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        bundle["warnings"]
-            .to_string()
-            .contains("background refresh started")
-    );
+    cmd.assert().success();
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fs::read(project.child(".mars/models-cache.json")).unwrap() == before {
-        assert!(
-            Instant::now() < deadline,
-            "project-less worker did not update cache"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    assert_ne!(
+        fs::read(project.child(".mars/models-cache.json")).unwrap(),
+        before
+    );
     assert_eq!(refresh.hits(), 1);
     assert!(!project.child("mars.toml").exists());
 

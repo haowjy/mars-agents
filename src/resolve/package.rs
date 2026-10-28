@@ -415,6 +415,10 @@ pub(crate) fn resolve_package_bottom_up(
             node: ResolvedNode {
                 source_name: pending_src.name.clone(),
                 source_id: pending_src.source_id.clone(),
+                fetch_url: match &pending_src.spec {
+                    crate::config::SourceSpec::Git(git) => Some(git.url.clone()),
+                    crate::config::SourceSpec::Path(_) => None,
+                },
                 rooted_ref,
                 prepared,
                 resolved_ref,

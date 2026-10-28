@@ -34,7 +34,7 @@ export type VersionErrorCode =
   | "version.invalid-version"
   /** A `requires-mars` that is not a requirement. */
   | "version.invalid-requirement"
-  /** A `locked` or `excluded` entry that is not a version tag. */
+  /** A `locked` entry that is not a version tag. */
   | "version.invalid-tag";
 
 /** Build-time version of the schema crate. */

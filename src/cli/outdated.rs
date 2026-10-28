@@ -3,7 +3,6 @@
 use serde::Serialize;
 
 use crate::error::MarsError;
-use crate::types::SourceUrl;
 
 use super::output;
 
@@ -25,38 +24,94 @@ struct OutdatedEntry {
 pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let lock = crate::lock::load(&ctx.project_root)?;
     let config = crate::config::load(&ctx.project_root)?;
+    let local = crate::config::load_local(&ctx.project_root)?;
+    let user = crate::config::load_user_config()?;
+    let source_overrides = local.source_overrides(&ctx.project_root);
+    let (effective, _) = crate::config::merge_with_root(config, local, &user, &ctx.project_root)?;
     let cache = crate::source::GlobalCache::new()?;
 
+    // Resolve as sync does, so the constraints every package puts on a dependency narrow the
+    // version reported here the same way they narrow `mars upgrade` and the sync hint.
     let provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
+    let overridden: Vec<_> = source_overrides.keys().cloned().collect();
+    let options = crate::resolve::ResolveOptions::default().with_source_overrides(source_overrides);
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    let graph = crate::resolve::resolve(&effective, &provider, Some(&lock), &options, &mut diag)?;
     let mut entries = Vec::new();
 
-    for (name, dep_entry) in &config.dependencies {
-        // Only check git dependencies with versions
-        let Some(url) = &dep_entry.url else {
-            continue; // local path deps have no version
+    for (name, dep) in &effective.dependencies {
+        let Some(node) = graph.nodes.get(name) else {
+            continue;
         };
-        let url = &SourceUrl::from(url.as_str());
+        let is_overridden = overridden.contains(name);
+        let git_version = match &dep.spec {
+            crate::config::SourceSpec::Git(git) => git.version.clone(),
+            // An override replaces the dependency's source; a plain path dependency has no version.
+            crate::config::SourceSpec::Path(_) if is_overridden => None,
+            crate::config::SourceSpec::Path(_) => continue,
+        };
 
         let locked_version = lock
             .dependencies
             .get(name)
             .and_then(|s| s.version.clone())
             .unwrap_or_else(|| "-".to_string());
+        let constraint = match (&git_version, is_overridden) {
+            (_, true) => "-".to_string(),
+            (version, false) => version.clone().unwrap_or_else(|| "latest".to_string()),
+        };
+        let unchecked = |updateable: &str, latest: &str| OutdatedEntry {
+            source: name.to_string(),
+            locked: locked_version.clone(),
+            constraint: constraint.clone(),
+            updateable: updateable.to_string(),
+            latest: latest.to_string(),
+        };
 
-        let constraint = dep_entry
-            .version
-            .clone()
-            .unwrap_or_else(|| "latest".to_string());
+        let skipped = if is_overridden {
+            Some("is overridden by mars.local.toml")
+        } else if matches!(
+            &node.source_id,
+            crate::types::SourceId::Git {
+                plugin: Some(_),
+                ..
+            }
+        ) {
+            Some("is a plugin selection")
+        } else {
+            None
+        };
+        if let Some(reason) = skipped {
+            output::print_warn(&format!("`{name}` {reason}; its versions are not checked"));
+            entries.push(unchecked("?", "?"));
+            continue;
+        }
 
-        // Try to list versions (may fail for non-git sources)
-        let versions = match crate::source::list_versions(url, &cache) {
-            Ok(v) => v,
-            Err(_) => continue,
+        let checked = crate::sync::upgrades::check_upgrade(
+            node,
+            &graph,
+            &provider,
+            &options,
+            &mut crate::diagnostic::DiagnosticCollector::new(),
+        );
+        let (versions, candidate) = match checked {
+            Ok(Some(checked)) => (checked.available, checked.candidate),
+            Ok(None) => continue,
+            Err(error) => {
+                output::print_warn(&format!(
+                    "could not check newer versions of `{name}`: {error}"
+                ));
+                entries.push(unchecked("?", "?"));
+                continue;
+            }
+        };
+        let Some(fetch_url) = &node.fetch_url else {
+            continue;
         };
 
         if versions.is_empty() {
             // Untagged repo — compare locked commit vs current HEAD
-            let current_head = crate::source::git::ls_remote_head(url.as_ref())
+            let current_head = crate::source::git::ls_remote_head(fetch_url.as_ref())
                 .map(|sha| {
                     if sha.len() >= 12 {
                         sha[..12].to_string()
@@ -92,39 +147,9 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
             .map(|v| v.tag.clone())
             .unwrap_or_else(|| "-".to_string());
 
-        // The version `mars upgrade` would pick: the newest the constraint allows whose
-        // `requires-*` this Mars meets.
-        let parsed_constraint =
-            mars_schema::version::parse_constraint(dep_entry.version.as_deref());
-        let locked_floor = mars_schema::version::parse_tag(&locked_version);
-        let updateable = match crate::resolve::upgrade_candidate(
-            name,
-            url,
-            dep_entry.subpath.as_ref(),
-            &versions,
-            locked_floor.as_ref(),
-            &[("mars.toml", &parsed_constraint)],
-            &provider,
-            &crate::resolve::ResolveOptions::default(),
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        ) {
-            Ok(Some(candidate)) => candidate.tag.clone(),
-            Ok(None) => locked_version.clone(),
-            Err(error) => {
-                output::print_warn(&format!(
-                    "could not check newer versions of `{name}`: {error}"
-                ));
-                "?".to_string()
-            }
-        };
-
-        entries.push(OutdatedEntry {
-            source: name.to_string(),
-            locked: locked_version,
-            constraint,
-            updateable,
-            latest,
-        });
+        // The version `mars upgrade` would pick; the locked one when nothing newer is allowed.
+        let updateable = candidate.map_or(locked_version.clone(), |candidate| candidate.tag);
+        entries.push(unchecked(&updateable, &latest));
     }
 
     if json {

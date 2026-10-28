@@ -141,7 +141,14 @@ fn apply_dependency_upsert(
 
         // Merge: update location fields, preserve user customizations
         let location = RawEntry::from(entry);
-        existing.url = location.url;
+        // A bare `github.com/org/repo` the user wrote stays as written: the entry carries it
+        // spelled with `https://`, the same repository.
+        let authored_same = existing.url.as_deref().is_some_and(|url| {
+            Some(mars_schema::git_url::with_default_scheme(url)) == location.url
+        });
+        if !authored_same {
+            existing.url = location.url;
+        }
         existing.path = location.path;
         existing.version = entry.version.clone();
         existing.plugin = entry.plugin.clone();

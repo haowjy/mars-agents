@@ -10,7 +10,7 @@ pub(crate) mod recovery;
 pub mod rewrite;
 pub mod target;
 pub mod types;
-mod upgrades;
+pub(crate) mod upgrades;
 pub(crate) mod validate;
 
 use std::collections::BTreeMap;
@@ -478,19 +478,7 @@ pub(crate) fn resolve_graph(
 
     let cache = GlobalCache::new()?;
     let source_provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
-    let source_overrides = loaded
-        .local
-        .overrides
-        .iter()
-        .map(|(name, entry)| {
-            let path = if entry.path.is_absolute() {
-                entry.path.clone()
-            } else {
-                ctx.project_root.join(&entry.path)
-            };
-            (name.clone(), path)
-        })
-        .collect();
+    let source_overrides = loaded.local.source_overrides(&ctx.project_root);
     let preparation = if request.options.dry_run {
         crate::platform::fs::PendingStagingGeneration::scratch()?
     } else {

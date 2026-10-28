@@ -85,6 +85,7 @@ fn make_graph_config(
         nodes.insert(
             name.into(),
             ResolvedNode {
+                fetch_url: None,
                 source_name: name.into(),
                 source_id: crate::types::SourceId::Path {
                     canonical: tree_path.clone(),
@@ -523,6 +524,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
         nodes.insert(
             (*name).into(),
             ResolvedNode {
+                fetch_url: None,
                 source_name: (*name).into(),
                 source_id: crate::types::SourceId::git_with_subpath(
                     crate::types::SourceUrl::from(*url),

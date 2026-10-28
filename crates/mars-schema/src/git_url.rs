@@ -2,20 +2,56 @@
 /// returned as written. Reading an entry applies it, so a consumer's `mars.toml` and a dependency's
 /// manifest fetch the same repository from the same text.
 pub fn with_default_scheme(url: &str) -> String {
-    if !url.contains("://") && !is_scp_style(url) && url.contains('/') && url.contains('.') {
+    if !url.contains("://")
+        && !is_local_path(url)
+        && !is_ssh_shorthand(url)
+        && url.contains('/')
+        && url.contains('.')
+    {
         format!("https://{url}")
     } else {
         url.to_string()
     }
 }
 
-/// `user@host:path`, the SSH shorthand, whatever the user.
-fn is_scp_style(url: &str) -> bool {
-    url.split_once(':').is_some_and(|(authority, _)| {
-        authority.split_once('@').is_some_and(|(user, host)| {
-            !user.is_empty() && !host.is_empty() && !authority.contains('/')
-        })
-    })
+/// A filesystem path or `file:` URL, which never takes a scheme. Git's own rule: with a colon, it
+/// is local only if a `/` comes before the first one (`./a:b`, `~/x:y`) or it opens with a drive
+/// letter (`C:/x`, `C:\x`); so `~user@host:repo` is SSH. Without a colon, a leading `/`, `.` or `~`.
+fn is_local_path(url: &str) -> bool {
+    let bytes = url.as_bytes();
+    if url.starts_with("file:")
+        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+    {
+        return true;
+    }
+    match url.split_once(':') {
+        Some((before_colon, _)) => before_colon.contains('/'),
+        None => url.starts_with(['/', '.', '~']),
+    }
+}
+
+/// Git's scp-like SSH form: `user@host:path` whatever the path (`git@host:/srv/repo.git` included),
+/// or `host:path` without a user unless it is `host:<port>/…`. A `scheme://` URL or a local path is
+/// not one.
+pub fn is_ssh_shorthand(url: &str) -> bool {
+    if url.contains("://") || is_local_path(url) {
+        return false;
+    }
+    let Some((authority, path)) = url.split_once(':') else {
+        return false;
+    };
+    if path.is_empty() || authority.contains(['/', '\\']) {
+        return false;
+    }
+    match authority.split_once('@') {
+        Some((user, host)) => !user.is_empty() && !host.is_empty(),
+        None => {
+            let (first, rest) = path.split_once('/').unwrap_or((path, ""));
+            let is_port =
+                !rest.is_empty() && !first.is_empty() && first.bytes().all(|b| b.is_ascii_digit());
+            !authority.is_empty() && !is_port
+        }
+    }
 }
 
 /// Canonicalize a git URL for identity comparison and cache keying.
@@ -332,5 +368,78 @@ mod tests {
     fn idempotent_on_already_canonical_form() {
         let canonical = "github.com/foo/bar";
         assert_eq!(canonicalize_git_url(canonical), canonical);
+    }
+
+    // ── Classifier: SSH shorthand, local paths, default scheme ─────────────
+
+    #[test]
+    fn default_scheme_table() {
+        let unchanged = [
+            "git@host:/srv/repo.git",
+            "git@host.example:org/repo.git",
+            "git@host:org/repo",
+            "github.com:org/repo",
+            "example.com:123team/repo",
+            "host:~user/repo",
+            "~user@host:repo",
+            "./a:b",
+            "~/x:y",
+            "[::1]:8080/org/repo.git",
+            "localhost:8080/repo",
+            "C:/x/repo.d",
+            "C:\\x\\repo",
+            "D:repo.git/x",
+            "./rel/x.git",
+            "../up/x.git",
+            "/abs/x.y/repo",
+            "~/x.y/repo",
+            "file:/x.y/r",
+            "file:///x.y/r",
+            "ssh://git@github.com/org/repo",
+            "https://github.com/org/repo",
+            "org/repo",
+        ];
+        for url in unchanged {
+            assert_eq!(with_default_scheme(url), url, "{url}");
+        }
+        assert_eq!(
+            with_default_scheme("github.com/org/repo"),
+            "https://github.com/org/repo"
+        );
+        assert_eq!(
+            with_default_scheme("example.com:8080/org/repo"),
+            "https://example.com:8080/org/repo"
+        );
+    }
+
+    #[test]
+    fn ssh_shorthand_table() {
+        for url in [
+            "git@host:/srv/repo.git",
+            "git@host:org/repo",
+            "git@host:8080/repo",
+            "github.com:org/repo",
+            "example.com:123team/repo",
+            "host:/srv/repo.git",
+            "host:~user/repo",
+            "~user@host:repo",
+        ] {
+            assert!(is_ssh_shorthand(url), "{url}");
+        }
+        for url in [
+            "example.com:8080/org/repo",
+            "git@host:",
+            "@host:org/repo",
+            "ssh://git@host/org/repo",
+            "/srv/repo:x",
+            "./a:b",
+            "~/x:y",
+            "C:/x",
+            "\\\\?\\C:\\x",
+            "file:/x",
+            "org/repo",
+        ] {
+            assert!(!is_ssh_shorthand(url), "{url}");
+        }
     }
 }

@@ -670,6 +670,23 @@ pub(super) fn read_error(path: &Path, source: std::io::Error) -> MarsError {
     }
 }
 
+impl LocalConfig {
+    /// The `[overrides]` as absolute paths, relative ones resolved against the project root.
+    pub(crate) fn source_overrides(&self, root: &Path) -> IndexMap<SourceName, PathBuf> {
+        self.overrides
+            .iter()
+            .map(|(name, entry)| {
+                let path = if entry.path.is_absolute() {
+                    entry.path.clone()
+                } else {
+                    root.join(&entry.path)
+                };
+                (name.clone(), path)
+            })
+            .collect()
+    }
+}
+
 /// Load mars.toml from the given root directory.
 pub fn load(root: &Path) -> Result<Config, MarsError> {
     let path = root.join(CONFIG_FILE);
@@ -684,9 +701,8 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 }
 
 pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
-    let mut config: Config = parse_without_removed_visibility(content, path)?;
+    let config: Config = parse_without_removed_visibility(content, path)?;
     validate_agent_overlays(path, &config.agents)?;
-    migrate_legacy_source_urls(&mut config);
     Ok(config)
 }
 
@@ -1301,18 +1317,6 @@ pub(crate) fn source_id_for_spec(
     id.with_plugin(plugin.map(str::to_owned))
 }
 
-fn migrate_legacy_source_urls(config: &mut Config) {
-    for dep in config
-        .dependencies
-        .values_mut()
-        .chain(config.local_dependencies.values_mut())
-    {
-        if let Some(url) = &mut dep.url {
-            *url = mars_schema::git_url::with_default_scheme(url);
-        }
-    }
-}
-
 /// Write mars.toml, changing only what differs from the file as it stands.
 pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
     let path = root.join(CONFIG_FILE);
@@ -1762,38 +1766,6 @@ harness_order = ["pi", "opencode", "codex"]
                 "opencode".to_string(),
                 "codex".to_string()
             ])
-        );
-    }
-
-    #[test]
-    fn load_migrates_legacy_bare_domain_url() {
-        let dir = TempDir::new().unwrap();
-        let toml_str = r#"
-[dependencies.base]
-url = "github.com/org/base"
-"#;
-        std::fs::write(dir.path().join("mars.toml"), toml_str).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        assert_eq!(
-            config.dependencies["base"].url.as_deref(),
-            Some("https://github.com/org/base")
-        );
-    }
-
-    #[test]
-    fn load_does_not_migrate_ssh_url() {
-        let dir = TempDir::new().unwrap();
-        let toml_str = r#"
-[dependencies.base]
-url = "git@github.com:org/base.git"
-"#;
-        std::fs::write(dir.path().join("mars.toml"), toml_str).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        assert_eq!(
-            config.dependencies["base"].url.as_deref(),
-            Some("git@github.com:org/base.git")
         );
     }
 

@@ -19,22 +19,6 @@ pub struct FetchOptions {
     /// Used for lock replay to guarantee reproducible content.
     pub preferred_commit: Option<CommitHash>,
 }
-/// Return a Git-CLI-fetchable remote URL from a source URL or canonical identity.
-///
-/// Source identities intentionally canonicalize GitHub/GitLab HTTPS URLs to
-/// `host/owner/repo` for equality. Git needs an actual remote locator, so adapt
-/// that shorthand at the boundary before running `git ls-remote`, `clone`, or
-/// `fetch`.
-pub(crate) fn normalize_git_remote_url(url: &str) -> String {
-    let trimmed = url.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("github.com/") || lower.starts_with("gitlab.com/") {
-        format!("https://{trimmed}")
-    } else {
-        trimmed.to_string()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedVersion {
     pub tag: Option<String>,
@@ -115,18 +99,35 @@ pub fn list_versions(url: &str, _cache: &GlobalCache) -> Result<Vec<AvailableVer
 }
 
 fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsError> {
-    let remote_url = normalize_git_remote_url(url);
-    git_cli::ls_remote_ref(&remote_url, reference)
+    git_cli::ls_remote_ref(url, reference)
 }
 
 pub(crate) fn ls_remote_head(url: &str) -> Result<String, MarsError> {
-    let remote_url = normalize_git_remote_url(url);
-    git_cli::ls_remote_head(&remote_url)
+    git_cli::ls_remote_head(url)
 }
 
 pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
-    let remote_url = normalize_git_remote_url(url);
-    git_cli::ls_remote_tags(&remote_url)
+    git_cli::ls_remote_tags(url).map_err(|error| with_alias_hint(url, error))
+}
+
+/// `host:path` with no user and a dotless host (`bitbucket:owner/repo`) is git's SSH form, but
+/// reads like an alias Mars doesn't have; when SSH fails, say so.
+fn with_alias_hint(url: &str, error: MarsError) -> MarsError {
+    let MarsError::GitCli { command, message } = error else {
+        return error;
+    };
+    let dotless_host = !url.contains('@')
+        && mars_schema::git_url::is_ssh_shorthand(url)
+        && extract_hostname(url).is_some_and(|host| !host.contains('.'));
+    let message = if dotless_host {
+        format!(
+            "{message}\nhint: `{url}` is read as SSH to host `{}`; for a GitHub or GitLab repository use `github:owner/repo`, `gitlab:owner/repo` or `owner/repo`",
+            extract_hostname(url).unwrap_or_default()
+        )
+    } else {
+        message
+    };
+    MarsError::GitCli { command, message }
 }
 
 pub fn fetch(
@@ -137,7 +138,7 @@ pub fn fetch(
     options: &FetchOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let remote_url = normalize_git_remote_url(url);
+    let remote_url = url.to_string();
     let mut resolved = resolve_version(&remote_url, version_req, diag)?;
     if let Some(preferred_commit) = options.preferred_commit.as_ref() {
         resolved.sha = preferred_commit.to_string();
@@ -192,7 +193,7 @@ pub fn fetch_commit(
     cache: &GlobalCache,
     _diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    let remote_url = normalize_git_remote_url(url);
+    let remote_url = url.to_string();
     let tree_path = if should_use_github_archive(&remote_url) {
         match archive::fetch_archive(&remote_url, commit, cache) {
             Ok(path) => path,
@@ -469,34 +470,6 @@ mod tests {
     fn is_github_host_rejects_other_hosts() {
         assert!(!is_github_host("https://gitlab.com/org/repo"));
         assert!(!is_github_host("git@source.example.com:org/repo.git"));
-    }
-
-    #[test]
-    fn normalize_git_remote_url_makes_known_host_identity_fetchable() {
-        assert_eq!(
-            normalize_git_remote_url("github.com/org/repo"),
-            "https://github.com/org/repo"
-        );
-        assert_eq!(
-            normalize_git_remote_url("gitlab.com/group/repo"),
-            "https://gitlab.com/group/repo"
-        );
-    }
-
-    #[test]
-    fn normalize_git_remote_url_preserves_explicit_locators() {
-        assert_eq!(
-            normalize_git_remote_url("https://github.com/org/repo"),
-            "https://github.com/org/repo"
-        );
-        assert_eq!(
-            normalize_git_remote_url("git@github.com:org/repo.git"),
-            "git@github.com:org/repo.git"
-        );
-        assert_eq!(
-            normalize_git_remote_url("git.example.com/org/repo"),
-            "git.example.com/org/repo"
-        );
     }
 
     #[test]

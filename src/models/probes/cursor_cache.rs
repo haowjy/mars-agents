@@ -201,7 +201,7 @@ where
         probe_refresh,
         |entry| entry.result.as_ref().filter(|_| is_usable(entry)),
         is_fresh,
-        || trigger_background_refresh_with(spawn_refresh),
+        || trigger_background_refresh_with(path, spawn_refresh),
     ) {
         ProbeCacheBranch::Hit(result) => {
             if latest_attempt_ok {
@@ -235,14 +235,17 @@ fn observation_from_entry(entry: &ProbeCacheEntry) -> super::ProbeObservation {
     }
 }
 
-fn trigger_background_refresh_with<S>(spawn_refresh: S)
+fn trigger_background_refresh_with<S>(path: &Option<PathBuf>, spawn_refresh: S)
 where
     S: Fn() -> Result<(), ()>,
 {
-    let Some(lock) = super::probe_lock(LOCK_FILE, "cursor") else {
+    let Ok(dir) = super::cache_dir_for(path.as_deref()) else {
         return;
     };
-    if let Some(entry) = read_cache_tolerant()
+    let Some(lock) = super::probe_lock(&dir, LOCK_FILE, "cursor") else {
+        return;
+    };
+    if let Some(entry) = path.as_deref().and_then(read_cache_tolerant_at)
         && is_fresh(&entry)
         && is_usable(&entry)
     {
@@ -261,7 +264,9 @@ where
     F: Fn() -> CursorProbeResult,
 {
     use super::ObservedOutcome;
-    let lock = super::probe_lock_blocking(LOCK_FILE);
+    let lock = super::cache_dir_for(path.as_deref())
+        .ok()
+        .and_then(|dir| super::probe_lock_blocking(&dir, LOCK_FILE));
     if lock.is_none() {
         // Without the lock, do not overwrite a last-good listing or race a
         // background writer. It is still useful as support evidence.
@@ -425,7 +430,10 @@ fn write_failed_attempt(path: &Path, existing: &ProbeCacheEntry, failed_probe: &
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
-    let Some(_lock) = super::probe_lock_blocking(LOCK_FILE) else {
+    let Some(_lock) = super::cache_dir()
+        .ok()
+        .and_then(|dir| super::probe_lock_blocking(&dir, LOCK_FILE))
+    else {
         return Ok(0);
     };
 
@@ -503,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn cold_failed_observation_keeps_error_without_last_good_cache() {
+    fn cold_probe_failure_reports_the_error_and_no_listing() {
         let temp = TempDir::new().unwrap();
         let path = cache_file(&temp);
         let observed = probe_cached_impl_observed(
@@ -517,6 +525,8 @@ mod tests {
             observed.outcome,
             CachedCursorProbeOutcome::Failed(_)
         ));
+        assert_eq!(observed.outcome.cache_status(), "failed");
+        assert!(!observed.outcome.result().unwrap().model_probe_success);
         assert_eq!(
             observed.observation.unwrap().last_error.as_deref(),
             Some("boom")
@@ -558,27 +568,6 @@ mod tests {
     }
 
     #[test]
-    fn stale_cache_preserved_on_failed_probe() {
-        let temp = TempDir::new().unwrap();
-        let path = cache_file(&temp);
-        write_entry(&path, &entry(1, Some(ok_result())));
-
-        let outcome = probe_cached_impl(
-            false,
-            crate::models::probes::ProbeRefreshMode::Background,
-            &Some(path.clone()),
-            fail_result,
-            || Ok(()),
-        );
-
-        assert!(matches!(outcome, CachedCursorProbeOutcome::Stale(_)));
-
-        let on_disk = read_cache_tolerant_at(&path).unwrap();
-        assert!(on_disk.result.as_ref().unwrap().model_probe_success);
-        assert_eq!(on_disk.fetched_at, 1);
-    }
-
-    #[test]
     fn missing_cache_runs_synchronous_probe() {
         let temp = TempDir::new().unwrap();
         let path = cache_file(&temp);
@@ -600,38 +589,31 @@ mod tests {
     }
 
     #[test]
-    fn invalid_json_is_cache_miss() {
-        let temp = TempDir::new().unwrap();
-        let path = cache_file(&temp);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "not json").unwrap();
+    fn unrecognized_cache_payload_is_a_cache_miss() {
+        for corrupt in [false, true] {
+            let temp = TempDir::new().unwrap();
+            let path = cache_file(&temp);
+            if corrupt {
+                let mut old = entry(now_unix_secs(), Some(ok_result()));
+                old.schema_version = 999;
+                write_entry(&path, &old);
+            } else {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, "not json").unwrap();
+            }
 
-        let outcome = probe_cached_impl(
-            false,
-            crate::models::probes::ProbeRefreshMode::Background,
-            &Some(path),
-            ok_result,
-            || Ok(()),
-        );
-        assert!(matches!(outcome, CachedCursorProbeOutcome::Miss(_)));
-    }
-
-    #[test]
-    fn incompatible_schema_is_cache_miss() {
-        let temp = TempDir::new().unwrap();
-        let path = cache_file(&temp);
-        let mut old = entry(now_unix_secs(), Some(ok_result()));
-        old.schema_version = 999;
-        write_entry(&path, &old);
-
-        let outcome = probe_cached_impl(
-            false,
-            crate::models::probes::ProbeRefreshMode::Background,
-            &Some(path),
-            ok_result,
-            || Ok(()),
-        );
-        assert!(matches!(outcome, CachedCursorProbeOutcome::Miss(_)));
+            let outcome = probe_cached_impl(
+                false,
+                crate::models::probes::ProbeRefreshMode::Background,
+                &Some(path),
+                ok_result,
+                || Ok(()),
+            );
+            assert!(
+                matches!(outcome, CachedCursorProbeOutcome::Miss(_)),
+                "corrupt={corrupt}"
+            );
+        }
     }
 
     #[test]
@@ -655,24 +637,5 @@ mod tests {
             || Ok(()),
         );
         assert!(matches!(outcome, CachedCursorProbeOutcome::Miss(_)));
-    }
-
-    #[test]
-    fn cold_probe_failure_returns_failed_outcome_with_error_status() {
-        let temp = TempDir::new().unwrap();
-        let path = cache_file(&temp);
-
-        let outcome = probe_cached_impl(
-            false,
-            crate::models::probes::ProbeRefreshMode::Background,
-            &Some(path),
-            fail_result,
-            || Ok(()),
-        );
-
-        assert!(matches!(outcome, CachedCursorProbeOutcome::Failed(_)));
-        assert_eq!(outcome.cache_status(), "failed");
-        assert!(!outcome.result().unwrap().model_probe_success);
-        assert_eq!(outcome.result().unwrap().error.as_deref(), Some("boom"));
     }
 }

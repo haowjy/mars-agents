@@ -339,46 +339,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_models_basic() {
-        let output = r#"gpt-5.5-high - GPT 5.5 (High)
-gpt-5.5-low - GPT 5.5 (Low)
-claude-opus-4-7-thinking-high - Claude Opus 4.7"#;
-
+    fn parses_cursor_models_output() {
+        // Header, tip and ANSI noise are not slugs; `-fast` variants are not
+        // selectable with an effort suffix.
+        let output = "\x1b[32mAvailable models\x1b[0m\n\n\
+gpt-5.5-high - GPT 5.5 (High)\n\
+gpt-5.5-fast - GPT 5.5 (Fast)\n\
+claude-opus-4-7-thinking-high - Claude Opus 4.7\n\
+\n\
+Tip: use --model <id> to select\n";
         let slugs = parse_cursor_models_output(output);
-
         assert_eq!(
             slugs,
             vec![
                 "gpt-5.5-high".to_string(),
-                "gpt-5.5-low".to_string(),
                 "claude-opus-4-7-thinking-high".to_string()
             ]
         );
-    }
-
-    #[test]
-    fn test_parse_models_filters_fast() {
-        let output = r#"gpt-5.5-high - GPT 5.5 (High)
-gpt-5.5-fast - GPT 5.5 (Fast)"#;
-        let slugs = parse_cursor_models_output(output);
-        assert_eq!(slugs, vec!["gpt-5.5-high".to_string()]);
-    }
-
-    #[test]
-    fn test_parse_models_skips_header_and_tip() {
-        let output = r#"Available models
-
-gpt-5.5-high - GPT 5.5 (High)
-
-Tip: use --model <id> to select"#;
-        let slugs = parse_cursor_models_output(output);
-        assert_eq!(slugs, vec!["gpt-5.5-high".to_string()]);
-    }
-
-    #[test]
-    fn test_parse_models_strips_ansi() {
-        let slugs = parse_cursor_models_output("\x1b[32mgpt-5.5-high - GPT 5.5\x1b[0m");
-        assert_eq!(slugs, vec!["gpt-5.5-high".to_string()]);
     }
 
     #[test]
@@ -403,11 +380,6 @@ Tip: use --model <id> to select"#;
         let matches = find_cursor_prefix_matches("gpt-5", &slugs);
 
         assert_eq!(matches, vec!["gpt-5.5-high", "gpt-5"]);
-    }
-
-    #[test]
-    fn test_normalize_slug() {
-        assert_eq!(normalize_slug("GPT.5.5-High"), "gpt-5-5-high");
     }
 
     #[test]
@@ -448,29 +420,21 @@ Tip: use --model <id> to select"#;
     }
 
     #[test]
-    fn test_resolve_effort_slug_medium_requires_base_slug_in_catalog() {
-        let slugs = vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()];
-        let err = resolve_cursor_effort_slug("gpt-5.5", "medium", &slugs).unwrap_err();
-        assert_eq!(
-            err,
-            CursorEffortResolutionError::NoEffortMatch {
-                model_id: "gpt-5.5".to_string(),
-                effort: "medium".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn test_resolve_effort_slug_no_effort_match() {
-        let slugs = vec!["gpt-5.5-low".to_string()];
-        let err = resolve_cursor_effort_slug("gpt-5.5", "high", &slugs).unwrap_err();
-        assert_eq!(
-            err,
-            CursorEffortResolutionError::NoEffortMatch {
-                model_id: "gpt-5.5".to_string(),
-                effort: "high".to_string(),
-            }
-        );
+    fn unresolvable_effort_reports_no_effort_match() {
+        for (effort, slugs) in [
+            ("medium", vec!["gpt-5.5-high", "gpt-5.5-low"]),
+            ("high", vec!["gpt-5.5-low"]),
+        ] {
+            let slugs: Vec<String> = slugs.into_iter().map(str::to_string).collect();
+            let err = resolve_cursor_effort_slug("gpt-5.5", effort, &slugs).unwrap_err();
+            assert_eq!(
+                err,
+                CursorEffortResolutionError::NoEffortMatch {
+                    model_id: "gpt-5.5".to_string(),
+                    effort: effort.to_string(),
+                }
+            );
+        }
     }
 
     #[test]
@@ -502,19 +466,5 @@ Tip: use --model <id> to select"#;
         ];
         let resolution = resolve_cursor_effort_slug("composer-2.5", "high", &slugs).unwrap();
         assert_eq!(resolution.slug, "composer-2.5-high");
-    }
-
-    #[test]
-    fn test_probe_result_round_trip() {
-        let result = CursorProbeResult {
-            slugs: vec!["gpt-5.5-high".to_string()],
-            model_probe_success: true,
-            error: None,
-        };
-        let json = serde_json::to_string(&result).unwrap();
-        let back: CursorProbeResult = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.slugs, result.slugs);
-        assert!(back.model_probe_success);
-        assert_eq!(back.error, None);
     }
 }

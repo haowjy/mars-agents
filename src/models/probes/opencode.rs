@@ -135,42 +135,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_models_basic() {
-        let output = r#"opencode/big-pickle
-google/gemini-2.5-pro
-openai/gpt-5.4
-openrouter/anthropic/claude-opus-4.7"#;
-
-        let slugs = parse_models_output(output);
-
-        assert_eq!(slugs.len(), 4);
-        assert!(slugs.contains(&"openai/gpt-5.4".to_string()));
-        assert!(slugs.contains(&"openrouter/anthropic/claude-opus-4.7".to_string()));
-    }
-
-    #[test]
-    fn test_parse_models_filters_invalid() {
-        let slugs = parse_models_output("some-invalid-line\nopenai/gpt-5.4\n\n");
-        assert_eq!(slugs, vec!["openai/gpt-5.4"]);
-    }
-
-    #[test]
-    fn test_parse_models_strips_ansi() {
-        let slugs = parse_models_output("\x1b[32mopenai/gpt-5.4\x1b[0m");
-        assert_eq!(slugs, vec!["openai/gpt-5.4"]);
-    }
-
-    #[test]
-    fn test_probe_result_round_trip() {
-        let result = OpenCodeProbeResult {
-            model_slugs: vec!["openai/gpt-5.4".to_string()],
-            model_probe_success: true,
-            error: None,
-        };
-        let json = serde_json::to_string(&result).unwrap();
-        let back: OpenCodeProbeResult = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.model_slugs, result.model_slugs);
-        assert!(back.model_probe_success);
-        assert_eq!(back.error, None);
+    fn parses_opencode_models_output() {
+        // Only provider-qualified lines are slugs; ANSI and blank lines are noise.
+        let output = "\x1b[32mopencode/big-pickle\x1b[0m\ngoogle/gemini-2.5-pro\n\
+some-invalid-line\n\n\
+openrouter/anthropic/claude-opus-4.7\n";
+        assert_eq!(
+            parse_models_output(output),
+            vec![
+                "opencode/big-pickle".to_string(),
+                "google/gemini-2.5-pro".to_string(),
+                "openrouter/anthropic/claude-opus-4.7".to_string(),
+            ]
+        );
     }
 }

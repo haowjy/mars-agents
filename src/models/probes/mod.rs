@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 
@@ -25,8 +25,7 @@ pub(super) fn cache_dir() -> Result<PathBuf, MarsError> {
 /// A probe cache's lock, best effort: `None` when another process holds it or the path cannot be
 /// opened, so the caller skips the refresh instead of failing. An open error is logged — it is not
 /// contention, and a silent skip would hide a broken cache directory.
-pub(super) fn probe_lock(file: &str, label: &str) -> Option<crate::fs::FileLock> {
-    let dir = cache_dir().ok()?;
+pub(super) fn probe_lock(dir: &Path, file: &str, label: &str) -> Option<crate::fs::FileLock> {
     match crate::fs::FileLock::try_acquire(&dir.join(file)) {
         Ok(lock) => lock,
         Err(error) => {
@@ -37,9 +36,20 @@ pub(super) fn probe_lock(file: &str, label: &str) -> Option<crate::fs::FileLock>
 }
 
 /// Wait for a probe cache's lock. `None` when the path cannot be opened: the cache is best effort.
-pub(super) fn probe_lock_blocking(file: &str) -> Option<crate::fs::FileLock> {
-    let dir = cache_dir().ok()?;
+pub(super) fn probe_lock_blocking(dir: &Path, file: &str) -> Option<crate::fs::FileLock> {
     crate::fs::FileLock::acquire(&dir.join(file)).ok()
+}
+
+/// The directory holding one probe cache file and its lock. Callers that already know the cache
+/// file derive the lock from it, so a caller-supplied path stays self-contained.
+pub(super) fn cache_dir_for(path: Option<&Path>) -> Result<PathBuf, MarsError> {
+    match path {
+        Some(path) => path
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| MarsError::Internal("probe cache path has no directory".to_string())),
+        None => cache_dir(),
+    }
 }
 
 /// Provenance captured with the outcome from the same cache read or probe.

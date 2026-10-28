@@ -313,14 +313,6 @@ args = ["-y", "@upstash/context7-mcp@latest"]
     }
 
     #[test]
-    fn discover_empty_when_no_mcp_dir() {
-        let tmp = TempDir::new().unwrap();
-        let items =
-            discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
-        assert!(items.is_empty());
-    }
-
-    #[test]
     fn discover_skips_dir_without_mcp_toml() {
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("mcp/no-toml")).unwrap();

@@ -96,6 +96,9 @@ pub struct PreparedDefinition {
     pub slug: String,
     pub source_path: String,
     pub output_path: String,
+    /// A skill's folder in the package tree (empty for a root skill); `None` for an agent.
+    #[serde(skip)]
+    pub skill_root: Option<String>,
     /// The normalized file; crosses to JavaScript as a `Uint8Array`.
     #[serde(with = "serde_bytes")]
     pub normalized_bytes: Vec<u8>,
@@ -365,7 +368,15 @@ pub(crate) fn prepare_root(
                 body: bodies.get(definition.source_path.as_str()).copied(),
             })
             .collect::<Vec<_>>();
-        for (definition, found) in skills.iter().zip(crate::links::skill_link_diagnostics(&views)) {
+        let installed = |path: &str| {
+            views.iter().filter(|view| view.installed).any(|view| {
+                view.stored_root.is_empty()
+                    || path == view.stored_root
+                    || path.starts_with(&format!("{}/", view.stored_root))
+            })
+        };
+        let found = crate::links::skill_link_diagnostics(&views, &installed);
+        for (definition, found) in skills.iter().zip(found) {
             diagnostics
                 .entry(definition.source_path.clone())
                 .or_default()
@@ -583,6 +594,7 @@ fn prepare_definition(
             slug: selected.slug.clone(),
             source_path: selected.source_path.clone(),
             output_path: selected.output_path.clone(),
+            skill_root: selected.skill_root.clone(),
             normalized_bytes: Vec::new(),
             reading: unreadable(
                 selected.kind,
@@ -660,6 +672,7 @@ fn prepare_definition(
         slug: selected.slug.clone(),
         source_path: selected.source_path.clone(),
         output_path: selected.output_path.clone(),
+        skill_root: selected.skill_root.clone(),
         normalized_bytes,
         reading,
         change,

@@ -176,27 +176,57 @@ pub(crate) fn warn_config_dangles_after_rename(
     }
 }
 
-/// Report the body links of every dependency skill that stop resolving once the skills are
-/// installed, judged against the installed tree: after the consumer's filters, explicit renames
-/// and collision renames. This is the one reporter of these links for a dependency; `package_prepare`
-/// leaves them out (`Subject::Dependency`) because it only knows the package's own layout.
+/// Report the body links of every installed dependency skill that stop resolving once the skills
+/// are installed, judged against the whole installed tree (`target.items`, every source, plus the
+/// unmanaged paths sync left in place): after the consumer's filters, explicit renames and
+/// collision renames. This is the one reporter of
+/// these links for a dependency; `package_prepare` leaves them out (`Subject::Dependency`)
+/// because it only knows the package's own layout. A skill that is not installed has no links
+/// checked, though it can still be a link target.
 ///
 /// The project's own `_self` skills are not checked here: they install under their default
 /// paths, never filtered or renamed, so the verdict `package_prepare` gives is already exact.
 pub(crate) fn report_skill_links(
     target: &TargetState,
     graph: &ResolvedGraph,
+    kept_unmanaged: &[DestPath],
     diag: &mut DiagnosticCollector,
 ) {
     use mars_schema::links::{SkillView, skill_link_diagnostics};
     use mars_schema::read::{DefinitionRead, Reading};
 
-    let installed: HashMap<(&SourceName, &Path), &DestPath> = target
+    let dests: Vec<&str> = target
+        .items
+        .values()
+        .map(|item| item.dest_path.as_str())
+        .chain(kept_unmanaged.iter().map(DestPath::as_str))
+        .collect();
+    let installed = |path: &str| {
+        dests.iter().any(|dest| {
+            path == *dest
+                || path
+                    .strip_prefix(dest)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+    };
+    let skill_dests: HashMap<(&SourceName, &Path), &DestPath> = target
         .items
         .values()
         .filter(|item| item.id.kind == ItemKind::Skill)
-        .map(|item| ((&item.source_name, item.source_path.as_path()), &item.dest_path))
+        .map(|item| {
+            (
+                (&item.source_name, item.source_path.as_path()),
+                &item.dest_path,
+            )
+        })
         .collect();
+
+    struct Skill<'a> {
+        definition: &'a mars_schema::prepare::PreparedDefinition,
+        /// Where the skill is installed; `None` when a filter or a local item dropped it.
+        dest: Option<&'a str>,
+        stored: String,
+    }
 
     for (source_name, node) in &graph.nodes {
         let Some(prepared) = &node.prepared else {
@@ -208,48 +238,47 @@ pub(crate) fn report_skill_links(
             .filter(|definition| definition.kind == DefinitionKind::Skill)
             .map(|definition| {
                 let item = crate::discover::definition_item(definition, &definition.output_path);
-                let dest = installed
-                    .get(&(source_name, node.rooted_ref.package_root.join(item.source_path).as_path()))
+                let dest = skill_dests
+                    .get(&(
+                        source_name,
+                        node.rooted_ref
+                            .package_root
+                            .join(item.source_path)
+                            .as_path(),
+                    ))
                     .map(|dest| dest.as_str());
-                (definition, dest)
-            })
-            .collect::<Vec<_>>();
-        let stored = skills
-            .iter()
-            .map(|(definition, dest)| {
-                dest.map_or_else(|| format!("skills/{}", definition.slug), str::to_owned)
-            })
-            .collect::<Vec<_>>();
-        let roots = skills
-            .iter()
-            .map(|(definition, _)| {
-                definition
-                    .source_path
-                    .strip_suffix("SKILL.md")
-                    .unwrap_or_default()
-                    .trim_end_matches('/')
+                Skill {
+                    definition,
+                    dest,
+                    stored: dest
+                        .map_or_else(|| format!("skills/{}", definition.slug), str::to_owned),
+                }
             })
             .collect::<Vec<_>>();
         let views = skills
             .iter()
-            .enumerate()
-            .map(|(index, (definition, dest))| SkillView {
-                slug: &definition.slug,
-                source_root: roots[index],
-                stored_root: &stored[index],
-                installed: dest.is_some(),
-                body: match &definition.reading {
-                    Reading::Skill(DefinitionRead { body, .. }) => body.as_deref(),
+            .map(|skill| SkillView {
+                slug: &skill.definition.slug,
+                source_root: skill.definition.skill_root.as_deref().unwrap_or_default(),
+                stored_root: &skill.stored,
+                installed: skill.dest.is_some(),
+                body: match &skill.definition.reading {
+                    Reading::Skill(DefinitionRead { body, .. }) if skill.dest.is_some() => {
+                        body.as_deref()
+                    }
                     _ => None,
                 },
             })
             .collect::<Vec<_>>();
         let package = crate::package_prepare::dependency_name(prepared, source_name);
-        for ((definition, _), found) in skills.iter().zip(skill_link_diagnostics(&views)) {
+        for (skill, found) in skills
+            .iter()
+            .zip(skill_link_diagnostics(&views, &installed))
+        {
             for diagnostic in &found {
                 diag.schema(
                     diagnostic,
-                    &format!("{package}: {}", definition.source_path),
+                    &format!("{package}: {}", skill.definition.source_path),
                     false,
                 );
             }

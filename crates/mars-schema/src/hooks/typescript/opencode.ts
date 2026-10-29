@@ -69,11 +69,12 @@ export default {
         matcher: tool.name,
         fields: { tool_name: tool.name, tool_input: input },
       }));
-      if (answer.permission?.behavior === "allow") {
-        e.effect = "allow";
-      } else if (answer.block) {
+      // A block overrides an allow, whichever handler gave which.
+      if (answer.block) {
         e.effect = "deny";
         e.message = answer.block;
+      } else if (answer.permission?.behavior === "allow") {
+        e.effect = "allow";
       }
     });
   },

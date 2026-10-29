@@ -204,7 +204,7 @@ type Moment = {
   fields: any;
 };
 
-// Runs the event's matching handlers in order. The first block (or deny) wins; the context
+// Runs the event's matching handlers in order. The first block (or deny) wins over any allow; the context
 // of every handler before it is joined. A handler marked `async` runs without being awaited.
 async function fire(event: string, moment: Moment): Promise<Outcome> {
   const stdin = JSON.stringify({
@@ -229,7 +229,7 @@ async function fire(event: string, moment: Moment): Promise<Outcome> {
       if (answer.permission?.behavior === "allow") outcome.permission = answer.permission;
       if (answer.block || answer.permission?.behavior === "deny") {
         outcome.block = answer.block ?? answer.permission?.message ?? `Blocked by hook ${HOOK.name}`;
-        outcome.permission = answer.permission ?? outcome.permission;
+        outcome.permission = undefined;
         outcome.context = contexts.join("\n") || undefined;
         return outcome;
       }

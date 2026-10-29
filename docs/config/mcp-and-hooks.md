@@ -990,11 +990,12 @@ installed gets no entries (`hook-not-installed`).
 
 `mars build plugin` renders `[hooks]` through the same code. The Claude tree,
 which Claude, Codex and Grok read, gets a `hooks/hooks.json` reduced to what
-Codex can parse, with drops reported. The OpenCode and
-Cursor trees drop `[hooks]`: for each hook that has no native hook for that tree, sync
-reports `plugin-native-hook-dropped`, naming the harnesses that won't get it.
-A native hook for another target also reports it. A hook generated for the OpenCode
-tree is tracked in [mars-agents#290](https://github.com/haowjy/mars-agents/issues/290).
+Codex can parse, with drops reported. The OpenCode tree gets the same generated
+adapter `mars sync` writes, in the hook's directory, loaded by `index.mjs` beside any
+OpenCode native hook; `${MARS_HOOK_TARGET}` is `.opencode` there. The Cursor tree drops
+`[hooks]`. For each hook that gets nothing in a tree (no native hook for it, and `[hooks]`
+render nothing there), sync reports `plugin-native-hook-dropped`, naming the harnesses that
+won't get it. A native hook for another target also reports it.
 
 ### Ownership and removal
 

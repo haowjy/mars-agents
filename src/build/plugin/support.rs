@@ -343,7 +343,9 @@ mod tests {
             ),
             (Component::Hooks, SupportState::DroppedWithWarning) => {
                 let tree_name = harness.tree.descriptor().target_dir.trim_start_matches('.');
-                if harness.tree.key == "claude" {
+                if harness.tree.key == "opencode" {
+                    "supported for `[hooks]` (generated adapter) and hooks with the `opencode` native hook; other targets' native hooks dropped with warning".to_string()
+                } else if harness.tree.key == "claude" {
                     "supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` native hook; other targets' native hooks dropped with warning".to_string()
                 } else {
                     format!(

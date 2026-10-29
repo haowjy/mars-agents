@@ -143,10 +143,12 @@ struct PermissionRule {
     effect: String,
 }
 
+/// One file `index.mjs` imports as a hook: the authored native hook or the adapter generated
+/// from `[hooks]`, both inside `hooks/<name>/`.
 #[derive(Serialize)]
 struct HookData {
     name: String,
-    native_hook: String,
+    file: String,
 }
 
 fn write_package(
@@ -203,15 +205,22 @@ fn write_package(
                 right.def.name.as_str(),
             ))
     });
-    let hooks = hooks
-        .into_iter()
-        .filter_map(|hook| {
-            Some(HookData {
+    let mut hook_files = Vec::new();
+    for hook in &hooks {
+        if let Some(native_hook) = hook.native_hook(TARGET_ROOT) {
+            hook_files.push(HookData {
                 name: hook.def.name.clone(),
-                native_hook: hook.native_hook(TARGET_ROOT)?.file.clone(),
-            })
-        })
-        .collect();
+                file: native_hook.file.clone(),
+            });
+        }
+        if let Some(file) = write_generated_hook(root, hook)? {
+            hook_files.push(HookData {
+                name: hook.def.name.clone(),
+                file,
+            });
+        }
+    }
+    let hooks = hook_files;
 
     let data = serde_json::to_string_pretty(&PluginData {
         plugin: &metadata.name,
@@ -234,6 +243,41 @@ fn write_package(
         ));
     }
     crate::fs::atomic_write(&root.join("index.mjs"), index.as_bytes())
+}
+
+/// Write the adapter generated from a hook's `[hooks]` into its tree directory, the file sync
+/// installs as `plugins/mars-<name>.hooks.ts`; `None` when `[hooks]` renders nothing for
+/// OpenCode. `${MARS_HOOK_DIR}` stays for `index.mjs` to fill in at runtime, like a native
+/// hook's. `${MARS_HOOK_TARGET}` is `.opencode` here, as in a sync install: this tree is
+/// OpenCode's alone, so no runtime token is needed.
+fn write_generated_hook(root: &Path, hook: &ParsedHookItem) -> Result<Option<String>, MarsError> {
+    let target = mars_schema::hooks::targets::target(TARGET_ROOT).expect("OpenCode takes hooks");
+    let tokens = Tokens {
+        hook_dir: mars_schema::hooks::HOOK_DIR_TOKEN,
+        hook_target: TARGET_ROOT,
+        ..Default::default()
+    };
+    let output = hook
+        .def
+        .output(target, None, hook.origin, &tokens)
+        .map_err(|error| MarsError::Internal(format!("hook `{}`: {error}", hook.def.name)))?;
+    let HookOutput::File(FileOutput { files, .. }) = output else {
+        return Ok(None);
+    };
+    let Some(generated) = files.into_iter().next() else {
+        return Ok(None);
+    };
+    let file = generated
+        .path
+        .rsplit('/')
+        .next()
+        .expect("rsplit yields one item")
+        .to_string();
+    crate::fs::atomic_write(
+        &root.join("hooks").join(&hook.def.name).join(&file),
+        generated.content.as_bytes(),
+    )?;
+    Ok(Some(file))
 }
 
 fn skill_data(root: &Path, directory: &str) -> Result<SkillData, MarsError> {

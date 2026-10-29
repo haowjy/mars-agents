@@ -58,7 +58,7 @@ function encodeForJavaScriptString(value) {
 
 async function renderHook(hook) {
   const hookDirectory = join(ROOT, "hooks", hook.name)
-  const source = await readFile(join(hookDirectory, hook.native_hook), "utf8")
+  const source = await readFile(join(hookDirectory, hook.file), "utf8")
   return source.replaceAll(HOOK_DIR_TOKEN, encodeForJavaScriptString(hookDirectory))
 }
 
@@ -116,12 +116,12 @@ export default {
         const url = `data:text/typescript;base64,${Buffer.from(rendered, "utf8").toString("base64")}`
         const definition = (await import(url)).default
         if (!definition || typeof definition.id !== "string" || typeof definition.setup !== "function") {
-          throw new Error(`OpenCode hook ${hook.name} must export default { id, setup }`)
+          throw new Error(`OpenCode hook ${hook.name}/${hook.file} must export default { id, setup }`)
         }
         const cleanup = await definition.setup(ctx)
         if (typeof cleanup === "function") cleanups.push(cleanup)
       } catch (error) {
-        console.error(`[${DATA.plugin}] failed to load hook ${hook.name}`, error)
+        console.error(`[${DATA.plugin}] failed to load hook ${hook.name}/${hook.file}`, error)
       }
     }
 

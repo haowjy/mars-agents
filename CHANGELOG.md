@@ -7,6 +7,16 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-29
+
+### Upgrade notes
+- Package authors: keep `fragment` until your consumers run Mars 0.26. Mars 0.25's reader rejects `native-hook`, so a dependency that switches early stays at its last good install there. See [native hooks](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#native-hooks).
+
+### Changed
+- `hook.toml` target tables now name the harness-native hook file with `native-hook`. `fragment` still works for one release and warns `hook-fragment-deprecated`; setting both is an error (`hook.native-hook-conflict`).
+- Diagnostic codes `hook-fragment-*`, `plugin-hook-fragment-dropped` and `hook.fragment-*` are renamed to `hook-native-*`, `plugin-native-hook-dropped` and `hook.native-hook-*`.
+- `@meridian-flow/mars-schema`: `FileOutput.fragmentProblem` is now `nativeHookProblem`.
+
 ## [0.25.0] - 2026-10-29
 
 ### Upgrade notes

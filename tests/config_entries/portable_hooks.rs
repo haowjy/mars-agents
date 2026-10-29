@@ -63,7 +63,7 @@ fn hooks_render_for_claude_and_codex_and_report_the_rest() {
             "`.codex` does not run `Notification`: Codex has no such event",
         ))
         .stderr(predicate::str::contains(
-            "`.opencode` does not run `PreToolUse`: mars does not render hooks for OpenCode yet",
+            "`.opencode` does not run `Notification`: OpenCode has no such event",
         ));
 
     let claude = json(&project, ".claude/settings.local.json");
@@ -91,11 +91,17 @@ fn hooks_render_for_claude_and_codex_and_report_the_rest() {
         ["hook:Notification:guard", "hook:PreToolUse:guard"]
     );
     assert_eq!(lock_keys(&project, ".codex"), ["hook:PreToolUse:guard"]);
-    // OpenCode renders nothing yet, so it gets neither a copy of the directory nor a record.
-    project
-        .child(".opencode/hooks")
-        .assert(predicate::path::missing());
-    assert!(lock_keys(&project, ".opencode").is_empty());
+    // OpenCode gets the generated plugin for PreToolUse, with its own target token.
+    let plugin = fs::read_to_string(
+        project
+            .child(".opencode/plugins/mars-guard.hooks.ts")
+            .path(),
+    )
+    .unwrap();
+    assert!(plugin.contains(&format!(
+        "bash \\\"{root}/.opencode/hooks/guard/run.sh\\\" .opencode"
+    )));
+    assert!(!plugin.contains("Notification"));
 }
 
 #[test]
@@ -399,7 +405,7 @@ fn a_portable_hook_that_renders_on_no_managed_target_is_reported() {
             "hook `notify`: `.codex` does not run `Notification`",
         ))
         .stderr(predicate::str::contains(
-            "hook `notify`: `.pi` does not run `Notification`: mars does not render hooks for Pi yet",
+            "hook `notify`: `.pi` does not run `Notification`: Pi has no such event",
         ));
 }
 
@@ -423,4 +429,53 @@ fn codex_trust_is_not_asked_for_an_event_codex_ignores() {
         .success()
         .stderr(predicate::str::contains("SessionStart[0][0]"))
         .stderr(predicate::str::contains("FutureEvent[").not());
+}
+
+#[test]
+fn a_file_target_keeps_the_generated_file_beside_the_fragment_and_removes_both() {
+    let dir = TempDir::new().unwrap();
+    let project = project(&dir, "\".opencode\", \".pi\"");
+    write_hook(
+        &project,
+        "guard",
+        &format!("{GUARD}\n[targets.\".opencode\"]\nfragment = \"plugin.ts\"\n"),
+    );
+    write_fragment(
+        &project,
+        "guard",
+        "plugin.ts",
+        "export default { id: \"mine\", async setup() {} }\n",
+    );
+    let generated = project.child(".opencode/plugins/mars-guard.hooks.ts");
+    let fragment = project.child(".opencode/plugins/mars-guard.ts");
+
+    sync(&project).success().stderr(predicate::str::contains(
+        "is installed next to the file generated from `[hooks]`",
+    ));
+    let first = fs::read_to_string(generated.path()).unwrap();
+    assert!(first.contains("\"name\": \"guard\"") && first.contains("PreToolUse"));
+    assert!(fragment.path().exists());
+    project
+        .child(".pi/extensions/mars-guard.hooks.ts")
+        .assert(predicate::path::exists());
+    project
+        .child(".pi/extensions/mars-guard.ts")
+        .assert(predicate::path::missing());
+
+    // A second sync leaves the generated file alone, rather than deleting it as an orphan.
+    let before = fs::metadata(generated.path()).unwrap().modified().unwrap();
+    sync(&project).success();
+    assert_eq!(fs::read_to_string(generated.path()).unwrap(), first);
+    assert_eq!(
+        fs::metadata(generated.path()).unwrap().modified().unwrap(),
+        before
+    );
+
+    fs::remove_dir_all(project.child("hooks/guard").path()).unwrap();
+    sync(&project).success();
+    generated.assert(predicate::path::missing());
+    fragment.assert(predicate::path::missing());
+    project
+        .child(".pi/extensions/mars-guard.hooks.ts")
+        .assert(predicate::path::missing());
 }

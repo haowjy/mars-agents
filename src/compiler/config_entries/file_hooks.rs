@@ -182,7 +182,12 @@ pub(super) fn write_file_hook_outputs(
             );
             continue;
         }
+        let unchanged =
+            dest_exists && std::fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes());
         let result = (|| -> Result<(), crate::error::MarsError> {
+            if unchanged {
+                return Ok(());
+            }
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }

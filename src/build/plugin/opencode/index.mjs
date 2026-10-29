@@ -58,7 +58,7 @@ function encodeForJavaScriptString(value) {
 
 async function renderHook(hook) {
   const hookDirectory = join(ROOT, "hooks", hook.name)
-  const source = await readFile(join(hookDirectory, hook.fragment), "utf8")
+  const source = await readFile(join(hookDirectory, hook.native_hook), "utf8")
   return source.replaceAll(HOOK_DIR_TOKEN, encodeForJavaScriptString(hookDirectory))
 }
 

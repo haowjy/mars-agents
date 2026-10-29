@@ -4,7 +4,7 @@ use super::support::*;
 fn opencode_file_hook_ignores_malformed_unrelated_config() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
-    configure_file_fragment(&project, ".opencode");
+    configure_file_native_hook(&project, ".opencode");
     project
         .child(".opencode/opencode.json")
         .write_str("{ malformed")
@@ -21,7 +21,7 @@ fn opencode_file_hook_ignores_malformed_unrelated_config() {
 }
 
 #[test]
-fn file_fragments_place_substitute_remove_and_resync_idempotently() {
+fn file_native_hooks_place_substitute_remove_and_resync_idempotently() {
     for (target, destination, export) in [
         (
             ".opencode",
@@ -52,9 +52,9 @@ export default function (pi: ExtensionAPI) {
         write_hook(
             &project,
             "audit",
-            &format!("[targets.\"{target}\"]\nfragment = \"plugin.ts\"\n"),
+            &format!("[targets.\"{target}\"]\nnative-hook = \"plugin.ts\"\n"),
         );
-        write_fragment(&project, "audit", "plugin.ts", export);
+        write_native_hook(&project, "audit", "plugin.ts", export);
         sync(&project).success();
         let placed = project.child(target).child(destination);
         let first = fs::read_to_string(placed.path()).unwrap();
@@ -91,11 +91,11 @@ export default function (pi: ExtensionAPI) {
 }
 
 #[test]
-fn untracked_file_fragment_collision_and_later_removal_preserve_user_file() {
-    for (target, destination) in file_fragment_targets() {
+fn untracked_file_native_hook_collision_and_later_removal_preserve_user_file() {
+    for (target, destination) in file_native_hook_targets() {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
-        configure_file_fragment(&project, target);
+        configure_file_native_hook(&project, target);
         let placed = project.child(target).child(destination);
         placed.write_str("user content").unwrap();
 
@@ -110,11 +110,11 @@ fn untracked_file_fragment_collision_and_later_removal_preserve_user_file() {
 }
 
 #[test]
-fn force_adopts_file_fragment_and_records_exact_output() {
-    for (target, destination) in file_fragment_targets() {
+fn force_adopts_file_native_hook_and_records_exact_output() {
+    for (target, destination) in file_native_hook_targets() {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
-        configure_file_fragment(&project, target);
+        configure_file_native_hook(&project, target);
         project
             .child(target)
             .child(destination)
@@ -132,7 +132,7 @@ fn force_adopts_file_fragment_and_records_exact_output() {
             .values()
             .flat_map(|item| &item.outputs)
             .find(|output| output.target_root == target && output.dest_path.as_str() == destination)
-            .expect("forced file fragment must have an exact output record");
+            .expect("forced file native hook must have an exact output record");
         let actual = mars_agents::hash::hash_bytes(
             &fs::read(project.child(target).child(destination).path()).unwrap(),
         );
@@ -152,11 +152,11 @@ fn force_adopts_file_fragment_and_records_exact_output() {
 }
 
 #[test]
-fn force_does_not_emit_file_fragment_without_canonical_owner() {
-    for (target, destination) in file_fragment_targets() {
+fn force_does_not_emit_file_native_hook_without_canonical_owner() {
+    for (target, destination) in file_native_hook_targets() {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
-        configure_file_fragment(&project, target);
+        configure_file_native_hook(&project, target);
 
         let canonical = project
             .child(".mars/hooks")
@@ -170,7 +170,7 @@ fn force_does_not_emit_file_fragment_without_canonical_owner() {
         installed
             .child("hook.toml")
             .write_str(&format!(
-                "[targets.\"{target}\"]\nfragment = \"plugin.ts\"\n"
+                "[targets.\"{target}\"]\nnative-hook = \"plugin.ts\"\n"
             ))
             .unwrap();
         installed.child("run.sh").write_str("#!/bin/sh\n").unwrap();
@@ -197,17 +197,17 @@ fn force_does_not_emit_file_fragment_without_canonical_owner() {
                 .flat_map(|item| &item.outputs)
                 .any(|output| output.target_root == target
                     && output.dest_path.as_str() == destination),
-            "an emitted file fragment must always have a canonical owner"
+            "an emitted file native hook must always have a canonical owner"
         );
     }
 }
 
 #[test]
-fn hand_edited_managed_file_fragment_is_not_silently_replaced() {
-    for (target, destination) in file_fragment_targets() {
+fn hand_edited_managed_file_native_hook_is_not_silently_replaced() {
+    for (target, destination) in file_native_hook_targets() {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
-        configure_file_fragment(&project, target);
+        configure_file_native_hook(&project, target);
         sync(&project).success();
         let placed = project.child(target).child(destination);
         placed.write_str("hand edited").unwrap();
@@ -218,11 +218,11 @@ fn hand_edited_managed_file_fragment_is_not_silently_replaced() {
 }
 
 #[test]
-fn failed_file_fragment_removal_retains_ownership_for_retry() {
-    for (target, destination) in file_fragment_targets() {
+fn failed_file_native_hook_removal_retains_ownership_for_retry() {
+    for (target, destination) in file_native_hook_targets() {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
-        configure_file_fragment(&project, target);
+        configure_file_native_hook(&project, target);
         sync(&project).success();
 
         let placed = project.child(target).child(destination);
@@ -272,11 +272,11 @@ fn failed_file_fragment_removal_retains_ownership_for_retry() {
 }
 
 #[test]
-fn removing_file_fragment_deletes_only_lock_owned_destination() {
-    for (target, destination) in file_fragment_targets() {
+fn removing_file_native_hook_deletes_only_lock_owned_destination() {
+    for (target, destination) in file_native_hook_targets() {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
-        configure_file_fragment(&project, target);
+        configure_file_native_hook(&project, target);
         sync(&project).success();
         let placed = project.child(target).child(destination);
         placed.assert(predicate::path::is_file());
@@ -291,10 +291,10 @@ fn removing_file_fragment_deletes_only_lock_owned_destination() {
 }
 
 #[test]
-fn file_fragment_preflight_errors_do_not_mutate_and_unchecked_is_rejected() {
+fn file_native_hook_preflight_errors_do_not_mutate_and_unchecked_is_rejected() {
     for manifest in [
-        "[targets.\".opencode\"]\nfragment = \"missing.ts\"\n",
-        "[targets.\".opencode\"]\nfragment = \"plugin.ts\"\nunchecked = false\n",
+        "[targets.\".opencode\"]\nnative-hook = \"missing.ts\"\n",
+        "[targets.\".opencode\"]\nnative-hook = \"plugin.ts\"\nunchecked = false\n",
     ] {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
@@ -310,11 +310,11 @@ fn file_fragment_preflight_errors_do_not_mutate_and_unchecked_is_rejected() {
             .unwrap();
         write_hook(&project, "bad", manifest);
         if manifest.contains("plugin.ts") {
-            write_fragment(&project, "bad", "plugin.ts", "export default {}");
+            write_native_hook(&project, "bad", "plugin.ts", "export default {}");
         }
         let assertion = sync(&project).failure();
         if manifest.contains("missing.ts") {
-            assertion.stderr(predicate::str::contains("failed to read fragment"));
+            assertion.stderr(predicate::str::contains("failed to read native hook"));
         } else {
             assertion.stderr(predicate::str::contains("`unchecked` is not supported"));
         }

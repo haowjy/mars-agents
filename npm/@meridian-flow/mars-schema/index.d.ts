@@ -640,21 +640,21 @@ export function selectItems(input: {
 export type HookTargetOutput =
   | {
       kind: "merge";
-      /** Finished entries per native event. A fragment's `[]` is kept: it turns that event off. */
+      /** Finished entries per native event. A native hook's `[]` is kept: it turns that event off. */
       events: { [event: string]: unknown[] };
-      /** Unknown events a dependency's fragment lists, left out of `events`. */
+      /** Unknown events a dependency's native hook lists, left out of `events`. */
       skippedEvents: string[];
       /** Events the target does not list that `unchecked = true` let through. */
       uncheckedEvents: string[];
-      /** Events a fragment declares that `[hooks]` also declares: the fragment's replace the generated entries. */
+      /** Events a native hook declares that `[hooks]` also declares: the native hook's replace the generated entries. */
       overrides: string[];
       skips: HookSkip[];
     }
   | {
       kind: "file";
       files: { path: string; content: string }[];
-      /** What is wrong with the authored fragment, if anything; it is installed regardless. */
-      fragmentProblem: string | null;
+      /** What is wrong with the authored native hook, if anything; it is installed regardless. */
+      nativeHookProblem: string | null;
       skips: HookSkip[];
       /** Rendered events whose portable answers do not all carry over to the target. */
       answerLimits: HookSkip[];

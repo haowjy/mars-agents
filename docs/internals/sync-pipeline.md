@@ -283,7 +283,7 @@ that never names the token has no directory and needs none.
 6. Order hooks deterministically: package depth → declaration order → `order`
    field → hook name.
 7. Render `[hooks]` for each target that can take the hook, skipping targets
-   in `skip-targets`, and validate native fragments. Validation depends on
+   in `skip-targets`, and validate native hooks. Validation depends on
    origin: the project's own hooks are strict, a dependency's invalid hook
    keeps its last good install (`hook-invalid-kept`), and a dependency's
    unknown event is skipped with a warning. A target that cannot render an

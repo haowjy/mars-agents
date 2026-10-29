@@ -60,7 +60,7 @@ fn malformed_merge_target_configs_fail_preflight_without_mutation() {
                 r#"{"hooks":[{"type":"command","command":"true"}]}"#,
             )
         };
-        write_fragment(
+        write_native_hook(
             &project,
             "audit",
             &format!("{}.json", target.trim_start_matches('.')),
@@ -82,7 +82,7 @@ fn malformed_merge_target_configs_fail_preflight_without_mutation() {
 }
 
 #[test]
-fn fragments_pass_through_native_entries_substitute_installed_paths_and_copy_hook_dirs() {
+fn native_hooks_pass_through_native_entries_substitute_installed_paths_and_copy_hook_dirs() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -99,7 +99,7 @@ order = 7
 [targets.".codex"]
 "#,
     );
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -108,7 +108,7 @@ order = 7
       "PostToolUse": [{"hooks":[{"type":"http","url":"https://example.test","timeout":9}]}]
     }"#,
     );
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "codex.json",
@@ -173,7 +173,7 @@ order = 7
 }
 
 #[test]
-fn wrapped_and_bare_fragments_emit_equal_entries() {
+fn wrapped_and_bare_native_hooks_emit_equal_entries() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -184,21 +184,21 @@ fn wrapped_and_bare_fragments_emit_equal_entries() {
     write_hook(
         &project,
         "bare",
-        "[targets.\".claude\"]\nfragment = \"bare.json\"\n",
+        "[targets.\".claude\"]\nnative-hook = \"bare.json\"\n",
     );
     write_hook(
         &project,
         "wrapped",
-        "[targets.\".claude\"]\nfragment = \"wrapped.json\"\n",
+        "[targets.\".claude\"]\nnative-hook = \"wrapped.json\"\n",
     );
     let entry = r#"[{"matcher":"Bash","hooks":[{"type":"command","command":"printf ok"}]}]"#;
-    write_fragment(
+    write_native_hook(
         &project,
         "bare",
         "bare.json",
         &format!(r#"{{"PreToolUse":{entry}}}"#),
     );
-    write_fragment(
+    write_native_hook(
         &project,
         "wrapped",
         "wrapped.json",
@@ -213,7 +213,7 @@ fn wrapped_and_bare_fragments_emit_equal_entries() {
 }
 
 #[test]
-fn invalid_fragments_fail_preflight_without_mutation() {
+fn invalid_native_hooks_fail_preflight_without_mutation() {
     for (body, expected) in [
         ("not json", "not valid JSON"),
         (r#"{"PreToolUse": {"hooks":[]}}"#, "value must be an array"),
@@ -231,7 +231,7 @@ fn invalid_fragments_fail_preflight_without_mutation() {
             .write_str("{\"sentinel\":true}")
             .unwrap();
         write_hook(&project, "bad", "[targets.\".claude\"]\n");
-        write_fragment(&project, "bad", "claude.json", body);
+        write_native_hook(&project, "bad", "claude.json", body);
         sync(&project)
             .failure()
             .stderr(predicate::str::contains(expected));
@@ -254,7 +254,7 @@ fn unknown_event_is_strict_by_default_and_unchecked_warns_and_passes() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "future", "[targets.\".claude\"]\n");
-    write_fragment(&project, "future", "claude.json", r#"{"FutureEvent":[]}"#);
+    write_native_hook(&project, "future", "claude.json", r#"{"FutureEvent":[]}"#);
     sync(&project)
         .failure()
         .stderr(predicate::str::contains("valid events: SessionStart"))
@@ -281,7 +281,7 @@ fn name_defaults_to_directory_and_explicit_override_controls_install_and_key() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "defaulted", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "defaulted",
         "claude.json",
@@ -292,7 +292,7 @@ fn name_defaults_to_directory_and_explicit_override_controls_install_and_key() {
         "source-dir",
         "name = \"renamed\"\n[targets.\".claude\"]\n",
     );
-    write_fragment(
+    write_native_hook(
         &project,
         "source-dir",
         "claude.json",
@@ -321,7 +321,7 @@ fn structural_ownership_preserves_edited_and_user_entries_and_prunes_emptied_eve
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "owned", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "owned",
         "claude.json",
@@ -366,7 +366,7 @@ fn stale_hook_diagnostics_distinguish_planned_and_unconfirmed_removals() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -438,7 +438,7 @@ fn edited_managed_entries_emit_divergence_warnings_on_every_merge_target() {
             .write_str(&format!("[settings]\ntargets = [\"{target}\"]\n"))
             .unwrap();
         write_hook(&project, "audit", &format!("[targets.\"{target}\"]\n"));
-        write_fragment(
+        write_native_hook(
             &project,
             "audit",
             &format!("{}.json", target.trim_start_matches('.')),
@@ -474,7 +474,7 @@ fn edited_managed_entries_emit_divergence_warnings_on_every_merge_target() {
 }
 
 #[test]
-fn empty_fragment_events_never_create_merge_config_residue() {
+fn empty_native_hook_events_never_create_merge_config_residue() {
     for (target, event, config) in [
         (".claude", "SessionStart", "settings.local.json"),
         (".codex", "SessionStart", "hooks.json"),
@@ -494,7 +494,7 @@ fn empty_fragment_events_never_create_merge_config_residue() {
             .write_str(r#"{"sentinel":true}"#)
             .unwrap();
         write_hook(&project, "empty", &format!("[targets.\"{target}\"]\n"));
-        write_fragment(
+        write_native_hook(
             &project,
             "empty",
             &format!("{}.json", target.trim_start_matches('.')),
@@ -519,7 +519,7 @@ fn empty_fragment_events_never_create_merge_config_residue() {
 }
 
 #[test]
-fn cursor_fragments_emit_flat_versioned_entries_and_preserve_user_entries() {
+fn cursor_native_hooks_emit_flat_versioned_entries_and_preserve_user_entries() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -533,7 +533,7 @@ fn cursor_fragments_emit_flat_versioned_entries_and_preserve_user_entries() {
         .write_str(r#"{"version":99,"hooks":{"sessionStart":[{"command":"printf user"}]}}"#)
         .unwrap();
     write_hook(&project, "audit", "[targets.\".cursor\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "cursor.json",
@@ -586,7 +586,7 @@ fn cursor_allowlist_is_camel_case_and_unchecked_passes_unknown_events() {
         .write_str("[settings]\ntargets = [\".cursor\"]\n")
         .unwrap();
     write_hook(&project, "future", "[targets.\".cursor\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "future",
         "cursor.json",
@@ -635,7 +635,7 @@ fn all_merge_destinations_are_validated_before_the_first_write() {
         .write_str("command = \"node\"\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -653,4 +653,58 @@ fn all_merge_destinations_are_validated_before_the_first_write() {
     project
         .child(".mars/hooks/claude/audit")
         .assert(predicate::path::missing());
+}
+
+/// A project with one Claude hook whose native hook is named by `key`.
+fn project_naming_native_hook_by(
+    dir: &TempDir,
+    name: &str,
+    key: &str,
+) -> assert_fs::fixture::ChildPath {
+    let project = dir.child(name);
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = [\".claude\"]\n")
+        .unwrap();
+    write_hook(
+        &project,
+        "audit",
+        &format!("[targets.\".claude\"]\n{key} = \"claude.json\"\n"),
+    );
+    write_native_hook(
+        &project,
+        "audit",
+        "claude.json",
+        r#"{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"printf ok"}]}]}"#,
+    );
+    project
+}
+
+#[test]
+fn deprecated_fragment_key_installs_like_native_hook_and_warns() {
+    let dir = TempDir::new().unwrap();
+    let new = project_naming_native_hook_by(&dir, "new", "native-hook");
+    let old = project_naming_native_hook_by(&dir, "old", "fragment");
+    sync(&new)
+        .success()
+        .stderr(predicate::str::contains("which is deprecated; use `native-hook`").not());
+    sync(&old).success().stderr(predicate::str::contains(
+        "which is deprecated; use `native-hook`",
+    ));
+    // The code users see is the CLI's dashed form, which the docs name.
+    mars()
+        .args(["--json", "sync", "--root", old.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hook-fragment-deprecated"));
+    // The item checksums cover `hook.toml` itself, so compare what was emitted and recorded.
+    let emitted = |project: &assert_fs::fixture::ChildPath| {
+        let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+        let entries = lock[lock.find("[config_entries").unwrap()..].to_owned();
+        let settings =
+            fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+        (entries, settings)
+    };
+    assert_eq!(emitted(&new), emitted(&old));
 }

@@ -31,7 +31,7 @@ fn write_migrated_hook_source(dir: &TempDir, source_name: &str) -> std::path::Pa
         "context-autosync",
         "name = \"context-autosync\"\nvisibility = \"exported\"\n\n[targets.\".claude\"]\n",
     );
-    write_fragment(
+    write_native_hook(
         &source,
         "context-autosync",
         "claude.json",
@@ -176,7 +176,7 @@ fn recovery_commands_converge_or_halt_at_the_reader_compiler_boundary() {
     let legacy = write_legacy_hook_source(&dir, "base");
     let migrated = write_migrated_hook_source(&dir, "base-migrated");
 
-    // (label, cli args, converges, halt_guidance_fragment, halt_command_fragment)
+    // (label, cli args, converges, halt_guidance_native_hook, halt_command_native_hook)
     let cases: Vec<(_, Vec<&str>, _, Option<&str>, Option<&str>)> = vec![
         (
             "upgrade",
@@ -703,7 +703,7 @@ fn unmatched_legacy_claude_sweep_does_not_rewrite_settings() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -745,7 +745,7 @@ fn new_emission_never_name_matches_user_hooks_in_committed_claude_settings() {
         .write_str(original)
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -757,7 +757,7 @@ fn new_emission_never_name_matches_user_hooks_in_committed_claude_settings() {
 }
 
 #[test]
-fn v011_schema_is_a_hard_error_with_filename_and_fragment_hint() {
+fn v011_schema_is_a_hard_error_with_filename_and_native_hook_hint() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -778,5 +778,5 @@ path = "run.sh"
         .failure()
         .stderr(predicate::str::contains("hook.toml"))
         .stderr(predicate::str::contains("removed v0.11.0 hook schema"))
-        .stderr(predicate::str::contains("native fragment"));
+        .stderr(predicate::str::contains("native hook"));
 }

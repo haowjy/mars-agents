@@ -263,8 +263,22 @@ pub(crate) fn lower_hook_entries(
             hook_dir: dir,
             hook_target: "plugin",
         };
-        match crate::compiler::hooks::load_output(item, target, &tokens) {
-            Ok(HookOutput::Merge(output)) => outputs.push((*item, output)),
+        match crate::compiler::hooks::load_plugin_output(item, target, &tokens) {
+            Ok(HookOutput::Merge(output)) => {
+                for skip in &output.skips {
+                    diag.warn(
+                        "hook-event-skipped",
+                        format!(
+                            "hook `{}` from `{}`: the `{}` plugin tree {}",
+                            item.def.name,
+                            item.source_name,
+                            adapter.name().trim_start_matches('.'),
+                            skip_text(skip)
+                        ),
+                    );
+                }
+                outputs.push((*item, output));
+            }
             Ok(HookOutput::File(_)) => {}
             Err(error) => diag.error("hook-fragment", error.to_string()),
         }

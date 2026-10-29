@@ -214,7 +214,7 @@ is converted to `serde_json::Map` at the boundary.
 
 `mars-schema-wasm` serializes with `Serializer::json_compatible()` (plain objects, `null`) and
 exposes `read`, `emitValue`, `rewriteBlock`, `vocabulary`, `prepare`, `inspect`, `normalize`,
-`satisfies`, `satisfiesRequirement`, `selectVersion`, `selectItems` and `version`
+`satisfies`, `satisfiesRequirement`, `selectVersion`, `selectItems`, `renderHooks` (the hook render, inline-checked in `run-fixtures.mjs`) and `version`
 as `@meridian-flow/mars-schema` (trees are `Map<path, Uint8Array>`). Every export throws an `Error` with a `code` (`fail` in the crate; the crate's error types supply it, `input.invalid` is the rest). `serde-wasm-bindgen` reads a plain object by field name, so `deny_unknown_fields` is inert across the boundary: `check_keys` refuses stray keys for the exports that take structures. `prepare` is a supported
 export on its own: the way to read one root without choosing items. The npm `node/`, `web/` and
 `fixtures/` are built by `scripts/build-schema-wasm.sh`, never committed. The script builds the

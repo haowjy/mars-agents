@@ -343,18 +343,39 @@ pub fn load_output(
     target: &Target,
     tokens: &Tokens<'_>,
 ) -> Result<HookOutput, MarsError> {
+    load(item, target, |fragment| {
+        item.def.output(target, fragment, item.origin, tokens)
+    })
+}
+
+/// What an installed hook puts in a plugin build's tree for `target`; see
+/// `HookDef::plugin_output`.
+pub fn load_plugin_output(
+    item: &ParsedHookItem,
+    target: &Target,
+    tokens: &Tokens<'_>,
+) -> Result<HookOutput, MarsError> {
+    load(item, target, |fragment| {
+        item.def
+            .plugin_output(target, fragment, item.origin, tokens)
+    })
+}
+
+fn load(
+    item: &ParsedHookItem,
+    target: &Target,
+    output: impl FnOnce(Option<&str>) -> Result<HookOutput, mars_schema::hooks::FragmentError>,
+) -> Result<HookOutput, MarsError> {
     let fragment = item
         .fragment(target.root)
         .map(|fragment| read_fragment(item, &fragment.file))
         .transpose()?;
-    item.def
-        .output(target, fragment.as_deref(), item.origin, tokens)
-        .map_err(|error| {
-            let file = fragment.as_ref().map_or("hook.toml", |_| {
-                item.fragment(target.root).map_or("", |f| &f.file)
-            });
-            fragment_error(item, file, &error.to_string())
-        })
+    output(fragment.as_deref()).map_err(|error| {
+        let file = fragment.as_ref().map_or("hook.toml", |_| {
+            item.fragment(target.root).map_or("", |f| &f.file)
+        });
+        fragment_error(item, file, &error.to_string())
+    })
 }
 
 /// Whether a dependency hook renders on every managed target it is installed for. The tokens

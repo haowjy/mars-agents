@@ -635,3 +635,38 @@ export function selectItems(input: {
   packages: { [name: string]: SelectionPackage };
   root?: SelectionPackage;
 }): SelectionResult;
+
+/** What a hook installs on one target. */
+export type HookTargetOutput =
+  | {
+      kind: "merge";
+      /** Finished entries per native event; an event with nothing left is absent. */
+      events: { [event: string]: unknown[] };
+      /** Events the target does not list that `unchecked = true` let through. */
+      uncheckedEvents: string[];
+      skips: HookSkip[];
+    }
+  | {
+      kind: "file";
+      files: { path: string; content: string }[];
+      skips: HookSkip[];
+    };
+
+/** Something a target does not run. `event` is `null` when the whole target is skipped. */
+export interface HookSkip {
+  event: string | null;
+  reason: string;
+}
+
+/**
+ * A `hook.toml`'s `[hooks]` table as each target in `targets` (roots such as `.claude`,
+ * `.codex`) takes it, from the same render `mars sync` uses. `tokens` fills `${MARS_HOOK_DIR}`
+ * and `${MARS_HOOK_TARGET}`; one left out stays as written (`hookTarget` defaults to the
+ * target's root). When `diagnostics` holds an error, `targets` is empty. A root with no hook
+ * mechanism throws `input.invalid`.
+ */
+export function renderHooks(
+  hookToml: string,
+  targets: string[],
+  tokens?: { hookDir?: string; hookTarget?: string } | null,
+): { diagnostics: Diagnostic[]; targets: { [root: string]: HookTargetOutput } };

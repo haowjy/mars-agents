@@ -498,6 +498,46 @@ pub struct MergeOutput {
     pub skips: Vec<Skip>,
 }
 
+impl MergeOutput {
+    /// Hold every event Claude lists to Codex's handler rules, reporting what that leaves
+    /// out. Events outside Claude's table (`unchecked`) and events turned off stay as they
+    /// are. Idempotent, so entries `[hooks]` already rendered pass unchanged.
+    fn conform_to_codex(&mut self) -> Result<(), FragmentError> {
+        let checked: serde_json::Map<_, _> = self
+            .events
+            .iter()
+            .filter(|(event, entries)| {
+                !entries.is_empty() && targets::claude_event(event).is_some()
+            })
+            .map(|(event, entries)| {
+                let entries = entries.iter().map(OrderedValue::to_json).collect();
+                (event.clone(), serde_json::Value::Array(entries))
+            })
+            .collect();
+        if checked.is_empty() {
+            return Ok(());
+        }
+        let text = serde_json::Value::Object(checked.clone()).to_string();
+        let (table, nulls) = PortableHooks::from_claude_json(&text)
+            .map_err(|error| FragmentError(format!("fragment is not a hook table: {error}")))?;
+        for path in nulls {
+            // `hooks.<Event>[..]…`: the second segment is the event.
+            let event = path.split(['.', '[']).nth(1).map(str::to_owned);
+            self.skips.push(render::Skip {
+                event,
+                reason: format!("`null` at `{path}` dropped: Codex cannot parse it"),
+            });
+        }
+        let rendered = table.render(&targets::PLUGIN_CLAUDE_TREE, &Tokens::default());
+        self.skips.extend(rendered.skips.iter().cloned());
+        for event in checked.keys() {
+            self.events.remove(event);
+        }
+        self.events.extend(rendered.events().clone());
+        Ok(())
+    }
+}
+
 /// Why a fragment's text is refused. The caller adds the file it came from.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
@@ -527,7 +567,7 @@ impl HookDef {
                 tokens,
             )))
         } else {
-            self.merge_output(target, fragment_text, origin, tokens)
+            self.merge_output(target, &target.profile, fragment_text, origin, tokens)
                 .map(HookOutput::Merge)
         }
     }
@@ -560,16 +600,43 @@ impl HookDef {
         output
     }
 
+    /// What this hook puts in a plugin build's tree for `target`. The Claude tree's
+    /// `hooks/hooks.json` is also read by Codex, which rejects the whole file over one
+    /// handler it cannot parse, so everything that reaches it, `[hooks]` and fragment alike,
+    /// is conformed to Codex's rules while keeping Claude's events (D21). Other trees take
+    /// what [`Self::output`] gives.
+    pub fn plugin_output(
+        &self,
+        target: &Target,
+        fragment_text: Option<&str>,
+        origin: Origin,
+        tokens: &Tokens<'_>,
+    ) -> Result<HookOutput, FragmentError> {
+        if target.root != ".claude" {
+            return self.output(target, fragment_text, origin, tokens);
+        }
+        let mut output = self.merge_output(
+            target,
+            &targets::PLUGIN_CLAUDE_TREE,
+            fragment_text,
+            origin,
+            tokens,
+        )?;
+        output.conform_to_codex()?;
+        Ok(HookOutput::Merge(output))
+    }
+
     fn merge_output(
         &self,
         target: &Target,
+        profile: &targets::Profile,
         fragment_text: Option<&str>,
         origin: Origin,
         tokens: &Tokens<'_>,
     ) -> Result<MergeOutput, FragmentError> {
         let mut output = MergeOutput::default();
         if let (Some(portable), true) = (&self.portable, self.generates_for(target.root)) {
-            let rendered = portable.render(&target.profile, tokens);
+            let rendered = portable.render(profile, tokens);
             if let render::Output::Merge {
                 events,
                 unchecked_events,
@@ -594,7 +661,7 @@ impl HookDef {
         };
         // Sorted, so the first fault reported does not depend on authored order.
         let sorted: BTreeMap<_, _> = object.into_iter().collect();
-        let known = target.profile.events;
+        let known = profile.events;
         for (event, entries) in sorted {
             if !known.iter().any(|e| e.name == event) {
                 if !fragment.is_unchecked() && origin == Origin::Dependency {

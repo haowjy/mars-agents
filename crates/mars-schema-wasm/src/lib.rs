@@ -432,3 +432,122 @@ pub fn select_items(argument: JsValue) -> Result<JsValue, JsValue> {
     };
     to_js(&mars_schema::selection::select(&view))
 }
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderTokens {
+    hook_dir: Option<String>,
+    hook_target: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SkipOut<'a> {
+    event: Option<&'a str>,
+    reason: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum TargetOut<'a> {
+    #[serde(rename_all = "camelCase")]
+    Merge {
+        events: &'a BTreeMap<String, Vec<OrderedValue>>,
+        unchecked_events: &'a [String],
+        skips: Vec<SkipOut<'a>>,
+    },
+    File {
+        files: Vec<FileOut<'a>>,
+        skips: Vec<SkipOut<'a>>,
+    },
+}
+
+#[derive(Serialize)]
+struct FileOut<'a> {
+    path: &'a str,
+    content: &'a str,
+}
+
+/// A `hook.toml`'s `[hooks]` as each of `targets` (roots such as `.claude`) takes it:
+/// `{diagnostics, targets: {<root>: {kind: "merge", events, uncheckedEvents, skips} | {kind:
+/// "file", files, skips}}}`. `tokens` (`{hookDir?, hookTarget?}`) fills the hook tokens; one
+/// left out stays as written (`hookTarget` defaults to the target's root). `targets` is empty
+/// when `diagnostics` holds an error. A root with no hook mechanism throws `input.invalid`.
+#[wasm_bindgen(js_name = renderHooks)]
+pub fn render_hooks(
+    hook_toml: &str,
+    targets: Vec<String>,
+    tokens: JsValue,
+) -> Result<JsValue, JsValue> {
+    use mars_schema::hooks::{self, HookOutput, Origin, targets as hook_targets};
+    let tokens: RenderTokens = if tokens.is_undefined() || tokens.is_null() {
+        RenderTokens {
+            hook_dir: None,
+            hook_target: None,
+        }
+    } else {
+        parse_fields(tokens)?
+    };
+    let roots = targets
+        .iter()
+        .map(|root| {
+            hook_targets::target(root)
+                .ok_or_else(|| fail("input.invalid", format!("`{root}` has no hook mechanism")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let read = hooks::read(hook_toml, "hook", Origin::Local);
+    let mut outputs = Vec::new();
+    if let Some(def) = &read.def {
+        for target in roots {
+            let tokens = hooks::Tokens {
+                hook_dir: tokens.hook_dir.as_deref().unwrap_or(hooks::HOOK_DIR_TOKEN),
+                hook_target: tokens.hook_target.as_deref().unwrap_or(target.root),
+            };
+            let output = def
+                .output(target, None, Origin::Local, &tokens)
+                .map_err(|error| fail("hook.invalid", error))?;
+            outputs.push((target.root, output));
+        }
+    }
+    fn skips(skips: &[hooks::render::Skip]) -> Vec<SkipOut<'_>> {
+        skips
+            .iter()
+            .map(|skip| SkipOut {
+                event: skip.event.as_deref(),
+                reason: &skip.reason,
+            })
+            .collect()
+    }
+    let targets: BTreeMap<_, _> = outputs
+        .iter()
+        .map(|(root, output)| {
+            let out = match output {
+                HookOutput::Merge(merge) => TargetOut::Merge {
+                    events: &merge.events,
+                    unchecked_events: &merge.unchecked_events,
+                    skips: skips(&merge.skips),
+                },
+                HookOutput::File(file) => TargetOut::File {
+                    files: file
+                        .files
+                        .iter()
+                        .map(|f| FileOut {
+                            path: &f.path,
+                            content: &f.content,
+                        })
+                        .collect(),
+                    skips: skips(&file.skips),
+                },
+            };
+            (*root, out)
+        })
+        .collect();
+    #[derive(Serialize)]
+    struct Out<'a> {
+        diagnostics: &'a [mars_schema::diagnostic::SchemaDiagnostic],
+        targets: BTreeMap<&'a str, TargetOut<'a>>,
+    }
+    to_js(&Out {
+        diagnostics: &read.diagnostics,
+        targets,
+    })
+}

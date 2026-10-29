@@ -49,6 +49,23 @@ for (const name of cases("read")) {
 }
 assert.throws(() => wasm.read("README.md", ""), (e) => e.code === "read.unrecognized-path" && /not a schema file/.test(e.message));
 
+// renderHooks: Codex keeps what it parses and says what it leaves out; the Claude table is as written
+{
+  const hookToml = `[[hooks.PreToolUse]]\nmatcher = "Bash"\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "bash \${MARS_HOOK_DIR}/run.sh"\ntimeout = 2.5\n[[hooks.PreToolUse.hooks]]\ntype = "http"\nurl = "https://example.test"\n`;
+  const out = wasm.renderHooks(hookToml, [".claude", ".codex", ".opencode"], { hookDir: "/h" });
+  assert.deepStrictEqual(out.diagnostics, []);
+  assert.equal(out.targets[".claude"].events.PreToolUse[0].hooks.length, 2);
+  assert.equal(out.targets[".claude"].events.PreToolUse[0].hooks[0].command, "bash /h/run.sh");
+  const codex = out.targets[".codex"];
+  assert.equal(codex.events.PreToolUse[0].hooks.length, 1);
+  assert.equal(codex.events.PreToolUse[0].hooks[0].timeout, 3);
+  assert.match(codex.skips[0].reason, /not `http`/);
+  assert.equal(out.targets[".opencode"].kind, "file");
+  assert.throws(() => wasm.renderHooks(hookToml, [".agents"]), (e) => e.code === "input.invalid");
+  assert.deepStrictEqual(wasm.renderHooks("hooks = 1", [".claude"]).targets, {});
+  checked++;
+}
+
 // prepare: result equals expected.json once the bytes are checked against expected/ or the input
 const stripBytes = value => {
   if (Array.isArray(value)) return value.forEach(stripBytes);

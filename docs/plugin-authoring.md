@@ -150,7 +150,9 @@ next to the hook's `opencode.ts` native hook, if it has one. The Cursor tree doe
 `[hooks]`. For each hook that gets nothing in a tree (no native hook, and `[hooks]` render nothing
 there), the build warns `plugin-native-hook-dropped` and names the harnesses that lose it. A
 Cursor hook needs a native hook (`cursor.json`). Inside a plugin build, `${MARS_HOOK_TARGET}` is
-`plugin` in the Claude tree and `.opencode` in the OpenCode tree.
+`plugin` in the Claude tree and `.opencode` in the OpenCode tree, in native hooks and generated
+adapters alike. A hook file may not be named like the generated adapter (`mars-<name>.hooks.ts`);
+the build fails. Events the adapter cannot carry are reported as `hook-event-skipped`.
 
 NativeHooks, tokens, and the drop codes are in
 [Plugin builds](config/mcp-and-hooks.md#plugin-builds) and

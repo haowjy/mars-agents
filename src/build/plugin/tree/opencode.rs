@@ -2,6 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use crate::compiler::config_entries::render::skip_text;
 use crate::compiler::hooks::{ParsedHookItem, load_plugin_output, report_native_hook};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
@@ -102,6 +103,9 @@ struct PluginData<'a> {
 struct DirTokens {
     #[serde(rename = "hookDir")]
     hook_dir: &'static str,
+    /// `index.mjs` fills it with `.opencode` in every hook file, as a sync install does.
+    #[serde(rename = "hookTarget")]
+    hook_target: &'static str,
     #[serde(rename = "mcpDir")]
     mcp_dir: &'static str,
 }
@@ -213,7 +217,7 @@ fn write_package(
                 file: native_hook.file.clone(),
             });
         }
-        if let Some(file) = write_generated_hook(root, hook)? {
+        if let Some(file) = write_generated_hook(root, hook, diag)? {
             hook_files.push(HookData {
                 name: hook.def.name.clone(),
                 file,
@@ -226,6 +230,7 @@ fn write_package(
         plugin: &metadata.name,
         tokens: DirTokens {
             hook_dir: mars_schema::hooks::HOOK_DIR_TOKEN,
+            hook_target: mars_schema::hooks::HOOK_TARGET_TOKEN,
             mcp_dir: mars_schema::mcp_server::MCP_DIR_TOKEN,
         },
         skills,
@@ -250,7 +255,11 @@ fn write_package(
 /// OpenCode. `${MARS_HOOK_DIR}` stays for `index.mjs` to fill in at runtime, like a native
 /// hook's. `${MARS_HOOK_TARGET}` is `.opencode` here, as in a sync install: this tree is
 /// OpenCode's alone, so no runtime token is needed.
-fn write_generated_hook(root: &Path, hook: &ParsedHookItem) -> Result<Option<String>, MarsError> {
+fn write_generated_hook(
+    root: &Path,
+    hook: &ParsedHookItem,
+    diag: &mut DiagnosticCollector,
+) -> Result<Option<String>, MarsError> {
     let target = mars_schema::hooks::targets::target(TARGET_ROOT).expect("OpenCode takes hooks");
     let tokens = Tokens {
         hook_dir: mars_schema::hooks::HOOK_DIR_TOKEN,
@@ -261,9 +270,38 @@ fn write_generated_hook(root: &Path, hook: &ParsedHookItem) -> Result<Option<Str
         .def
         .output(target, None, hook.origin, &tokens)
         .map_err(|error| MarsError::Internal(format!("hook `{}`: {error}", hook.def.name)))?;
-    let HookOutput::File(FileOutput { files, .. }) = output else {
+    let HookOutput::File(FileOutput {
+        files,
+        skips,
+        answer_limits,
+        ..
+    }) = output
+    else {
         return Ok(None);
     };
+    for skip in &skips {
+        diag.warn(
+            "hook-event-skipped",
+            format!(
+                "hook `{}` from `{}`: the `opencode` plugin tree {}",
+                hook.def.name,
+                hook.source_name,
+                skip_text(skip)
+            ),
+        );
+    }
+    for limit in &answer_limits {
+        diag.info(
+            "hook-answer-unsupported",
+            format!(
+                "hook `{}` from `{}`: `{TARGET_ROOT}` `{}`: {}",
+                hook.def.name,
+                hook.source_name,
+                limit.event.as_deref().unwrap_or(""),
+                limit.reason,
+            ),
+        );
+    }
     let Some(generated) = files.into_iter().next() else {
         return Ok(None);
     };
@@ -273,10 +311,16 @@ fn write_generated_hook(root: &Path, hook: &ParsedHookItem) -> Result<Option<Str
         .next()
         .expect("rsplit yields one item")
         .to_string();
-    crate::fs::atomic_write(
-        &root.join("hooks").join(&hook.def.name).join(&file),
-        generated.content.as_bytes(),
-    )?;
+    let destination = root.join("hooks").join(&hook.def.name).join(&file);
+    if destination.exists() {
+        return Err(MarsError::InvalidRequest {
+            message: format!(
+                "hook `{}` from `{}`: its file `{file}` has the name of the adapter generated from `[hooks]`; an authored file may not use it",
+                hook.def.name, hook.source_name
+            ),
+        });
+    }
+    crate::fs::atomic_write(&destination, generated.content.as_bytes())?;
     Ok(Some(file))
 }
 

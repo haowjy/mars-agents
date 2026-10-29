@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 const DATA = /*__MARS_PLUGIN_DATA__*/
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const HOOK_DIR_TOKEN = DATA.tokens.hookDir
+const HOOK_TARGET_TOKEN = DATA.tokens.hookTarget
 const MCP_DIR_TOKEN = DATA.tokens.mcpDir
 
 function substituteMcpDir(value, mcpDirectory) {
@@ -59,7 +60,9 @@ function encodeForJavaScriptString(value) {
 async function renderHook(hook) {
   const hookDirectory = join(ROOT, "hooks", hook.name)
   const source = await readFile(join(hookDirectory, hook.file), "utf8")
-  return source.replaceAll(HOOK_DIR_TOKEN, encodeForJavaScriptString(hookDirectory))
+  return source
+    .replaceAll(HOOK_TARGET_TOKEN, () => ".opencode")
+    .replaceAll(HOOK_DIR_TOKEN, encodeForJavaScriptString(hookDirectory))
 }
 
 export default {

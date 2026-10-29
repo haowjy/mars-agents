@@ -464,31 +464,35 @@ fn an_empty_file_target_table_needs_a_native_hook_for_both_origins() {
 }
 
 #[test]
-fn fragment_is_a_deprecated_alias_of_native_hook() {
-    let got = read_local("[targets.\".codex\"]\nfragment = \"old.json\"\n");
-    assert_eq!(
-        got.def
-            .as_ref()
-            .unwrap()
-            .native_hook(".codex")
-            .unwrap()
-            .file,
-        "old.json"
-    );
-    assert_eq!(got.diagnostics.len(), 1);
-    assert_eq!(got.diagnostics[0].code, "hook.fragment-deprecated");
-    assert_eq!(got.diagnostics[0].severity, Severity::Warning);
-    assert!(message(&got).contains(".codex") && message(&got).contains("native-hook"));
-    // A dependency's hook warns the same way and still reads.
-    let got = read_dependency("[targets.\".codex\"]\nfragment = \"old.json\"\n");
-    assert!(got.def.is_some());
-    assert_eq!(got.diagnostics[0].code, "hook.fragment-deprecated");
+fn fragment_was_removed_for_both_origins() {
+    for (text, fix) in [
+        (
+            "[targets.\".codex\"]\nfragment = \"old.json\"\n",
+            "use `native-hook`",
+        ),
+        (
+            "[targets.\".codex\"]\nnative-hook = \"a.json\"\nfragment = \"b.json\"\n",
+            "delete it, `native-hook` is already set",
+        ),
+    ] {
+        for got in [read_local(text), read_dependency(text)] {
+            assert!(got.def.is_none());
+            assert_eq!(got.diagnostics.len(), 1);
+            assert_eq!(got.diagnostics[0].code, "field.removed");
+            assert_eq!(got.diagnostics[0].severity, Severity::Error);
+            assert_eq!(
+                message(&got),
+                format!("target `.codex`: `fragment` was removed in 0.27; {fix}")
+            );
+        }
+    }
 }
 
 #[test]
-fn native_hook_and_fragment_together_are_an_error() {
-    let got = read_local("[targets.\".codex\"]\nnative-hook = \"a.json\"\nfragment = \"b.json\"\n");
-    assert!(got.def.is_none());
-    assert_eq!(got.diagnostics[0].code, "hook.native-hook-conflict");
-    assert!(message(&got).contains("keep one of `native-hook` or `fragment`"));
+fn native_hook_names_the_file_in_a_merge_target() {
+    let got = read_local("[targets.\".codex\"]\nnative-hook = \"a.json\"\n");
+    assert_eq!(
+        got.def.unwrap().native_hook(".codex").unwrap().file,
+        "a.json"
+    );
 }

@@ -68,7 +68,7 @@ fn hooks_render_for_claude_and_codex_and_report_the_rest() {
 
     let claude = json(&project, ".claude/settings.local.json");
     let codex = json(&project, ".codex/hooks.json");
-    let root = portable_path(project.path());
+    let root = portable_path(&dunce::canonicalize(project.path()).unwrap());
     // Each target gets its own directory in the command, and its own target token.
     assert_eq!(
         commands(&claude, "PreToolUse"),

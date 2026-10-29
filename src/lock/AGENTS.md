@@ -44,6 +44,11 @@ paths match.
   subpath, commit}` are optional and skipped when absent, so locks without plugins read and write
   unchanged at version 3. A plugin dependency's `url`, `version` and `commit` stay the marketplace's
   own; `content` is where the plugin's files came from (see `.context/CONTEXT.md`).
+- **A hook item records `source_path`**, its directory under the package root (`hooks/guard`, `/`
+  separated), optional and skipped when absent so the lock stays version 3. `sync/kept_hooks.rs`
+  finds a kept hook's install by package + path; locks without it fall back to the names the
+  broken `hook.toml` still declares. Older Mars ignores the field and drops it when it rewrites the
+  lock; the next current-Mars sync records it again.
 - **Do not change the lock schema for lookup fixes.** `LockIndex` is the
   ephemeral seam for efficient read shapes over the persisted nested-output schema.
 - **Keep path comparisons separator-tolerant.** `DestPath` uses forward-slash

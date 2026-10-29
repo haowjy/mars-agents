@@ -224,6 +224,7 @@ mod tests {
             kind,
             version: None,
             source_checksum: ContentHash::from(source_checksum),
+            source_path: None,
             outputs: vec![OutputRecord::installed(
                 ".mars".to_string(),
                 dest_path.into(),
@@ -592,6 +593,7 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: source_hash.clone().into(),
+                source_path: None,
                 outputs: vec![OutputRecord::installed(
                     ".mars".to_string(),
                     "agents/coder.md".into(),
@@ -645,6 +647,7 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: canonical_hash.clone().into(),
+                source_path: None,
                 outputs: vec![
                     OutputRecord::installed(
                         ".mars".to_string(),
@@ -717,6 +720,7 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: source_hash.into(),
+                source_path: None,
                 outputs: vec![OutputRecord::installed(
                     ".mars".to_string(),
                     "agents/coder.md".into(),

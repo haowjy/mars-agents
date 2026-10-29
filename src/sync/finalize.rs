@@ -6,6 +6,8 @@ use mars_schema::item::ItemKind;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
+use crate::lock::LockFile;
+use crate::sync::kept_hooks;
 use crate::sync::{SyncReport, SyncRequest, SyncedState, recovery};
 use crate::types::MarsContext;
 
@@ -47,6 +49,7 @@ pub(crate) fn finalize(
             state.config_entries,
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
+        record_hook_source_paths(&mut new_lock, &state.applied.planned.targeted.target, graph);
         let mut confirmed_output_removals: Vec<(String, String)> = state
             .target_outcomes
             .iter()
@@ -153,6 +156,32 @@ pub(crate) fn finalize(
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
     })
+}
+
+/// Record where each hook directory sits in its package, so a later sync finds the install
+/// of a hook whose `hook.toml` stops reading (`kept_hooks::settle`). Every sync stamps them,
+/// which also upgrades a lock that has none.
+fn record_hook_source_paths(
+    lock: &mut LockFile,
+    target: &crate::sync::target::TargetState,
+    graph: &crate::resolve::ResolvedGraph,
+) {
+    for item in target
+        .items
+        .values()
+        .filter(|item| item.id.kind == ItemKind::Hook)
+    {
+        let Some(node) = graph.nodes.get(&item.source_name) else {
+            continue;
+        };
+        let source_path =
+            kept_hooks::lock_source_path(&node.rooted_ref.package_root, &item.source_path);
+        if let Some(locked) = lock.items.get_mut(&crate::lock::item_key(&item.id))
+            && locked.source == item.source_name
+        {
+            locked.source_path = source_path;
+        }
+    }
 }
 
 fn retry_tombstone_removals(

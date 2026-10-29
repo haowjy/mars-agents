@@ -377,6 +377,10 @@ pub(crate) fn build_with_collisions_and_diag(
                 {
                     invalid_hooks.push(InvalidDependencyHook {
                         source_name: source_name.clone(),
+                        source_path: crate::sync::kept_hooks::lock_source_path(
+                            &node.rooted_ref.package_root,
+                            &invalid.hook_dir,
+                        ),
                         installed_names: invalid.installed_names,
                         rank: crate::compiler::hooks::HookRank {
                             package_depth,

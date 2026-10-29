@@ -155,7 +155,7 @@ entry with a path-bearing warning when it did not. Config lowering must not redi
 A dependency hook that is invalid (its `hook.toml`, or a fragment that does not load) is not selected
 if the consumer's filters select it and its file still says it is exported: `kept_hooks.rs`
 (`build_target_state` calls it with the old lock, once the state is complete) turns it into a `KeptHook` over the directories the lock
-holds for that package under one of the names the broken file may have had, or warns and installs
+holds for that package: the hook's `source_path` (stamped on the lock item by `finalize`) names the install first, then the names the broken file may still declare (locks without the path), or warns and installs
 nothing. `diff::compute` emits those directories as unchanged
 and never orphans them, whatever the disk or the invalid source holds.
 

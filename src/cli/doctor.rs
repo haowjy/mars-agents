@@ -383,6 +383,7 @@ mod tests {
             kind: mars_schema::item::ItemKind::Agent,
             version: None,
             source_checksum: expected_hash.clone().into(),
+            source_path: None,
             outputs,
         };
         (key, item)

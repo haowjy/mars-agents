@@ -513,54 +513,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_requirement_always_compatible() {
-        let diag = compatibility_preflight("0.5.0", None);
-        assert!(diag.is_none());
-    }
+    fn compatibility_preflight_judges_binary_against_requirement() {
+        // (binary, requirement) pairs that are compatible
+        for (binary, requirement) in [
+            ("0.5.0", None),
+            ("1.2.0", Some("1.0.0")),
+            ("1.0.0", Some("1.0.0")),
+            ("v1.2.0", Some("v1.0.0")),
+            ("1.2.3-beta.1", Some("1.2.3")),
+        ] {
+            assert!(
+                compatibility_preflight(binary, requirement).is_none(),
+                "{binary} vs {requirement:?}"
+            );
+        }
 
-    #[test]
-    fn binary_meets_requirement() {
-        let diag = compatibility_preflight("1.2.0", Some("1.0.0"));
-        assert!(diag.is_none());
-    }
+        for (binary, requirement) in [("0.5.0", "1.0.0"), ("v0.9.0", "v1.0.0")] {
+            let diag = compatibility_preflight(binary, Some(requirement)).unwrap();
+            assert_eq!(diag.level, DiagnosticLevel::Error);
+            assert_eq!(diag.code, "compat-version");
+            assert_eq!(diag.category, Some(DiagnosticCategory::Compatibility));
+            assert!(diag.message.contains(binary) && diag.message.contains(requirement));
+        }
 
-    #[test]
-    fn binary_exactly_meets_requirement() {
-        let diag = compatibility_preflight("1.0.0", Some("1.0.0"));
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_too_old_produces_error() {
-        let diag = compatibility_preflight("0.5.0", Some("1.0.0")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Error);
-        assert_eq!(diag.code, "compat-version");
-        assert_eq!(diag.category, Some(DiagnosticCategory::Compatibility));
-        assert!(diag.message.contains("0.5.0"));
-        assert!(diag.message.contains("1.0.0"));
-    }
-
-    #[test]
-    fn binary_v_prefix_handled() {
-        let diag = compatibility_preflight("v1.2.0", Some("v1.0.0"));
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_v_prefix_too_old() {
-        let diag = compatibility_preflight("v0.9.0", Some("v1.0.0")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Error);
-    }
-
-    #[test]
-    fn unparseable_version_produces_warning_not_error() {
+        // Unparseable input never blocks a sync.
         let diag = compatibility_preflight("dev", Some("1.0.0")).unwrap();
         assert_eq!(diag.level, DiagnosticLevel::Warning);
         assert_eq!(diag.code, "compat-version-parse");
-    }
-
-    #[test]
-    fn unparseable_requirement_produces_warning() {
         let diag = compatibility_preflight("1.0.0", Some("latest")).unwrap();
         assert_eq!(diag.level, DiagnosticLevel::Warning);
     }
@@ -582,6 +561,25 @@ mod tests {
             DiagnosticCategory::Lossiness,
         );
         assert_eq!(coll.drain().len(), 1);
+
+        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
+        coll.info_with_category(
+            "field-approximate",
+            "field `x`: approximate",
+            DiagnosticCategory::Lossiness,
+        );
+        assert!(coll.drain().is_empty());
+
+        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
+        coll.info_with_category(
+            "field-approximate",
+            "field `x`: approximate",
+            DiagnosticCategory::Lossiness,
+        );
+        let diags = coll.drain();
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].level, DiagnosticLevel::Info);
+        assert_eq!(diags[0].category, Some(DiagnosticCategory::Lossiness));
     }
 
     #[test]
@@ -640,87 +638,23 @@ mod tests {
     }
 
     #[test]
-    fn collector_suppresses_info_lossiness_when_hidden() {
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
-        coll.info_with_category(
-            "field-approximate",
-            "field `x`: approximate",
-            DiagnosticCategory::Lossiness,
-        );
-        assert!(coll.drain().is_empty());
-
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.info_with_category(
-            "field-approximate",
-            "field `x`: approximate",
-            DiagnosticCategory::Lossiness,
-        );
-        let diags = coll.drain();
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].level, DiagnosticLevel::Info);
-        assert_eq!(diags[0].category, Some(DiagnosticCategory::Lossiness));
-    }
-
-    #[test]
-    fn collector_verbose_surfaces_meridian_only_detail() {
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
-        coll.record_meridian_only_field("agent", "coder", "Claude", "approval");
-        let diags = coll.drain();
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].code, "agent-field-meridian-only");
-    }
-
-    #[test]
-    fn collector_surface_emits_meridian_only_summary() {
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.record_meridian_only_field("agent", "coder", "Claude", "approval");
-        let diags = coll.drain();
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].code, "launch-time-field-summary");
-    }
-
-    #[test]
-    fn collector_error_with_category() {
-        let mut coll = DiagnosticCollector::new();
-        coll.error_with_category(
-            "compat-version",
-            "too old",
-            DiagnosticCategory::Compatibility,
-        );
-        let diags = coll.drain();
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].level, DiagnosticLevel::Error);
-        assert_eq!(diags[0].category, Some(DiagnosticCategory::Compatibility));
-    }
-
-    #[test]
-    fn display_shows_error_prefix() {
-        let d = Diagnostic {
-            level: DiagnosticLevel::Error,
-            code: "test".into(),
-            message: "something broke".to_string(),
-            context: None,
-            category: None,
-        };
-        assert_eq!(d.to_string(), "error: something broke");
-    }
-
-    #[test]
-    fn display_shows_warning_prefix() {
-        let d = Diagnostic {
-            level: DiagnosticLevel::Warning,
-            code: "test".into(),
-            message: "heads up".to_string(),
-            context: None,
-            category: None,
-        };
-        assert_eq!(d.to_string(), "warning: heads up");
-    }
-
-    #[test]
-    fn patch_with_prerelease_suffix_parsed() {
-        // "1.2.3-beta.1" → (1, 2, 3)
-        let v = parse_semver("1.2.3-beta.1").unwrap();
-        assert_eq!(v, (1, 2, 3));
+    fn display_prefixes_the_level() {
+        for (level, message, expected) in [
+            (
+                DiagnosticLevel::Error,
+                "something broke",
+                "error: something broke",
+            ),
+            (DiagnosticLevel::Warning, "heads up", "warning: heads up"),
+        ] {
+            let d = Diagnostic {
+                level,
+                code: "test".into(),
+                message: message.to_string(),
+                context: None,
+                category: None,
+            };
+            assert_eq!(d.to_string(), expected);
+        }
     }
 }

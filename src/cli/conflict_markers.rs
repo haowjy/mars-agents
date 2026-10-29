@@ -24,46 +24,28 @@ mod tests {
 
     #[test]
     fn detects_markers() {
-        assert!(has_conflict_markers(
-            b"some content\n<<<<<<< local\nconflict\n=======\nother\n>>>>>>> theirs\n"
-        ));
-    }
+        let with_markers: [&[u8]; 4] = [
+            b"some content\n<<<<<<< local\nconflict\n=======\nother\n>>>>>>> theirs\n",
+            // at the start of the file
+            b"<<<<<<< local\nconflict\n=======\nother\n>>>>>>> theirs\n",
+            // opening marker without a closing one
+            b"content\n<<<<<<< local\nunresolved content\n",
+            // non-UTF-8 content
+            b"invalid: \xff\n<<<<<<< local\nunresolved content\n",
+        ];
+        for content in with_markers {
+            assert!(has_conflict_markers(content), "{content:?}");
+        }
 
-    #[test]
-    fn detects_marker_at_start_of_file() {
-        assert!(has_conflict_markers(
-            b"<<<<<<< local\nconflict\n=======\nother\n>>>>>>> theirs\n"
-        ));
-    }
-
-    #[test]
-    fn detects_opening_marker_without_closing_marker() {
-        assert!(has_conflict_markers(
-            b"content\n<<<<<<< local\nunresolved content\n"
-        ));
-    }
-
-    #[test]
-    fn detects_markers_in_non_utf8_content() {
-        assert!(has_conflict_markers(
-            b"invalid: \xff\n<<<<<<< local\nunresolved content\n"
-        ));
-    }
-
-    #[test]
-    fn ignores_content_without_markers() {
-        assert!(!has_conflict_markers(b"normal content\nwith lines\n"));
-    }
-
-    #[test]
-    fn ignores_partial_marker() {
-        assert!(!has_conflict_markers(b"content\n<<<<<< only six\n"));
-    }
-
-    #[test]
-    fn ignores_paired_markers_in_middle_of_lines() {
-        assert!(!has_conflict_markers(
-            b"content <<<<<<< not at line start\nconflict\ncontent >>>>>>> also mid-line\n"
-        ));
+        let without_markers: [&[u8]; 3] = [
+            b"normal content\nwith lines\n",
+            // partial marker
+            b"content\n<<<<<< only six\n",
+            // paired markers in the middle of lines
+            b"content <<<<<<< not at line start\nconflict\ncontent >>>>>>> also mid-line\n",
+        ];
+        for content in without_markers {
+            assert!(!has_conflict_markers(content), "{content:?}");
+        }
     }
 }

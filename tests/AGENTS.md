@@ -16,8 +16,15 @@ bucket is not a testing tier.
   under the fixture's excluded `.mars/test-env` directory.
 - Catalog/probe tests use local servers and fake executables with
   `configure_assert_cmd` / `mars_cmd`; explicitly control PATH. Never use a live
-  model-backed agent as a test fixture. Bare `mars()` inherits the environment;
-  remaining migrations are tracked in issue #167.
+  model-backed agent as a test fixture. Start every `mars` process from
+  `common::mars()` (or `mars_cmd`): it gets no user `config.toml`, a private empty
+  `MARS_CACHE_DIR` and no global git config, so the developer's `~/.config/mars`,
+  `~/.cache/mars` and `~/.gitconfig` never leak in or get written. A test that wants its
+  own state sets the variable again after `mars()`. Bare `mars()` still inherits PATH and
+  HOME; remaining migrations are tracked in issue #167. `configure_assert_cmd` and
+  `configure_std_cmd` share one environment list: add a variable once, in `isolated_env`.
+- Lib tests never `set_var`/`remove_var`: another thread may be reading the environment.
+  Pass directories explicitly (`CuratedRules::load_paths`) or test through a child process.
 - Never mutate assumed-absent absolute paths. Arrange absence under a TempDir.
 - Test deletions need a retained-protection explanation, not replacement tests by
   default. Ignored specifications belong in tracked work, not a green-suite claim.

@@ -54,6 +54,19 @@ pub fn sync_force(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert
     assertion
 }
 
+/// False when the process can write into a `0555` directory (running as root): tests that
+/// inject a write failure with `chmod` have nothing to inject there and must not run.
+#[cfg(unix)]
+pub fn read_only_dirs_are_enforced() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let enforced = fs::write(dir.path().join("probe"), "").is_err();
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    enforced
+}
+
 pub fn file_fragment_targets() -> [(&'static str, &'static str); 2] {
     [
         (".opencode", "plugins/mars-audit.ts"),

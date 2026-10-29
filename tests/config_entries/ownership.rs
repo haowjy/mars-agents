@@ -247,6 +247,9 @@ fn identical_unmanaged_hook_is_preserved_through_sync_and_removal() {
 fn stale_managed_hook_recovers_after_transient_copy_failure() {
     use std::os::unix::fs::PermissionsExt;
 
+    if !read_only_dirs_are_enforced() {
+        return;
+    }
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -290,44 +293,6 @@ fn stale_managed_hook_recovers_after_transient_copy_failure() {
     project
         .child(".claude/settings.local.json")
         .assert(predicate::str::contains("SessionStart"));
-}
-
-#[test]
-fn config_destination_directory_rejects_before_any_config_write() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = [\".claude\"]\n")
-        .unwrap();
-    let mcp = project.child("mcp/audit");
-    mcp.create_dir_all().unwrap();
-    mcp.child("mcp.toml")
-        .write_str("command = \"node\"\n")
-        .unwrap();
-    write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
-        &project,
-        "audit",
-        "claude.json",
-        r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#,
-    );
-    project
-        .child(".claude/settings.local.json")
-        .create_dir_all()
-        .unwrap();
-
-    sync(&project)
-        .failure()
-        .stderr(predicate::str::contains("settings.local.json"))
-        .stderr(predicate::str::contains("file"));
-    project
-        .child(".mcp.json")
-        .assert(predicate::path::missing());
-    project
-        .child(".mars/hooks/claude/audit")
-        .assert(predicate::path::missing());
 }
 
 #[test]

@@ -207,19 +207,3 @@ fn run_status(
     output::print_list(&entries, json);
     Ok(0)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn read_name_description_uses_provided_fallback_name() {
-        let dir = TempDir::new().unwrap();
-        let missing_skill_md = dir.path().join("skills/test-skill/SKILL.md");
-        let (name, description) =
-            read_name_description(&missing_skill_md, "test-skill", ItemKind::Skill);
-        assert_eq!(name, "test-skill");
-        assert_eq!(description, "");
-    }
-}

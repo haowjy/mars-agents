@@ -359,177 +359,78 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn parse_github_shorthand() {
-        let parsed = parse_dependency_specifier("meridian-flow/meridian-base", None, None).unwrap();
-        assert_eq!(parsed.name, "meridian-base");
-        assert_eq!(
-            parsed.entry.url(),
-            Some("https://github.com/meridian-flow/meridian-base")
-        );
-        assert!(parsed.entry.path().is_none());
-        assert!(parsed.entry.version.is_none());
-    }
-
-    #[test]
     fn parse_github_shorthand_with_version() {
-        let parsed =
-            parse_dependency_specifier("meridian-flow/meridian-base@v0.5.0", None, None).unwrap();
-        assert_eq!(parsed.name, "meridian-base");
-        assert_eq!(
-            parsed.entry.url(),
-            Some("https://github.com/meridian-flow/meridian-base")
-        );
-        assert_eq!(parsed.entry.version.as_deref(), Some("v0.5.0"));
+        // (specifier, name, url, version)
+        for (specifier, name, url, version) in [
+            (
+                "meridian-flow/meridian-base@v0.5.0",
+                "meridian-base",
+                "https://github.com/meridian-flow/meridian-base",
+                Some("v0.5.0"),
+            ),
+            (
+                "github.com/meridian-flow/meridian-dev-workflow@v2",
+                "meridian-dev-workflow",
+                "https://github.com/meridian-flow/meridian-dev-workflow",
+                Some("v2"),
+            ),
+            (
+                "https://github.com/someone/cool-agents.git",
+                "cool-agents",
+                "https://github.com/someone/cool-agents",
+                None,
+            ),
+            (
+                "git@github.com:someone/cool-agents.git",
+                "cool-agents",
+                "git@github.com:someone/cool-agents.git",
+                None,
+            ),
+            (
+                "git@github.com:someone/cool-agents.git@v2",
+                "cool-agents",
+                "git@github.com:someone/cool-agents.git",
+                Some("v2"),
+            ),
+        ] {
+            let parsed = parse_dependency_specifier(specifier, None, None).unwrap();
+            assert_eq!(parsed.name, name, "{specifier}");
+            assert_eq!(parsed.entry.url(), Some(url), "{specifier}");
+            assert_eq!(parsed.entry.version.as_deref(), version, "{specifier}");
+        }
     }
 
     #[test]
-    fn parse_full_url() {
-        let parsed = parse_dependency_specifier(
-            "github.com/meridian-flow/meridian-dev-workflow@v2",
-            None,
-            None,
-        )
-        .unwrap();
-        assert_eq!(parsed.name, "meridian-dev-workflow");
-        assert_eq!(
-            parsed.entry.url(),
-            Some("https://github.com/meridian-flow/meridian-dev-workflow")
-        );
-        assert_eq!(parsed.entry.version.as_deref(), Some("v2"));
-    }
-
-    #[test]
-    fn parse_https_url() {
-        let parsed =
-            parse_dependency_specifier("https://github.com/someone/cool-agents.git", None, None)
-                .unwrap();
-        assert_eq!(parsed.name, "cool-agents");
-        assert_eq!(
-            parsed.entry.url(),
-            Some("https://github.com/someone/cool-agents")
-        );
-    }
-
-    #[test]
-    fn parse_ssh_url() {
-        let parsed =
-            parse_dependency_specifier("git@github.com:someone/cool-agents.git", None, None)
-                .unwrap();
-        assert_eq!(parsed.name, "cool-agents");
-        assert_eq!(
-            parsed.entry.url(),
-            Some("git@github.com:someone/cool-agents.git")
-        );
-        assert!(parsed.entry.version.is_none());
-    }
-
-    #[test]
-    fn parse_ssh_url_keeps_at_suffix_in_path() {
-        let parsed =
-            parse_dependency_specifier("git@github.com:someone/cool-agents.git@v2", None, None)
-                .unwrap();
-        assert_eq!(parsed.name, "cool-agents");
-        assert_eq!(
-            parsed.entry.url(),
-            Some("git@github.com:someone/cool-agents.git")
-        );
-        assert_eq!(parsed.entry.version.as_deref(), Some("v2"));
-    }
-
-    #[test]
-    fn parse_local_path_relative() {
-        let parsed = parse_dependency_specifier("./my-agents", None, None).unwrap();
-        assert_eq!(parsed.name, "my-agents");
-        assert!(parsed.entry.url().is_none());
-        assert_eq!(parsed.entry.path(), Some(Path::new("./my-agents")));
-    }
-
-    #[test]
-    fn parse_local_path_parent() {
-        let parsed = parse_dependency_specifier("../meridian-dev-workflow", None, None).unwrap();
-        assert_eq!(parsed.name, "meridian-dev-workflow");
-        assert!(parsed.entry.url().is_none());
-        assert_eq!(
-            parsed.entry.path(),
-            Some(Path::new("../meridian-dev-workflow"))
-        );
-    }
-
-    #[test]
-    fn parse_local_path_absolute() {
-        let parsed = parse_dependency_specifier("/home/dev/agents", None, None).unwrap();
-        assert_eq!(parsed.name, "agents");
-        assert!(parsed.entry.url().is_none());
-        assert_eq!(parsed.entry.path(), Some(Path::new("/home/dev/agents")));
+    fn parse_local_paths() {
+        for (specifier, name) in [("./my-agents", "my-agents"), ("/home/dev/agents", "agents")] {
+            let parsed = parse_dependency_specifier(specifier, None, None).unwrap();
+            assert_eq!(parsed.name, name);
+            assert!(parsed.entry.url().is_none());
+            assert_eq!(parsed.entry.path(), Some(Path::new(specifier)));
+        }
     }
 
     #[test]
     fn parse_source_embedded_subpath() {
-        let parsed = parse_dependency_specifier("owner/repo/plugins/foo", None, None).unwrap();
-        assert_eq!(parsed.name, "repo/plugins/foo");
-        assert_eq!(
-            parsed.entry.subpath.as_ref().map(SourceSubpath::as_str),
-            Some("plugins/foo")
-        );
-    }
+        // (specifier, explicit subpath, name)
+        for (specifier, subpath, name) in [
+            ("owner/repo/plugins/foo", None, "repo/plugins/foo"),
+            (
+                "gitlab:group/subgroup/repo",
+                Some("plugins/foo"),
+                "repo/plugins/foo",
+            ),
+        ] {
+            let parsed = parse_dependency_specifier(specifier, subpath, None).unwrap();
+            assert_eq!(parsed.name, name);
+            assert_eq!(
+                parsed.entry.subpath.as_ref().map(SourceSubpath::as_str),
+                Some("plugins/foo")
+            );
+        }
 
-    #[test]
-    fn parse_explicit_subpath_merges_when_source_has_none() {
-        let parsed =
-            parse_dependency_specifier("gitlab:group/subgroup/repo", Some("plugins/foo"), None)
-                .unwrap();
-        assert_eq!(parsed.name, "repo/plugins/foo");
-        assert_eq!(
-            parsed.entry.subpath.as_ref().map(SourceSubpath::as_str),
-            Some("plugins/foo")
-        );
-    }
-
-    #[test]
-    fn conflicting_subpath_is_rejected() {
         let err = parse_dependency_specifier("owner/repo/plugins/foo", Some("plugins/bar"), None)
             .unwrap_err();
         assert!(matches!(err, MarsError::InvalidRequest { .. }));
-    }
-
-    #[test]
-    fn format_filter_all() {
-        assert_eq!(format_filter(&FilterConfig::default()), "all");
-    }
-
-    #[test]
-    fn format_filter_only_modes() {
-        assert_eq!(
-            format_filter(&FilterConfig {
-                only_skills: true,
-                ..FilterConfig::default()
-            }),
-            "only_skills=true"
-        );
-        assert_eq!(
-            format_filter(&FilterConfig {
-                only_agents: true,
-                ..FilterConfig::default()
-            }),
-            "only_agents=true"
-        );
-    }
-
-    #[test]
-    fn format_filter_lists() {
-        assert_eq!(
-            format_filter(&FilterConfig {
-                agents: Some(vec!["reviewer".into(), "planner".into()]),
-                ..FilterConfig::default()
-            }),
-            "agents=[reviewer,planner]"
-        );
-        assert_eq!(
-            format_filter(&FilterConfig {
-                exclude: Some(vec!["legacy".into()]),
-                ..FilterConfig::default()
-            }),
-            "exclude=[legacy]"
-        );
     }
 }

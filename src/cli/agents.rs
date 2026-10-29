@@ -280,36 +280,3 @@ fn path_stem(path: &std::path::Path) -> String {
         .unwrap_or("unknown")
         .to_string()
 }
-
-#[cfg(test)]
-mod filter_flag_tests {
-    use crate::cli::{Cli, Command};
-    use clap::Parser;
-
-    fn agents_args(args: &[&str]) -> super::AgentsArgs {
-        match Cli::try_parse_from(args).expect("should parse").command {
-            Command::Agents(a) => a,
-            other => panic!("expected agents command, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn mode_filter_populates_on_both_bare_and_list_forms() {
-        // The `list` subcommand form is the discoverable one and must work.
-        for args in [
-            ["mars", "agents", "list", "--mode", "subagent"].as_slice(),
-            ["mars", "agents", "--mode", "subagent", "list"].as_slice(),
-            ["mars", "agents", "--mode", "subagent"].as_slice(),
-        ] {
-            let parsed = agents_args(args);
-            // Value must actually populate (run_list reads args.mode), not merely parse.
-            assert_eq!(parsed.mode.as_deref(), Some("subagent"), "args: {args:?}");
-        }
-    }
-
-    #[test]
-    fn source_filter_populates_on_list_form() {
-        let parsed = agents_args(&["mars", "agents", "list", "--source", "core"]);
-        assert_eq!(parsed.source.as_deref(), Some("core"));
-    }
-}

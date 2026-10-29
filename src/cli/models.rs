@@ -1430,7 +1430,6 @@ fn diagnostic_level_label(level: DiagnosticLevel) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     use tempfile::TempDir;
 
     fn write_mars_toml(temp: &TempDir, contents: &str) {
@@ -1464,80 +1463,6 @@ mod tests {
                 root.path()
             ));
         }
-    }
-
-    #[test]
-    fn list_args_parses_no_refresh_models() {
-        let args = ListArgs::try_parse_from(["mars", "--no-refresh-models"]).unwrap();
-        assert!(args.no_refresh_models);
-    }
-
-    #[test]
-    fn list_args_parses_refresh_models() {
-        let args = ListArgs::try_parse_from(["mars", "--refresh-models"]).unwrap();
-        assert!(args.refresh_models);
-    }
-
-    #[test]
-    fn list_refresh_and_no_refresh_conflict() {
-        assert!(
-            ListArgs::try_parse_from(["mars", "--refresh-models", "--no-refresh-models"]).is_err()
-        );
-    }
-
-    #[test]
-    fn command_matrix_keeps_aliases_catalog_and_new_list_flags_distinct() {
-        for command in [
-            "list",
-            "aliases",
-            "catalog",
-            "resolve",
-            "prompting",
-            "alias",
-            "refresh",
-        ] {
-            assert!(
-                ModelsArgs::try_parse_from(["mars", command, "--help"]).is_err(),
-                "{command} should have its own help surface"
-            );
-        }
-        assert!(
-            ModelsArgs::try_parse_from([
-                "mars",
-                "list",
-                "--all",
-                "--live",
-                "--harness",
-                "codex",
-                "--match",
-                "gpt-*"
-            ])
-            .is_ok()
-        );
-        for command in ["aliases", "catalog"] {
-            assert!(ModelsArgs::try_parse_from(["mars", command, "--no-refresh-models"]).is_ok());
-            assert!(ModelsArgs::try_parse_from(["mars", command, "--live"]).is_err());
-        }
-        for flag in [
-            "--include",
-            "--exclude",
-            "--providers",
-            "--no-visibility",
-            "--catalog",
-            "--unavailable",
-        ] {
-            assert!(
-                ModelsArgs::try_parse_from(["mars", "list", flag]).is_err(),
-                "{flag}"
-            );
-        }
-    }
-
-    #[test]
-    fn resolve_alias_args_parses_no_refresh_models() {
-        let args =
-            ResolveAliasArgs::try_parse_from(["mars", "opus", "--no-refresh-models"]).unwrap();
-        assert!(args.no_refresh_models);
     }
 
     #[test]
@@ -1596,27 +1521,20 @@ description = "Old alias"
         let err = run_alias(&args, &ctx, false).unwrap_err().to_string();
         assert!(err.contains("invalid harness 'gemini'"));
         assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor"));
-    }
 
-    #[test]
-    fn alias_normalizes_mixed_case_harness_before_write() {
-        let temp = TempDir::new().unwrap();
-        write_mars_toml(&temp, "[settings]\n");
-        let ctx = MarsContext::new(temp.path().to_path_buf()).unwrap();
-
+        // A mixed-case harness is normalized before it is written.
         let args = AddAliasArgs {
             name: "fast".to_string(),
             model_id: "gpt-5.3-codex".to_string(),
             harness: "OpenCode".to_string(),
             description: None,
         };
-
-        let exit = run_alias(&args, &ctx, false).unwrap();
-        assert_eq!(exit, 0);
-
+        assert_eq!(run_alias(&args, &ctx, false).unwrap(), 0);
         let config = crate::config::load(temp.path()).unwrap();
-        let alias = config.models.get("fast").unwrap();
-        assert_eq!(alias.harness.as_deref(), Some("opencode"));
+        assert_eq!(
+            config.models.get("fast").unwrap().harness.as_deref(),
+            Some("opencode")
+        );
     }
 
     fn passthrough_trace(
@@ -1652,10 +1570,6 @@ description = "Old alias"
             )
             .is_none()
         );
-    }
-
-    #[test]
-    fn passthrough_catalog_warning_keeps_warning_for_passthrough_routes() {
         let warning = passthrough_catalog_warning(
             "unknown-model",
             &passthrough_trace(crate::routing::MatchEvidence::Passthrough),

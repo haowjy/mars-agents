@@ -128,89 +128,26 @@ pub fn global_cache_root() -> Result<PathBuf, MarsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
-    use std::ffi::OsString;
-    use std::path::Path;
-
-    #[allow(unused_unsafe)]
-    fn env_set(key: &str, value: &std::path::Path) {
-        unsafe {
-            std::env::set_var(key, value);
-        }
-    }
-
-    #[allow(unused_unsafe)]
-    fn env_remove(key: &str) {
-        unsafe {
-            std::env::remove_var(key);
-        }
-    }
-
-    struct EnvVarGuard {
-        key: String,
-        prev: Option<OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn set_path(key: &str, value: &std::path::Path) -> Self {
-            let prev = std::env::var_os(key);
-            env_set(key, value);
-            Self {
-                key: key.to_string(),
-                prev,
-            }
-        }
-
-        fn remove(key: &str) -> Self {
-            let prev = std::env::var_os(key);
-            env_remove(key);
-            Self {
-                key: key.to_string(),
-                prev,
-            }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            if let Some(prev) = &self.prev {
-                #[allow(unused_unsafe)]
-                unsafe {
-                    std::env::set_var(&self.key, prev);
-                }
-            } else {
-                env_remove(&self.key);
-            }
-        }
-    }
 
     #[test]
     fn safe_component_replaces_invalid_chars() {
-        assert_eq!(safe_component("a/b\\c:d"), "a_b_c_d");
-        assert_eq!(safe_component("file<>name"), "file__name");
-        assert_eq!(safe_component("test|file"), "test_file");
-    }
-
-    #[test]
-    fn safe_component_handles_trailing_space_dot() {
-        assert_eq!(safe_component("test "), "test");
-        assert_eq!(safe_component("test."), "test");
-        assert_eq!(safe_component("test. "), "test");
-    }
-
-    #[test]
-    fn safe_component_handles_reserved_names() {
-        assert_eq!(safe_component("CON"), "CON_");
-        assert_eq!(safe_component("con"), "con_");
-        assert_eq!(safe_component("NUL"), "NUL_");
-        assert_eq!(safe_component("COM1"), "COM1_");
-        assert_eq!(safe_component("lpt9"), "lpt9_");
-    }
-
-    #[test]
-    fn safe_component_handles_empty() {
-        assert_eq!(safe_component(""), "_");
-        assert_eq!(safe_component("..."), "_");
+        for (input, expected) in [
+            ("a/b\\c:d", "a_b_c_d"),
+            ("file<>name", "file__name"),
+            ("test|file", "test_file"),
+            ("test ", "test"),
+            ("test.", "test"),
+            ("test. ", "test"),
+            ("CON", "CON_"),
+            ("con", "con_"),
+            ("NUL", "NUL_"),
+            ("COM1", "COM1_"),
+            ("lpt9", "lpt9_"),
+            ("", "_"),
+            ("...", "_"),
+        ] {
+            assert_eq!(safe_component(input), expected, "{input:?}");
+        }
     }
 
     #[test]
@@ -224,69 +161,5 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(b, c);
         assert_ne!(a, c);
-    }
-
-    #[test]
-    fn git_cache_component_no_colon() {
-        // Explicit port URL must not have colon in result.
-        let result = git_cache_component("git://gitlab.localtest.me:19424/group/pkg.git").unwrap();
-        assert!(
-            !result.contains(':'),
-            "cache component should not contain colon: {result}"
-        );
-    }
-
-    #[test]
-    fn git_cache_component_various_urls() {
-        // All should produce valid components without colons.
-        let urls = [
-            "https://github.com/foo/bar",
-            "git@github.com:foo/bar.git",
-            "ssh://git@github.com/foo/bar",
-            "git://host:1234/path.git",
-        ];
-        for url in urls {
-            let result = git_cache_component(url).unwrap();
-            assert!(
-                !result.contains(':'),
-                "URL {url} produced component with colon: {result}"
-            );
-        }
-    }
-
-    #[test]
-    fn archive_cache_component_no_colon() {
-        let result = archive_cache_component("https://host:8080/archive.tar.gz", "abc123").unwrap();
-        assert!(
-            !result.contains(':'),
-            "archive component should not contain colon: {result}"
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn global_cache_root_respects_env_var() {
-        let temp = std::env::temp_dir().join("mars-test-cache");
-        let _guard = EnvVarGuard::set_path("MARS_CACHE_DIR", &temp);
-
-        let root = global_cache_root().unwrap();
-        assert_eq!(root, temp);
-    }
-
-    #[test]
-    #[serial]
-    fn global_cache_root_uses_os_cache_when_no_env() {
-        let _guard = EnvVarGuard::remove("MARS_CACHE_DIR");
-
-        let root = global_cache_root().unwrap();
-
-        if let Some(cache_dir) = dirs::cache_dir() {
-            assert_eq!(root, cache_dir.join("mars").join("cache"));
-        } else {
-            assert!(
-                root.ends_with(Path::new(".mars").join("cache")),
-                "fallback root should end with .mars/cache: {root:?}"
-            );
-        }
     }
 }

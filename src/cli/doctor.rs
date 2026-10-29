@@ -429,13 +429,8 @@ mod tests {
                 .any(|w| w
                     == "divergent in target: .agents/agents/modified.md (local modifications)")
         );
-    }
 
-    #[test]
-    fn check_target_divergence_checks_every_managed_target() {
-        let temp = TempDir::new().expect("create temp dir");
-        let root = temp.path();
-
+        // Every managed target is checked, not only the first.
         let mut lock = crate::lock::LockFile::empty();
         let (k, v) = make_locked_agent(
             "test",
@@ -444,8 +439,6 @@ mod tests {
             &[".agents", ".claude"],
         );
         lock.items.insert(k, v);
-
-        fs::create_dir_all(root.join(".agents/agents")).expect("create .agents tree");
         fs::write(root.join(".agents/agents/test.md"), "expected content")
             .expect("write matching file");
 
@@ -482,20 +475,14 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("legacy `.agents/` directory exists"))
         );
-    }
 
-    #[test]
-    fn check_legacy_agents_directory_allows_explicit_target() {
-        let temp = TempDir::new().expect("create temp dir");
-        fs::create_dir_all(temp.path().join(".agents")).expect("create legacy dir");
-
+        // An explicit `.agents` target is not legacy.
         let settings = crate::config::Settings {
             targets: Some(vec![".agents".to_string()]),
             ..crate::config::Settings::default()
         };
         let mut warnings = Vec::new();
         check_legacy_agents_directory(temp.path(), Some(&settings), &mut warnings);
-
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 }

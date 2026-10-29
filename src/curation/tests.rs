@@ -314,13 +314,13 @@ fn declarations_require_literal_concrete_show_and_do_not_create_phantoms() {
 
 #[test]
 fn disabled_declaration_dropped_uninstalled_declaration_kept_and_hidden_show_removed() {
-    let (_, rules) = rules(
+    let (_, declared) = rules(
         "",
         "[[show]]\nharness='cursor'\nmodel='composer-2.5'\n[[show]]\nharness='pi'\nmodel='openai/gpt-5'\n[[hide]]\nharness='pi'\nmodel='openai/gpt-5'\n",
         "",
     );
     let scope = HarnessScope::Only([HarnessId::Pi].into_iter().collect());
-    let view = rules.project(&[], &scope);
+    let view = declared.project(&[], &scope);
     assert!(view.rows.is_empty());
     assert!(
         view.diagnostics
@@ -328,6 +328,20 @@ fn disabled_declaration_dropped_uninstalled_declaration_kept_and_hidden_show_rem
             .any(|diag| diag.contains("outside the enabled harness scope"))
     );
     assert_eq!(view.diagnostics.len(), 1);
+
+    // The same out-of-scope declaration in two tiers emits one diagnostic.
+    let (_, duplicated) = rules(
+        "[[show]]\nharness='pi'\nmodel='openai/gpt-5'\n",
+        "",
+        "[[show]]\nharness='pi'\nmodel='OPENAI/GPT-5'\n",
+    );
+    let view = duplicated.project(
+        &[],
+        &HarnessScope::Only([HarnessId::Claude].into_iter().collect()),
+    );
+    assert!(view.rows.is_empty());
+    assert_eq!(view.diagnostics.len(), 1);
+    assert!(view.diagnostics[0].contains("outside the enabled harness scope"));
 }
 
 #[test]
@@ -344,38 +358,6 @@ fn conflicting_provider_declarations_are_diagnosed_not_materialized() {
         view.diagnostics
             .iter()
             .all(|line| line.contains("mars.curated.toml"))
-    );
-}
-
-#[test]
-fn duplicate_out_of_scope_declarations_emit_one_diagnostic() {
-    let (_, rules) = rules(
-        "[[show]]\nharness='pi'\nmodel='openai/gpt-5'\n",
-        "",
-        "[[show]]\nharness='pi'\nmodel='OPENAI/GPT-5'\n",
-    );
-    let view = rules.project(
-        &[],
-        &HarnessScope::Only([HarnessId::Claude].into_iter().collect()),
-    );
-    assert!(view.rows.is_empty());
-    assert_eq!(view.diagnostics.len(), 1);
-    assert!(view.diagnostics[0].contains("outside the enabled harness scope"));
-}
-
-#[test]
-fn prepared_matcher_decides_after_possible_inventory_is_dropped() {
-    let (_, rules) = rules("", "[[show]]\nharness='pi'\nmodel='gpt-5'\n", "");
-    let key = RowKey::from(&row(HarnessId::Pi, "openai/gpt-5", Some("openai"), "gpt-5"));
-    let matcher = {
-        let possible = vec![row(HarnessId::Pi, "openai/gpt-5", Some("openai"), "gpt-5")];
-        rules.matcher(&possible)
-    };
-    assert_eq!(
-        matcher.decide(&key),
-        Decision::Shown {
-            tier: Some(TierId::Project)
-        }
     );
 }
 
@@ -469,35 +451,4 @@ fn malformed_unknown_keys_harnesses_and_unreadable_files_name_path() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("curated.toml"), "{error}");
-}
-
-#[test]
-#[serial_test::serial]
-fn load_uses_the_shared_mars_config_directory() {
-    let temp = TempDir::new().unwrap();
-    let user_dir = temp.path().join("xdg");
-    std::fs::create_dir(&user_dir).unwrap();
-    std::fs::write(user_dir.join("curated.toml"), "default='hide'\n").unwrap();
-    let prior = std::env::var_os("MARS_CONFIG_DIR");
-    unsafe { std::env::set_var("MARS_CONFIG_DIR", &user_dir) };
-    let loaded = CuratedRules::load(temp.path()).unwrap();
-    match prior {
-        Some(value) => unsafe { std::env::set_var("MARS_CONFIG_DIR", value) },
-        None => unsafe { std::env::remove_var("MARS_CONFIG_DIR") },
-    }
-    assert_eq!(
-        loaded.default_for_unmatched(),
-        Decision::Hidden {
-            tier: Some(TierId::User)
-        }
-    );
-
-    let prior = std::env::var_os("MARS_CONFIG_DIR");
-    unsafe { std::env::set_var("MARS_CONFIG_DIR", "") };
-    let fallback = crate::platform::config::mars_config_dir();
-    match prior {
-        Some(value) => unsafe { std::env::set_var("MARS_CONFIG_DIR", value) },
-        None => unsafe { std::env::remove_var("MARS_CONFIG_DIR") },
-    }
-    assert_ne!(fallback, Some(std::path::PathBuf::new()));
 }

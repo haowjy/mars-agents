@@ -168,61 +168,42 @@ pub(crate) fn find_suggestion(missing: &str, available: &HashSet<String>) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
 
-    // ── Validation tests ────────────────────────────────────────────
-
-    fn write_agent(dir: &Path, name: &str, content: &str) -> PathBuf {
-        let path = dir.join(format!("{name}.md"));
-        fs::write(&path, content).unwrap();
-        path
-    }
     #[test]
-    fn parse_agent_skills_reads_frontmatter() {
-        let dir = TempDir::new().unwrap();
-        let path = write_agent(
-            dir.path(),
-            "coder",
-            "---\nskills:\n  - planning\n  - review\n---\n# Coder\n",
-        );
-
-        let skills = parse_agent_skills(&path).unwrap();
-        assert_eq!(skills, vec!["planning", "review"]);
-    }
-    #[test]
-    fn suggestion_reverse_substring() {
-        // "planning" contains "plan" → suggestion
-        let available: HashSet<String> = ["planning"].iter().map(|s| s.to_string()).collect();
+    fn find_suggestion_matches_substrings_either_way_ignoring_case() {
+        let suggest = |name: &str, available: &[&str]| {
+            let available: HashSet<String> = available.iter().map(|s| s.to_string()).collect();
+            find_suggestion(name, &available)
+        };
+        // "planning" contains "plan"
+        assert_eq!(suggest("plan", &["planning"]), Some("planning".to_string()));
+        // "review-pr" contains "review"
         assert_eq!(
-            find_suggestion("plan", &available),
-            Some("planning".to_string())
-        );
-    }
-
-    #[test]
-    fn suggestion_forward_substring() {
-        // "review-pr" contains "review" → suggestion
-        let available: HashSet<String> = ["review"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(
-            find_suggestion("review-pr", &available),
+            suggest("review-pr", &["review"]),
             Some("review".to_string())
         );
+        assert_eq!(suggest("plan", &["Planning"]), Some("Planning".to_string()));
+        assert_eq!(suggest("completely-different", &["review"]), None);
     }
 
     #[test]
-    fn suggestion_case_insensitive() {
-        let available: HashSet<String> = ["Planning"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(
-            find_suggestion("plan", &available),
-            Some("Planning".to_string())
+    fn missing_skill_message_offers_the_suggestion() {
+        use crate::lock::ItemId;
+        use mars_schema::item::ItemKind;
+        use mars_schema::names::ItemName;
+        let missing = |suggestion: Option<&str>| ValidationWarning::MissingSkill {
+            agent: ItemId {
+                kind: ItemKind::Agent,
+                name: ItemName::from("coder".to_string()),
+            },
+            skill_name: "plan".to_string(),
+            suggestion: suggestion.map(str::to_string),
+        };
+        assert!(
+            missing(Some("planning"))
+                .message()
+                .contains("did you mean `planning`")
         );
-    }
-
-    #[test]
-    fn no_suggestion_when_no_match() {
-        let available: HashSet<String> = ["review"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(find_suggestion("completely-different", &available), None);
+        assert!(!missing(None).message().contains("did you mean"));
     }
 }

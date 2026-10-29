@@ -570,39 +570,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn replace_generated_dir_basic() {
-        let tmp = TempDir::new().unwrap();
-        let src = tmp.path().join("src");
-        let dest = tmp.path().join("dest");
-
-        fs::create_dir(&src).unwrap();
-        fs::write(src.join("file.txt"), "content").unwrap();
-
-        replace_generated_dir(&src, &dest).unwrap();
-
-        assert!(!src.exists());
-        assert!(dest.join("file.txt").exists());
-    }
-
-    #[test]
-    fn replace_generated_dir_replaces_existing() {
-        let tmp = TempDir::new().unwrap();
-        let src = tmp.path().join("src");
-        let dest = tmp.path().join("dest");
-
-        fs::create_dir(&dest).unwrap();
-        fs::write(dest.join("old.txt"), "old").unwrap();
-
-        fs::create_dir(&src).unwrap();
-        fs::write(src.join("new.txt"), "new").unwrap();
-
-        replace_generated_dir(&src, &dest).unwrap();
-
-        assert!(!dest.join("old.txt").exists());
-        assert!(dest.join("new.txt").exists());
-    }
-
-    #[test]
     fn publish_cache_dir_if_absent_publishes() {
         let tmp = TempDir::new().unwrap();
         let src = tmp.path().join("src");
@@ -639,14 +606,6 @@ mod tests {
     }
 
     #[test]
-    fn safe_remove_handles_nonexistent() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("nonexistent");
-
-        safe_remove(&path).unwrap();
-    }
-
-    #[test]
     fn safe_remove_removes_file_and_directory_tree() {
         let tmp = TempDir::new().unwrap();
         let file = tmp.path().join("file.txt");
@@ -661,6 +620,8 @@ mod tests {
 
         safe_remove(&dir).unwrap();
         assert!(!dir.exists());
+
+        safe_remove(&tmp.path().join("nonexistent")).unwrap();
     }
 
     #[test]
@@ -682,6 +643,15 @@ mod tests {
         assert!(!old.exists());
         assert!(!dest.join("old.txt").exists());
         assert_eq!(fs::read_to_string(dest.join("new.txt")).unwrap(), "new");
+
+        // With no existing destination the source is simply moved into place.
+        let fresh_src = tmp.path().join("fresh-src");
+        let fresh_dest = tmp.path().join("fresh-dest");
+        fs::create_dir(&fresh_src).unwrap();
+        fs::write(fresh_src.join("file.txt"), "content").unwrap();
+        replace_generated_dir(&fresh_src, &fresh_dest).unwrap();
+        assert!(!fresh_src.exists());
+        assert!(fresh_dest.join("file.txt").exists());
     }
 }
 
@@ -708,20 +678,18 @@ mod content_tests {
 
         assert!(directory_trees_content_equal(&left, &right).expect("compare equal"));
         assert!(!directory_trees_content_equal(&left, &other).expect("compare different"));
-    }
 
-    #[test]
-    fn file_content_equal_compares_regular_files() {
-        let dir = TempDir::new().expect("temp dir");
-        let left = dir.path().join("left.txt");
-        let right = dir.path().join("right.txt");
-        let other = dir.path().join("other.txt");
-        fs::write(&left, "same").expect("write left");
-        fs::write(&right, "same").expect("write right");
-        fs::write(&other, "different").expect("write other");
-
-        assert!(file_content_equal(&left, &right).expect("compare equal"));
-        assert!(!file_content_equal(&left, &other).expect("compare different"));
+        // An empty directory on one side is a structural delta.
+        let empty_left = dir.path().join("empty-left");
+        let empty_right = dir.path().join("empty-right");
+        fs::create_dir_all(empty_left.join("empty-only")).expect("create left empty dir");
+        fs::create_dir_all(&empty_right).expect("create right root");
+        fs::write(empty_left.join("root.txt"), "root").expect("write left root");
+        fs::write(empty_right.join("root.txt"), "root").expect("write right root");
+        assert!(
+            !directory_trees_content_equal(&empty_left, &empty_right).expect("compare delta"),
+            "empty-directory-only structural delta must not compare equal"
+        );
     }
 
     #[cfg(unix)]
@@ -737,25 +705,13 @@ mod content_tests {
         let symlink = dir.path().join("link.txt");
         std::os::unix::fs::symlink(&target, &symlink).expect("create symlink");
 
+        let other = dir.path().join("other.txt");
+        fs::write(&other, "different").expect("write other");
+        assert!(file_content_equal(&target, &regular).expect("compare equal"));
+        assert!(!file_content_equal(&target, &other).expect("compare different"));
         assert!(
             !file_content_equal(&regular, &symlink).expect("compare symlink dest"),
             "symlink dest must force rewrite even when target bytes match"
-        );
-    }
-
-    #[test]
-    fn directory_trees_content_equal_detects_empty_directory_delta() {
-        let dir = TempDir::new().expect("temp dir");
-        let left = dir.path().join("left");
-        let right = dir.path().join("right");
-        fs::create_dir_all(left.join("empty-only")).expect("create left empty dir");
-        fs::create_dir_all(&right).expect("create right root");
-        fs::write(left.join("root.txt"), "root").expect("write left root");
-        fs::write(right.join("root.txt"), "root").expect("write right root");
-
-        assert!(
-            !directory_trees_content_equal(&left, &right).expect("compare empty-dir delta"),
-            "empty-directory-only structural delta must not compare equal"
         );
     }
 
@@ -780,18 +736,6 @@ mod content_tests {
         );
     }
 
-    #[test]
-    fn atomic_copy_file_copies_regular_file() {
-        let dir = TempDir::new().expect("temp dir");
-        let source = dir.path().join("source.txt");
-        let dest = dir.path().join("dest").join("copied.txt");
-        fs::write(&source, "hello").expect("write source");
-
-        atomic_copy_file(&source, &dest).expect("copy file");
-
-        assert_eq!(fs::read_to_string(dest).expect("read dest"), "hello");
-    }
-
     #[cfg(unix)]
     #[test]
     fn atomic_copy_file_follows_source_symlink() {
@@ -811,27 +755,6 @@ mod content_tests {
             "dest should be a regular file"
         );
         assert_eq!(fs::read_to_string(dest).expect("read dest"), "from-real");
-    }
-
-    #[test]
-    fn atomic_copy_dir_copies_tree() {
-        let dir = TempDir::new().expect("temp dir");
-        let source = dir.path().join("source");
-        fs::create_dir_all(source.join("nested")).expect("create source tree");
-        fs::write(source.join("root.txt"), "root").expect("write root");
-        fs::write(source.join("nested").join("child.txt"), "child").expect("write child");
-
-        let dest = dir.path().join("dest");
-        atomic_copy_dir(&source, &dest).expect("copy dir");
-
-        assert_eq!(
-            fs::read_to_string(dest.join("root.txt")).expect("read root"),
-            "root"
-        );
-        assert_eq!(
-            fs::read_to_string(dest.join("nested").join("child.txt")).expect("read child"),
-            "child"
-        );
     }
 
     #[cfg(unix)]

@@ -182,119 +182,25 @@ fn category_str(cat: DiagnosticCategory) -> &'static str {
 }
 
 #[cfg(test)]
-fn validation_warning_to_diagnostic(vw: &crate::validate::ValidationWarning) -> Diagnostic {
-    Diagnostic {
-        level: DiagnosticLevel::Warning,
-        code: vw.code().into(),
-        message: vw.message(),
-        context: None,
-        category: Some(DiagnosticCategory::Validation),
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticLevel;
 
-    fn make_diag(level: DiagnosticLevel) -> Diagnostic {
-        Diagnostic {
-            level,
-            code: "test".into(),
-            message: "test message".to_string(),
-            context: None,
-            category: None,
-        }
-    }
-
     #[test]
     fn strict_mode_escalates_warning_to_error() {
-        let diag = make_diag(DiagnosticLevel::Warning);
-        assert_eq!(effective_level(diag.level, true), DiagnosticLevel::Error);
-    }
-
-    #[test]
-    fn strict_mode_leaves_error_as_error() {
-        let diag = make_diag(DiagnosticLevel::Error);
-        assert_eq!(effective_level(diag.level, true), DiagnosticLevel::Error);
-    }
-
-    #[test]
-    fn non_strict_leaves_warning_as_warning() {
-        let diag = make_diag(DiagnosticLevel::Warning);
-        assert_eq!(effective_level(diag.level, false), DiagnosticLevel::Warning);
-    }
-
-    #[test]
-    fn strict_mode_leaves_info_as_info() {
-        let diag = make_diag(DiagnosticLevel::Info);
-        assert_eq!(effective_level(diag.level, true), DiagnosticLevel::Info);
-    }
-
-    #[test]
-    fn validate_diag_from_diagnostic_maps_category() {
-        let diag = Diagnostic {
-            level: DiagnosticLevel::Warning,
-            code: "compat-version".into(),
-            message: "test".to_string(),
-            context: None,
-            category: Some(DiagnosticCategory::Compatibility),
-        };
-        let vd = ValidateDiagnostic::from_diagnostic(&diag, false);
-        assert_eq!(vd.level, "warning");
-        assert_eq!(vd.category, Some("compatibility"));
-    }
-
-    #[test]
-    fn validate_diag_strict_escalation_in_json() {
-        let diag = Diagnostic {
-            level: DiagnosticLevel::Warning,
-            code: "missing-skill".into(),
-            message: "test".to_string(),
-            context: None,
-            category: Some(DiagnosticCategory::Validation),
-        };
-        let vd = ValidateDiagnostic::from_diagnostic(&diag, true);
-        assert_eq!(
-            vd.level, "error",
-            "warning should be escalated in strict mode"
-        );
-    }
-
-    #[test]
-    fn validation_warning_missing_skill_no_suggestion() {
-        use crate::lock::ItemId;
-        use mars_schema::item::ItemKind;
-        use mars_schema::names::ItemName;
-        let vw = crate::validate::ValidationWarning::MissingSkill {
-            agent: ItemId {
-                kind: ItemKind::Agent,
-                name: ItemName::from("coder".to_string()),
-            },
-            skill_name: "planning".to_string(),
-            suggestion: None,
-        };
-        let diag = validation_warning_to_diagnostic(&vw);
-        assert_eq!(diag.level, DiagnosticLevel::Warning);
-        assert!(diag.message.contains("coder"));
-        assert!(diag.message.contains("planning"));
-        assert_eq!(diag.category, Some(DiagnosticCategory::Validation));
-    }
-
-    #[test]
-    fn validation_warning_missing_skill_with_suggestion() {
-        use crate::lock::ItemId;
-        use mars_schema::item::ItemKind;
-        use mars_schema::names::ItemName;
-        let vw = crate::validate::ValidationWarning::MissingSkill {
-            agent: ItemId {
-                kind: ItemKind::Agent,
-                name: ItemName::from("coder".to_string()),
-            },
-            skill_name: "plan".to_string(),
-            suggestion: Some("planning".to_string()),
-        };
-        let diag = validation_warning_to_diagnostic(&vw);
-        assert!(diag.message.contains("did you mean `planning`"));
+        use DiagnosticLevel::{Error, Info, Warning};
+        // (level, strict, effective level)
+        for (level, strict, expected) in [
+            (Warning, true, Error),
+            (Error, true, Error),
+            (Warning, false, Warning),
+            (Info, true, Info),
+        ] {
+            assert_eq!(
+                effective_level(level, strict),
+                expected,
+                "{level:?} strict={strict}"
+            );
+        }
     }
 }

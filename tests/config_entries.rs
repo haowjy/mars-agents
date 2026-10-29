@@ -4,12 +4,12 @@ mod common;
 mod file_hooks;
 #[path = "config_entries/kept_hooks.rs"]
 mod kept_hooks;
-#[path = "config_entries/mcp.rs"]
-mod mcp;
 #[path = "config_entries/merge_hooks.rs"]
 mod merge_hooks;
 #[path = "config_entries/migrations.rs"]
 mod migrations;
+#[path = "config_entries/overrides_and_links.rs"]
+mod overrides_and_links;
 #[path = "config_entries/ownership.rs"]
 mod ownership;
 #[path = "config_entries/portable_hooks.rs"]

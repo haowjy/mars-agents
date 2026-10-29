@@ -1340,433 +1340,41 @@ mod tests {
     use mars_schema::model_policy::ModelPolicyMatchType;
     use tempfile::TempDir;
 
-    #[test]
-    fn parse_git_dependency() {
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = "v1.0"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.dependencies.len(), 1);
-        let entry = &config.dependencies["base"];
-        assert_eq!(
-            entry.url.as_deref(),
-            Some("https://github.com/org/base.git")
-        );
-        assert!(entry.path.as_deref().is_none());
-        assert_eq!(entry.version.as_deref(), Some("v1.0"));
+    /// `load_effective_project_config` minus the developer's real `config.toml`.
+    fn project_config_without_user_layer(root: &Path) -> EffectiveProjectConfig {
+        let (config, local) = load_config_with_local(root).unwrap();
+        effective_project_config(&config, &local, &UserConfig::default(), root)
     }
 
     #[test]
-    fn parse_path_dependency() {
-        let toml_str = r#"
-[dependencies.local]
-path = "../my-agents"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let entry = &config.dependencies["local"];
-        assert!(entry.url.as_deref().is_none());
-        assert_eq!(entry.path.as_deref(), Some(Path::new("../my-agents")));
-    }
-
-    #[test]
-    fn parse_mixed_dependencies() {
-        let toml_str = r#"
-[dependencies.remote]
-url = "https://github.com/org/remote.git"
-version = "v2.0"
-agents = ["coder", "reviewer"]
-
-[dependencies.local]
-path = "/home/dev/agents"
-exclude = ["experimental"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.dependencies.len(), 2);
-        assert!(config.dependencies.contains_key("remote"));
-        assert!(config.dependencies.contains_key("local"));
-    }
-
-    #[test]
-    fn parse_package_and_dependencies_coexist() {
-        let toml_str = r#"
-[package]
-name = "my-agents"
-version = "0.1.0"
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = ">=1.0.0"
-
-[dependencies.local]
-path = "../local-agents"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert!(config.package.is_some());
-        assert!(config.dependencies.contains_key("base"));
-        assert!(config.dependencies.contains_key("local"));
-    }
-
-    #[test]
-    fn plugin_config_applies_defaults_from_package() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[package]
-name = "example-plugin"
-version = "1.2.3"
-description = "Package description"
-authors = [{ name = "Example Author", email = "author@example.com" }]
-homepage = "https://example.com/plugin"
-license = "MIT"
-
-[plugin]
-"#,
-        )
-        .unwrap();
-
-        let config = load(dir.path()).unwrap();
-        let package = config.package.as_ref().unwrap();
-        let plugin = config.plugin.as_ref().unwrap();
-        assert!(plugin.as_table().is_some_and(toml::Table::is_empty));
-        assert_eq!(
-            package.authors.as_ref().and_then(toml::Value::as_array),
-            Some(&vec![toml::Value::Table(toml::Table::from_iter([
-                (
-                    "name".to_string(),
-                    toml::Value::String("Example Author".to_string())
-                ),
-                (
-                    "email".to_string(),
-                    toml::Value::String("author@example.com".to_string())
-                ),
-            ]))])
-        );
-        assert_eq!(
-            package.homepage.as_ref().and_then(toml::Value::as_str),
-            Some("https://example.com/plugin")
-        );
-        assert_eq!(
-            package.license.as_ref().and_then(toml::Value::as_str),
-            Some("MIT")
-        );
-
-        let metadata = crate::build::plugin::validate_plugin_build(&config).unwrap();
-        assert_eq!(metadata.dir, Path::new("plugin"));
-        assert_eq!(metadata.name, "example-plugin");
-        assert_eq!(metadata.marketplace, "example-plugin");
-        assert_eq!(metadata.description.as_deref(), Some("Package description"));
-        assert_eq!(metadata.harnesses.len(), 5);
-        assert_eq!(metadata.authors[0].name, "Example Author");
-        assert_eq!(
-            metadata.authors[0].email.as_deref(),
-            Some("author@example.com")
-        );
-    }
-
-    #[test]
-    fn plugin_config_parses_explicit_values() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[package]
-name = "example-package"
-version = "1.2.3"
-description = "Package description"
-authors = ["Example Author <author@example.com>"]
-
-[plugin]
-dir = "generated/plugin"
-name = "custom-plugin"
-marketplace = "custom-marketplace"
-description = "Plugin description"
-harnesses = ["claude", "cursor"]
-"#,
-        )
-        .unwrap();
-
-        let config = load(dir.path()).unwrap();
-        let plugin = config.plugin.as_ref().unwrap();
-        assert_eq!(
-            plugin
-                .as_table()
-                .and_then(|plugin| plugin.get("dir"))
-                .and_then(toml::Value::as_str),
-            Some("generated/plugin")
-        );
-        let metadata = crate::build::plugin::validate_plugin_build(&config).unwrap();
-        assert_eq!(metadata.dir, Path::new("generated/plugin"));
-        assert_eq!(metadata.name, "custom-plugin");
-        assert_eq!(metadata.marketplace, "custom-marketplace");
-        assert_eq!(metadata.description.as_deref(), Some("Plugin description"));
-        assert_eq!(metadata.authors[0].name, "Example Author");
-        assert_eq!(
-            metadata.authors[0].email.as_deref(),
-            Some("author@example.com")
-        );
-        assert_eq!(
-            metadata
-                .harnesses
-                .iter()
-                .map(|harness| harness.key)
-                .collect::<Vec<_>>(),
-            vec!["claude", "cursor"]
-        );
-
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-        assert_eq!(reloaded.plugin, config.plugin);
-    }
-
-    #[test]
-    fn plugin_build_rejects_unsafe_directories() {
-        for (plugin_dir, expected) in [
-            ("", "cannot be empty"),
-            ("/tmp/plugin", "must be a relative path"),
-            ("../plugin", "without `.` or `..`"),
-            (".", "without `.` or `..`"),
-            (".generated", "cannot use a dot directory"),
-            ("generated/.private", "cannot use a dot directory"),
-            ("skills/plugin", "source convention directory `skills`"),
-        ] {
-            let dir = TempDir::new().unwrap();
-            std::fs::write(
-                dir.path().join("mars.toml"),
-                format!(
-                    "[package]\nname = \"example-plugin\"\nversion = \"1.0.0\"\n\n[plugin]\ndir = {plugin_dir:?}\n"
-                ),
+    fn entries_refused_in_consumer_mode_name_the_problem() {
+        // (manifest, text the error must contain)
+        let cases = [
+            (
+                "[dependencies.bad]\nurl = \"https://github.com/org/bad.git\"\nagents = [\"coder\"]\nexclude = [\"reviewer\"]\n",
+                "bad",
+            ),
+            ("[dependencies.empty]\nversion = \"v1.0\"\n", "neither"),
+            (
+                "[dependencies.both]\nurl = \"https://github.com/org/repo.git\"\npath = \"/local/path\"\n",
+                "both",
+            ),
+        ];
+        for (toml_str, expected) in cases {
+            let config: Config = toml::from_str(toml_str).unwrap();
+            let err = merge_with_root(
+                config,
+                LocalConfig::default(),
+                &UserConfig::default(),
+                Path::new("."),
             )
-            .unwrap();
-
-            let config = load(dir.path()).unwrap();
-            let error = crate::build::plugin::validate_plugin_build(&config)
-                .err()
-                .unwrap()
-                .to_string();
+            .unwrap_err()
+            .to_string();
             assert!(
-                error.contains(expected),
-                "dir {plugin_dir:?} should report {expected:?}, got: {error}"
+                err.contains(expected),
+                "error should mention {expected:?}: {err}"
             );
         }
-    }
-
-    #[test]
-    fn plugin_build_rejects_unknown_harnesses_and_pi() {
-        for harness in ["unknown", "pi"] {
-            let dir = TempDir::new().unwrap();
-            std::fs::write(
-                dir.path().join("mars.toml"),
-                format!(
-                    "[package]\nname = \"example-plugin\"\nversion = \"1.0.0\"\n\n[plugin]\nharnesses = [{harness:?}]\n"
-                ),
-            )
-            .unwrap();
-
-            let config = load(dir.path()).unwrap();
-            let error = crate::build::plugin::validate_plugin_build(&config)
-                .err()
-                .unwrap()
-                .to_string();
-            assert!(
-                error.contains(&format!("unknown harness `{harness}`"))
-                    && error.contains("expected one of: claude, codex, grok, cursor, opencode"),
-                "harness {harness:?} should be refused, got: {error}"
-            );
-        }
-    }
-
-    #[test]
-    fn plugin_build_validates_name_for_each_listed_harness() {
-        for (harness, name, expected) in [
-            ("claude", "bad:name", "Claude names"),
-            ("codex", "bad--name", "Codex names"),
-            ("grok", "bad/name", "Grok reads the Claude tree"),
-            ("cursor", "Bad_name", "Cursor names"),
-            ("opencode", "_bad-name", "OpenCode names"),
-        ] {
-            let dir = TempDir::new().unwrap();
-            std::fs::write(
-                dir.path().join("mars.toml"),
-                format!(
-                    "[package]\nname = \"fallback-name\"\nversion = \"1.0.0\"\n\n[plugin]\nname = {name:?}\nharnesses = [{harness:?}]\n"
-                ),
-            )
-            .unwrap();
-
-            let config = load(dir.path()).unwrap();
-            let error = crate::build::plugin::validate_plugin_build(&config)
-                .err()
-                .unwrap()
-                .to_string();
-            assert!(
-                error.contains(expected),
-                "name {name:?} for {harness} should report {expected:?}, got: {error}"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_include_filter() {
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-agents = ["coder"]
-skills = ["review"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let (effective, _) =
-            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
-        let source = &effective.dependencies["base"];
-        match &source.filter {
-            FilterMode::Include { agents, skills } => {
-                assert_eq!(agents, &["coder"]);
-                assert_eq!(skills, &["review"]);
-            }
-            other => panic!("expected Include, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_exclude_filter() {
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-exclude = ["experimental", "deprecated"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let (effective, _) =
-            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
-        let source = &effective.dependencies["base"];
-        match &source.filter {
-            FilterMode::Exclude(items) => {
-                assert_eq!(items, &["experimental", "deprecated"]);
-            }
-            other => panic!("expected Exclude, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn error_on_both_include_and_exclude() {
-        let toml_str = r#"
-[dependencies.bad]
-url = "https://github.com/org/bad.git"
-agents = ["coder"]
-exclude = ["reviewer"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("bad"),
-            "error should mention dependency name: {err}"
-        );
-    }
-
-    #[test]
-    fn error_on_neither_url_nor_path() {
-        let toml_str = r#"
-[dependencies.empty]
-version = "v1.0"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let err = merge_with_root(
-            config,
-            LocalConfig::default(),
-            &UserConfig::default(),
-            Path::new("."),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(
-            err.contains("neither"),
-            "error should mention 'neither': {err}"
-        );
-    }
-
-    #[test]
-    fn error_on_both_url_and_path() {
-        let toml_str = r#"
-[dependencies.both]
-url = "https://github.com/org/repo.git"
-path = "/local/path"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let err = merge_with_root(
-            config,
-            LocalConfig::default(),
-            &UserConfig::default(),
-            Path::new("."),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("both"), "error should mention 'both': {err}");
-    }
-
-    #[test]
-    fn roundtrip_full_config_shape_survives_save() {
-        let dir = TempDir::new().unwrap();
-        let original = r#"
-[package]
-name = "sample"
-version = "0.1.0"
-description = "sample package"
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = "v1.0"
-agents = ["coder", "reviewer"]
-
-[dependencies.local]
-path = "../local-agents"
-exclude = ["experimental"]
-
-[settings]
-managed_root = ".custom-agents"
-targets = [".claude", ".cursor"]
-harness_order = ["pi", "opencode", "codex"]
-"#;
-        std::fs::write(dir.path().join("mars.toml"), original).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-
-        assert_eq!(
-            reloaded.package.as_ref().map(|p| p.name.as_str()),
-            Some("sample")
-        );
-        assert_eq!(reloaded.dependencies.len(), 2);
-        assert_eq!(
-            reloaded.dependencies["base"].url.as_deref(),
-            Some("https://github.com/org/base.git")
-        );
-        assert_eq!(
-            reloaded.dependencies["local"].path.as_deref(),
-            Some(Path::new("../local-agents"))
-        );
-        assert_eq!(
-            reloaded.settings.managed_root.as_deref(),
-            Some(".custom-agents")
-        );
-        assert_eq!(
-            reloaded.settings.targets,
-            Some(vec![".claude".to_string(), ".cursor".to_string()])
-        );
-        assert_eq!(
-            reloaded.settings.harness_order,
-            Some(vec![
-                "pi".to_string(),
-                "opencode".to_string(),
-                "codex".to_string()
-            ])
-        );
     }
 
     #[test]
@@ -1776,29 +1384,9 @@ harness_order = ["pi", "opencode", "codex"]
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found"), "should be NotFound: {err}");
-    }
 
-    #[test]
-    fn load_local_missing_returns_default() {
-        let dir = TempDir::new().unwrap();
-        let local = load_local(dir.path()).unwrap();
-        assert!(local.overrides.is_empty());
-    }
-
-    #[test]
-    fn load_local_from_disk() {
-        let dir = TempDir::new().unwrap();
-        let toml_str = r#"
-[overrides.base]
-path = "/home/dev/local-base"
-"#;
-        std::fs::write(dir.path().join("mars.local.toml"), toml_str).unwrap();
-        let local = load_local(dir.path()).unwrap();
-        assert_eq!(local.overrides.len(), 1);
-        assert_eq!(
-            local.overrides["base"].path,
-            PathBuf::from("/home/dev/local-base")
-        );
+        // The local file is optional.
+        assert!(load_local(dir.path()).unwrap().overrides.is_empty());
     }
 
     #[test]
@@ -1906,38 +1494,6 @@ override = { effort = "high" }
 
     fn overlay_tool_strings(names: &[OverlayToolName]) -> Vec<String> {
         names.iter().cloned().map(String::from).collect()
-    }
-
-    #[test]
-    fn merged_agent_overlays_local_override_authored_fields() {
-        let mut base_agents = IndexMap::new();
-        base_agents.insert(
-            "worker".to_string(),
-            AgentOverlay {
-                description: Some("Base description".to_string()),
-                user_invocable: Some(true),
-                ..AgentOverlay::default()
-            },
-        );
-
-        let mut local_agents = IndexMap::new();
-        local_agents.insert(
-            "worker".to_string(),
-            AgentOverlay {
-                description: Some("Local description".to_string()),
-                user_invocable: Some(false),
-                ..AgentOverlay::default()
-            },
-        );
-        let local = LocalConfig {
-            agents: local_agents,
-            ..LocalConfig::default()
-        };
-
-        let merged = overlay_agent_overlays(&base_agents, &local.agents);
-        let replaced = merged.get("worker").expect("worker overlay");
-        assert_eq!(replaced.description.as_deref(), Some("Local description"));
-        assert_eq!(replaced.user_invocable, Some(false));
     }
 
     #[test]
@@ -2112,27 +1668,6 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn merged_settings_replaces_catalog_providers() {
-        let settings = Settings {
-            catalog_providers: Some(vec!["anthropic".to_string()]),
-            ..Settings::default()
-        };
-        let local = LocalConfig {
-            settings: LocalSettings {
-                catalog_providers: Some(vec!["xai".to_string(), "openrouter".to_string()]),
-                ..LocalSettings::default()
-            },
-            ..LocalConfig::default()
-        };
-
-        let merged = local.settings.overlay_settings(&settings).0;
-        assert_eq!(
-            merged.catalog_providers,
-            Some(vec!["xai".to_string(), "openrouter".to_string()])
-        );
-    }
-
-    #[test]
     fn merged_settings_replaces_scalar_table_and_array_fields() {
         let base_rule = ModelPolicyRule {
             match_type: ModelPolicyMatchType::Alias,
@@ -2152,6 +1687,7 @@ override = { effort = "high" }
             targets: Some(vec![".claude".to_string(), ".codex".to_string()]),
             models_cache_ttl_hours: Some(24),
             min_mars_version: Some("0.1.0".to_string()),
+            catalog_providers: Some(vec!["anthropic".to_string()]),
             model_policies: Some(vec![base_rule]),
             ..Settings::default()
         };
@@ -2160,6 +1696,7 @@ override = { effort = "high" }
                 targets: Some(vec![".cursor".to_string()]),
                 models_cache_ttl_hours: Some(48),
                 min_mars_version: Some("0.2.0".to_string()),
+                catalog_providers: Some(vec!["xai".to_string(), "openrouter".to_string()]),
                 model_policies: Some(vec![local_rule.clone()]),
                 ..LocalSettings::default()
             },
@@ -2170,6 +1707,10 @@ override = { effort = "high" }
         assert_eq!(merged.targets, Some(vec![".cursor".to_string()]));
         assert_eq!(merged.models_cache_ttl_hours, Some(48));
         assert_eq!(merged.min_mars_version.as_deref(), Some("0.2.0"));
+        assert_eq!(
+            merged.catalog_providers,
+            Some(vec!["xai".to_string(), "openrouter".to_string()])
+        );
         assert_eq!(merged.model_policies, Some(vec![local_rule]));
     }
 
@@ -2271,7 +1812,7 @@ override = { effort = "high" }
         )
         .unwrap();
 
-        let effective = load_effective_project_config(dir.path()).unwrap();
+        let effective = project_config_without_user_layer(dir.path());
         assert_eq!(effective.warnings.len(), 3, "{:?}", effective.warnings);
         for key in [
             "network_access",
@@ -2338,7 +1879,7 @@ allowed = { replace = ["Bash"] }
         )
         .unwrap();
 
-        let effective = load_effective_project_config(dir.path()).unwrap();
+        let effective = project_config_without_user_layer(dir.path());
         let warnings = effective
             .warnings
             .iter()
@@ -2388,22 +1929,6 @@ allowed = { replace = ["Bash"] }
     }
 
     #[test]
-    fn load_rejects_removed_project_model_visibility_with_migration() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings.model_visibility]\ninclude = ['anthropic/*']\n",
-        )
-        .unwrap();
-        let error = load(dir.path()).unwrap_err().to_string();
-        assert!(error.contains("mars.toml"), "{error}");
-        assert!(error.contains("mars.curated.toml"), "{error}");
-        assert!(error.contains("provider=\"anthropic\""), "{error}");
-        assert!(error.contains("[[show]]"), "{error}");
-        assert!(!error.contains("openrouter/anthropic/*"), "{error}");
-    }
-
-    #[test]
     fn removed_visibility_migration_uses_actual_values_and_direction() {
         let dir = TempDir::new().unwrap();
         std::fs::write(
@@ -2421,99 +1946,6 @@ allowed = { replace = ["Bash"] }
             "providers = \"openai-codex\" → [[show]] harness=\"*\" provider=\"openai-codex\" model=\"*\"",
         ] {
             assert!(error.contains(expected), "missing {expected}: {error}");
-        }
-    }
-
-    #[test]
-    fn load_effective_project_config_accepts_unknown_project_settings_keys() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"[settings]
-harness_order = ["codex", "pi"]
-future_key = "allowed"
-
-"#,
-        )
-        .unwrap();
-
-        let effective = load_effective_project_config(dir.path())
-            .expect("project settings overlay should ignore unknown keys");
-        assert_eq!(
-            effective.settings.harness_order,
-            Some(vec!["codex".to_string(), "pi".to_string()])
-        );
-    }
-
-    #[test]
-    fn merge_with_empty_local() {
-        let config = Config {
-            dependencies: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "base".into(),
-                    mars_schema::dependency::Entry {
-                        version: Some("v1.0".into()),
-                        ..mars_schema::dependency::Entry::git("https://github.com/org/base.git")
-                    }
-                    .into(),
-                );
-                m
-            },
-            settings: Settings::default(),
-            ..Config::default()
-        };
-        let local = LocalConfig::default();
-        let (effective, _) =
-            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
-        assert_eq!(effective.dependencies.len(), 1);
-        let source = &effective.dependencies["base"];
-        match &source.spec {
-            SourceSpec::Git(git) => {
-                assert_eq!(git.url, "https://github.com/org/base.git");
-                assert_eq!(git.version.as_deref(), Some("v1.0"));
-            }
-            SourceSpec::Path(_) => panic!("expected Git"),
-        }
-    }
-
-    #[test]
-    fn merge_override_replaces_with_path() {
-        let config = Config {
-            dependencies: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "base".into(),
-                    mars_schema::dependency::Entry {
-                        version: Some("v1.0".into()),
-                        ..mars_schema::dependency::Entry::git("https://github.com/org/base.git")
-                    }
-                    .into(),
-                );
-                m
-            },
-            settings: Settings::default(),
-            ..Config::default()
-        };
-        let local = LocalConfig {
-            overrides: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "base".into(),
-                    OverrideEntry {
-                        path: PathBuf::from("/home/dev/local-base"),
-                    },
-                );
-                m
-            },
-            ..LocalConfig::default()
-        };
-        let (effective, _) =
-            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
-        let source = &effective.dependencies["base"];
-        match &source.spec {
-            SourceSpec::Path(p) => assert_eq!(p, &PathBuf::from("/home/dev/local-base")),
-            SourceSpec::Git(_) => panic!("expected Path override"),
         }
     }
 
@@ -2576,54 +2008,6 @@ future_key = "allowed"
     }
 
     #[test]
-    fn merge_all_filter_mode() {
-        let config = Config {
-            dependencies: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "base".into(),
-                    mars_schema::dependency::Entry::git("https://github.com/org/base.git").into(),
-                );
-                m
-            },
-            settings: Settings::default(),
-            ..Config::default()
-        };
-        let (effective, _) = merge_with_root(
-            config,
-            LocalConfig::default(),
-            &UserConfig::default(),
-            Path::new("."),
-        )
-        .unwrap();
-        assert!(matches!(
-            effective.dependencies["base"].filter,
-            FilterMode::All
-        ));
-    }
-
-    #[test]
-    fn rename_map_preserved() {
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-
-[dependencies.base.rename]
-old-name = "new-name"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let (effective, _) = merge_with_root(
-            config,
-            LocalConfig::default(),
-            &UserConfig::default(),
-            Path::new("."),
-        )
-        .unwrap();
-        let source = &effective.dependencies["base"];
-        assert_eq!(source.rename.get("old-name").unwrap(), "new-name");
-    }
-
-    #[test]
     fn self_dependency_name_rejected() {
         let toml_str = r#"
 [dependencies._self]
@@ -2638,251 +2022,6 @@ url = "https://github.com/org/base.git"
             err.contains("_self") && err.contains("reserved"),
             "should reject _self: {err}"
         );
-    }
-
-    #[test]
-    fn save_preserves_dependencies_when_clearing_last_target() {
-        let dir = TempDir::new().unwrap();
-        let original = r#"
-[package]
-name = "sample"
-version = "0.1.0"
-
-[dependencies.base]
-url = "https://github.com/org/base.git"
-version = "v1.0"
-agents = ["coder"]
-
-[settings]
-managed_root = ".agents"
-targets = [".claude"]
-"#;
-        std::fs::write(dir.path().join("mars.toml"), original).unwrap();
-
-        let mut config = load(dir.path()).unwrap();
-        if let Some(targets) = config.settings.targets.as_mut() {
-            targets.retain(|target| target != ".claude");
-            if targets.is_empty() {
-                config.settings.targets = None;
-            }
-        }
-        save(dir.path(), &config).unwrap();
-
-        let reloaded = load(dir.path()).unwrap();
-        assert_eq!(
-            reloaded.package.as_ref().map(|p| p.name.as_str()),
-            Some("sample")
-        );
-        assert_eq!(
-            reloaded.dependencies["base"].url.as_deref(),
-            Some("https://github.com/org/base.git")
-        );
-        assert_eq!(
-            reloaded.dependencies["base"].version.as_deref(),
-            Some("v1.0")
-        );
-        assert_eq!(
-            reloaded.dependencies["base"].filter.agents.as_deref(),
-            Some(&["coder".into()][..])
-        );
-        assert_eq!(reloaded.settings.managed_root.as_deref(), Some(".agents"));
-        assert!(reloaded.settings.targets.is_none());
-    }
-
-    #[test]
-    fn roundtrip_preserves_all_filter_fields() {
-        let dir = TempDir::new().unwrap();
-        let original = r#"
-[dependencies.include]
-url = "https://github.com/org/include.git"
-agents = ["coder", "reviewer"]
-skills = ["review", "plan"]
-
-[dependencies.include.rename]
-coder = "core-coder"
-
-[dependencies.exclude]
-url = "https://github.com/org/exclude.git"
-exclude = ["experimental", "deprecated"]
-
-[dependencies.only_skills]
-url = "https://github.com/org/skills.git"
-only_skills = true
-
-[dependencies.only_agents]
-url = "https://github.com/org/agents.git"
-only_agents = true
-"#;
-        std::fs::write(dir.path().join("mars.toml"), original).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-
-        let include = &reloaded.dependencies["include"].filter;
-        assert_eq!(
-            include.agents.as_deref(),
-            Some(&["coder".into(), "reviewer".into()][..])
-        );
-        assert_eq!(
-            include.skills.as_deref(),
-            Some(&["review".into(), "plan".into()][..])
-        );
-        assert_eq!(
-            include.rename.as_ref().and_then(|r| r.get("coder")),
-            Some(&"core-coder".into())
-        );
-
-        let exclude = &reloaded.dependencies["exclude"].filter;
-        assert_eq!(
-            exclude.exclude.as_deref(),
-            Some(&["experimental".into(), "deprecated".into()][..])
-        );
-
-        let only_skills = &reloaded.dependencies["only_skills"].filter;
-        assert!(only_skills.only_skills);
-        assert!(!only_skills.only_agents);
-
-        let only_agents = &reloaded.dependencies["only_agents"].filter;
-        assert!(only_agents.only_agents);
-        assert!(!only_agents.only_skills);
-    }
-
-    #[test]
-    fn parse_only_skills_filter() {
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-only_skills = true
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let (effective, _) =
-            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
-        let source = &effective.dependencies["base"];
-        assert!(matches!(source.filter, FilterMode::OnlySkills));
-    }
-
-    #[test]
-    fn parse_only_agents_filter() {
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-only_agents = true
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let (effective, _) =
-            merge_with_root(config, local, &UserConfig::default(), Path::new(".")).unwrap();
-        let source = &effective.dependencies["base"];
-        assert!(matches!(source.filter, FilterMode::OnlyAgents));
-    }
-
-    #[test]
-    fn error_on_only_skills_and_only_agents() {
-        let toml_str = r#"
-[dependencies.bad]
-url = "https://github.com/org/bad.git"
-only_skills = true
-only_agents = true
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("mutually exclusive"),
-            "should mention mutually exclusive: {err}"
-        );
-    }
-
-    #[test]
-    fn error_on_only_skills_with_agents_list() {
-        let toml_str = r#"
-[dependencies.bad]
-url = "https://github.com/org/bad.git"
-only_skills = true
-agents = ["coder"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("cannot combine"),
-            "should mention cannot combine: {err}"
-        );
-    }
-
-    #[test]
-    fn error_on_only_agents_with_skills_list() {
-        let toml_str = r#"
-[dependencies.bad]
-url = "https://github.com/org/bad.git"
-only_agents = true
-skills = ["planning"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn error_on_only_skills_with_exclude() {
-        let toml_str = r#"
-[dependencies.bad]
-url = "https://github.com/org/bad.git"
-only_skills = true
-exclude = ["deprecated"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        let local = LocalConfig::default();
-        let result = merge_with_root(config, local, &UserConfig::default(), Path::new("."));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn only_skills_false_not_serialized() {
-        let config = Config {
-            dependencies: {
-                let mut m = IndexMap::new();
-                m.insert(
-                    "base".into(),
-                    mars_schema::dependency::Entry::git("https://github.com/org/base.git").into(),
-                );
-                m
-            },
-            settings: Settings::default(),
-            ..Config::default()
-        };
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        assert!(
-            !serialized.contains("only_skills"),
-            "false booleans should not be serialized: {serialized}"
-        );
-        assert!(
-            !serialized.contains("only_agents"),
-            "false booleans should not be serialized: {serialized}"
-        );
-    }
-
-    #[test]
-    fn only_skills_true_roundtrips() {
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-only_skills = true
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert!(config.dependencies["base"].filter.only_skills);
-        assert!(!config.dependencies["base"].filter.only_agents);
-
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        let reloaded: Config = toml::from_str(&serialized).unwrap();
-        assert!(reloaded.dependencies["base"].filter.only_skills);
     }
 
     // === managed_targets tests ===
@@ -2919,87 +2058,34 @@ only_skills = true
     }
 
     #[test]
-    fn managed_targets_normalizes_bare_harness_and_generic_links() {
-        let settings = Settings {
-            targets: Some(vec![
-                "codex".to_string(),
-                "agents".to_string(),
-                "foo".to_string(),
-            ]),
+    fn merge_warns_when_managed_root_or_targets_include_agents() {
+        let managed_root = Settings {
+            managed_root: Some(".agents".into()),
             ..Settings::default()
         };
-        assert_eq!(
-            settings.managed_targets(),
-            vec![
-                ".codex".to_string(),
-                ".agents".to_string(),
-                ".foo".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn linked_harnesses_extracts_legacy_path_form_harness_links() {
-        let settings = Settings {
-            targets: Some(vec![
-                ".codex".to_string(),
-                ".claude".to_string(),
-                ".agents".to_string(),
-            ]),
+        let targets = Settings {
+            targets: Some(vec![".agents".into(), ".claude".into()]),
             ..Settings::default()
         };
-        assert_eq!(
-            settings.linked_harnesses(),
-            vec!["codex".to_string(), "claude".to_string()]
-        );
-    }
-
-    #[test]
-    fn merge_warns_when_managed_root_is_agents() {
-        let config = Config {
-            settings: Settings {
-                managed_root: Some(".agents".into()),
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-
-        let (_, diagnostics) = merge_with_root(
-            config,
-            LocalConfig::default(),
-            &UserConfig::default(),
-            Path::new("."),
-        )
-        .unwrap();
-
-        assert!(diagnostics.iter().any(|diag| {
-            diag.code == "deprecated-agents-target"
-                && diag.context.as_deref() == Some("settings.managed_root")
-        }));
-    }
-
-    #[test]
-    fn merge_warns_when_targets_include_agents() {
-        let config = Config {
-            settings: Settings {
-                targets: Some(vec![".agents".into(), ".claude".into()]),
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-
-        let (_, diagnostics) = merge_with_root(
-            config,
-            LocalConfig::default(),
-            &UserConfig::default(),
-            Path::new("."),
-        )
-        .unwrap();
-
-        assert!(diagnostics.iter().any(|diag| {
-            diag.code == "deprecated-agents-target"
-                && diag.context.as_deref() == Some("settings.targets")
-        }));
+        for (settings, context) in [
+            (managed_root, "settings.managed_root"),
+            (targets, "settings.targets"),
+        ] {
+            let config = Config {
+                settings,
+                ..Config::default()
+            };
+            let (_, diagnostics) = merge_with_root(
+                config,
+                LocalConfig::default(),
+                &UserConfig::default(),
+                Path::new("."),
+            )
+            .unwrap();
+            assert!(diagnostics.iter().any(|diag| {
+                diag.code == "deprecated-agents-target" && diag.context.as_deref() == Some(context)
+            }));
+        }
     }
 
     #[test]
@@ -3035,175 +2121,7 @@ models_cache_ttl_hours = 48
         }
     }
 
-    #[test]
-    fn settings_models_cache_ttl_roundtrip_preserves_value() {
-        let original = Config {
-            settings: Settings {
-                models_cache_ttl_hours: Some(48),
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-        let serialized = toml::to_string_pretty(&original).unwrap();
-        let roundtripped: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(
-            roundtripped.settings.models_cache_ttl_hours,
-            original.settings.models_cache_ttl_hours
-        );
-    }
-
-    #[test]
-    fn settings_agent_emission_parsing_and_default() {
-        for (value, expected) in [
-            ("auto", AgentEmission::Auto),
-            ("always", AgentEmission::Always),
-            ("never", AgentEmission::Never),
-        ] {
-            let config: Config = toml::from_str(&format!(
-                "[settings]
-agent_emission = \"{value}\"
-"
-            ))
-            .unwrap();
-            assert_eq!(config.settings.agent_emission, Some(expected));
-        }
-        let config: Config = toml::from_str(
-            "[settings]
-models_cache_ttl_hours = 48
-",
-        )
-        .unwrap();
-        assert_eq!(config.settings.agent_emission, None);
-    }
-
-    #[test]
-    fn settings_agent_copy_parses() {
-        let config: Config = toml::from_str(
-            r#"
-[settings]
-targets = [".claude"]
-
-[settings.meridian.agent_copy]
-harnesses = ["claude"]
-include_fanout = true
-"#,
-        )
-        .unwrap();
-        let agent_copy = config
-            .settings
-            .meridian_agent_copy()
-            .expect("agent_copy should parse")
-            .clone();
-        assert_eq!(agent_copy.harnesses, vec!["claude".to_string()]);
-        assert!(agent_copy.include_fanout);
-    }
-
-    #[test]
-    fn settings_default_harness_parses_and_roundtrips() {
-        let config: Config = toml::from_str(
-            r#"
-[settings]
-default_harness = "codex"
-"#,
-        )
-        .unwrap();
-        assert_eq!(config.settings.default_harness.as_deref(), Some("codex"));
-
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        let roundtripped: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(
-            roundtripped.settings.default_harness,
-            config.settings.default_harness
-        );
-    }
-
-    #[test]
-    fn settings_default_model_parses_and_roundtrips() {
-        let config: Config = toml::from_str(
-            r#"
-[settings]
-default_model = "gpt-5.4-mini"
-"#,
-        )
-        .unwrap();
-        assert_eq!(
-            config.settings.default_model.as_deref(),
-            Some("gpt-5.4-mini")
-        );
-
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        let roundtripped: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(
-            roundtripped.settings.default_model,
-            config.settings.default_model
-        );
-    }
-
-    #[test]
-    fn settings_harness_order_parses_and_roundtrips() {
-        let config: Config = toml::from_str(
-            r#"
-[settings]
-harness_order = ["pi", "opencode", "codex", "claude"]
-"#,
-        )
-        .unwrap();
-        assert_eq!(
-            config.settings.harness_order,
-            Some(vec![
-                "pi".to_string(),
-                "opencode".to_string(),
-                "codex".to_string(),
-                "claude".to_string()
-            ])
-        );
-
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        let roundtripped: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(
-            roundtripped.settings.harness_order,
-            config.settings.harness_order
-        );
-    }
-
-    #[test]
-    fn settings_agent_emission_roundtrip_preserves_value() {
-        let original = Config {
-            settings: Settings {
-                agent_emission: Some(AgentEmission::Always),
-                ..Settings::default()
-            },
-            ..Config::default()
-        };
-        let serialized = toml::to_string_pretty(&original).unwrap();
-        let roundtripped: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(
-            roundtripped.settings.agent_emission,
-            original.settings.agent_emission
-        );
-    }
-
     // === local-dependencies tests ===
-
-    #[test]
-    fn parse_local_dependencies() {
-        let toml_str = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-
-[local-dependencies.prompter]
-url = "https://github.com/org/prompter.git"
-skills = ["prompt-helper"]
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.dependencies.len(), 1);
-        assert_eq!(config.local_dependencies.len(), 1);
-        assert!(config.local_dependencies.contains_key("prompter"));
-        assert_eq!(
-            config.local_dependencies["prompter"].url.as_deref(),
-            Some("https://github.com/org/prompter.git")
-        );
-    }
 
     #[test]
     fn local_dependencies_merged_into_effective_config() {
@@ -3246,35 +2164,6 @@ url = "https://github.com/org/base-local.git"
     }
 
     #[test]
-    fn local_dependencies_roundtrip() {
-        let dir = TempDir::new().unwrap();
-        let original = r#"
-[dependencies.base]
-url = "https://github.com/org/base.git"
-
-[local-dependencies.prompter]
-url = "https://github.com/org/prompter.git"
-skills = ["prompt-helper"]
-"#;
-        std::fs::write(dir.path().join("mars.toml"), original).unwrap();
-
-        let config = load(dir.path()).unwrap();
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-
-        assert_eq!(reloaded.dependencies.len(), 1);
-        assert_eq!(reloaded.local_dependencies.len(), 1);
-        assert!(reloaded.local_dependencies.contains_key("prompter"));
-        assert_eq!(
-            reloaded.local_dependencies["prompter"]
-                .filter
-                .skills
-                .as_deref(),
-            Some(&["prompt-helper".into()][..])
-        );
-    }
-
-    #[test]
     fn path_with_backslashes_serializes_as_forward_slashes() {
         let mut deps = IndexMap::new();
         deps.insert(
@@ -3299,30 +2188,20 @@ skills = ["prompt-helper"]
             reparsed.dependencies["test-src"].path.as_deref().unwrap(),
             Path::new("C:/Users/dev/src"),
         );
-    }
 
-    #[test]
-    fn override_path_serializes_forward_slashes() {
-        let mut overrides = IndexMap::new();
-        overrides.insert(
-            SourceName::from("my-dep"),
-            OverrideEntry {
-                path: PathBuf::from("C:\\Users\\dev\\local-pkg"),
-            },
-        );
+        // Same serializer for override paths.
         let local = LocalConfig {
-            overrides,
+            overrides: IndexMap::from([(
+                SourceName::from("my-dep"),
+                OverrideEntry {
+                    path: PathBuf::from("C:\\Users\\dev\\local-pkg"),
+                },
+            )]),
             ..LocalConfig::default()
         };
         let toml_str = toml::to_string_pretty(&local).unwrap();
-        assert!(
-            !toml_str.contains('\\'),
-            "local config TOML must not contain backslashes: {toml_str}"
-        );
-        assert!(
-            toml_str.contains("C:/Users/dev/local-pkg"),
-            "expected forward-slash override path: {toml_str}"
-        );
+        assert!(!toml_str.contains('\\'), "{toml_str}");
+        assert!(toml_str.contains("C:/Users/dev/local-pkg"), "{toml_str}");
     }
 
     #[test]

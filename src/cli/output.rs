@@ -632,10 +632,7 @@ mod tests {
                 "engines": ["mars"]
             }])
         );
-    }
 
-    #[test]
-    fn sync_json_has_empty_engine_fallbacks_without_fallback() {
         assert_eq!(
             sync_report_json(&report(Vec::new()))["engine_fallbacks"],
             serde_json::json!([])

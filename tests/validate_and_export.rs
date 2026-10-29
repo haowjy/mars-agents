@@ -34,45 +34,12 @@ fn validate_json_outputs_clean_true_on_success() {
         Some(0),
         "expected zero errors: {stdout}"
     );
-}
 
-#[test]
-fn validate_strict_clean_project_still_passes() {
-    // --strict on a project with zero warnings should still exit 0.
-    let dir = TempDir::new().unwrap();
-    let agent_content = "---\nname: planner\ndescription: plans\n---\n# Planner";
-    let project = setup_synced_project(&dir, "proj", "src", &[("planner", agent_content)], &[]);
-
+    // --strict on a project with zero warnings still exits 0.
     offline_mars(dir.path())
         .args(["validate", "--strict", "--root", project.to_str().unwrap()])
         .assert()
         .success();
-}
-
-#[test]
-fn validate_strict_with_override_warning() {
-    // override-missing-dep is a Warning diagnostic.
-    // --strict should escalate it to an error (exit 1).
-    let dir = TempDir::new().unwrap();
-    let agent_content = "---\nname: agent\ndescription: an agent\n---\n# Agent";
-    let project = setup_synced_project(&dir, "proj", "src", &[("agent", agent_content)], &[]);
-
-    // Add mars.local.toml with an override pointing to a non-existent dep.
-    // This produces an override-missing-dep Warning diagnostic.
-    let local_toml = "[overrides.nonexistent-dep]\npath = \"/does/not/exist\"\n";
-    fs::write(project.join("mars.local.toml"), local_toml).unwrap();
-
-    // Normal validate exits 0 (warning doesn't fail)
-    offline_mars(dir.path())
-        .args(["validate", "--root", project.to_str().unwrap()])
-        .assert()
-        .success();
-
-    // --strict exits 1 (warning escalated to error)
-    offline_mars(dir.path())
-        .args(["validate", "--strict", "--root", project.to_str().unwrap()])
-        .assert()
-        .failure();
 }
 
 #[test]
@@ -125,9 +92,10 @@ fn export_exits_zero_and_outputs_json() {
         json["diagnostics"].is_array(),
         "expected diagnostics array: {stdout}"
     );
+    let dependencies = json["dependencies"].as_array().expect("dependencies array");
     assert!(
-        json["dependencies"].is_array(),
-        "expected dependencies array: {stdout}"
+        dependencies.iter().any(|dep| dep["origin"] == "path"),
+        "path dependency should report origin `path`: {stdout}"
     );
 }
 
@@ -194,9 +162,19 @@ fn validate_json_strict_escalates_warnings_in_output() {
     let agent_content = "---\nname: alpha\ndescription: agent\n---\n# Alpha";
     let project = setup_synced_project(&dir, "proj", "src", &[("alpha", agent_content)], &[]);
 
-    // Add override-missing-dep warning via mars.local.toml.
-    let local_toml = "[overrides.ghost-dep]\npath = \"/does/not/exist\"\n";
+    // Add an override-missing-dep warning via mars.local.toml, pointing at a path that is
+    // absent under the fixture's temp dir.
+    let local_toml = format!(
+        "[overrides.ghost-dep]\npath = \"{}\"\n",
+        portable_path(&dir.path().join("absent"))
+    );
     fs::write(project.join("mars.local.toml"), local_toml).unwrap();
+
+    // Without --strict a warning does not fail validation.
+    offline_mars(dir.path())
+        .args(["validate", "--root", project.to_str().unwrap()])
+        .assert()
+        .success();
 
     let output = offline_mars(dir.path())
         .args([

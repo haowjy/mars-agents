@@ -139,28 +139,35 @@ fn agents_show_json_subagents_and_kebab_keys() {
 }
 
 #[test]
-fn agents_show_not_found_exits_nonzero() {
+fn show_of_missing_agent_or_skill_exits_nonzero() {
     let dir = TempDir::new().unwrap();
-    let project =
-        setup_synced_project(&dir, "proj", "src", &[("orchestrator", AGENT_CONTENT)], &[]);
-
-    let status = mars()
-        .args([
-            "--json",
-            "agents",
-            "show",
-            "nonexistent",
-            "--root",
-            project.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap()
-        .status;
-
-    assert!(
-        !status.success(),
-        "agents show of missing agent must exit non-zero"
+    let project = setup_synced_project(
+        &dir,
+        "proj",
+        "src",
+        &[("orchestrator", AGENT_CONTENT)],
+        &[("planning", SKILL_CONTENT)],
     );
+
+    for kind in ["agents", "skills"] {
+        let status = mars()
+            .args([
+                "--json",
+                kind,
+                "show",
+                "nonexistent",
+                "--root",
+                project.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap()
+            .status;
+
+        assert!(
+            !status.success(),
+            "{kind} show of a missing item must exit non-zero"
+        );
+    }
 }
 
 #[test]
@@ -491,14 +498,8 @@ fn skills_list_json_model_invocable_is_kebab_not_snake() {
         entry["type"], "principle",
         "'type' field in skills list:\n{stdout}"
     );
-}
 
-#[test]
-fn skills_show_json_model_invocable_is_kebab_not_snake() {
-    // Mirror of the list test — both endpoints must agree on kebab-case.
-    let dir = TempDir::new().unwrap();
-    let project = setup_synced_project(&dir, "proj", "src", &[], &[("planning", SKILL_CONTENT)]);
-
+    // `show` must agree with `list` on the kebab-case keys.
     let output = mars()
         .args([
             "--json",
@@ -510,57 +511,14 @@ fn skills_show_json_model_invocable_is_kebab_not_snake() {
         ])
         .output()
         .unwrap();
-
     assert!(output.status.success(), "mars skills show should exit 0");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&stdout)
+    let shown: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|_| panic!("mars skills show --json must be valid JSON:\n{stdout}"));
-
-    // Kebab-case contract — the regression was snake vs kebab disagreement.
-    assert!(
-        json.get("model-invocable").is_some(),
-        "skills show MUST emit 'model-invocable' (kebab):\n{stdout}"
-    );
-    assert!(
-        json.get("model_invocable").is_none(),
-        "skills show MUST NOT emit 'model_invocable' (snake):\n{stdout}"
-    );
-    assert_eq!(
-        json["model-invocable"], false,
-        "'model-invocable' value:\n{stdout}"
-    );
-
-    assert!(
-        json.get("user-invocable").is_some(),
-        "'user-invocable' key required (kebab):\n{stdout}"
-    );
-    assert_eq!(json["type"], "principle", "'type' field:\n{stdout}");
-    assert!(
-        json.get("detail").is_none(),
-        "'detail' field should not be emitted:\n{stdout}"
-    );
-}
-
-#[test]
-fn skills_show_not_found_exits_nonzero() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_synced_project(&dir, "proj", "src", &[], &[("planning", SKILL_CONTENT)]);
-
-    let status = mars()
-        .args([
-            "--json",
-            "skills",
-            "show",
-            "nonexistent",
-            "--root",
-            project.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap()
-        .status;
-
-    assert!(
-        !status.success(),
-        "skills show of missing skill must exit non-zero"
-    );
+    assert!(shown.get("model-invocable").is_some(), "{stdout}");
+    assert!(shown.get("model_invocable").is_none(), "{stdout}");
+    assert_eq!(shown["model-invocable"], false, "{stdout}");
+    assert!(shown.get("user-invocable").is_some(), "{stdout}");
+    assert_eq!(shown["type"], "principle", "{stdout}");
+    assert!(shown.get("detail").is_none(), "{stdout}");
 }

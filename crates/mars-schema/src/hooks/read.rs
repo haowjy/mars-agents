@@ -7,12 +7,12 @@ use serde::Deserialize;
 
 use super::portable::PortableHooks;
 use super::targets::{self, Target};
-use super::{Fragment, HookDef, Origin, RESERVED_NAME_SUFFIX};
+use super::{HookDef, NativeHook, Origin, RESERVED_NAME_SUFFIX};
 use crate::diagnostic::{SchemaDiagnostic, Severity};
 use crate::visibility::Visibility;
 
 pub const REMOVED_SCHEMA_MESSAGE: &str = "uses the removed v0.11.0 hook schema (`events`/`matcher`/`[action]`/`path`); \
-     migrate to per-target native fragment files with `fragment = \"<target>.json\"`";
+     migrate to per-target native hook files with `native-hook = \"<target>.json\"`";
 
 /// `Diagnostic` code of a `hook.toml` in the removed v0.11.0 schema.
 pub const REMOVED_SCHEMA_CODE: &str = "hook.removed-schema";
@@ -31,6 +31,9 @@ pub struct HookRead {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawTarget {
+    #[serde(default, rename = "native-hook")]
+    native_hook: Option<String>,
+    /// Deprecated alias of `native-hook`, read for one release.
     #[serde(default)]
     fragment: Option<String>,
     #[serde(default)]
@@ -214,20 +217,41 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
     let mut targets = BTreeMap::new();
     for (root, spec) in raw.targets {
         let is_file = targets::target(&root).is_some_and(Target::is_file);
-        if is_file && spec.fragment.is_none() {
+        let named = match (spec.native_hook, spec.fragment) {
+            (Some(_), Some(_)) => {
+                return failed(
+                    "hook.native-hook-conflict",
+                    format!(
+                        "target `{root}` sets both `native-hook` and `fragment`; keep one of `native-hook` or `fragment` (`fragment` is deprecated)"
+                    ),
+                );
+            }
+            (None, Some(file)) => {
+                warn(
+                    &mut diagnostics,
+                    "hook.fragment-deprecated",
+                    format!(
+                        "target `{root}` uses `fragment`, which is deprecated; use `native-hook`"
+                    ),
+                );
+                Some(file)
+            }
+            (named, None) => named,
+        };
+        if is_file && named.is_none() {
             return failed(
-                "hook.fragment-required",
+                "hook.native-hook-required",
                 format!(
-                    "target `{root}` must name its `fragment`: a file target is a TypeScript file with no default name, and `{}.json` would be installed as one",
+                    "target `{root}` must name its `native-hook`: a file target is a TypeScript file with no default name, and `{}.json` would be installed as one",
                     root.trim_start_matches('.')
                 ),
             );
         }
-        if portable.is_some() && spec.fragment.is_none() {
+        if portable.is_some() && named.is_none() {
             return failed(
-                "hook.fragment-required",
+                "hook.native-hook-required",
                 format!(
-                    "target `{root}` must name its `fragment` because the hook has `[hooks]`; an empty table would pick up a leftover `{}.json`",
+                    "target `{root}` must name its `native-hook` because the hook has `[hooks]`; an empty table would pick up a leftover `{}.json`",
                     root.trim_start_matches('.')
                 ),
             );
@@ -235,7 +259,7 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
         let mut unchecked = spec.unchecked;
         if unchecked.is_some() && is_file {
             let message = format!(
-                "target `{root}` uses file-mode fragments; `unchecked` is not supported because file contents and events are not validated"
+                "target `{root}` uses file-mode native hooks; `unchecked` is not supported because file contents and events are not validated"
             );
             if origin == Origin::Local {
                 return failed("hook.unchecked-file", message);
@@ -247,18 +271,16 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
             );
             unchecked = None;
         }
-        let file = spec
-            .fragment
-            .unwrap_or_else(|| format!("{}.json", root.trim_start_matches('.')));
-        if let Err(message) = validate_fragment_path(&file) {
+        let file = named.unwrap_or_else(|| format!("{}.json", root.trim_start_matches('.')));
+        if let Err(message) = validate_native_hook_path(&file) {
             return failed(
-                "hook.fragment-path",
-                format!("target `{root}` has invalid fragment `{file}`: {message}"),
+                "hook.native-hook-path",
+                format!("target `{root}` has invalid native hook `{file}`: {message}"),
             );
         }
         targets.insert(
             root,
-            Fragment {
+            NativeHook {
                 file,
                 unchecked: unchecked.unwrap_or(false),
             },
@@ -311,7 +333,7 @@ pub(super) fn validate_name(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn validate_fragment_path(path: &str) -> Result<(), &'static str> {
+fn validate_native_hook_path(path: &str) -> Result<(), &'static str> {
     if path.is_empty() || path.contains('\0') {
         return Err("must be a non-empty relative path");
     }

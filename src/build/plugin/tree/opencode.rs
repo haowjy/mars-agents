@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::compiler::hooks::{ParsedHookItem, load_plugin_output, report_fragment};
+use crate::compiler::hooks::{ParsedHookItem, load_plugin_output, report_native_hook};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::target::opencode::OpencodeAdapter;
@@ -39,24 +39,24 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
 };
 
 fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
-    // A hook selected for `[hooks]` alone has no fragment to check.
-    let Some(fragment) = hook.fragment(TARGET_ROOT).map(|f| f.file.as_str()) else {
+    // A hook selected for `[hooks]` alone has no native hook to check.
+    let Some(native_hook) = hook.native_hook(TARGET_ROOT).map(|f| f.file.as_str()) else {
         return;
     };
     let target = mars_schema::hooks::targets::target(TARGET_ROOT).expect("OpenCode takes hooks");
     match load_plugin_output(hook, target, None, &Tokens::default()) {
         Ok(HookOutput::File(FileOutput {
-            fragment_problem: Some(problem),
+            native_hook_problem: Some(problem),
             ..
         })) => diag.warn(
-            "hook-fragment-contract",
+            "hook-native-contract",
             format!(
-                "hook `{}` from `{}`: OpenCode fragment `{fragment}` {problem}; the hook will still be shipped and isolated at runtime",
+                "hook `{}` from `{}`: OpenCode native hook `{native_hook}` {problem}; the hook will still be shipped and isolated at runtime",
                 hook.def.name, hook.source_name
             ),
         ),
         Ok(_) => {}
-        Err(error) => report_fragment(hook, &error, diag),
+        Err(error) => report_native_hook(hook, &error, diag),
     }
 }
 
@@ -146,7 +146,7 @@ struct PermissionRule {
 #[derive(Serialize)]
 struct HookData {
     name: String,
-    fragment: String,
+    native_hook: String,
 }
 
 fn write_package(
@@ -208,7 +208,7 @@ fn write_package(
         .filter_map(|hook| {
             Some(HookData {
                 name: hook.def.name.clone(),
-                fragment: hook.fragment(TARGET_ROOT)?.file.clone(),
+                native_hook: hook.native_hook(TARGET_ROOT)?.file.clone(),
             })
         })
         .collect();

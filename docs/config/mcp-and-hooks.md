@@ -12,7 +12,7 @@ agents and skills. Mars compiles these into target-specific config files during
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 - **Hooks** are written once in Claude's hook format (`[hooks]` in `hook.toml`)
   and installed natively in Claude, Codex, OpenCode and Pi, or contributed as
-  target-native fragments (JSON for Claude, Codex and Cursor; TypeScript for
+  target-native hooks (JSON for Claude, Codex and Cursor; TypeScript for
   OpenCode and Pi). Their complete hook directories install beside the target.
 - **Server files** shipped beside `mcp.toml` are installed with their server
   directory when `command` or `args` names it with `${MARS_MCP_DIR}`.
@@ -75,9 +75,9 @@ An entry is Mars's only while its content still equals what Mars last wrote
   than 0.25 rejects `[hooks]` and fails the whole sync, not just your hook, and
   `mars check` warns when the requirement is missing. A path or branch
   dependency has no version to fall back on, so a too-old Mars hard-errors on it.
-- A plugin package that moves an `opencode.ts` fragment into `[hooks]` loses its
+- A plugin package that moves an `opencode.ts` native hook into `[hooks]` loses its
   hook in the OpenCode plugin tree built by `mars build plugin`; the tree
-  reports `plugin-hook-fragment-dropped`. Keep the `opencode.ts` fragment for
+  reports `plugin-native-hook-dropped`. Keep the `opencode.ts` native hook for
   the plugin tree until the tree can load generated hooks.
 - Mars now reads a dependency's `hook.toml` leniently (see
   [Validation by origin](#validation-by-origin)): an unknown key or event in a
@@ -85,9 +85,9 @@ An entry is Mars's only while its content still equals what Mars last wrote
   strict.
 - Claude Code before 2.1.295 ignores `onFailure`, and a guard written with
   `onFailure = "block"` then fails open there.
-- An OpenCode or Pi target table must name its fragment, as in
-  `[targets.".opencode"]` followed by `fragment = "opencode.ts"`. An empty table
-  is now an error in your project's hooks (`hook.fragment-required`); a
+- An OpenCode or Pi target table must name its native hook, as in
+  `[targets.".opencode"]` followed by `native-hook = "opencode.ts"`. An empty table
+  is now an error in your project's hooks (`hook.native-hook-required`); a
   dependency's hook with one keeps its last good install. Earlier releases read
   an empty table as `opencode.json` and installed that file as a plugin.
 
@@ -388,7 +388,7 @@ names are Claude's, camelCase included (`onFailure`, `statusMessage`). A Claude
 hooks JSON converts to this TOML and back mechanically. The one exception is
 JSON `null`, which TOML cannot hold: drop it.
 
-A hook needs `[hooks]`, a [target table](#native-fragments), or both. Mars
+A hook needs `[hooks]`, a [target table](#native-hooks), or both. Mars
 copies the whole directory to `<target>/hooks/<name>/` for each target that
 receives the hook, so the scripts sit beside the generated entry.
 
@@ -442,8 +442,8 @@ real matcher cannot be tested and is left out.
 
 A target that cannot render an event reports `hook-event-skipped` at sync.
 Cursor receives no generated entries (Mars renders none for it before 0.26) and
-reports that once per hook; a native Cursor fragment still works (see
-[Native fragments](#native-fragments)). Codex leaves out a matcher group whose
+reports that once per hook; a Cursor native hook still works (see
+[Native hooks](#native-hooks)). Codex leaves out a matcher group whose
 matcher its regex engine cannot compile, such as one with look-around
 (`(?!…)`), and reports it; Claude's JavaScript regex accepts those.
 
@@ -539,15 +539,15 @@ A hook with `[hooks]` goes to every managed target that can render at least one
 of its events, except the targets in `skip-targets`. Entries must be target
 roots such as `".codex"`. A skipped target gets no generated entries and no
 `hook-event-skipped` reports. `skip-targets` turns off only the generated
-entries: a [native fragment](#native-fragments) for that target still installs.
+entries: a [native hook](#native-hooks) for that target still installs.
 
 ```toml
 skip-targets = [".codex"]   # [hooks] generates nothing for Codex
 ```
 
-### Native fragments
+### Native hooks
 
-`[hooks]` and native fragments can live in one hook. A fragment is the
+`[hooks]` and native hooks can live in one hook. A native hook is the
 harness-native file for one target, declared in a target table:
 
 ```
@@ -568,32 +568,40 @@ visibility = "exported"
 order = 10
 
 [targets.".claude"]
-fragment = "claude.json"    # default filename when the hook has no [hooks]
+native-hook = "claude.json"    # default filename when the hook has no [hooks]
 
 [targets.".codex"]
-fragment = "codex.json"
+native-hook = "codex.json"
 ```
 
-How fragments combine with `[hooks]`:
+`fragment` is the deprecated earlier name of `native-hook`. It still works and warns
+with `hook-fragment-deprecated`, for your own hooks and a dependency's alike; use
+`native-hook`. Setting both keys in one table is an error (`hook.native-hook-conflict`).
 
-- **Claude and Codex (merge targets).** A fragment replaces the generated
+A package published today should keep `fragment` until its consumers run Mars 0.26:
+Mars 0.25's reader rejects `native-hook`, so a dependency that switches early stays
+at its last good install there.
+
+How native hooks combine with `[hooks]`:
+
+- **Claude and Codex (merge targets).** A native hook replaces the generated
   entries only for the events it declares; the other events still render from
-  `[hooks]`. A fragment that declares an event as an empty array
+  `[hooks]`. A native hook that declares an event as an empty array
   (`"PreToolUse": []`) turns that event off on that target. Sync reports
-  `hook-fragment-overrides`.
+  `hook-native-overrides`.
 - **OpenCode and Pi (file targets).** Mars cannot read events out of a
-  TypeScript file, so the fragment installs beside the generated file
+  TypeScript file, so the native hook installs beside the generated file
   (`mars-<name>.ts` next to `mars-<name>.hooks.ts`) and sync reports
-  `hook-fragment-beside-generated`. To replace the generated hook there, put
+  `hook-native-beside-generated`. To replace the generated hook there, put
   that target in `skip-targets`. Hook names may not end in `.hooks`.
-- When a hook has `[hooks]`, every target table must name `fragment`
+- When a hook has `[hooks]`, every target table must name `native-hook`
   explicitly; an empty table is an error, because it would pick up a leftover
   `claude.json`. A hook without `[hooks]` keeps the old rule: the tables select
   targets, and an empty table on a merge target means `<target>.json`. An OpenCode
-  or Pi table always names its `fragment`: it is a TypeScript file, and
+  or Pi table always names its `native-hook`: it is a TypeScript file, and
   `opencode.json` would otherwise be installed as a plugin.
 
-Each fragment is the harness's native event-keyed object—the value that its
+Each native hook is the harness's native event-keyed object—the value that its
 documentation places under `"hooks"`. Mars preserves every entry field and
 only merges arrays by event:
 
@@ -618,7 +626,7 @@ The quoted command form matters when a project path contains spaces. Authors
 own the complete command string; Mars does not add a shell or quoting wrapper.
 It textually replaces every `${MARS_HOOK_DIR}` occurrence in every JSON string
 with the absolute installed directory, such as
-`/work/project/.claude/hooks/audit`. A fragment may omit the placeholder.
+`/work/project/.claude/hooks/audit`. A native hook may omit the placeholder.
 
 For copy-paste convenience, Mars also accepts a full documented wrapper and
 unwraps `hooks` when the only sibling keys are `version` and/or `description`:
@@ -631,7 +639,7 @@ unwraps `hooks` when the only sibling keys are `version` and/or `description`:
 ```
 
 Cursor uses a flat native entry shape. This is a complete, copy-pasteable
-Cursor fragment—do not put a Claude-style nested `hooks` array inside an entry:
+Cursor native hook—do not put a Claude-style nested `hooks` array inside an entry:
 
 ```json
 {
@@ -655,7 +663,7 @@ unverified because the probe could not authenticate.
 
 A hook with no `[hooks]` goes only to the targets with a declared table. Mars
 copies the whole authored
-directory to `<target>/hooks/<name>/`; `hook.toml` and fragment files remain
+directory to `<target>/hooks/<name>/`; `hook.toml` and native hook files remain
 there as inert package metadata. Merge-mode destinations are Claude
 `settings.local.json`, Codex `hooks.json`, and Cursor `hooks.json`.
 
@@ -668,17 +676,17 @@ with a `target-divergent` warning and also withholds the entry until
 
 Mars validates only the merge contract:
 
-1. the fragment is valid JSON;
+1. the native hook is valid JSON;
 2. its top-level event names appear in the target allowlist;
 3. every event value is an array.
 
 Nested matcher, handler, timeout, and harness-specific fields pass through
-unchanged in a fragment. Claude currently has 29 known events and Cursor has
+unchanged in a native hook. Claude currently has 29 known events and Cursor has
 21. Codex's allowlist holds the 11 events it shares with Claude (`SessionStart`,
 `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`,
 `PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop`, `Stop`,
 `SessionEnd`) plus its own `PreModelRequest`, `PostModelRequest` and
-`Interrupt`, which pass in a Codex fragment only with `unchecked = true`. `SessionEnd` fires on Codex 0.164.0;
+`Interrupt`, which pass in a Codex native hook only with `unchecked = true`. `SessionEnd` fires on Codex 0.164.0;
 it did not fire on 0.144.4.
 To use a newly shipped native event before Mars updates its
 allowlist, opt in on that target:
@@ -689,24 +697,24 @@ unchecked = true
 ```
 
 Mars warns and passes unknown keys when `unchecked = true`; without it, the
-error lists valid events. All fragment parsing and validation happens before
+error lists valid events. All native hook parsing and validation happens before
 Mars mutates the canonical store or any target config.
 
-### OpenCode and Pi file fragments
+### OpenCode and Pi file hooks
 
 OpenCode and Pi consume opaque files rather than JSON event maps. Point their
-target table at any fragment filename (a `.ts` file is expected); Mars performs
+target table at any native hook filename (a `.ts` file is expected); Mars performs
 textual `${MARS_HOOK_DIR}` substitution and places it under a managed name:
 
 ```toml
 [targets.".opencode"]
-fragment = "opencode.ts"
+native-hook = "opencode.ts"
 
 [targets.".pi"]
-fragment = "pi.ts"
+native-hook = "pi.ts"
 ```
 
-Self-contained OpenCode plugin fragment for `mars build plugin`:
+Self-contained OpenCode plugin hook for `mars build plugin`:
 
 ```ts
 import { spawnSync } from "node:child_process"
@@ -727,15 +735,15 @@ export default {
 }
 ```
 
-OpenCode fragments must use a default `{ id, setup }` export. Mars warns when a fragment has no
-recognizable default export but still installs it; plugin builds isolate each fragment so one load
-or setup failure does not block later hooks. Mars places synced fragments at
+OpenCode native hooks must use a default `{ id, setup }` export. Mars warns when a native hook has no
+recognizable default export but still installs it; plugin builds isolate each native hook so one load
+or setup failure does not block later hooks. Mars places synced native hooks at
 `.opencode/plugins/mars-<name>.ts`.
 
-These placed fragments are managed target outputs. Mars preserves an existing
+These placed native hooks are managed target outputs. Mars preserves an existing
 file at that path during ordinary sync when the lock holds no installed-content
 claim for it; use `mars sync --force` to adopt it. Mars also preserves later edits during ordinary sync and removes a
-fragment only when the lock owns that exact target path.
+native hook only when the lock owns that exact target path.
 
 Self-contained Pi extension:
 
@@ -752,7 +760,7 @@ export default function (pi: ExtensionAPI) {
 ```
 
 Mars places it at `.pi/extensions/mars-<name>.ts`. Generated hooks from `[hooks]`
-go to `mars-<name>.hooks.ts` in the same directories. File fragments receive no
+go to `mars-<name>.hooks.ts` in the same directories. File-mode native hooks receive no
 content or event validation; only file existence and substitution are checked
 in preflight. `unchecked` is therefore meaningless and rejected for file-mode
 targets, even when set to `false`.
@@ -832,8 +840,7 @@ again to update all of them.
 ### Worked examples
 
 **One hook in four harnesses, with a Codex-only event.** Here `[hooks]`
-generates entries for Claude, OpenCode and Pi, while Codex gets a native
-fragment. `skip-targets` withholds only the generated entries, so the fragment
+generates entries for Claude, OpenCode and Pi, while Codex gets a native hook. `skip-targets` withholds only the generated entries, so the native hook
 still installs, and `unchecked = true` admits Codex's `PreModelRequest`, an
 event Mars does not render:
 
@@ -850,7 +857,7 @@ command = 'bash "${MARS_HOOK_DIR}/run.sh"'
 onFailure = "block"
 
 [targets.".codex"]
-fragment = "codex.json"
+native-hook = "codex.json"
 unchecked = true
 ```
 
@@ -879,7 +886,7 @@ whole distribution, so this hook reaches Codex and nothing else:
 ```toml
 # hooks/codex-audit/hook.toml
 [targets.".codex"]
-fragment = "codex.json"
+native-hook = "codex.json"
 ```
 
 **One script for every harness.** `${MARS_HOOK_TARGET}` is replaced in the
@@ -929,7 +936,7 @@ below, after Codex has found the hooks, so it does not make an untrusted
 project load them.
 
 Mars sorts contributions by package depth, dependency declaration order,
-`order`, and hook name, preserving each fragment array's internal order. It
+`order`, and hook name, preserving each native hook array's internal order. It
 appends the managed block after user-authored entries. This guarantees stable
 placement, not execution order—Claude runs matching hooks in parallel.
 
@@ -962,15 +969,19 @@ reorder its file-mode artifact.
 |---|---|---|
 | `hook-event-skipped` | warning for your own hooks and in `mars check`; info (one summary per sync) for dependencies' hooks | an event, handler type or matcher field has no counterpart on a managed target, whether or not the hook was selected there |
 | `hook-answer-unsupported` | info | the event renders, but some portable answers do not carry over to that target |
-| `hook-fragment-overrides` | info | a Claude or Codex fragment declares an event that `[hooks]` also declares |
-| `hook-fragment-beside-generated` | info | an OpenCode or Pi fragment installs next to the generated file for the same hook |
+| `hook-native-overrides` | info | a Claude or Codex native hook declares an event that `[hooks]` also declares |
+| `hook-native-beside-generated` | info | an OpenCode or Pi native hook installs next to the generated file for the same hook |
 | `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
-| `hook-fragment-contract` | warning | an OpenCode or Pi fragment lacks the expected default export; it installs anyway |
-| `hook-fragment` | warning or error | a fragment could not be read or rendered in a plugin build (an error for the project's own hook, a warning for a dependency's) |
+| `hook-native-contract` | warning | an OpenCode or Pi native hook lacks the expected default export; it installs anyway |
+| `hook-native-hook` | warning or error | a native hook could not be read or rendered in a plugin build (an error for the project's own hook, a warning for a dependency's) |
+| `hook-fragment-deprecated` | warning | a target table sets `fragment`; use `native-hook` |
+| `hook.native-hook-conflict` | error | a target table sets both `native-hook` and `fragment`; keep one |
+| `hook.native-hook-required` | error | a file target, or any target of a hook with `[hooks]`, does not name its `native-hook` |
+| `hook.native-hook-path` | error | a `native-hook` path is not a plain relative path inside the hook directory |
 | `hook.handler` | error | your own hook has a handler `timeout` outside 0 to 2147483 seconds, or an `onFailure` other than `block` or `continue`. For a dependency's hook the same fault is reported as `hook-invalid-kept` |
 | `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists |
 | `codex-hooks-need-trust` | warning | `.codex/hooks.json` has new or moved handlers Codex will want reviewed |
-| `plugin-hook-fragment-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |
+| `plugin-native-hook-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |
 
 With `--json`, these appear in `diagnostics[]`. A hook whose directory was not
 installed gets no entries (`hook-not-installed`).
@@ -980,9 +991,9 @@ installed gets no entries (`hook-not-installed`).
 `mars build plugin` renders `[hooks]` through the same code. The Claude tree,
 which Claude, Codex and Grok read, gets a `hooks/hooks.json` reduced to what
 Codex can parse, with drops reported. The OpenCode and
-Cursor trees drop `[hooks]`: for each hook that has no fragment for that tree, sync
-reports `plugin-hook-fragment-dropped`, naming the harnesses that won't get it.
-A fragment for another target also reports it. A hook generated for the OpenCode
+Cursor trees drop `[hooks]`: for each hook that has no native hook for that tree, sync
+reports `plugin-native-hook-dropped`, naming the harnesses that won't get it.
+A native hook for another target also reports it. A hook generated for the OpenCode
 tree is tracked in [mars-agents#290](https://github.com/haowjy/mars-agents/issues/290).
 
 ### Ownership and removal
@@ -1071,7 +1082,7 @@ info[stale-config-entry]: removed stale config entries from `.claude`:
 
 ## Windows Compatibility
 
-**Hook script invocation** — hook fragments own the entire native command
+**Hook script invocation** — native hook files own the entire command
 string, including the shell and quoting. Mars substitutes the absolute
 `${MARS_HOOK_DIR}` value and normalizes that substituted directory's separators
 to `/`, keeping JSON and TypeScript string literals escape-safe. Author commands

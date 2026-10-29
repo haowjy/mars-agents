@@ -17,7 +17,7 @@ pub fn write_hook(project: &assert_fs::fixture::ChildPath, dir_name: &str, manif
     hook.child("run.sh").write_str("#!/bin/sh\n").unwrap();
 }
 
-pub fn write_fragment(
+pub fn write_native_hook(
     project: &assert_fs::fixture::ChildPath,
     dir_name: &str,
     file: &str,
@@ -54,14 +54,14 @@ pub fn sync_force(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert
     assertion
 }
 
-pub fn file_fragment_targets() -> [(&'static str, &'static str); 2] {
+pub fn file_native_hook_targets() -> [(&'static str, &'static str); 2] {
     [
         (".opencode", "plugins/mars-audit.ts"),
         (".pi", "extensions/mars-audit.ts"),
     ]
 }
 
-pub fn configure_file_fragment(project: &assert_fs::fixture::ChildPath, target: &str) {
+pub fn configure_file_native_hook(project: &assert_fs::fixture::ChildPath, target: &str) {
     project.create_dir_all().unwrap();
     project
         .child("mars.toml")
@@ -70,9 +70,9 @@ pub fn configure_file_fragment(project: &assert_fs::fixture::ChildPath, target: 
     write_hook(
         project,
         "audit",
-        &format!("[targets.\"{target}\"]\nfragment = \"plugin.ts\"\n"),
+        &format!("[targets.\"{target}\"]\nnative-hook = \"plugin.ts\"\n"),
     );
-    write_fragment(
+    write_native_hook(
         project,
         "audit",
         "plugin.ts",
@@ -92,7 +92,7 @@ pub fn write_dependency_hook(
         name,
         &format!("visibility = \"exported\"\n[targets.\"{target}\"]\n"),
     );
-    write_fragment(
+    write_native_hook(
         source,
         name,
         &format!("{}.json", target.trim_start_matches('.')),

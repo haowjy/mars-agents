@@ -1,4 +1,4 @@
-//! Native hook discovery and fragment loading. The `hook.toml` model, its reader and every
+//! Native hook discovery and loading. The `hook.toml` model, its reader and every
 //! per-target hook rule are `mars_schema::hooks`; this module reads the bytes and adds the
 //! location to the schema's path-free diagnostics.
 
@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use mars_schema::diagnostic::Severity;
 use mars_schema::hooks::targets::{Profile, Target};
-use mars_schema::hooks::{self, Fragment, HookDef, HookOutput, Origin, Tokens};
+use mars_schema::hooks::{self, HookDef, HookOutput, NativeHook, Origin, Tokens};
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
@@ -19,7 +19,7 @@ pub struct ParsedHookItem {
     pub package_depth: usize,
     pub decl_order: usize,
     pub hook_dir: PathBuf,
-    /// Whose `hook.toml` this is: a dependency's fragments are read leniently.
+    /// Whose `hook.toml` this is: a dependency's native hooks are read leniently.
     pub origin: Origin,
 }
 
@@ -56,9 +56,9 @@ impl ParsedHookItem {
         }
     }
 
-    /// The fragment table this hook declares for `target`; a `[hooks]`-only hook has none.
-    pub(crate) fn fragment(&self, target: &str) -> Option<&Fragment> {
-        self.def.fragment(target)
+    /// The native hook table this hook declares for `target`; a `[hooks]`-only hook has none.
+    pub(crate) fn native_hook(&self, target: &str) -> Option<&NativeHook> {
+        self.def.native_hook(target)
     }
 }
 
@@ -366,15 +366,15 @@ fn invalid_manifest(
     ConfigError::Invalid { message }.into()
 }
 
-/// What an installed hook puts on `target`: its `[hooks]` rendered, with its fragment (when
+/// What an installed hook puts on `target`: its `[hooks]` rendered, with its native hook (when
 /// it declares one for the target) laid over them.
 pub fn load_output(
     item: &ParsedHookItem,
     target: &Target,
     tokens: &Tokens<'_>,
 ) -> Result<HookOutput, MarsError> {
-    load(item, target, |fragment| {
-        item.def.output(target, fragment, item.origin, tokens)
+    load(item, target, |native_hook| {
+        item.def.output(target, native_hook, item.origin, tokens)
     })
 }
 
@@ -386,69 +386,70 @@ pub fn load_plugin_output(
     shared: Option<&Profile>,
     tokens: &Tokens<'_>,
 ) -> Result<HookOutput, MarsError> {
-    load(item, target, |fragment| {
+    load(item, target, |native_hook| {
         item.def
-            .plugin_output(target, shared, fragment, item.origin, tokens)
+            .plugin_output(target, shared, native_hook, item.origin, tokens)
     })
 }
 
-/// Say a hook's fragment could not be loaded for a plugin build: an error for the project's
+/// Say a hook's native hook could not be loaded for a plugin build: an error for the project's
 /// own hook, a warning for a dependency's, which never fails the build (D19).
-pub(crate) fn report_fragment(
+pub(crate) fn report_native_hook(
     item: &ParsedHookItem,
     error: &MarsError,
     diag: &mut DiagnosticCollector,
 ) {
     match item.origin {
-        Origin::Local => diag.error("hook-fragment", error.to_string()),
-        Origin::Dependency => diag.warn("hook-fragment", error.to_string()),
+        Origin::Local => diag.error("hook-native-hook", error.to_string()),
+        Origin::Dependency => diag.warn("hook-native-hook", error.to_string()),
     }
 }
 
 fn load<T>(
     item: &ParsedHookItem,
     target: &Target,
-    output: impl FnOnce(Option<&str>) -> Result<T, mars_schema::hooks::FragmentError>,
+    output: impl FnOnce(Option<&str>) -> Result<T, mars_schema::hooks::NativeHookError>,
 ) -> Result<T, MarsError> {
-    let fragment = item
-        .fragment(target.root)
-        .map(|fragment| read_fragment(item, &fragment.file))
+    let native_hook = item
+        .native_hook(target.root)
+        .map(|native_hook| read_native_hook(item, &native_hook.file))
         .transpose()?;
-    output(fragment.as_deref()).map_err(|error| {
-        let file = fragment.as_ref().map_or("hook.toml", |_| {
-            item.fragment(target.root).map_or("", |f| &f.file)
+    output(native_hook.as_deref()).map_err(|error| {
+        let file = native_hook.as_ref().map_or("hook.toml", |_| {
+            item.native_hook(target.root).map_or("", |f| &f.file)
         });
-        fragment_error(item, file, &error.to_string())
+        native_hook_error(item, file, &error.to_string())
     })
 }
 
-/// Whether a dependency hook's fragment loads on every managed target it is installed for.
+/// Whether a dependency hook's native hook loads on every managed target it is installed for.
 /// `[hooks]` never fails to render, so it is left to preflight, which renders each hook once
 /// (D25); the tokens only change string values, so none are needed here.
 fn render_check(item: &ParsedHookItem, managed_targets: &[String]) -> Result<(), MarsError> {
     for root in item.def.select(managed_targets) {
         let Some(target) = hooks::targets::target(root) else {
-            return Err(fragment_error(
+            return Err(native_hook_error(
                 item,
                 "hook.toml",
-                &format!("target `{root}` has no hook fragment mechanism"),
+                &format!("target `{root}` has no native hook mechanism"),
             ));
         };
-        load(item, target, |fragment| {
-            item.def.check_fragment(target, fragment, item.origin)
+        load(item, target, |native_hook| {
+            item.def.check_native_hook(target, native_hook, item.origin)
         })?;
     }
     Ok(())
 }
 
-fn read_fragment(item: &ParsedHookItem, file: &str) -> Result<String, MarsError> {
-    std::fs::read_to_string(item.hook_dir.join(file))
-        .map_err(|error| fragment_error(item, file, &format!("failed to read fragment: {error}")))
+fn read_native_hook(item: &ParsedHookItem, file: &str) -> Result<String, MarsError> {
+    std::fs::read_to_string(item.hook_dir.join(file)).map_err(|error| {
+        native_hook_error(item, file, &format!("failed to read native hook: {error}"))
+    })
 }
 
 /// A hook's file that cannot be used, located by its path for the project's hook and by its
 /// package and hook for a dependency's, whose path is a staging directory.
-fn fragment_error(item: &ParsedHookItem, file: &str, message: &str) -> MarsError {
+fn native_hook_error(item: &ParsedHookItem, file: &str, message: &str) -> MarsError {
     let located = match item.origin {
         Origin::Local => item.hook_dir.join(file).display().to_string(),
         Origin::Dependency => format!(

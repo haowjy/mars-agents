@@ -17,7 +17,7 @@ use super::targets::{self, Profile};
 const CORE: &str = include_str!("typescript/core.ts");
 
 /// One TypeScript harness's row: its glue, what its native callbacks leave out, and the
-/// contract of a fragment file written for it.
+/// contract of a native hook file written for it.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Harness {
     /// The harness's display name, in the generated file and in skip reasons.
@@ -27,8 +27,8 @@ pub struct Harness {
     unsupported_events: &'static [(&'static str, &'static str)],
     /// Rendered events whose answers do not all carry over, with which.
     answer_limits: &'static [(&'static str, &'static str)],
-    /// Whether a fragment must export a default `{ id, setup }` (OpenCode loads plugins so).
-    fragment_needs_default_export: bool,
+    /// Whether a native hook must export a default `{ id, setup }` (OpenCode loads plugins so).
+    native_hook_needs_default_export: bool,
 }
 
 pub(super) const OPENCODE: Harness = Harness {
@@ -62,7 +62,7 @@ pub(super) const OPENCODE: Harness = Harness {
             "OpenCode cannot cancel a compaction: the script runs and a block answer is ignored",
         ),
     ],
-    fragment_needs_default_export: true,
+    native_hook_needs_default_export: true,
 };
 
 pub(super) const PI: Harness = Harness {
@@ -73,18 +73,18 @@ pub(super) const PI: Harness = Harness {
         "UserPromptSubmit",
         "a block answer stops the prompt, but Pi shows the reason only in its UI: print mode shows nothing",
     )],
-    fragment_needs_default_export: false,
+    native_hook_needs_default_export: false,
 };
 
 impl Harness {
-    /// Name what is wrong with a fragment written for this harness, if anything.
+    /// Name what is wrong with a native hook written for this harness, if anything.
     ///
     /// OpenCode must export a default `{ id, setup }`: `export default …`,
     /// `export { x as default }` or `export * as default`. The check scans identifier
     /// tokens, so a commented-out export satisfies it; the cost of that miss is a warning
     /// not shown.
-    pub(super) fn fragment_problem(&self, content: &str) -> Option<&'static str> {
-        if !self.fragment_needs_default_export {
+    pub(super) fn native_hook_problem(&self, content: &str) -> Option<&'static str> {
+        if !self.native_hook_needs_default_export {
             return None;
         }
         let tokens: Vec<&str> = content

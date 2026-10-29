@@ -55,7 +55,7 @@ pub struct SyncReport {
     /// Native harness agent outputs removed this run, as `(target_root, dest_path)`.
     /// Surfaced so SuppressAll / selective prunes are not reported as "up to date".
     pub native_removed: Vec<(String, String)>,
-    /// Generated hook files (`mars-<name>.hooks.ts`, a fragment written to a file target)
+    /// Generated hook files (`mars-<name>.hooks.ts`, a native hook written to a file target)
     /// whose bytes this run wrote, as `(target_root, dest_path)`. Surfaced because a sync
     /// that rewrites only these is not "already up to date".
     pub hook_files_rewritten: Vec<(String, String)>,

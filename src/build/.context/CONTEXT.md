@@ -25,7 +25,7 @@ files, and includes inventory kinds but not generated catalog metadata. Staging'
 subtree copies use sync's historical follow behavior. Flat-root skills keep authored resources but
 exclude standard repo tooling and top-level special filesystem nodes from their publication
 inventory. Skill rename content is written once into graph staging before native projection, and
-plain derived-tree copies omit hook fragment paths belonging only to other targets.
+plain derived-tree copies omit native hook paths belonging only to other targets.
 
 The flatten step uses the sync roots of the requested trees. Five plugin harnesses map to three tree
 identities: Claude/Codex/Grok → Claude, Cursor → Cursor, OpenCode → OpenCode. `build/plugin/spec.rs`
@@ -56,7 +56,7 @@ carries no token literal of its own and Rust stays the only owner of the strings
 `tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
 selected MCP union once; per-tree writers report only lowering behavior.
 `TargetState::accepted_hooks` retains filtered exported graph hooks even when no requested tree
-selected a fragment, which is the input for plugin omission diagnostics. `support::emit` receives
+selected a native hook, which is the input for plugin omission diagnostics. `support::emit` receives
 the full target so graph-wide agent and bootstrap counts never depend on one format's emitted
 components. Component support and verification come from each selected harness row plus its tree
 profile; a harness row's agent evidence is also its `loads agents` fact, so per-harness verification

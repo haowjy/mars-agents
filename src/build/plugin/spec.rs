@@ -343,7 +343,7 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
             agents: Some(
                 "registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance; `harness-overrides.opencode` keys other than `permission` are dropped with warning",
             ),
-            hooks: Some("each fragment needs a default `{id, setup}` export"),
+            hooks: Some("each native hook needs a default `{id, setup}` export"),
             mcp: Some("registered by `index.mjs`"),
         },
         verification: VerificationRow {

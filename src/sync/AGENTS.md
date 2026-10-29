@@ -151,8 +151,8 @@ selections survive an install skip; post-target-sync lowering asks one gate whet
 own `synced_outputs` recorded this target installing the record's directory, and withholds the
 entry with a path-bearing warning when it did not. Config lowering must not rediscover items.
 `hook_target_items` asks `HookDef::select(managed)` which targets get a hook: those where its
-`[hooks]` renders at least one event (unless `skip-targets`) and those with a fragment table.
-A dependency hook that is invalid (its `hook.toml`, or a fragment that does not load) is not selected
+`[hooks]` renders at least one event (unless `skip-targets`) and those with a native hook table.
+A dependency hook that is invalid (its `hook.toml`, or a native hook that does not load) is not selected
 if the consumer's filters select it and its file still says it is exported: `kept_hooks.rs`
 (`build_target_state` calls it with the old lock, once the state is complete) turns it into a `KeptHook` over the directories the lock
 holds for that package: the hook's `source_path` (stamped on the lock item by `finalize`) names the install first, then the names the broken file may still declare (locks without the path), or warns and installs

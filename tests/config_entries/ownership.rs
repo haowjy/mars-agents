@@ -33,7 +33,7 @@ fn hook_identity_and_materialization_are_scoped_per_target() {
         ))
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -130,7 +130,7 @@ fn unmanaged_target_hook_directory_warns_and_withholds_entry() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -173,7 +173,7 @@ fn a_file_where_the_hook_directory_belongs_warns_and_withholds_the_entry() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -209,7 +209,7 @@ fn identical_unmanaged_hook_is_preserved_through_sync_and_removal() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -255,7 +255,7 @@ fn stale_managed_hook_recovers_after_transient_copy_failure() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -307,7 +307,7 @@ fn config_destination_directory_rejects_before_any_config_write() {
         .write_str("command = \"node\"\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",
@@ -376,7 +376,7 @@ fn exported_dependency_hook_uses_item_lifecycle_for_whole_directory_copy() {
         "dep-hook",
         "visibility = \"exported\"\n[targets.\".claude\"]\n",
     );
-    write_fragment(
+    write_native_hook(
         &source,
         "dep-hook",
         "claude.json",
@@ -414,7 +414,7 @@ fn unrelated_malformed_mcp_file_cannot_retain_removed_hook_ownership() {
         .write_str("[settings]\ntargets = [\".claude\"]\n")
         .unwrap();
     write_hook(&project, "audit", "[targets.\".claude\"]\n");
-    write_fragment(
+    write_native_hook(
         &project,
         "audit",
         "claude.json",

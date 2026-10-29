@@ -29,10 +29,10 @@ tree, and `${MARS_HOOK_DIR}` / `${MARS_MCP_DIR}` map through that same plugin ro
 Harness identity, variant key, and sync root come from `compiler::harness_descriptor`; authored-hook
 checks run once before copying. Claude, Codex, and Grok share the Claude tree; Cursor and OpenCode
 have their own tree identities. The OpenCode tree is an npm-shaped package whose fixed `index.mjs`
-registers skills, agents, and MCP servers and imports every targeted hook fragment as an in-memory TypeScript
-data URL. A build warning reports fragments with no recognizable default export, but runtime
+registers skills, agents, and MCP servers and imports every targeted native hook as an in-memory TypeScript
+data URL. A build warning reports native hooks with no recognizable default export, but runtime
 isolation decides whether each hook loads. Hook-directory substitution is JavaScript-string encoded,
-and one fragment's load or setup failure does not block later hooks. OpenCode loads no agent files from a
+and one native hook's load or setup failure does not block later hooks. OpenCode loads no agent files from a
 plugin, so the tree's agents (lowered by the same lowering sync uses, carried in memory as
 `WrittenTreeContents::agents`) become `DATA.agents`. Each agent travels as one parsed
 `Frontmatter`: the lowering is parsed once, the tree's optional agent policy and the body-reference
@@ -57,7 +57,7 @@ includes inventory kinds and authored bytes, but never Mars-generated catalog me
 skill retains authored root resources but its publication inventory excludes standard tooling
 directories and top-level special filesystem nodes. Installed skill frontmatter is written once into
 graph staging before every tree projects it; derived skill and hook trees then use the plain copier,
-with other-target hook fragments excluded.
+with other-target native hooks excluded.
 
 Plugin builds lower agents, skills, exported hooks, and exported MCP servers without reading project
 config, a lockfile, `.mars/`, or host model state. The implicit target selection is the set of built
@@ -128,7 +128,7 @@ before native lowering so generated guidance is born qualified; the fence-aware 
 only responsible for authored body references.
 
 `plugin_inputs_hash` is the offline F3 seam: bytes under the root package's discovered own-item
-paths (including hook fragments and MCP server directories), with generated trees skipped and text
+paths (including native hooks and MCP server directories), with generated trees skipped and text
 line endings normalized, plus `[package]` without `version` and the `[plugin]`, `[dependencies]`,
 `[models]`, `[skills]`, and `[agents]` tables. It never resolves. Builds compute it after output
 recovery while holding the output lock. The sentinel separately records resolved dependency

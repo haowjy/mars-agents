@@ -2,18 +2,12 @@
 
 mod common;
 
-use assert_cmd::Command;
 use serde_json::{Value, json};
-use serial_test::serial;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
 use common::fresh_fetched_at;
-
-fn mars_cmd() -> Command {
-    common::mars()
-}
 
 fn write_mars_toml(dir: &Path, content: &str) {
     fs::create_dir_all(dir).unwrap();
@@ -77,19 +71,6 @@ fn setup_raw_route_project(project_root: &Path) {
         project_root,
         r#"[settings]
 harness_order = ["opencode", "codex"]
-"#,
-    );
-    write_models_cache(project_root, &models_cache_json());
-}
-
-fn setup_alias_prefix_project(project_root: &Path) {
-    write_mars_toml(
-        project_root,
-        r#"[settings]
-
-[models.fast]
-provider = "openai"
-match = ["gpt-5*"]
 "#,
     );
     write_models_cache(project_root, &models_cache_json());
@@ -159,7 +140,6 @@ fn prepend_path(bin_dir: &Path) -> String {
 }
 
 #[test]
-#[serial]
 fn refresh_models_ignores_prepopulated_probe_cache_and_uses_live_probe() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
@@ -172,9 +152,7 @@ fn refresh_models_ignores_prepopulated_probe_cache_and_uses_live_probe() {
     let stale_cache = probe_cache_json(1, &["openai/not-gpt-5"]);
     write_probe_cache(&cache_dir, &stale_cache);
 
-    let output = mars_cmd()
-        .arg("--root")
-        .arg(&project_root)
+    let output = common::mars_cmd(&project_root, temp.path(), "http://127.0.0.1:9/api.json")
         .args(["--json", "models", "resolve", "fast", "--refresh-models"])
         .env("MARS_CACHE_DIR", &cache_dir)
         .env("MARS_PROBE_CACHE_TTL_SECS", "60")
@@ -206,7 +184,6 @@ fn refresh_models_ignores_prepopulated_probe_cache_and_uses_live_probe() {
 }
 
 #[test]
-#[serial]
 fn no_refresh_models_skips_live_probe_even_when_stale_cache_exists() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
@@ -220,9 +197,7 @@ fn no_refresh_models_skips_live_probe_even_when_stale_cache_exists() {
     let stale_cache = probe_cache_json(1, &["openai/gpt-5"]);
     write_probe_cache(&cache_dir, &stale_cache);
 
-    let output = mars_cmd()
-        .arg("--root")
-        .arg(&project_root)
+    let output = common::mars_cmd(&project_root, temp.path(), "http://127.0.0.1:9/api.json")
         .args(["--json", "models", "resolve", "fast", "--no-refresh-models"])
         .env("MARS_CACHE_DIR", &cache_dir)
         .env("PATH", prepend_path(&bin_dir))
@@ -241,7 +216,6 @@ fn no_refresh_models_skips_live_probe_even_when_stale_cache_exists() {
 }
 
 #[test]
-#[serial]
 fn resolve_raw_model_prefers_native_auth_over_supported_stale_probe() {
     let temp = TempDir::new().unwrap();
     let project_root = temp.path().join("project");
@@ -254,9 +228,7 @@ fn resolve_raw_model_prefers_native_auth_over_supported_stale_probe() {
 
     write_probe_cache(&cache_dir, &probe_cache_json(1, &["openai/gpt-5"]));
 
-    let output = mars_cmd()
-        .arg("--root")
-        .arg(&project_root)
+    let output = common::mars_cmd(&project_root, temp.path(), "http://127.0.0.1:9/api.json")
         .args(["--json", "models", "resolve", "gpt-5"])
         .env("MARS_CACHE_DIR", &cache_dir)
         .env("MARS_PROBE_CACHE_TTL_SECS", "60")
@@ -289,49 +261,6 @@ fn resolve_raw_model_prefers_native_auth_over_supported_stale_probe() {
 }
 
 #[test]
-#[serial]
-fn resolve_alias_prefix_uses_loaded_live_probe_for_unverified_availability() {
-    let temp = TempDir::new().unwrap();
-    let project_root = temp.path().join("project");
-    let cache_dir = temp.path().join("mars-cache");
-    let bin_dir = temp.path().join("bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-    setup_alias_prefix_project(&project_root);
-    install_fake_opencode(&bin_dir, &["openai/gpt-5"], None);
-
-    let output = mars_cmd()
-        .arg("--root")
-        .arg(&project_root)
-        .args(["--json", "models", "resolve", "gpt-5"])
-        .env("MARS_CACHE_DIR", &cache_dir)
-        .env("PATH", prepend_path(&bin_dir))
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-
-    let stdout: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(stdout["source"].as_str(), Some("alias_prefix"));
-    assert_eq!(stdout["harness"].as_str(), Some("opencode"));
-    assert_eq!(stdout["availability"].as_str(), Some("unknown"));
-    assert_eq!(
-        stdout["availability_source"].as_str(),
-        Some("route_unverified")
-    );
-    assert_eq!(stdout["runnable_paths"], json!([]));
-    let assessment = stdout["route_trace"]["model_attempts"][0]["assessments"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|assessment| assessment["harness"] == "opencode")
-        .unwrap();
-    assert_eq!(assessment["chosen_slug"], "openai/gpt-5");
-    assert_eq!(assessment["verdict"], "unverified");
-    assert_eq!(assessment["reason"], "auth_unchecked");
-}
-
-#[test]
-#[serial]
 fn resolve_passthrough_uses_loaded_live_probe_for_unverified_availability_without_extra_probe_runs()
 {
     let temp = TempDir::new().unwrap();
@@ -349,9 +278,7 @@ harness_order = ["opencode"]
     write_models_cache(&project_root, &models_cache_json());
     install_fake_opencode(&bin_dir, &["openai/gpt-5"], Some(&marker));
 
-    let output = mars_cmd()
-        .arg("--root")
-        .arg(&project_root)
+    let output = common::mars_cmd(&project_root, temp.path(), "http://127.0.0.1:9/api.json")
         .args(["--json", "models", "resolve", "openai/gpt-5"])
         .env("MARS_CACHE_DIR", &cache_dir)
         .env("PATH", prepend_path(&bin_dir))

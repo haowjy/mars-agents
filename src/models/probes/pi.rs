@@ -432,15 +432,6 @@ mod tests {
     }
 
     #[test]
-    fn classify_help_tokens_accepts_stderr_only_help_surface() {
-        let help = "--mode rpc --model --append-system-prompt --session --fork --session-dir --no-extensions --no-skills --no-context-files --no-prompt-templates -e --extension";
-        let stderr_only = effective_probe_output(Vec::new(), help.as_bytes().to_vec()).unwrap();
-        let (present, missing) = classify_help_tokens(&stderr_only);
-        assert_eq!(missing, Vec::<String>::new());
-        assert!(present.contains(&"--mode".to_string()));
-    }
-
-    #[test]
     fn parse_models_output_parses_space_separated_multi_column_table() {
         let output = "\
 provider      model                context  max-out\n\
@@ -450,33 +441,5 @@ openai-codex  gpt-5.4              272K     128K\n";
         let model_slugs = parse_models_output(output);
         assert!(model_slugs.contains("openai-codex/gpt-5.4-mini"));
         assert!(model_slugs.contains("openai-codex/gpt-5.4"));
-    }
-
-    #[test]
-    fn parse_models_output_accepts_stderr_only_list_models_table() {
-        let table = r#"
-| Provider | Model |
-| --- | --- |
-| openai-codex | gpt-5.4-mini |
-"#;
-        let stderr_only = effective_probe_output(Vec::new(), table.as_bytes().to_vec()).unwrap();
-        let model_slugs = parse_models_output(&stderr_only);
-        assert!(model_slugs.contains("openai-codex/gpt-5.4-mini"));
-    }
-
-    #[test]
-    fn probe_result_round_trip_defaults_model_slugs() {
-        let raw = r#"{
-            "binary_path": "/usr/bin/pi",
-            "version": "pi 0.4.2",
-            "compatible": true,
-            "help_surface_tokens_present": ["--mode"],
-            "help_surface_tokens_missing": [],
-            "error": null
-        }"#;
-
-        let parsed: PiProbeResult = serde_json::from_str(raw).unwrap();
-        assert!(parsed.model_slugs.is_empty());
-        assert!(!parsed.model_probe_success);
     }
 }

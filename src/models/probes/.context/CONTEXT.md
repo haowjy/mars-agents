@@ -97,21 +97,26 @@ provenance. Listing success and latest-attempt policy still come from
 written.
 If a refresh cannot acquire its lock, it returns usable cached evidence without
 probing or writing; with no usable cache, it may probe for this command only and
-does not persist the result. This avoids racing another writer.
+does not persist the result. This avoids racing another writer. The lock lives
+next to the cache file the caller passed in, so a caller-supplied path stays
+self-contained.
 Pi cache schema 3 invalidates earlier entries rather than inferring listing
 success from an old result's error field.
 
 ### Windows/test cache isolation
 
-Tests that exercise probe caching or depend on deterministic cache state **must**
-set `MARS_CACHE_DIR` explicitly to a temp directory. XDG env vars (`XDG_CACHE_HOME`)
-are not honored on Windows, so tests relying on them produce non-deterministic
-results on Windows. `MARS_CACHE_DIR` is cross-platform safe and takes precedence
-over platform-specific cache discovery on all platforms.
+Unit tests call the `*_impl` probe-cache helpers with an explicit cache file path;
+the in-process lock is taken next to that file, so a test never reads the user's
+cache or waits on a lock a live `mars` holds. Integration tests run the binary as
+a child and **must** set `MARS_CACHE_DIR` explicitly to a temp directory. XDG env
+vars (`XDG_CACHE_HOME`) are not honored on Windows, so tests relying on them
+produce non-deterministic results on Windows. `MARS_CACHE_DIR` is cross-platform
+safe and takes precedence over platform-specific cache discovery on all
+platforms.
 
 ```rust
-// In test setup:
-std::env::set_var("MARS_CACHE_DIR", temp_dir.path());
+// In an integration test, on the child command:
+cmd.env("MARS_CACHE_DIR", temp_dir.path());
 ```
 
 ## Rationale

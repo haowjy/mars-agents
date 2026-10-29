@@ -133,30 +133,36 @@ fn scenario_d_empty_cache_offline_errors_cleanly() {
     });
     let (temp, project_root) = setup_project(&server);
 
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.env("MARS_OFFLINE", "1");
-    cmd.args(["models", "resolve", "opus"]);
+    // An explicit --refresh-models request must not override MARS_OFFLINE.
+    for args in [
+        vec!["models", "resolve", "opus"],
+        vec!["models", "resolve", "opus", "--refresh-models"],
+    ] {
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        cmd.env("MARS_OFFLINE", "1");
+        cmd.args(&args);
 
-    let output = cmd.assert().code(3).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+        let output = cmd.assert().code(3).get_output().clone();
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
-    assert!(
-        stderr.contains("MARS_OFFLINE"),
-        "expected MARS_OFFLINE mention in stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("mars models refresh"),
-        "expected refresh hint in stderr:\n{stderr}"
-    );
-    assert_eq!(
-        mock.hits(),
-        0,
-        "offline resolve should not hit models endpoint"
-    );
-    assert!(
-        !cache_path(&project_root).exists(),
-        "offline resolve with empty cache should not create cache file"
-    );
+        assert!(
+            stderr.contains("MARS_OFFLINE"),
+            "expected MARS_OFFLINE mention in stderr for {args:?}:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("mars models refresh"),
+            "expected refresh hint in stderr for {args:?}:\n{stderr}"
+        );
+        assert_eq!(
+            mock.hits(),
+            0,
+            "offline {args:?} should not hit models endpoint"
+        );
+        assert!(
+            !cache_path(&project_root).exists(),
+            "offline {args:?} with empty cache should not create cache file"
+        );
+    }
 }
 
 #[test]
@@ -196,67 +202,60 @@ fn scenario_e_no_refresh_models_flag_matches_offline_behavior() {
 
 #[test]
 #[serial]
-fn scenario_e1_json_list_no_refresh_without_cache_includes_routing_diagnostics() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings]
+fn scenario_e1_list_without_cache_reports_routing_warning_in_each_output_mode() {
+    for json_mode in [true, false] {
+        let server = MockServer::start();
+        let (temp, project_root) = setup_project(&server);
+        fs::write(
+            project_root.join("mars.toml"),
+            r#"[settings]
 default_harness = "gemini"
 "#,
-    )
-    .expect("failed to write mars.toml");
+        )
+        .expect("failed to write mars.toml");
 
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "list", "--no-refresh-models"]);
+        let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+        if json_mode {
+            cmd.arg("--json");
+        }
+        cmd.args(["models", "list", "--no-refresh-models"]);
 
-    let output = cmd.assert().code(1).get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-    assert!(
-        stdout["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("--no-refresh-models")),
-        "expected no-refresh cache error in JSON: {stdout}"
-    );
-    assert!(
-        stdout["routing_diagnostics"]
-            .as_array()
-            .is_some_and(|diagnostics| diagnostics.iter().any(|entry| {
-                entry
+        let output = cmd
+            .assert()
+            .code(if json_mode { 1 } else { 3 })
+            .get_output()
+            .clone();
+        if json_mode {
+            let stdout: Value = serde_json::from_slice(&output.stdout)
+                .expect("models list --json should return JSON");
+            assert!(
+                stdout["error"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("settings.default_harness"))
-            })),
-        "expected routing diagnostics in JSON: {stdout}"
-    );
-}
-
-#[test]
-#[serial]
-fn scenario_e1b_text_list_no_refresh_without_cache_emits_routing_warning_to_stderr() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[settings]
-default_harness = "gemini"
-"#,
-    )
-    .expect("failed to write mars.toml");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "list", "--no-refresh-models"]);
-
-    let output = cmd.assert().code(3).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
-    assert!(
-        stderr.contains("settings.default_harness"),
-        "expected routing warning in stderr: {stderr}"
-    );
-    assert!(
-        stderr.contains("--no-refresh-models"),
-        "expected no-refresh cache error in stderr: {stderr}"
-    );
+                    .is_some_and(|message| message.contains("--no-refresh-models")),
+                "expected no-refresh cache error in JSON: {stdout}"
+            );
+            assert!(
+                stdout["routing_diagnostics"]
+                    .as_array()
+                    .is_some_and(|diagnostics| diagnostics.iter().any(|entry| {
+                        entry
+                            .as_str()
+                            .is_some_and(|message| message.contains("settings.default_harness"))
+                    })),
+                "expected routing diagnostics in JSON: {stdout}"
+            );
+        } else {
+            let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+            assert!(
+                stderr.contains("settings.default_harness"),
+                "expected routing warning in stderr: {stderr}"
+            );
+            assert!(
+                stderr.contains("--no-refresh-models"),
+                "expected no-refresh cache error in stderr: {stderr}"
+            );
+        }
+    }
 }
 
 #[test]

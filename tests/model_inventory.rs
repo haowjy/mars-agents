@@ -483,6 +483,8 @@ fn retained_failed_listings_warn_once_per_harness_even_when_hidden() {
     for row in all["models"].as_array().unwrap() {
         assert_eq!(row["provenance"]["latest_attempt_ok"], false, "{all}");
         assert!(row["provenance"]["last_error"].is_string(), "{all}");
+        // The observation time is the last successful listing, not the failed attempt.
+        assert_eq!(row["provenance"]["observed_at"], old, "{all}");
         if row["harness"] == "pi" || row["harness"] == "cursor" {
             assert_eq!(row["reason"], "auth_listing_failed", "{all}");
         }

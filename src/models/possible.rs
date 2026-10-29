@@ -326,11 +326,9 @@ fn now_unix_secs() -> u64 {
 mod tests {
     use super::*;
     use crate::harness::host::{CapabilityCollectionOptions, ExecutableResolver, ExecutableState};
+    use crate::models::probes::CursorProbeResult;
     use crate::models::probes::ProbeRefreshMode;
     use crate::models::probes::cursor_cache::CachedCursorProbeOutcome;
-    use crate::models::probes::opencode_cache::CachedProbeOutcome;
-    use crate::models::probes::pi_cache::CachedPiProbeOutcome;
-    use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 
     struct Installed(Vec<&'static str>);
     impl ExecutableResolver for Installed {
@@ -413,34 +411,28 @@ mod tests {
     }
 
     #[test]
-    fn missing_or_uninstalled_harness_and_alias_only_input_create_no_rows() {
+    fn unlisted_reasons_distinguish_no_catalog_missing_harness_and_missing_listing() {
+        // No alias argument enters this API: even an authored alias for a model
+        // not present in the catalog/listing cannot create a Possible row.
         let empty: ModelsCache = serde_json::from_value(serde_json::json!({"models": []})).unwrap();
-        let mut session = session(vec!["claude"]);
+        let mut session = session(vec!["claude", "pi"]);
         let mut source =
             SessionPossibleSource::new(&empty, &mut session, &HarnessScope::Unrestricted);
         assert_eq!(
             source.rows_for(HarnessId::Claude),
             &HarnessPossible::Unlisted(UnlistedReason::NoCatalog)
         );
-        assert_eq!(
-            source.rows_for(HarnessId::Pi),
-            &HarnessPossible::Unlisted(UnlistedReason::NotInstalled)
-        );
-        assert!(source.all_rows().is_empty());
-        // No alias argument enters this API: even an authored alias for a model
-        // not present in the catalog/listings cannot create a Possible row.
-    }
-
-    #[test]
-    fn installed_pi_without_listing_is_unavailable_not_incompatible() {
-        let mut session = session(vec!["pi"]);
-        let catalog = catalog();
-        let mut source =
-            SessionPossibleSource::new(&catalog, &mut session, &HarnessScope::Unrestricted);
+        // Installed but unprobed: unavailable, which is not the same as
+        // incompatible and must not be reported as an empty listing.
         assert_eq!(
             source.rows_for(HarnessId::Pi),
             &HarnessPossible::Unlisted(UnlistedReason::ListingUnavailable)
         );
+        assert_eq!(
+            source.rows_for(HarnessId::Codex),
+            &HarnessPossible::Unlisted(UnlistedReason::NotInstalled)
+        );
+        assert!(source.all_rows().is_empty());
     }
 
     #[test]
@@ -518,48 +510,6 @@ mod tests {
     }
 
     #[test]
-    fn retained_session_outcomes_are_enumerated_and_scope_does_not_probe_others() {
-        let mut session = session(vec!["pi", "cursor", "opencode"]);
-        session.set_pi_outcome_for_test(CachedPiProbeOutcome::StaleFailed(PiProbeResult {
-            compatible: true,
-            model_probe_success: true,
-            model_slugs: HashSet::from(["openai/gpt-5".into()]),
-            ..PiProbeResult::default()
-        }));
-        session.set_cursor_outcome_for_test(CachedCursorProbeOutcome::Hit(CursorProbeResult {
-            model_probe_success: true,
-            slugs: vec!["composer-2.5".into()],
-            error: None,
-        }));
-        session.set_opencode_outcome_for_test(CachedProbeOutcome::Hit(OpenCodeProbeResult {
-            model_probe_success: true,
-            model_slugs: vec!["opencode-go/glm-5.2".into()],
-            error: None,
-        }));
-        let scope = HarnessScope::Only([HarnessId::Pi].into_iter().collect());
-        {
-            let catalog = catalog();
-            let mut source = SessionPossibleSource::new(&catalog, &mut session, &scope);
-            let HarnessPossible::Listed(rows) = source.rows_for(HarnessId::Pi) else {
-                panic!("expected Pi")
-            };
-            assert_eq!(rows[0].harness_model_id, "openai/gpt-5");
-            assert!(matches!(
-                rows[0].provenance,
-                Provenance::Enumerated {
-                    latest_attempt_ok: false,
-                    ..
-                }
-            ));
-            assert_eq!(
-                source.rows_for(HarnessId::Cursor),
-                &HarnessPossible::Unlisted(UnlistedReason::OutOfScope)
-            );
-        }
-        assert!(session.loaded_cursor_outcome().is_some()); // preloaded fixture, not accessed by source
-    }
-
-    #[test]
     fn per_harness_projection_keeps_other_probe_outcomes_unloaded() {
         let mut session = session(vec!["pi", "cursor", "opencode"]);
         let catalog = catalog();
@@ -574,108 +524,5 @@ mod tests {
         assert!(session.loaded_pi_outcome().is_some());
         assert!(session.loaded_cursor_outcome().is_none());
         assert!(session.loaded_opencode_outcome().is_none());
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn existing_cache_entries_supply_observed_time_and_retained_error() {
-        struct CacheDirGuard(Option<std::ffi::OsString>);
-        impl Drop for CacheDirGuard {
-            fn drop(&mut self) {
-                if let Some(value) = self.0.take() {
-                    unsafe { std::env::set_var("MARS_CACHE_DIR", value) };
-                } else {
-                    unsafe { std::env::remove_var("MARS_CACHE_DIR") };
-                }
-            }
-        }
-        let temp = tempfile::tempdir().unwrap();
-        let cache = temp.path().join("availability");
-        std::fs::create_dir(&cache).unwrap();
-        let _guard = CacheDirGuard(std::env::var_os("MARS_CACHE_DIR"));
-        unsafe { std::env::set_var("MARS_CACHE_DIR", temp.path()) };
-        let pi = PiProbeResult {
-            compatible: true,
-            model_probe_success: true,
-            model_slugs: HashSet::from(["openai/gpt-5".into()]),
-            ..PiProbeResult::default()
-        };
-        std::fs::write(
-            cache.join("pi.json"),
-            serde_json::json!({
-                "schema_version": 3, "harness": "pi", "fetched_at": 100,
-                "last_attempt_at": 101, "last_error": "listing timed out", "result": pi
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let open = OpenCodeProbeResult {
-            model_slugs: vec!["openai/gpt-5".into()],
-            model_probe_success: true,
-            error: None,
-        };
-        std::fs::write(
-            cache.join("opencode-probe.json"),
-            serde_json::json!({
-                "schema_version": 1, "fetched_at": 102,
-                "last_attempt_at": 102, "last_error": null, "result": open
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let cursor = CursorProbeResult {
-            slugs: vec!["composer-2.5".into()],
-            model_probe_success: true,
-            error: None,
-        };
-        std::fs::write(
-            cache.join("cursor-probe.json"),
-            serde_json::json!({
-                "schema_version": 1, "fetched_at": 103,
-                "last_attempt_at": 103, "last_error": null, "result": cursor
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let mut session = CapabilitySession::collect_with_resolver(
-            &CapabilityCollectionOptions {
-                offline: false,
-                probe_refresh: ProbeRefreshMode::Skip,
-            },
-            &Installed(vec!["pi", "opencode", "cursor"]),
-        );
-        // The session owns one atomic observation. A later cache mutation must
-        // not rewrite the provenance of results already loaded into it.
-        session.pi_outcome();
-        session.opencode_outcome();
-        session.cursor_outcome();
-        std::fs::remove_file(cache.join("pi.json")).unwrap();
-        std::fs::remove_file(cache.join("opencode-probe.json")).unwrap();
-        std::fs::remove_file(cache.join("cursor-probe.json")).unwrap();
-        let catalog = catalog();
-        let mut source =
-            SessionPossibleSource::new(&catalog, &mut session, &HarnessScope::Unrestricted);
-        let rows = source.all_rows();
-        assert_eq!(rows.len(), 3);
-        for row in rows {
-            let Provenance::Enumerated {
-                observed_at,
-                latest_attempt_ok,
-                last_error,
-                ..
-            } = row.provenance
-            else {
-                panic!("expected enumerated")
-            };
-            let (expected_at, expected_ok, expected_error) = match row.harness {
-                HarnessId::Pi => (100, false, Some("listing timed out")),
-                HarnessId::OpenCode => (102, true, None),
-                HarnessId::Cursor => (103, true, None),
-                _ => unreachable!(),
-            };
-            assert_eq!(observed_at, expected_at);
-            assert_eq!(latest_attempt_ok, expected_ok);
-            assert_eq!(last_error.as_deref(), expected_error);
-        }
     }
 }

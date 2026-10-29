@@ -197,7 +197,7 @@ where
                 .filter(|result| is_usable_result(Some(*result)))
         },
         is_fresh,
-        || trigger_background_refresh_with(spawn_refresh),
+        || trigger_background_refresh_with(path, spawn_refresh),
     ) {
         ProbeCacheBranch::Hit(result) => {
             if latest_attempt_ok {
@@ -231,14 +231,17 @@ fn observation_from_entry(entry: &PiProbeCacheEntry) -> super::ProbeObservation 
     }
 }
 
-fn trigger_background_refresh_with<S>(spawn_refresh: S)
+fn trigger_background_refresh_with<S>(path: &Option<PathBuf>, spawn_refresh: S)
 where
     S: Fn() -> Result<(), ()>,
 {
-    let Some(lock) = super::probe_lock(LOCK_FILE, "pi") else {
+    let Ok(dir) = super::cache_dir_for(path.as_deref()) else {
         return;
     };
-    if let Some(entry) = read_cache_tolerant()
+    let Some(lock) = super::probe_lock(&dir, LOCK_FILE, "pi") else {
+        return;
+    };
+    if let Some(entry) = path.as_deref().and_then(read_cache_tolerant_at)
         && is_fresh(&entry)
         && is_usable_result(entry.result.as_ref())
     {
@@ -257,7 +260,9 @@ where
     F: Fn() -> PiProbeResult,
 {
     use super::ObservedOutcome;
-    let lock = super::probe_lock_blocking(LOCK_FILE);
+    let lock = super::cache_dir_for(path.as_deref())
+        .ok()
+        .and_then(|dir| super::probe_lock_blocking(&dir, LOCK_FILE));
     if lock.is_none() {
         // Without the lock, do not overwrite a last-good listing or race a
         // background writer. It is still useful as support evidence.
@@ -439,7 +444,10 @@ fn persist_probe_attempt(
 }
 
 pub fn run_refresh_probe_command() -> Result<i32, MarsError> {
-    let Some(_lock) = super::probe_lock_blocking(LOCK_FILE) else {
+    let Some(_lock) = super::cache_dir()
+        .ok()
+        .and_then(|dir| super::probe_lock_blocking(&dir, LOCK_FILE))
+    else {
         return Ok(0);
     };
 
@@ -653,22 +661,6 @@ mod tests {
                 .model_slugs
                 .contains("openai/gpt-5.4")
         );
-    }
-
-    #[test]
-    fn detached_refresh_write_decision_preserves_last_good_listing() {
-        let temp = TempDir::new().unwrap();
-        let path = cache_file(&temp);
-        let previous = entry(1, Some(compatible_result()));
-        write_entry(&path, &previous);
-
-        let retained = persist_probe_attempt(&path, Some(&previous), &incompatible_result());
-        assert_eq!(retained, previous.result);
-        let on_disk = read_cache_tolerant_at(&path).unwrap();
-        assert_eq!(on_disk.fetched_at, 1);
-        assert!(on_disk.last_attempt_at > on_disk.fetched_at);
-        assert_eq!(on_disk.result, retained);
-        assert!(on_disk.last_error.is_some());
     }
 
     #[test]

@@ -7,6 +7,39 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-29
+
+### Upgrade notes
+- A package that uses `[hooks]` should set `requires-mars = ">=0.25.0"`: an older Mars rejects `[hooks]` and fails the whole sync, and a path or branch dependency has no older version to fall back on. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#upgrading).
+- A plugin package that moves an `opencode.ts` fragment into `[hooks]` loses that hook in the OpenCode plugin tree until the tree can load generated hooks; keep the fragment for plugin builds. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#upgrading).
+- An OpenCode or Pi target table in `hook.toml` must name its fragment (`fragment = "opencode.ts"`); an empty table is now an error in your own hooks. It used to pick up a stray `opencode.json` and install it as a plugin. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#upgrading).
+- Codex runs a project's `.codex/hooks.json` only in a trusted project, and asks you to review new or moved handlers in its `/hooks` screen; Mars warns `codex-hooks-need-trust` when a sync moves one. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#ordering-and-codex-trust).
+- Upgrading from Mars 0.23 or earlier: Mars forgets old MCP and hook records with a warning; delete the leftovers it names by hand. See [Upgrading](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#upgrading).
+- Upgrading from Mars 0.11 or earlier (a version 2 `mars.lock`): sync once with any Mars from 0.12 to 0.24 first, or run `mars sync --force` once, which also overwrites local edits at those paths. See [Upgrading](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#upgrading).
+
+### Added
+- Write a hook once in `hook.toml` as `[[hooks.<Event>]]`, Claude's hooks JSON in TOML, and Mars installs it natively for Claude Code, Codex, OpenCode and Pi: entries in `.claude/settings.local.json` and `.codex/hooks.json`, a generated `mars-<name>.hooks.ts` plugin for OpenCode and extension for Pi. A harness gets the events Mars maps for it; Mars reports the rest (`hook-event-skipped`), and `mars check` lists them. See [which harness gets what](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#which-harness-gets-what).
+- `${MARS_HOOK_TARGET}` in a hook command names the harness running it (`.claude`, `.codex`, `.opencode`, `.pi`, or `plugin` in a plugin build).
+- `skip-targets = [".codex"]` at the top of `hook.toml` turns that harness's generated entries off. A hand-written fragment for a harness replaces the generated entries only for the events it declares; an empty event array turns that event off. See [choosing targets](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#choosing-targets-skip-targets).
+- The WASM package exports `renderHooks(hookToml, targets, tokens?)`, returning each harness's output and diagnostics.
+
+### Changed
+- A dependency's `hook.toml` is read leniently: an unknown key or event warns and the rest installs. A dependency hook that becomes invalid keeps what the last sync installed (`hook-invalid-kept`) instead of failing the sync; one that was never installed installs nothing, with a warning. The same faults in your project's own hooks fail the sync. See [validation by origin](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#validation-by-origin).
+- A sync that changes no hook entries no longer rewrites the harness's hook file, so Codex keeps trusting what it already reviewed.
+- `mars build plugin` writes the shared Claude-tree `hooks/hooks.json` as something Codex can also parse, leaving out handlers Codex rejects with a warning.
+- Hook names may not contain control characters. A handler's `timeout` must be more than 0 and at most 2147483 seconds, and `onFailure` must be `block` or `continue`.
+- Generated OpenCode and Pi hooks use Claude Code's per-event default timeouts (600 s; `UserPromptSubmit` 30 s; `SessionEnd` 1.5 s) instead of 600 s for every event. An `async` handler is never timed out, as on Claude.
+
+### Removed
+- Mars no longer cleans up state written by 0.23 and earlier: the old `.claude/.mcp.json` and `.codex/codex_mcp.json` MCP locations, the `codex_hooks.json` and `opencode.json` hook sweeps, and the version 2 lock promotion. Records Mars cannot interpret are dropped with a warning, and nothing is deleted.
+
+### Fixed
+- An error in a dependency's `hook.toml` names the package and hook, not Mars's internal staging path.
+- `mars remove` and `unlink` no longer delete a `.codex/config.toml` that still holds your comments after Mars removes its last MCP server from it.
+- A dependency hook whose `hook.toml` breaks, including its `name` line, keeps what the last sync installed. Mars now finds it by the hook's directory, recorded in `mars.lock` as `source_path`. Older Mars versions read the new lock and ignore that field.
+- `mars sync` reports generated hook files it wrote (`wrote N generated hook files`, JSON `hook_files_rewritten`), and `mars sync --diff` previews them, instead of saying "already up to date" when only a generated OpenCode or Pi hook file changed.
+- On Windows, a generated OpenCode or Pi hook that times out now kills its whole process tree, not only `bash`.
+
 ## [0.24.2] - 2026-10-28
 
 ### Fixed

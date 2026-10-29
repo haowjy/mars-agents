@@ -193,6 +193,7 @@ fn compile_inner(
     );
     synced.config_entries = config_entry_compilation.records;
     synced.config_entry_outputs = config_entry_compilation.emitted_outputs;
+    synced.rewritten_hook_files = config_entry_compilation.rewritten_outputs;
     synced.removed_config_entry_outputs = config_entry_compilation.removed_outputs;
 
     let loaded = &synced.applied.planned.targeted.resolved.loaded;

@@ -26,6 +26,8 @@ use render::{RenderedHooks, lower_merge_fragments};
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     pub emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
+    /// Generated hook files whose bytes this run wrote, as `(target_root, dest_path)`.
+    pub rewritten_outputs: Vec<(String, String)>,
     pub removed_outputs: Vec<(String, String)>,
 }
 
@@ -266,6 +268,7 @@ pub(crate) fn compile_config_entries(
         return ConfigEntryCompilation {
             records: desired_records,
             emitted_outputs,
+            rewritten_outputs: Vec::new(),
             removed_outputs,
         };
     }
@@ -589,6 +592,7 @@ fn apply_replacement_writes(
             );
     }
 
+    let mut rewritten_outputs = Vec::new();
     for (target_root, files) in pending_file_writes {
         let Some(permit) = retention.write_permit(&target_root) else {
             diag.info(
@@ -606,6 +610,7 @@ fn apply_replacement_writes(
             force,
             diag,
             &mut emitted_outputs,
+            &mut rewritten_outputs,
         );
     }
 
@@ -619,6 +624,7 @@ fn apply_replacement_writes(
     ConfigEntryCompilation {
         records,
         emitted_outputs,
+        rewritten_outputs,
         removed_outputs,
     }
 }

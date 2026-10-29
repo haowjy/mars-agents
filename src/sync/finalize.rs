@@ -149,6 +149,7 @@ pub(crate) fn finalize(
         dry_run: request.options.dry_run,
         native_emitted,
         native_removed,
+        hook_files_rewritten: state.rewritten_hook_files,
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
     })

@@ -134,6 +134,8 @@ mars sync [--force] [--diff] [--frozen]
 
 This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). Warnings (`field.unknown`, the lossiness a target cannot express) are printed and the sync goes on. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
+The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a fragment written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `rewrote N generated hook files`; a run that writes only those is not "already up to date". `--json` carries the count as `hook_files_rewritten`.
+
 ---
 
 ## `mars upgrade`

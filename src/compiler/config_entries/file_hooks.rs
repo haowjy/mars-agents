@@ -92,6 +92,7 @@ pub(super) fn write_file_hook_outputs(
     force: bool,
     diag: &mut DiagnosticCollector,
     emitted_outputs: &mut Vec<crate::lock::CompiledNativeOutput>,
+    rewritten_outputs: &mut Vec<(String, String)>,
 ) {
     let target_root = write.target_root().to_owned();
     let (target_dir, files) = write.into_parts(&ctx.project_root);
@@ -199,6 +200,9 @@ pub(super) fn write_file_hook_outputs(
                 format!("failed to write file hook `{}`: {error}", path.display()),
             );
             continue;
+        }
+        if !unchanged {
+            rewritten_outputs.push((target_root.clone(), output.dest_path.clone()));
         }
         emitted_outputs.push(output);
     }

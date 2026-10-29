@@ -479,3 +479,41 @@ fn a_file_target_keeps_the_generated_file_beside_the_fragment_and_removes_both()
         .child(".pi/extensions/mars-guard.hooks.ts")
         .assert(predicate::path::missing());
 }
+
+#[test]
+fn a_sync_that_rewrites_only_a_generated_hook_file_says_so() {
+    let dir = TempDir::new().unwrap();
+    let project = project(&dir, "\".opencode\"");
+    write_hook(&project, "guard", GUARD);
+    sync(&project).success();
+    let generated = project.child(".opencode/plugins/mars-guard.hooks.ts");
+    let expected = fs::read_to_string(generated.path()).unwrap();
+
+    // Nothing to write: still up to date.
+    sync(&project)
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+
+    // Mars owns the file and it is gone: the next sync writes it back, and no item changes.
+    fs::remove_file(generated.path()).unwrap();
+    let rewritten = sync(&project).success();
+    rewritten
+        .stdout(predicate::str::contains(
+            ".opencode/plugins/mars-guard.hooks.ts (generated hook file)",
+        ))
+        .stdout(predicate::str::contains(
+            "rewrote     1 generated hook files",
+        ))
+        .stdout(predicate::str::contains("already up to date").not());
+    assert_eq!(fs::read_to_string(generated.path()).unwrap(), expected);
+
+    fs::remove_file(generated.path()).unwrap();
+    let output = mars()
+        .args(["--json", "sync", "--root", project.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["hook_files_rewritten"], 1);
+    assert_eq!(report["installed"], 0);
+    assert_eq!(report["updated"], 0);
+}

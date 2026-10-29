@@ -18,6 +18,7 @@ const CLAUDE_TOOLS = new Map<string, string>([
   ["read", "Read"],
   ["write", "Write"],
   ["edit", "Edit"],
+  ["patch", "Edit"],
 ]);
 
 const logged = new Set<string>();
@@ -38,6 +39,8 @@ function claudeTool(native: string, input: any, cwd: string): { name: string; in
   const name = CLAUDE_TOOLS.get(native);
   if (!name) return { name: native, input: input ?? {} };
   if (name === "Bash") return { name, input: { command: input?.command ?? "" } };
+  // OpenCode's `patch` tool is Codex's `apply_patch`: Edit, with the patch text as `command`.
+  if (native === "patch") return { name, input: { command: input?.patchText ?? "" } };
   const path = input?.path ?? input?.filePath ?? input?.file_path;
   const out: any = {};
   if (typeof path === "string") out.file_path = isAbsolute(path) ? path : resolve(cwd, path);

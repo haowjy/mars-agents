@@ -439,11 +439,13 @@ translates the native names and inputs:
 | `Read` | `read` | `read` | `tool_input.file_path` (absolute) |
 | `Write` | `write` | `write` | `file_path`, `content` |
 | `Edit` | `edit` | `edit` | `file_path`, `old_string`, `new_string` |
+| `Edit` | `patch` | — | `command` (the patch text, no `file_path`) |
 
 Other tools keep their native name, so a `*` matcher still sees them. Pi's
 `powershell` tool is not mapped. On Codex, `apply_patch` is reported as
 `Write`/`Edit`, and `tool_input.command` holds the patch text, not a
-`file_path` (Codex 0.164.0). An `Edit|Write` hook on Codex must parse the patch.
+`file_path` (Codex 0.164.0); OpenCode's `patch` tool arrives the same way, as
+`Edit`. An `Edit|Write` hook on Codex or OpenCode must parse the patch.
 
 ### What a script may answer
 

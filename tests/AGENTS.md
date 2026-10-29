@@ -11,6 +11,10 @@ bucket is not a testing tier.
 - Assert actual destinations, lock ownership and emitted data. A missing file at
   an obsolete path, empty diagnostic array or absent prompt field proves nothing.
 - Register tests on their bodies; no forwarding wrappers to preserve test names.
+- Assert each routing decision once, at the unit tier (`routing::tests`,
+  `build::policy`). Integration tests cover how an input source reaches routing
+  and how its errors render; they do not re-assert a routing decision in
+  subprocess JSON.
 - For local, non-network/non-Git CLI fixtures, use `common::offline_mars(root)`:
   temporary HOME/cache, empty PATH and offline behavior. Its environment lives
   under the fixture's excluded `.mars/test-env` directory.

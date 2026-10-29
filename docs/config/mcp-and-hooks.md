@@ -85,6 +85,11 @@ An entry is Mars's only while its content still equals what Mars last wrote
   strict.
 - Claude Code before 2.1.295 ignores `onFailure`, and a guard written with
   `onFailure = "block"` then fails open there.
+- An OpenCode or Pi target table must name its fragment, as in
+  `[targets.".opencode"]` followed by `fragment = "opencode.ts"`. An empty table
+  is now an error in your project's hooks (`hook.fragment-required`); a
+  dependency's hook with one keeps its last good install. Earlier releases read
+  an empty table as `opencode.json` and installed that file as a plugin.
 
 **From Mars 0.23 or earlier.** Those releases wrote Claude servers to
 `.claude/.mcp.json` and Codex servers to `.codex/codex_mcp.json`, which neither harness

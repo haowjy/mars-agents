@@ -33,9 +33,6 @@ pub struct HookRead {
 struct RawTarget {
     #[serde(default, rename = "native-hook")]
     native_hook: Option<String>,
-    /// Deprecated alias of `native-hook`, read for one release.
-    #[serde(default)]
-    fragment: Option<String>,
     #[serde(default)]
     unchecked: Option<bool>,
 }
@@ -94,6 +91,19 @@ fn is_removed_schema(value: &toml::Value) -> bool {
         || value.get("targets").is_some_and(toml::Value::is_array)
 }
 
+/// The first target table that still sets `fragment`, the alias of `native-hook` removed in
+/// 0.27, and whether that table also sets `native-hook`. Checked on the parsed value for both
+/// origins: a dependency's unknown keys are otherwise dropped with a warning, and serde's own
+/// error would not say what to write.
+fn removed_fragment_target(value: &toml::Value) -> Option<(&str, bool)> {
+    value
+        .get("targets")?
+        .as_table()?
+        .iter()
+        .find(|(_, target)| target.get("fragment").is_some())
+        .map(|(root, target)| (root.as_str(), target.get("native-hook").is_some()))
+}
+
 fn failed(code: &str, message: impl Into<String>) -> HookRead {
     HookRead {
         def: None,
@@ -115,6 +125,17 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
     };
     if is_removed_schema(&value) {
         return failed(REMOVED_SCHEMA_CODE, REMOVED_SCHEMA_MESSAGE);
+    }
+    if let Some((root, has_native_hook)) = removed_fragment_target(&value) {
+        let fix = if has_native_hook {
+            "delete it, `native-hook` is already set"
+        } else {
+            "use `native-hook`"
+        };
+        return failed(
+            "field.removed",
+            format!("target `{root}`: `fragment` was removed in 0.27; {fix}"),
+        );
     }
     let mut diagnostics = Vec::new();
     let warn = |diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String| {
@@ -217,27 +238,7 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
     let mut targets = BTreeMap::new();
     for (root, spec) in raw.targets {
         let is_file = targets::target(&root).is_some_and(Target::is_file);
-        let named = match (spec.native_hook, spec.fragment) {
-            (Some(_), Some(_)) => {
-                return failed(
-                    "hook.native-hook-conflict",
-                    format!(
-                        "target `{root}` sets both `native-hook` and `fragment`; keep one of `native-hook` or `fragment` (`fragment` is deprecated)"
-                    ),
-                );
-            }
-            (None, Some(file)) => {
-                warn(
-                    &mut diagnostics,
-                    "hook.fragment-deprecated",
-                    format!(
-                        "target `{root}` uses `fragment`, which is deprecated; use `native-hook`"
-                    ),
-                );
-                Some(file)
-            }
-            (named, None) => named,
-        };
+        let named = spec.native_hook;
         if is_file && named.is_none() {
             return failed(
                 "hook.native-hook-required",

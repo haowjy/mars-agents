@@ -88,6 +88,27 @@ fn dependency_hook_turned_invalid_keeps_its_install_until_fixed() {
 }
 
 #[test]
+fn dependency_hook_setting_the_removed_fragment_key_warns_and_keeps_its_install() {
+    let dir = TempDir::new().unwrap();
+    let (project, source) = project_with_dependency(&dir, "\".codex\", \".opencode\"");
+    write_guard(&source, VALID);
+    sync(&project).success();
+    let installed = snapshot(&project);
+
+    write_guard(
+        &source,
+        "visibility = \"exported\"\n[targets.\".codex\"]\nfragment = \"codex.json\"\n[targets.\".opencode\"]\nnative-hook = \"plugin.ts\"\n",
+    );
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("`fragment` was removed in 0.27"))
+        .stderr(predicate::str::contains(
+            "keeping what the last sync installed",
+        ));
+    assert_eq!(snapshot(&project), installed);
+}
+
+#[test]
 fn dependency_hook_never_installed_and_invalid_installs_nothing() {
     let dir = TempDir::new().unwrap();
     let (project, source) = project_with_dependency(&dir, "\".codex\"");

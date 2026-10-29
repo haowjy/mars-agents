@@ -146,7 +146,8 @@ function runCommand(handler: any, stdin: string, cwd: string): Promise<Run> {
     const seconds = handler.timeout;
     timer = setTimeout(() => {
       try {
-        if (windows) child.kill();
+        // No process groups on Windows: kill bash and everything it started.
+        if (windows) spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
         else process.kill(-child.pid, "SIGKILL");
       } catch {}
       fail(`timed out after ${seconds}s`, stdout, stderr);

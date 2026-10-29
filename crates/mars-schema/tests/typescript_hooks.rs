@@ -98,9 +98,18 @@ fn run_opencode(hook_toml: &str, script: &str) -> Option<String> {
         .arg(dir.join("drive.mjs"))
         .arg(dir.join("hook.ts"))
         .current_dir(&dir)
-        .output()
-        .ok()?;
+        .output();
     std::fs::remove_dir_all(&dir).ok();
+    let run = match run {
+        Ok(run) => run,
+        // CI (Linux and Windows runners) has node: a missing one there is a broken runner,
+        // not a reason to skip.
+        Err(error) if std::env::var_os("CI").is_none() => {
+            eprintln!("node is not installed ({error}); skipping");
+            return None;
+        }
+        Err(error) => panic!("CI needs node to run the generated TypeScript: {error}"),
+    };
     assert!(
         run.status.success(),
         "{}",
@@ -120,7 +129,6 @@ fn a_block_overrides_an_allow_in_opencode_permissions() {
         )
     };
     let Some(blocked) = opencode_permission_effect(&toml("echo no >&2; exit 2")) else {
-        eprintln!("node is not installed; skipping");
         return;
     };
     assert_eq!(blocked, "deny");
@@ -151,10 +159,59 @@ fn opencode_patch_is_an_edit_with_the_patch_as_command() {
   console.log("allowed");
 } catch (err) { console.log(err.message); }"#,
     ) else {
-        eprintln!("node is not installed; skipping");
         return;
     };
     let seen: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(seen["tool_name"], "Edit");
     assert_eq!(seen["tool_input"]["command"], "*** Begin Patch");
+}
+
+/// Runs a `PreToolUse` Bash hook for each command in `commands` and prints `blocked` or
+/// `allowed` for each.
+fn opencode_bash_verdicts(hook_toml: &str, commands: &[&str]) -> Option<Vec<String>> {
+    let script = format!(
+        r#"for (const command of {commands:?}) {{
+  try {{
+    await hooks["tool.execute.before"]({{ tool: "bash", input: {{ command }}, sessionID: "s1", id: "t1" }});
+    console.log("allowed");
+  }} catch (err) {{ console.log("blocked"); }}
+}}"#
+    );
+    let out = run_opencode(hook_toml, &script)?;
+    Some(out.lines().map(|line| line.trim().to_owned()).collect())
+}
+
+#[test]
+fn an_if_filter_runs_the_hook_only_for_matching_commands() {
+    let toml = "[[hooks.PreToolUse]]\nmatcher = \"Bash\"\n\
+                [[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"exit 2\"\n\
+                if = \"Bash(git *)\"\n";
+    let Some(verdicts) = opencode_bash_verdicts(toml, &["git status", "ls"]) else {
+        return;
+    };
+    assert_eq!(verdicts, ["blocked", "allowed"]);
+}
+
+/// A timed-out hook is killed with everything it started: the background job would write
+/// `alive` after the timeout if only the shell died (Windows has no process-group kill).
+#[test]
+fn a_timed_out_hook_leaves_no_child_running() {
+    let toml = "[[hooks.PreToolUse]]\nmatcher = \"Bash\"\n\
+                [[hooks.PreToolUse.hooks]]\ntype = \"command\"\n\
+                command = \"(sleep 3; echo late > alive) & wait\"\n\
+                timeout = 1\nonFailure = \"block\"\n";
+    let Some(out) = run_opencode(
+        toml,
+        r#"import { existsSync } from "node:fs";
+try {
+  await hooks["tool.execute.before"]({ tool: "bash", input: { command: "ls" }, sessionID: "s1", id: "t1" });
+  console.log("allowed");
+} catch (err) { console.log("blocked"); }
+await new Promise((done) => setTimeout(done, 4500));
+console.log(existsSync("alive") ? "child survived" : "child gone");"#,
+    ) else {
+        return;
+    };
+    let lines: Vec<_> = out.lines().map(str::trim).collect();
+    assert_eq!(lines, ["blocked", "child gone"]);
 }

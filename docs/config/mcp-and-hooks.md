@@ -497,7 +497,10 @@ runs such a handler, and report it. On tool events they evaluate a superset of C
 match and every literal part of the glob must appear in the command or path, so
 the script never runs less often than on Claude. A handler with no `timeout`
 gets Claude's default for its event: 600 seconds, except `UserPromptSubmit` (30)
-and `SessionEnd` (1.5). Set `timeout` explicitly on a guard.
+and `SessionEnd` (1.5). Set `timeout` explicitly on a guard. A handler with
+`async = true` has no timeout, as on Claude. On Windows a timeout kills `bash`
+and its children with `taskkill`; a background job that outlived `bash` is not
+killed.
 
 `onFailure = "block"` turns a failure (cannot start, timeout, an exit other than
 0 or 2) into the event's blocking answer. The default, `"continue"`, lets the

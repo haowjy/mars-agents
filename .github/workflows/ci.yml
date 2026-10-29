@@ -68,6 +68,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # `cargo test -p mars-schema` imports the generated hook.ts, which needs Node's type stripping.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Shared preflight
         if: matrix.rust == 'stable'
         run: scripts/preflight.sh full
@@ -99,6 +104,10 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
       - name: Build
         run: cargo build

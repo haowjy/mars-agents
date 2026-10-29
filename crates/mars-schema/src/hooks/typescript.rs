@@ -189,7 +189,12 @@ pub(super) fn render(
                 kept.push(json!({
                     "command": tokens.substitute(command),
                     "commandWindows": windows,
-                    "timeout": handler.timeout.clone().unwrap_or_else(|| default_timeout(claude)),
+                    // Claude never times out an `async` handler, so none gets a timeout.
+                    "timeout": if handler.is_async == Some(true) {
+                        None
+                    } else {
+                        Some(handler.timeout.clone().unwrap_or_else(|| default_timeout(claude)))
+                    },
                     "if": handler.condition.as_deref().map(|c| tokens.substitute(c)),
                     "onFailure": handler.on_failure,
                     "async": handler.is_async.unwrap_or(false),

@@ -143,15 +143,22 @@ function runCommand(handler: any, stdin: string, cwd: string): Promise<Run> {
     child.on("close", (status: number | null, signal: string | null) =>
       finish({ ok: status !== null, status, stdout, stderr, why: signal ? `killed by ${signal}` : `exit ${status}` }),
     );
-    const seconds = handler.timeout;
-    timer = setTimeout(() => {
-      try {
-        // No process groups on Windows: kill bash and everything it started.
-        if (windows) spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-        else process.kill(-child.pid, "SIGKILL");
-      } catch {}
-      fail(`timed out after ${seconds}s`, stdout, stderr);
-    }, seconds * 1000);
+    // Claude never times out a handler marked `async`.
+    if (!handler.async) {
+      const seconds = handler.timeout;
+      timer = setTimeout(() => {
+        try {
+          // bash has already exited when only a background job still holds the pipes: its pid
+          // may be gone or reused, so leave taskkill alone (a Windows grandchild then leaks).
+          if (windows) {
+            if (child.exitCode === null && child.signalCode === null) {
+              spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => {});
+            }
+          } else process.kill(-child.pid, "SIGKILL");
+        } catch {}
+        fail(`timed out after ${seconds}s`, stdout, stderr);
+      }, seconds * 1000);
+    }
     child.stdin.end(stdin);
   });
 }

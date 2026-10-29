@@ -215,3 +215,22 @@ console.log(existsSync("alive") ? "child survived" : "child gone");"#,
     let lines: Vec<_> = out.lines().map(str::trim).collect();
     assert_eq!(lines, ["blocked", "child gone"]);
 }
+
+/// Claude never times out a handler marked `async`: this one outlives its `timeout`.
+#[test]
+fn an_async_hook_outlives_its_timeout() {
+    let toml = "[[hooks.PreToolUse]]\nmatcher = \"Bash\"\n\
+                [[hooks.PreToolUse.hooks]]\ntype = \"command\"\n\
+                command = \"sleep 2; echo late > done\"\n\
+                timeout = 1\nasync = true\n";
+    let Some(out) = run_opencode(
+        toml,
+        r#"import { existsSync } from "node:fs";
+await hooks["tool.execute.before"]({ tool: "bash", input: { command: "ls" }, sessionID: "s1", id: "t1" });
+await new Promise((done) => setTimeout(done, 3500));
+console.log(existsSync("done") ? "finished" : "killed");"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out.trim(), "finished");
+}

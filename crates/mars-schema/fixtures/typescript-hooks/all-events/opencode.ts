@@ -25,7 +25,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": 600
+            "timeout": null
           }
         ],
         "matcher": "*"

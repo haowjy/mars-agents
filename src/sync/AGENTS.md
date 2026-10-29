@@ -143,14 +143,22 @@ declares an `McpFile` selects a server (so `.pi` does too), and a winner becomes
 its `command` or `args` name `${MARS_MCP_DIR}`; a token-free server is a config entry alone. Its
 files, config entry, lock ownership, and pruning then all name the same winner, and
 `sync/package_dir.rs` owns every path and identifier for that copy. It separately
-retains every filtered, exported graph hook, selected or
-not; plugin builds read that list for omission diagnostics, and sync never reads it. Hook and MCP
+retains every accepted hook (past the filters and visibility; a local hook too), selected or
+not; plugin builds read that list for omission diagnostics and sync for the `[hooks]` skip report. Hook and MCP
 selections survive an install skip; post-target-sync lowering asks one gate whether target sync's
 own `synced_outputs` recorded this target installing the record's directory, and withholds the
 entry with a path-bearing warning when it did not. Config lowering must not rediscover items.
+`hook_target_items` asks `HookDef::select(managed)` which targets get a hook: those where its
+`[hooks]` renders at least one event (unless `skip-targets`) and those with a fragment table.
+A dependency hook that is invalid (its `hook.toml`, or a fragment that does not load) is not selected
+if the consumer's filters select it and its file still says it is exported: `kept_hooks.rs`
+(`build_target_state` calls it with the old lock, once the state is complete) turns it into a `KeptHook` over the directories the lock
+holds for that package under one of the names the broken file may have had, or warns and installs
+nothing. `diff::compute` emits those directories as unchanged
+and never orphans them, whatever the disk or the invalid source holds.
 
 Plugin builds and sync both call `build_target_state` (graph collection, optional local extension,
-MCP collision resolution and the winning servers' directory items) and then `apply_target_renames`. Between
+settling invalid dependency hooks against the old lock (`None` for a plugin build), MCP collision resolution and the winning servers' directory items) and then `apply_target_renames`. Between
 the two, sync drops items that would overwrite unmanaged content, so the rename view and the
 references it rewrites only see surviving items. The plugin root source name is the local package
 for collision precedence, as `_self` is in sync. Skill-ref validation is the caller's: sync passes

@@ -9,6 +9,7 @@ homepage = "https://github.com/haowjy/mars-agents"
 
 [dependencies]
 indexmap = { version = "2", features = ["serde"] }
+regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11.19"
@@ -18,3 +19,6 @@ thiserror = "2"
 toml = "0.8"
 toml_edit = { version = "0.22.27", features = ["serde"] }
 yaml-rust2 = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+regex = "1"

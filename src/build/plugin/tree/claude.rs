@@ -50,7 +50,7 @@ fn write_config_entries(
         write_plugin_mcp_json(&root.join(".mcp.json"), mcp, harnesses, diag)?;
     }
     if !hooks.is_empty() {
-        crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), hooks)?;
+        crate::target::hook_file::write(&root.join("hooks/hooks.json"), hooks, &[])?;
     }
     Ok(())
 }

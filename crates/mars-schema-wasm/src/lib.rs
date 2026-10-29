@@ -432,3 +432,67 @@ pub fn select_items(argument: JsValue) -> Result<JsValue, JsValue> {
     };
     to_js(&mars_schema::selection::select(&view))
 }
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderTokens {
+    hook_dir: Option<String>,
+    hook_target: Option<String>,
+}
+
+/// A `hook.toml`'s `[hooks]` as each of `targets` (roots such as `.claude`) takes it:
+/// `{diagnostics, targets: {<root>: HookOutput}}`, where `HookOutput` is the schema's own
+/// serialization (`kind: "merge" | "file"`; see `index.d.ts`). `tokens` (`{hookDir?, hookTarget?}`) fills the hook tokens; one
+/// left out stays as written (`hookTarget` defaults to the target's root). `targets` is empty
+/// when `diagnostics` holds an error. A root with no hook mechanism throws `input.invalid`.
+#[wasm_bindgen(js_name = renderHooks)]
+pub fn render_hooks(
+    hook_toml: &str,
+    targets: Vec<String>,
+    tokens: JsValue,
+) -> Result<JsValue, JsValue> {
+    use mars_schema::hooks::{self, HookOutput, Origin, targets as hook_targets};
+    let tokens: RenderTokens = if tokens.is_undefined() || tokens.is_null() {
+        RenderTokens {
+            hook_dir: None,
+            hook_target: None,
+        }
+    } else {
+        parse_fields(tokens)?
+    };
+    let roots = targets
+        .iter()
+        .map(|root| {
+            hook_targets::target(root)
+                .ok_or_else(|| fail("input.invalid", format!("`{root}` has no hook mechanism")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let read = hooks::read(hook_toml, "hook", Origin::Local);
+    let mut outputs = Vec::new();
+    if let Some(def) = &read.def {
+        for target in roots {
+            let tokens = hooks::Tokens {
+                hook_dir: tokens.hook_dir.as_deref().unwrap_or(hooks::HOOK_DIR_TOKEN),
+                hook_target: tokens.hook_target.as_deref().unwrap_or(target.root),
+                ..Default::default()
+            };
+            let output = def
+                .output(target, None, Origin::Local, &tokens)
+                .map_err(|error| fail("hook.invalid", error))?;
+            outputs.push((target.root, output));
+        }
+    }
+    let targets: BTreeMap<_, _> = outputs
+        .iter()
+        .map(|(root, output)| (*root, output))
+        .collect();
+    #[derive(Serialize)]
+    struct Out<'a> {
+        diagnostics: &'a [mars_schema::diagnostic::SchemaDiagnostic],
+        targets: BTreeMap<&'a str, &'a HookOutput>,
+    }
+    to_js(&Out {
+        diagnostics: &read.diagnostics,
+        targets,
+    })
+}

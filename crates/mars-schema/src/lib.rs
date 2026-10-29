@@ -12,6 +12,7 @@ pub mod filter;
 pub mod git_url;
 pub mod harness;
 pub mod harness_overrides;
+pub mod hooks;
 pub mod inspect;
 pub mod manifest;
 pub mod normalize;

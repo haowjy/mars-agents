@@ -55,7 +55,7 @@ hooks. Both authored directory tokens travel in the tree's generated `DATA` bloc
 carries no token literal of its own and Rust stays the only owner of the strings.
 `tree::check_sources` scans authored agents, skills (including schema findings), hooks and the
 selected MCP union once; per-tree writers report only lowering behavior.
-`TargetState::exported_hooks` retains filtered exported graph hooks even when no requested tree
+`TargetState::accepted_hooks` retains filtered exported graph hooks even when no requested tree
 selected a fragment, which is the input for plugin omission diagnostics. `support::emit` receives
 the full target so graph-wide agent and bootstrap counts never depend on one format's emitted
 components. Component support and verification come from each selected harness row plus its tree

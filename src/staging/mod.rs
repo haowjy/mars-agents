@@ -318,10 +318,7 @@ pub(crate) fn detect_unreadable_hook_surface(
     for hook_dir in hook_dirs {
         let manifest = hook_dir.join("hook.toml");
         let raw = fs::read_to_string(&manifest)?;
-        let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
-            continue;
-        };
-        if crate::compiler::hooks::uses_removed_schema(&value)
+        if mars_schema::hooks::uses_removed_schema(&raw)
             && let Some(hook_name) = hook_dir.file_name().and_then(|name| name.to_str())
         {
             hook_names.insert(hook_name.to_owned());

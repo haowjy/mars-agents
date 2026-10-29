@@ -2,13 +2,14 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::compiler::hooks::ParsedHookItem;
+use crate::compiler::hooks::{ParsedHookItem, load_plugin_output, report_fragment};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::target::opencode::OpencodeAdapter;
-use crate::target::{HookEntry, McpServerEntry, TargetAdapter};
+use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
 use mars_schema::frontmatter::Frontmatter;
+use mars_schema::hooks::{FileOutput, HookOutput, Tokens};
 use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
 
 use super::super::metadata::PackageMetadata;
@@ -37,29 +38,24 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
 };
 
 fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
-    let fragment = hook.fragment_name(TARGET_ROOT);
-    let path = hook.hook_dir.join(&fragment);
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(error) => {
-            diag.warn(
-                "hook-fragment",
-                format!(
-                    "hook `{}` from `{}`: could not check OpenCode fragment `{fragment}` for a default export: {error}; the hook will still be shipped and isolated at runtime",
-                    hook.def.name, hook.source_name
-                ),
-            );
-            return;
-        }
+    // A hook selected for `[hooks]` alone has no fragment to check.
+    let Some(fragment) = hook.fragment(TARGET_ROOT).map(|f| f.file.as_str()) else {
+        return;
     };
-    if let Some(problem) = OpencodeAdapter.hook_fragment_problem(&content) {
-        diag.warn(
+    let target = mars_schema::hooks::targets::target(TARGET_ROOT).expect("OpenCode takes hooks");
+    match load_plugin_output(hook, target, &Tokens::default()) {
+        Ok(HookOutput::File(FileOutput {
+            fragment_problem: Some(problem),
+            ..
+        })) => diag.warn(
             "hook-fragment-contract",
             format!(
                 "hook `{}` from `{}`: OpenCode fragment `{fragment}` {problem}; the hook will still be shipped and isolated at runtime",
                 hook.def.name, hook.source_name
             ),
-        );
+        ),
+        Ok(_) => {}
+        Err(error) => report_fragment(hook, &error, diag),
     }
 }
 
@@ -208,16 +204,18 @@ fn write_package(
     });
     let hooks = hooks
         .into_iter()
-        .map(|hook| HookData {
-            name: hook.def.name.clone(),
-            fragment: hook.fragment_name(TARGET_ROOT),
+        .filter_map(|hook| {
+            Some(HookData {
+                name: hook.def.name.clone(),
+                fragment: hook.fragment(TARGET_ROOT)?.file.clone(),
+            })
         })
         .collect();
 
     let data = serde_json::to_string_pretty(&PluginData {
         plugin: &metadata.name,
         tokens: DirTokens {
-            hook_dir: crate::compiler::hooks::HOOK_DIR_TOKEN,
+            hook_dir: mars_schema::hooks::HOOK_DIR_TOKEN,
             mcp_dir: mars_schema::mcp_server::MCP_DIR_TOKEN,
         },
         skills,

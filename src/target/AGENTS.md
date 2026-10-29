@@ -8,7 +8,7 @@ Target-specific lowering for `.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`,
 TargetRegistry → TargetAdapter trait → per-target implementations
     ↓
 default_dest_path()  → where items go
-write_hook_entries(ConfigWrite, …) → hook config files; MCP goes through mcp_file::reconcile
+mcp_file()          → MCP goes through mcp_file::reconcile; hook files are `mars_schema::hooks::targets`, not an adapter method
 skill_variant_key()  → which skill variant directory to use
 ```
 
@@ -33,12 +33,7 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `skill_variant_key()` | Which `variants/<key>/` directory this target consumes |
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `mcp_file()` | The adapter's one MCP spec (below); `None` when the target takes no MCP servers |
-| `write_hook_entries(write, project_root)` | Hook config file writes; MCP is reconciled by `mcp_file::reconcile` |
-| `hook_fragment_mode()` | Declares `MergeJson { events }` or `File` fragment placement |
-| `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
-| `hook_fragment_problem(content)` | Names a contract violation in a file-mode fragment; callers build the warning |
-| `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
-| `remove_owned_hook_entries(token, records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |
+| (hooks) | No adapter method. The merge file, its top-level keys and Codex's trust gate are the target's `Placement::Merge` row in `mars_schema::hooks::targets`; `hook_file::write` / `remove_recorded` / `holds_recorded` / `trust_positions` edit and read a merge file |
 
 ## MCP Spec (`mcp_file.rs`)
 

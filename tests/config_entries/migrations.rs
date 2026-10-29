@@ -334,6 +334,41 @@ fn normal_sync_reports_removed_hook_schema_by_source_package_and_version() {
 }
 
 #[test]
+fn malformed_dependency_hook_error_names_package_and_hook_not_staging_path() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.child("base");
+    source.create_dir_all().unwrap();
+    source
+        .child("mars.toml")
+        .write_str("[package]\nname = \"base\"\nversion = \"0.8.9\"\n")
+        .unwrap();
+    write_hook(
+        &source,
+        "audit",
+        "visibility = \"exported\"\n[targets.\".claude\"]\nbogus = true\n",
+    );
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[dependencies.base]\npath = \"{}\"\n\n[settings]\ntargets = [\".claude\"]\n",
+            portable_path(source.path())
+        ))
+        .unwrap();
+
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("nothing is installed"))
+        .stderr(predicate::str::contains(
+            "source package `base` version `0.8.9`, hook `audit`: failed to parse",
+        ))
+        .stderr(predicate::str::contains("unknown field `bogus`"))
+        .stderr(predicate::str::contains(".staging").not())
+        .stderr(predicate::str::contains(".mars/staging").not());
+}
+
+#[test]
 fn filtered_transitive_removed_hook_error_hides_staging_path() {
     let dir = TempDir::new().unwrap();
     let legacy = write_legacy_hook_source(&dir, "base");

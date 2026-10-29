@@ -52,14 +52,14 @@ pub(crate) fn validate(path: &Path) -> Result<(), MarsError> {
 
 /// Append `hooks` to the file at `path`, creating it if needed, after setting
 /// the top-level `top_level` keys (Cursor's `version`).
-pub(super) fn write(
+pub(crate) fn write(
     path: &Path,
     hooks: &[HookEntry],
-    top_level: &[(&str, Value)],
+    top_level: &[(&str, i64)],
 ) -> Result<(), MarsError> {
     let mut doc = load(path)?.unwrap_or_else(|| JsonDoc::new(SECTION));
     for (key, value) in top_level {
-        doc.set_top_level(key, value.clone());
+        doc.set_top_level(key, Value::from(*value));
     }
     let section = doc.section_mut();
     for hook in hooks.iter().filter(|hook| !hook.entries.is_empty()) {
@@ -78,10 +78,85 @@ pub(super) fn write(
     doc.save(path)
 }
 
+/// Whether the file at `path` already holds `hooks` as a sync would write them: per event,
+/// every entry present, in `hooks`' order. Other entries may sit between them. A sync that
+/// changes nothing and finds this true leaves the file alone; a file that lost an entry, or
+/// holds them in another order, is rewritten.
+///
+/// Entries are matched one by one in order, so two hooks with identical entries need two in
+/// the file.
+pub(crate) fn holds_recorded(path: &Path, hooks: &[HookEntry]) -> bool {
+    let Ok(Some(doc)) = load(path) else {
+        return false;
+    };
+    let Some(section) = doc.section() else {
+        return false;
+    };
+    let mut cursor: BTreeMap<&str, usize> = BTreeMap::new();
+    for hook in hooks.iter().filter(|hook| !hook.entries.is_empty()) {
+        let Some(OrderedValue::Array(current)) = section.get(&hook.native_event) else {
+            return false;
+        };
+        let at = cursor.entry(hook.native_event.as_str()).or_default();
+        for entry in &hook.entries {
+            let entry = to_ordered(entry.clone());
+            let Some(found) = current[*at..].iter().position(|c| *c == entry) else {
+                return false;
+            };
+            *at += found + 1;
+        }
+    }
+    true
+}
+
+/// `(event, matcher group, handler)` → what sits there; see [`trust_positions`].
+pub(crate) type TrustPositions = BTreeMap<(String, usize, usize), Value>;
+
+/// Where a handler sits in a hook file and what it is: `(event, matcher group, handler)` →
+/// the group's matcher and the handler. Codex keys its trust on exactly this, so an entry
+/// that moves or changes must be reviewed again. Only events `reads` accepts count: Codex
+/// ignores any other key, so a handler there needs no review. Empty when the file is missing
+/// or unreadable.
+pub(crate) fn trust_positions(path: &Path, reads: impl Fn(&str) -> bool) -> TrustPositions {
+    let Ok(Some(doc)) = load(path) else {
+        return BTreeMap::new();
+    };
+    let mut positions = BTreeMap::new();
+    for (event, groups) in doc.section().into_iter().flatten() {
+        let OrderedValue::Array(groups) = groups else {
+            continue;
+        };
+        if !reads(event) {
+            continue;
+        }
+        for (g, group) in groups.iter().enumerate() {
+            let group = group.to_json();
+            let handlers = group.get("hooks").and_then(Value::as_array);
+            for (h, handler) in handlers.into_iter().flatten().enumerate() {
+                positions.insert(
+                    (event.clone(), g, h),
+                    serde_json::json!([group.get("matcher"), handler]),
+                );
+            }
+        }
+    }
+    positions
+}
+
+/// The positions in `after` that hold something `before` did not: a new handler, or one that
+/// moved or changed. A handler that only went away needs no new trust.
+pub(crate) fn untrusted_positions(before: &TrustPositions, after: &TrustPositions) -> Vec<String> {
+    after
+        .iter()
+        .filter(|(position, content)| before.get(*position) != Some(*content))
+        .map(|((event, group, handler), _)| format!("{event}[{group}][{handler}]"))
+        .collect()
+}
+
 /// Remove the entries `records` say mars wrote, wherever they still equal what
 /// was recorded; an entry that has changed is left, with a warning, and the
 /// package entry is appended beside it. The file is saved only if something went.
-pub(super) fn remove_recorded(
+pub(crate) fn remove_recorded(
     path: &Path,
     records: &BTreeMap<String, ConfigEntryRecord>,
     target: &str,
@@ -110,7 +185,7 @@ pub(super) fn remove_recorded(
             diag.warn(
                 "config-divergence",
                 format!(
-                    "config-divergence: managed hook `{name}` diverged in target `{target}` at `{}`; preserving edited config and appending the package entry",
+                    "config-divergence: managed hook `{name}` diverged in target `{target}` at `{}`: an entry Mars wrote was edited or deleted; any edited version stays and the package entry is appended",
                     path.display()
                 ),
             );
@@ -145,4 +220,94 @@ fn remove_entries(
         section.shift_remove(event);
     }
     (removed, expected.len() - removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn entry(name: &str, event: &str, script: &str) -> HookEntry {
+        HookEntry {
+            name: name.to_string(),
+            native_event: event.to_string(),
+            entries: vec![
+                serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '{script}'")}]}),
+            ],
+        }
+    }
+
+    fn record(event: &str, command: &str) -> BTreeMap<String, ConfigEntryRecord> {
+        BTreeMap::from([(
+            format!("hook:{event}:audit"),
+            ConfigEntryRecord {
+                emitted_json: serde_json::json!([{"hooks": [{"command": command}]}]).to_string(),
+            },
+        )])
+    }
+
+    #[test]
+    fn write_creates_the_file_and_appends_in_call_order() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("hooks.json");
+        write(&path, &[entry("audit", "PreToolUse", "/old/run.sh")], &[]).unwrap();
+        write(&path, &[entry("audit", "PreToolUse", "/new/run.sh")], &[]).unwrap();
+
+        let json: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let commands: Vec<_> = json["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["hooks"][0]["command"].as_str().unwrap())
+            .collect();
+        assert_eq!(commands, ["bash '/old/run.sh'", "bash '/new/run.sh'"]);
+    }
+
+    #[test]
+    fn removal_leaves_a_diverged_file_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("hooks.json");
+        let original =
+            br#"{"hooks":{"SessionStart":[{"hooks":[{"command":"edited"}]}]},"keep":true}"#;
+        std::fs::write(&path, original).unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        remove_recorded(
+            &path,
+            &record("SessionStart", "original"),
+            ".codex",
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn removal_prunes_an_emptied_hooks_object() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("hooks.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({"version": 1, "hooks": {"sessionStart": [{"hooks": [{"command": "owned"}]}]}})
+                .to_string(),
+        )
+        .unwrap();
+
+        remove_recorded(
+            &path,
+            &record("sessionStart", "owned"),
+            ".cursor",
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
+
+        let after: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(after, serde_json::json!({"version": 1}));
+    }
 }

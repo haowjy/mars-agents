@@ -58,6 +58,15 @@ fn convention_layer(relative_root: &Path) -> usize {
     relative_root.components().count()
 }
 
+/// The name selection knows a hook by: its `name`, else its directory's. A `hook.toml` that
+/// does not parse is known by its directory.
+pub(crate) fn hook_slug(hook_toml: &str, dir_name: &str) -> String {
+    toml::from_str::<toml::Value>(hook_toml)
+        .ok()
+        .and_then(|value| value.get("name")?.as_str().map(str::to_owned))
+        .unwrap_or_else(|| dir_name.to_owned())
+}
+
 fn scan_hook_dir(
     package_root: &Path,
     relative_root: &Path,
@@ -81,15 +90,7 @@ fn scan_hook_dir(
             continue;
         }
         let raw = std::fs::read_to_string(path.join("hook.toml"))?;
-        let name = toml::from_str::<toml::Value>(&raw)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("name")
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or_else(|| dir_name.to_string());
+        let name = hook_slug(&raw, dir_name);
         items.push(DiscoveredItem {
             id: ItemId {
                 kind: ItemKind::Hook,

@@ -149,13 +149,6 @@ impl RemovalReport {
             },
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn unwrap(self) {
-        if let Self::Unconfirmed { message, .. } = self {
-            panic!("removal was unconfirmed: {message}");
-        }
-    }
 }
 
 enum RemovalOutcome {
@@ -213,11 +206,6 @@ impl<'p> WritePermit<'p> {
             target_root: self.target_root,
             files,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(target_root: &'static str) -> WritePermit<'static> {
-        WritePermit { target_root }
     }
 }
 

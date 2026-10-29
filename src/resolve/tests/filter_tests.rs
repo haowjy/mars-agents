@@ -397,7 +397,7 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
         ]
     );
 
-    let (target, renames, _) = crate::sync::target::build_with_collisions_and_diag(
+    let (target, renames, _, _) = crate::sync::target::build_with_collisions_and_diag(
         &graph,
         &config,
         &crate::types::SourceOrigin::LocalPackage.to_string().into(),

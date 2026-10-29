@@ -133,12 +133,7 @@ fn remove_owned_target_content(
     )
     .execute(
         |operation, diagnostics| {
-            crate::compiler::config_entries::remove_hooks(
-                &registry,
-                operation,
-                &ctx.project_root,
-                diagnostics,
-            )
+            crate::compiler::config_entries::remove_hooks(operation, &ctx.project_root, diagnostics)
         },
         &mut diagnostics,
     );

@@ -635,3 +635,46 @@ export function selectItems(input: {
   packages: { [name: string]: SelectionPackage };
   root?: SelectionPackage;
 }): SelectionResult;
+
+/** What a hook installs on one target: the schema's own `HookOutput`, as `mars sync` reports it. */
+export type HookTargetOutput =
+  | {
+      kind: "merge";
+      /** Finished entries per native event. A fragment's `[]` is kept: it turns that event off. */
+      events: { [event: string]: unknown[] };
+      /** Unknown events a dependency's fragment lists, left out of `events`. */
+      skippedEvents: string[];
+      /** Events the target does not list that `unchecked = true` let through. */
+      uncheckedEvents: string[];
+      /** Events a fragment declares that `[hooks]` also declares: the fragment's replace the generated entries. */
+      overrides: string[];
+      skips: HookSkip[];
+    }
+  | {
+      kind: "file";
+      files: { path: string; content: string }[];
+      /** What is wrong with the authored fragment, if anything; it is installed regardless. */
+      fragmentProblem: string | null;
+      skips: HookSkip[];
+      /** Rendered events whose portable answers do not all carry over to the target. */
+      answerLimits: HookSkip[];
+    };
+
+/** Something a target does not run. `event` is `null` when the whole target is skipped. */
+export interface HookSkip {
+  event: string | null;
+  reason: string;
+}
+
+/**
+ * A `hook.toml`'s `[hooks]` table as each target in `targets` (roots such as `.claude`,
+ * `.codex`) takes it, from the same render `mars sync` uses. `tokens` fills `${MARS_HOOK_DIR}`
+ * and `${MARS_HOOK_TARGET}`; one left out stays as written (`hookTarget` defaults to the
+ * target's root). When `diagnostics` holds an error, `targets` is empty. A root with no hook
+ * mechanism throws `input.invalid`.
+ */
+export function renderHooks(
+  hookToml: string,
+  targets: string[],
+  tokens?: { hookDir?: string; hookTarget?: string } | null,
+): { diagnostics: Diagnostic[]; targets: { [root: string]: HookTargetOutput } };

@@ -756,6 +756,66 @@ content or event validation; only file existence and substitution are checked
 in preflight. `unchecked` is therefore meaningless and rejected for file-mode
 targets, even when set to `false`.
 
+### Worked examples
+
+**One hook in four harnesses, with a Codex-only event.** Here `[hooks]`
+generates entries for Claude, OpenCode and Pi, while Codex gets a native
+fragment. `skip-targets` withholds only the generated entries, so the fragment
+still installs, and `unchecked = true` admits Codex's `PreModelRequest`, an
+event Mars does not render:
+
+```toml
+# hooks/guarded/hook.toml
+skip-targets = [".codex"]
+
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh"'
+onFailure = "block"
+
+[targets.".codex"]
+fragment = "codex.json"
+unchecked = true
+```
+
+`hooks/guarded/codex.json` holds the Codex event:
+
+```json
+{
+  "PreModelRequest": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \"${MARS_HOOK_DIR}/run.sh\""
+        }
+      ]
+    }
+  ]
+}
+```
+
+Codex asks you to trust the new handler with `/hooks` once.
+
+**A hook only one harness gets.** Without `[hooks]`, the target tables are the
+whole distribution, so this hook reaches Codex and nothing else:
+
+```toml
+# hooks/codex-audit/hook.toml
+[targets.".codex"]
+fragment = "codex.json"
+```
+
+**One script for every harness.** `${MARS_HOOK_TARGET}` is replaced in the
+command, so pass it to the script instead of writing one command per target:
+
+```toml
+command = 'bash "${MARS_HOOK_DIR}/run.sh" "${MARS_HOOK_TARGET}"'
+```
+
 ### Validation by origin
 
 Before 0.25, `hook.toml` rejected unknown keys, so a Mars older than 0.25 fails

@@ -28,7 +28,14 @@
 
 ## Resulting Behavior
 
-<!-- User-facing end state. What can someone do after this merges that they could not do before? Prefer examples/CLI outcomes over implementation details. -->
+<!-- User-facing end state, in one or two sentences. What can someone do after this merges that they could not do before? -->
+
+## Examples of Behavior
+
+<!-- One to three short, real examples of the change in action: a command and
+     its output, an input and the result, or a before/after config. Fenced code
+     blocks, no invented output. If there is no behavior to show, say so in one
+     line. -->
 
 ## Changes
 

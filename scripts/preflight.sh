@@ -23,6 +23,7 @@ case "$MODE" in
     else
       run_step cargo test -- --skip cli::version::tests::run
     fi
+    run_step cargo test -p mars-schema
     run_step cargo build --release
     ;;
   *)

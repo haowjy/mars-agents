@@ -3,11 +3,12 @@
 //! This module owns config-entry lowering and writes. MCP and hook selection
 //! come from the target build that also selects installed content.
 
+pub(crate) mod file_hooks;
+pub(crate) mod render;
 pub mod resolve;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::compiler::hooks::ParsedHookItem;
 use crate::compiler::mcp::{ParsedMcpItem, lower_transport};
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ConfigEntryRecord;
@@ -15,192 +16,19 @@ use crate::surface_ownership::retention::{RemovalOperation, RemovalReport};
 use crate::sync::AppliedState;
 use crate::sync::package_dir::PackageDir;
 use crate::target::{
-    HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, McpServerEntry, TargetAdapter, TargetRegistry,
-    mcp_file,
+    HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, McpServerEntry, TargetRegistry, mcp_file,
 };
 use crate::types::MarsContext;
-use mars_schema::item::ItemKind;
+use file_hooks::{file_hook_output_preserve_paths, kept_file_outputs, write_file_hook_outputs};
+use mars_schema::hooks::HookOutput;
+use render::{RenderedHooks, lower_merge_fragments};
 
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     pub emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
+    /// Generated hook files whose bytes this run wrote, as `(target_root, dest_path)`.
+    pub rewritten_outputs: Vec<(String, String)>,
     pub removed_outputs: Vec<(String, String)>,
-}
-
-pub(crate) fn file_hook_output_preserve_paths(
-    lock: &crate::lock::LockFile,
-) -> HashMap<String, std::collections::HashSet<String>> {
-    let registry = crate::target::TargetRegistry::new();
-    let mut preserve = HashMap::<String, std::collections::HashSet<String>>::new();
-    for item in lock
-        .items
-        .values()
-        .filter(|item| item.kind == ItemKind::Hook)
-    {
-        for output in item
-            .outputs
-            .iter()
-            .filter(|output| output.target_root != crate::lock::CANONICAL_TARGET_ROOT)
-        {
-            let Some(adapter) = registry.get(&output.target_root) else {
-                continue;
-            };
-            // The canonical record of a hook installed as one file names its
-            // package directory; the file that directory projects must stay.
-            let is_file_fragment = item.outputs.iter().any(|canonical| {
-                canonical.target_root == crate::lock::CANONICAL_TARGET_ROOT
-                    && PackageDir::parse_canonical(ItemKind::Hook, &canonical.dest_path)
-                        .filter(|dir| dir.belongs_to(&output.target_root))
-                        .and_then(|dir| adapter.hook_file_dest_path(dir.name()))
-                        .is_some_and(|path| {
-                            crate::target::dest_paths_equivalent(
-                                path.to_string_lossy().as_ref(),
-                                output.dest_path.as_str(),
-                            )
-                        })
-            });
-            if is_file_fragment {
-                preserve
-                    .entry(output.target_root.clone())
-                    .or_default()
-                    .insert(output.dest_path.as_str().to_string());
-            }
-        }
-    }
-    preserve
-}
-
-/// Validate all hook schemas and native event names before the apply phase.
-///
-/// This is deliberately separate from config emission so an invalid hook
-/// cannot leave canonical or target state partially mutated.
-pub(crate) fn preflight_config_entries(
-    ctx: &MarsContext,
-    targeted: &crate::sync::TargetedState,
-    diag: &mut DiagnosticCollector,
-) -> Result<(), crate::error::MarsError> {
-    use crate::compiler::hooks::{load_file_fragment, load_merge_fragment};
-    use crate::error::{ConfigError, MarsError};
-    use crate::target::{HookFragmentMode, TargetRegistry};
-
-    let resolved = &targeted.resolved;
-    let registry = TargetRegistry::new();
-    let mut errors = Vec::new();
-    // Targets whose MCP file / hook files this sync reads: those the old lock
-    // has records on, and those with something selected.
-    let mut mcp_targets: BTreeSet<String> = BTreeSet::new();
-    let mut hook_targets: BTreeSet<String> = BTreeSet::new();
-    for (target, records) in &resolved.loaded.old_lock.config_entries {
-        if records.keys().any(|key| key.starts_with(MCP_KEY_PREFIX)) {
-            mcp_targets.insert(target.clone());
-        }
-        if records.keys().any(|key| key.starts_with(HOOK_KEY_PREFIX)) {
-            hook_targets.insert(target.clone());
-        }
-    }
-    hook_targets.extend(
-        targeted
-            .target
-            .selected_hooks()
-            .map(|(dir, _)| dir.target().to_string()),
-    );
-    mcp_targets.extend(targeted.target.selected_mcp_targets().map(str::to_string));
-    for target_name in mcp_targets.union(&hook_targets) {
-        let touches_mcp = mcp_targets.contains(target_name);
-        let touches_hooks = hook_targets.contains(target_name);
-        let target_dir = ctx.project_root.join(target_name);
-        if let Err(error) = validate_destination_path(&ctx.project_root, &target_dir, true) {
-            errors.push(error);
-            continue;
-        }
-        if let Some(adapter) = registry.get(target_name) {
-            let records = resolved.loaded.old_lock.config_entries.get(target_name);
-            let has_legacy_hooks = has_unrecorded(records, HOOK_KEY_PREFIX);
-            if touches_mcp && let Some(file) = adapter.mcp_file() {
-                let has_legacy = has_unrecorded(records, MCP_KEY_PREFIX);
-                for location in
-                    std::iter::once(&file.at).chain(file.legacy.iter().filter(|_| has_legacy))
-                {
-                    let path = ctx.project_root.join(location.path);
-                    if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
-                        errors.push(error);
-                    } else if let Err(error) = crate::target::mcp_file::validate(location, &path) {
-                        errors.push(format!(
-                            "target `{target_name}` reads MCP servers from `{}`: {}",
-                            location.path,
-                            error_message(error)
-                        ));
-                    }
-                }
-            }
-            let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-            if touches_hooks {
-                names.extend(adapter.hook_config_file_names());
-            }
-            if has_legacy_hooks {
-                names.extend(adapter.legacy_hook_config_file_names());
-            }
-            for name in names {
-                let path = target_dir.join(name);
-                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
-                    errors.push(error);
-                }
-                if let Err(error) = crate::target::hook_file::validate(&path) {
-                    errors.push(error_message(error));
-                }
-            }
-        }
-    }
-    for (dir, item) in targeted.target.selected_hooks() {
-        let target_name = dir.target();
-        let adapter = registry.get(target_name);
-        let mode = adapter.and_then(|adapter| adapter.hook_fragment_mode());
-        let hook_dir = installed_token(ctx, dir);
-        let result = match mode {
-            Some(HookFragmentMode::MergeJson { events }) => {
-                load_merge_fragment(item, target_name, events, &hook_dir, diag, true).map(|_| ())
-            }
-            Some(HookFragmentMode::File) => {
-                if let Some(relative) =
-                    adapter.and_then(|adapter| adapter.hook_file_dest_path(&item.def.name))
-                {
-                    let destination = ctx.project_root.join(target_name).join(relative);
-                    if let Err(error) =
-                        validate_destination_path(&ctx.project_root, &destination, false)
-                    {
-                        errors.push(error);
-                        continue;
-                    }
-                }
-                load_file_fragment(item, target_name, &hook_dir).map(|_| ())
-            }
-            None => Err(MarsError::Config(ConfigError::Invalid {
-                message: format!(
-                    "hook `{}`: target `{target_name}` has no hook fragment mechanism",
-                    item.def.name
-                ),
-            })),
-        };
-        if let Err(error) = result {
-            errors.push(error_message(error));
-        }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(MarsError::Config(ConfigError::Invalid {
-            message: errors.join("\n"),
-        }))
-    }
-}
-
-/// An error's message without its `config error:` prefix: preflight wraps the
-/// joined messages in one `ConfigError::Invalid`, which supplies it.
-fn error_message(error: crate::error::MarsError) -> String {
-    match error {
-        crate::error::MarsError::Config(crate::error::ConfigError::Invalid { message }) => message,
-        other => other.to_string(),
-    }
 }
 
 /// Lower the selected MCP servers for one target.
@@ -217,99 +45,6 @@ pub(crate) fn lower_mcp_servers(mcp: &[(String, &ParsedMcpItem)]) -> Vec<McpServ
         .collect()
 }
 
-/// Lower the mergeable hook entries for one target.
-///
-/// The caller supplies each hook's directory token: the replacement for
-/// `${MARS_HOOK_DIR}` in its native fragment.
-pub(crate) fn lower_hook_entries(
-    hooks: &[(String, &ParsedHookItem)],
-    adapter: &dyn TargetAdapter,
-    diag: &mut DiagnosticCollector,
-) -> Vec<HookEntry> {
-    let target_root = adapter.name();
-    let Some(crate::target::HookFragmentMode::MergeJson {
-        events: known_events,
-    }) = adapter.hook_fragment_mode()
-    else {
-        return Vec::new();
-    };
-    let mut contributions = Vec::new();
-    for (dir, item) in hooks {
-        match crate::compiler::hooks::load_merge_fragment(
-            item,
-            target_root,
-            known_events,
-            dir,
-            diag,
-            false,
-        ) {
-            Ok(fragment) => contributions.extend(
-                fragment
-                    .events
-                    .into_iter()
-                    .filter(|(_, entries)| !entries.is_empty())
-                    .map(|(event, entries)| (item, event, entries)),
-            ),
-            Err(error) => diag.error("hook-fragment", error.to_string()),
-        }
-    }
-
-    contributions.sort_by(|(left, left_event, _), (right, right_event, _)| {
-        (
-            left.package_depth,
-            left.decl_order,
-            left.def.order,
-            left.def.name.as_str(),
-            left_event.as_str(),
-        )
-            .cmp(&(
-                right.package_depth,
-                right.decl_order,
-                right.def.order,
-                right.def.name.as_str(),
-                right_event.as_str(),
-            ))
-    });
-    contributions
-        .into_iter()
-        .map(|(item, event, entries)| HookEntry {
-            name: item.def.name.clone(),
-            native_event: event,
-            entries,
-        })
-        .collect()
-}
-
-fn validate_destination_path(
-    root: &std::path::Path,
-    destination: &std::path::Path,
-    directory: bool,
-) -> Result<(), String> {
-    let relative = destination.strip_prefix(root).unwrap_or(destination);
-    let mut current = root.to_path_buf();
-    let components: Vec<_> = relative.components().collect();
-    for (index, component) in components.iter().enumerate() {
-        current.push(component);
-        let is_destination = index + 1 == components.len();
-        let Ok(metadata) = std::fs::metadata(&current) else {
-            continue;
-        };
-        let expects_directory = !is_destination || directory;
-        if metadata.is_dir() != expects_directory {
-            let expected = if expects_directory {
-                "directory"
-            } else {
-                "file"
-            };
-            return Err(format!(
-                "destination `{}` must be a {expected}",
-                current.display()
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Post-target-sync config-entry compilation: MCP servers and hooks.
 ///
 /// MCP servers and hooks come from the target build's filter- and
@@ -323,11 +58,13 @@ fn validate_destination_path(
 ///    adapter, MCP servers are reconciled in one pass per target file
 ///
 /// All errors are non-fatal — emitted as diagnostics and compilation continues.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_config_entries(
     ctx: &MarsContext,
     applied: &AppliedState,
     ownership_lock: &mut crate::lock::LockFile,
     target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+    rendered_hooks: &RenderedHooks,
     dry_run: bool,
     force: bool,
     diag: &mut DiagnosticCollector,
@@ -373,7 +110,6 @@ pub(crate) fn compile_config_entries(
         let Some(adapter) = registry.get(target_root) else {
             continue;
         };
-        let mode = adapter.hook_fragment_mode();
         let installed_hooks = applied
             .planned
             .targeted
@@ -393,56 +129,77 @@ pub(crate) fn compile_config_entries(
                     || emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag)
             })
             .collect::<Vec<_>>();
-        let hook_entries = installed_hooks
-            .iter()
-            .map(|(dir, item)| (installed_token(ctx, dir), *item))
-            .collect::<Vec<_>>();
         let mcp_entries = selected_mcp
             .iter()
             .map(|(dir, item)| (installed_token(ctx, dir), *item))
             .collect::<Vec<_>>();
-        let hooks = lower_hook_entries(&hook_entries, adapter, diag);
         let mcp_servers = lower_mcp_servers(&mcp_entries);
 
-        // Resolve and load whole-file hooks independently of merge ordering.
+        // Preflight rendered every selected hook; place each by its target's placement.
+        let mut merge_fragments = Vec::new();
         let mut file_writes = Vec::new();
-        if mode == Some(crate::target::HookFragmentMode::File) {
-            for (dir, item) in &installed_hooks {
-                let hook_dir = installed_token(ctx, dir);
-                let Some(relative_dest) = adapter.hook_file_dest_path(&item.def.name) else {
-                    diag.error(
-                        "hook-fragment",
-                        format!(
-                            "target `{target_root}` declares file-mode hooks without a placement path"
-                        ),
-                    );
-                    continue;
-                };
-                match crate::compiler::hooks::load_file_fragment(item, target_root, &hook_dir) {
-                    Ok(content) => {
-                        if let Some(problem) = adapter.hook_fragment_problem(&content) {
-                            diag.warn(
-                                "hook-fragment-contract",
-                                format!(
-                                    "hook `{}` from `{}`: `{target_root}` fragment `{}` {problem}; the fragment will still be installed",
-                                    item.def.name,
-                                    item.source_name,
-                                    item.fragment_name(target_root),
-                                ),
-                            );
-                        }
-                        let relative_dest = relative_dest.to_string_lossy().into_owned();
-                        desired_file_outputs.insert((target_root.clone(), relative_dest.clone()));
+        for (dir, item) in &installed_hooks {
+            match rendered_hooks.get(dir) {
+                HookOutput::Merge(fragment) => merge_fragments.push((*item, fragment)),
+                HookOutput::File(output) => {
+                    for file in &output.files {
+                        desired_file_outputs.insert((target_root.clone(), file.path.clone()));
                         file_writes.push((
                             dir.canonical().as_str().to_string(),
-                            relative_dest,
-                            content,
+                            file.path.clone(),
+                            file.content.clone(),
                         ));
                     }
-                    Err(error) => diag.error("hook-fragment", error.to_string()),
                 }
             }
         }
+
+        // A kept hook (see `sync::target::KeptHook`) stays as the last lock recorded it.
+        let mut kept_records = BTreeMap::new();
+        let mut kept_entries = Vec::new();
+        for kept in applied.planned.targeted.target.kept_hooks() {
+            let Some(dir) = kept.dirs.iter().find(|dir| dir.belongs_to(target_root)) else {
+                continue;
+            };
+            desired_file_outputs.extend(
+                kept_file_outputs(old_lock, dir)
+                    .into_iter()
+                    .map(|path| (target_root.clone(), path)),
+            );
+            for (key, record) in old_lock
+                .config_entries
+                .get(target_root)
+                .into_iter()
+                .flatten()
+            {
+                let Some((event, name)) = key
+                    .strip_prefix(HOOK_KEY_PREFIX)
+                    .and_then(|rest| rest.split_once(':'))
+                    .filter(|(_, name)| *name == kept.name)
+                else {
+                    continue;
+                };
+                match serde_json::from_str(&record.emitted_json) {
+                    Ok(entries) => {
+                        kept_entries.push((
+                            kept.rank,
+                            HookEntry {
+                                name: name.to_string(),
+                                native_event: event.to_string(),
+                                entries,
+                            },
+                        ));
+                        kept_records.insert(key.clone(), record.clone());
+                    }
+                    Err(error) => diag.warn(
+                        "hook-invalid-kept",
+                        format!("cannot keep `{key}` for `{target_root}`: its record is unreadable ({error})"),
+                    ),
+                }
+            }
+        }
+
+        let hooks = lower_merge_fragments(&merge_fragments, kept_entries);
 
         // Render each server once. Lossiness warnings come with the render, so
         // they run even on dry runs.
@@ -454,12 +211,15 @@ pub(crate) fn compile_config_entries(
             .iter()
             .map(|server| (server.key(), server.record()))
             .chain(hooks.iter().map(|hook| {
-                (
-                    hook.key(),
-                    ConfigEntryRecord {
-                        emitted_json: serde_json::to_string(&hook.entries).ok(),
-                    },
-                )
+                let key = hook.key();
+                let record = kept_records
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| ConfigEntryRecord {
+                        emitted_json: serde_json::to_string(&hook.entries)
+                            .expect("JSON values serialize"),
+                    });
+                (key, record)
             }))
             .collect();
         if !target_records.is_empty() {
@@ -505,17 +265,69 @@ pub(crate) fn compile_config_entries(
                 );
             }
         }
+        // Preview the generated hook files a real sync would write: a missing file or one
+        // whose bytes differ from what would be rendered.
+        let rewritten_outputs = pending_file_writes
+            .iter()
+            .flat_map(|(target_root, files)| {
+                files.iter().filter_map(move |(_, relative, content)| {
+                    let path = ctx.project_root.join(target_root).join(relative);
+                    let current = std::fs::read(path).ok();
+                    (current.as_deref() != Some(content.as_bytes()))
+                        .then(|| (target_root.clone(), relative.clone()))
+                })
+            })
+            .collect();
         return ConfigEntryCompilation {
             records: desired_records,
             emitted_outputs,
+            rewritten_outputs,
             removed_outputs,
         };
     }
 
+    // Codex skips a hook it has not been told to trust, keyed on its position in the file;
+    // `hooks.json` before this sync is what the user last reviewed.
+    let trust_before = trust_snapshots(ctx, &target_roots);
+
+    // A target whose hook entries equal what the lock records, and whose file still holds
+    // them in the order they would be written, is left alone: removing and re-appending them
+    // would rewrite the file and move entries (Codex keys its trust on entry position). A file
+    // that lost or edited an entry, or whose `order` changed, goes through removal, which
+    // warns of the divergence and appends the package entries in order.
+    let hook_records = |records: Option<&BTreeMap<String, ConfigEntryRecord>>| {
+        records
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| key.starts_with(HOOK_KEY_PREFIX))
+            .map(|(key, record)| (key.clone(), record.clone()))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let mut unchanged_records = BTreeMap::new();
+    for target_root in pending_hooks.keys().cloned().collect::<Vec<_>>() {
+        let desired = hook_records(desired_records.get(&target_root));
+        let previous = hook_records(previous_records.get(&target_root));
+        let holds_previous = desired == previous
+            && merge_file(&target_root).is_some_and(|merge| {
+                crate::target::hook_file::holds_recorded(
+                    &ctx.project_root.join(&target_root).join(merge.file),
+                    &pending_hooks[&target_root],
+                )
+            });
+        if holds_previous {
+            pending_hooks.remove(&target_root);
+            unchanged_records.insert(target_root, desired);
+        }
+    }
+    let to_remove: BTreeMap<_, _> = previous_records
+        .iter()
+        .filter(|(target_root, _)| !unchanged_records.contains_key(*target_root))
+        .map(|(target_root, records)| (target_root.clone(), records.clone()))
+        .collect();
     let retention =
-        crate::surface_ownership::retention::RemovalPlan::build(previous_records, &desired_records)
+        crate::surface_ownership::retention::RemovalPlan::build(&to_remove, &desired_records)
             .execute(
-                |operation, diag| remove_hooks(&registry, operation, &ctx.project_root, diag),
+                |operation, diag| remove_hooks(operation, &ctx.project_root, diag),
                 diag,
             );
 
@@ -571,13 +383,13 @@ pub(crate) fn compile_config_entries(
 
     let mut compiled = apply_replacement_writes(
         ctx,
-        &registry,
         old_lock,
         ownership_lock,
         retention,
         pending_hooks,
         pending_file_writes,
         &desired_records,
+        unchanged_records,
         force,
         diag,
         emitted_outputs,
@@ -590,39 +402,75 @@ pub(crate) fn compile_config_entries(
             .or_default()
             .extend(records);
     }
+    warn_untrusted(&trust_before, &trust_snapshots(ctx, &target_roots), diag);
     compiled
 }
 
-/// Whether `records` hold an entry with `prefix` from before content ownership
-/// (no `emitted_json`), which preflight must be able to clean up.
-fn has_unrecorded(records: Option<&BTreeMap<String, ConfigEntryRecord>>, prefix: &str) -> bool {
-    records.is_some_and(|records| {
-        records
-            .iter()
-            .any(|(key, record)| key.starts_with(prefix) && record.emitted_json.is_none())
-    })
+/// Per trust-gated target root: its hook file's display path and handler positions.
+type TrustSnapshots = BTreeMap<String, (String, crate::target::hook_file::TrustPositions)>;
+
+/// The handler positions of each managed target whose harness gates hooks on trust.
+fn trust_snapshots(ctx: &MarsContext, target_roots: &[String]) -> TrustSnapshots {
+    target_roots
+        .iter()
+        .filter_map(|root| {
+            let target = mars_schema::hooks::targets::target(root)?;
+            let file = target.merge_file().filter(|m| m.trust_gated)?.file;
+            let positions = crate::target::hook_file::trust_positions(
+                &ctx.project_root.join(root).join(file),
+                |event| target.reads(event),
+            );
+            Some((root.clone(), (format!("{root}/{file}"), positions)))
+        })
+        .collect()
+}
+
+/// Say which hooks the harness will skip until the user trusts them again (D10).
+fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut DiagnosticCollector) {
+    for (root, (file, positions)) in after {
+        let Some((_, previous)) = before.get(root) else {
+            continue;
+        };
+        let changed = crate::target::hook_file::untrusted_positions(previous, positions);
+        if changed.is_empty() {
+            continue;
+        }
+        diag.warn(
+            "codex-hooks-need-trust",
+            format!(
+                "`{file}` has {} new or moved hook handler(s) ({}); `{root}` skips them until you review them in its `/hooks` screen",
+                changed.len(),
+                changed.join(", ")
+            ),
+        );
+    }
 }
 
 /// Remove the hook entries `operation` names. Shared by sync and `mars unlink`.
 pub(crate) fn remove_hooks(
-    registry: &TargetRegistry,
     operation: RemovalOperation<'_>,
     project_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> RemovalReport {
     let target_root = operation.target_root().to_owned();
-    let Some(adapter) = registry.get(&target_root) else {
-        let (_, removal) = operation.into_parts(project_root);
-        return RemovalReport::failed(
-            format!("no adapter registered for `{target_root}`"),
-            removal.prior_records.clone(),
-        );
+    let (target_dir, removal) = operation.into_parts(project_root);
+    let report = match merge_file(&target_root) {
+        Some(merge) => crate::target::hook_file::remove_recorded(
+            &target_dir.join(merge.file),
+            &removal.prior_records,
+            &target_root,
+            diag,
+        )
+        .map_or_else(
+            |error| RemovalReport::failed(error, removal.prior_records.clone()),
+            |()| RemovalReport::confirmed(),
+        ),
+        // A file target records no merge entries.
+        None => RemovalReport::confirmed(),
     };
-    adapter
-        .remove_owned_hook_entries(operation, project_root, diag)
-        .context(format!(
-            "failed to remove prior hook entries from `{target_root}`"
-        ))
+    report.context(format!(
+        "failed to remove prior hook entries from `{target_root}`"
+    ))
 }
 
 /// Report the stale entries a sync or `mars unlink` took off the books: the
@@ -706,13 +554,13 @@ pub(crate) fn reconcile_mcp(
 #[allow(clippy::too_many_arguments)]
 fn apply_replacement_writes(
     ctx: &MarsContext,
-    registry: &crate::target::TargetRegistry,
     old_lock: &crate::lock::LockFile,
     ownership_lock: &mut crate::lock::LockFile,
     retention: crate::surface_ownership::retention::RetentionPlan,
     pending_hooks: BTreeMap<String, Vec<HookEntry>>,
     pending_file_writes: BTreeMap<String, Vec<(String, String, String)>>,
     desired_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    unchanged_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     force: bool,
     diag: &mut DiagnosticCollector,
     mut emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
@@ -720,8 +568,7 @@ fn apply_replacement_writes(
 ) -> ConfigEntryCompilation {
     // Write desired hooks only after every removal has completed. Removal
     // cleared the target's recorded hooks, so a failed write leaves no record.
-    let mut written_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
-        BTreeMap::new();
+    let mut written_records = unchanged_records;
     for (target_root, hooks) in pending_hooks {
         let Some(permit) = retention.write_permit(&target_root) else {
             diag.info(
@@ -731,11 +578,14 @@ fn apply_replacement_writes(
             continue;
         };
         let write = permit.bind_hooks(hooks);
-        let Some(adapter) = registry.get(write.target_root()) else {
+        let keys: Vec<String> = write.hooks().iter().map(HookEntry::key).collect();
+        let Some(merge) = merge_file(write.target_root()) else {
             continue;
         };
-        let keys: Vec<String> = write.hooks().iter().map(HookEntry::key).collect();
-        if let Err(error) = adapter.write_hook_entries(write, &ctx.project_root) {
+        let (target_dir, hooks) = write.into_parts(&ctx.project_root);
+        if let Err(error) =
+            crate::target::hook_file::write(&target_dir.join(merge.file), &hooks, merge.top_level)
+        {
             diag.warn(
                 "config-entry-write",
                 format!("failed to write config entries to `{target_root}`: {error}"),
@@ -755,6 +605,7 @@ fn apply_replacement_writes(
             );
     }
 
+    let mut rewritten_outputs = Vec::new();
     for (target_root, files) in pending_file_writes {
         let Some(permit) = retention.write_permit(&target_root) else {
             diag.info(
@@ -772,6 +623,7 @@ fn apply_replacement_writes(
             force,
             diag,
             &mut emitted_outputs,
+            &mut rewritten_outputs,
         );
     }
 
@@ -785,123 +637,8 @@ fn apply_replacement_writes(
     ConfigEntryCompilation {
         records,
         emitted_outputs,
+        rewritten_outputs,
         removed_outputs,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn write_file_hook_outputs(
-    write: crate::surface_ownership::retention::FileHookWrite<'_>,
-    ctx: &MarsContext,
-    old_lock: &crate::lock::LockFile,
-    ownership_lock: &mut crate::lock::LockFile,
-    force: bool,
-    diag: &mut DiagnosticCollector,
-    emitted_outputs: &mut Vec<crate::lock::CompiledNativeOutput>,
-) {
-    let target_root = write.target_root().to_owned();
-    let (target_dir, files) = write.into_parts(&ctx.project_root);
-    for (owner_canonical_dest_path, relative, content) in files {
-        let path = target_dir.join(&relative);
-        let dest_exists = crate::surface_ownership::target_dest_exists(&path);
-        match crate::surface_ownership::copy_decision(
-            old_lock,
-            &target_root,
-            &relative,
-            dest_exists,
-            force,
-        ) {
-            crate::surface_ownership::SurfaceCopyDecision::SkipWithoutInstalledClaim => {
-                crate::surface_ownership::warn_no_installed_claim_collision(
-                    &target_root,
-                    &relative,
-                    crate::surface_ownership::CollisionAdoptHint::SyncForce,
-                    diag,
-                );
-                continue;
-            }
-            crate::surface_ownership::SurfaceCopyDecision::Proceed => {
-                if dest_exists
-                    && force
-                    && old_lock
-                        .installed_checksum_for_output(&target_root, &relative)
-                        .is_none()
-                {
-                    crate::surface_ownership::warn_no_installed_claim_adopted(
-                        &target_root,
-                        &relative,
-                        crate::surface_ownership::CollisionAdoptHint::SyncForce,
-                        diag,
-                    );
-                }
-            }
-        }
-        if dest_exists && !force {
-            let previous = old_lock.items.values().find_map(|item| {
-                item.outputs.iter().find(|output| {
-                    output.target_root == target_root
-                        && crate::target::dest_paths_equivalent(
-                            output.dest_path.as_str(),
-                            &relative,
-                        )
-                })
-            });
-            let diverged = previous.is_some_and(|previous| {
-                std::fs::read(&path)
-                    .map(|bytes| crate::hash::hash_bytes(&bytes))
-                    .is_ok_and(|actual| {
-                        previous
-                            .installed_checksum()
-                            .is_none_or(|checksum| actual != checksum.as_ref())
-                    })
-            });
-            if diverged {
-                diag.warn(
-                    "target-divergent",
-                    format!(
-                        "target `{target_root}` item `{relative}` was edited after Mars installed it \
-                         (preserved local content; run `{}` to reset)",
-                        crate::types::managed_cmd("mars sync --force")
-                    ),
-                );
-                continue;
-            }
-        }
-        let output = crate::lock::CompiledNativeOutput {
-            owner_canonical_dest_path,
-            target_root: target_root.clone(),
-            dest_path: relative,
-            installed_checksum: crate::types::ContentHash::from(crate::hash::hash_bytes(
-                content.as_bytes(),
-            )),
-        };
-        if let Err(error) = crate::lock::apply_compiled_native_outputs(
-            ownership_lock,
-            std::slice::from_ref(&output),
-        ) {
-            diag.warn(
-                "config-entry-write",
-                format!(
-                    "not writing file hook `{}` because its ownership cannot be recorded: {error}",
-                    path.display()
-                ),
-            );
-            continue;
-        }
-        let result = (|| -> Result<(), crate::error::MarsError> {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            crate::fs::atomic_write(&path, content.as_bytes())
-        })();
-        if let Err(error) = result {
-            diag.warn(
-                "config-entry-write",
-                format!("failed to write file hook `{}`: {error}", path.display()),
-            );
-            continue;
-        }
-        emitted_outputs.push(output);
     }
 }
 
@@ -939,6 +676,12 @@ fn emits_installed_copy(
         );
     }
     installed
+}
+
+/// The hook config file a merge target appends entries to; `None` for a file target and for
+/// a root with no hook mechanism.
+fn merge_file(target_root: &str) -> Option<&'static mars_schema::hooks::targets::MergeFile> {
+    mars_schema::hooks::targets::target(target_root)?.merge_file()
 }
 
 /// The path target sync installs `dir`'s copy at.

@@ -216,6 +216,7 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: None,
                 source_checksum: "sha256:src".into(),
+                source_path: None,
                 outputs,
             },
         );
@@ -248,6 +249,7 @@ mod tests {
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:src".into(),
+                    source_path: None,
                     outputs: vec![
                         OutputRecord::installed(
                             ".mars".to_string(),
@@ -373,6 +375,7 @@ mod tests {
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:src".into(),
+                    source_path: None,
                     outputs: vec![
                         OutputRecord::installed(
                             ".mars".to_string(),

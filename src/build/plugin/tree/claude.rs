@@ -28,6 +28,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     agents: Some(apply_agent_policy),
     native_model_aliases: NATIVE_MODEL_ALIASES,
     plugin_root: PluginRoot::Token("${CLAUDE_PLUGIN_ROOT}"),
+    shared_hook_profile: Some(&mars_schema::hooks::targets::PLUGIN_CLAUDE_TREE),
     check_hook,
     write_config: write_config_entries,
     finish: Finish::StandardManifest {
@@ -50,7 +51,7 @@ fn write_config_entries(
         write_plugin_mcp_json(&root.join(".mcp.json"), mcp, harnesses, diag)?;
     }
     if !hooks.is_empty() {
-        crate::target::claude::write_hooks_settings(&root.join("hooks/hooks.json"), hooks)?;
+        crate::target::hook_file::write(&root.join("hooks/hooks.json"), hooks, &[])?;
     }
     Ok(())
 }

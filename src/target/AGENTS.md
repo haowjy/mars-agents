@@ -8,7 +8,7 @@ Target-specific lowering for `.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`,
 TargetRegistry → TargetAdapter trait → per-target implementations
     ↓
 default_dest_path()  → where items go
-write_hook_entries(ConfigWrite, …) → hook config files; MCP goes through mcp_file::reconcile
+mcp_file()          → MCP goes through mcp_file::reconcile; hook files are `mars_schema::hooks::targets`, not an adapter method
 skill_variant_key()  → which skill variant directory to use
 ```
 
@@ -33,13 +33,7 @@ The adapter boundary isolates all per-target branching here, keeping shared comp
 | `skill_variant_key()` | Which `variants/<key>/` directory this target consumes |
 | `default_dest_path(kind, name)` | Where an item goes; `None` if target rejects the kind |
 | `mcp_file()` | The adapter's one MCP spec (below); `None` when the target takes no MCP servers |
-| `write_hook_entries(write, project_root)` | Hook config file writes; MCP is reconciled by `mcp_file::reconcile` |
-| `hook_fragment_mode()` | Declares `MergeJson { events }` or `File` fragment placement |
-| `hook_file_dest_path()` | Managed relative path for an opaque file fragment |
-| `hook_fragment_problem(content)` | Names a contract violation in a file-mode fragment; callers build the warning |
-| `hook_config_file_names()` | Config files mutated by merge-mode hook entries |
-| `legacy_hook_config_file_names()` | Legacy hook files for old lock records (remove in 0.25, see `.context/TODO`) |
-| `remove_owned_hook_entries(token, records, target_dir)` | Structural removal: find lock-recorded entries by JSON equality and delete them |
+| (hooks) | No adapter method. The merge file, its top-level keys and Codex's trust gate are the target's `Placement::Merge` row in `mars_schema::hooks::targets`; `hook_file::write` / `remove_recorded` / `holds_recorded` / `trust_positions` edit and read a merge file |
 
 ## MCP Spec (`mcp_file.rs`)
 
@@ -51,22 +45,20 @@ lossiness. Preflight, the reconcile and the lock record all derive from it
 adapter that needs a different file or shape changes its spec, nothing else.
 
 - **One call per target**: `mcp_file::reconcile(file, project_root, target, previous, desired,
-  force, diag)` loads the file (and the legacy file, only if a record lacks `emitted_json`)
-  once, removes stale entries the lock still owns, writes the desired ones, saves each file at
+  force, diag)` loads the file once, removes stale entries the lock still owns, writes the desired ones, saves each file at
   most once, and returns exactly the records the lock should hold. On failure it returns
   `previous`'s MCP records so the next sync retries. `mars unlink` calls it with `desired`
   empty. Servers are rendered once, by `render_all`, where they are lowered.
-- **Ownership**: one predicate, `mcp_file::ownership(record, current)` → `Unowned | Legacy |
-  Owned | Edited`. `Owned` is replaced in place (keeping the file's key order) or removed;
-  `Edited` is kept with a warning (`--force` replaces it on write); `Unowned` and `Legacy`
-  (a record that never recorded content) are kept on write with a warning, and `--force` adopts
-  them.
-- **Legacy**: a record with no `emitted_json` predates the spec. It is removed by name from
-  `legacy` (the adapter's earlier file, or the same file), warning `mcp-legacy-replaced` when
-  the entry differs from what mars now writes. Any file this reconcile changed is deleted if it
-  ends up empty (`{}`, an empty section, a 0-byte TOML); a file it did not change never is. An adapter with no `legacy` drops such a record and touches no file, so
-  deleting a `legacy` spec later can never reach a user entry by name. Remove the `legacy`
-  specs in 0.25 (`.context/TODO`).
+- **Ownership**: one predicate, `mcp_file::ownership(record, current)` → `Unowned | Owned |
+  Edited`. `Owned` is replaced in place (keeping the file's key order) or removed; `Edited` is
+  kept with a warning (`--force` replaces it on write); `Unowned` is kept on write with a
+  warning, and `--force` adopts it.
+- **Empty file**: mars records no ownership of the file itself, only of entries. A file is
+  deleted when this reconcile changed it and it then holds nothing but an empty section (`{}`,
+  an empty section, a 0-byte TOML); a file it did not change never is, since it may be the
+  user's, empty on purpose.
+- **Old locks**: a record without `emitted_json` (mars 0.23 and earlier) never reaches here;
+  the lock drops it on load, so mars never removes an entry by name alone.
 - The `mcpServers` family (Claude, Pi, Cursor, and the Claude/Codex plugin tree) has one codec,
   `mars_schema::mcp_servers`: `render(transport, Flavor)` and the parse the plugin import uses.
   Claude and Pi share `claude_render` (`${VAR}`, remote typed `http`); Cursor passes

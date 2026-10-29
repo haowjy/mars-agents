@@ -38,22 +38,28 @@ pub struct LockFile {
 }
 
 /// Custom `Deserialize` for `LockFile`, delegated to the current wire type.
-/// Version validation is performed by [`load`]; direct deserialization expects the
-/// current schema shape.
+/// Version validation and the warnings about dropped records belong to
+/// [`load_with_diagnostics`]; direct deserialization expects the current schema shape.
 impl<'de> serde::Deserialize<'de> for LockFile {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let wire = LockFileWire::deserialize(deserializer)?;
-        Ok(LockFile {
-            version: wire.version,
-            dependencies: wire.dependencies,
-            items: wire.items,
-            config_entries: wire.config_entries,
-            dependency_model_aliases: wire.dependency_model_aliases,
-        })
+        Ok(LockFile::from_wire(wire).0)
     }
 }
 
 impl LockFile {
+    fn from_wire(wire: LockFileWire) -> (Self, Vec<(String, String)>) {
+        let (config_entries, orphaned) = split_unrecorded(wire.config_entries);
+        let lock = LockFile {
+            version: wire.version,
+            dependencies: wire.dependencies,
+            items: wire.items,
+            config_entries,
+            dependency_model_aliases: wire.dependency_model_aliases,
+        };
+        (lock, orphaned)
+    }
+
     /// Create a new empty lock file with the current schema version.
     pub fn empty() -> Self {
         LockFile {
@@ -314,6 +320,12 @@ pub struct LockedItemV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     pub source_checksum: ContentHash,
+    /// A hook's source directory relative to its package root (`hooks/guard`), always with
+    /// `/`. It finds the hook's last install when its `hook.toml` no longer reads and its
+    /// name with it. Absent on other kinds and on locks written before Mars 0.25, which
+    /// older Mars also ignores and drops on rewrite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
     /// Per-output records: one per target root this item was materialized to.
     pub outputs: Vec<OutputRecord>,
 }
@@ -386,9 +398,7 @@ pub struct ConfigEntryRecord {
     /// Canonical JSON for the exact post-substitution entry the target wrote:
     /// a hook's entry array, or an MCP server's entry. An entry on disk that
     /// still equals it is mars's; one that differs was edited and is left alone.
-    /// A record with none was written by a release before content ownership.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub emitted_json: Option<String>,
+    pub emitted_json: String,
 }
 
 /// Flat view of a single installed item — used by diff, plan, and apply stages.
@@ -452,44 +462,27 @@ struct LockFileWire {
     #[serde(default)]
     items: IndexMap<String, LockedItemV2>,
     #[serde(default)]
-    config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecordWire>>,
     #[serde(default)]
     dependency_model_aliases: IndexMap<String, ModelAlias>,
 }
 
-/// Version 2 output records did not distinguish installed content from retry tombstones.
-#[derive(Deserialize)]
-struct OutputRecordV2 {
-    target_root: String,
-    dest_path: DestPath,
-    installed_checksum: ContentHash,
-}
-
-#[derive(Deserialize)]
-struct LockedItemV2Wire {
-    source: SourceName,
-    #[serde(with = "lock_kind")]
-    kind: ItemKind,
-    #[serde(default)]
-    version: Option<String>,
-    source_checksum: ContentHash,
-    outputs: Vec<OutputRecordV2>,
-}
-
-/// One-release v2 wire format. Remove in 0.25, alongside the #130 legacy-hook
-/// sweeps that depend on these records.
+/// The parts of a v2 lock (mars 0.11 and earlier) that still mean something: the
+/// resolved dependencies and their aliases. Everything else is dropped on load.
 #[derive(Deserialize)]
 struct LockFileV2Wire {
-    #[allow(dead_code)]
-    version: u32,
     #[serde(default)]
     dependencies: IndexMap<SourceName, LockedSource>,
     #[serde(default)]
-    items: IndexMap<String, LockedItemV2Wire>,
-    #[serde(default)]
-    config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
-    #[serde(default)]
     dependency_model_aliases: IndexMap<String, ModelAlias>,
+}
+
+/// A config-entry record as an older mars may have written it, `emitted_json` included or not.
+#[derive(Deserialize)]
+#[serde(rename = "config entry record")]
+struct ConfigEntryRecordWire {
+    #[serde(default)]
+    emitted_json: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -499,8 +492,8 @@ struct LockFileV2Wire {
 /// Load the lock file from the given root directory.
 ///
 /// Returns an empty current-version lock if the file is absent.
-/// Version 2 is promoted in memory for one release; other older schemas fail
-/// with actionable re-sync guidance.
+/// A version 2 lock keeps only its dependencies and aliases; other older schemas
+/// fail with actionable re-sync guidance.
 pub fn load(root: &Path) -> Result<LockFile, MarsError> {
     let (lock, _) = load_with_diagnostics(root)?;
     Ok(lock)
@@ -547,9 +540,8 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
 
 /// Load the lock file and return any diagnostics produced while reading it.
 ///
-/// Version 2 locks are promoted in memory so one-release cleanup bridges can
-/// inspect their ownership records. Other version and schema failures are
-/// returned as actionable lock errors.
+/// Version 2 locks are reduced to their dependencies and aliases, with a warning.
+/// Other version and schema failures are returned as actionable lock errors.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let path = root.join(LOCK_FILE);
     let content = match std::fs::read_to_string(&path) {
@@ -577,27 +569,21 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
                     path.display()
                 ),
             })?;
-            Ok((
-                LockFile {
-                    version: wire.version,
-                    dependencies: wire.dependencies,
-                    items: wire.items,
-                    config_entries: wire.config_entries,
-                    dependency_model_aliases: wire.dependency_model_aliases,
-                },
-                Vec::new(),
-            ))
+            let (lock, orphaned) = LockFile::from_wire(wire);
+            Ok((lock, orphaned_entries_warning(&orphaned).into_iter().collect()))
         }
         2 => {
-            let wire: LockFileV2Wire =
-                value.try_into().map_err(|error| LockError::Corrupt {
-                    message: format!("failed to parse {} lock version 2: {error}", path.display()),
-                })?;
-            Ok((promote_v2_lock(root, wire), Vec::new()))
+            let wire: LockFileV2Wire = value.try_into().map_err(|error| LockError::Corrupt {
+                message: format!("failed to parse {} lock version 2: {error}", path.display()),
+            })?;
+            let mut lock = LockFile::empty();
+            lock.dependencies = wire.dependencies;
+            lock.dependency_model_aliases = wire.dependency_model_aliases;
+            Ok((lock, vec![v2_lock_dropped_warning()]))
         }
         older if older < i64::from(LOCK_VERSION) => Err(LockError::Corrupt {
             message: format!(
-                "{} uses unsupported lock version {older}; remove it and run `{}` (only version 2 can be promoted to version {LOCK_VERSION})",
+                "{} uses unsupported lock version {older}; remove it and run `{}`",
                 path.display(),
                 crate::types::managed_cmd("mars sync")
             ),
@@ -613,57 +599,78 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
     }
 }
 
-/// Cross the untyped v2 output boundary exactly once.
-///
-/// A v2 checksum could describe either installed content or a retry tombstone left
-/// after failed removal. The output's actual disk shape selects the canonical file
-/// or directory hash. Only matching regular content is promoted as installed;
-/// every other path retains deletion authority without asserting ghost content.
-fn promote_v2_lock(root: &Path, wire: LockFileV2Wire) -> LockFile {
-    let items = wire
-        .items
-        .into_iter()
-        .map(|(key, item)| {
-            let outputs = item
-                .outputs
-                .into_iter()
-                .map(|output| {
-                    let path = root
-                        .join(&output.target_root)
-                        .join(output.dest_path.as_str());
-                    let matches_disk = regular_output_checksum(&path)
-                        .is_some_and(|checksum| checksum == output.installed_checksum.as_ref());
-                    if matches_disk {
-                        OutputRecord::installed(
-                            output.target_root,
-                            output.dest_path,
-                            output.installed_checksum,
-                        )
-                    } else {
-                        OutputRecord::pending_deletion(output.target_root, output.dest_path)
-                    }
-                })
-                .collect();
-            (
-                key,
-                LockedItemV2 {
-                    source: item.source,
-                    kind: item.kind,
-                    version: item.version,
-                    source_checksum: item.source_checksum,
-                    outputs,
-                },
-            )
-        })
-        .collect();
+/// Config-entry records by target root and key.
+type ConfigEntries = BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>;
 
-    LockFile {
-        version: LOCK_VERSION,
-        dependencies: wire.dependencies,
-        items,
-        config_entries: wire.config_entries,
-        dependency_model_aliases: wire.dependency_model_aliases,
+/// Config-entry records with their `emitted_json`; the records without one are
+/// returned apart, as `(target, key)`.
+///
+/// Mars 0.23 and earlier recorded MCP servers by name alone. Without the entry's
+/// content mars cannot tell its own write from the user's edit, so it drops the record
+/// rather than remove anything by name.
+fn split_unrecorded(
+    wire: BTreeMap<String, BTreeMap<String, ConfigEntryRecordWire>>,
+) -> (ConfigEntries, Vec<(String, String)>) {
+    let mut kept = ConfigEntries::new();
+    let mut dropped = Vec::new();
+    for (target, records) in wire {
+        let target_kept = kept.entry(target.clone()).or_default();
+        for (key, record) in records {
+            match record.emitted_json {
+                Some(emitted_json) => {
+                    target_kept.insert(key, ConfigEntryRecord { emitted_json });
+                }
+                None => dropped.push((target.clone(), key)),
+            }
+        }
     }
+    kept.retain(|_, records| !records.is_empty());
+    (kept, dropped)
+}
+
+fn lock_warning(code: &'static str, message: impl Into<String>) -> Diagnostic {
+    Diagnostic {
+        level: crate::diagnostic::DiagnosticLevel::Warning,
+        code: code.into(),
+        message: message.into(),
+        context: None,
+        category: None,
+    }
+}
+
+fn orphaned_entries_warning(orphaned: &[(String, String)]) -> Option<Diagnostic> {
+    if orphaned.is_empty() {
+        return None;
+    }
+    let list = orphaned
+        .iter()
+        .map(|(target, key)| format!("`{key}` in `{target}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(lock_warning(
+        "lock-config-entries-dropped",
+        format!(
+            "mars.lock holds config entries written by mars 0.23 or earlier that this mars cannot recognize: {list}. \
+             Mars forgot them and removed nothing. If one is unwanted, delete it by hand from the target's MCP or hook \
+             config file (older mars wrote MCP servers to `.claude/.mcp.json`, `.codex/codex_mcp.json` and `.cursor/mcp.json`, \
+             hooks to `.codex/codex_hooks.json` and `.opencode/opencode.json`); mars 0.24 would have cleaned them up"
+        ),
+    ))
+}
+
+fn v2_lock_dropped_warning() -> Diagnostic {
+    lock_warning(
+        "lock-v2-dropped",
+        format!(
+            "mars.lock is version 2, written by mars 0.11 or earlier. This mars kept its dependency versions \
+             but forgot which files and config entries it installed, and removed nothing. Installed files now \
+             count as local content: sync keeps them with a warning, and `{}` adopts them, \
+             overwriting any local edits at those paths. Files of items no longer wanted, and MCP or hook \
+             entries in target config files, stay behind; delete them by hand. Syncing once with any mars \
+             from 0.12 to 0.24 first would have migrated the lock",
+            crate::types::managed_cmd("mars sync --force")
+        ),
+    )
 }
 
 /// Hash regular installed content without following root or nested symlinks.
@@ -817,6 +824,7 @@ pub fn build(
                         kind: old_item.kind,
                         version: old_item.version.clone(),
                         source_checksum: old_item.source_checksum.clone(),
+                        source_path: old_item.source_path.clone(),
                         outputs: outputs_with_carried_non_canonical(
                             Some(old_item),
                             OutputRecord::installed(
@@ -882,6 +890,7 @@ pub fn build(
                         kind: outcome.item_id.kind,
                         version,
                         source_checksum,
+                        source_path: None,
                         outputs,
                     },
                 );
@@ -1022,6 +1031,7 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: flat.kind,
                         version: flat.version,
                         source_checksum: flat.source_checksum,
+                        source_path: None,
                         outputs: vec![OutputRecord::installed(
                             CANONICAL_TARGET_ROOT.to_string(),
                             flat.dest_path,
@@ -1043,6 +1053,7 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: flat.kind,
                         version: flat.version,
                         source_checksum: flat.source_checksum,
+                        source_path: None,
                         outputs: vec![OutputRecord::installed(
                             CANONICAL_TARGET_ROOT.to_string(),
                             flat.dest_path,
@@ -1107,6 +1118,7 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: outcome.item_id.kind,
                         version: None,
                         source_checksum: source_checksum.clone(),
+                        source_path: None,
                         outputs,
                     },
                 );
@@ -1250,6 +1262,7 @@ pub fn retain_unremoved_noncanonical_outputs(
                 kind: old_item.kind,
                 version: old_item.version.clone(),
                 source_checksum: old_item.source_checksum.clone(),
+                source_path: old_item.source_path.clone(),
                 // A retry tombstone may carry only unresolved noncanonical outputs.
                 // It must never resurrect an old canonical output: only the current
                 // apply pass can grant canonical ownership and deletion authority.
@@ -1459,6 +1472,7 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:aaa".into(),
+                source_path: None,
                 outputs: vec![OutputRecord::installed(
                     ".mars".to_string(),
                     "agents/coder.md".into(),
@@ -1473,6 +1487,7 @@ mod tests {
                 kind: ItemKind::Skill,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:ccc".into(),
+                source_path: None,
                 outputs: vec![OutputRecord::installed(
                     ".mars".to_string(),
                     "skills/review".into(),
@@ -1498,79 +1513,15 @@ mod tests {
         let error = load(dir.path()).unwrap_err().to_string();
 
         assert!(error.contains("unsupported lock version 1"));
-        assert!(error.contains("only version 2 can be promoted"));
         assert!(error.contains(&format!(
             "remove it and run `{}`",
             crate::types::managed_cmd("mars sync")
         )));
     }
 
-    #[test]
-    fn v2_output_matching_regular_file_promotes_to_installed() {
-        let dir = TempDir::new().unwrap();
-        let output = dir.path().join(".mars/agents/coder.md");
-        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
-        std::fs::write(&output, "managed").unwrap();
-        let checksum = crate::hash::hash_bytes(b"managed");
-        std::fs::write(
-            dir.path().join("mars.lock"),
-            format!(
-                r#"
-version = 2
-
-[items."agent/coder"]
-source = "_self"
-kind = "agent"
-source_checksum = "{checksum}"
-
-[[items."agent/coder".outputs]]
-target_root = ".mars"
-dest_path = "agents/coder.md"
-installed_checksum = "{checksum}"
-"#
-            ),
-        )
-        .unwrap();
-
-        let lock = load(dir.path()).unwrap();
-        let output = &lock.items["agent/coder"].outputs[0];
-
-        assert_eq!(lock.version, LOCK_VERSION);
-        assert!(matches!(output.state, OutputState::Installed { .. }));
-    }
-
-    #[test]
-    fn v2_output_absent_on_disk_promotes_to_pending_deletion() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.lock"),
-            r#"
-version = 2
-
-[items."hook/audit"]
-source = "_self"
-kind = "hook"
-source_checksum = "sha256:source"
-
-[[items."hook/audit".outputs]]
-target_root = ".opencode"
-dest_path = "plugins/mars-audit.ts"
-installed_checksum = "sha256:old"
-"#,
-        )
-        .unwrap();
-
-        let lock = load(dir.path()).unwrap();
-
-        assert!(matches!(
-            lock.items["hook/audit"].outputs[0].state,
-            OutputState::PendingDeletion
-        ));
-    }
-
     #[cfg(unix)]
     #[test]
-    fn v2_directory_output_with_nested_dangling_symlink_has_no_checksum() {
+    fn directory_output_with_nested_dangling_symlink_has_no_checksum() {
         use std::os::unix::fs::symlink;
 
         let dir = TempDir::new().unwrap();
@@ -1584,7 +1535,7 @@ installed_checksum = "sha256:old"
 
     #[cfg(unix)]
     #[test]
-    fn v2_directory_output_with_nested_directory_symlink_has_no_checksum() {
+    fn directory_output_with_nested_directory_symlink_has_no_checksum() {
         use std::os::unix::fs::symlink;
 
         let dir = TempDir::new().unwrap();
@@ -1601,7 +1552,7 @@ installed_checksum = "sha256:old"
 
     #[cfg(unix)]
     #[test]
-    fn v2_directory_output_with_nested_fifo_returns_without_opening_it() {
+    fn directory_output_with_nested_fifo_returns_without_opening_it() {
         let dir = TempDir::new().unwrap();
         let output = dir.path().join("skill");
         std::fs::create_dir(&output).unwrap();
@@ -1621,93 +1572,6 @@ installed_checksum = "sha256:old"
     }
 
     #[cfg(unix)]
-    #[test]
-    fn v2_promotion_classifies_outputs_by_disk_shape_and_checksum() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
-
-        let dir = TempDir::new().unwrap();
-        let root = dir.path();
-        let outputs = root.join(".mars/outputs");
-        std::fs::create_dir_all(&outputs).unwrap();
-
-        std::fs::write(outputs.join("file-match"), "managed").unwrap();
-        std::fs::write(outputs.join("file-mismatch"), "changed").unwrap();
-        std::fs::create_dir(outputs.join("dir-match")).unwrap();
-        std::fs::write(outputs.join("dir-match/SKILL.md"), "# Managed").unwrap();
-        std::fs::create_dir(outputs.join("dir-mismatch")).unwrap();
-        std::fs::write(outputs.join("dir-mismatch/SKILL.md"), "# Changed").unwrap();
-        std::fs::write(outputs.join("symlink-target"), "managed").unwrap();
-        symlink("symlink-target", outputs.join("symlink")).unwrap();
-        std::fs::write(outputs.join("unreadable"), "managed").unwrap();
-        std::fs::set_permissions(
-            outputs.join("unreadable"),
-            std::fs::Permissions::from_mode(0o000),
-        )
-        .unwrap();
-
-        let file_checksum = crate::hash::hash_bytes(b"managed");
-        let directory_checksum =
-            crate::hash::compute_hash(&outputs.join("dir-match"), ItemKind::Skill).unwrap();
-        let cases = [
-            ("file-match", &file_checksum),
-            ("file-mismatch", &file_checksum),
-            ("dir-match", &directory_checksum),
-            ("dir-mismatch", &directory_checksum),
-            ("absent", &file_checksum),
-            ("symlink", &file_checksum),
-            ("unreadable", &file_checksum),
-        ];
-        let mut lock = String::from("version = 2\n");
-        for (name, checksum) in cases {
-            lock.push_str(&format!(
-                r#"
-[items."agent/{name}"]
-source = "_self"
-kind = "agent"
-source_checksum = "{checksum}"
-
-[[items."agent/{name}".outputs]]
-target_root = ".mars"
-dest_path = "outputs/{name}"
-installed_checksum = "{checksum}"
-"#
-            ));
-        }
-        std::fs::write(root.join("mars.lock"), lock).unwrap();
-
-        let promoted = load(root).unwrap();
-        std::fs::set_permissions(
-            outputs.join("unreadable"),
-            std::fs::Permissions::from_mode(0o600),
-        )
-        .unwrap();
-
-        for name in ["file-match", "dir-match"] {
-            assert!(
-                matches!(
-                    promoted.items[&format!("agent/{name}")].outputs[0].state,
-                    OutputState::Installed { .. }
-                ),
-                "{name} should retain installed-content authority"
-            );
-        }
-        for name in [
-            "file-mismatch",
-            "dir-mismatch",
-            "absent",
-            "symlink",
-            "unreadable",
-        ] {
-            assert!(
-                matches!(
-                    promoted.items[&format!("agent/{name}")].outputs[0].state,
-                    OutputState::PendingDeletion
-                ),
-                "{name} should retain deletion authority only"
-            );
-        }
-    }
-
     #[test]
     fn load_for_runtime_aliases_rejects_legacy_v2_without_dependency_alias_authority() {
         let toml_str = r#"
@@ -1781,7 +1645,9 @@ installed_checksum = "sha256:bbb"
             ".claude".to_string(),
             BTreeMap::from([(
                 "mcp:context7".to_string(),
-                ConfigEntryRecord { emitted_json: None },
+                ConfigEntryRecord {
+                    emitted_json: "{}".into(),
+                },
             )]),
         );
 
@@ -1792,7 +1658,7 @@ installed_checksum = "sha256:bbb"
         assert_eq!(lock, reloaded);
         assert_eq!(
             reloaded.config_entries[".claude"]["mcp:context7"].emitted_json,
-            None
+            "{}"
         );
     }
 
@@ -1896,6 +1762,7 @@ installed_checksum = "sha256:222"
             kind: ItemKind::Skill,
             version: None,
             source_checksum: "sha256:aaa".into(),
+            source_path: None,
             outputs: vec![OutputRecord::installed(
                 ".mars".to_string(),
                 "skills/review".into(),
@@ -2049,6 +1916,7 @@ installed_checksum = "sha256:222"
                 kind: ItemKind::Agent,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:alias-src".into(),
+                source_path: None,
                 outputs: vec![OutputRecord::installed(
                     ".mars".to_string(),
                     "agents/on-disk-stem.md".into(),
@@ -2153,6 +2021,7 @@ installed_checksum = "sha256:222"
                         kind: ItemKind::Agent,
                         version: None,
                         source_checksum: "sha256:coder-src".into(),
+                        source_path: None,
                         outputs: vec![
                             OutputRecord::installed(
                                 ".mars".to_string(),
@@ -2174,6 +2043,7 @@ installed_checksum = "sha256:222"
                         kind: ItemKind::Skill,
                         version: None,
                         source_checksum: "sha256:review-src".into(),
+                        source_path: None,
                         outputs: vec![
                             OutputRecord::installed(
                                 ".mars".to_string(),
@@ -2255,6 +2125,7 @@ installed_checksum = "sha256:222"
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:old-src".into(),
+                    source_path: None,
                     outputs: vec![
                         OutputRecord::installed(
                             ".mars".to_string(),
@@ -2329,6 +2200,7 @@ installed_checksum = "sha256:222"
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:old-src".into(),
+                    source_path: None,
                     outputs: vec![
                         OutputRecord::installed(
                             ".mars".to_string(),
@@ -2752,6 +2624,7 @@ installed_checksum = "sha256:222"
                     kind: ItemKind::Skill,
                     version: None,
                     source_checksum: "sha256:self".into(),
+                    source_path: None,
                     outputs: vec![OutputRecord::installed(
                         ".mars".to_string(),
                         DestPath::from("skills/local-skill"),
@@ -2856,6 +2729,7 @@ installed_checksum = "sha256:222"
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "".into(),
+                    source_path: None,
                     outputs: vec![OutputRecord::installed(
                         ".mars".to_string(),
                         DestPath::from("agents/coder.md"),

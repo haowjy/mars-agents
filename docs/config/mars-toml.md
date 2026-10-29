@@ -116,7 +116,7 @@ requires-meridian = ">=0.15.0"                       # optional
 | `authors` | string[] or table[] | no | Package authors as `"Name <email>"` strings or `{ name, email }` tables; the first author supplies generated plugin owner metadata |
 | `homepage` | string | no | Package or project homepage used in generated plugin manifests |
 | `license` | string | no | Package license identifier used in generated plugin manifests |
-| `requires-mars` | semver requirement | no | Mars versions that can consume this package. A schema 1 package needs a floor of `>=0.20.0`, the first Mars that reads schema 1: `mars check` warns when one is missing or lower, and `mars migrate` adds it only when the package has none (an existing requirement is reported, never rewritten) |
+| `requires-mars` | semver requirement | no | Mars versions that can consume this package. A schema 1 package needs a floor of `>=0.20.0`, the first Mars that reads schema 1: `mars check` warns when one is missing or lower, and `mars migrate` adds it only when the package has none (an existing requirement is reported, never rewritten). A package whose hooks use `[hooks]` needs `>=0.25.0`; see [Using `[hooks]` in a package](mcp-and-hooks.md#upgrading) |
 | `requires-meridian` | semver requirement | no | Meridian versions that can consume this package; skipped when Mars runs standalone |
 | `uses-providers` | string[] | no | The hosts the package expects to supply skills at sync time, such as `["meridian"]`; each is a provider name (`[a-z0-9][a-z0-9-]*`). See [Provided skills and `uses-providers`](#provided-skills-and-uses-providers) |
 
@@ -286,7 +286,7 @@ Explicitly unsupported in v1:
 
 #### Filter fields
 
-Filters control which agents and skills from a source are installed. Only one filter mode is active at a time.
+Filters control which agents, skills and hooks from a source are installed; MCP servers are never filtered (see [Dependency filters](mcp-and-hooks.md#declaring-mcp-servers-in-a-package)). Only one filter mode is active at a time.
 
 | Field | Type | Description |
 |---|---|---|

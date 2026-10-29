@@ -46,12 +46,14 @@ Pending deletion is deliberately part of the same type because it changes the
 meaning of an existing path-ownership record. The enum makes a checksum
 unavailable in that state, so disk-content consumers must handle the lifecycle.
 
-For one release, loading a v2 lock crosses its untyped output records into this
-model. The promotion consults disk at that boundary only: a regular file with a
-matching checksum becomes installed; an absent, non-file, unreadable, or
-mismatched path becomes pending deletion. This preserves retry authority without
-asserting ghost content and leaves legacy config-entry records available to the
-#130 hook sweep. Remove the v2 promotion in 0.25, alongside that sweep.
+A v2 lock (Mars 0.11 and earlier) has no such distinction: its checksum may be installed
+content or a retry tombstone, and nothing on disk settles which. Mars 0.25 does not
+promote it. `load_with_diagnostics` keeps its dependencies and aliases, drops the items and
+config entries, and warns once, so the sync never fails; the files it described count as
+local content until `--force` adopts them. Dropping is safe because it can only leave
+files behind, never delete one. A config-entry record without `emitted_json` is dropped
+with a warning for the same reason: with no recorded content mars cannot tell its own
+entry from the user's.
 
 Canonical write intent is separate from installed/deletion authority.
 `sync/recovery.rs` uses a versioned `.mars/pending-canonical.json` journal, bound

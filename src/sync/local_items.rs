@@ -74,6 +74,7 @@ impl LocalMerge<'_> {
         target_state: &mut TargetState,
         diag: &mut DiagnosticCollector,
     ) -> Result<(), MarsError> {
+        target_state.accept_hook(hook);
         for (target_name, dest_path, target_item) in
             target::hook_target_items(hook, &self.local_source_name, managed_targets)?
         {

@@ -68,6 +68,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # `cargo test -p mars-schema` imports the generated hook.ts, which needs Node's type stripping.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Shared preflight
         if: matrix.rust == 'stable'
         run: scripts/preflight.sh full
@@ -100,11 +105,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Build
         run: cargo build
 
       - name: Test
         run: cargo test
+
+      # Root `cargo test` skips the member crates. This one drives the generated OpenCode
+      # TypeScript in the runner's node and Git Bash (block, `if`, timeout kills the tree).
+      - name: Test generated hooks (mars-schema)
+        run: cargo test -p mars-schema
 
       - name: Clippy
         run: cargo clippy -- -D warnings

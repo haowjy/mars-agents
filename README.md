@@ -9,10 +9,10 @@ Mars materializes harness-native artifacts for multiple targets:
 | Target | Status | Notes |
 |---|---|---|
 | `.claude` | First-class | Claude Code agents, skills, MCP, hooks, and settings surfaces. |
-| `.codex` | First-class | Codex project instruction and agent-facing surfaces. |
-| `.opencode` | First-class | OpenCode agent and permission surfaces. |
+| `.codex` | First-class | Codex project instruction and agent-facing surfaces, MCP servers, and hooks. |
+| `.opencode` | First-class | OpenCode agent and permission surfaces, MCP servers, and hooks. |
 | `.cursor` | Unmaintained | Cursor CLI/config support still ships but is no longer tested or extended; it may break without notice. |
-| `.pi` | Future first-class | Meridian-owned Pi flavor and extension surface; under active design/development. |
+| `.pi` | Future first-class | Receives MCP servers and hooks today. The Meridian-owned Pi flavor and extension surface is under active design/development. |
 
 ## Plugin Distribution
 
@@ -32,7 +32,7 @@ where a cell explicitly says docs-only.
 | Tree | claude | claude | claude | cursor | opencode |
 | Skills | supported | supported | supported | supported | supported (registered by `index.mjs`) |
 | Agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning | **impossible**: Codex plugins don't load agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning (same file as Claude) | supported | supported (registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance; `harness-overrides.opencode` keys other than `permission` are dropped with warning) |
-| Hooks | supported for hooks with the `claude` fragment; others dropped with warning | supported for hooks with the `claude` fragment; others dropped with warning (reads the Claude tree's `hooks/hooks.json`) | supported for hooks with the `claude` fragment; others dropped with warning | supported for hooks with the `cursor` fragment; others dropped with warning | supported for hooks with the `opencode` fragment; others dropped with warning (each fragment needs a default `{id, setup}` export) |
+| Hooks | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` fragment; other targets' fragments dropped with warning | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` fragment; other targets' fragments dropped with warning (reads the Claude tree's `hooks/hooks.json`) | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` fragment; other targets' fragments dropped with warning | supported for hooks with the `cursor` fragment; `[hooks]` and others dropped with warning | supported for hooks with the `opencode` fragment; `[hooks]` and others dropped with warning (each fragment needs a default `{id, setup}` export) |
 | MCP | supported | supported (same file as Claude) | supported (same file as Claude) | supported | supported (registered by `index.mjs`) |
 | Bootstrap docs | impossible | impossible | impossible | impossible | impossible |
 
@@ -128,6 +128,7 @@ flowchart TD
     codex[".codex/"]
     cursor[".cursor/"]
     opencode[".opencode/"]
+    pi[".pi/"]
 
     sources --> |mars sync| canonical
     local --> canonical
@@ -141,9 +142,10 @@ flowchart TD
     canonical --> |mars link| codex
     canonical --> |mars link| cursor
     canonical --> |mars link| opencode
+    canonical --> |mars link| pi
 ```
 
-Mars resolves the full dependency graph before touching any files. Writes are atomic. The lock file tracks what mars manages so it never touches your files. Each linked target gets harness-native artifacts — agents, skills, MCP servers, and hooks compiled to match what that tool expects.
+Mars resolves the full dependency graph before touching any files. Writes are atomic. The lock file tracks what mars manages so it never touches your files. Each linked target gets harness-native artifacts — agents, skills, MCP servers, and hooks compiled to match what that tool expects. A package declares a hook once, in Claude's shape, and Mars renders it for Claude, Codex, OpenCode, and Pi; see [Declaring Hooks in a Package](docs/config/mcp-and-hooks.md#declaring-hooks-in-a-package).
 
 Published packages can declare `requires-mars` and `requires-meridian` under
 `[package]`. Mars automatically falls back to the newest compatible package

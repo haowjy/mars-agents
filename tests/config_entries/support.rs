@@ -80,21 +80,6 @@ pub fn configure_file_fragment(project: &assert_fs::fixture::ChildPath, target: 
     );
 }
 
-/// Rewrite a lock produced by the current binary into the released v2 output shape.
-pub fn downgrade_lock_to_v2(project: &assert_fs::fixture::ChildPath) {
-    let lock_path = project.child("mars.lock");
-    let mut lock: Value = toml::from_str(&fs::read_to_string(lock_path.path()).unwrap()).unwrap();
-    lock["version"] = Value::Integer(2);
-    for (_, item) in lock["items"].as_table_mut().unwrap().iter_mut() {
-        for output in item["outputs"].as_array_mut().unwrap() {
-            output.as_table_mut().unwrap().remove("state");
-        }
-    }
-    lock_path
-        .write_str(&toml::to_string(&lock).unwrap())
-        .unwrap();
-}
-
 pub fn write_dependency_hook(
     source: &assert_fs::fixture::ChildPath,
     name: &str,
@@ -170,9 +155,7 @@ fn assert_config_entry_consistency_with_diagnostics(
     for (target, records) in &lock.config_entries {
         for (key, record) in records {
             if key.starts_with("hook:") {
-                let Some(emitted) = &record.emitted_json else {
-                    continue;
-                };
+                let emitted = &record.emitted_json;
                 let event = key
                     .strip_prefix("hook:")
                     .and_then(|rest| rest.split_once(':'))
@@ -231,8 +214,8 @@ fn assert_config_entry_consistency_with_diagnostics(
                     "lock owns `{key}` but {section}.{name} is absent on disk"
                 );
             }
-            // A hook record without emitted_json is the explicit one-release
-            // legacy migration state and cannot be content-matched.
+            // A hook record cannot be content-matched against the file; only MCP
+            // records are checked here.
         }
     }
 

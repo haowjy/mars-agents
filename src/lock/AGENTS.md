@@ -37,14 +37,18 @@ paths match.
 - **Unscoped `dest_path` views are broad views only.** Use them for listing,
   diagnostics, or legacy compatibility, not for deciding whether a concrete
   target path is owned or unchanged.
-- **V2 promotion is the only legacy lifecycle inference seam.** Matching regular
-  files and directory manifests become installed. Absent, mismatched, symlinked,
-  unreadable, or unsupported paths become pending deletion. Remove the promotion
-  in 0.25, together with the #130 legacy-hook sweeps.
+- **State mars cannot interpret is dropped, never inferred.** A v2 lock keeps only its
+  dependencies and aliases, and a config-entry record without `emitted_json` is dropped,
+  each with one load warning; neither fails the sync or deletes anything.
 - **Marketplace plugins extend `LockedSource`, not the version.** `plugin` and `content {url,
   subpath, commit}` are optional and skipped when absent, so locks without plugins read and write
   unchanged at version 3. A plugin dependency's `url`, `version` and `commit` stay the marketplace's
   own; `content` is where the plugin's files came from (see `.context/CONTEXT.md`).
+- **A hook item records `source_path`**, its directory under the package root (`hooks/guard`, `/`
+  separated), optional and skipped when absent so the lock stays version 3. `sync/kept_hooks.rs`
+  finds a kept hook's install by package + path; locks without it fall back to the names the
+  broken `hook.toml` still declares. Older Mars ignores the field and drops it when it rewrites the
+  lock; the next current-Mars sync records it again.
 - **Do not change the lock schema for lookup fixes.** `LockIndex` is the
   ephemeral seam for efficient read shapes over the persisted nested-output schema.
 - **Keep path comparisons separator-tolerant.** `DestPath` uses forward-slash

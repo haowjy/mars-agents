@@ -26,23 +26,6 @@ pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
 
-/// Item names become one directory under a target; reject anything that could
-/// escape it.
-pub(crate) fn validate_path_component(name: &str) -> Result<(), &'static str> {
-    use std::path::Component;
-    if name.is_empty() {
-        return Err("must not be empty");
-    }
-    if name.contains(['/', '\\', '\0']) {
-        return Err("must be a single path component");
-    }
-    let mut components = std::path::Path::new(name).components();
-    match (components.next(), components.next()) {
-        (Some(Component::Normal(_)), None) => Ok(()),
-        _ => Err("must be a single path component"),
-    }
-}
-
 /// Say that an item's `visibility` is not `local` or `exported`; it is read as `local`.
 pub(crate) fn warn_unknown_visibility(
     unknown: &str,
@@ -121,7 +104,8 @@ fn compile_inner(
     }
 
     // Hook schemas and native allowlists are resolved before any mutation.
-    config_entries::preflight_config_entries(ctx, &planned.targeted, diag)?;
+    let rendered_hooks =
+        config_entries::render::preflight_config_entries(ctx, &planned.targeted, diag)?;
 
     if enforce_diagnostic_gate {
         diag.fail_on_errors()?;
@@ -202,12 +186,14 @@ fn compile_inner(
         &synced.applied,
         &mut ownership_lock,
         &synced.target_outcomes,
+        &rendered_hooks,
         request.options.dry_run,
         request.options.force,
         diag,
     );
     synced.config_entries = config_entry_compilation.records;
     synced.config_entry_outputs = config_entry_compilation.emitted_outputs;
+    synced.rewritten_hook_files = config_entry_compilation.rewritten_outputs;
     synced.removed_config_entry_outputs = config_entry_compilation.removed_outputs;
 
     let loaded = &synced.applied.planned.targeted.resolved.loaded;

@@ -1,0 +1,10 @@
+.opencode
+  skip PostCompact: OpenCode reports a finished compaction only on its bus
+  skip SessionEnd: OpenCode reports a deleted session only on its bus
+  skip SessionStart: OpenCode has no per-session start hook (a plugin's setup runs once per project)
+  skip Stop: OpenCode's end of a turn is a bus event that is not awaited
+  answers PreCompact: OpenCode cannot cancel a compaction: the script runs and a block answer is ignored
+  answers UserPromptSubmit: a block answer stops the prompt, but OpenCode shows a generic error instead of the reason
+.pi
+  skip PermissionRequest: Pi has no permission system
+  answers UserPromptSubmit: a block answer stops the prompt, but Pi shows the reason only in its UI: print mode shows nothing

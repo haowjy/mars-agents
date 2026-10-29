@@ -207,7 +207,7 @@ pub(super) fn check_sources(
         }
     }
 
-    for hook in input.target.exported_hooks() {
+    for hook in input.target.accepted_hooks() {
         warn_terms_in_tree(
             &hook.hook_dir,
             &format!("hooks/{}", hook.def.name),
@@ -317,7 +317,7 @@ pub(super) fn write_tree(
             Ok((
                 profile
                     .plugin_root
-                    .resolve(crate::compiler::hooks::HOOK_DIR_TOKEN, &dir.native()),
+                    .resolve(mars_schema::hooks::HOOK_DIR_TOKEN, &dir.native()),
                 hook,
             ))
         })
@@ -343,7 +343,12 @@ pub(super) fn write_tree(
         .get(descriptor.target_dir)
         .expect("compiler harness descriptor names a registered target");
     let mcp_servers = crate::compiler::config_entries::lower_mcp_servers(&mcp);
-    let hook_entries = crate::compiler::config_entries::lower_hook_entries(&hooks, adapter, diag);
+    let hook_entries = crate::compiler::config_entries::render::lower_hook_entries(
+        &hooks,
+        adapter,
+        profile.shared_hook_profile,
+        diag,
+    );
     (profile.write_config)(
         profile,
         root,
@@ -587,21 +592,12 @@ fn other_hook_fragments(
     hook: &crate::compiler::hooks::ParsedHookItem,
     target_dir: &str,
 ) -> Vec<PathBuf> {
-    let current = hook.def.targets[target_dir]
-        .fragment
-        .clone()
-        .unwrap_or_else(|| crate::compiler::hooks::default_fragment_name(target_dir));
+    let current = hook.fragment(target_dir).map(|fragment| &fragment.file);
     hook.def
-        .targets
-        .iter()
-        .filter(|(target, _)| target.as_str() != target_dir)
-        .map(|(target, config)| {
-            config
-                .fragment
-                .clone()
-                .unwrap_or_else(|| crate::compiler::hooks::default_fragment_name(target))
-        })
-        .filter(|fragment| fragment != &current)
+        .fragments()
+        .filter(|(target, _)| *target != target_dir)
+        .map(|(_, fragment)| &fragment.file)
+        .filter(|file| Some(*file) != current)
         .map(PathBuf::from)
         .collect()
 }

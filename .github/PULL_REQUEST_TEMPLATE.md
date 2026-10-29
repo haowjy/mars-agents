@@ -28,7 +28,18 @@
 
 ## Resulting Behavior
 
-<!-- User-facing end state. What can someone do after this merges that they could not do before? Prefer examples/CLI outcomes over implementation details. -->
+<!-- User-facing end state, in one or two sentences. What can someone do after this merges that they could not do before? -->
+
+## End-to-End Walkthrough
+
+<!-- Take a reviewer through the new or changed behavior from the user's side,
+     when there is something to walk through. A UI change gets screenshots or a
+     GIF with numbered steps and the before/after state. A CLI, config, library
+     or docs change gets a numbered text walkthrough: copy-pasteable commands
+     and their real output, or before/after files. Where behavior changed,
+     show the before state on main and the after state on this branch. If
+     nothing is runnable or visible, write "Not applicable" and say what
+     check replaces it. -->
 
 ## Changes
 

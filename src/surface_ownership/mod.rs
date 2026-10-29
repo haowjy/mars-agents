@@ -20,17 +20,12 @@
 //! resemblance without a lock record never establishes ownership.
 //!
 //! Merge-mode hooks are also matched by content: a hook entry is removed only
-//! when its recorded `emitted_json` still matches the entry on disk. The
-//! temporary issue #130 old-lock bridge (Codex and OpenCode only; remove in
-//! 0.25) is narrower: a hook record without `emitted_json` authorizes only the
-//! legacy command-path cleanup associated with that recorded key.
+//! when its recorded `emitted_json` still matches the entry on disk.
 //!
 //! MCP servers are matched by content too: a record's `emitted_json` is the
 //! entry mars wrote, so an entry on disk that still equals it is mars's to
-//! replace or remove, and one that differs was edited and is preserved. A
-//! record without `emitted_json` predates content ownership; it removes by name
-//! from the adapter's legacy file, if it has one (`target::mcp_file::reconcile`,
-//! which owns MCP removal and write in one pass).
+//! replace or remove, and one that differs was edited and is preserved
+//! (`target::mcp_file::reconcile`, which owns MCP removal and write in one pass).
 //!
 //! [`retention`] enforces the other half of the contract for hooks, which are
 //! removed whole before they are rewritten: each removal is a single-use
@@ -155,6 +150,7 @@ mod tests {
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:src".into(),
+                    source_path: None,
                     outputs: vec![OutputRecord::installed(
                         target_root.to_string(),
                         dest_path.into(),

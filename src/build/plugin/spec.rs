@@ -204,6 +204,9 @@ pub(super) struct TreeProfile {
     pub(super) agents: Option<AgentPolicy>,
     pub(super) native_model_aliases: &'static [&'static str],
     pub(super) plugin_root: PluginRoot,
+    /// Set when another harness also reads this tree's hook file: the profile the file is
+    /// rendered under (see `HookDef::plugin_output`).
+    pub(super) shared_hook_profile: Option<&'static mars_schema::hooks::targets::Profile>,
     pub(super) check_hook: HookCheck,
     pub(super) write_config: ConfigWriter,
     pub(super) finish: Finish,

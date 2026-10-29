@@ -25,6 +25,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     agents: None,
     native_model_aliases: &[],
     plugin_root: PluginRoot::Token("${CURSOR_PLUGIN_ROOT}"),
+    shared_hook_profile: None,
     check_hook,
     write_config: write_config_entries,
     finish: Finish::StandardManifest {
@@ -53,7 +54,14 @@ fn write_config_entries(
         )?;
     }
     if !hooks.is_empty() {
-        crate::target::cursor::write_cursor_hooks_json(&root.join("hooks/hooks.json"), hooks)?;
+        crate::target::hook_file::write(
+            &root.join("hooks/hooks.json"),
+            hooks,
+            mars_schema::hooks::targets::target(".cursor")
+                .and_then(|target| target.merge_file())
+                .expect("Cursor merges hooks into a file")
+                .top_level,
+        )?;
     }
     Ok(())
 }

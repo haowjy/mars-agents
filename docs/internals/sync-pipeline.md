@@ -282,21 +282,24 @@ that never names the token has no directory and needs none.
      is emitted.
 6. Order hooks deterministically: package depth → declaration order → `order`
    field → hook name.
-7. Validate each per-target native event against the target adapter's
-   allowlist. Unknown events hard-error unless that target table sets
-   `unchecked = true`; targets without declarative command hooks hard-error.
+7. Render `[hooks]` for each target that can take the hook, skipping targets
+   in `skip-targets`, and validate native fragments. Validation depends on
+   origin: the project's own hooks are strict, a dependency's invalid hook
+   keeps its last good install (`hook-invalid-kept`), and a dependency's
+   unknown event is skipped with a warning. A target that cannot render an
+   event reports `hook-event-skipped`. See
+   [Validation by origin](../config/mcp-and-hooks.md#validation-by-origin).
 8. Lower desired entries and derive native lock keys such as
    `hook:PreToolUse:audit`.
 9. Compare desired entries against the previous lock and remove stale entries
-   before writing replacements. Hook removal is ownership-gated; the same phase
-   performs temporary removal-only residue sweeps (until 0.25) for legacy
-   OpenCode `opencode.json` hooks and Codex `codex_hooks.json` hooks. MCP
+   before writing replacements. Hook removal is ownership-gated. MCP
    servers skip this step: step 10 removes and writes them in one pass.
 10. Write desired entries to target config files: MCP through each adapter's
     `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), reconciled in one
     pass per file (`mcp_file::reconcile`: stale owned entries removed, desired
     ones written, one save), hooks through the adapter (`settings.local.json`,
-    `hooks.json`). A same-named MCP entry the lock does not own is kept.
+    `hooks.json`) and, for OpenCode and Pi, as generated files
+    (`.opencode/plugins/mars-<name>.hooks.ts`, `.pi/extensions/mars-<name>.hooks.ts`). A same-named MCP entry the lock does not own is kept.
     Non-fatal per-target.
 
 In `--diff` (dry run) mode, stale entries are reported as warnings but not

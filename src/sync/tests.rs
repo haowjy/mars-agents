@@ -793,7 +793,7 @@ fn full_pipeline_fresh_sync() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // Build target
-    let (target, renames, _) = target::build_with_collisions_and_diag(
+    let (target, renames, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -851,7 +851,7 @@ fn re_sync_no_changes() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -867,7 +867,7 @@ fn re_sync_no_changes() {
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
     // Second sync with same content
-    let (target2, _, _) = target::build_with_collisions_and_diag(
+    let (target2, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -967,7 +967,7 @@ fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
     let options = SyncOptions::default();
 
     let apply_sync = |graph: &ResolvedGraph, cfg: &EffectiveConfig, lock: &LockFile| {
-        let (target, _, _) = target::build_with_collisions_and_diag(
+        let (target, _, _, _) = target::build_with_collisions_and_diag(
             graph,
             cfg,
             &test_local_source(),
@@ -1061,7 +1061,7 @@ fn validate_skill_refs_ignores_stale_installed_agent_content() {
     .unwrap();
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1086,7 +1086,7 @@ fn validate_skill_refs_warns_for_missing_target_source_ref() {
     );
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1176,7 +1176,7 @@ fn source_update_detects_changes() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1196,7 +1196,7 @@ fn source_update_detects_changes() {
     fs::write(agents_dir.join("coder.md"), "# Version 2").unwrap();
 
     // Rebuild target with updated content
-    let (target2, _, _) = target::build_with_collisions_and_diag(
+    let (target2, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1221,7 +1221,7 @@ fn local_modification_preserved() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1244,7 +1244,7 @@ fn local_modification_preserved() {
     .unwrap();
 
     // Re-sync (source unchanged)
-    let (target2, _, _) = target::build_with_collisions_and_diag(
+    let (target2, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1276,7 +1276,7 @@ fn force_overwrites_local_modifications() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1303,7 +1303,7 @@ fn force_overwrites_local_modifications() {
     fs::write(agents_dir.join("coder.md"), "# Upstream update").unwrap();
 
     // Re-sync with --force
-    let (target2, _, _) = target::build_with_collisions_and_diag(
+    let (target2, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1344,7 +1344,7 @@ fn orphan_removed_when_source_drops_item() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // First sync — install both
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1367,7 +1367,7 @@ fn orphan_removed_when_source_drops_item() {
 
     // Re-sync: the graph is rebuilt because preparation reads the tree once per resolve
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-    let (target2, _, _) = target::build_with_collisions_and_diag(
+    let (target2, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1407,7 +1407,7 @@ fn dry_run_produces_plan_without_changes() {
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1441,7 +1441,7 @@ fn lock_written_after_apply() {
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
     // Full pipeline minus actual sync() (which needs real config files)
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1488,7 +1488,7 @@ fn two_sources_no_collision() {
         ],
     );
 
-    let (target, renames, _) = target::build_with_collisions_and_diag(
+    let (target, renames, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1522,7 +1522,7 @@ fn pipeline_only_skills_filter() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlySkills)]);
 
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1550,7 +1550,7 @@ fn pipeline_only_agents_filter() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
 
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),
@@ -1572,7 +1572,7 @@ fn pipeline_only_agents_no_agents_source() {
     let (graph, config) =
         make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
 
-    let (target, _, _) = target::build_with_collisions_and_diag(
+    let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
         &test_local_source(),

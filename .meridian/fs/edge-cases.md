@@ -68,6 +68,9 @@ Agents and skills are selected by `mars_schema::prepare` (convention scan in `cr
 | `agents/*.md` | `ItemKind::Agent` — non-recursive, `.md` extension required |
 | `skills/*/SKILL.md` | `ItemKind::Skill` — directory must contain `SKILL.md` |
 | Root `SKILL.md` (no agents/ or skills/ found) | Flat skill — entire repo is one skill, `source_path = "."` |
+| `hooks/<name>/hook.toml` | `ItemKind::Hook` — the directory is the item (`discover_binary_owned_items`) |
+| `mcp/<name>/mcp.toml` | `ItemKind::McpServer` — found by `compiler::mcp::discover_mcp_items` during target build |
+| `bootstrap/` directories | `ItemKind::BootstrapDoc` (`discover_bootstrap_surfaces`) |
 | Hidden files/dirs (`.`-prefixed) | Skipped |
 | Non-`.md` files in `agents/` | Skipped |
 | Subdirectories in `agents/` | Skipped (non-recursive) |

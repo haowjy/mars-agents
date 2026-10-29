@@ -140,6 +140,21 @@ mapping such as `TOKEN = { from = "env", var = "OTHER_TOKEN" }` remains
 `"env": {"TOKEN": "${OTHER_TOKEN}"}` for Claude compatibility. Codex 0.164.0 passes
 that value literally, so the plugin build warns once for the affected server.
 
+## Hooks in a plugin build
+
+A hook that declares `[hooks]` in its `hook.toml` reaches the Claude/Codex/Grok tree
+only: Mars writes `hooks/hooks.json` there, cut down to what Codex can parse, since Codex
+reads that file too. The OpenCode and Cursor trees do not get `[hooks]`. For each hook with
+no fragment for such a tree, the build warns `plugin-hook-fragment-dropped` and names the
+harnesses that lose it. A hook there needs a native fragment (`opencode.ts` for OpenCode,
+`cursor.json` for Cursor), so a package that moves its `opencode.ts` into `[hooks]` should
+keep the fragment until the OpenCode tree can load generated hooks. Inside a plugin build,
+`${MARS_HOOK_TARGET}` is `plugin`.
+
+Fragments, tokens, and the drop codes are in
+[Plugin builds](config/mcp-and-hooks.md#plugin-builds) and
+[Declaring Hooks in a Package](config/mcp-and-hooks.md#declaring-hooks-in-a-package).
+
 ## Check before release
 
 Run `mars check` before building or releasing. In addition to source validation, it

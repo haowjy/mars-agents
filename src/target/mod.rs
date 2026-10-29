@@ -19,10 +19,6 @@ pub mod mcp_file;
 pub mod opencode;
 pub mod pi;
 
-use std::path::{Path, PathBuf};
-
-use crate::error::MarsError;
-use crate::surface_ownership::retention::{ConfigWrite, RemovalOperation, RemovalReport};
 use crate::types::DestPath;
 pub use config_doc::SectionFormat;
 use mars_schema::item::ItemKind;
@@ -64,13 +60,6 @@ impl HookEntry {
     }
 }
 
-/// How a target consumes hook fragments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookFragmentMode {
-    MergeJson { events: &'static [&'static str] },
-    File,
-}
-
 /// Per-target compilation adapter.
 ///
 /// Implementations encapsulate all per-target knowledge:
@@ -88,16 +77,6 @@ pub enum HookFragmentMode {
 pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Target root name (e.g., `.claude`, `.codex`).
     fn name(&self) -> &str;
-
-    /// Native fragment placement mechanism declared by this adapter.
-    fn hook_fragment_mode(&self) -> Option<HookFragmentMode> {
-        None
-    }
-
-    /// Relative destination for an opaque file-mode fragment.
-    fn hook_file_dest_path(&self, _name: &str) -> Option<PathBuf> {
-        None
-    }
 
     /// Skill variant harness key used when projecting skills to this target.
     ///
@@ -117,56 +96,13 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath>;
 
     // -----------------------------------------------------------------------
-    // Config-file writing
+    // Config files
     // -----------------------------------------------------------------------
-
-    /// Write hook entries to this target's hook config file. MCP servers are
-    /// written by [`mcp_file::reconcile`] from [`Self::mcp_file`].
-    ///
-    /// Default: no-op — targets that don't use a config file leave this as-is.
-    fn write_hook_entries(
-        &self,
-        write: ConfigWrite<'_>,
-        project_root: &Path,
-    ) -> Result<(), MarsError> {
-        let _ = write.into_parts(project_root);
-        Ok(())
-    }
 
     /// The file this harness reads MCP servers from and how entries render
     /// there; `None` when the target takes no MCP servers.
     fn mcp_file(&self) -> Option<McpFile> {
         None
-    }
-
-    /// Config files mutated by merge-mode hook entries.
-    fn hook_config_file_names(&self) -> &'static [&'static str] {
-        &[]
-    }
-
-    /// Legacy hook files touched only when old lock records lack structural
-    /// emission data. Remove in 0.25.
-    fn legacy_hook_config_file_names(&self) -> &'static [&'static str] {
-        &[]
-    }
-
-    /// Name what is wrong with an opaque file-mode hook fragment, if anything.
-    ///
-    /// Most targets treat file fragments as opaque text. Targets with a native
-    /// loader report a contract violation; callers build the diagnostic text.
-    fn hook_fragment_problem(&self, _content: &str) -> Option<&'static str> {
-        None
-    }
-
-    /// Remove hook entries recorded in the previous lock by structural equality.
-    fn remove_owned_hook_entries(
-        &self,
-        operation: RemovalOperation<'_>,
-        project_root: &Path,
-        _diag: &mut crate::diagnostic::DiagnosticCollector,
-    ) -> RemovalReport {
-        let (_, _) = operation.into_parts(project_root);
-        RemovalReport::confirmed()
     }
 }
 
@@ -301,40 +237,6 @@ mod tests {
         for (target, key) in expected {
             let adapter = registry.get(target).unwrap();
             assert_eq!(adapter.skill_variant_key(), key);
-        }
-    }
-
-    #[test]
-    fn hook_event_allowlists_match_supported_command_hook_targets() {
-        let registry = TargetRegistry::new();
-        let Some(HookFragmentMode::MergeJson { events: claude }) =
-            registry.get(".claude").unwrap().hook_fragment_mode()
-        else {
-            panic!("Claude must declare merge-mode hooks");
-        };
-        let Some(HookFragmentMode::MergeJson { events: codex }) =
-            registry.get(".codex").unwrap().hook_fragment_mode()
-        else {
-            panic!("Codex must declare merge-mode hooks");
-        };
-        assert_eq!(claude.len(), 29);
-        assert!(claude.contains(&"SessionEnd"));
-        assert_eq!(codex.len(), 10);
-        assert!(!codex.contains(&"SessionEnd"));
-        let Some(HookFragmentMode::MergeJson { events: cursor }) =
-            registry.get(".cursor").unwrap().hook_fragment_mode()
-        else {
-            panic!("Cursor must declare merge-mode hooks");
-        };
-        assert_eq!(cursor.len(), 21);
-        assert!(cursor.contains(&"beforeShellExecution"));
-        assert!(cursor.contains(&"sessionStart"));
-
-        for target in [".opencode", ".pi"] {
-            assert_eq!(
-                registry.get(target).unwrap().hook_fragment_mode(),
-                Some(HookFragmentMode::File)
-            );
         }
     }
 

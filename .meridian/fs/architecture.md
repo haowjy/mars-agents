@@ -1,6 +1,6 @@
 # Mars Architecture
 
-Mars is a package manager for agent profiles and skills. It resolves versioned dependencies from git repos and local paths, installs them into a managed `.agents/` directory, tracks ownership via a lock file, and handles content conflicts with three-way merge.
+Mars is a package manager for agent profiles and skills. It resolves versioned dependencies from git repos and local paths, installs them into the `.mars/` canonical store, copies them into the target directories you link (`.claude/`, `.codex/`, and so on), tracks ownership via a lock file, and handles content conflicts with three-way merge.
 
 ## Module Map
 
@@ -14,6 +14,12 @@ src/
 │   ├── diff.rs         Compare target vs lock+disk → diff entries
 │   ├── plan.rs         Convert diff entries → executable actions
 │   └── apply.rs        Execute actions against filesystem
+├── compiler/
+│   ├── config_entries/ Writes MCP servers and hooks into target config files; `render.rs` renders hooks
+│   ├── hooks/          Hook discovery, selection and `mars check` hook checks (semantics live in mars-schema)
+│   └── mcp/            MCP server discovery and lowering
+├── build/plugin/       `mars build plugin`: per-harness plugin trees and what each drops
+├── target_sync/        Copies `.mars/` content into each linked target
 ├── lock/mod.rs         Lock file schema, load/save, build from outcomes
 ├── discover/mod.rs     Binary-owned item discovery (hooks, bootstrap docs) + `package_items`
 ├── frontmatter/mod.rs  YAML frontmatter parse/rewrite for .md files
@@ -33,6 +39,8 @@ src/
 └── main.rs             CLI entrypoint
 ```
 
+Hook semantics (the portable `[hooks]` format, per-target event tables, renderers) are in `crates/mars-schema/src/hooks/`, not in `src/`; `config_entries/render.rs` calls them and places the result. To change what a hook becomes on a harness, start in `mars_schema::hooks` (`targets.rs`, `render.rs`); `src/discover/mod.rs` only finds the `hooks/<name>/hook.toml` files. The reference is [mcp-and-hooks.md](../../docs/config/mcp-and-hooks.md#declaring-hooks-in-a-package).
+
 ## Core Types
 
 Defined in `src/types.rs` unless noted otherwise.
@@ -42,8 +50,8 @@ Defined in `src/types.rs` unless noted otherwise.
 | `SourceName` | `String` newtype | Dependency name from `mars.toml` keys |
 | `SourceId` | `enum { Git { url }, Path { canonical } }` | Stable identity for dedup across names |
 | `ItemName` | `String` newtype | Agent or skill name (filename-derived) |
-| `ItemKind` | `enum { Agent, Skill }` (`lock/mod.rs`) | Two item types mars manages |
-| `ItemId` | `struct { kind: ItemKind, name: ItemName }` (`lock/mod.rs`) | Unique item identity |
+| `ItemKind` | `enum { Agent, Skill, Hook, McpServer, BootstrapDoc }` (`mars_schema::item`, imported in `types.rs`) | The item kinds mars manages |
+| `ItemId` | `struct { kind: ItemKind, name: ItemName }` (`types.rs`) | Unique item identity |
 | `DestPath` | `PathBuf` newtype | Relative path under `.agents/` |
 | `ContentHash` | `String` newtype | `"sha256:<hex>"` format |
 | `MarsContext` | `struct { project_root, managed_root }` | Resolved project paths |

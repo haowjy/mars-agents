@@ -95,6 +95,7 @@ impl From<PendingWrite> for LockedItemV2 {
             kind: write.kind,
             version: write.version,
             source_checksum: write.source_checksum,
+            source_path: None,
             outputs: vec![OutputRecord::installed(
                 CANONICAL_TARGET_ROOT.to_string(),
                 write.dest_path,

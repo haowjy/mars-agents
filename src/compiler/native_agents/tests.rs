@@ -265,6 +265,7 @@ fn lock_with_target_outputs(targets: &[&str], dest: &str, checksum: &str) -> Loc
             kind: ItemKind::Agent,
             version: None,
             source_checksum: "sha256:src".into(),
+            source_path: None,
             outputs,
         },
     );

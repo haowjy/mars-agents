@@ -391,3 +391,63 @@ fn dependency_handler_with_bad_value_keeps_the_whole_hook_installed() {
         .stderr(predicate::str::contains("codex-hooks-need-trust").not());
     assert_eq!(read_all(), installed);
 }
+
+/// A dependency hook in directory `dguard` that installs as `renamed-guard`.
+fn write_dguard(source: &assert_fs::fixture::ChildPath, name_line: &str, tail: &str) {
+    write_hook(
+        source,
+        "dguard",
+        &format!(
+            "{name_line}\nvisibility = \"exported\"\n[[hooks.PreToolUse]]\nmatcher = \"Bash\"\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"printf guard\"\n{tail}"
+        ),
+    );
+}
+
+#[test]
+fn a_hook_whose_name_line_stops_reading_is_found_by_its_directory() {
+    let dir = TempDir::new().unwrap();
+    let (project, source) = project_with_dependency(&dir, "\".claude\", \".codex\"");
+    write_dguard(&source, "name = \"renamed-guard\"", "");
+    sync(&project).success();
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock.contains("source_path = \"hooks/dguard\""), "{lock}");
+    let installed = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
+    assert!(installed.contains("printf guard"));
+
+    // The name line itself no longer reads, so neither the name nor the directory name
+    // (`dguard`) is what the lock holds.
+    write_dguard(&source, "name = renamed-guard", "[[[broken\n");
+    for _ in 0..2 {
+        sync(&project)
+            .success()
+            .stderr(predicate::str::contains(
+                "keeping what the last sync installed",
+            ))
+            .stderr(predicate::str::contains("nothing is installed").not());
+        assert_eq!(
+            fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap(),
+            installed
+        );
+        project
+            .child(".claude/hooks/renamed-guard")
+            .assert(predicate::path::exists());
+    }
+
+    // A lock written before the path was recorded still finds a hook whose name reads.
+    fs::write(
+        project.child("mars.lock").path(),
+        lock.lines()
+            .filter(|line| !line.starts_with("source_path"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    write_dguard(&source, "name = \"renamed-guard\"", "[[[broken\n");
+    sync(&project).success().stderr(predicate::str::contains(
+        "keeping what the last sync installed",
+    ));
+    assert_eq!(
+        fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap(),
+        installed
+    );
+}

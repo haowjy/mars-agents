@@ -150,6 +150,7 @@ mod tests {
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:src".into(),
+                    source_path: None,
                     outputs: vec![OutputRecord::installed(
                         target_root.to_string(),
                         dest_path.into(),

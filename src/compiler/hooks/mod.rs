@@ -79,6 +79,8 @@ pub enum HookSource<'a> {
 pub struct InvalidHook {
     /// What selection knows the hook by (see `discover::hook_slug`).
     pub slug: String,
+    /// The hook's directory in the package, which a lock records for finding its last install.
+    pub hook_dir: PathBuf,
     /// The names the last sync may have installed it under: the `name` the file still
     /// declares, then its directory's. A hook is found by the first one the lock holds.
     pub installed_names: Vec<String>,
@@ -94,7 +96,11 @@ pub struct InvalidHook {
 
 impl InvalidHook {
     /// A `hook.toml` that does not read.
-    fn unreadable(text: &str, dir_name: &str, error: MarsError, removed_schema: bool) -> Self {
+    fn unreadable(text: &str, hook_dir: &Path, error: MarsError, removed_schema: bool) -> Self {
+        let dir_name = &*hook_dir
+            .file_name()
+            .expect("discovered hook directory has a name")
+            .to_string_lossy();
         let mut installed_names: Vec<String> = declared(text, "name")
             .and_then(|name| name.as_str().map(str::to_owned))
             .into_iter()
@@ -103,6 +109,7 @@ impl InvalidHook {
         installed_names.dedup();
         Self {
             slug: crate::discover::hook_slug(text, dir_name),
+            hook_dir: hook_dir.to_path_buf(),
             installed_names,
             exported: declared(text, "visibility").is_some_and(|v| v.as_str() == Some("exported")),
             order: declared(text, "order")
@@ -118,6 +125,7 @@ impl InvalidHook {
     fn unrenderable(item: &ParsedHookItem, error: MarsError) -> Self {
         Self {
             slug: item.def.name.clone(),
+            hook_dir: item.hook_dir.clone(),
             installed_names: vec![item.def.name.clone()],
             exported: item.def.visibility == mars_schema::visibility::Visibility::Exported,
             order: item.def.order,
@@ -275,7 +283,7 @@ fn load_hook_item(
     {
         return Ok(Err(InvalidHook::unreadable(
             &text,
-            &dir_name,
+            hook_dir,
             invalid_manifest(
                 &toml_path,
                 &dir_name,

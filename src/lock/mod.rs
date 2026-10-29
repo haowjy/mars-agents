@@ -320,6 +320,12 @@ pub struct LockedItemV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     pub source_checksum: ContentHash,
+    /// A hook's source directory relative to its package root (`hooks/guard`), always with
+    /// `/`. It finds the hook's last install when its `hook.toml` no longer reads and its
+    /// name with it. Absent on other kinds and on locks written before Mars 0.25, which
+    /// older Mars also ignores and drops on rewrite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
     /// Per-output records: one per target root this item was materialized to.
     pub outputs: Vec<OutputRecord>,
 }
@@ -818,6 +824,7 @@ pub fn build(
                         kind: old_item.kind,
                         version: old_item.version.clone(),
                         source_checksum: old_item.source_checksum.clone(),
+                        source_path: old_item.source_path.clone(),
                         outputs: outputs_with_carried_non_canonical(
                             Some(old_item),
                             OutputRecord::installed(
@@ -883,6 +890,7 @@ pub fn build(
                         kind: outcome.item_id.kind,
                         version,
                         source_checksum,
+                        source_path: None,
                         outputs,
                     },
                 );
@@ -1023,6 +1031,7 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: flat.kind,
                         version: flat.version,
                         source_checksum: flat.source_checksum,
+                        source_path: None,
                         outputs: vec![OutputRecord::installed(
                             CANONICAL_TARGET_ROOT.to_string(),
                             flat.dest_path,
@@ -1044,6 +1053,7 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: flat.kind,
                         version: flat.version,
                         source_checksum: flat.source_checksum,
+                        source_path: None,
                         outputs: vec![OutputRecord::installed(
                             CANONICAL_TARGET_ROOT.to_string(),
                             flat.dest_path,
@@ -1108,6 +1118,7 @@ pub fn apply_apply_outcomes_to_lock(
                         kind: outcome.item_id.kind,
                         version: None,
                         source_checksum: source_checksum.clone(),
+                        source_path: None,
                         outputs,
                     },
                 );
@@ -1251,6 +1262,7 @@ pub fn retain_unremoved_noncanonical_outputs(
                 kind: old_item.kind,
                 version: old_item.version.clone(),
                 source_checksum: old_item.source_checksum.clone(),
+                source_path: old_item.source_path.clone(),
                 // A retry tombstone may carry only unresolved noncanonical outputs.
                 // It must never resurrect an old canonical output: only the current
                 // apply pass can grant canonical ownership and deletion authority.
@@ -1460,6 +1472,7 @@ mod tests {
                 kind: ItemKind::Agent,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:aaa".into(),
+                source_path: None,
                 outputs: vec![OutputRecord::installed(
                     ".mars".to_string(),
                     "agents/coder.md".into(),
@@ -1474,6 +1487,7 @@ mod tests {
                 kind: ItemKind::Skill,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:ccc".into(),
+                source_path: None,
                 outputs: vec![OutputRecord::installed(
                     ".mars".to_string(),
                     "skills/review".into(),
@@ -1748,6 +1762,7 @@ installed_checksum = "sha256:222"
             kind: ItemKind::Skill,
             version: None,
             source_checksum: "sha256:aaa".into(),
+            source_path: None,
             outputs: vec![OutputRecord::installed(
                 ".mars".to_string(),
                 "skills/review".into(),
@@ -1901,6 +1916,7 @@ installed_checksum = "sha256:222"
                 kind: ItemKind::Agent,
                 version: Some("v1.0.0".into()),
                 source_checksum: "sha256:alias-src".into(),
+                source_path: None,
                 outputs: vec![OutputRecord::installed(
                     ".mars".to_string(),
                     "agents/on-disk-stem.md".into(),
@@ -2005,6 +2021,7 @@ installed_checksum = "sha256:222"
                         kind: ItemKind::Agent,
                         version: None,
                         source_checksum: "sha256:coder-src".into(),
+                        source_path: None,
                         outputs: vec![
                             OutputRecord::installed(
                                 ".mars".to_string(),
@@ -2026,6 +2043,7 @@ installed_checksum = "sha256:222"
                         kind: ItemKind::Skill,
                         version: None,
                         source_checksum: "sha256:review-src".into(),
+                        source_path: None,
                         outputs: vec![
                             OutputRecord::installed(
                                 ".mars".to_string(),
@@ -2107,6 +2125,7 @@ installed_checksum = "sha256:222"
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:old-src".into(),
+                    source_path: None,
                     outputs: vec![
                         OutputRecord::installed(
                             ".mars".to_string(),
@@ -2181,6 +2200,7 @@ installed_checksum = "sha256:222"
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "sha256:old-src".into(),
+                    source_path: None,
                     outputs: vec![
                         OutputRecord::installed(
                             ".mars".to_string(),
@@ -2604,6 +2624,7 @@ installed_checksum = "sha256:222"
                     kind: ItemKind::Skill,
                     version: None,
                     source_checksum: "sha256:self".into(),
+                    source_path: None,
                     outputs: vec![OutputRecord::installed(
                         ".mars".to_string(),
                         DestPath::from("skills/local-skill"),
@@ -2708,6 +2729,7 @@ installed_checksum = "sha256:222"
                     kind: ItemKind::Agent,
                     version: None,
                     source_checksum: "".into(),
+                    source_path: None,
                     outputs: vec![OutputRecord::installed(
                         ".mars".to_string(),
                         DestPath::from("agents/coder.md"),

@@ -182,6 +182,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         skipped: usize,
         native_emitted: usize,
         native_removed: usize,
+        hook_files_rewritten: usize,
         upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
@@ -227,6 +228,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         skipped,
         native_emitted: report.native_emitted.len(),
         native_removed: report.native_removed.len(),
+        hook_files_rewritten: report.hook_files_rewritten.len(),
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
@@ -300,6 +302,13 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
     for (target_root, dest_path) in &report.native_emitted {
         print_native_line(&mut stdout, "+", Color::Green, target_root, dest_path);
     }
+    let hook_files = report.hook_files_rewritten.len();
+    for (target_root, dest_path) in &report.hook_files_rewritten {
+        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
+        let _ = write!(stdout, "  ~ ");
+        let _ = stdout.reset();
+        let _ = writeln!(stdout, "{target_root}/{dest_path} (generated hook file)");
+    }
 
     // Summary line — use "would ..." wording for dry runs
     let _ = writeln!(stdout);
@@ -339,6 +348,13 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
             let _ = writeln!(stdout, "  removed     {native_removed} native agents");
         }
     }
+    if hook_files > 0 {
+        if dry {
+            let _ = writeln!(stdout, "  would write {hook_files} generated hook files");
+        } else {
+            let _ = writeln!(stdout, "  wrote       {hook_files} generated hook files");
+        }
+    }
     if kept > 0 {
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
     }
@@ -349,6 +365,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         && kept == 0
         && native_emitted == 0
         && native_removed == 0
+        && hook_files == 0
     {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = writeln!(stdout, "  already up to date");
@@ -600,6 +617,7 @@ mod tests {
             dry_run: false,
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
+            hook_files_rewritten: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
         }

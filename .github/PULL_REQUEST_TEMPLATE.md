@@ -30,12 +30,15 @@
 
 <!-- User-facing end state, in one or two sentences. What can someone do after this merges that they could not do before? -->
 
-## Examples of Behavior
+## End-to-End Walkthrough
 
-<!-- One to three short, real examples of the change in action: a command and
-     its output, an input and the result, or a before/after config. Fenced code
-     blocks, no invented output. If there is no behavior to show, say so in one
-     line. -->
+<!-- Take a reviewer through the new or changed behavior from the user's side,
+     when there is something to walk through. A UI change gets screenshots or a
+     GIF with numbered steps and the before/after state. A CLI, config, library
+     or docs change gets a numbered text walkthrough: copy-pasteable commands
+     and their real output, or before/after files. Where behavior changed,
+     show main's state and this branch's. If nothing is runnable or visible,
+     write "Not applicable" and say what check replaces it. -->
 
 ## Changes
 

@@ -342,6 +342,7 @@ runs:
 my-package/hooks/protect-tmux-server/
   hook.toml
   run.sh
+  context.sh
 ```
 
 This is not the `hooks` key in an Agent's or skill's frontmatter. That key is Claude's own
@@ -755,6 +756,78 @@ go to `mars-<name>.hooks.ts` in the same directories. File fragments receive no
 content or event validation; only file existence and substitution are checked
 in preflight. `unchecked` is therefore meaningless and rejected for file-mode
 targets, even when set to `false`.
+
+### Walkthrough: sync one hook into four harnesses
+
+The `protect-tmux-server` hook from the top of this section, in a project whose
+four targets are linked (`mars link .claude`, then the same for `.codex`,
+`.opencode` and `.pi`):
+
+```console
+$ mars sync
+  + hooks/claude/protect-tmux-server (hook)
+  + hooks/codex/protect-tmux-server (hook)
+  + hooks/opencode/protect-tmux-server (hook)
+  + hooks/pi/protect-tmux-server (hook)
+  ~ .opencode/plugins/mars-protect-tmux-server.hooks.ts (generated hook file)
+  ~ .pi/extensions/mars-protect-tmux-server.hooks.ts (generated hook file)
+
+  installed   4 new items
+  wrote       2 generated hook files
+  warning: hook `protect-tmux-server`: `.opencode` does not run `SessionStart`: OpenCode has no per-session start hook (a plugin's setup runs once per project)
+  warning: `.codex/hooks.json` has 2 new or moved hook handler(s) (PreToolUse[0][0], SessionStart[0][0]); `.codex` skips them until you review them in its `/hooks` screen
+```
+
+One item per target, plus the two generated files. Claude's
+`.claude/settings.local.json` holds the hook as written, with `${MARS_HOOK_DIR}`
+replaced by the installed copy:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/work/project/.claude/hooks/protect-tmux-server/run.sh\"",
+            "if": "Bash(*tmux*)",
+            "onFailure": "block",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/work/project/.claude/hooks/protect-tmux-server/context.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Codex's `.codex/hooks.json` gets the same two events with `.codex` paths. Codex
+ignores `if` and `onFailure`, so the script must do that filtering itself, and
+the trust warning above stays until you open `/hooks` in Codex once.
+
+OpenCode and Pi get generated TypeScript instead of entries:
+`.opencode/plugins/mars-protect-tmux-server.hooks.ts` and
+`.pi/extensions/mars-protect-tmux-server.hooks.ts`. OpenCode has no
+per-session-start event, so its file carries `PreToolUse` only; the warning
+says so.
+
+Each target also gets its own copy of the hook directory, which is why the
+commands point at `.claude/hooks/protect-tmux-server/run.sh`,
+`.codex/hooks/protect-tmux-server/run.sh` and so on. Edit the package and sync
+again to update all of them.
 
 ### Worked examples
 

@@ -2,13 +2,14 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::compiler::hooks::ParsedHookItem;
+use crate::compiler::hooks::{ParsedHookItem, load_plugin_output, report_fragment};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::target::opencode::OpencodeAdapter;
 use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
 use mars_schema::frontmatter::Frontmatter;
+use mars_schema::hooks::{FileOutput, HookOutput, Tokens};
 use mars_schema::plugin_metadata::OPENCODE_ROOT_FILE;
 
 use super::super::metadata::PackageMetadata;
@@ -38,31 +39,23 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
 
 fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
     // A hook selected for `[hooks]` alone has no fragment to check.
-    let Some(fragment) = hook.fragment(TARGET_ROOT).map(|f| f.file.clone()) else {
+    let Some(fragment) = hook.fragment(TARGET_ROOT).map(|f| f.file.as_str()) else {
         return;
     };
-    let path = hook.hook_dir.join(&fragment);
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(error) => {
-            diag.warn(
-                "hook-fragment",
-                format!(
-                    "hook `{}` from `{}`: could not check OpenCode fragment `{fragment}` for a default export: {error}; the hook will still be shipped and isolated at runtime",
-                    hook.def.name, hook.source_name
-                ),
-            );
-            return;
-        }
-    };
-    if let Some(problem) = mars_schema::hooks::file_fragment_problem(TARGET_ROOT, &content) {
-        diag.warn(
+    let target = mars_schema::hooks::targets::target(TARGET_ROOT).expect("OpenCode takes hooks");
+    match load_plugin_output(hook, target, &Tokens::default()) {
+        Ok(HookOutput::File(FileOutput {
+            fragment_problem: Some(problem),
+            ..
+        })) => diag.warn(
             "hook-fragment-contract",
             format!(
                 "hook `{}` from `{}`: OpenCode fragment `{fragment}` {problem}; the hook will still be shipped and isolated at runtime",
                 hook.def.name, hook.source_name
             ),
-        );
+        ),
+        Ok(_) => {}
+        Err(error) => report_fragment(hook, &error, diag),
     }
 }
 

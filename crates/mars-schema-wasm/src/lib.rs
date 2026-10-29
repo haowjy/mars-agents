@@ -440,36 +440,9 @@ struct RenderTokens {
     hook_target: Option<String>,
 }
 
-#[derive(Serialize)]
-struct SkipOut<'a> {
-    event: Option<&'a str>,
-    reason: &'a str,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-enum TargetOut<'a> {
-    #[serde(rename_all = "camelCase")]
-    Merge {
-        events: &'a BTreeMap<String, Vec<OrderedValue>>,
-        unchecked_events: &'a [String],
-        skips: Vec<SkipOut<'a>>,
-    },
-    File {
-        files: Vec<FileOut<'a>>,
-        skips: Vec<SkipOut<'a>>,
-    },
-}
-
-#[derive(Serialize)]
-struct FileOut<'a> {
-    path: &'a str,
-    content: &'a str,
-}
-
 /// A `hook.toml`'s `[hooks]` as each of `targets` (roots such as `.claude`) takes it:
-/// `{diagnostics, targets: {<root>: {kind: "merge", events, uncheckedEvents, skips} | {kind:
-/// "file", files, skips}}}`. `tokens` (`{hookDir?, hookTarget?}`) fills the hook tokens; one
+/// `{diagnostics, targets: {<root>: HookOutput}}`, where `HookOutput` is the schema's own
+/// serialization (`kind: "merge" | "file"`; see `index.d.ts`). `tokens` (`{hookDir?, hookTarget?}`) fills the hook tokens; one
 /// left out stays as written (`hookTarget` defaults to the target's root). `targets` is empty
 /// when `diagnostics` holds an error. A root with no hook mechanism throws `input.invalid`.
 #[wasm_bindgen(js_name = renderHooks)]
@@ -509,43 +482,14 @@ pub fn render_hooks(
             outputs.push((target.root, output));
         }
     }
-    fn skips(skips: &[hooks::render::Skip]) -> Vec<SkipOut<'_>> {
-        skips
-            .iter()
-            .map(|skip| SkipOut {
-                event: skip.event.as_deref(),
-                reason: &skip.reason,
-            })
-            .collect()
-    }
     let targets: BTreeMap<_, _> = outputs
         .iter()
-        .map(|(root, output)| {
-            let out = match output {
-                HookOutput::Merge(merge) => TargetOut::Merge {
-                    events: &merge.events,
-                    unchecked_events: &merge.unchecked_events,
-                    skips: skips(&merge.skips),
-                },
-                HookOutput::File(file) => TargetOut::File {
-                    files: file
-                        .files
-                        .iter()
-                        .map(|f| FileOut {
-                            path: &f.path,
-                            content: &f.content,
-                        })
-                        .collect(),
-                    skips: skips(&file.skips),
-                },
-            };
-            (*root, out)
-        })
+        .map(|(root, output)| (*root, output))
         .collect();
     #[derive(Serialize)]
     struct Out<'a> {
         diagnostics: &'a [mars_schema::diagnostic::SchemaDiagnostic],
-        targets: BTreeMap<&'a str, TargetOut<'a>>,
+        targets: BTreeMap<&'a str, &'a HookOutput>,
     }
     to_js(&Out {
         diagnostics: &read.diagnostics,

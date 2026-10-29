@@ -272,7 +272,7 @@ pub(crate) fn compile_config_entries(
 
     // Codex skips a hook it has not been told to trust, keyed on its position in the file;
     // `hooks.json` before this sync is what the user last reviewed.
-    let trust_before = trust_snapshots(ctx, &registry, &target_roots);
+    let trust_before = trust_snapshots(ctx, &target_roots);
 
     // A target whose hook entries equal what the lock records, and whose file still holds
     // them in the order they would be written, is left alone: removing and re-appending them
@@ -292,15 +292,12 @@ pub(crate) fn compile_config_entries(
         let desired = hook_records(desired_records.get(&target_root));
         let previous = hook_records(previous_records.get(&target_root));
         let holds_previous = desired == previous
-            && registry
-                .get(&target_root)
-                .and_then(|adapter| adapter.hook_file())
-                .is_some_and(|hook_file| {
-                    crate::target::hook_file::holds_recorded(
-                        &ctx.project_root.join(&target_root).join(hook_file.file),
-                        &pending_hooks[&target_root],
-                    )
-                });
+            && merge_file(&target_root).is_some_and(|merge| {
+                crate::target::hook_file::holds_recorded(
+                    &ctx.project_root.join(&target_root).join(merge.file),
+                    &pending_hooks[&target_root],
+                )
+            });
         if holds_previous {
             pending_hooks.remove(&target_root);
             unchanged_records.insert(target_root, desired);
@@ -314,7 +311,7 @@ pub(crate) fn compile_config_entries(
     let retention =
         crate::surface_ownership::retention::RemovalPlan::build(&to_remove, &desired_records)
             .execute(
-                |operation, diag| remove_hooks(&registry, operation, &ctx.project_root, diag),
+                |operation, diag| remove_hooks(operation, &ctx.project_root, diag),
                 diag,
             );
 
@@ -370,7 +367,6 @@ pub(crate) fn compile_config_entries(
 
     let mut compiled = apply_replacement_writes(
         ctx,
-        &registry,
         old_lock,
         ownership_lock,
         retention,
@@ -390,11 +386,7 @@ pub(crate) fn compile_config_entries(
             .or_default()
             .extend(records);
     }
-    warn_untrusted(
-        &trust_before,
-        &trust_snapshots(ctx, &registry, &target_roots),
-        diag,
-    );
+    warn_untrusted(&trust_before, &trust_snapshots(ctx, &target_roots), diag);
     compiled
 }
 
@@ -402,17 +394,12 @@ pub(crate) fn compile_config_entries(
 type TrustSnapshots = BTreeMap<String, (String, crate::target::hook_file::TrustPositions)>;
 
 /// The handler positions of each managed target whose harness gates hooks on trust.
-fn trust_snapshots(
-    ctx: &MarsContext,
-    registry: &TargetRegistry,
-    target_roots: &[String],
-) -> TrustSnapshots {
+fn trust_snapshots(ctx: &MarsContext, target_roots: &[String]) -> TrustSnapshots {
     target_roots
         .iter()
         .filter_map(|root| {
-            let hook_file = registry.get(root)?.hook_file().filter(|f| f.trust_gated)?;
             let target = mars_schema::hooks::targets::target(root)?;
-            let file = hook_file.file;
+            let file = target.merge_file().filter(|m| m.trust_gated)?.file;
             let positions = crate::target::hook_file::trust_positions(
                 &ctx.project_root.join(root).join(file),
                 |event| target.reads(event),
@@ -445,23 +432,15 @@ fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut Di
 
 /// Remove the hook entries `operation` names. Shared by sync and `mars unlink`.
 pub(crate) fn remove_hooks(
-    registry: &TargetRegistry,
     operation: RemovalOperation<'_>,
     project_root: &Path,
     diag: &mut DiagnosticCollector,
 ) -> RemovalReport {
     let target_root = operation.target_root().to_owned();
-    let Some(adapter) = registry.get(&target_root) else {
-        let (_, removal) = operation.into_parts(project_root);
-        return RemovalReport::failed(
-            format!("no adapter registered for `{target_root}`"),
-            removal.prior_records.clone(),
-        );
-    };
     let (target_dir, removal) = operation.into_parts(project_root);
-    let report = match adapter.hook_file() {
-        Some(hook_file) => crate::target::hook_file::remove_recorded(
-            &target_dir.join(hook_file.file),
+    let report = match merge_file(&target_root) {
+        Some(merge) => crate::target::hook_file::remove_recorded(
+            &target_dir.join(merge.file),
             &removal.prior_records,
             &target_root,
             diag,
@@ -559,7 +538,6 @@ pub(crate) fn reconcile_mcp(
 #[allow(clippy::too_many_arguments)]
 fn apply_replacement_writes(
     ctx: &MarsContext,
-    registry: &crate::target::TargetRegistry,
     old_lock: &crate::lock::LockFile,
     ownership_lock: &mut crate::lock::LockFile,
     retention: crate::surface_ownership::retention::RetentionPlan,
@@ -584,19 +562,14 @@ fn apply_replacement_writes(
             continue;
         };
         let write = permit.bind_hooks(hooks);
-        let Some(adapter) = registry.get(write.target_root()) else {
-            continue;
-        };
         let keys: Vec<String> = write.hooks().iter().map(HookEntry::key).collect();
-        let Some(hook_file) = adapter.hook_file() else {
+        let Some(merge) = merge_file(write.target_root()) else {
             continue;
         };
         let (target_dir, hooks) = write.into_parts(&ctx.project_root);
-        if let Err(error) = crate::target::hook_file::write(
-            &target_dir.join(hook_file.file),
-            &hooks,
-            hook_file.top_level,
-        ) {
+        if let Err(error) =
+            crate::target::hook_file::write(&target_dir.join(merge.file), &hooks, merge.top_level)
+        {
             diag.warn(
                 "config-entry-write",
                 format!("failed to write config entries to `{target_root}`: {error}"),
@@ -684,6 +657,12 @@ fn emits_installed_copy(
         );
     }
     installed
+}
+
+/// The hook config file a merge target appends entries to; `None` for a file target and for
+/// a root with no hook mechanism.
+fn merge_file(target_root: &str) -> Option<&'static mars_schema::hooks::targets::MergeFile> {
+    mars_schema::hooks::targets::target(target_root)?.merge_file()
 }
 
 /// The path target sync installs `dir`'s copy at.

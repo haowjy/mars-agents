@@ -1,18 +1,21 @@
 use super::*;
 use crate::diagnostic::Severity;
-use targets::Placement;
 
 #[test]
 fn opencode_fragments_need_a_default_export() {
+    let opencode = targets::target(".opencode").unwrap();
     for ok in [
         "export default { id: 'a' }",
         "export { plugin as default }",
         "export * as default from './x'",
     ] {
-        assert_eq!(file_fragment_problem(".opencode", ok), None, "{ok}");
+        assert_eq!(opencode.fragment_problem(ok), None, "{ok}");
     }
-    assert!(file_fragment_problem(".opencode", "export const x = 1").is_some());
-    assert_eq!(file_fragment_problem(".pi", "anything"), None);
+    assert!(opencode.fragment_problem("export const x = 1").is_some());
+    assert_eq!(
+        targets::target(".pi").unwrap().fragment_problem("anything"),
+        None
+    );
 }
 
 fn stop_hook(handlers: &str) -> String {
@@ -105,7 +108,7 @@ fn output(
 
 fn events(root: &str) -> &'static [targets::Event] {
     let target = targets::target(root).unwrap();
-    assert_eq!(target.placement, Placement::Merge, "{root}");
+    assert!(target.merge_file().is_some(), "{root}");
     target.profile.events
 }
 
@@ -365,7 +368,13 @@ fn unknown_events_are_strict_for_the_project_and_skipped_for_a_dependency() {
         .unwrap();
     let portable = def.portable().unwrap();
     let claude = portable.render(&profile(".claude"), &tokens());
-    assert_eq!(claude.unchecked_events(), ["FutureEvent"]);
+    let render::Output::Merge {
+        unchecked_events, ..
+    } = &claude.output
+    else {
+        panic!("Claude is a merge target");
+    };
+    assert_eq!(unchecked_events, &["FutureEvent"]);
     let codex = portable.render(&profile(".codex"), &tokens());
     assert!(!codex.events().contains_key("FutureEvent"));
     assert!(

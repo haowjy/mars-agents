@@ -56,7 +56,10 @@ fn write_config_entries(
         crate::target::hook_file::write(
             &root.join("hooks/hooks.json"),
             hooks,
-            crate::target::cursor::HOOKS_TOP_LEVEL,
+            mars_schema::hooks::targets::target(".cursor")
+                .and_then(|target| target.merge_file())
+                .expect("Cursor merges hooks into a file")
+                .top_level,
         )?;
     }
     Ok(())

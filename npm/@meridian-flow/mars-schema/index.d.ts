@@ -636,20 +636,28 @@ export function selectItems(input: {
   root?: SelectionPackage;
 }): SelectionResult;
 
-/** What a hook installs on one target. */
+/** What a hook installs on one target: the schema's own `HookOutput`, as `mars sync` reports it. */
 export type HookTargetOutput =
   | {
       kind: "merge";
       /** Finished entries per native event; an event with nothing left is absent. */
       events: { [event: string]: unknown[] };
+      /** Unknown events a dependency's fragment lists, left out of `events`. */
+      skippedEvents: string[];
       /** Events the target does not list that `unchecked = true` let through. */
       uncheckedEvents: string[];
+      /** Events a fragment declares that `[hooks]` also declares: the fragment's replace the generated entries. */
+      overrides: string[];
       skips: HookSkip[];
     }
   | {
       kind: "file";
       files: { path: string; content: string }[];
+      /** What is wrong with the authored fragment, if anything; it is installed regardless. */
+      fragmentProblem: string | null;
       skips: HookSkip[];
+      /** Rendered events whose portable answers do not all carry over to the target. */
+      answerLimits: HookSkip[];
     };
 
 /** Something a target does not run. `event` is `null` when the whole target is skipped. */

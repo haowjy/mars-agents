@@ -85,8 +85,8 @@ pub(crate) fn preflight_config_entries(
                     ));
                 }
             }
-            if touches_hooks && let Some(hook_file) = adapter.hook_file() {
-                let path = target_dir.join(hook_file.file);
+            if touches_hooks && let Some(merge) = super::merge_file(target_name) {
+                let path = target_dir.join(merge.file);
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
                     errors.push(error);
                 }
@@ -305,7 +305,7 @@ pub(crate) fn lower_hook_entries(
                 outputs.push((*item, output));
             }
             Ok(HookOutput::File(_)) => {}
-            Err(error) => diag.error("hook-fragment", error.to_string()),
+            Err(error) => crate::compiler::hooks::report_fragment(item, &error, diag),
         }
     }
     let outputs: Vec<_> = outputs

@@ -264,7 +264,11 @@ pub(super) fn unwrap_hooks_object(value: OrderedValue) -> OrderedValue {
 }
 
 impl PortableHooks {
-    fn from_ordered(value: OrderedValue) -> Result<Self, String> {
+    /// An event table already parsed. `null`s are dropped (TOML cannot hold them); the
+    /// second value says where each was, as `hooks.<Event>[i]…`.
+    pub fn from_ordered(mut value: OrderedValue) -> Result<(Self, Vec<String>), String> {
+        let mut dropped = Vec::new();
+        drop_nulls(&mut value, "hooks", &mut dropped);
         let mut events = BTreeMap::new();
         for (event, groups) in object(value, "`hooks`")? {
             let OrderedValue::Array(groups) = groups else {
@@ -277,23 +281,21 @@ impl PortableHooks {
                 .collect::<Result<Vec<_>, _>>()?;
             events.insert(event, groups);
         }
-        Ok(Self { events })
+        Ok((Self { events }, dropped))
     }
 
     /// The `[hooks]` table of a `hook.toml`.
     pub fn from_toml(value: &toml::Value) -> Result<Self, String> {
-        Self::from_ordered(from_toml(value))
+        Self::from_ordered(from_toml(value)).map(|(hooks, _)| hooks)
     }
 
     /// Claude's hooks JSON: an event table, or a settings file or plugin `hooks.json`
     /// wrapping one. TOML cannot hold `null`, so each is dropped; the second value says
     /// where.
     pub fn from_claude_json(text: &str) -> Result<(Self, Vec<String>), String> {
-        let mut value: OrderedValue =
+        let value: OrderedValue =
             serde_json::from_str(text).map_err(|error| format!("not valid JSON: {error}"))?;
-        let mut dropped = Vec::new();
-        drop_nulls(&mut value, "hooks", &mut dropped);
-        Ok((Self::from_ordered(unwrap_hooks_object(value))?, dropped))
+        Self::from_ordered(unwrap_hooks_object(value))
     }
 
     /// Claude's event table: what Claude reads under `"hooks"`.

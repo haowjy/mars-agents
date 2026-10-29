@@ -383,11 +383,24 @@ pub fn load_plugin_output(
     })
 }
 
-fn load(
+/// Say a hook's fragment could not be loaded for a plugin build: an error for the project's
+/// own hook, a warning for a dependency's, which never fails the build (D19).
+pub(crate) fn report_fragment(
+    item: &ParsedHookItem,
+    error: &MarsError,
+    diag: &mut DiagnosticCollector,
+) {
+    match item.origin {
+        Origin::Local => diag.error("hook-fragment", error.to_string()),
+        Origin::Dependency => diag.warn("hook-fragment", error.to_string()),
+    }
+}
+
+fn load<T>(
     item: &ParsedHookItem,
     target: &Target,
-    output: impl FnOnce(Option<&str>) -> Result<HookOutput, mars_schema::hooks::FragmentError>,
-) -> Result<HookOutput, MarsError> {
+    output: impl FnOnce(Option<&str>) -> Result<T, mars_schema::hooks::FragmentError>,
+) -> Result<T, MarsError> {
     let fragment = item
         .fragment(target.root)
         .map(|fragment| read_fragment(item, &fragment.file))
@@ -400,8 +413,9 @@ fn load(
     })
 }
 
-/// Whether a dependency hook renders on every managed target it is installed for. The tokens
-/// only change string values, so none are needed to find a fragment that cannot load.
+/// Whether a dependency hook's fragment loads on every managed target it is installed for.
+/// `[hooks]` never fails to render, so it is left to preflight, which renders each hook once
+/// (D25); the tokens only change string values, so none are needed here.
 fn render_check(item: &ParsedHookItem, managed_targets: &[String]) -> Result<(), MarsError> {
     for root in item.def.select(managed_targets) {
         let Some(target) = hooks::targets::target(root) else {
@@ -411,7 +425,9 @@ fn render_check(item: &ParsedHookItem, managed_targets: &[String]) -> Result<(),
                 &format!("target `{root}` has no hook fragment mechanism"),
             ));
         };
-        load_output(item, target, &Tokens::default())?;
+        load(item, target, |fragment| {
+            item.def.check_fragment(target, fragment, item.origin)
+        })?;
     }
     Ok(())
 }

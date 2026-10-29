@@ -12,7 +12,7 @@ use super::targets::{self, Profile, Rules};
 use crate::ordered::OrderedValue;
 
 /// Something a target does not run. `event` is `None` when the whole target is skipped.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Skip {
     pub event: Option<String>,
     pub reason: String,
@@ -65,24 +65,31 @@ impl Rendered {
             Output::File { .. } => &NONE,
         }
     }
-
-    /// The merge shape's unchecked events; none for a file.
-    pub fn unchecked_events(&self) -> &[String] {
-        match &self.output {
-            Output::Merge {
-                unchecked_events, ..
-            } => unchecked_events,
-            Output::File { .. } => &[],
-        }
-    }
 }
 
 impl PortableHooks {
     /// This table as `profile` takes it, with `tokens` substituted in every string.
     pub fn render(&self, profile: &Profile, tokens: &Tokens<'_>) -> Rendered {
+        // Only Claude takes an event mars does not know (`unchecked`); every other target
+        // reports it as skipped.
+        let mut events: Vec<_> = self.events().collect();
+        let mut unknown = Vec::new();
+        if matches!(profile.rules, Rules::Codex | Rules::TypeScript(_)) {
+            events.retain(|(event, _)| {
+                let known = targets::claude_event(event).is_some();
+                if !known {
+                    unknown.push(Skip {
+                        event: Some((*event).to_owned()),
+                        reason: "not an event mars knows, so `unchecked` renders it on Claude only"
+                            .into(),
+                    });
+                }
+                known
+            });
+        }
         let mut rendered = match profile.rules {
-            Rules::Claude => self.render_claude(profile),
-            Rules::Codex => self.render_codex(profile),
+            Rules::Claude => render_claude(&events, profile),
+            Rules::Codex => render_codex(&events, profile),
             Rules::Withheld { reason } => Rendered {
                 output: Output::Merge {
                     events: BTreeMap::new(),
@@ -94,8 +101,15 @@ impl PortableHooks {
                 }],
                 answer_limits: Vec::new(),
             },
-            Rules::TypeScript { harness } => self.render_typescript(profile, harness, tokens),
+            Rules::TypeScript(harness) => {
+                super::typescript::render(&events, profile, harness, tokens)
+            }
         };
+        if !unknown.is_empty() {
+            // Skips follow the events' sorted order, as the renderers emit them.
+            rendered.skips.extend(unknown);
+            rendered.skips.sort_by(|a, b| a.event.cmp(&b.event));
+        }
         if let Output::Merge { events, .. } = &mut rendered.output {
             for entries in events.values_mut() {
                 entries
@@ -125,92 +139,83 @@ impl PortableHooks {
             .map(|(event, _)| event)
             .collect()
     }
+}
 
-    /// Identity: Claude takes the table as written. An event the profile does not list is one
-    /// the author passed with `unchecked = true`.
-    fn render_claude(&self, profile: &Profile) -> Rendered {
-        let mut events = BTreeMap::new();
-        let mut unchecked_events = Vec::new();
-        for (event, groups) in self.events() {
-            if !profile.events.iter().any(|e| e.name == event) {
-                unchecked_events.push(event.to_owned());
-            }
-            events.insert(
-                event.to_owned(),
-                groups.iter().map(MatcherGroup::to_claude).collect(),
-            );
+/// Identity: Claude takes the table as written. An event the profile does not list is one
+/// the author passed with `unchecked = true`.
+fn render_claude(table: &[(&str, &[MatcherGroup])], profile: &Profile) -> Rendered {
+    let mut events = BTreeMap::new();
+    let mut unchecked_events = Vec::new();
+    for &(event, groups) in table {
+        if profile.event(event).is_none() {
+            unchecked_events.push(event.to_owned());
         }
-        Rendered {
-            output: Output::Merge {
-                events,
-                unchecked_events,
-            },
-            skips: Vec::new(),
-            answer_limits: Vec::new(),
-        }
+        events.insert(
+            event.to_owned(),
+            groups.iter().map(MatcherGroup::to_claude).collect(),
+        );
     }
+    Rendered {
+        output: Output::Merge {
+            events,
+            unchecked_events,
+        },
+        skips: Vec::new(),
+        answer_limits: Vec::new(),
+    }
+}
 
-    fn render_codex(&self, profile: &Profile) -> Rendered {
-        let mut rendered = Rendered {
-            output: Output::Merge {
-                events: BTreeMap::new(),
-                unchecked_events: Vec::new(),
-            },
-            skips: Vec::new(),
-            answer_limits: Vec::new(),
+fn render_codex(table: &[(&str, &[MatcherGroup])], profile: &Profile) -> Rendered {
+    let mut rendered = Rendered {
+        output: Output::Merge {
+            events: BTreeMap::new(),
+            unchecked_events: Vec::new(),
+        },
+        skips: Vec::new(),
+        answer_limits: Vec::new(),
+    };
+    let mut rendered_events = BTreeMap::new();
+    for &(event, groups) in table {
+        let Some(row) = profile.event(event) else {
+            rendered.skip(event, "Codex has no such event".into());
+            continue;
         };
-        let mut rendered_events = BTreeMap::new();
-        for (event, groups) in self.events() {
-            if targets::claude_event(event).is_none() {
+        let matched = row.matcher.is_some();
+        let mut entries = Vec::new();
+        for (g, group) in groups.iter().enumerate() {
+            if let (true, Some(matcher)) = (matched, &group.matcher)
+                && let Err(reason) = codex_matcher(matcher)
+            {
                 rendered.skip(
                     event,
-                    "not an event mars knows, so `unchecked` renders it on Claude only".into(),
+                    format!(
+                        "matcher group {g}: Codex cannot compile matcher `{matcher}`: {reason}"
+                    ),
                 );
                 continue;
             }
-            if !profile.events.iter().any(|e| e.name == event) {
-                rendered.skip(event, "Codex has no such event".into());
-                continue;
-            }
-            let matched = profile
-                .events
-                .iter()
-                .any(|e| e.name == event && e.matcher.is_some());
-            let mut entries = Vec::new();
-            for (g, group) in groups.iter().enumerate() {
-                if let (true, Some(matcher)) = (matched, &group.matcher)
-                    && let Err(reason) = codex_matcher(matcher)
-                {
-                    rendered.skip(
-                        event,
-                        format!(
-                            "matcher group {g}: Codex cannot compile matcher `{matcher}`: {reason}"
-                        ),
-                    );
-                    continue;
-                }
-                let mut kept = Vec::new();
-                for (h, handler) in group.handlers.iter().enumerate() {
-                    match codex_handler(event, handler) {
-                        Ok(handler) => kept.push(handler),
-                        Err(reason) => rendered
-                            .skip(event, format!("matcher group {g}, handler {h}: {reason}")),
+            let mut kept = Vec::new();
+            for (h, handler) in group.handlers.iter().enumerate() {
+                match codex_handler(event, handler) {
+                    Ok(handler) => kept.push(handler),
+                    Err(reason) => {
+                        rendered.skip(event, format!("matcher group {g}, handler {h}: {reason}"))
                     }
                 }
-                if !kept.is_empty() {
-                    entries.push(group.to_value(&kept));
-                }
             }
-            if !entries.is_empty() {
-                rendered_events.insert(event.to_owned(), entries);
+            if !kept.is_empty() {
+                entries.push(group.to_value(&kept));
             }
         }
-        rendered.output = Output::Merge {
-            events: rendered_events,
-            unchecked_events: Vec::new(),
-        };
-        rendered
+        if !entries.is_empty() {
+            rendered_events.insert(event.to_owned(), entries);
+        }
     }
+    rendered.output = Output::Merge {
+        events: rendered_events,
+        unchecked_events: Vec::new(),
+    };
+    rendered
 }
 
 /// Whether Codex 0.164.0 admits a group's `matcher`. Codex compiles it at discovery, and a

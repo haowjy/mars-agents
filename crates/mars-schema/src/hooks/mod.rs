@@ -24,9 +24,7 @@ use crate::visibility::Visibility;
 use portable::PortableHooks;
 use render::Skip;
 
-pub use output::{
-    FileOutput, FragmentError, HookOutput, MergeOutput, OutputFile, file_fragment_problem,
-};
+pub use output::{FileOutput, FragmentError, HookOutput, MergeOutput, OutputFile};
 pub use read::{HookRead, REMOVED_SCHEMA_CODE, REMOVED_SCHEMA_MESSAGE, read, uses_removed_schema};
 
 /// The authored placeholder for the directory a hook's files are installed in.

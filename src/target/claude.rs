@@ -12,7 +12,7 @@
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
-use super::{HookFile, McpFile, McpLocation, SectionFormat, TargetAdapter};
+use super::{McpFile, McpLocation, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct ClaudeAdapter;
@@ -44,16 +44,6 @@ impl TargetAdapter for ClaudeAdapter {
                 format: SectionFormat::JsonSection("mcpServers"),
             },
             render: super::mcp_file::claude_render,
-        })
-    }
-
-    fn hook_file(&self) -> Option<HookFile> {
-        // Hook commands carry machine-local cache paths, so they belong in the
-        // gitignored `settings.local.json` rather than the committed `settings.json`.
-        Some(HookFile {
-            file: "settings.local.json",
-            top_level: &[],
-            trust_gated: false,
         })
     }
 }

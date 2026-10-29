@@ -9,7 +9,7 @@ use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_servers::{self, Flavor, McpRender};
 
-use super::{HookFile, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
+use super::{McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct CursorAdapter;
@@ -39,17 +39,7 @@ impl TargetAdapter for CursorAdapter {
             render,
         })
     }
-    fn hook_file(&self) -> Option<HookFile> {
-        Some(HookFile {
-            file: "hooks.json",
-            top_level: HOOKS_TOP_LEVEL,
-            trust_gated: false,
-        })
-    }
 }
-
-/// Cursor's `hooks.json` is a flat entry array and requires this version wrapper.
-pub(crate) const HOOKS_TOP_LEVEL: &[(&str, i64)] = &[("version", 1)];
 
 // ---------------------------------------------------------------------------
 // Cursor MCP — `mcp.json` entry shape

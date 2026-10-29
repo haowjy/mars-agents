@@ -11,7 +11,7 @@ use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::{HeaderValue, McpTransport};
 use mars_schema::mcp_servers::{McpRender, partition_env};
 
-use super::{HookFile, McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
+use super::{McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct CodexAdapter;
@@ -41,14 +41,6 @@ impl TargetAdapter for CodexAdapter {
                 format: SectionFormat::TomlTable("mcp_servers"),
             },
             render,
-        })
-    }
-
-    fn hook_file(&self) -> Option<HookFile> {
-        Some(HookFile {
-            file: "hooks.json",
-            top_level: &[],
-            trust_gated: true,
         })
     }
 }

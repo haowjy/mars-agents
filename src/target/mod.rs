@@ -60,19 +60,6 @@ impl HookEntry {
     }
 }
 
-/// The hook config file of a merge target: where its entries are appended. What the target
-/// accepts, and the files of a file target, are `mars_schema::hooks::targets`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HookFile {
-    /// Under the target root.
-    pub file: &'static str,
-    /// Keys set at the top of the file before appending (Cursor's `version`).
-    pub top_level: &'static [(&'static str, i64)],
-    /// The harness skips hooks it has not been told to trust, keyed on their position in
-    /// `file` (Codex): a sync that moves or adds one says so.
-    pub trust_gated: bool,
-}
-
 /// Per-target compilation adapter.
 ///
 /// Implementations encapsulate all per-target knowledge:
@@ -111,13 +98,6 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     // -----------------------------------------------------------------------
     // Config files
     // -----------------------------------------------------------------------
-
-    /// The file this target merges hook entries into; `None` for a target that merges none
-    /// (a file target's files are named by `mars_schema::hooks::targets`). MCP servers are
-    /// reconciled by [`mcp_file::reconcile`] from [`Self::mcp_file`].
-    fn hook_file(&self) -> Option<HookFile> {
-        None
-    }
 
     /// The file this harness reads MCP servers from and how entries render
     /// there; `None` when the target takes no MCP servers.

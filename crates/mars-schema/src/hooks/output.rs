@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::Serialize;
+
 use super::portable::{self, PortableHooks};
 use super::render::{self, Skip};
 use super::targets::{self, Target};
@@ -10,7 +12,8 @@ use super::{HookDef, Origin, Tokens};
 use crate::ordered::OrderedValue;
 
 /// What a hook installs on one target.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
 pub enum HookOutput {
     Merge(MergeOutput),
     File(FileOutput),
@@ -28,7 +31,8 @@ impl HookOutput {
 
 /// A file target's files for a hook: the authored fragment as written, and the file
 /// generated from `[hooks]`.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileOutput {
     pub files: Vec<OutputFile>,
     /// What is wrong with the fragment, if anything; it is installed regardless.
@@ -46,7 +50,7 @@ impl FileOutput {
 }
 
 /// A file a hook installs on a file target.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OutputFile {
     /// Relative to the target root.
     pub path: String,
@@ -55,7 +59,8 @@ pub struct OutputFile {
 
 /// One merge target's events for a hook: `[hooks]` rendered, with the fragment's events
 /// replacing the generated ones they name.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MergeOutput {
     /// Finished entries per native event. An event whose array is empty is turned off.
     pub events: BTreeMap<String, Vec<OrderedValue>>,
@@ -75,23 +80,24 @@ impl MergeOutput {
     /// out. Events outside Claude's table (`unchecked`) and events turned off stay as they
     /// are. Idempotent, so entries `[hooks]` already rendered pass unchanged.
     fn conform_to_codex(&mut self) -> Result<(), FragmentError> {
-        let checked: serde_json::Map<_, _> = self
+        let checked: BTreeMap<_, _> = self
             .events
             .iter()
             .filter(|(event, entries)| {
                 !entries.is_empty() && targets::claude_event(event).is_some()
             })
-            .map(|(event, entries)| {
-                let entries = entries.iter().map(OrderedValue::to_json).collect();
-                (event.clone(), serde_json::Value::Array(entries))
-            })
+            .map(|(event, entries)| (event.clone(), OrderedValue::Array(entries.clone())))
             .collect();
         if checked.is_empty() {
             return Ok(());
         }
-        let text = serde_json::Value::Object(checked.clone()).to_string();
-        let (table, nulls) = PortableHooks::from_claude_json(&text)
-            .map_err(|error| FragmentError(format!("fragment is not a hook table: {error}")))?;
+        let (table, nulls) = PortableHooks::from_ordered(OrderedValue::Object(
+            checked
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ))
+        .map_err(|error| FragmentError(format!("fragment is not a hook table: {error}")))?;
         for path in nulls {
             // `hooks.<Event>[..]…`: the second segment is the event.
             let event = path.split(['.', '[']).nth(1).map(str::to_owned);
@@ -157,7 +163,7 @@ impl HookDef {
         let mut output = FileOutput::default();
         if let (Some(text), Some(path)) = (fragment_text, target.fragment_path(&self.name)) {
             let content = tokens.substitute(text);
-            output.fragment_problem = file_fragment_problem(target.root, &content);
+            output.fragment_problem = target.fragment_problem(&content);
             output.files.push(OutputFile { path, content });
         }
         if let (Some(portable), true) = (&self.portable, self.generates_for(target.root)) {
@@ -203,6 +209,29 @@ impl HookDef {
         Ok(HookOutput::Merge(output))
     }
 
+    /// Whether the hook's fragment for `target` loads, as [`Self::output`] would lay it. A
+    /// file target's fragment is opaque, and `[hooks]` never fails to render.
+    pub fn check_fragment(
+        &self,
+        target: &Target,
+        fragment_text: Option<&str>,
+        origin: Origin,
+    ) -> Result<(), FragmentError> {
+        if target.is_file() {
+            return Ok(());
+        }
+        let tokens = Tokens::default();
+        self.lay_fragment(
+            MergeOutput::default(),
+            target,
+            &target.profile,
+            fragment_text,
+            origin,
+            &tokens,
+        )
+        .map(drop)
+    }
+
     fn merge_output(
         &self,
         target: &Target,
@@ -224,6 +253,19 @@ impl HookDef {
             }
             output.skips = rendered.skips;
         }
+        self.lay_fragment(output, target, profile, fragment_text, origin, tokens)
+    }
+
+    /// Lay the hook's fragment over the events `[hooks]` rendered.
+    fn lay_fragment(
+        &self,
+        mut output: MergeOutput,
+        target: &Target,
+        profile: &targets::Profile,
+        fragment_text: Option<&str>,
+        origin: Origin,
+        tokens: &Tokens<'_>,
+    ) -> Result<MergeOutput, FragmentError> {
         let (Some(text), Some(fragment)) = (fragment_text, self.fragment(target.root)) else {
             return Ok(output);
         };
@@ -238,21 +280,25 @@ impl HookDef {
         };
         // Sorted, so the first fault reported does not depend on authored order.
         let sorted: BTreeMap<_, _> = object.into_iter().collect();
-        let known = profile.events;
         for (event, entries) in sorted {
-            if !known.iter().any(|e| e.name == event) {
+            if profile.event(&event).is_none() {
                 if !fragment.is_unchecked() && origin == Origin::Dependency {
                     output.skipped_events.push(event);
                     continue;
                 }
                 if !fragment.is_unchecked() {
-                    let checked = target
+                    let checked = profile
                         .verified_against
                         .map_or(String::new(), |v| format!(" (checked against {v})"));
                     return Err(err(format!(
                         "unknown event `{event}` for target `{}`; valid events: {}{checked}; use `unchecked = true` to pass a newer native event through verbatim",
                         target.root,
-                        known.iter().map(|e| e.name).collect::<Vec<_>>().join(", ")
+                        profile
+                            .events
+                            .iter()
+                            .map(|e| e.name)
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )));
                 }
                 output.unchecked_events.push(event.clone());
@@ -271,25 +317,4 @@ impl HookDef {
         }
         Ok(output)
     }
-}
-
-/// Name what is wrong with a file target's fragment, if anything. Warning-only: a file
-/// fragment is otherwise opaque, and the caller words the diagnostic.
-///
-/// `.opencode` must export a default `{ id, setup }`: `export default …`,
-/// `export { x as default }` or `export * as default`. The check scans identifier tokens,
-/// so a commented-out export satisfies it; the cost of that miss is a warning not shown.
-pub fn file_fragment_problem(target_root: &str, content: &str) -> Option<&'static str> {
-    if target_root != ".opencode" {
-        return None;
-    }
-    let tokens: Vec<&str> = content
-        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '$')))
-        .filter(|token| !token.is_empty())
-        .collect();
-    let has_default_export = tokens
-        .windows(2)
-        .any(|pair| matches!(pair, ["export", "default"] | ["as", "default"]));
-    (!has_default_export)
-        .then_some("has no recognizable default export; add a default `{ id, setup }` export")
 }

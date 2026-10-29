@@ -225,7 +225,6 @@ fn remove_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::target::{HookFile, TargetRegistry};
     use tempfile::TempDir;
 
     fn entry(name: &str, event: &str, script: &str) -> HookEntry {
@@ -310,36 +309,5 @@ mod tests {
 
         let after: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(after, serde_json::json!({"version": 1}));
-    }
-
-    #[test]
-    fn claude_hooks_go_to_the_local_settings_file() {
-        let registry = TargetRegistry::new();
-        assert_eq!(
-            registry.get(".claude").unwrap().hook_file(),
-            Some(HookFile {
-                file: "settings.local.json",
-                top_level: &[],
-                trust_gated: false,
-            })
-        );
-    }
-
-    #[test]
-    fn schema_and_adapter_placements_agree_for_every_target() {
-        use mars_schema::hooks::targets::target;
-        let registry = TargetRegistry::new();
-        for root in [
-            ".agents",
-            ".claude",
-            ".codex",
-            ".opencode",
-            ".pi",
-            ".cursor",
-        ] {
-            let merges = target(root).is_some_and(|target| !target.is_file());
-            let located = registry.get(root).unwrap().hook_file().is_some();
-            assert_eq!(merges, located, "{root}: schema and adapter disagree");
-        }
     }
 }

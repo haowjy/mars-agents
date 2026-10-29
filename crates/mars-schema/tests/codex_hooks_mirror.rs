@@ -179,6 +179,7 @@ fn codex_document(claude_json: &str) -> (serde_json::Value, PortableHooks) {
         &Tokens {
             hook_dir: "/p/.codex/hooks/audit",
             hook_target: ".codex",
+            ..Tokens::default()
         },
     );
     let events: BTreeMap<_, Vec<_>> = rendered

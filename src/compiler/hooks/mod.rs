@@ -433,8 +433,8 @@ pub(crate) fn check_hooks(
                 "hook `{name}`: `if` on `{event}` never matches: Claude does not run a handler with `if` on a non-tool event"
             ));
         }
-        // Only the targets that render `[hooks]` today have a reason an author can act on;
-        // the others report "not rendered yet" at sync.
+        // Cursor renders nothing before 0.26, so its one blanket skip is no reason an author
+        // can act on.
         for target in mars_schema::hooks::targets::all()
             .iter()
             .filter(|target| target.profile.renders())

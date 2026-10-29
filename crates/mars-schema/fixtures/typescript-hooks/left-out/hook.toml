@@ -1,0 +1,25 @@
+[[hooks.PreToolUse]]
+matcher = "Bash"
+[[hooks.PreToolUse.hooks]]
+type = "http"
+url = "https://example.test"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "echo ok"
+
+[[hooks.PreCompact]]
+matcher = "manual"
+[[hooks.PreCompact.hooks]]
+type = "command"
+command = "echo a"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "echo b"
+if = "Bash(*)"
+
+[[hooks.Notification]]
+[[hooks.Notification.hooks]]
+type = "command"
+command = "echo n"

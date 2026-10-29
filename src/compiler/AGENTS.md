@@ -167,10 +167,10 @@ that result, and `lower_merge_fragments` orders each hook's merge output (`lower
 the same for a plugin build, which has no preflight; there `${MARS_HOOK_TARGET}` is `plugin`).
 Preflight also says what `[hooks]` leaves out on every managed target, for every accepted hook even when no target takes it (`hook-event-skipped`:
 a warning per skip for the project's own hooks, one info line per sync for dependencies) and
-a fragment replacing generated events (`hook-fragment-overrides`). After the writes, compile
+a fragment replacing generated events (`hook-fragment-overrides`), a file-target fragment beside the generated `mars-<name>.hooks.ts` (`hook-fragment-beside-generated`) and answers a TypeScript target cannot carry (`hook-answer-unsupported`, info). After the writes, compile
 compares a trust-gated target's (event, group, handler) positions with those before the sync and
 warns `codex-hooks-need-trust` for any new or moved one. `config_entries/file_hooks.rs` owns file-placement
-outputs: what the old lock says a hook owns on a target (every non-canonical output but its
+outputs (a file whose bytes already equal the output is not rewritten): what the old lock says a hook owns on a target (every non-canonical output but its
 directory copy, so a hook may own several files) and writing them. `lower_mcp_servers` lowers servers.
 A target whose merge-file hook entries equal the lock's records, and whose file still holds
 them in the order a sync would write them (`hook_file::holds_recorded`, matched entry by entry),

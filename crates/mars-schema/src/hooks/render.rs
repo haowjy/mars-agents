@@ -23,6 +23,8 @@ pub struct Skip {
 pub struct Rendered {
     pub output: Output,
     pub skips: Vec<Skip>,
+    /// Events that render, but whose portable answers do not all carry over to the target.
+    pub answer_limits: Vec<Skip>,
 }
 
 /// What a rendering yields, in the shape the target's placement takes.
@@ -90,20 +92,9 @@ impl PortableHooks {
                     event: None,
                     reason: reason.into(),
                 }],
+                answer_limits: Vec::new(),
             },
-            Rules::TypeScript { harness } => {
-                let mut rendered = Rendered {
-                    output: Output::File { text: None },
-                    skips: Vec::new(),
-                };
-                for (event, _) in self.events() {
-                    rendered.skip(
-                        event,
-                        format!("mars does not render hooks for {harness} yet"),
-                    );
-                }
-                rendered
-            }
+            Rules::TypeScript { harness } => self.render_typescript(profile, harness, tokens),
         };
         if let Output::Merge { events, .. } = &mut rendered.output {
             for entries in events.values_mut() {
@@ -155,6 +146,7 @@ impl PortableHooks {
                 unchecked_events,
             },
             skips: Vec::new(),
+            answer_limits: Vec::new(),
         }
     }
 
@@ -165,6 +157,7 @@ impl PortableHooks {
                 unchecked_events: Vec::new(),
             },
             skips: Vec::new(),
+            answer_limits: Vec::new(),
         };
         let mut rendered_events = BTreeMap::new();
         for (event, groups) in self.events() {
@@ -332,6 +325,7 @@ mod tests {
         Tokens {
             hook_dir: "/p/.codex/hooks/audit",
             hook_target: ".codex",
+            ..Default::default()
         }
     }
 
@@ -442,15 +436,8 @@ mod tests {
     }
 
     #[test]
-    fn opencode_pi_and_cursor_render_nothing_and_say_why() {
-        let table = hooks(MIXED);
-        for root in [".opencode", ".pi"] {
-            let rendered = table.render(&profile(root), &tokens());
-            assert!(rendered.is_empty());
-            assert_eq!(rendered.skips.len(), 3, "{root}");
-            assert!(rendered.skips[0].reason.contains("yet"));
-        }
-        let cursor = table.render(&profile(".cursor"), &tokens());
+    fn cursor_renders_nothing_and_says_why() {
+        let cursor = hooks(MIXED).render(&profile(".cursor"), &tokens());
         assert!(cursor.is_empty());
         assert_eq!(cursor.skips.len(), 1);
         assert_eq!(cursor.skips[0].event, None);

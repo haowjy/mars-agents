@@ -1,0 +1,9 @@
+.opencode
+  skip Notification: OpenCode has no such event
+  skip PreCompact: matcher group 0: OpenCode gives `PreCompact` no `trigger` to test `manual` against
+  skip PreToolUse: matcher group 0, handler 0: OpenCode runs `command` handlers, not `http`
+  skip Stop: OpenCode's end of a turn is a bus event that is not awaited
+.pi
+  skip Notification: Pi has no such event
+  skip PreToolUse: matcher group 0, handler 0: Pi runs `command` handlers, not `http`
+  skip Stop: matcher group 0, handler 0: Claude never runs a handler with `if` on a non-tool event

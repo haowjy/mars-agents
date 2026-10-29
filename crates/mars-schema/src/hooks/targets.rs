@@ -51,7 +51,7 @@ pub enum Rules {
     Claude,
     /// Codex's parser: handlers and matchers it cannot run are left out (D17).
     Codex,
-    /// Generated TypeScript for `harness`; not rendered yet.
+    /// Generated TypeScript for `harness` (`hooks::typescript`).
     TypeScript { harness: &'static str },
     /// Nothing is rendered for the target, as a whole; `reason` says why.
     Withheld { reason: &'static str },
@@ -70,7 +70,7 @@ pub struct Profile {
 impl Profile {
     /// Whether the rules render `[hooks]` at all.
     pub fn renders(&self) -> bool {
-        matches!(self.rules, Rules::Claude | Rules::Codex)
+        !matches!(self.rules, Rules::Withheld { .. })
     }
 }
 
@@ -201,6 +201,31 @@ const CURSOR_EVENTS: &[Event] = &[
     event("workspaceOpen"),
 ];
 
+// What the generated OpenCode plugin registers (verified live on OpenCode 2.2.0, `matcher`
+// fields included). `PreCompact` has no matcher field: its compaction callback does not say
+// why it ran.
+const OPENCODE_EVENTS: &[Event] = &[
+    matched("PreToolUse", "tool_name"),
+    matched("PostToolUse", "tool_name"),
+    matched("PostToolUseFailure", "tool_name"),
+    event("UserPromptSubmit"),
+    event("PreCompact"),
+    matched("PermissionRequest", "tool_name"),
+];
+
+// What the generated Pi extension registers (Pi 1.4.0).
+const PI_EVENTS: &[Event] = &[
+    matched("PreToolUse", "tool_name"),
+    matched("PostToolUse", "tool_name"),
+    matched("PostToolUseFailure", "tool_name"),
+    event("UserPromptSubmit"),
+    matched("SessionStart", "source"),
+    event("Stop"),
+    matched("PreCompact", "trigger"),
+    matched("PostCompact", "trigger"),
+    matched("SessionEnd", "reason"),
+];
+
 const TARGETS: &[Target] = &[
     Target {
         root: ".claude",
@@ -234,13 +259,12 @@ const TARGETS: &[Target] = &[
         },
         other_events: &[],
     },
-    // The events a generated adapter handles are listed when its renderer lands.
     Target {
         root: ".opencode",
-        verified_against: None,
+        verified_against: Some("OpenCode 2.2.0"),
         placement: Placement::File { dir: "plugins" },
         profile: Profile {
-            events: &[],
+            events: OPENCODE_EVENTS,
             rules: Rules::TypeScript {
                 harness: "OpenCode",
             },
@@ -249,10 +273,10 @@ const TARGETS: &[Target] = &[
     },
     Target {
         root: ".pi",
-        verified_against: None,
+        verified_against: Some("Pi 1.4.0"),
         placement: Placement::File { dir: "extensions" },
         profile: Profile {
-            events: &[],
+            events: PI_EVENTS,
             rules: Rules::TypeScript { harness: "Pi" },
         },
         other_events: &[],

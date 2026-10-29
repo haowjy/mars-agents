@@ -11,6 +11,7 @@
 pub mod portable;
 pub mod render;
 pub mod targets;
+mod typescript;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
@@ -56,6 +57,9 @@ pub struct Tokens<'a> {
     /// Replaces [`HOOK_TARGET_TOKEN`]: the target root (`.claude`, `.codex`, …), or `plugin`
     /// in a plugin build's shared tree.
     pub hook_target: &'a str,
+    /// The hook's name, which a generated file carries as its identity. Not a token: no
+    /// authored text is substituted with it.
+    pub hook_name: &'a str,
 }
 
 impl Tokens<'_> {
@@ -471,6 +475,15 @@ pub struct FileOutput {
     /// What is wrong with the fragment, if anything; it is installed regardless.
     pub fragment_problem: Option<&'static str>,
     pub skips: Vec<Skip>,
+    /// Rendered events whose portable answers do not all carry over to the target.
+    pub answer_limits: Vec<Skip>,
+}
+
+impl FileOutput {
+    /// Whether a fragment installs next to a file generated from `[hooks]`.
+    pub fn has_fragment_beside_generated(&self) -> bool {
+        self.files.len() > 1
+    }
 }
 
 /// A file a hook installs on a file target.
@@ -538,6 +551,10 @@ impl HookDef {
         fragment_text: Option<&str>,
         tokens: &Tokens<'_>,
     ) -> FileOutput {
+        let tokens = &Tokens {
+            hook_name: &self.name,
+            ..*tokens
+        };
         let mut output = FileOutput::default();
         if let (Some(text), Some(path)) = (fragment_text, target.fragment_path(&self.name)) {
             let content = tokens.substitute(text);
@@ -556,6 +573,7 @@ impl HookDef {
                 output.files.push(OutputFile { path, content });
             }
             output.skips = rendered.skips;
+            output.answer_limits = rendered.answer_limits;
         }
         output
     }
@@ -672,6 +690,7 @@ mod tests {
         Tokens {
             hook_dir: "/p/.claude/hooks/audit",
             hook_target: ".claude",
+            ..Tokens::default()
         }
     }
 
@@ -757,6 +776,7 @@ mod tests {
         let t = Tokens {
             hook_dir: "${CLAUDE_PLUGIN_ROOT}/hooks/audit",
             hook_target: "plugin",
+            ..Tokens::default()
         };
         assert_eq!(
             t.substitute(r#"const SCRIPT = "${MARS_HOOK_DIR}/run.sh"; // ${MARS_HOOK_TARGET}"#),
@@ -873,12 +893,15 @@ command = "echo n"
         let managed: Vec<String> = [".claude", ".codex", ".cursor", ".opencode", ".pi"]
             .map(String::from)
             .into();
-        // OpenCode, Pi and Cursor render nothing yet.
-        assert_eq!(def.select(&managed), [".claude", ".codex"]);
+        // Cursor renders nothing before 0.26; GUARD's PreToolUse renders on the two TypeScript targets.
+        assert_eq!(
+            def.select(&managed),
+            [".claude", ".codex", ".opencode", ".pi"]
+        );
         let skipped = read_local(&format!("skip-targets = [\".codex\"]\n{GUARD}"))
             .def
             .unwrap();
-        assert_eq!(skipped.select(&managed), [".claude"]);
+        assert_eq!(skipped.select(&managed), [".claude", ".opencode", ".pi"]);
         assert!(skipped.skips_for(".codex").is_empty());
         assert_eq!(def.skips_for(".codex").len(), 1);
     }

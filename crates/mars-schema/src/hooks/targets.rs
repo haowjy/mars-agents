@@ -226,6 +226,13 @@ const PI_EVENTS: &[Event] = &[
     matched("SessionEnd", "reason"),
 ];
 
+/// What the Claude plugin tree's `hooks/hooks.json` must satisfy: Claude's events under
+/// Codex's handler rules, because Claude, Codex and Grok all read that one file (D21).
+pub const PLUGIN_CLAUDE_TREE: Profile = Profile {
+    events: CLAUDE_EVENTS,
+    rules: Rules::Codex,
+};
+
 const TARGETS: &[Target] = &[
     Target {
         root: ".claude",

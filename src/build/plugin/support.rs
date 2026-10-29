@@ -98,16 +98,30 @@ fn warn_hooks_without_tree_fragment(
     let affected = human_list(&affected);
 
     for hook in accepted_hooks {
-        if !hook.def.select(&[target_dir.to_owned()]).is_empty() {
+        if hook.def.select(&[target_dir.to_owned()]).is_empty() {
+            diag.warn(
+                "plugin-hook-fragment-dropped",
+                format!(
+                    "hook `{}` from `{}` has no `{fragment}` fragment and its `[hooks]` render nothing in this tree; {affected} won't get it",
+                    hook.def.name, hook.source_name
+                ),
+            );
             continue;
         }
-        diag.warn(
-            "plugin-hook-fragment-dropped",
-            format!(
-                "hook `{}` from `{}` has no `{fragment}` fragment; {affected} won't get it",
-                hook.def.name, hook.source_name
-            ),
-        );
+        for (other, file) in hook.def.fragments() {
+            if other != target_dir {
+                diag.warn(
+                    "plugin-hook-fragment-dropped",
+                    format!(
+                        "hook `{}` from `{}`: `{}` fragment `{}` does not reach the `{fragment}` plugin tree; {affected} won't get it",
+                        hook.def.name,
+                        hook.source_name,
+                        other.trim_start_matches('.'),
+                        file.file
+                    ),
+                );
+            }
+        }
     }
 }
 
@@ -329,9 +343,13 @@ mod tests {
             ),
             (Component::Hooks, SupportState::DroppedWithWarning) => {
                 let fragment = harness.tree.descriptor().target_dir.trim_start_matches('.');
-                format!(
-                    "supported for hooks with the `{fragment}` fragment; others dropped with warning"
-                )
+                if harness.tree.key == "claude" {
+                    "supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` fragment; other targets' fragments dropped with warning".to_string()
+                } else {
+                    format!(
+                        "supported for hooks with the `{fragment}` fragment; `[hooks]` and others dropped with warning"
+                    )
+                }
             }
             (Component::Mcp, SupportState::Supported) => "supported".to_string(),
             (Component::BootstrapDocs, SupportState::Impossible) => "impossible".to_string(),

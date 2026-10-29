@@ -164,7 +164,7 @@ warning naming the path; target sync's `target-unmanaged-collision` or `target-d
 says why. A token-free server has no directory to check. `config_entries/render.rs`
 preflight reads, validates and renders every selected hook once (`RenderedHooks`); compile reuses
 that result, and `lower_merge_fragments` orders each hook's merge output (`lower_hook_entries` is
-the same for a plugin build, which has no preflight; there `${MARS_HOOK_TARGET}` is `plugin`).
+the same for a plugin build, which has no preflight; there `${MARS_HOOK_TARGET}` is `plugin`, and the Claude tree's output goes through `HookDef::plugin_output`, which holds it to what Codex parses because Codex reads that file too, D21).
 Preflight also says what `[hooks]` leaves out on every managed target, for every accepted hook even when no target takes it (`hook-event-skipped`:
 a warning per skip for the project's own hooks, one info line per sync for dependencies) and
 a fragment replacing generated events (`hook-fragment-overrides`), a file-target fragment beside the generated `mars-<name>.hooks.ts` (`hook-fragment-beside-generated`) and answers a TypeScript target cannot carry (`hook-answer-unsupported`, info). After the writes, compile

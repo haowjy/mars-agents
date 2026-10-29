@@ -265,6 +265,57 @@ fn every_rendered_codex_document_loads_with_no_handler_skipped() {
     assert_eq!(pre[0].hooks.len(), 2);
 }
 
+/// The Claude plugin tree's `hooks.json` is read by Codex too (D21): what `[hooks]` and a
+/// Claude fragment put there must load with no handler skipped, and keep Claude's events.
+#[test]
+fn the_claude_plugin_tree_loads_in_codex_with_claude_events_kept() {
+    use mars_schema::hooks::{HookOutput, Origin, read};
+    let read = read(
+        "[[hooks.PreToolUse]]\nmatcher = \"Bash\"\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"a\"\ntimeout = 2.5\n[[hooks.PreToolUse.hooks]]\ntype = \"http\"\nurl = \"u\"\n[targets.\".claude\"]\nfragment = \"c.json\"\n",
+        "audit",
+        Origin::Local,
+    );
+    let def = read.def.expect("hook.toml reads");
+    let fragment = r#"{"Notification":[{"hooks":[{"type":"command","command":"n"}]}],
+        "Stop":[{"hooks":[{"type":"agent"},{"type":"mcp_tool","server":"s","tool":"t","input":{"a":null}},
+                          {"type":"command","command":"s","timeout":0.1}]}],
+        "SessionEnd":[{"hooks":[{"type":"mcp_tool","server":"s","tool":"t"}]}]}"#;
+    let HookOutput::Merge(output) = def
+        .plugin_output(
+            mars_schema::hooks::targets::target(".claude").unwrap(),
+            Some(fragment),
+            Origin::Local,
+            &Tokens {
+                hook_dir: "/p",
+                hook_target: "plugin",
+            },
+        )
+        .unwrap()
+    else {
+        panic!("claude is a merge target");
+    };
+    let events: BTreeMap<_, Vec<_>> = output
+        .events
+        .iter()
+        .map(|(event, entries)| (event, entries.iter().map(|e| e.to_json()).collect()))
+        .collect();
+    let document = serde_json::json!({ "hooks": events });
+    let (run, skipped) = loaded(&parse(&document).expect("Codex must deserialize the tree"));
+    assert!(skipped.is_empty(), "Codex would skip: {skipped:?}");
+    // The generated command, the fragment's two Stop handlers that survive (the `null` input
+    // is dropped, not the handler), and Notification, which Codex ignores but Claude runs.
+    assert_eq!(run, 3, "{document:#}");
+    assert!(document["hooks"]["Notification"].is_array());
+    assert!(
+        !document["hooks"]
+            .as_object()
+            .unwrap()
+            .contains_key("SessionEnd")
+    );
+    assert_eq!(document["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"], 3);
+    assert_eq!(output.skips.len(), 4, "{:?}", output.skips);
+}
+
 #[test]
 fn the_mirror_rejects_what_the_renderer_leaves_out() {
     // Without the renderer's checks the same input fails or is skipped, so the test above

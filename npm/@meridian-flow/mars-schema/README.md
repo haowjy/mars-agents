@@ -35,6 +35,7 @@ await init();
 | `satisfies(constraint, version)` | Whether a version meets a dependency entry's `version` (`^1.2`, `v2`, a bare `0.20` as `^0.20`, `latest`; a branch or commit pin is met by none). |
 | `satisfiesRequirement(requirement, version)` | Whether a version meets a package's `requires-mars` or `requires-meridian`, where a bare `0.20` means `>=0.20.0`. |
 | `selectVersion({available, constraints, locked?})` | Which ref a package ends at, from every `[requester, version \| null]` on it and the repository's tags: `{pin}` (a branch or commit), `{locked: true}` (the locked version still meets every semver range, whether or not the repository still has its tag), `{tag}` (the newest that meets every semver range) or `{untagged: true}` (no version tags). Throws when none qualifies. |
+| `renderHooks(hookToml, targets, tokens?)` | A `hook.toml`'s `[hooks]` table as each target (`.claude`, `.codex`, …) takes it: finished entries or generated files, what the target leaves out, and the reader's diagnostics. |
 | `selectItems({packages, root?, requests?})` | Which Agents, skills and bootstrap documents an install of `root` and its dependencies yields, and why. Takes each package's `prepare` result. |
 | `version()` | The version of the schema crate this build was made from. |
 

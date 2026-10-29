@@ -568,7 +568,9 @@ How fragments combine with `[hooks]`:
 - When a hook has `[hooks]`, every target table must name `fragment`
   explicitly; an empty table is an error, because it would pick up a leftover
   `claude.json`. A hook without `[hooks]` keeps the old rule: the tables select
-  targets, and an empty table means `<target>.json`.
+  targets, and an empty table on a merge target means `<target>.json`. An OpenCode
+  or Pi table always names its `fragment`: it is a TypeScript file, and
+  `opencode.json` would otherwise be installed as a plugin.
 
 Each fragment is the harness's native event-keyed object—the value that its
 documentation places under `"hooks"`. Mars preserves every entry field and
@@ -808,7 +810,7 @@ reorder its file-mode artifact.
 | `hook-fragment-beside-generated` | info | an OpenCode or Pi fragment installs next to the generated file for the same hook |
 | `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
 | `hook-fragment-contract` | warning | an OpenCode or Pi fragment lacks the expected default export; it installs anyway |
-| `hook-fragment` | warning or error | a fragment could not be read or rendered (a warning for a plugin-build OpenCode fragment) |
+| `hook-fragment` | warning or error | a fragment could not be read or rendered in a plugin build (an error for the project's own hook, a warning for a dependency's) |
 | `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists |
 | `codex-hooks-need-trust` | warning | `.codex/hooks.json` has new or moved handlers Codex will want reviewed |
 | `plugin-hook-fragment-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |

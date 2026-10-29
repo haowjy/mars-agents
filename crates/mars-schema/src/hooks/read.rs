@@ -222,6 +222,16 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
 
     let mut targets = BTreeMap::new();
     for (root, spec) in raw.targets {
+        let is_file = targets::target(&root).is_some_and(Target::is_file);
+        if is_file && spec.fragment.is_none() {
+            return failed(
+                "hook.fragment-required",
+                format!(
+                    "target `{root}` must name its `fragment`: a file target is a TypeScript file with no default name, and `{}.json` would be installed as one",
+                    root.trim_start_matches('.')
+                ),
+            );
+        }
         if portable.is_some() && spec.fragment.is_none() {
             return failed(
                 "hook.fragment-required",
@@ -232,7 +242,7 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
             );
         }
         let mut unchecked = spec.unchecked;
-        if unchecked.is_some() && targets::target(&root).is_some_and(Target::is_file) {
+        if unchecked.is_some() && is_file {
             let message = format!(
                 "target `{root}` uses file-mode fragments; `unchecked` is not supported because file contents and events are not validated"
             );

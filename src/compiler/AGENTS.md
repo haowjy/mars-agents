@@ -183,8 +183,8 @@ A dependency hook whose `hook.toml` fails validation (D19) is `KeptHook` in `Tar
 records (re-appended from the record if the file is rewritten for another reason) and file
 outputs, and target sync re-projects the unchanged directory as for any unchanged item. A hook
 never installed installs nothing; both warn `hook-invalid-kept`. A dependency hook is judged
-invalid in one place, discovery: it must also render (read its fragments) on each managed target
-it is installed for. The project's own hook that fails to render is a hard error at preflight.
+invalid in one place, discovery: its fragments must also load (`HookDef::check_fragment`) on each
+managed target it is installed for; `[hooks]` is rendered once, at preflight. The project's own hook that fails to render is a hard error at preflight.
 The hook kept is whatever the old lock installed from that package under the `name` its broken
 file still declares, else its directory's name (the lock records no source path). A hook the
 consumer excludes, or whose file does not still say `visibility = "exported"`, keeps nothing and

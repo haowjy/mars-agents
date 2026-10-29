@@ -151,14 +151,14 @@ entry with a path-bearing warning when it did not. Config lowering must not redi
 `hook_target_items` asks `HookDef::select(managed)` which targets get a hook: those where its
 `[hooks]` renders at least one event (unless `skip-targets`) and those with a fragment table.
 A dependency hook that is invalid (its `hook.toml`, or a fragment that does not load) is not selected
-if the consumer's filters select it and its file still says it is exported: `settle_invalid_hooks`
-(called by `build_target` with the old lock) turns it into a `KeptHook` over the directories the lock
+if the consumer's filters select it and its file still says it is exported: `kept_hooks.rs`
+(`build_target_state` calls it with the old lock, once the state is complete) turns it into a `KeptHook` over the directories the lock
 holds for that package under one of the names the broken file may have had, or warns and installs
 nothing. `diff::compute` emits those directories as unchanged
 and never orphans them, whatever the disk or the invalid source holds.
 
 Plugin builds and sync both call `build_target_state` (graph collection, optional local extension,
-MCP collision resolution and the winning servers' directory items) and then `apply_target_renames`. Between
+settling invalid dependency hooks against the old lock (`None` for a plugin build), MCP collision resolution and the winning servers' directory items) and then `apply_target_renames`. Between
 the two, sync drops items that would overwrite unmanaged content, so the rename view and the
 references it rewrites only see surviving items. The plugin root source name is the local package
 for collision precedence, as `_self` is in sync. Skill-ref validation is the caller's: sync passes

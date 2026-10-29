@@ -259,12 +259,11 @@ fn stage_plugin_inner(
         &graph_staging.path().join("resolve"),
         diag,
     )?;
-    let mut built_target =
-        crate::sync::build_target_state(&graph, &effective, &root_source, diag, |_, _| Ok(()))?;
     // No previous install to keep: an invalid dependency hook is left out with a warning.
-    built_target
-        .target
-        .settle_invalid_hooks(None, &effective.settings.managed_targets(), diag);
+    let built_target =
+        crate::sync::build_target_state(&graph, &effective, &root_source, None, diag, |_, _| {
+            Ok(())
+        })?;
     let mut prepared_target =
         crate::sync::apply_target_renames(built_target, &graph, &effective, diag)?;
     // A plugin build has no project-local items and carries no provided skills, so it passes no

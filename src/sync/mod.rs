@@ -1,6 +1,7 @@
 use mars_schema::item::ItemKind;
 pub mod apply;
 pub mod diff;
+mod kept_hooks;
 mod local_items;
 pub mod mutation;
 pub(crate) mod ownership;
@@ -568,21 +569,29 @@ pub(crate) struct BuiltTarget {
 ///
 /// `local_source` names the consumer's own package: it wins MCP name collisions
 /// silently. Sync's local package is `_self`; a plugin build's is its root package.
+///
+/// A dependency hook whose `hook.toml` is invalid keeps what `old_lock` installed (D19); a
+/// build with no previous install passes `None` and keeps nothing.
 pub(crate) fn build_target_state(
     graph: &crate::resolve::ResolvedGraph,
     effective: &EffectiveConfig,
     local_source: &SourceName,
+    old_lock: Option<&crate::lock::LockFile>,
     diag: &mut DiagnosticCollector,
     extend: impl FnOnce(&mut target::TargetState, &mut DiagnosticCollector) -> Result<(), MarsError>,
 ) -> Result<BuiltTarget, MarsError> {
-    let (mut target, explicit_renames, collision_renames) =
+    let (mut target, explicit_renames, collision_renames, invalid_hooks) =
         target::build_with_collisions_and_diag(graph, effective, local_source, diag)?;
     extend(&mut target, diag)?;
-    target.resolve_mcp_collisions(
-        &effective.settings.managed_targets(),
-        local_source.as_str(),
+    let managed_targets = effective.settings.managed_targets();
+    target.kept_hooks = kept_hooks::settle(
+        invalid_hooks,
+        &target.items,
+        old_lock,
+        &managed_targets,
         diag,
-    )?;
+    );
+    target.resolve_mcp_collisions(&managed_targets, local_source.as_str(), diag)?;
     Ok(BuiltTarget {
         target,
         explicit_renames,
@@ -645,6 +654,7 @@ pub(crate) fn build_target(
         &resolved.graph,
         &resolved.loaded.effective,
         &local_source,
+        Some(&resolved.loaded.old_lock),
         diag,
         |target_state, diag| {
             local_items::merge_local_items(
@@ -657,12 +667,6 @@ pub(crate) fn build_target(
             )
         },
     )?;
-
-    built.target.settle_invalid_hooks(
-        Some(&resolved.loaded.old_lock),
-        &resolved.loaded.effective.settings.managed_targets(),
-        diag,
-    );
 
     // Prevent managed installs from overwriting unmanaged files. This runs over
     // every item, hook and MCP directories included, and before renames rewrite

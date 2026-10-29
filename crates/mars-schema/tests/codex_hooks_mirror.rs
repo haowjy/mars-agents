@@ -288,6 +288,7 @@ fn the_claude_plugin_tree_loads_in_codex_with_claude_events_kept() {
             &Tokens {
                 hook_dir: "/p",
                 hook_target: "plugin",
+                ..Tokens::default()
             },
         )
         .unwrap()

@@ -312,7 +312,7 @@ pub(super) fn write_tree(
         .target
         .selected_hooks_for_target(descriptor.target_dir)
         .map(|(dir, hook)| {
-            let excluded = other_hook_fragments(hook, descriptor.target_dir);
+            let excluded = other_hook_native_hooks(hook, descriptor.target_dir);
             crate::fs::copy_dir_filtered(&hook.hook_dir, &root.join(dir.native()), &excluded)?;
             Ok((
                 profile
@@ -588,15 +588,17 @@ fn write_skill(
     Ok(())
 }
 
-fn other_hook_fragments(
+fn other_hook_native_hooks(
     hook: &crate::compiler::hooks::ParsedHookItem,
     target_dir: &str,
 ) -> Vec<PathBuf> {
-    let current = hook.fragment(target_dir).map(|fragment| &fragment.file);
+    let current = hook
+        .native_hook(target_dir)
+        .map(|native_hook| &native_hook.file);
     hook.def
-        .fragments()
+        .native_hooks()
         .filter(|(target, _)| *target != target_dir)
-        .map(|(_, fragment)| &fragment.file)
+        .map(|(_, native_hook)| &native_hook.file)
         .filter(|file| Some(*file) != current)
         .map(PathBuf::from)
         .collect()

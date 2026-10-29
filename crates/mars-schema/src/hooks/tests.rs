@@ -2,18 +2,20 @@ use super::*;
 use crate::diagnostic::Severity;
 
 #[test]
-fn opencode_fragments_need_a_default_export() {
+fn opencode_native_hooks_need_a_default_export() {
     let opencode = targets::target(".opencode").unwrap();
     for ok in [
         "export default { id: 'a' }",
         "export { plugin as default }",
         "export * as default from './x'",
     ] {
-        assert_eq!(opencode.fragment_problem(ok), None, "{ok}");
+        assert_eq!(opencode.native_hook_problem(ok), None, "{ok}");
     }
-    assert!(opencode.fragment_problem("export const x = 1").is_some());
+    assert!(opencode.native_hook_problem("export const x = 1").is_some());
     assert_eq!(
-        targets::target(".pi").unwrap().fragment_problem("anything"),
+        targets::target(".pi")
+            .unwrap()
+            .native_hook_problem("anything"),
         None
     );
 }
@@ -77,7 +79,7 @@ fn tokens() -> Tokens<'static> {
 fn def_with(extra: &str, tables: &[(&str, bool)]) -> HookDef {
     let mut text = format!("{extra}\n");
     for (root, unchecked) in tables {
-        text.push_str(&format!("[targets.\"{root}\"]\nfragment = \"f.json\"\n"));
+        text.push_str(&format!("[targets.\"{root}\"]\nnative-hook = \"f.json\"\n"));
         if *unchecked {
             text.push_str("unchecked = true\n");
         }
@@ -88,10 +90,15 @@ fn def_with(extra: &str, tables: &[(&str, bool)]) -> HookDef {
 fn output(
     def: &HookDef,
     root: &str,
-    fragment: Option<&str>,
+    native_hook: Option<&str>,
     origin: Origin,
-) -> Result<MergeOutput, FragmentError> {
-    match def.output(targets::target(root).unwrap(), fragment, origin, &tokens())? {
+) -> Result<MergeOutput, NativeHookError> {
+    match def.output(
+        targets::target(root).unwrap(),
+        native_hook,
+        origin,
+        &tokens(),
+    )? {
         HookOutput::Merge(output) => Ok(output),
         HookOutput::File(_) => panic!("{root} is a file target"),
     }
@@ -129,10 +136,10 @@ fn event_tables_match_supported_command_hook_targets() {
 }
 
 #[test]
-fn file_targets_name_their_fragment_and_generated_files() {
+fn file_targets_name_their_native_hook_and_generated_files() {
     let opencode = targets::target(".opencode").unwrap();
     assert_eq!(
-        opencode.fragment_path("audit").as_deref(),
+        opencode.native_hook_path("audit").as_deref(),
         Some("plugins/mars-audit.ts")
     );
     assert_eq!(
@@ -141,11 +148,11 @@ fn file_targets_name_their_fragment_and_generated_files() {
     );
     let pi = targets::target(".pi").unwrap();
     assert_eq!(
-        pi.fragment_path("audit").as_deref(),
+        pi.native_hook_path("audit").as_deref(),
         Some("extensions/mars-audit.ts")
     );
     assert_eq!(
-        targets::target(".codex").unwrap().fragment_path("audit"),
+        targets::target(".codex").unwrap().native_hook_path("audit"),
         None
     );
 }
@@ -184,7 +191,7 @@ fn hook_dir_token_is_replaced_in_text_and_in_every_json_string() {
 #[test]
 fn merge_emits_the_bytes_a_serde_json_value_would() {
     // The lock's `emitted_json` and Codex trust hash these bytes: keys sort, as they
-    // did when fragments were `serde_json::Value`s.
+    // did when native hooks were `serde_json::Value`s.
     let def = def_with("", &[(".claude", false)]);
     let text = r#"{"version":1,"hooks":{"PreToolUse":[
         {"matcher":"Bash","hooks":[{"timeout":5,"command":"${MARS_HOOK_DIR}/run.sh","type":"command"}]}]}}"#;
@@ -253,14 +260,15 @@ command = "echo n"
 "#;
 
 #[test]
-fn reads_targets_with_default_fragments() {
-    let got =
-        read_local("order = 3\n[targets.\".claude\"]\n[targets.\".pi\"]\nfragment = \"x/pi.ts\"\n");
+fn reads_targets_with_default_native_hooks() {
+    let got = read_local(
+        "order = 3\n[targets.\".claude\"]\n[targets.\".pi\"]\nnative-hook = \"x/pi.ts\"\n",
+    );
     let def = got.def.unwrap();
     assert_eq!((def.name.as_str(), def.order), ("audit", 3));
-    assert_eq!(def.fragment(".claude").unwrap().file, "claude.json");
-    assert_eq!(def.fragment(".pi").unwrap().file, "x/pi.ts");
-    assert!(def.fragment(".codex").is_none());
+    assert_eq!(def.native_hook(".claude").unwrap().file, "claude.json");
+    assert_eq!(def.native_hook(".pi").unwrap().file, "x/pi.ts");
+    assert!(def.native_hook(".codex").is_none());
     let managed = [".pi".to_string(), ".codex".to_string()];
     assert_eq!(def.select(&managed), [".pi"]);
 }
@@ -285,28 +293,28 @@ fn hooks_select_every_managed_target_that_renders_an_event() {
 }
 
 #[test]
-fn a_fragment_still_installs_on_a_skipped_target() {
+fn a_native_hook_still_installs_on_a_skipped_target() {
     let def = read_local(&format!(
-        "skip-targets = [\".codex\"]\n{GUARD}\n[targets.\".codex\"]\nfragment = \"codex.json\"\n"
+        "skip-targets = [\".codex\"]\n{GUARD}\n[targets.\".codex\"]\nnative-hook = \"codex.json\"\n"
     ))
     .def
     .unwrap();
     let managed = [".codex".to_string()];
     assert_eq!(def.select(&managed), [".codex"]);
     let out = output(&def, ".codex", Some(r#"{"Stop":[]}"#), Origin::Local).unwrap();
-    // Skipped: no generated PreToolUse. The fragment's own event is all there is.
+    // Skipped: no generated PreToolUse. The native hook's own event is all there is.
     assert_eq!(out.events.keys().collect::<Vec<_>>(), ["Stop"]);
 }
 
 #[test]
-fn a_fragment_replaces_only_the_events_it_declares() {
+fn a_native_hook_replaces_only_the_events_it_declares() {
     let def = read_local(&format!(
-        "{GUARD}\n[targets.\".codex\"]\nfragment = \"codex.json\"\n"
+        "{GUARD}\n[targets.\".codex\"]\nnative-hook = \"codex.json\"\n"
     ))
     .def
     .unwrap();
-    let fragment = r#"{"PreToolUse":[],"Stop":[{"hooks":[]}]}"#;
-    let out = output(&def, ".codex", Some(fragment), Origin::Local).unwrap();
+    let native_hook = r#"{"PreToolUse":[],"Stop":[{"hooks":[]}]}"#;
+    let out = output(&def, ".codex", Some(native_hook), Origin::Local).unwrap();
     // The empty array is kept, so the caller sees the event turned off.
     assert_eq!(out.events["PreToolUse"], Vec::<OrderedValue>::new());
     assert_eq!(out.overrides, ["PreToolUse"]);
@@ -318,10 +326,10 @@ fn a_fragment_replaces_only_the_events_it_declares() {
 }
 
 #[test]
-fn hooks_need_explicit_fragment_names() {
+fn hooks_need_explicit_native_hook_names() {
     let got = read_local(&format!("{GUARD}\n[targets.\".codex\"]\n"));
     assert!(got.def.is_none());
-    assert!(message(&got).contains("must name its `fragment`"));
+    assert!(message(&got).contains("must name its `native-hook`"));
     // Without `[hooks]` an empty table keeps today's meaning.
     assert!(read_local("[targets.\".codex\"]\n").def.is_some());
 }
@@ -385,7 +393,7 @@ fn skip_targets_must_be_target_roots() {
 
 #[test]
 fn unchecked_on_a_file_target_is_an_error_for_the_project_and_a_warning_for_a_dependency() {
-    let text = "[targets.\".pi\"]\nfragment = \"p.ts\"\nunchecked = false\n";
+    let text = "[targets.\".pi\"]\nnative-hook = \"p.ts\"\nunchecked = false\n";
     let got = read_local(text);
     assert!(got.def.is_none());
     assert!(message(&got).contains("`unchecked` is not supported"));
@@ -423,8 +431,8 @@ fn diagnostics_carry_no_path() {
         ),
         ("[targets]\n", "at least one target"),
         (
-            "[targets.\".claude\"]\nfragment = \"../x\"\n",
-            "invalid fragment",
+            "[targets.\".claude\"]\nnative-hook = \"../x\"\n",
+            "invalid native hook",
         ),
     ] {
         let got = read_local(text);
@@ -443,7 +451,7 @@ fn unknown_visibility_reads_as_local() {
 }
 
 #[test]
-fn an_empty_file_target_table_needs_a_fragment_for_both_origins() {
+fn an_empty_file_target_table_needs_a_native_hook_for_both_origins() {
     let text = format!(
         "{}[targets.\".opencode\"]\n",
         stop_hook("[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"a\"\n")
@@ -451,6 +459,36 @@ fn an_empty_file_target_table_needs_a_fragment_for_both_origins() {
     for origin in [Origin::Local, Origin::Dependency] {
         let read = read(&text, "h", origin);
         assert!(read.def.is_none());
-        assert_eq!(read.diagnostics[0].code, "hook.fragment-required");
+        assert_eq!(read.diagnostics[0].code, "hook.native-hook-required");
     }
+}
+
+#[test]
+fn fragment_is_a_deprecated_alias_of_native_hook() {
+    let got = read_local("[targets.\".codex\"]\nfragment = \"old.json\"\n");
+    assert_eq!(
+        got.def
+            .as_ref()
+            .unwrap()
+            .native_hook(".codex")
+            .unwrap()
+            .file,
+        "old.json"
+    );
+    assert_eq!(got.diagnostics.len(), 1);
+    assert_eq!(got.diagnostics[0].code, "hook.fragment-deprecated");
+    assert_eq!(got.diagnostics[0].severity, Severity::Warning);
+    assert!(message(&got).contains(".codex") && message(&got).contains("native-hook"));
+    // A dependency's hook warns the same way and still reads.
+    let got = read_dependency("[targets.\".codex\"]\nfragment = \"old.json\"\n");
+    assert!(got.def.is_some());
+    assert_eq!(got.diagnostics[0].code, "hook.fragment-deprecated");
+}
+
+#[test]
+fn native_hook_and_fragment_together_are_an_error() {
+    let got = read_local("[targets.\".codex\"]\nnative-hook = \"a.json\"\nfragment = \"b.json\"\n");
+    assert!(got.def.is_none());
+    assert_eq!(got.diagnostics[0].code, "hook.native-hook");
+    assert!(message(&got).contains("keep one of `native-hook` or `fragment`"));
 }

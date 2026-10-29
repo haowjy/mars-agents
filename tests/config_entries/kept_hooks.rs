@@ -21,13 +21,13 @@ fn project_with_dependency(
 /// A dependency hook for the merge target `.codex` and the file target `.opencode`.
 fn write_guard(source: &assert_fs::fixture::ChildPath, manifest: &str) {
     write_hook(source, "guard", manifest);
-    write_fragment(
+    write_native_hook(
         source,
         "guard",
         "codex.json",
         r#"{"SessionStart":[{"hooks":[{"type":"command","command":"printf guard"}]}]}"#,
     );
-    write_fragment(
+    write_native_hook(
         source,
         "guard",
         "plugin.ts",
@@ -35,7 +35,7 @@ fn write_guard(source: &assert_fs::fixture::ChildPath, manifest: &str) {
     );
 }
 
-const VALID: &str = "visibility = \"exported\"\n[targets.\".codex\"]\n[targets.\".opencode\"]\nfragment = \"plugin.ts\"\n";
+const VALID: &str = "visibility = \"exported\"\n[targets.\".codex\"]\n[targets.\".opencode\"]\nnative-hook = \"plugin.ts\"\n";
 
 fn snapshot(project: &assert_fs::fixture::ChildPath) -> (String, String, String) {
     (
@@ -57,9 +57,9 @@ fn dependency_hook_turned_invalid_keeps_its_install_until_fixed() {
     // `bogus` is an unknown key inside a target table: still invalid for a dependency.
     write_guard(
         &source,
-        "visibility = \"exported\"\n[targets.\".codex\"]\nbogus = 1\n[targets.\".opencode\"]\nfragment = \"plugin.ts\"\n",
+        "visibility = \"exported\"\n[targets.\".codex\"]\nbogus = 1\n[targets.\".opencode\"]\nnative-hook = \"plugin.ts\"\n",
     );
-    write_fragment(&source, "guard", "codex.json", "not json");
+    write_native_hook(&source, "guard", "codex.json", "not json");
     for _ in 0..2 {
         sync(&project)
             .success()
@@ -74,7 +74,7 @@ fn dependency_hook_turned_invalid_keeps_its_install_until_fixed() {
     }
 
     write_guard(&source, VALID);
-    write_fragment(
+    write_native_hook(
         &source,
         "guard",
         "codex.json",
@@ -111,7 +111,7 @@ fn dependency_unknown_key_and_event_warn_and_still_install() {
         &source,
         "visibility = \"exported\"\nfuture-key = true\n[targets.\".codex\"]\n",
     );
-    write_fragment(
+    write_native_hook(
         &source,
         "guard",
         "codex.json",
@@ -128,7 +128,7 @@ fn dependency_unknown_key_and_event_warn_and_still_install() {
 
 #[test]
 fn local_unknown_key_and_event_still_error() {
-    for (manifest, fragment, message) in [
+    for (manifest, native_hook, message) in [
         (
             "future-key = true\n[targets.\".codex\"]\n",
             r#"{"SessionStart":[]}"#,
@@ -148,7 +148,7 @@ fn local_unknown_key_and_event_still_error() {
             .write_str("[settings]\ntargets = [\".codex\"]\n")
             .unwrap();
         write_hook(&project, "guard", manifest);
-        write_fragment(&project, "guard", "codex.json", fragment);
+        write_native_hook(&project, "guard", "codex.json", native_hook);
         sync(&project)
             .failure()
             .stderr(predicate::str::contains(message));
@@ -174,7 +174,7 @@ fn resync_without_changes_leaves_the_merge_file_untouched() {
 /// A dependency hook `hooks/protect` that installs as `guard` for `.codex`.
 fn write_renamed_guard(source: &assert_fs::fixture::ChildPath, manifest: &str) {
     write_hook(source, "protect", manifest);
-    write_fragment(
+    write_native_hook(
         source,
         "protect",
         "codex.json",
@@ -209,22 +209,22 @@ fn a_renamed_dependency_hook_stays_kept_when_its_toml_stops_parsing() {
 }
 
 #[test]
-fn a_dependency_fragment_that_stops_loading_keeps_the_install_and_names_the_package() {
+fn a_dependency_native_hook_that_stops_loading_keeps_the_install_and_names_the_package() {
     let dir = TempDir::new().unwrap();
     let (project, source) = project_with_dependency(&dir, "\".codex\"");
     write_guard(
         &source,
         VALID
-            .replace("[targets.\".opencode\"]\nfragment = \"plugin.ts\"\n", "")
+            .replace("[targets.\".opencode\"]\nnative-hook = \"plugin.ts\"\n", "")
             .as_str(),
     );
     sync(&project).success();
     let installed = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
 
-    // A fragment of the wrong shape, then one that is gone.
+    // A native hook of the wrong shape, then one that is gone.
     for broken in [Some(r#"{"Stop": {}}"#), None] {
         match broken {
-            Some(text) => write_fragment(&source, "guard", "codex.json", text),
+            Some(text) => write_native_hook(&source, "guard", "codex.json", text),
             None => fs::remove_file(source.child("hooks/guard/codex.json").path()).unwrap(),
         }
         sync(&project)
@@ -244,7 +244,7 @@ fn a_dependency_fragment_that_stops_loading_keeps_the_install_and_names_the_pack
 }
 
 #[test]
-fn the_projects_own_fragment_that_does_not_load_still_fails_the_sync() {
+fn the_projects_own_native_hook_that_does_not_load_still_fails_the_sync() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -253,7 +253,7 @@ fn the_projects_own_fragment_that_does_not_load_still_fails_the_sync() {
         .write_str("[settings]\ntargets = [\".codex\"]\n")
         .unwrap();
     write_hook(&project, "mine", "[targets.\".codex\"]\n");
-    write_fragment(&project, "mine", "codex.json", r#"{"Stop": {}}"#);
+    write_native_hook(&project, "mine", "codex.json", r#"{"Stop": {}}"#);
     sync(&project)
         .failure()
         .stderr(predicate::str::contains("must be an array"));
@@ -312,7 +312,7 @@ fn a_kept_hook_keeps_its_place_among_the_merged_hooks() {
             name,
             &format!("visibility = \"exported\"\n[targets.\".codex\"]\n{bogus}"),
         );
-        write_fragment(
+        write_native_hook(
             &source,
             name,
             "codex.json",

@@ -44,7 +44,7 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `skills/` — universal skill schema + native lowering with variant layouts
 - `config_entries/` — selected MCP servers and hooks → target config files
 - `mcp/` — MCP server item discovery, env-ref validation, collision detection
-- `hooks/` — hook discovery, fragment reading, and the location added to `mars-schema::hooks` diagnostics; the model and every hook rule are `mars-schema::hooks`
+- `hooks/` — hook discovery, native hook reading, and the location added to `mars-schema::hooks` diagnostics; the model and every hook rule are `mars-schema::hooks`
 - `variants/` — skill variant layout validation, indexing, projection
 
 ## Dual-Surface Compilation
@@ -163,11 +163,11 @@ unmanaged or user-edited copy keeps the entry out with a `hook-not-installed` / 
 warning naming the path; target sync's `target-unmanaged-collision` or `target-divergent` warning
 says why. A token-free server has no directory to check. `config_entries/render.rs`
 preflight reads, validates and renders every selected hook once (`RenderedHooks`); compile reuses
-that result, and `lower_merge_fragments` orders each hook's merge output, kept hooks' recorded entries included (a kept hook carries its `HookRank` from the sync that found it invalid: merge order is the only source of order in a target's file) (`lower_hook_entries` is
+that result, and `lower_merge_native_hooks` orders each hook's merge output, kept hooks' recorded entries included (a kept hook carries its `HookRank` from the sync that found it invalid: merge order is the only source of order in a target's file) (`lower_hook_entries` is
 the same for a plugin build, which has no preflight; there `${MARS_HOOK_TARGET}` is `plugin`, and the Claude tree's output goes through `HookDef::plugin_output`, which holds it to what Codex parses because Codex reads that file too, D21).
 Preflight also says what `[hooks]` leaves out on every managed target, for every accepted hook even when no target takes it (`hook-event-skipped`:
 a warning per skip for the project's own hooks, one info line per sync for dependencies) and
-a fragment replacing generated events (`hook-fragment-overrides`), a file-target fragment beside the generated `mars-<name>.hooks.ts` (`hook-fragment-beside-generated`) and answers a TypeScript target cannot carry (`hook-answer-unsupported`, info). After the writes, compile
+a native hook replacing generated events (`hook-native-overrides`), a file-target native hook beside the generated `mars-<name>.hooks.ts` (`hook-native-beside-generated`) and answers a TypeScript target cannot carry (`hook-answer-unsupported`, info). After the writes, compile
 compares a trust-gated target's (event, group, handler) positions with those before the sync and
 warns `codex-hooks-need-trust` for any new or moved one. `config_entries/file_hooks.rs` owns file-placement
 outputs (a file whose bytes already equal the output is not rewritten): what the old lock says a hook owns on a target (every non-canonical output but its
@@ -183,14 +183,14 @@ A dependency hook whose `hook.toml` fails validation (D19) is `KeptHook` in `Tar
 records (re-appended from the record if the file is rewritten for another reason) and file
 outputs, and target sync re-projects the unchanged directory as for any unchanged item. A hook
 never installed installs nothing; both warn `hook-invalid-kept`. A dependency hook is judged
-invalid in one place, discovery: its fragments must also load (`HookDef::check_fragment`) on each
+invalid in one place, discovery: its native hooks must also load (`HookDef::check_native_hook`) on each
 managed target it is installed for; `[hooks]` is rendered once, at preflight. The project's own hook that fails to render is a hard error at preflight.
 The hook kept is whatever the old lock installed from that package under the `name` its broken
 file still declares, else its directory's name (the lock records no source path). A hook the
 consumer excludes, or whose file does not still say `visibility = "exported"`, keeps nothing and
 is not reported. A dependency hook in the
 removed schema, and any invalid project hook, still fail the sync. A dependency's unknown
-top-level key and unknown merge-fragment event warn (`Origin::Dependency`) and install. MCP collisions resolve once per target in
+top-level key and unknown merge-hook event warn (`Origin::Dependency`) and install. MCP collisions resolve once per target in
 `TargetState`, so the winning server's directory and config entry come from the same selection.
 Each selected item arrives with its directory token, the `${MARS_HOOK_DIR}` /
 `${MARS_MCP_DIR}` replacement, so installed copies and plugin trees share one lowering path.
@@ -212,9 +212,9 @@ installs it as a directory.
 ## Hooks Compilation (`hooks/`)
 
 Hook discovery and output loading. The `hook.toml` model, its reader, each target root's
-placement and event table, the `[hooks]` renderers, fragment validation and token substitution
+placement and event table, the `[hooks]` renderers, native hook validation and token substitution
 (`Tokens`) are `mars-schema::hooks`; the binary holds no copy of those rules. `load_output`
-reads the fragment file when the hook declares one and asks the schema what the hook installs on
+reads the native hook file when the hook declares one and asks the schema what the hook installs on
 the target (`HookOutput`: merge events, or a list of files);
 `check_hooks` is `mars check`'s hook pass (the `requires-mars >= 0.25.0` floor, `if` on a
 non-tool event, what Claude and Codex leave out). This module reads

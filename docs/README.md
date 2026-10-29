@@ -98,7 +98,7 @@ Mars accepts several source forms:
 | [config/agent-compilation.md](config/agent-compilation.md) | How agents compile to native harness formats: field mapping, lossiness, emission control |
 | [config/skill-compilation.md](config/skill-compilation.md) | Skill frontmatter schema, per-harness lowering, skill variants layout and projection |
 | [config/bootstrap-docs.md](config/bootstrap-docs.md) | Bootstrap doc two-tier layout, BOOTSTRAP.md authoring, and `meridian bootstrap` |
-| [config/mcp-and-hooks.md](config/mcp-and-hooks.md) | MCP servers, and hooks declared once for four harnesses: native fragments, `skip-targets`, tokens, collision resolution, stale cleanup, Windows |
+| [config/mcp-and-hooks.md](config/mcp-and-hooks.md) | MCP servers, and hooks declared once for four harnesses: native hooks, `skip-targets`, tokens, collision resolution, stale cleanup, Windows |
 
 ### CLI
 

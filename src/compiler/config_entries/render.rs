@@ -101,7 +101,7 @@ pub(crate) fn preflight_config_entries(
         let target_name = dir.target();
         let Some(target) = mars_schema::hooks::targets::target(target_name) else {
             errors.push(format!(
-                "hook `{}`: target `{target_name}` has no hook fragment mechanism",
+                "hook `{}`: target `{target_name}` has no native hook mechanism",
                 item.def.name
             ));
             continue;
@@ -127,9 +127,9 @@ pub(crate) fn preflight_config_entries(
                 for event in &merged.skipped_events {
                     diag.warn("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
                 }
-                if let Some(fragment) = item.fragment(target_name) {
+                if let Some(native_hook) = item.native_hook(target_name) {
                     for event in &merged.overrides {
-                        diag.info("hook-fragment-overrides", format!("hook `{}` from `{}`: `{target_name}` fragment `{}` replaces the generated `{event}` entries", item.def.name, item.source_name, fragment.file));
+                        diag.info("hook-native-overrides", format!("hook `{}` from `{}`: `{target_name}` native hook `{}` replaces the generated `{event}` entries", item.def.name, item.source_name, native_hook.file));
                     }
                 }
             }
@@ -147,14 +147,14 @@ pub(crate) fn preflight_config_entries(
                 if !valid {
                     continue;
                 }
-                if files.has_fragment_beside_generated() {
+                if files.has_native_hook_beside_generated() {
                     diag.info(
-                        "hook-fragment-beside-generated",
+                        "hook-native-beside-generated",
                         format!(
-                            "hook `{}` from `{}`: `{target_name}` fragment `{}` is installed next to the file generated from `[hooks]`; to replace the generated hook, put `{target_name}` in `skip-targets`",
+                            "hook `{}` from `{}`: `{target_name}` native hook `{}` is installed next to the file generated from `[hooks]`; to replace the generated hook, put `{target_name}` in `skip-targets`",
                             item.def.name,
                             item.source_name,
-                            item.fragment(target_name).map_or("", |f| f.file.as_str()),
+                            item.native_hook(target_name).map_or("", |f| f.file.as_str()),
                         ),
                     );
                 }
@@ -170,14 +170,14 @@ pub(crate) fn preflight_config_entries(
                         ),
                     );
                 }
-                if let Some(problem) = files.fragment_problem {
+                if let Some(problem) = files.native_hook_problem {
                     diag.warn(
-                        "hook-fragment-contract",
+                        "hook-native-contract",
                         format!(
-                            "hook `{}` from `{}`: `{target_name}` fragment `{}` {problem}; the fragment will still be installed",
+                            "hook `{}` from `{}`: `{target_name}` native hook `{}` {problem}; the native hook will still be installed",
                             item.def.name,
                             item.source_name,
-                            item.fragment(target_name).map_or("", |f| f.file.as_str()),
+                            item.native_hook(target_name).map_or("", |f| f.file.as_str()),
                         ),
                     );
                 }
@@ -271,7 +271,7 @@ fn hook_key(item: &ParsedHookItem) -> String {
 /// Read and lower a plugin build's mergeable hook entries for one target.
 ///
 /// The caller supplies each hook's directory token: the replacement for
-/// `${MARS_HOOK_DIR}` in its native fragment. `${MARS_HOOK_TARGET}` is `plugin` there: the
+/// `${MARS_HOOK_DIR}` in its native hook. `${MARS_HOOK_TARGET}` is `plugin` there: the
 /// tree is shared by every harness that reads it.
 pub(crate) fn lower_hook_entries(
     hooks: &[(String, &ParsedHookItem)],
@@ -307,27 +307,27 @@ pub(crate) fn lower_hook_entries(
                 outputs.push((*item, output));
             }
             Ok(HookOutput::File(_)) => {}
-            Err(error) => crate::compiler::hooks::report_fragment(item, &error, diag),
+            Err(error) => crate::compiler::hooks::report_native_hook(item, &error, diag),
         }
     }
     let outputs: Vec<_> = outputs
         .iter()
         .map(|(item, output)| (*item, output))
         .collect();
-    lower_merge_fragments(&outputs, Vec::new())
+    lower_merge_native_hooks(&outputs, Vec::new())
 }
 
-/// Order validated merge fragments, and the entries of kept hooks (each with the rank it
+/// Order validated merge native_hooks, and the entries of kept hooks (each with the rank it
 /// had), deterministically and lower them to one entry per (hook, event). This sort is the
 /// only source of order in a target's file.
-pub(crate) fn lower_merge_fragments(
-    fragments: &[(&ParsedHookItem, &MergeOutput)],
+pub(crate) fn lower_merge_native_hooks(
+    native_hooks: &[(&ParsedHookItem, &MergeOutput)],
     kept: Vec<(HookRank, HookEntry)>,
 ) -> Vec<HookEntry> {
     let mut contributions: Vec<(HookRank, HookEntry)> = kept;
-    for (item, fragment) in fragments {
+    for (item, native_hook) in native_hooks {
         contributions.extend(
-            fragment
+            native_hook
                 .events
                 .iter()
                 .filter(|(_, entries)| !entries.is_empty())

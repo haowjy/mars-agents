@@ -1,7 +1,7 @@
 //! The `hook.toml` definition and every per-target hook rule.
 //!
 //! A hook is written once as Claude's hooks JSON in TOML (`[hooks]`, see `portable`), a
-//! native fragment per target (`[targets]`), or both. This module owns what is authored
+//! native hook per target (`[targets]`), or both. This module owns what is authored
 //! (`HookDef`) and which targets receive it (`HookDef::select`); `read` turns text into a
 //! `HookDef`, `output` says what it installs on one target, `targets` is the per-target
 //! table and `render` turns a `[hooks]` table into a profile's entries.
@@ -24,7 +24,7 @@ use crate::visibility::Visibility;
 use portable::PortableHooks;
 use render::Skip;
 
-pub use output::{FileOutput, FragmentError, HookOutput, MergeOutput, OutputFile};
+pub use output::{FileOutput, HookOutput, MergeOutput, NativeHookError, OutputFile};
 pub use read::{HookRead, REMOVED_SCHEMA_CODE, REMOVED_SCHEMA_MESSAGE, read, uses_removed_schema};
 
 /// The authored placeholder for the directory a hook's files are installed in.
@@ -35,7 +35,7 @@ pub(crate) const RESERVED_NAME_SUFFIX: &str = ".hooks";
 
 /// Where a `hook.toml` came from. The project's own is strict. A dependency's is lenient
 /// where one author's slip should not stop a sync: an unknown top-level key is ignored and
-/// a merge fragment's unknown event is skipped, each with a warning.
+/// a merge native hook's unknown event is skipped, each with a warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     Local,
@@ -77,15 +77,15 @@ impl Tokens<'_> {
     }
 }
 
-/// One target's fragment table.
+/// One target's native hook table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Fragment {
-    /// The fragment file in the hook's directory: the declared one, else `<target>.json`.
+pub struct NativeHook {
+    /// The native hook file in the hook's directory: the declared one, else `<target>.json`.
     pub file: String,
     unchecked: bool,
 }
 
-impl Fragment {
+impl NativeHook {
     /// `unchecked = true`: events the target does not list pass through verbatim.
     pub fn is_unchecked(&self) -> bool {
         self.unchecked
@@ -98,19 +98,19 @@ pub struct HookDef {
     pub name: String,
     pub visibility: Visibility,
     pub order: i32,
-    targets: BTreeMap<String, Fragment>,
+    targets: BTreeMap<String, NativeHook>,
     portable: Option<PortableHooks>,
     skip_targets: BTreeSet<String>,
 }
 
 impl HookDef {
-    /// The fragment table this hook declares for `target_root`.
-    pub fn fragment(&self, target_root: &str) -> Option<&Fragment> {
+    /// The native hook table this hook declares for `target_root`.
+    pub fn native_hook(&self, target_root: &str) -> Option<&NativeHook> {
         self.targets.get(target_root)
     }
 
-    /// Every declared fragment table, by target root.
-    pub fn fragments(&self) -> impl Iterator<Item = (&str, &Fragment)> {
+    /// Every declared native hook table, by target root.
+    pub fn native_hooks(&self) -> impl Iterator<Item = (&str, &NativeHook)> {
         self.targets.iter().map(|(root, f)| (root.as_str(), f))
     }
 
@@ -125,7 +125,7 @@ impl HookDef {
     }
 
     /// The managed target roots this hook is installed for: those where `[hooks]` renders at
-    /// least one event (unless in `skip-targets`) and those with a fragment table. A fragment
+    /// least one event (unless in `skip-targets`) and those with a native hook table. A native hook
     /// on a skipped target still installs; `skip-targets` only turns the generated entries
     /// off.
     pub fn select<'a>(&'a self, managed_targets: &'a [String]) -> Vec<&'a str> {

@@ -1,5 +1,5 @@
-//! What a hook installs on one target: `[hooks]` rendered, the fragment laid over it, and
-//! the fragment's own contract checks.
+//! What a hook installs on one target: `[hooks]` rendered, the native hook laid over it, and
+//! the native hook's own contract checks.
 
 use std::collections::BTreeMap;
 
@@ -20,7 +20,7 @@ pub enum HookOutput {
 }
 
 impl HookOutput {
-    /// What `[hooks]` leaves out on the target, minus what a fragment replaces.
+    /// What `[hooks]` leaves out on the target, minus what a native hook replaces.
     pub fn skips(&self) -> &[Skip] {
         match self {
             Self::Merge(output) => &output.skips,
@@ -29,22 +29,22 @@ impl HookOutput {
     }
 }
 
-/// A file target's files for a hook: the authored fragment as written, and the file
+/// A file target's files for a hook: the authored native hook as written, and the file
 /// generated from `[hooks]`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileOutput {
     pub files: Vec<OutputFile>,
-    /// What is wrong with the fragment, if anything; it is installed regardless.
-    pub fragment_problem: Option<&'static str>,
+    /// What is wrong with the native hook, if anything; it is installed regardless.
+    pub native_hook_problem: Option<&'static str>,
     pub skips: Vec<Skip>,
     /// Rendered events whose portable answers do not all carry over to the target.
     pub answer_limits: Vec<Skip>,
 }
 
 impl FileOutput {
-    /// Whether a fragment installs next to a file generated from `[hooks]`.
-    pub fn has_fragment_beside_generated(&self) -> bool {
+    /// Whether a native hook installs next to a file generated from `[hooks]`.
+    pub fn has_native_hook_beside_generated(&self) -> bool {
         self.files.len() > 1
     }
 }
@@ -57,21 +57,21 @@ pub struct OutputFile {
     pub content: String,
 }
 
-/// One merge target's events for a hook: `[hooks]` rendered, with the fragment's events
+/// One merge target's events for a hook: `[hooks]` rendered, with the native hook's events
 /// replacing the generated ones they name.
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeOutput {
     /// Finished entries per native event. An event whose array is empty is turned off.
     pub events: BTreeMap<String, Vec<OrderedValue>>,
-    /// Unknown events a dependency's fragment lists, left out of `events`.
+    /// Unknown events a dependency's native hook lists, left out of `events`.
     pub skipped_events: Vec<String>,
     /// Events the target does not list that `unchecked = true` let through.
     pub unchecked_events: Vec<String>,
-    /// Events the fragment declares that `[hooks]` also declares: the fragment's replace
+    /// Events the native hook declares that `[hooks]` also declares: the native hook's replace
     /// the generated entries.
     pub overrides: Vec<String>,
-    /// What `[hooks]` leaves out here, minus the events a fragment replaces.
+    /// What `[hooks]` leaves out here, minus the events a native hook replaces.
     pub skips: Vec<Skip>,
 }
 
@@ -79,7 +79,7 @@ impl MergeOutput {
     /// Hold every event Claude lists to Codex's handler rules, reporting what that leaves
     /// out. Events outside Claude's table (`unchecked`) and events turned off stay as they
     /// are. Idempotent, so entries `[hooks]` already rendered pass unchanged.
-    fn conform_to_codex(&mut self, profile: &targets::Profile) -> Result<(), FragmentError> {
+    fn conform_to_codex(&mut self, profile: &targets::Profile) -> Result<(), NativeHookError> {
         let checked: BTreeMap<_, _> = self
             .events
             .iter()
@@ -97,7 +97,7 @@ impl MergeOutput {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
         ))
-        .map_err(|error| FragmentError(format!("fragment is not a hook table: {error}")))?;
+        .map_err(|error| NativeHookError(format!("native hook is not a hook table: {error}")))?;
         for path in nulls {
             // `hooks.<Event>[..]…`: the second segment is the event.
             let event = path.split(['.', '[']).nth(1).map(str::to_owned);
@@ -116,17 +116,17 @@ impl MergeOutput {
     }
 }
 
-/// Why a fragment's text is refused. The caller adds the file it came from.
+/// Why a native hook's text is refused. The caller adds the file it came from.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
-pub struct FragmentError(String);
+pub struct NativeHookError(String);
 
 impl HookDef {
     /// What this hook installs on `target`: `[hooks]` rendered (unless the target is in
-    /// `skip-targets`) and the fragment laid over it. `fragment_text` is the fragment's file,
+    /// `skip-targets`) and the native hook laid over it. `native_hook_text` is the native hook's file,
     /// read by the caller when the hook declares one for the target.
     ///
-    /// On a merge target the fragment is an event-keyed JSON object, optionally wrapped as
+    /// On a merge target the native hook is an event-keyed JSON object, optionally wrapped as
     /// `{"hooks": …, "version"?, "description"?}`, whose events the target lists (unless
     /// its table is `unchecked`) and whose values are arrays. It replaces only the events it
     /// declares, so one with an empty array turns that event off. On a file target it is
@@ -134,18 +134,18 @@ impl HookDef {
     pub fn output(
         &self,
         target: &Target,
-        fragment_text: Option<&str>,
+        native_hook_text: Option<&str>,
         origin: Origin,
         tokens: &Tokens<'_>,
-    ) -> Result<HookOutput, FragmentError> {
+    ) -> Result<HookOutput, NativeHookError> {
         if target.is_file() {
             Ok(HookOutput::File(self.file_output(
                 target,
-                fragment_text,
+                native_hook_text,
                 tokens,
             )))
         } else {
-            self.merge_output(target, &target.profile, fragment_text, origin, tokens)
+            self.merge_output(target, &target.profile, native_hook_text, origin, tokens)
                 .map(HookOutput::Merge)
         }
     }
@@ -153,7 +153,7 @@ impl HookDef {
     fn file_output(
         &self,
         target: &Target,
-        fragment_text: Option<&str>,
+        native_hook_text: Option<&str>,
         tokens: &Tokens<'_>,
     ) -> FileOutput {
         let tokens = &Tokens {
@@ -161,9 +161,9 @@ impl HookDef {
             ..*tokens
         };
         let mut output = FileOutput::default();
-        if let (Some(text), Some(path)) = (fragment_text, target.fragment_path(&self.name)) {
+        if let (Some(text), Some(path)) = (native_hook_text, target.native_hook_path(&self.name)) {
             let content = tokens.substitute(text);
-            output.fragment_problem = target.fragment_problem(&content);
+            output.native_hook_problem = target.native_hook_problem(&content);
             output.files.push(OutputFile { path, content });
         }
         if let (Some(portable), true) = (&self.portable, self.generates_for(target.root)) {
@@ -186,42 +186,42 @@ impl HookDef {
     /// What this hook puts in a plugin build's tree for `target`. A tree whose hook file
     /// another harness also reads passes `shared` (the Claude tree: [`targets::PLUGIN_CLAUDE_TREE`]):
     /// Codex rejects the whole `hooks/hooks.json` over one handler it cannot parse, so
-    /// everything that reaches the file, `[hooks]` and fragment alike, is rendered under
+    /// everything that reaches the file, `[hooks]` and native hook alike, is rendered under
     /// `shared` and conformed to Codex's rules while keeping its events (D21). Any other
     /// tree passes `None` and takes what [`Self::output`] gives.
     pub fn plugin_output(
         &self,
         target: &Target,
         shared: Option<&targets::Profile>,
-        fragment_text: Option<&str>,
+        native_hook_text: Option<&str>,
         origin: Origin,
         tokens: &Tokens<'_>,
-    ) -> Result<HookOutput, FragmentError> {
+    ) -> Result<HookOutput, NativeHookError> {
         let Some(profile) = shared else {
-            return self.output(target, fragment_text, origin, tokens);
+            return self.output(target, native_hook_text, origin, tokens);
         };
-        let mut output = self.merge_output(target, profile, fragment_text, origin, tokens)?;
+        let mut output = self.merge_output(target, profile, native_hook_text, origin, tokens)?;
         output.conform_to_codex(profile)?;
         Ok(HookOutput::Merge(output))
     }
 
-    /// Whether the hook's fragment for `target` loads, as [`Self::output`] would lay it. A
-    /// file target's fragment is opaque, and `[hooks]` never fails to render.
-    pub fn check_fragment(
+    /// Whether the hook's native hook for `target` loads, as [`Self::output`] would lay it. A
+    /// file target's native hook is opaque, and `[hooks]` never fails to render.
+    pub fn check_native_hook(
         &self,
         target: &Target,
-        fragment_text: Option<&str>,
+        native_hook_text: Option<&str>,
         origin: Origin,
-    ) -> Result<(), FragmentError> {
+    ) -> Result<(), NativeHookError> {
         if target.is_file() {
             return Ok(());
         }
         let tokens = Tokens::default();
-        self.lay_fragment(
+        self.lay_native_hook(
             MergeOutput::default(),
             target,
             &target.profile,
-            fragment_text,
+            native_hook_text,
             origin,
             &tokens,
         )
@@ -232,10 +232,10 @@ impl HookDef {
         &self,
         target: &Target,
         profile: &targets::Profile,
-        fragment_text: Option<&str>,
+        native_hook_text: Option<&str>,
         origin: Origin,
         tokens: &Tokens<'_>,
-    ) -> Result<MergeOutput, FragmentError> {
+    ) -> Result<MergeOutput, NativeHookError> {
         let mut output = MergeOutput::default();
         if let (Some(portable), true) = (&self.portable, self.generates_for(target.root)) {
             let rendered = portable.render(profile, tokens);
@@ -249,40 +249,41 @@ impl HookDef {
             }
             output.skips = rendered.skips;
         }
-        self.lay_fragment(output, target, profile, fragment_text, origin, tokens)
+        self.lay_native_hook(output, target, profile, native_hook_text, origin, tokens)
     }
 
-    /// Lay the hook's fragment over the events `[hooks]` rendered.
-    fn lay_fragment(
+    /// Lay the hook's native hook over the events `[hooks]` rendered.
+    fn lay_native_hook(
         &self,
         mut output: MergeOutput,
         target: &Target,
         profile: &targets::Profile,
-        fragment_text: Option<&str>,
+        native_hook_text: Option<&str>,
         origin: Origin,
         tokens: &Tokens<'_>,
-    ) -> Result<MergeOutput, FragmentError> {
-        let (Some(text), Some(fragment)) = (fragment_text, self.fragment(target.root)) else {
+    ) -> Result<MergeOutput, NativeHookError> {
+        let (Some(text), Some(native_hook)) = (native_hook_text, self.native_hook(target.root))
+        else {
             return Ok(output);
         };
-        let err = |message: String| FragmentError(message);
+        let err = |message: String| NativeHookError(message);
         let mut value: OrderedValue = serde_json::from_str(text)
-            .map_err(|error| err(format!("fragment is not valid JSON: {error}")))?;
+            .map_err(|error| err(format!("native hook is not valid JSON: {error}")))?;
         value = portable::unwrap_hooks_object(value);
         let OrderedValue::Object(object) = value else {
             return Err(err(
-                "fragment top level must be an event-keyed JSON object".into()
+                "native hook top level must be an event-keyed JSON object".into(),
             ));
         };
         // Sorted, so the first fault reported does not depend on authored order.
         let sorted: BTreeMap<_, _> = object.into_iter().collect();
         for (event, entries) in sorted {
             if profile.event(&event).is_none() {
-                if !fragment.is_unchecked() && origin == Origin::Dependency {
+                if !native_hook.is_unchecked() && origin == Origin::Dependency {
                     output.skipped_events.push(event);
                     continue;
                 }
-                if !fragment.is_unchecked() {
+                if !native_hook.is_unchecked() {
                     let checked = profile
                         .verified_against
                         .map_or(String::new(), |v| format!(" (checked against {v})"));

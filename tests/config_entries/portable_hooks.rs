@@ -128,15 +128,15 @@ fn skip_targets_turns_generated_entries_off_for_that_target() {
 }
 
 #[test]
-fn a_fragment_replaces_only_its_events_and_an_empty_array_turns_one_off() {
+fn a_native_hook_replaces_only_its_events_and_an_empty_array_turns_one_off() {
     let dir = TempDir::new().unwrap();
     let project = project(&dir, "\".claude\", \".codex\"");
     write_hook(
         &project,
         "guard",
-        &format!("{GUARD}\n[targets.\".codex\"]\nfragment = \"codex.json\"\n"),
+        &format!("{GUARD}\n[targets.\".codex\"]\nnative-hook = \"codex.json\"\n"),
     );
-    write_fragment(
+    write_native_hook(
         &project,
         "guard",
         "codex.json",
@@ -146,13 +146,13 @@ fn a_fragment_replaces_only_its_events_and_an_empty_array_turns_one_off() {
     sync(&project)
         .success()
         .stderr(
-            predicate::str::contains("hook-fragment-overrides").or(predicate::str::contains(
+            predicate::str::contains("hook-native-overrides").or(predicate::str::contains(
                 "replaces the generated `PreToolUse` entries",
             )),
         );
 
     let codex = json(&project, ".codex/hooks.json");
-    // PreToolUse is off on Codex; Stop is the fragment's; Claude still has the guard.
+    // PreToolUse is off on Codex; Stop is the native hook's; Claude still has the guard.
     assert!(codex["hooks"].get("PreToolUse").is_none());
     assert_eq!(commands(&codex, "Stop"), ["printf stop"]);
     assert_eq!(lock_keys(&project, ".codex"), ["hook:Stop:guard"]);
@@ -279,7 +279,7 @@ fn the_projects_own_unknown_event_is_an_error_unless_unchecked() {
 }
 
 #[test]
-fn a_target_table_beside_hooks_must_name_its_fragment() {
+fn a_target_table_beside_hooks_must_name_its_native_hook() {
     let dir = TempDir::new().unwrap();
     let project = project(&dir, "\".codex\"");
     write_hook(
@@ -287,10 +287,10 @@ fn a_target_table_beside_hooks_must_name_its_fragment() {
         "guard",
         &format!("{GUARD}\n[targets.\".codex\"]\n"),
     );
-    write_fragment(&project, "guard", "codex.json", r#"{"Stop":[]}"#);
+    write_native_hook(&project, "guard", "codex.json", r#"{"Stop":[]}"#);
     sync(&project)
         .failure()
-        .stderr(predicate::str::contains("must name its `fragment`"));
+        .stderr(predicate::str::contains("must name its `native-hook`"));
 }
 
 #[test]
@@ -416,9 +416,9 @@ fn codex_trust_is_not_asked_for_an_event_codex_ignores() {
     write_hook(
         &project,
         "future",
-        "[targets.\".codex\"]\nfragment = \"c.json\"\nunchecked = true\n",
+        "[targets.\".codex\"]\nnative-hook = \"c.json\"\nunchecked = true\n",
     );
-    write_fragment(
+    write_native_hook(
         &project,
         "future",
         "c.json",
@@ -432,29 +432,29 @@ fn codex_trust_is_not_asked_for_an_event_codex_ignores() {
 }
 
 #[test]
-fn a_file_target_keeps_the_generated_file_beside_the_fragment_and_removes_both() {
+fn a_file_target_keeps_the_generated_file_beside_the_native_hook_and_removes_both() {
     let dir = TempDir::new().unwrap();
     let project = project(&dir, "\".opencode\", \".pi\"");
     write_hook(
         &project,
         "guard",
-        &format!("{GUARD}\n[targets.\".opencode\"]\nfragment = \"plugin.ts\"\n"),
+        &format!("{GUARD}\n[targets.\".opencode\"]\nnative-hook = \"plugin.ts\"\n"),
     );
-    write_fragment(
+    write_native_hook(
         &project,
         "guard",
         "plugin.ts",
         "export default { id: \"mine\", async setup() {} }\n",
     );
     let generated = project.child(".opencode/plugins/mars-guard.hooks.ts");
-    let fragment = project.child(".opencode/plugins/mars-guard.ts");
+    let native_hook = project.child(".opencode/plugins/mars-guard.ts");
 
     sync(&project).success().stderr(predicate::str::contains(
         "is installed next to the file generated from `[hooks]`",
     ));
     let first = fs::read_to_string(generated.path()).unwrap();
     assert!(first.contains("\"name\": \"guard\"") && first.contains("PreToolUse"));
-    assert!(fragment.path().exists());
+    assert!(native_hook.path().exists());
     project
         .child(".pi/extensions/mars-guard.hooks.ts")
         .assert(predicate::path::exists());
@@ -474,7 +474,7 @@ fn a_file_target_keeps_the_generated_file_beside_the_fragment_and_removes_both()
     fs::remove_dir_all(project.child("hooks/guard").path()).unwrap();
     sync(&project).success();
     generated.assert(predicate::path::missing());
-    fragment.assert(predicate::path::missing());
+    native_hook.assert(predicate::path::missing());
     project
         .child(".pi/extensions/mars-guard.hooks.ts")
         .assert(predicate::path::missing());

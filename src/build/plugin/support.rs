@@ -32,7 +32,7 @@ pub(super) fn emit(
     diag: &mut DiagnosticCollector,
 ) {
     for built in built_trees {
-        warn_hooks_without_tree_fragment(harnesses, built, target.accepted_hooks(), diag);
+        warn_hooks_without_tree_native_hook(harnesses, built, target.accepted_hooks(), diag);
     }
 
     for harness in selected_harnesses(harnesses) {
@@ -83,14 +83,14 @@ fn count_items(target: &TargetState, kind: ItemKind) -> usize {
         .count()
 }
 
-fn warn_hooks_without_tree_fragment(
+fn warn_hooks_without_tree_native_hook(
     harnesses: &[&'static PluginHarnessSpec],
     built: &BuiltTree,
     accepted_hooks: &[crate::compiler::hooks::ParsedHookItem],
     diag: &mut DiagnosticCollector,
 ) {
     let target_dir = built.profile.descriptor().target_dir;
-    let fragment = target_dir.trim_start_matches('.');
+    let tree_name = target_dir.trim_start_matches('.');
     let affected = selected_harnesses(harnesses)
         .filter(|harness| harness.tree.key == built.profile.key)
         .map(harness_display_name)
@@ -100,20 +100,20 @@ fn warn_hooks_without_tree_fragment(
     for hook in accepted_hooks {
         if hook.def.select(&[target_dir.to_owned()]).is_empty() {
             diag.warn(
-                "plugin-hook-fragment-dropped",
+                "plugin-native-hook-dropped",
                 format!(
-                    "hook `{}` from `{}` has no `{fragment}` fragment and its `[hooks]` render nothing in this tree; {affected} won't get it",
+                    "hook `{}` from `{}` has no `{tree_name}` native hook and its `[hooks]` render nothing in this tree; {affected} won't get it",
                     hook.def.name, hook.source_name
                 ),
             );
             continue;
         }
-        for (other, file) in hook.def.fragments() {
+        for (other, file) in hook.def.native_hooks() {
             if other != target_dir {
                 diag.warn(
-                    "plugin-hook-fragment-dropped",
+                    "plugin-native-hook-dropped",
                     format!(
-                        "hook `{}` from `{}`: `{}` fragment `{}` does not reach the `{fragment}` plugin tree; {affected} won't get it",
+                        "hook `{}` from `{}`: `{}` native hook `{}` does not reach the `{tree_name}` plugin tree; {affected} won't get it",
                         hook.def.name,
                         hook.source_name,
                         other.trim_start_matches('.'),
@@ -342,12 +342,12 @@ mod tests {
                 harness_display_name(harness)
             ),
             (Component::Hooks, SupportState::DroppedWithWarning) => {
-                let fragment = harness.tree.descriptor().target_dir.trim_start_matches('.');
+                let tree_name = harness.tree.descriptor().target_dir.trim_start_matches('.');
                 if harness.tree.key == "claude" {
-                    "supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` fragment; other targets' fragments dropped with warning".to_string()
+                    "supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` native hook; other targets' native hooks dropped with warning".to_string()
                 } else {
                     format!(
-                        "supported for hooks with the `{fragment}` fragment; `[hooks]` and others dropped with warning"
+                        "supported for hooks with the `{tree_name}` native hook; `[hooks]` and others dropped with warning"
                     )
                 }
             }

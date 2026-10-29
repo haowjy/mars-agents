@@ -21,7 +21,7 @@ use crate::target::{
 use crate::types::MarsContext;
 use file_hooks::{file_hook_output_preserve_paths, kept_file_outputs, write_file_hook_outputs};
 use mars_schema::hooks::HookOutput;
-use render::{RenderedHooks, lower_merge_fragments};
+use render::{RenderedHooks, lower_merge_native_hooks};
 
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
@@ -136,11 +136,11 @@ pub(crate) fn compile_config_entries(
         let mcp_servers = lower_mcp_servers(&mcp_entries);
 
         // Preflight rendered every selected hook; place each by its target's placement.
-        let mut merge_fragments = Vec::new();
+        let mut merge_native_hooks = Vec::new();
         let mut file_writes = Vec::new();
         for (dir, item) in &installed_hooks {
             match rendered_hooks.get(dir) {
-                HookOutput::Merge(fragment) => merge_fragments.push((*item, fragment)),
+                HookOutput::Merge(native_hook) => merge_native_hooks.push((*item, native_hook)),
                 HookOutput::File(output) => {
                     for file in &output.files {
                         desired_file_outputs.insert((target_root.clone(), file.path.clone()));
@@ -199,7 +199,7 @@ pub(crate) fn compile_config_entries(
             }
         }
 
-        let hooks = lower_merge_fragments(&merge_fragments, kept_entries);
+        let hooks = lower_merge_native_hooks(&merge_native_hooks, kept_entries);
 
         // Render each server once. Lossiness warnings come with the render, so
         // they run even on dry runs.
@@ -331,7 +331,7 @@ pub(crate) fn compile_config_entries(
                 diag,
             );
 
-    // File-mode fragments are ordinary target outputs. Remove only exact paths
+    // File-mode native hooks are ordinary target outputs. Remove only exact paths
     // owned by the old lock and no longer desired.
     for (target_root, paths) in file_hook_output_preserve_paths(old_lock) {
         for dest_path in paths {

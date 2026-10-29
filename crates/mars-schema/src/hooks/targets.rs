@@ -1,7 +1,7 @@
 //! What each target root takes of a hook (D11): one [`Target`] row per root, holding where its
 //! hooks are placed (the merge file and its trust gate, or the file directory), the events it
 //! accepts, the harness version that table was last checked against, how `[hooks]` is
-//! rendered for it (for a TypeScript harness, its glue, limits and fragment contract), and
+//! rendered for it (for a TypeScript harness, its glue, limits and native hook contract), and
 //! what its generated files are called. A new target is one row here; the binary only places
 //! what the row describes. Nothing about a target is kept anywhere else.
 use super::typescript::{self, Harness};
@@ -123,7 +123,7 @@ pub struct Target {
     pub placement: Placement,
     pub profile: Profile,
     /// Events the harness reads that `profile.events` has no row for: they travel only in a
-    /// fragment marked `unchecked`.
+    /// native hook marked `unchecked`.
     pub other_events: &'static [&'static str],
 }
 
@@ -145,11 +145,11 @@ impl Target {
         }
     }
 
-    /// What is wrong with a file target's fragment, if anything. Warning-only: a file
-    /// fragment is otherwise opaque, and the caller words the diagnostic.
-    pub fn fragment_problem(&self, content: &str) -> Option<&'static str> {
+    /// What is wrong with a file target's native hook, if anything. Warning-only: a file
+    /// native hook is otherwise opaque, and the caller words the diagnostic.
+    pub fn native_hook_problem(&self, content: &str) -> Option<&'static str> {
         match self.profile.rules {
-            Rules::TypeScript(harness) => harness.fragment_problem(content),
+            Rules::TypeScript(harness) => harness.native_hook_problem(content),
             _ => None,
         }
     }
@@ -159,9 +159,9 @@ impl Target {
         matches!(self.placement, Placement::File { .. })
     }
 
-    /// The path, relative to the target root, of the hook's own fragment file; `None` for a
+    /// The path, relative to the target root, of the hook's own native hook file; `None` for a
     /// merge target, which has no per-hook file.
-    pub fn fragment_path(&self, hook_name: &str) -> Option<String> {
+    pub fn native_hook_path(&self, hook_name: &str) -> Option<String> {
         let Placement::File { dir } = self.placement else {
             return None;
         };
@@ -214,7 +214,7 @@ const CLAUDE_EVENTS: &[Event] = &[
 
 // codex-cli 0.164.0: `HookEventsToml` (codex-rs/config/src/hook_config.rs L39-69) names
 // fourteen events. These are the ones Claude also has; the Codex-only ones (`PreModelRequest`,
-// `PostModelRequest`, `Interrupt`) stay in a Codex fragment. `SessionEnd` fires on 0.164.0
+// `PostModelRequest`, `Interrupt`) stay in a Codex native hook. `SessionEnd` fires on 0.164.0
 // (`reason` is always `other`; research/live-unverified-rows.md); 0.144.4 did not.
 const CODEX_EVENTS: &[Event] = &[
     matched("SessionStart", "source"),

@@ -42,7 +42,7 @@ pub struct McpServerEntry {
     pub transport: mars_schema::mcp_server::McpTransport,
 }
 
-/// A native fragment contribution ready to be merged into a target config.
+/// A native hook contribution ready to be merged into a target config.
 #[derive(Debug, Clone)]
 pub struct HookEntry {
     /// Hook name, retained as ownership provenance.

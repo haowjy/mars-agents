@@ -40,7 +40,7 @@ fn rendered_typescript_matches_the_golden_files() {
                     common::assert_file(&case.join(file), &format!("{literal}\n"));
                 }
                 [] => assert!(!case.join(file).exists(), "{root} renders nothing"),
-                _ => panic!("no fragment was given"),
+                _ => panic!("no native hook was given"),
             }
             writeln!(report, "{root}").unwrap();
             for skip in &output.skips {

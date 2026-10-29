@@ -66,7 +66,8 @@ fn rendered_typescript_matches_the_golden_files() {
     }
 }
 
-const PRELUDE: &str = r#"const mod = await import(process.argv[2]);
+const PRELUDE: &str = r#"const { pathToFileURL } = await import("node:url");
+const mod = await import(pathToFileURL(process.argv[2]).href);
 const hooks = {};
 const ctx = { location: { directory: process.cwd() } };
 for (const g of ["tool", "session", "permission"]) ctx[g] = { hook: async (n, fn) => { hooks[`${g}.${n}`] = fn; } };

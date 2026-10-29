@@ -692,6 +692,12 @@ fn deprecated_fragment_key_installs_like_native_hook_and_warns() {
     sync(&old).success().stderr(predicate::str::contains(
         "which is deprecated; use `native-hook`",
     ));
+    // The code users see is the CLI's dashed form, which the docs name.
+    mars()
+        .args(["--json", "sync", "--root", old.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hook-fragment-deprecated"));
     // The item checksums cover `hook.toml` itself, so compare what was emitted and recorded.
     let emitted = |project: &assert_fs::fixture::ChildPath| {
         let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();

@@ -314,20 +314,20 @@ pub(crate) fn lower_hook_entries(
         .iter()
         .map(|(item, output)| (*item, output))
         .collect();
-    lower_merge_native_hooks(&outputs, Vec::new())
+    lower_merge_outputs(&outputs, Vec::new())
 }
 
-/// Order validated merge native_hooks, and the entries of kept hooks (each with the rank it
+/// Order validated merge outputs, and the entries of kept hooks (each with the rank it
 /// had), deterministically and lower them to one entry per (hook, event). This sort is the
 /// only source of order in a target's file.
-pub(crate) fn lower_merge_native_hooks(
-    native_hooks: &[(&ParsedHookItem, &MergeOutput)],
+pub(crate) fn lower_merge_outputs(
+    outputs: &[(&ParsedHookItem, &MergeOutput)],
     kept: Vec<(HookRank, HookEntry)>,
 ) -> Vec<HookEntry> {
     let mut contributions: Vec<(HookRank, HookEntry)> = kept;
-    for (item, native_hook) in native_hooks {
+    for (item, output) in outputs {
         contributions.extend(
-            native_hook
+            output
                 .events
                 .iter()
                 .filter(|(_, entries)| !entries.is_empty())

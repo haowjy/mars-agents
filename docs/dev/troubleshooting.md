@@ -183,7 +183,7 @@ below has its full account in
 | Hook works on Claude but not on Codex | Codex runs `.codex/hooks.json` only in a trusted project. Trust the project once in Codex. See [Ordering and Codex trust](../config/mcp-and-hooks.md#ordering-and-codex-trust) |
 | `codex-hooks-need-trust` | A sync added or moved a handler in `.codex/hooks.json`. Codex skips it, silently, until you review it in `/hooks`. Adding a hook ahead of an existing one moves the later one too |
 | `hook-event-skipped` | The target has no counterpart for an event, handler type or matcher. The hook's other events still install. The table in [Which harness gets what](../config/mcp-and-hooks.md#which-harness-gets-what) shows what each harness runs |
-| `hook.fragment-deprecated` | A `hook.toml` target table uses `fragment`, the old name of `native-hook`. It still installs. Rename the key |
+| `hook-fragment-deprecated` | A `hook.toml` target table uses `fragment`, the old name of `native-hook`. It still installs. Rename the key |
 | `hook-invalid-kept` | A dependency's `hook.toml` failed validation under this Mars. Mars keeps that hook as the last sync installed it, or installs nothing if there was none. Update Mars, or ask the package for a fix |
 | `hook-not-installed` | Mars withheld the hook's config entry because its directory was not installed into that target (an unmanaged or edited copy sits at the path the warning names). Resolve that path, then sync again |
 | The hook is on neither warning list and still does nothing | Check the target is linked (`mars link`) and not in the hook's `skip-targets` |

@@ -1,4 +1,4 @@
-//! Native hook discovery and native hook loading. The `hook.toml` model, its reader and every
+//! Native hook discovery and loading. The `hook.toml` model, its reader and every
 //! per-target hook rule are `mars_schema::hooks`; this module reads the bytes and adds the
 //! location to the schema's path-free diagnostics.
 

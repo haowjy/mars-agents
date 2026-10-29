@@ -489,6 +489,6 @@ fn fragment_is_a_deprecated_alias_of_native_hook() {
 fn native_hook_and_fragment_together_are_an_error() {
     let got = read_local("[targets.\".codex\"]\nnative-hook = \"a.json\"\nfragment = \"b.json\"\n");
     assert!(got.def.is_none());
-    assert_eq!(got.diagnostics[0].code, "hook.native-hook");
+    assert_eq!(got.diagnostics[0].code, "hook.native-hook-conflict");
     assert!(message(&got).contains("keep one of `native-hook` or `fragment`"));
 }

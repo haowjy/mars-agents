@@ -21,7 +21,7 @@ use crate::target::{
 use crate::types::MarsContext;
 use file_hooks::{file_hook_output_preserve_paths, kept_file_outputs, write_file_hook_outputs};
 use mars_schema::hooks::HookOutput;
-use render::{RenderedHooks, lower_merge_native_hooks};
+use render::{RenderedHooks, lower_merge_outputs};
 
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
@@ -136,11 +136,11 @@ pub(crate) fn compile_config_entries(
         let mcp_servers = lower_mcp_servers(&mcp_entries);
 
         // Preflight rendered every selected hook; place each by its target's placement.
-        let mut merge_native_hooks = Vec::new();
+        let mut merge_outputs = Vec::new();
         let mut file_writes = Vec::new();
         for (dir, item) in &installed_hooks {
             match rendered_hooks.get(dir) {
-                HookOutput::Merge(native_hook) => merge_native_hooks.push((*item, native_hook)),
+                HookOutput::Merge(output) => merge_outputs.push((*item, output)),
                 HookOutput::File(output) => {
                     for file in &output.files {
                         desired_file_outputs.insert((target_root.clone(), file.path.clone()));
@@ -199,7 +199,7 @@ pub(crate) fn compile_config_entries(
             }
         }
 
-        let hooks = lower_merge_native_hooks(&merge_native_hooks, kept_entries);
+        let hooks = lower_merge_outputs(&merge_outputs, kept_entries);
 
         // Render each server once. Lossiness warnings come with the render, so
         // they run even on dry runs.

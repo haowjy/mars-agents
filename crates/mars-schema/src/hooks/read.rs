@@ -220,7 +220,7 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
         let named = match (spec.native_hook, spec.fragment) {
             (Some(_), Some(_)) => {
                 return failed(
-                    "hook.native-hook",
+                    "hook.native-hook-conflict",
                     format!(
                         "target `{root}` sets both `native-hook` and `fragment`; keep one of `native-hook` or `fragment` (`fragment` is deprecated)"
                     ),

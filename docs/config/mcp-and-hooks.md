@@ -575,8 +575,12 @@ native-hook = "codex.json"
 ```
 
 `fragment` is the deprecated earlier name of `native-hook`. It still works and warns
-with `hook.fragment-deprecated`, for your own hooks and a dependency's alike; use
-`native-hook`. Setting both keys in one table is an error (`hook.native-hook`).
+with `hook-fragment-deprecated`, for your own hooks and a dependency's alike; use
+`native-hook`. Setting both keys in one table is an error (`hook.native-hook-conflict`).
+
+A package published today should keep `fragment` until its consumers run Mars 0.26:
+Mars 0.25's reader rejects `native-hook`, so a dependency that switches early stays
+at its last good install there.
 
 How native hooks combine with `[hooks]`:
 
@@ -970,8 +974,8 @@ reorder its file-mode artifact.
 | `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
 | `hook-native-contract` | warning | an OpenCode or Pi native hook lacks the expected default export; it installs anyway |
 | `hook-native-hook` | warning or error | a native hook could not be read or rendered in a plugin build (an error for the project's own hook, a warning for a dependency's) |
-| `hook.fragment-deprecated` | warning | a target table sets `fragment`; use `native-hook` |
-| `hook.native-hook` | error | a target table sets both `native-hook` and `fragment`; keep one |
+| `hook-fragment-deprecated` | warning | a target table sets `fragment`; use `native-hook` |
+| `hook.native-hook-conflict` | error | a target table sets both `native-hook` and `fragment`; keep one |
 | `hook.native-hook-required` | error | a file target, or any target of a hook with `[hooks]`, does not name its `native-hook` |
 | `hook.native-hook-path` | error | a `native-hook` path is not a plain relative path inside the hook directory |
 | `hook.handler` | error | your own hook has a handler `timeout` outside 0 to 2147483 seconds, or an `onFailure` other than `block` or `continue`. For a dependency's hook the same fault is reported as `hook-invalid-kept` |

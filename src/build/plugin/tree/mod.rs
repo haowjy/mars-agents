@@ -343,8 +343,12 @@ pub(super) fn write_tree(
         .get(descriptor.target_dir)
         .expect("compiler harness descriptor names a registered target");
     let mcp_servers = crate::compiler::config_entries::lower_mcp_servers(&mcp);
-    let hook_entries =
-        crate::compiler::config_entries::render::lower_hook_entries(&hooks, adapter, diag);
+    let hook_entries = crate::compiler::config_entries::render::lower_hook_entries(
+        &hooks,
+        adapter,
+        profile.shared_hook_profile,
+        diag,
+    );
     (profile.write_config)(
         profile,
         root,

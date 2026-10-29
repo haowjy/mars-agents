@@ -10,6 +10,7 @@ use crate::sync::package_dir::PackageDir;
 use crate::target::{HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, TargetAdapter};
 use crate::types::MarsContext;
 use mars_schema::hooks::render::Skip;
+use mars_schema::hooks::targets::Profile;
 use mars_schema::hooks::{HookOutput, MergeOutput, Origin};
 
 /// Every selected hook's output, by the hook's canonical directory, as preflight rendered it.
@@ -275,6 +276,7 @@ fn hook_key(item: &ParsedHookItem) -> String {
 pub(crate) fn lower_hook_entries(
     hooks: &[(String, &ParsedHookItem)],
     adapter: &dyn TargetAdapter,
+    shared: Option<&Profile>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<HookEntry> {
     let Some(target) = mars_schema::hooks::targets::target(adapter.name()).filter(|t| !t.is_file())
@@ -288,7 +290,7 @@ pub(crate) fn lower_hook_entries(
             hook_target: "plugin",
             ..Default::default()
         };
-        match crate::compiler::hooks::load_plugin_output(item, target, &tokens) {
+        match crate::compiler::hooks::load_plugin_output(item, target, shared, &tokens) {
             Ok(HookOutput::Merge(output)) => {
                 for skip in &output.skips {
                     diag.warn(

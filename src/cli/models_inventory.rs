@@ -181,7 +181,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         .as_ref()
         .map(|c| c.effective.target_source.clone())
         .unwrap_or_default();
-    let routing_diagnostics = routing_settings.diagnostic_messages();
+    let mut routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
         for message in &routing_diagnostics {
             eprintln!("warning: {message}");
@@ -244,6 +244,22 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             .collect::<Vec<_>>();
         (rows, diagnostics)
     };
+    let provider_order = settings.provider_order.as_deref().unwrap_or_default();
+    // Listing above has loaded the probes this reads; the check never loads any itself.
+    if let Some(known) =
+        session.known_providers(provider_order, &models::catalog_model_slugs(&cache))
+    {
+        let unknown = crate::harness::known_providers::unknown_provider_order_warnings(
+            provider_order,
+            &known,
+        );
+        if !json {
+            for message in &unknown {
+                eprintln!("warning: {message}");
+            }
+        }
+        routing_diagnostics.extend(unknown);
+    }
     let view = rules.project(&possible, scope);
     let diagnostics = view
         .diagnostics

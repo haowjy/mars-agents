@@ -146,97 +146,6 @@ Fallback agent body."#;
 }
 
 #[test]
-fn build_launch_bundle_includes_skill_documents_and_system_instruction() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
-    let agent_content = r#"---
-name: reviewer
-model: gpt-5
-skills: [planning]
----
-Review code changes."#;
-    let skill_content =
-        "---\nname: planning\ndescription: Plan tasks\n---\nUse this skill to reason about steps.";
-
-    let (server, project_root) = setup_bundle_project(
-        &temp,
-        "bundle-source",
-        agent_content,
-        &[("planning", skill_content)],
-        "",
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    let docs = bundle["prompt_surface"]["supplemental_documents"]
-        .as_array()
-        .expect("supplemental_documents should be an array");
-    assert_eq!(docs.len(), 1);
-    assert_eq!(docs[0]["name"].as_str(), Some("planning"));
-
-    let system_instruction = bundle["prompt_surface"]["system_instruction"]
-        .as_str()
-        .expect("system instruction should be string");
-    assert!(system_instruction.contains("# Skill: planning"));
-    assert!(system_instruction.contains("Use this skill to reason about steps."));
-    assert!(system_instruction.contains("# Report"));
-    assert_eq!(
-        bundle["skills"]["loaded"][0]["name"].as_str(),
-        Some("planning")
-    );
-    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
-    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
-}
-
-#[test]
-fn build_launch_bundle_keeps_skill_with_snake_case_tool_alias() {
-    let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: gpt-5
-skills: [planning]
----
-Review code changes."#;
-    let skill_content = "---\nname: planning\ndescription: Plan tasks\ntools:\n  ask_user: allow\n---\nUse this skill.";
-
-    let (server, project_root) = setup_bundle_project(
-        &temp,
-        "bundle-source",
-        agent_content,
-        &[("planning", skill_content)],
-        "",
-    );
-
-    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "codex",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(
-        bundle["skills"]["loaded"][0]["name"].as_str(),
-        Some("planning")
-    );
-    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
-    let warnings = bundle["warnings"].as_array().unwrap();
-    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
-}
-
-#[test]
 fn build_launch_bundle_splits_loaded_and_available_skills() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
@@ -493,66 +402,6 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_includes_inventory_prompt_before_report_block() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
-    let reviewer_content = r#"---
-name: reviewer
-description: Review implementation
-mode: subagent
-model: claude-opus-4-6
----
-Review code changes."#;
-    let planner_content = r#"---
-name: planner
-description: Plan tasks
-mode: primary
-model: openai/gpt-5
----
-Plan work."#;
-
-    let (server, project_root) = setup_bundle_project_with_agents(
-        &temp,
-        "bundle-source",
-        &[("reviewer", reviewer_content), ("planner", planner_content)],
-        &[],
-        "",
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    let inventory_prompt = bundle["prompt_surface"]["inventory_prompt"]
-        .as_str()
-        .expect("inventory_prompt should be string");
-    assert!(inventory_prompt.contains("# Meridian Agents"));
-    assert!(inventory_prompt.contains("## Primary"));
-    assert!(inventory_prompt.contains("## Subagent"));
-    assert!(
-        inventory_prompt
-            .contains("- `meridian spawn -a planner`: Plan tasks | Model: openai/gpt-5")
-    );
-    assert!(inventory_prompt.contains(
-        "- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6"
-    ));
-
-    let system_instruction = bundle["prompt_surface"]["system_instruction"]
-        .as_str()
-        .expect("system instruction should be string");
-    let inventory_index = system_instruction
-        .find("# Meridian Agents")
-        .expect("system instruction should include inventory");
-    let report_index = system_instruction
-        .find("# Report")
-        .expect("system instruction should include report block");
-    assert!(inventory_index < report_index);
-}
-
-#[test]
 fn build_launch_bundle_orders_skills_by_type_and_bookends_principles() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
@@ -630,62 +479,6 @@ Review code changes."#;
         !after_report.contains("Principle body."),
         "principle bookend should no longer appear after report"
     );
-}
-
-#[test]
-fn build_launch_bundle_fanout_agent_dual_lists_in_inventory() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude"]);
-    let reviewer_content = r#"---
-name: reviewer
-description: Review implementation
-mode: subagent
-model: claude-opus-4-6
----
-Review code changes."#;
-
-    let extra_toml = r#"
-[settings]
-targets = [".claude"]
-agent_emission = "always"
-
-[settings.meridian.fanout]
-agents = ["reviewer"]
-"#;
-
-    let (server, project_root) = setup_bundle_project_with_agents(
-        &temp,
-        "bundle-source",
-        &[("reviewer", reviewer_content)],
-        &[],
-        extra_toml,
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "claude",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    let inventory_prompt = bundle["prompt_surface"]["inventory_prompt"]
-        .as_str()
-        .expect("inventory_prompt should be string");
-    assert!(inventory_prompt.contains("## Subagent"));
-    assert!(inventory_prompt.contains(
-        "- `meridian spawn -a reviewer`: Review implementation | Model: claude-opus-4-6"
-    ));
-    assert!(
-        inventory_prompt.contains("## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)")
-    );
-    assert!(inventory_prompt.contains("- reviewer: Review implementation"));
 }
 
 #[test]
@@ -855,10 +648,18 @@ Review code changes."#;
     let principle_skill = "---\nname: principle_a\ndescription: Principle\nmetadata:\n  type: principle\n---\nPrinciple body.";
     let reference_skill = "---\nname: reference_a\ndescription: Reference\nmetadata:\n  type: reference\n---\nReference body.";
 
-    let (server, project_root) = setup_bundle_project(
+    let planner_content = r#"---
+name: planner
+description: Plan tasks
+mode: primary
+model: openai/gpt-5
+---
+Plan work."#;
+
+    let (server, project_root) = setup_bundle_project_with_agents(
         &temp,
         "bundle-source",
-        agent_content,
+        &[("reviewer", agent_content), ("planner", planner_content)],
         &[
             ("principle_a", principle_skill),
             ("reference_a", reference_skill),
@@ -872,6 +673,22 @@ Review code changes."#;
 
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let docs = bundle["prompt_surface"]["supplemental_documents"]
+        .as_array()
+        .expect("supplemental_documents should be an array");
+    assert_eq!(docs.len(), 2);
+    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
+    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
+    let inventory_prompt = bundle["prompt_surface"]["inventory_prompt"]
+        .as_str()
+        .expect("inventory_prompt should be string");
+    assert!(inventory_prompt.contains("# Meridian Agents"));
+    assert!(inventory_prompt.contains("## Primary"));
+    assert!(inventory_prompt.contains("## Subagent"));
+    assert!(
+        inventory_prompt
+            .contains("- `meridian spawn -a planner`: Plan tasks | Model: openai/gpt-5")
+    );
     let system_instruction = bundle["prompt_surface"]["system_instruction"]
         .as_str()
         .expect("system instruction should be string");

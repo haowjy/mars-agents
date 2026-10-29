@@ -380,7 +380,7 @@ include_fanout = false
 | `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Allowed host permission set. Plain lists add across user/project/local/profile/overlay/CLI; `{ replace = [...] }` clears lower entries. |
 | `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Denied host permission set, with the same merge rule. Denies win at enforcement. |
 | `harness_order` | string[] | unset | Ordered harness preference for launch-bundle candidate selection; the first installed candidate wins |
-| `provider_order` | string[] | unset | Provider preference for model-first routing tie-breaks, used after model-name matching |
+| `provider_order` | string[] | unset | Provider preference for model-first routing tie-breaks, used after model-name matching. Entries are kept as written. `mars models list` warns once for an entry Mars has not seen in its model catalog, a harness probe listing, or a harness's native provider; it only reads probes the listing already loaded. `models resolve`, sync and launch bundles do not check |
 | `model-policies` | rule[] | `[]` | Model policy rules for every agent, written `[[settings.model-policies]]`; they apply after an agent's own rules. See [Model policies](schema-v1.md#model-policies) |
 
 `.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.

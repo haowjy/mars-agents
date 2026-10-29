@@ -263,29 +263,52 @@ mod tests {
         assert_eq!(commands, ["bash '/old/run.sh'", "bash '/new/run.sh'"]);
     }
 
+    /// An entry edited since mars wrote it is not removed, and the file is not rewritten at all.
     #[test]
     fn removal_leaves_a_diverged_file_untouched() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("hooks.json");
-        let original =
-            br#"{"hooks":{"SessionStart":[{"hooks":[{"command":"edited"}]}]},"keep":true}"#;
-        std::fs::write(&path, original).unwrap();
-        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        // (target, file contents, recorded entries for `hook:<event>:audit`)
+        let cases = [
+            (
+                ".claude",
+                br#"{"hooks":{"SessionStart":[{"hooks":[{"command":"edited"}]}]},"keep":true}"#
+                    .as_slice(),
+                serde_json::json!([{"hooks":[{"command":"original"}]}]),
+            ),
+            (
+                ".cursor",
+                br#"{"version":1,"hooks":{"SessionStart":[{"command":"edited"}]},"keep":true}"#
+                    .as_slice(),
+                serde_json::json!([{"command":"original"}]),
+            ),
+        ];
+        for (target, original, recorded) in cases {
+            let tmp = TempDir::new().unwrap();
+            let path = tmp.path().join("hooks.json");
+            std::fs::write(&path, original).unwrap();
+            // Pin the mtime in the past so a rewrite is visible without sleeping.
+            let pinned = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(pinned)
+                .unwrap();
+            let records = BTreeMap::from([(
+                "hook:SessionStart:audit".to_string(),
+                ConfigEntryRecord {
+                    emitted_json: recorded.to_string(),
+                },
+            )]);
 
-        remove_recorded(
-            &path,
-            &record("SessionStart", "original"),
-            ".codex",
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
+            remove_recorded(&path, &records, target, &mut DiagnosticCollector::new()).unwrap();
 
-        assert_eq!(std::fs::read(&path).unwrap(), original);
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().modified().unwrap(),
-            before
-        );
+            assert_eq!(std::fs::read(&path).unwrap(), original, "{target}");
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().modified().unwrap(),
+                pinned,
+                "{target}"
+            );
+        }
     }
 
     #[test]

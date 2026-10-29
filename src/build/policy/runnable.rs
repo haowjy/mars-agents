@@ -277,32 +277,128 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cursor_applies_effort_to_harness_model() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "gpt-5.5".to_string(),
-            model_token: "gpt-5.5".to_string(),
+    fn cursor_resolution(
+        model: &str,
+        effort: &str,
+        probe: Option<&crate::models::probes::CursorProbeResult>,
+    ) -> RoutingResolution {
+        resolve_routing(RoutingInput {
+            model: model.to_string(),
+            model_token: model.to_string(),
             harness: "cursor".to_string(),
             selection_kind: "auto".to_string(),
             match_evidence: "confirmed".to_string(),
             provider_constraint: None,
             provider_for_order: None,
-            effort: Some("high".to_string()),
-            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
-                slugs: vec!["gpt-5.5-high".to_string(), "gpt-5.5-low".to_string()],
-                model_probe_success: true,
-                error: None,
-            }),
+            effort: Some(effort.to_string()),
+            cursor_probe_result: probe,
             route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
+        })
+    }
 
-        assert!(resolution.effort_consumed);
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::Applied
-        );
-        assert_eq!(resolution.routing.harness_model, "gpt-5.5-high");
-        assert_eq!(resolution.routing.harness_model_confidence, "confirmed");
+    fn probe_with(slugs: &[&str]) -> crate::models::probes::CursorProbeResult {
+        crate::models::probes::CursorProbeResult {
+            slugs: slugs.iter().map(|s| s.to_string()).collect(),
+            model_probe_success: true,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn cursor_effort_picks_the_variant_slug_or_falls_back_to_the_bare_one() {
+        // (model, effort, probe slugs, expected harness model, effort applied)
+        let cases = [
+            (
+                "gpt-5.5",
+                "high",
+                vec!["gpt-5.5-high", "gpt-5.5-low"],
+                "gpt-5.5-high",
+                true,
+            ),
+            // Medium is the unsuffixed slug.
+            (
+                "gpt-5.5",
+                "medium",
+                vec!["gpt-5.5", "gpt-5.5-high", "gpt-5.5-low"],
+                "gpt-5.5",
+                true,
+            ),
+            // Composer has a bare slug that stands in for a missing variant...
+            (
+                "composer-2.5",
+                "high",
+                vec!["composer-2.5", "composer-2.5-low"],
+                "composer-2.5",
+                true,
+            ),
+            // ...but an exact variant still wins.
+            (
+                "composer-2.5",
+                "high",
+                vec!["composer-2.5", "composer-2.5-high", "composer-2.5-low"],
+                "composer-2.5-high",
+                true,
+            ),
+            // Other models do not: the effort is not applied.
+            (
+                "gpt-5.5",
+                "high",
+                vec!["gpt-5.5", "gpt-5.5-low"],
+                "gpt-5.5",
+                false,
+            ),
+        ];
+        for (model, effort, slugs, expected, applied) in cases {
+            let probe = probe_with(&slugs);
+            let resolution = cursor_resolution(model, effort, Some(&probe));
+            assert_eq!(
+                resolution.routing.harness_model, expected,
+                "{model} {effort}"
+            );
+            assert_eq!(resolution.effort_consumed, applied, "{model} {effort}");
+            assert_eq!(
+                resolution.cursor_effort_outcome,
+                if applied {
+                    CursorEffortOutcome::Applied
+                } else {
+                    CursorEffortOutcome::NoEffortVariant
+                },
+                "{model} {effort}"
+            );
+            if applied {
+                assert_eq!(resolution.routing.harness_model_confidence, "confirmed");
+            }
+        }
+    }
+
+    #[test]
+    fn cursor_probe_problems_report_a_typed_outcome() {
+        let failed = crate::models::probes::CursorProbeResult {
+            slugs: Vec::new(),
+            model_probe_success: false,
+            error: Some("model probe failed: timeout".to_string()),
+        };
+        let cases = [
+            (None, CursorEffortOutcome::ProbeUnavailable),
+            (
+                Some(probe_with(&[])),
+                CursorEffortOutcome::ProbeReturnedNoSlugs,
+            ),
+            (
+                Some(failed),
+                CursorEffortOutcome::ProbeFailed {
+                    error: Some("model probe failed: timeout".to_string()),
+                },
+            ),
+            (
+                Some(probe_with(&["claude-opus-4-7-high"])),
+                CursorEffortOutcome::NoModelPrefixMatch,
+            ),
+        ];
+        for (probe, expected) in cases {
+            let resolution = cursor_resolution("gpt-5.5", "high", probe.as_ref());
+            assert_eq!(resolution.cursor_effort_outcome, expected);
+        }
     }
 
     #[test]
@@ -332,220 +428,6 @@ mod tests {
         assert_eq!(resolution.routing.harness_model, "gpt-5-xhigh");
         assert_eq!(resolution.warnings.len(), 1, "{:?}", resolution.warnings);
         assert!(resolution.warnings[0].contains("no max variant"));
-    }
-
-    #[test]
-    fn cursor_applies_medium_effort_to_unsuffixed_harness_model() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "gpt-5.5".to_string(),
-            model_token: "gpt-5.5".to_string(),
-            harness: "cursor".to_string(),
-            selection_kind: "auto".to_string(),
-            match_evidence: "confirmed".to_string(),
-            provider_constraint: None,
-            provider_for_order: None,
-            effort: Some("medium".to_string()),
-            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
-                slugs: vec![
-                    "gpt-5.5".to_string(),
-                    "gpt-5.5-high".to_string(),
-                    "gpt-5.5-low".to_string(),
-                ],
-                model_probe_success: true,
-                error: None,
-            }),
-            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
-
-        assert!(resolution.effort_consumed);
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::Applied
-        );
-        assert_eq!(resolution.routing.harness_model, "gpt-5.5");
-    }
-
-    #[test]
-    fn cursor_applies_effort_to_composer_bare_slug_when_variant_missing() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "composer-2.5".to_string(),
-            model_token: "composer-2.5".to_string(),
-            harness: "cursor".to_string(),
-            selection_kind: "auto".to_string(),
-            match_evidence: "confirmed".to_string(),
-            provider_constraint: None,
-            provider_for_order: None,
-            effort: Some("high".to_string()),
-            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
-                slugs: vec!["composer-2.5".to_string(), "composer-2.5-low".to_string()],
-                model_probe_success: true,
-                error: None,
-            }),
-            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
-
-        assert!(resolution.effort_consumed);
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::Applied
-        );
-        assert_eq!(resolution.routing.harness_model, "composer-2.5");
-    }
-
-    #[test]
-    fn cursor_prefers_exact_effort_variant_for_composer_when_available() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "composer-2.5".to_string(),
-            model_token: "composer-2.5".to_string(),
-            harness: "cursor".to_string(),
-            selection_kind: "auto".to_string(),
-            match_evidence: "confirmed".to_string(),
-            provider_constraint: None,
-            provider_for_order: None,
-            effort: Some("high".to_string()),
-            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
-                slugs: vec![
-                    "composer-2.5".to_string(),
-                    "composer-2.5-high".to_string(),
-                    "composer-2.5-low".to_string(),
-                ],
-                model_probe_success: true,
-                error: None,
-            }),
-            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
-
-        assert!(resolution.effort_consumed);
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::Applied
-        );
-        assert_eq!(resolution.routing.harness_model, "composer-2.5-high");
-    }
-
-    #[test]
-    fn cursor_non_composer_bare_slug_without_variant_reports_missing_effort_variant() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "gpt-5.5".to_string(),
-            model_token: "gpt-5.5".to_string(),
-            harness: "cursor".to_string(),
-            selection_kind: "auto".to_string(),
-            match_evidence: "confirmed".to_string(),
-            provider_constraint: None,
-            provider_for_order: None,
-            effort: Some("high".to_string()),
-            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
-                slugs: vec!["gpt-5.5".to_string(), "gpt-5.5-low".to_string()],
-                model_probe_success: true,
-                error: None,
-            }),
-            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
-
-        assert!(!resolution.effort_consumed);
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::NoEffortVariant
-        );
-        assert_eq!(resolution.routing.harness_model, "gpt-5.5");
-    }
-
-    #[test]
-    fn cursor_probe_unavailable_reports_typed_outcome() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "gpt-5.5".to_string(),
-            model_token: "gpt-5.5".to_string(),
-            harness: "cursor".to_string(),
-            selection_kind: "auto".to_string(),
-            match_evidence: "confirmed".to_string(),
-            provider_constraint: None,
-            provider_for_order: None,
-            effort: Some("high".to_string()),
-            cursor_probe_result: None,
-            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
-
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::ProbeUnavailable
-        );
-    }
-
-    #[test]
-    fn cursor_probe_empty_slugs_reports_typed_outcome() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "gpt-5.5".to_string(),
-            model_token: "gpt-5.5".to_string(),
-            harness: "cursor".to_string(),
-            selection_kind: "auto".to_string(),
-            match_evidence: "confirmed".to_string(),
-            provider_constraint: None,
-            provider_for_order: None,
-            effort: Some("high".to_string()),
-            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
-                slugs: Vec::new(),
-                model_probe_success: true,
-                error: None,
-            }),
-            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
-
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::ProbeReturnedNoSlugs
-        );
-    }
-
-    #[test]
-    fn cursor_probe_failure_reports_typed_outcome_with_error() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "gpt-5.5".to_string(),
-            model_token: "gpt-5.5".to_string(),
-            harness: "cursor".to_string(),
-            selection_kind: "auto".to_string(),
-            match_evidence: "confirmed".to_string(),
-            provider_constraint: None,
-            provider_for_order: None,
-            effort: Some("high".to_string()),
-            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
-                slugs: Vec::new(),
-                model_probe_success: false,
-                error: Some("model probe failed: timeout".to_string()),
-            }),
-            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
-
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::ProbeFailed {
-                error: Some("model probe failed: timeout".to_string())
-            }
-        );
-    }
-
-    #[test]
-    fn cursor_probe_no_prefix_match_reports_typed_outcome() {
-        let resolution = resolve_routing(RoutingInput {
-            model: "gpt-5.5".to_string(),
-            model_token: "gpt-5.5".to_string(),
-            harness: "cursor".to_string(),
-            selection_kind: "auto".to_string(),
-            match_evidence: "confirmed".to_string(),
-            provider_constraint: None,
-            provider_for_order: None,
-            effort: Some("high".to_string()),
-            cursor_probe_result: Some(&crate::models::probes::CursorProbeResult {
-                slugs: vec!["claude-opus-4-7-high".to_string()],
-                model_probe_success: true,
-                error: None,
-            }),
-            route_report: report(trace_with_assessment(MatchEvidence::Confirmed)),
-        });
-
-        assert_eq!(
-            resolution.cursor_effort_outcome,
-            CursorEffortOutcome::NoModelPrefixMatch
-        );
     }
 
     #[test]

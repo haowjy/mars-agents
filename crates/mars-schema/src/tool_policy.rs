@@ -332,3 +332,118 @@ fn permission_replace_entries(value: &Value) -> Option<&Value> {
 }
 
 const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool_policy::EffectiveToolPolicy;
+
+    fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
+        let reading = crate::agent::read(yaml);
+        assert!(
+            reading.diagnostics.is_empty(),
+            "agent diags: {:?}",
+            reading.diagnostics
+        );
+        reading.fields.unwrap().tools
+    }
+
+    #[test]
+    fn tools_mcp_entry_grants_whole_server() {
+        let policy =
+            agent_policy("---\nname: a\ndescription: d\ntools:\n  mcp(context7): allow\n---\n");
+        assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
+    }
+
+    #[test]
+    fn append_mcp_server_entries_to_tools_merges_into_existing_list() {
+        let mut fm = Frontmatter::parse("---\ntools: [Bash]\n---\n").unwrap();
+        assert!(append_mcp_server_entries_to_tools(
+            &mut fm,
+            &["context7".to_string()]
+        ));
+        assert_eq!(
+            fm.get("tools").map(yaml_str_list),
+            Some(vec!["Bash".to_string(), "mcp(context7)".to_string()])
+        );
+    }
+
+    #[test]
+    fn append_mcp_server_entries_to_tools_is_idempotent() {
+        let mut fm = Frontmatter::parse("---\ntools: [mcp(context7)]\n---\n").unwrap();
+        assert!(!append_mcp_server_entries_to_tools(
+            &mut fm,
+            &["context7".to_string()]
+        ));
+    }
+
+    #[test]
+    fn append_mcp_server_entries_to_tools_preserves_map_form() {
+        let mut fm = Frontmatter::parse("---\ntools:\n  Bash: allow\n  Read: deny\n---\n").unwrap();
+        assert!(append_mcp_server_entries_to_tools(
+            &mut fm,
+            &["context7".to_string(), "github".to_string()]
+        ));
+        let tools = fm.get("tools").unwrap();
+        let Value::Mapping(mapping) = tools else {
+            panic!("expected map-form tools, got {tools:?}");
+        };
+        assert_eq!(
+            mapping.get(Value::String("Bash".into())),
+            Some(&Value::String("allow".into()))
+        );
+        assert_eq!(
+            mapping.get(Value::String("Read".into())),
+            Some(&Value::String("deny".into()))
+        );
+        assert_eq!(
+            mapping.get(Value::String("mcp(context7)".into())),
+            Some(&Value::String("allow".into()))
+        );
+        assert_eq!(
+            mapping.get(Value::String("mcp(github)".into())),
+            Some(&Value::String("allow".into()))
+        );
+    }
+
+    #[test]
+    fn plugin_colon_server_names_preserve_verbatim_in_mcp_refs() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  mcp(plugin:context7:context7): allow\n---\n",
+        );
+        let mcp = policy.with_action(ToolAction::Allow).next().unwrap();
+        assert_eq!(
+            mcp.capability,
+            Capability::Mcp(crate::mcp::parse_mcp_ref("plugin:context7:context7").unwrap())
+        );
+    }
+
+    #[test]
+    fn v1_list_form_is_rejected_without_rules() {
+        let yaml = "---\nname: a\ndescription: d\ntools: [read, grep]\n---\n";
+        let reading = crate::agent::read(yaml);
+        let profile = reading.fields.unwrap();
+        assert!(profile.tools.rules.is_empty());
+        assert!(!profile.tools.is_allowlist());
+        assert_eq!(reading.diagnostics.len(), 1);
+        assert_eq!(reading.diagnostics[0].code, "tools.list-form");
+    }
+
+    #[test]
+    fn map_form_allows_are_grants_not_an_allowlist() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  read: allow\n  edit: deny\n---\n",
+        );
+        assert_eq!(policy.describe(), vec!["allow:read", "deny:edit"]);
+        assert!(!policy.is_allowlist());
+    }
+
+    #[test]
+    fn explicit_wildcard_deny_makes_a_map_an_allowlist() {
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  '*': deny\n  'bash(rg *)': allow\n---\n",
+        );
+        assert_eq!(policy.describe(), vec!["deny:*", "allow:bash(rg *)"]);
+        assert!(policy.is_allowlist());
+    }
+}

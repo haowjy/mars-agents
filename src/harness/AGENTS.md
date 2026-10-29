@@ -8,6 +8,7 @@ Schema-owned harness identity plus runtime descriptors (`registry`) and one-shot
 mars-schema  →  HarnessId, canonical names, authored-name parsing
 registry.rs  →  executable/auth descriptors, provider orders (pure data, no I/O)
 host.rs      →  PATH + probe caches  →  CapabilitySnapshot (clone, share)
+known_providers.rs → pure: providers Mars has observed + `provider_order` warnings; only `models list` uses it (reads loaded probes, never runs one)
 ```
 
 **Schema owns identity.** Valid harness names and parsing live in `mars_schema::harness`; native provider affinity and evaluation order live in the runtime registry.

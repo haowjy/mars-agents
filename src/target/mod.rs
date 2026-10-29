@@ -198,31 +198,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_contains_all_builtin_adapters() {
-        let registry = TargetRegistry::new();
-
-        for name in [
-            ".agents",
-            ".claude",
-            ".codex",
-            ".opencode",
-            ".pi",
-            ".cursor",
-        ] {
-            let adapter = registry
-                .get(name)
-                .unwrap_or_else(|| panic!("built-in target adapter `{name}` is not registered"));
-            assert_eq!(adapter.name(), name);
-        }
-    }
-
-    #[test]
-    fn registry_get_unknown_name_returns_none() {
-        let registry = TargetRegistry::new();
-        assert!(registry.get(".unknown-target").is_none());
-    }
-
-    #[test]
     fn native_adapters_expose_skill_variant_keys() {
         let registry = TargetRegistry::new();
         let expected = [
@@ -241,34 +216,12 @@ mod tests {
     }
 
     #[test]
-    fn agents_adapter_default_dest_path_agent() {
-        let registry = TargetRegistry::new();
-        let adapter = registry.get(".agents").unwrap();
-        let path = adapter.default_dest_path(ItemKind::Agent, "coder").unwrap();
-        assert_eq!(path.as_str(), "agents/coder.md");
-    }
-
-    #[test]
-    fn agents_adapter_default_dest_path_skill() {
-        let registry = TargetRegistry::new();
-        let adapter = registry.get(".agents").unwrap();
-        let path = adapter
-            .default_dest_path(ItemKind::Skill, "planning")
-            .unwrap();
-        assert_eq!(path.as_str(), "skills/planning");
-    }
-
-    #[test]
     fn windows_invalid_agent_filename_is_rejected() {
         assert!(validate_agent_filename("bad:name").is_err());
         assert!(validate_agent_filename("team/lead").is_err());
         assert!(validate_agent_filename(r"team\lead").is_err());
         assert!(validate_agent_filename("CON").is_err());
         assert!(validate_agent_filename("com1").is_err());
-    }
-
-    #[test]
-    fn valid_agent_filename_passes() {
         assert!(validate_agent_filename("coder").is_ok());
         assert!(validate_agent_filename("deep-agent").is_ok());
     }

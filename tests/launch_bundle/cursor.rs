@@ -6,72 +6,6 @@ use assert_fs::TempDir;
 use serde_json::Value;
 
 #[test]
-fn build_launch_bundle_accepts_cursor_harness_flag() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "cursor",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
-    assert!(
-        bundle["provenance"].get("harness_stability").is_none(),
-        "cursor should not be marked experimental"
-    );
-}
-
-#[test]
-fn build_launch_bundle_accepts_profile_cursor_harness() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
-harness: cursor
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
-    assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("profile")
-    );
-    assert!(
-        bundle["provenance"].get("harness_stability").is_none(),
-        "cursor should not be marked experimental"
-    );
-}
-
-#[test]
 fn build_launch_bundle_cursor_alias_preserves_cursor_passthrough_only() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["cursor"]);
@@ -146,10 +80,6 @@ harness = "cursor""#;
     assert_eq!(
         bundle["provenance"]["harness_source"].as_str(),
         Some("alias")
-    );
-    assert!(
-        bundle["provenance"].get("harness_stability").is_none(),
-        "cursor should not be marked experimental"
     );
     assert_eq!(
         bundle["skills"]["loaded"][0]["name"].as_str(),

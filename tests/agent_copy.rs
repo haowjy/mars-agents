@@ -67,7 +67,7 @@ fn claude_native_content(project: &assert_fs::fixture::ChildPath, agent: &str) -
 }
 
 fn sync_project(project: &assert_fs::fixture::ChildPath, meridian_managed: Option<&str>) {
-    let mut cmd = mars();
+    let mut cmd = offline_mars(project.path());
     cmd.args(["sync", "--root", project.path().to_str().unwrap()]);
     match meridian_managed {
         Some(value) => {
@@ -266,7 +266,7 @@ path = "{}"
     )
     .unwrap();
 
-    mars()
+    offline_mars(project.path())
         .args([
             "link",
             ".claude",
@@ -478,7 +478,7 @@ path = "{}"
         "sync without .claude linked should not emit native agent"
     );
 
-    mars()
+    offline_mars(project.path())
         .args([
             "link",
             ".claude",
@@ -500,55 +500,6 @@ path = "{}"
     assert!(
         lock_has_native_agent(&project, "coder"),
         "link should record native agent output in mars.lock"
-    );
-}
-
-#[test]
-fn agent_copy_link_lock_tracks_codex_native_output() {
-    const CODEX_AGENT: &str = r#"---
-name: explorer
-description: Codex explorer
-harness: codex
-model: gpt-5.3-codex
----
-# Explorer
-"#;
-
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("explorer", CODEX_AGENT)], &[]);
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = []
-
-[settings.meridian.agent_copy]
-harnesses = ["codex"]
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
-
-    mars()
-        .args(["link", ".codex", "--root", project.path().to_str().unwrap()])
-        .env("MERIDIAN_MANAGED", "1")
-        .assert()
-        .success();
-
-    assert!(
-        project.child(".codex/agents/explorer.toml").exists(),
-        "mars link .codex should materialize codex native agent"
-    );
-    assert!(
-        lock_has_codex_native_agent(&project, "explorer"),
-        "link should record codex native output against canonical .mars owner"
     );
 }
 
@@ -581,7 +532,7 @@ harnesses = ["claude", "codex"]
         .unwrap();
     write_claude_collision(&project);
 
-    mars()
+    offline_mars(project.path())
         .args(["link", ".codex", "--root", project.path().to_str().unwrap()])
         .env("MERIDIAN_MANAGED", "1")
         .assert()
@@ -591,6 +542,10 @@ harnesses = ["claude", "codex"]
         project
             .child(".codex/agents/integration-tester.toml")
             .exists()
+    );
+    assert!(
+        lock_has_codex_native_agent(&project, "integration-tester"),
+        "link should record codex native output against canonical .mars owner"
     );
     assert_claude_collision_unchanged(&project);
 
@@ -625,7 +580,7 @@ path = "{}"
             .unwrap();
         write_claude_collision(&project);
 
-        mars()
+        offline_mars(project.path())
             .args(["link", target, "--root", project.path().to_str().unwrap()])
             .assert()
             .success();
@@ -678,7 +633,7 @@ path = "{}"
     )
     .unwrap();
 
-    mars()
+    offline_mars(project.path())
         .args(["sync", "--diff", "--root", project.path().to_str().unwrap()])
         .env("MERIDIAN_MANAGED", "1")
         .assert()
@@ -712,7 +667,7 @@ targets = [".claude"]
         .write_str("[settings]\ntargets = [\".claude\", \".codex\"]\n")
         .unwrap();
 
-    mars()
+    offline_mars(project.path())
         .args([
             "link",
             ".opencode",

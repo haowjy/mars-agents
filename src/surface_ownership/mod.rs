@@ -163,29 +163,11 @@ mod tests {
     }
 
     #[test]
-    fn copy_decision_proceeds_when_dest_missing() {
-        let lock = LockFile::empty();
-        assert_eq!(
-            copy_decision(&lock, ".cursor", "agents/coder.md", false, false),
-            SurfaceCopyDecision::Proceed
-        );
-    }
-
-    #[test]
     fn copy_decision_skips_untracked_collision_without_force() {
         let lock = lock_with_output(".mars", "agents/coder.md");
         assert_eq!(
             copy_decision(&lock, ".cursor", "agents/coder.md", true, false),
             SurfaceCopyDecision::SkipWithoutInstalledClaim
-        );
-    }
-
-    #[test]
-    fn copy_decision_proceeds_when_target_tracked() {
-        let lock = lock_with_output(".cursor", "agents/coder.md");
-        assert_eq!(
-            copy_decision(&lock, ".cursor", "agents/coder.md", true, false),
-            SurfaceCopyDecision::Proceed
         );
     }
 

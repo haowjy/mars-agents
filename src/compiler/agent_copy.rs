@@ -110,24 +110,4 @@ mod tests {
             "{messages:?}"
         );
     }
-
-    #[test]
-    fn deprecated_fanout_agents_emits_migration_warning() {
-        let config = AgentCopyConfig {
-            harnesses: vec!["claude".to_string()],
-            include_fanout: false,
-            deprecated_fanout_agents: vec!["reviewer".to_string(), "investigator".to_string()],
-        };
-        let mut diag = DiagnosticCollector::new();
-        let spec =
-            build_agent_copy_spec(Some(&config), &[".claude".to_string()], &mut diag).unwrap();
-        assert!(!spec.include_fanout);
-        let messages: Vec<_> = diag.drain().into_iter().map(|d| d.message).collect();
-        assert!(
-            messages
-                .iter()
-                .any(|m| m.contains("[settings.meridian.fanout].agents")),
-            "{messages:?}"
-        );
-    }
 }

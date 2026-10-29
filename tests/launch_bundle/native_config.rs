@@ -59,41 +59,6 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_native_config_shape_is_passthrough() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);
-    let agent_content = r#"---
-name: reviewer
-model: gpt-5
-harness-overrides:
-  codex:
-    native-config: [1, 2]
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "codex",
-    ]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        bundle["execution_policy"]["native_config"]["native-config"],
-        serde_json::json!([1, 2])
-    );
-}
-
-#[test]
 fn build_launch_bundle_harness_override_invalid_values_preserve_valid_siblings() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);

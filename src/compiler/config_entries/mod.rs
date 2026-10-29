@@ -265,10 +265,23 @@ pub(crate) fn compile_config_entries(
                 );
             }
         }
+        // Preview the generated hook files a real sync would write: a missing file or one
+        // whose bytes differ from what would be rendered.
+        let rewritten_outputs = pending_file_writes
+            .iter()
+            .flat_map(|(target_root, files)| {
+                files.iter().filter_map(move |(_, relative, content)| {
+                    let path = ctx.project_root.join(target_root).join(relative);
+                    let current = std::fs::read(path).ok();
+                    (current.as_deref() != Some(content.as_bytes()))
+                        .then(|| (target_root.clone(), relative.clone()))
+                })
+            })
+            .collect();
         return ConfigEntryCompilation {
             records: desired_records,
             emitted_outputs,
-            rewritten_outputs: Vec::new(),
+            rewritten_outputs,
             removed_outputs,
         };
     }

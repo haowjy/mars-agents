@@ -349,7 +349,11 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         }
     }
     if hook_files > 0 {
-        let _ = writeln!(stdout, "  rewrote     {hook_files} generated hook files");
+        if dry {
+            let _ = writeln!(stdout, "  would write {hook_files} generated hook files");
+        } else {
+            let _ = writeln!(stdout, "  wrote       {hook_files} generated hook files");
+        }
     }
     if kept > 0 {
         let _ = writeln!(stdout, "  kept        {kept} locally modified");

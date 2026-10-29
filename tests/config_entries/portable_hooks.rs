@@ -496,13 +496,22 @@ fn a_sync_that_rewrites_only_a_generated_hook_file_says_so() {
 
     // Mars owns the file and it is gone: the next sync writes it back, and no item changes.
     fs::remove_file(generated.path()).unwrap();
+    mars()
+        .args(["sync", "--diff", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "would write 1 generated hook files",
+        ))
+        .stdout(predicate::str::contains("already up to date").not());
+    generated.assert(predicate::path::missing());
     let rewritten = sync(&project).success();
     rewritten
         .stdout(predicate::str::contains(
             ".opencode/plugins/mars-guard.hooks.ts (generated hook file)",
         ))
         .stdout(predicate::str::contains(
-            "rewrote     1 generated hook files",
+            "wrote       1 generated hook files",
         ))
         .stdout(predicate::str::contains("already up to date").not());
     assert_eq!(fs::read_to_string(generated.path()).unwrap(), expected);

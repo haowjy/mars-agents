@@ -298,15 +298,13 @@ fn codex_handler(event: &str, handler: &Handler) -> Result<Handler, String> {
 
 /// Codex reads `timeout` as an unsigned integer: a fractional one rounds up.
 fn whole_seconds(timeout: &Number) -> Result<Number, String> {
-    if let Some(seconds) = timeout.as_u64() {
-        return Ok(seconds.into());
+    if let Some(problem) = super::portable::timeout_problem(timeout) {
+        return Err(problem);
     }
-    match timeout.as_f64() {
-        Some(seconds) if seconds >= 0.0 && seconds <= u64::MAX as f64 => {
-            Ok((seconds.ceil() as u64).into())
-        }
-        _ => Err("`timeout` must be a non-negative number of seconds".into()),
-    }
+    Ok(match timeout.as_u64() {
+        Some(seconds) => seconds.into(),
+        None => (timeout.as_f64().unwrap_or(0.0).ceil() as u64).into(),
+    })
 }
 
 #[cfg(test)]

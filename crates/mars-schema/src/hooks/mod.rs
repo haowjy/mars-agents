@@ -302,6 +302,18 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
         Some(Err(message)) => return failed("hook.hooks", message),
     };
     if let Some(portable) = &mut portable {
+        let mut problem = None;
+        portable.drop_invalid_handlers(|event, g, h, message| {
+            let at = format!("`{event}` matcher group {g}, handler {h}: {message}");
+            if origin == Origin::Local {
+                problem.get_or_insert(at);
+            } else {
+                warn(&mut diagnostics, "hook.handler", format!("skipping {at}"));
+            }
+        });
+        if let Some(message) = problem {
+            return failed("hook.handler", message);
+        }
         let unknown: Vec<String> = portable
             .events()
             .map(|(event, _)| event)
@@ -420,8 +432,15 @@ fn validate_name(name: &str) -> Result<(), &'static str> {
     if name.is_empty() {
         return Err("must not be empty");
     }
-    if name.contains(['/', '\\', '\0']) {
+    if name.contains(['/', '\\']) {
         return Err("must be a single path component");
+    }
+    // The name is written into a generated file's `//` header, which U+2028 / U+2029 end.
+    if name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+    {
+        return Err("must not contain control characters");
     }
     let mut components = Path::new(name).components();
     match (components.next(), components.next()) {
@@ -751,6 +770,62 @@ mod tests {
         }
         assert!(file_fragment_problem(".opencode", "export const x = 1").is_some());
         assert_eq!(file_fragment_problem(".pi", "anything"), None);
+    }
+
+    fn stop_hook(handlers: &str) -> String {
+        format!("[[hooks.Stop]]\n{handlers}")
+    }
+
+    #[test]
+    fn handler_timeout_and_on_failure_are_checked_once_for_every_target() {
+        let bad = |field: &str| {
+            stop_hook(&format!(
+                "[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"a\"\n{field}\n\
+                 [[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"b\"\n"
+            ))
+        };
+        for field in [
+            "timeout = 1e10",
+            "timeout = 0",
+            "timeout = -1",
+            "timeout = 2147484",
+            "onFailure = \"Block\"",
+        ] {
+            let local = read(&bad(field), "h", Origin::Local);
+            assert!(local.def.is_none(), "{field}");
+            assert_eq!(local.diagnostics[0].code, "hook.handler", "{field}");
+            let dep = read(&bad(field), "h", Origin::Dependency);
+            let def = dep.def.unwrap();
+            let groups: Vec<_> = def.portable().unwrap().events().collect();
+            assert_eq!(
+                groups[0].1[0].handlers.len(),
+                1,
+                "{field}: only `b` is kept"
+            );
+            assert_eq!(dep.diagnostics[0].code, "hook.handler", "{field}");
+        }
+        for ok in [
+            "timeout = 2147483",
+            "timeout = 0.5",
+            "onFailure = \"continue\"",
+        ] {
+            assert!(read(&bad(ok), "h", Origin::Local).def.is_some(), "{ok}");
+        }
+        // A dependency hook with no valid handler left has nothing to install.
+        let all_bad =
+            stop_hook("[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"a\"\ntimeout = 0\n");
+        assert!(read(&all_bad, "h", Origin::Dependency).def.is_none());
+    }
+
+    #[test]
+    fn hook_names_reject_control_characters() {
+        let text = stop_hook("[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"a\"\n");
+        for name in ["a\\nb", "a\\u2028b", "a\\tb", "a\\u0007b", "a/b", ""] {
+            let toml = format!("name = \"{name}\"\n{text}");
+            let read = read(&toml, "dir", Origin::Local);
+            assert!(read.def.is_none(), "{name:?}");
+        }
+        assert!(read(&text, "fine-name", Origin::Local).def.is_some());
     }
 
     fn tokens() -> Tokens<'static> {

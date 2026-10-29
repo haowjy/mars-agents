@@ -59,7 +59,31 @@ fn take_string(
     }
 }
 
+/// Longest `timeout`, in seconds, that every target holds: Node's timers stop at 2^31 - 1 ms.
+const MAX_TIMEOUT_SECONDS: f64 = 2_147_483.0;
+
+/// What is wrong with a `timeout`: the one rule the reader and the Codex renderer share.
+pub(super) fn timeout_problem(timeout: &Number) -> Option<String> {
+    let seconds = timeout.as_f64().unwrap_or(f64::NAN);
+    (!(seconds > 0.0 && seconds <= MAX_TIMEOUT_SECONDS))
+        .then(|| format!("`timeout` must be more than 0 and at most {MAX_TIMEOUT_SECONDS} seconds"))
+}
+
 impl Handler {
+    /// What is wrong with this handler's `timeout` or `onFailure`, if anything. The reader
+    /// applies it to a hook's handlers.
+    pub(super) fn problem(&self) -> Option<String> {
+        if let Some(problem) = self.timeout.as_ref().and_then(timeout_problem) {
+            return Some(problem);
+        }
+        match self.on_failure.as_deref() {
+            None | Some("block" | "continue") => None,
+            Some(other) => Some(format!(
+                "`onFailure` must be `block` or `continue`, not `{other}`"
+            )),
+        }
+    }
+
     fn from_value(value: OrderedValue, at: &str) -> Result<Self, String> {
         let mut map = object(value, at)?;
         let kind = take_string(&mut map, "type", at)?
@@ -310,6 +334,32 @@ impl PortableHooks {
 
     pub(super) fn remove_event(&mut self, event: &str) {
         self.events.remove(event);
+    }
+
+    /// Drop each handler `problem` rejects, then the groups and events left empty. Calls
+    /// `report(event, group index, handler index, problem)` for each handler dropped.
+    pub(super) fn drop_invalid_handlers(
+        &mut self,
+        mut report: impl FnMut(&str, usize, usize, String),
+    ) {
+        for (event, groups) in &mut self.events {
+            for (g, group) in groups.iter_mut().enumerate() {
+                let mut h = 0;
+                group.handlers.retain(|handler| {
+                    let at = h;
+                    h += 1;
+                    match handler.problem() {
+                        Some(problem) => {
+                            report(event, g, at, problem);
+                            false
+                        }
+                        None => true,
+                    }
+                });
+            }
+            groups.retain(|group| !group.handlers.is_empty());
+        }
+        self.events.retain(|_, groups| !groups.is_empty());
     }
 }
 

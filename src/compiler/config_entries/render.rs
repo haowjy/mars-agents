@@ -109,6 +109,7 @@ pub(crate) fn preflight_config_entries(
         let tokens = Tokens {
             hook_dir: &installed,
             hook_target: target_name,
+            ..Default::default()
         };
         let output = match load_output(item, target, &tokens) {
             Ok(output) => output,
@@ -144,6 +145,29 @@ pub(crate) fn preflight_config_entries(
                 }
                 if !valid {
                     continue;
+                }
+                if files.has_fragment_beside_generated() {
+                    diag.info(
+                        "hook-fragment-beside-generated",
+                        format!(
+                            "hook `{}` from `{}`: `{target_name}` fragment `{}` is installed next to the file generated from `[hooks]`; to replace the generated hook, put `{target_name}` in `skip-targets`",
+                            item.def.name,
+                            item.source_name,
+                            item.fragment(target_name).map_or("", |f| f.file.as_str()),
+                        ),
+                    );
+                }
+                for limit in &files.answer_limits {
+                    diag.info(
+                        "hook-answer-unsupported",
+                        format!(
+                            "hook `{}` from `{}`: `{target_name}` `{}`: {}",
+                            item.def.name,
+                            item.source_name,
+                            limit.event.as_deref().unwrap_or(""),
+                            limit.reason,
+                        ),
+                    );
                 }
                 if let Some(problem) = files.fragment_problem {
                     diag.warn(
@@ -262,6 +286,7 @@ pub(crate) fn lower_hook_entries(
         let tokens = mars_schema::hooks::Tokens {
             hook_dir: dir,
             hook_target: "plugin",
+            ..Default::default()
         };
         match crate::compiler::hooks::load_output(item, target, &tokens) {
             Ok(HookOutput::Merge(output)) => outputs.push((*item, output)),

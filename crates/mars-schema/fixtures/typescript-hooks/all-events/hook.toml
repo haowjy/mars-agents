@@ -1,0 +1,62 @@
+name = "all-events"
+
+[[hooks.PreToolUse]]
+matcher = "Bash|Edit"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" PreToolUse ${MARS_HOOK_TARGET}'
+commandWindows = 'bash "${MARS_HOOK_DIR}/run.sh" "quoted \\ path"'
+if = "Bash(*tmux*)"
+onFailure = "block"
+timeout = 2.5
+
+[[hooks.PostToolUse]]
+matcher = "*"
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" PostToolUse ${MARS_HOOK_TARGET}'
+async = true
+
+[[hooks.PostToolUseFailure]]
+[[hooks.PostToolUseFailure.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" PostToolUseFailure ${MARS_HOOK_TARGET}'
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" UserPromptSubmit ${MARS_HOOK_TARGET}'
+
+[[hooks.SessionStart]]
+matcher = "startup"
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" SessionStart ${MARS_HOOK_TARGET}'
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" Stop ${MARS_HOOK_TARGET}'
+
+[[hooks.PreCompact]]
+[[hooks.PreCompact.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" PreCompact ${MARS_HOOK_TARGET}'
+
+[[hooks.PostCompact]]
+matcher = "auto"
+[[hooks.PostCompact.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" PostCompact ${MARS_HOOK_TARGET}'
+
+[[hooks.SessionEnd]]
+matcher = "clear|other"
+[[hooks.SessionEnd.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" SessionEnd ${MARS_HOOK_TARGET}'
+
+[[hooks.PermissionRequest]]
+matcher = "^mcp__"
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh" PermissionRequest ${MARS_HOOK_TARGET}'

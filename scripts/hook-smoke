@@ -5,9 +5,16 @@
 # prompt on a cheap model and reports whether the guard blocked and the context
 # arrived, from sentinel files the hooks write.
 #
-# Usage: scripts/hook-smoke [path/to/mars]   (default: cargo build, target/debug/mars)
+# Usage: scripts/hook-smoke [--sync-only] [path/to/mars]   (default: cargo build, target/debug/mars)
 # Costs a few cheap-model calls per harness. Harnesses: claude codex opencode pi.
+# --sync-only syncs each project and checks the installed files, and runs no harness.
 set -uo pipefail
+
+SYNC_ONLY=0
+if [ "${1:-}" = "--sync-only" ]; then
+  SYNC_ONLY=1
+  shift
+fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ $# -ge 1 ]; then
@@ -27,15 +34,15 @@ pass() { echo "PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 
 # --- package: one guard (PreToolUse) and one context hook (SessionStart) ---
-# verify: package manifest fields and the dependency path form below are unchecked against a build with [hooks].
 PKG="$SCRATCH/pkg"
 mkdir -p "$PKG/hooks/smoke-guard" "$PKG/hooks/smoke-context"
 cat > "$PKG/mars.toml" << 'TOML'
 [package]
 name = "hook-smoke"
 version = "0.0.0"
-requires-mars = ">=0.25.0"
+schema = 1
 TOML
+# No `requires-mars`: a dev build reports 0.24.1 and would fail the floor.
 
 cat > "$PKG/hooks/smoke-guard/hook.toml" << 'TOML'
 visibility = "exported"
@@ -88,6 +95,7 @@ targets = ["$2"]
 path = "../pkg"
 TOML
   (cd "$1" && "$MARS" sync --root . > sync.out 2>&1)
+  [ "$SYNC_ONLY" = 1 ] && cat "$1/sync.out"
 }
 
 PROMPT_BLOCK='Run exactly this one shell command once, do not retry, and report its result or any error reason: echo HOOK_SMOKE_BLOCK_ME > blocked.marker'
@@ -104,16 +112,20 @@ run_prompt() {
 check_harness() { # name target dir cmd... (prompt is appended by run_prompt)
   local name=$1 target=$2 dir="$SCRATCH/$1"
   shift 2
-  if ! command -v "$name" > /dev/null 2>&1; then
+  if [ "$SYNC_ONLY" = 0 ] && ! command -v "$name" > /dev/null 2>&1; then
     echo "SKIP: $name not installed"
     SKIP=$((SKIP+1))
     return
   fi
-  echo "== $name ($("$name" --version 2>&1 | head -n1)) =="
+  echo "== $name =="
   sync_project "$dir" "$target"
   if [ ! -d "$dir/$target/hooks/smoke-guard" ]; then
     fail "$name: sync did not install the hook (output below)"
     cat "$dir/sync.out"
+    return
+  fi
+  if [ "$SYNC_ONLY" = 1 ]; then
+    pass "$name: sync installed the hook"
     return
   fi
   mkdir -p "$dir/sentinel"
@@ -144,11 +156,15 @@ check_harness() { # name target dir cmd... (prompt is appended by run_prompt)
 }
 
 # Harness invocations are from the live probes: noninteractive, approvals
-# bypassed, cheap models. Codex needs the invocation-only trust bypass because
-# mars cannot grant hook trust. The prompt is appended as the last argument.
+# bypassed, cheap models. Mars cannot grant trust, so Codex gets the scratch project
+# trusted for this invocation: Codex 0.164.0 loads a project's .codex/hooks.json only
+# in a trusted project, and only the inline-table form of -c works (the dotted
+# `projects."/path".trust_level` form is split at every dot and trusts nothing).
+# --dangerously-bypass-hook-trust skips the /hooks handler review. The prompt is
+# appended as the last argument.
 check_harness claude .claude claude -p --model haiku --dangerously-skip-permissions
 check_harness codex .codex codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
-  --dangerously-bypass-hook-trust -m gpt-5.6-luna
+  --dangerously-bypass-hook-trust -c "projects={\"$SCRATCH/codex\"={trust_level=\"trusted\"}}" -m gpt-5.6-luna
 check_harness opencode .opencode opencode --standalone run --auto -m opencode-go/beam-free
 check_harness pi .pi pi -p -a --no-session --no-skills --model deepseek/deepseek-flash
 

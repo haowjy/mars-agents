@@ -407,19 +407,28 @@ from the harness's documentation or source, not run. Versions: Claude Code
 | `UserPromptSubmit` | docs | docs | seen; a block shows a generic error, not your reason | seen; a block is silent in print mode |
 | `SessionStart` | docs | docs | skipped: no per-session hook | seen; `startup`, `resume`, and `new` (reported to your script as `clear`) |
 | `Stop` | docs | docs | skipped | seen (keep going) |
-| `PreCompact` | docs | docs | runs; block unsupported | seen (block cancels) |
+| `PreCompact` | docs | docs | runs, its answer ignored (seen); a group with a matcher is skipped | seen (block cancels) |
 | `PostCompact` | docs | docs | skipped | seen |
 | `SessionEnd` | docs | seen | skipped | seen |
-| `PermissionRequest` | docs | docs | `deny` seen; `allow` over `ask` unproven | skipped: no permission system |
-| `Subagent*`, `Notification`, others | docs | skipped | skipped | skipped |
+| `PermissionRequest` | docs | docs | seen, but only when the permission is `ask` (see below) | skipped: no permission system |
+| `SubagentStart`, `SubagentStop` | docs | docs | skipped | skipped |
+| `Notification` and the other Claude events | docs | skipped | skipped | skipped |
 
-<!-- verify: Pi SessionStart `new` → `clear` mapping and OpenCode PermissionRequest rendering are the revised plan, not the first design; confirm against the final renderers. -->
-<!-- verify: Codex PreCompact/PostCompact/PermissionRequest/UserPromptSubmit/Stop rows come from the Codex docs and source, not a live run; confirm the Codex allowlist in the final build. -->
-<!-- verify: Cursor. 0.25 generates nothing for a managed `.cursor` target and reports it once per hook; the stated Cursor plan is a later release. Confirm. -->
+OpenCode's `PermissionRequest` hook runs only when the permission is `ask`, as
+Claude shows the hook only before a dialog. Set `permission: {shell: "ask"}` in
+`opencode.json` to see it; under `--auto` or an `allow` rule OpenCode never asks,
+so the hook does not run. Pi reports `new` to your script as `clear`; its `reload`
+and `fork` reasons pass through unchanged and match no Claude `source`. Pi can emit
+`session_start` twice when a session is replaced; Mars runs your script once per
+session id. An OpenCode `PreCompact` event carries no `trigger`, so a group with a
+real matcher cannot be tested and is left out.
 
 A target that cannot render an event reports `hook-event-skipped` at sync.
-Cursor receives no generated entries; a native Cursor fragment still works (see
-[Native fragments](#native-fragments)).
+Cursor receives no generated entries (Mars renders none for it before 0.26) and
+reports that once per hook; a native Cursor fragment still works (see
+[Native fragments](#native-fragments)). Codex leaves out a matcher group whose
+matcher its regex engine cannot compile, such as one with look-around
+(`(?!…)`), and reports it; Claude's JavaScript regex accepts those.
 
 On OpenCode and Pi the matcher tests the tool name in Claude's spelling. Mars
 translates the native names and inputs:
@@ -470,9 +479,11 @@ and Pi.
 (`Bash(git *)`). Claude applies it to tool events only; on any other event,
 Claude never runs a handler that has `if`, and `mars check` warns. Codex ignores
 `if` and runs the script on every `matcher` match, so the script must decide for
-itself. OpenCode and Pi evaluate a superset of Claude's check: the tool must
+itself. OpenCode and Pi leave out an `if` on a non-tool event, as Claude never
+runs such a handler, and report it. On tool events they evaluate a superset of Claude's check: the tool must
 match and every literal part of the glob must appear in the command or path, so
-the script never runs less often than on Claude.
+the script never runs less often than on Claude. Their default `timeout` is 600
+seconds for every event; set `timeout` explicitly on a guard.
 
 `onFailure = "block"` turns a failure (cannot start, timeout, an exit other than
 0 or 2) into the event's blocking answer. The default, `"continue"`, lets the
@@ -503,11 +514,12 @@ path with spaces works. Mars adds no shell or quoting wrapper.
 
 A hook with `[hooks]` goes to every managed target that can render at least one
 of its events, except the targets in `skip-targets`. Entries must be target
-roots such as `".codex"`. A skipped target gets no hook and no
-`hook-event-skipped` reports.
+roots such as `".codex"`. A skipped target gets no generated entries and no
+`hook-event-skipped` reports. `skip-targets` turns off only the generated
+entries: a [native fragment](#native-fragments) for that target still installs.
 
 ```toml
-skip-targets = [".codex"]   # this guard is Claude, OpenCode and Pi only
+skip-targets = [".codex"]   # [hooks] generates nothing for Codex
 ```
 
 ### Native fragments
@@ -637,8 +649,12 @@ Mars validates only the merge contract:
 
 Nested matcher, handler, timeout, and harness-specific fields pass through
 unchanged in a fragment. Claude currently has 29 known events and Cursor has
-21. Codex `SessionEnd` fires on Codex 0.164.0 and is accepted; it did not fire on
-0.144.4. <!-- verify: Codex event count and allowlist in the final build; the old text said 10 without SessionEnd. -->
+21. Codex's allowlist holds the 11 events it shares with Claude (`SessionStart`,
+`UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`,
+`PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop`, `Stop`,
+`SessionEnd`) plus its own `PreModelRequest`, `PostModelRequest` and
+`Interrupt`, which pass in a Codex fragment only with `unchecked = true`. `SessionEnd` fires on Codex 0.164.0;
+it did not fire on 0.144.4.
 To use a newly shipped native event before Mars updates its
 allowlist, opt in on that target:
 
@@ -738,12 +754,28 @@ Fields inside `[hooks]` handlers and matcher groups always pass through.
 
 ### Ordering and Codex trust
 
+**Codex runs a project's `.codex/hooks.json` only in a trusted project.** Mars
+writes the file but cannot trust the project; trust it once in Codex. For a
+scripted run (Codex 0.164.0), pass the project as an inline table:
+
+```bash
+codex exec -c 'projects={"/path/to/project"={trust_level="trusted"}}' "…"
+```
+
+The dotted form `-c 'projects."/path".trust_level="trusted"'` trusts nothing on
+0.164.0: Codex splits the override at every `.`, including the ones inside the
+quoted path. `--dangerously-bypass-hook-trust` skips only the handler review
+below, after Codex has found the hooks, so it does not make an untrusted
+project load them.
+
 Mars sorts contributions by package depth, dependency declaration order,
 `order`, and hook name, preserving each fragment array's internal order. It
 appends the managed block after user-authored entries. This guarantees stable
 placement, not execution order—Claude runs matching hooks in parallel.
 
-Codex trust is indexed by hook file, event, and array position. Adding or
+Within a trusted project, Codex also reviews each new or moved handler in its
+`/hooks` screen and skips it until you approve (`codex-hooks-need-trust`, below).
+Trust is indexed by hook file, event, and array position. Adding or
 reordering managed hooks can shift indices, so Codex may silently skip affected
 hooks until you re-trust them with `/hooks`. This re-trust churn is an accepted
 Codex behavior; deterministic ordering minimizes it but cannot prevent it when
@@ -772,8 +804,12 @@ reorder its file-mode artifact.
 | `hook-answer-unsupported` | info | the event renders, but some portable answers do not carry over to that target |
 | `hook-fragment-overrides` | info | a Claude or Codex fragment declares an event that `[hooks]` also declares |
 | `hook-fragment-beside-generated` | info | an OpenCode or Pi fragment installs next to the generated file for the same hook |
-| `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays |
-| `codex-hooks-need-trust` | warning | `.codex/hooks.json` changed in a way Codex will want re-trusted |
+| `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
+| `hook-fragment-contract` | warning | an OpenCode or Pi fragment lacks the expected default export; it installs anyway |
+| `hook-fragment` | warning or error | a fragment could not be read or rendered (a warning for a plugin-build OpenCode fragment) |
+| `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists |
+| `codex-hooks-need-trust` | warning | `.codex/hooks.json` has new or moved handlers Codex will want reviewed |
+| `plugin-hook-fragment-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |
 
 With `--json`, these appear in `diagnostics[]`. A hook whose directory was not
 installed gets no entries (`hook-not-installed`).
@@ -782,9 +818,11 @@ installed gets no entries (`hook-not-installed`).
 
 `mars build plugin` renders `[hooks]` through the same code. The Claude tree,
 which Claude, Codex and Grok read, gets a `hooks/hooks.json` reduced to what
-Codex can parse, with drops reported. The OpenCode tree cannot yet load a
-generated hook, so it reports `plugin-hook-fragment-dropped`.
-<!-- verify: plugin-hook-fragment-dropped code name and Grok reading the Claude tree; design says a follow-up issue tracks the OpenCode tree. -->
+Codex can parse, with drops reported. The OpenCode and
+Cursor trees drop `[hooks]`: for each hook that has no fragment for that tree, sync
+reports `plugin-hook-fragment-dropped`, naming the harnesses that won't get it.
+A fragment for another target also reports it. A hook generated for the OpenCode
+tree is tracked in [mars-agents#290](https://github.com/haowjy/mars-agents/issues/290).
 
 ### Ownership and removal
 

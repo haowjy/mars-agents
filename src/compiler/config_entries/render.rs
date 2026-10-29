@@ -4,7 +4,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use super::installed_token;
-use crate::compiler::hooks::{ParsedHookItem, error_message};
+use crate::compiler::hooks::{HookRank, ParsedHookItem, error_message};
 use crate::diagnostic::DiagnosticCollector;
 use crate::sync::package_dir::PackageDir;
 use crate::target::{HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, TargetAdapter};
@@ -312,15 +312,17 @@ pub(crate) fn lower_hook_entries(
         .iter()
         .map(|(item, output)| (*item, output))
         .collect();
-    lower_merge_fragments(&outputs)
+    lower_merge_fragments(&outputs, Vec::new())
 }
 
-/// Order validated merge fragments deterministically and lower them to one entry per
-/// (hook, event).
+/// Order validated merge fragments, and the entries of kept hooks (each with the rank it
+/// had), deterministically and lower them to one entry per (hook, event). This sort is the
+/// only source of order in a target's file.
 pub(crate) fn lower_merge_fragments(
     fragments: &[(&ParsedHookItem, &MergeOutput)],
+    kept: Vec<(HookRank, HookEntry)>,
 ) -> Vec<HookEntry> {
-    let mut contributions = Vec::new();
+    let mut contributions: Vec<(HookRank, HookEntry)> = kept;
     for (item, fragment) in fragments {
         contributions.extend(
             fragment
@@ -328,37 +330,26 @@ pub(crate) fn lower_merge_fragments(
                 .iter()
                 .filter(|(_, entries)| !entries.is_empty())
                 .map(|(event, entries)| {
-                    // `to_json` sorts keys: the bytes mars has always written.
-                    let entries: Vec<_> = entries.iter().map(|entry| entry.to_json()).collect();
-                    (*item, event, entries)
+                    (
+                        item.rank(),
+                        HookEntry {
+                            name: item.def.name.clone(),
+                            native_event: event.clone(),
+                            // `to_json` sorts keys: the bytes mars has always written.
+                            entries: entries.iter().map(|entry| entry.to_json()).collect(),
+                        },
+                    )
                 }),
         );
     }
-
-    contributions.sort_by(|(left, left_event, _), (right, right_event, _)| {
-        (
-            left.package_depth,
-            left.decl_order,
-            left.def.order,
-            left.def.name.as_str(),
-            left_event.as_str(),
-        )
-            .cmp(&(
-                right.package_depth,
-                right.decl_order,
-                right.def.order,
-                right.def.name.as_str(),
-                right_event.as_str(),
-            ))
+    contributions.sort_by(|(left_rank, left), (right_rank, right)| {
+        (left_rank, &left.name, &left.native_event).cmp(&(
+            right_rank,
+            &right.name,
+            &right.native_event,
+        ))
     });
-    contributions
-        .into_iter()
-        .map(|(item, event, entries)| HookEntry {
-            name: item.def.name.clone(),
-            native_event: event.clone(),
-            entries,
-        })
-        .collect()
+    contributions.into_iter().map(|(_, entry)| entry).collect()
 }
 
 fn validate_destination_path(

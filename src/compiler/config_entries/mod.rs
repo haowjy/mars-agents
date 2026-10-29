@@ -151,10 +151,10 @@ pub(crate) fn compile_config_entries(
                 }
             }
         }
-        let mut hooks = lower_merge_fragments(&merge_fragments);
 
         // A kept hook (see `sync::target::KeptHook`) stays as the last lock recorded it.
         let mut kept_records = BTreeMap::new();
+        let mut kept_entries = Vec::new();
         for kept in applied.planned.targeted.target.kept_hooks() {
             let Some(dir) = kept.dirs.iter().find(|dir| dir.belongs_to(target_root)) else {
                 continue;
@@ -179,11 +179,14 @@ pub(crate) fn compile_config_entries(
                 };
                 match serde_json::from_str(&record.emitted_json) {
                     Ok(entries) => {
-                        hooks.push(HookEntry {
-                            name: name.to_string(),
-                            native_event: event.to_string(),
-                            entries,
-                        });
+                        kept_entries.push((
+                            kept.rank,
+                            HookEntry {
+                                name: name.to_string(),
+                                native_event: event.to_string(),
+                                entries,
+                            },
+                        ));
                         kept_records.insert(key.clone(), record.clone());
                     }
                     Err(error) => diag.warn(
@@ -193,6 +196,8 @@ pub(crate) fn compile_config_entries(
                 }
             }
         }
+
+        let hooks = lower_merge_fragments(&merge_fragments, kept_entries);
 
         // Render each server once. Lossiness warnings come with the render, so
         // they run even on dry runs.

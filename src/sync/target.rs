@@ -41,6 +41,8 @@ struct InvalidDependencyHook {
     source_name: SourceName,
     /// Names the last sync may have installed the hook under, most likely first.
     installed_names: Vec<String>,
+    /// Where the hook sorted in the last sync, so its kept entries keep their place.
+    rank: crate::compiler::hooks::HookRank,
     message: String,
 }
 
@@ -50,6 +52,7 @@ struct InvalidDependencyHook {
 #[derive(Debug, Clone)]
 pub(crate) struct KeptHook {
     pub name: String,
+    pub rank: crate::compiler::hooks::HookRank,
     pub dirs: Vec<PackageDir>,
 }
 
@@ -118,6 +121,7 @@ impl TargetState {
                     .collect();
                 (!dirs.is_empty()).then(|| KeptHook {
                     name: name.clone(),
+                    rank: invalid.rank,
                     dirs,
                 })
             });
@@ -402,14 +406,16 @@ pub fn build_with_collisions_and_diag(
         // filters select no hook. Discovery also supplies the hooks for filters,
         // avoiding a second hook.toml parse. Any other invalid `hook.toml` leaves
         // its hook out and the sync going: see `settle_invalid_hooks`.
+        let package_depth = dependency_depths.get(source_name).copied().unwrap_or(1);
+        let decl_order = decl_orders
+            .get(source_name)
+            .copied()
+            .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
         let hook_results = crate::compiler::hooks::discover_resolved_hook_items(
             node,
             source_name,
-            dependency_depths.get(source_name).copied().unwrap_or(1),
-            decl_orders
-                .get(source_name)
-                .copied()
-                .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1),
+            package_depth,
+            decl_order,
             &managed_target_roots,
             diag,
         )?;
@@ -430,6 +436,11 @@ pub fn build_with_collisions_and_diag(
                     target.invalid_hooks.push(InvalidDependencyHook {
                         source_name: source_name.clone(),
                         installed_names: invalid.installed_names,
+                        rank: crate::compiler::hooks::HookRank {
+                            package_depth,
+                            decl_order,
+                            order: invalid.order,
+                        },
                         message: crate::compiler::hooks::error_message(invalid.error)
                             .trim_end()
                             .to_string(),
@@ -452,10 +463,6 @@ pub fn build_with_collisions_and_diag(
 
         // Filters select agents, skills and bootstrap docs; a dependency's MCP
         // servers stay visible to a consumer that includes nothing else.
-        let decl_order = decl_orders
-            .get(source_name)
-            .copied()
-            .unwrap_or_else(|| config.dependencies.len() + graph.order.len() + 1);
         match crate::compiler::mcp::discover_mcp_items(
             &node.rooted_ref.package_root,
             source_name.as_str(),

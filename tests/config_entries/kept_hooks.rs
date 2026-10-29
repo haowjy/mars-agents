@@ -301,3 +301,52 @@ fn an_invalid_dependency_hook_the_consumer_excludes_is_removed_and_not_reported(
         .success()
         .stderr(predicate::str::contains("internal").not());
 }
+
+#[test]
+fn a_kept_hook_keeps_its_place_among_the_merged_hooks() {
+    let dir = TempDir::new().unwrap();
+    let (project, source) = project_with_dependency(&dir, "\".codex\"");
+    let write = |name: &str, bogus: &str| {
+        write_hook(
+            &source,
+            name,
+            &format!("visibility = \"exported\"\n[targets.\".codex\"]\n{bogus}"),
+        );
+        write_fragment(
+            &source,
+            name,
+            "codex.json",
+            &format!(
+                r#"{{"PreToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":"echo {name}"}}]}}]}}"#
+            ),
+        );
+    };
+    let order = || {
+        let text = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
+        (text.find("echo a").unwrap(), text.find("echo b").unwrap())
+    };
+    write("a", "");
+    write("b", "");
+    sync(&project).success();
+    let (a, b) = order();
+    assert!(a < b);
+
+    // Codex keys its trust on position: breaking and fixing `a` must move nothing.
+    write("a", "bogus = 1\n");
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains(
+            "keeping what the last sync installed",
+        ))
+        .stderr(predicate::str::contains("codex-hooks-need-trust").not())
+        .stderr(predicate::str::contains("moved").not());
+    let (a, b) = order();
+    assert!(a < b, "the kept hook stays first");
+
+    write("a", "");
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("moved").not());
+    let (a, b) = order();
+    assert!(a < b);
+}

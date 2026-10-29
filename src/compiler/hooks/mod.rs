@@ -23,7 +23,25 @@ pub struct ParsedHookItem {
     pub origin: Origin,
 }
 
+/// Where a hook sorts among a target's hooks: package depth, declaration order, the hook's
+/// own `order`. Merge order is the only source of order in a target's file, so a kept hook
+/// carries the rank it had instead of being appended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct HookRank {
+    pub package_depth: usize,
+    pub decl_order: usize,
+    pub order: i32,
+}
+
 impl ParsedHookItem {
+    pub(crate) fn rank(&self) -> HookRank {
+        HookRank {
+            package_depth: self.package_depth,
+            decl_order: self.decl_order,
+            order: self.def.order,
+        }
+    }
+
     pub(crate) fn discovered_item(&self, package_root: &Path) -> crate::discover::DiscoveredItem {
         crate::discover::DiscoveredItem {
             id: crate::lock::ItemId {
@@ -67,6 +85,8 @@ pub struct InvalidHook {
     /// The file still declares `visibility = "exported"`: a hook that is not exported was
     /// not installed for this consumer.
     pub exported: bool,
+    /// The `order` the file still declares (0 when it does not read), for a kept hook's place.
+    pub order: i32,
     pub error: MarsError,
     /// The file is in the schema Mars 0.11 removed.
     pub removed_schema: bool,
@@ -75,13 +95,20 @@ pub struct InvalidHook {
 impl InvalidHook {
     /// A `hook.toml` that does not read.
     fn unreadable(text: &str, dir_name: &str, error: MarsError, removed_schema: bool) -> Self {
-        let mut installed_names: Vec<String> = declared(text, "name").into_iter().collect();
+        let mut installed_names: Vec<String> = declared(text, "name")
+            .and_then(|name| name.as_str().map(str::to_owned))
+            .into_iter()
+            .collect();
         installed_names.push(dir_name.to_owned());
         installed_names.dedup();
         Self {
             slug: crate::discover::hook_slug(text, dir_name),
             installed_names,
-            exported: declared(text, "visibility").as_deref() == Some("exported"),
+            exported: declared(text, "visibility").is_some_and(|v| v.as_str() == Some("exported")),
+            order: declared(text, "order")
+                .and_then(|order| order.as_integer())
+                .and_then(|order| i32::try_from(order).ok())
+                .unwrap_or(0),
             error,
             removed_schema,
         }
@@ -93,22 +120,17 @@ impl InvalidHook {
             slug: item.def.name.clone(),
             installed_names: vec![item.def.name.clone()],
             exported: item.def.visibility == mars_schema::visibility::Visibility::Exported,
+            order: item.def.order,
             error,
             removed_schema: false,
         }
     }
 }
 
-/// A top-level string `key` of a `hook.toml`, read even when the rest does not parse: the
-/// first `key = "…"` line before the first table, which is where an author puts it.
-fn declared(text: &str, key: &str) -> Option<String> {
-    let value = |text: &str| {
-        toml::from_str::<toml::Value>(text)
-            .ok()?
-            .get(key)?
-            .as_str()
-            .map(str::to_owned)
-    };
+/// A top-level `key` of a `hook.toml`, read even when the rest does not parse: the
+/// first `key = …` line before the first table, which is where an author puts it.
+fn declared(text: &str, key: &str) -> Option<toml::Value> {
+    let value = |text: &str| toml::from_str::<toml::Value>(text).ok()?.get(key).cloned();
     value(text).or_else(|| {
         text.lines()
             .take_while(|line| !line.trim_start().starts_with('['))

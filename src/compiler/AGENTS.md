@@ -163,7 +163,7 @@ unmanaged or user-edited copy keeps the entry out with a `hook-not-installed` / 
 warning naming the path; target sync's `target-unmanaged-collision` or `target-divergent` warning
 says why. A token-free server has no directory to check. `config_entries/render.rs`
 preflight reads, validates and renders every selected hook once (`RenderedHooks`); compile reuses
-that result, and `lower_merge_fragments` orders each hook's merge output (`lower_hook_entries` is
+that result, and `lower_merge_fragments` orders each hook's merge output, kept hooks' recorded entries included (a kept hook carries its `HookRank` from the sync that found it invalid: merge order is the only source of order in a target's file) (`lower_hook_entries` is
 the same for a plugin build, which has no preflight; there `${MARS_HOOK_TARGET}` is `plugin`, and the Claude tree's output goes through `HookDef::plugin_output`, which holds it to what Codex parses because Codex reads that file too, D21).
 Preflight also says what `[hooks]` leaves out on every managed target, for every accepted hook even when no target takes it (`hook-event-skipped`:
 a warning per skip for the project's own hooks, one info line per sync for dependencies) and

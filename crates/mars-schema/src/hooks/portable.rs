@@ -69,9 +69,12 @@ pub(super) fn timeout_problem(timeout: &Number) -> Option<String> {
         .then(|| format!("`timeout` must be more than 0 and at most {MAX_TIMEOUT_SECONDS} seconds"))
 }
 
+pub(super) const NO_COMMAND: &str = "a command handler needs a non-empty `command`";
+
 impl Handler {
-    /// What is wrong with this handler's `timeout` or `onFailure`, if anything. The reader
-    /// applies it to a hook's handlers.
+    /// What is wrong with this handler's `timeout` or `onFailure`, if anything. A hook with
+    /// such a handler fails whole: a hard error for the project's own, `hook-invalid-kept`
+    /// for a dependency's.
     pub(super) fn problem(&self) -> Option<String> {
         if let Some(problem) = self.timeout.as_ref().and_then(timeout_problem) {
             return Some(problem);
@@ -82,6 +85,14 @@ impl Handler {
                 "`onFailure` must be `block` or `continue`, not `{other}`"
             )),
         }
+    }
+
+    /// The command of a `command` handler that has one. Claude takes the table as written;
+    /// every other renderer skips a `command` handler without one, with `NO_COMMAND`.
+    pub(super) fn command_to_run(&self) -> Option<&str> {
+        self.command
+            .as_deref()
+            .filter(|command| self.kind == "command" && !command.trim().is_empty())
     }
 
     fn from_value(value: OrderedValue, at: &str) -> Result<Self, String> {
@@ -291,7 +302,8 @@ impl PortableHooks {
 
     /// Claude's hooks JSON: an event table, or a settings file or plugin `hooks.json`
     /// wrapping one. TOML cannot hold `null`, so each is dropped; the second value says
-    /// where.
+    /// where. This is the entry point for the Claude importer (0.26) that turns a settings
+    /// file's `hooks` into a `hook.toml`; tests drive it until then.
     pub fn from_claude_json(text: &str) -> Result<(Self, Vec<String>), String> {
         let value: OrderedValue =
             serde_json::from_str(text).map_err(|error| format!("not valid JSON: {error}"))?;
@@ -338,30 +350,18 @@ impl PortableHooks {
         self.events.remove(event);
     }
 
-    /// Drop each handler `problem` rejects, then the groups and events left empty. Calls
-    /// `report(event, group index, handler index, problem)` for each handler dropped.
-    pub(super) fn drop_invalid_handlers(
-        &mut self,
-        mut report: impl FnMut(&str, usize, usize, String),
-    ) {
-        for (event, groups) in &mut self.events {
-            for (g, group) in groups.iter_mut().enumerate() {
-                let mut h = 0;
-                group.handlers.retain(|handler| {
-                    let at = h;
-                    h += 1;
-                    match handler.problem() {
-                        Some(problem) => {
-                            report(event, g, at, problem);
-                            false
-                        }
-                        None => true,
-                    }
-                });
-            }
-            groups.retain(|group| !group.handlers.is_empty());
-        }
-        self.events.retain(|_, groups| !groups.is_empty());
+    /// The first handler `timeout` or `onFailure` that is out of range, located.
+    pub(super) fn handler_problem(&self) -> Option<String> {
+        self.events.iter().find_map(|(event, groups)| {
+            groups.iter().enumerate().find_map(|(g, group)| {
+                group.handlers.iter().enumerate().find_map(|(h, handler)| {
+                    let problem = handler.problem()?;
+                    Some(format!(
+                        "`{event}` matcher group {g}, handler {h}: {problem}"
+                    ))
+                })
+            })
+        })
     }
 }
 

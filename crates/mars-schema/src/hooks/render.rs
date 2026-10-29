@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use serde_json::Number;
 
 use super::Tokens;
-use super::portable::{Handler, MatcherGroup, PortableHooks};
+use super::portable::{Handler, MatcherGroup, NO_COMMAND, PortableHooks};
 use super::targets::{self, Profile, Rules};
 use crate::ordered::OrderedValue;
 
@@ -257,12 +257,8 @@ fn codex_handler(event: &str, handler: &Handler) -> Result<Handler, String> {
     };
     match handler.kind.as_str() {
         "command" => {
-            if handler
-                .command
-                .as_deref()
-                .is_none_or(|c| c.trim().is_empty())
-            {
-                return Err("a command handler needs a non-empty `command`".into());
+            if handler.command_to_run().is_none() {
+                return Err(NO_COMMAND.into());
             }
             text("commandWindows")?;
             match extra("additionalContextLimit") {

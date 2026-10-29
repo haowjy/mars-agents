@@ -10,7 +10,7 @@
 use serde_json::{Map, Value, json};
 
 use super::Tokens;
-use super::portable::MatcherGroup;
+use super::portable::{MatcherGroup, NO_COMMAND};
 use super::render::{Output, Rendered, Skip};
 use super::targets::{self, Profile};
 
@@ -148,22 +148,19 @@ pub(super) fn render(
             let mut kept = Vec::new();
             for (h, handler) in group.handlers.iter().enumerate() {
                 let at = format!("matcher group {g}, handler {h}");
-                let command = match (handler.kind.as_str(), handler.command.as_deref()) {
-                    ("command", Some(command)) if !command.trim().is_empty() => command,
-                    ("command", _) => {
-                        skip(
-                            event,
-                            format!("{at}: a command handler needs a non-empty `command`"),
-                        );
-                        continue;
-                    }
-                    (other, _) => {
-                        skip(
-                            event,
-                            format!("{at}: {harness_name} runs `command` handlers, not `{other}`"),
-                        );
-                        continue;
-                    }
+                if handler.kind != "command" {
+                    skip(
+                        event,
+                        format!(
+                            "{at}: {harness_name} runs `command` handlers, not `{}`",
+                            handler.kind
+                        ),
+                    );
+                    continue;
+                }
+                let Some(command) = handler.command_to_run() else {
+                    skip(event, format!("{at}: {NO_COMMAND}"));
+                    continue;
                 };
                 if handler.condition.is_some() && !claude.is_tool_event() {
                     skip(

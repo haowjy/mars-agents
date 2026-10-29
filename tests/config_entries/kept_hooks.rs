@@ -350,3 +350,44 @@ fn a_kept_hook_keeps_its_place_among_the_merged_hooks() {
     let (a, b) = order();
     assert!(a < b);
 }
+
+fn portable_guard(on_failure: &str) -> String {
+    format!(
+        "visibility = \"exported\"\n\
+         [[hooks.PreToolUse]]\nmatcher = \"Bash\"\n\
+         [[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"exit 2\"\n{on_failure}\n\
+         [[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"echo astop\"\n"
+    )
+}
+
+#[test]
+fn dependency_handler_with_bad_value_keeps_the_whole_hook_installed() {
+    let dir = TempDir::new().unwrap();
+    let (project, source) = project_with_dependency(&dir, "\".claude\", \".codex\", \".opencode\"");
+    write_hook(&source, "a", &portable_guard(""));
+    write_hook(
+        &source,
+        "b",
+        "visibility = \"exported\"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"echo b\"\n",
+    );
+    sync(&project).success();
+    let files = [
+        ".claude/settings.local.json",
+        ".codex/hooks.json",
+        ".opencode/plugins/mars-a.hooks.ts",
+        "mars.lock",
+    ];
+    let read_all = || files.map(|f| fs::read_to_string(project.child(f).path()).unwrap());
+    let installed = read_all();
+    assert!(installed[0].contains("exit 2") && installed[1].contains("exit 2"));
+
+    write_hook(&source, "a", &portable_guard("onFailure = \"ask\""));
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("hook `a`"))
+        .stderr(predicate::str::contains(
+            "keeping what the last sync installed",
+        ))
+        .stderr(predicate::str::contains("codex-hooks-need-trust").not());
+    assert_eq!(read_all(), installed);
+}

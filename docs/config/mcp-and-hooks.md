@@ -393,6 +393,12 @@ to Claude. The other targets get only what their parser accepts. A handler whose
 `type` a target cannot run is left out on that target and reported: Codex runs
 `command` and `mcp_tool`; OpenCode and Pi run `command` only.
 
+Two handler fields are range-checked once, for every target: `timeout` is a
+number of seconds above 0 and at most 2147483, and `onFailure` is `block` or
+`continue`. A hook with a handler outside these rules fails as a whole
+(`hook.handler`); [Validation by origin](#validation-by-origin) says what that
+does for your project's hooks and for a dependency's.
+
 ### Which harness gets what
 
 "Seen" means the row was observed working on that version. "Docs" means read
@@ -742,8 +748,9 @@ Before 0.25, `hook.toml` rejected unknown keys, so a Mars older than 0.25 fails
 the whole sync on `[hooks]`. From 0.25 on, validation depends on who wrote the
 hook:
 
-- **Your project's own hooks are strict.** An unknown key, unknown event or
-  invalid table is an error, because you can fix it. `unchecked = true` on a
+- **Your project's own hooks are strict.** An unknown key, unknown event,
+  invalid table or out-of-range handler `timeout` or `onFailure` is an error,
+  because you can fix it. `unchecked = true` on a
   file target is an error whichever targets are selected.
 - **A dependency's hooks never fail your sync.**
   - An unknown top-level key is ignored with a warning.
@@ -751,7 +758,9 @@ hook:
     render.
   - Any other validation failure keeps that hook's installed entries and files
     as they were (the last good install) and warns, naming the package and
-    version (`hook-invalid-kept`).
+    version (`hook-invalid-kept`). This includes a handler whose `timeout` or
+    `onFailure` is out of range (`hook.handler`): the whole hook stays as it
+    was, on every target and in its position, not just that handler.
 
 A guard is therefore never removed because a newer package met an older Mars.
 Fields inside `[hooks]` handlers and matcher groups always pass through.
@@ -811,6 +820,7 @@ reorder its file-mode artifact.
 | `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
 | `hook-fragment-contract` | warning | an OpenCode or Pi fragment lacks the expected default export; it installs anyway |
 | `hook-fragment` | warning or error | a fragment could not be read or rendered in a plugin build (an error for the project's own hook, a warning for a dependency's) |
+| `hook.handler` | error | your own hook has a handler `timeout` outside 0 to 2147483 seconds, or an `onFailure` other than `block` or `continue`. For a dependency's hook the same fault is reported as `hook-invalid-kept` |
 | `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists |
 | `codex-hooks-need-trust` | warning | `.codex/hooks.json` has new or moved handlers Codex will want reviewed |
 | `plugin-hook-fragment-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |

@@ -23,7 +23,7 @@ fn stop_hook(handlers: &str) -> String {
 }
 
 #[test]
-fn handler_timeout_and_on_failure_are_checked_once_for_every_target() {
+fn handler_timeout_and_on_failure_fail_the_hook_for_both_origins() {
     let bad = |field: &str| {
         stop_hook(&format!(
             "[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"a\"\n{field}\n\
@@ -40,14 +40,9 @@ fn handler_timeout_and_on_failure_are_checked_once_for_every_target() {
         let local = read(&bad(field), "h", Origin::Local);
         assert!(local.def.is_none(), "{field}");
         assert_eq!(local.diagnostics[0].code, "hook.handler", "{field}");
+        // A dependency's hook fails whole too, so the sync keeps its last good install.
         let dep = read(&bad(field), "h", Origin::Dependency);
-        let def = dep.def.unwrap();
-        let groups: Vec<_> = def.portable().unwrap().events().collect();
-        assert_eq!(
-            groups[0].1[0].handlers.len(),
-            1,
-            "{field}: only `b` is kept"
-        );
+        assert!(dep.def.is_none(), "{field}");
         assert_eq!(dep.diagnostics[0].code, "hook.handler", "{field}");
     }
     for ok in [
@@ -57,10 +52,6 @@ fn handler_timeout_and_on_failure_are_checked_once_for_every_target() {
     ] {
         assert!(read(&bad(ok), "h", Origin::Local).def.is_some(), "{ok}");
     }
-    // A dependency hook with no valid handler left has nothing to install.
-    let all_bad =
-        stop_hook("[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"a\"\ntimeout = 0\n");
-    assert!(read(&all_bad, "h", Origin::Dependency).def.is_none());
 }
 
 #[test]
@@ -449,4 +440,17 @@ fn unknown_visibility_reads_as_local() {
     let got = read_local("visibility = \"public\"\n[targets.\".claude\"]\n");
     assert_eq!(got.def.unwrap().visibility, Visibility::Local);
     assert_eq!(got.unknown_visibility.as_deref(), Some("public"));
+}
+
+#[test]
+fn an_empty_file_target_table_needs_a_fragment_for_both_origins() {
+    let text = format!(
+        "{}[targets.\".opencode\"]\n",
+        stop_hook("[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"a\"\n")
+    );
+    for origin in [Origin::Local, Origin::Dependency] {
+        let read = read(&text, "h", origin);
+        assert!(read.def.is_none());
+        assert_eq!(read.diagnostics[0].code, "hook.fragment-required");
+    }
 }

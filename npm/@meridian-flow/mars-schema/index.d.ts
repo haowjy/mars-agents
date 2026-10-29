@@ -640,7 +640,7 @@ export function selectItems(input: {
 export type HookTargetOutput =
   | {
       kind: "merge";
-      /** Finished entries per native event; an event with nothing left is absent. */
+      /** Finished entries per native event. A fragment's `[]` is kept: it turns that event off. */
       events: { [event: string]: unknown[] };
       /** Unknown events a dependency's fragment lists, left out of `events`. */
       skippedEvents: string[];

@@ -159,16 +159,7 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
         Some(Err(message)) => return failed("hook.hooks", message),
     };
     if let Some(portable) = &mut portable {
-        let mut problem = None;
-        portable.drop_invalid_handlers(|event, g, h, message| {
-            let at = format!("`{event}` matcher group {g}, handler {h}: {message}");
-            if origin == Origin::Local {
-                problem.get_or_insert(at);
-            } else {
-                warn(&mut diagnostics, "hook.handler", format!("skipping {at}"));
-            }
-        });
-        if let Some(message) = problem {
+        if let Some(message) = portable.handler_problem() {
             return failed("hook.handler", message);
         }
         let unknown: Vec<String> = portable

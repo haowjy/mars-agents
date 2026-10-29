@@ -339,8 +339,7 @@ fn parse_rename_dest_rejects_absolute_and_escape_destinations() {
 
     // The build path surfaces the same rejection for a configured rename.
     let tree = make_source_tree(&[("old-name.md", "# old")], &[]);
-    let (graph, mut config) =
-        make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
+    let (graph, mut config) = make_graph_and_config(vec![("base", &tree, None, FilterMode::All)]);
     config
         .dependencies
         .get_mut("base")

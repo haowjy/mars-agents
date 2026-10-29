@@ -172,6 +172,22 @@ git add mars.lock
 git commit -m "Update lock file"
 ```
 
+### A hook does not fire
+
+Run `mars sync` and read its warnings (with `--json`, the `diagnostics[]` array). Each code
+below has its full account in
+[What sync reports](../config/mcp-and-hooks.md#what-sync-reports).
+
+| What you see | Cause and fix |
+|---|---|
+| Hook works on Claude but not on Codex | Codex runs `.codex/hooks.json` only in a trusted project. Trust the project once in Codex. See [Ordering and Codex trust](../config/mcp-and-hooks.md#ordering-and-codex-trust) |
+| `codex-hooks-need-trust` | A sync added or moved a handler in `.codex/hooks.json`. Codex skips it, silently, until you review it in `/hooks`. Adding a hook ahead of an existing one moves the later one too |
+| `hook-event-skipped` | The target has no counterpart for an event, handler type or matcher. The hook's other events still install. The table in [Which harness gets what](../config/mcp-and-hooks.md#which-harness-gets-what) shows what each harness runs |
+| `hook-invalid-kept` | A dependency's `hook.toml` failed validation under this Mars. Mars keeps that hook as the last sync installed it, or installs nothing if there was none. Update Mars, or ask the package for a fix |
+| `hook-not-installed` | Mars withheld the hook's config entry because its directory was not installed into that target (an unmanaged or edited copy sits at the path the warning names). Resolve that path, then sync again |
+| The hook is on neither warning list and still does nothing | Check the target is linked (`mars link`) and not in the hook's `skip-targets` |
+| `mars sync` fails on a package's `hook.toml` | The package uses `[hooks]` and your Mars is older than 0.25. Update Mars |
+
 ## Diagnostic Workflow
 
 For any issue, start with:
@@ -188,5 +204,7 @@ If the problem persists after repair, check:
 3. Is the managed root writable? (permissions)
 
 ## Smoke Checks
+
+For a change to how a hook renders for a harness, run `scripts/hook-smoke`. It syncs a scratch project with a guard hook and a context hook, then runs a one-shot prompt on each installed harness and reports whether the guard blocked and the context arrived. `--sync-only` checks the installed files and runs no harness.
 
 For parser, discovery, transport, or sync regressions, use the manual smoke matrices in [Smoke Testing (POSIX)](smoke-testing-posix.md) or [Smoke Testing (Windows)](smoke-testing-windows.md).

@@ -540,7 +540,7 @@ mars check --root PATH
 
 Does not require a mars project (no `mars.toml` needed). Validates:
 - `requires-mars` and `requires-meridian` syntax when `[package]` is present
-- Package structure: convention folders named `agents/`, `skills/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
+- Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
 - Prints the `source package validates` line only when there are no errors
 - Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so removed keys, invalid values and malformed YAML are errors (exit 1), unknown keys warn, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
 - Frontmatter: name, description presence and consistency
@@ -555,6 +555,7 @@ Does not require a mars project (no `mars.toml` needed). Validates:
   `schema = 1`, the first Mars that reads it; `">=0.19.0"` for a plugin package with no
   `schema`, the first that keeps `[plugin]`
 - Plugin compatibility: unknown `[plugin].harnesses` values
+- Hooks (`hooks/<name>/hook.toml`) that use `[hooks]`: warns when `requires-mars` is missing or below `>=0.25.0`, when an `if` sits on an event that is not a tool event (it never matches), and for each event, handler type or matcher a managed target cannot render. See [Declaring Hooks in a Package](../config/mcp-and-hooks.md#declaring-hooks-in-a-package)
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
 preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed
@@ -765,7 +766,7 @@ Only trees selected by `[plugin].harnesses` are written. The shared Claude tree 
 agents, skills, exported hooks, exported MCP servers, and `.claude-plugin/plugin.json`; Codex
 loads its skills, hooks, and MCP servers but not its agents. Cursor receives its native tree.
 OpenCode receives an npm-shaped package that registers skills, agents and MCP servers and
-composes default-export hook fragments.
+composes default-export hook fragments. `[hooks]` reaches only the shared Claude tree; the OpenCode and Cursor trees drop it with `plugin-hook-fragment-dropped` unless the hook has a fragment for that tree (see [Plugin builds](../config/mcp-and-hooks.md#plugin-builds)).
 
 Mars records generated file hashes, input and dependency identities, version, and root-file
 ownership in the sentinel. It atomically replaces owned output, recovers interrupted staging, and

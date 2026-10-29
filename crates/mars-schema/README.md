@@ -1,6 +1,6 @@
 # mars-schema
 
-The reader and editor for [Mars](https://github.com/haowjy/mars-agents) schema v1: the file format of agent definitions (`agents/<slug>.md`), skills (`skills/<slug>/SKILL.md`) and the `[package]` table of `mars.toml`. It holds the key tables, the validation, the tool vocabulary, the pre-v1 upgrade, the foreign-layout translation and the YAML emitter. The `mars-agents` binary calls it directly, and the [`@meridian-flow/mars-schema`](https://github.com/haowjy/mars-agents/tree/main/npm/@meridian-flow/mars-schema) npm package compiles it to WebAssembly, so an editor and `mars sync` read a file the same way.
+The reader and editor for [Mars](https://github.com/haowjy/mars-agents) schema v1: the file format of agent definitions (`agents/<slug>.md`), skills (`skills/<slug>/SKILL.md`) the `[package]` table of `mars.toml`, and the `hook.toml` of a package's hooks. It holds the key tables, the validation, the tool vocabulary, the pre-v1 upgrade, the foreign-layout translation, the YAML emitter and the per-harness hook renderers. The `mars-agents` binary calls it directly, and the [`@meridian-flow/mars-schema`](https://github.com/haowjy/mars-agents/tree/main/npm/@meridian-flow/mars-schema) npm package compiles it to WebAssembly, so an editor and `mars sync` read a file the same way.
 
 The format is documented in [Schema v1](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md). This page covers the crate.
 
@@ -62,6 +62,10 @@ Unknown keys are kept and reported as `field.unknown` warnings. Removed keys are
 
 `inspect::inspect(&source, &hint)` reports what a repository is (a marketplace's plugins, a plugin's or skill tree's items, the dialect and its evidence), and `normalize::normalize(&request)` runs `prepare` on each selected root of a Claude plugin, marketplace, skill tree or other foreign layout and adds a generated `mars.toml` and provenance. Neither fetches anything: the caller fetches a remote marketplace plugin and inspects or normalizes the fetched tree with `hint.plugin` set to the plugin's entry.
 
+## Rendering hooks
+
+`hooks::read(text, dir_name, origin)` reads one `hook.toml` into a `HookDef`. The `Origin` says whose hook it is: the project's own is read strictly, a dependency's unknown keys and events are skipped with a diagnostic. `HookDef::output(target, fragment_text, origin, tokens)` returns what the hook installs on one target: merged events for Claude and Codex, or generated files for OpenCode and Pi (`typescript.rs` writes the TypeScript). Each target is one row in `hooks/targets.rs`: its events, the harness version it was checked against, and the rules that render for it. `Tokens` fills `${MARS_HOOK_DIR}` and `${MARS_HOOK_TARGET}`. The `@meridian-flow/mars-schema` package exposes this as `renderHooks`. The `hook.toml` format is in [Declaring Hooks in a Package](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#declaring-hooks-in-a-package).
+
 ## Vocabulary and policy types
 
 | Module | Holds |
@@ -72,13 +76,14 @@ Unknown keys are kept and reported as `field.unknown` warnings. Removed keys are
 | `mcp_server`, `mcp_servers`, `visibility` | an `mcp.toml` server definition, the one codec for the Claude `mcpServers` entry (read and rendered for Claude, Pi, Cursor and a plugin tree), and `Visibility` |
 | `model_policy` | the `model-policies` rule and its validator |
 | `harness` | `HarnessId` and the reserved consumer namespaces (`meridian-flow`, `meridian-cli`) |
+| `hooks`, `visibility` | the `hook.toml` model, its per-target tables and renderers (above), and `Visibility` |
 | `dialect` | the layouts Mars reads: the foreign ones it translates (`claude`, `agent-skills`, `codex`, `opencode`, `cursor`) and `mars-native` |
 
 Projection onto a particular harness, overlay application, precedence and everything that touches the filesystem stay in the `mars-agents` binary.
 
 ## Fixtures
 
-`fixtures/<suite>/<case>/` holds the corpus that fixes the behaviour: `read`, `emit`, `upgrade`, `prepare`, `normalize` and `vocabulary`. `cargo test -p mars-schema` checks every case, and the npm package's `run-fixtures.mjs` checks the same cases through WebAssembly. Regenerate expected output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff: a changed reading is a change to the format.
+`fixtures/<suite>/<case>/` holds the corpus that fixes the behaviour: `read`, `emit`, `upgrade`, `prepare`, `normalize`, `selection`, `version`, `vocabulary` and `typescript-hooks`. `cargo test -p mars-schema` checks every case, and the npm package's `run-fixtures.mjs` checks the same cases through WebAssembly. Regenerate expected output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff: a changed reading is a change to the format.
 
 ## License
 

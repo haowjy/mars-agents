@@ -344,6 +344,11 @@ my-package/hooks/protect-tmux-server/
   run.sh
 ```
 
+This is not the `hooks` key in an Agent's or skill's frontmatter. That key is Claude's own
+setting for one agent or skill: Mars carries it unchanged in `harness-overrides.claude`, only
+`.claude/` output has it, and it never reads it. A `hook.toml` is package content: Mars
+validates it, renders it for each target, and records it in `mars.lock`.
+
 ```toml
 # hooks/protect-tmux-server/hook.toml
 visibility = "exported"       # dependencies must export hooks

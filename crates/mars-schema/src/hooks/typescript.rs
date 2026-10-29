@@ -103,7 +103,7 @@ impl Harness {
 /// hook gets on Claude, so it times out here as it would there.
 fn default_timeout(claude: &targets::Event) -> serde_json::Number {
     let ms = claude.default_timeout_ms;
-    if ms % 1000 == 0 {
+    if ms.is_multiple_of(1000) {
         (ms / 1000).into()
     } else {
         serde_json::Number::from_f64(f64::from(ms) / 1000.0).expect("finite")

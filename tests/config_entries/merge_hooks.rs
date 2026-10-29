@@ -682,29 +682,18 @@ fn project_naming_native_hook_by(
 }
 
 #[test]
-fn deprecated_fragment_key_installs_like_native_hook_and_warns() {
+fn fragment_key_fails_with_the_removal_message_and_native_hook_still_installs() {
     let dir = TempDir::new().unwrap();
     let new = project_naming_native_hook_by(&dir, "new", "native-hook");
     let old = project_naming_native_hook_by(&dir, "old", "fragment");
-    sync(&new)
-        .success()
-        .stderr(predicate::str::contains("which is deprecated; use `native-hook`").not());
-    sync(&old).success().stderr(predicate::str::contains(
-        "which is deprecated; use `native-hook`",
-    ));
-    // The code users see is the CLI's dashed form, which the docs name.
-    mars()
-        .args(["--json", "sync", "--root", old.path().to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("hook-fragment-deprecated"));
-    // The item checksums cover `hook.toml` itself, so compare what was emitted and recorded.
-    let emitted = |project: &assert_fs::fixture::ChildPath| {
-        let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
-        let entries = lock[lock.find("[config_entries").unwrap()..].to_owned();
-        let settings =
-            fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
-        (entries, settings)
-    };
-    assert_eq!(emitted(&new), emitted(&old));
+    sync(&new).success();
+    new.child(".claude/settings.local.json")
+        .assert(predicate::str::contains("PreToolUse"));
+    sync(&old).failure().stderr(
+        predicate::str::contains("`fragment` was removed in 0.27")
+            .and(predicate::str::contains("use `native-hook`")),
+    );
+    old.child(".claude/settings.local.json")
+        .assert(predicate::path::missing());
+    old.child("mars.lock").assert(predicate::path::missing());
 }

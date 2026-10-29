@@ -37,8 +37,9 @@
      GIF with numbered steps and the before/after state. A CLI, config, library
      or docs change gets a numbered text walkthrough: copy-pasteable commands
      and their real output, or before/after files. Where behavior changed,
-     show main's state and this branch's. If nothing is runnable or visible,
-     write "Not applicable" and say what check replaces it. -->
+     show the before state on main and the after state on this branch. If
+     nothing is runnable or visible, write "Not applicable" and say what
+     check replaces it. -->
 
 ## Changes
 

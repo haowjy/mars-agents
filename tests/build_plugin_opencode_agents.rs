@@ -156,7 +156,11 @@ fn opencode_plugin_ships_adapter_generated_from_hooks() {
         mars_schema::hooks::HookOutput::File(file) => file.files[0].content.clone(),
         other => panic!("{other:?}"),
     };
-    assert_eq!(adapter, rendered);
+    // The tree normalizes text files to CRLF on Windows; sync renders LF.
+    assert_eq!(
+        adapter.replace("\r\n", "\n"),
+        rendered.replace("\r\n", "\n")
+    );
 }
 
 /// A native hook alone loads as before; with `[hooks]` beside it, both load.

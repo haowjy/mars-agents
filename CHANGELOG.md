@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-10-29
+
+### Fixed
+- `mars build plugin` now ships hooks generated from `[hooks]` in the OpenCode tree. A hook with no `opencode` native hook is no longer dropped from that tree with `plugin-native-hook-dropped`.
+
 ## [0.26.0] - 2026-10-29
 
 ### Upgrade notes

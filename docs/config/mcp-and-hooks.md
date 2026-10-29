@@ -763,7 +763,7 @@ hook:
     was, on every target and in its position, not just that handler.
 
 A guard is therefore never removed because a newer package met an older Mars.
-Fields inside `[hooks]` handlers and matcher groups always pass through.
+Unknown fields inside `[hooks]` handlers and matcher groups always pass through.
 
 ### Ordering and Codex trust
 

@@ -99,6 +99,17 @@ impl Harness {
     }
 }
 
+/// The seconds a handler with no `timeout` runs for: Claude's default for the event, which a
+/// hook gets on Claude, so it times out here as it would there.
+fn default_timeout(claude: &targets::Event) -> serde_json::Number {
+    let ms = claude.default_timeout_ms;
+    if ms % 1000 == 0 {
+        (ms / 1000).into()
+    } else {
+        serde_json::Number::from_f64(f64::from(ms) / 1000.0).expect("finite")
+    }
+}
+
 /// `table` (the events Claude knows) as `harness` takes them, with `tokens` substituted.
 pub(super) fn render(
     table: &[(&str, &[MatcherGroup])],
@@ -178,7 +189,7 @@ pub(super) fn render(
                 kept.push(json!({
                     "command": tokens.substitute(command),
                     "commandWindows": windows,
-                    "timeout": handler.timeout,
+                    "timeout": handler.timeout.clone().unwrap_or_else(|| default_timeout(claude)),
                     "if": handler.condition.as_deref().map(|c| tokens.substitute(c)),
                     "onFailure": handler.on_failure,
                     "async": handler.is_async.unwrap_or(false),

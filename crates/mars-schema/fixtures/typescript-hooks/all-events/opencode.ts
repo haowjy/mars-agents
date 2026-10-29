@@ -10,7 +10,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": "^mcp__"
@@ -25,7 +25,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": "*"
@@ -40,7 +40,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": null
@@ -55,7 +55,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": null
@@ -85,7 +85,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 30
           }
         ],
         "matcher": null

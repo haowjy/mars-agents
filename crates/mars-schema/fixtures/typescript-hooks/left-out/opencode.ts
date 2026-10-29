@@ -10,7 +10,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": "Bash"

@@ -495,8 +495,9 @@ Claude never runs a handler that has `if`, and `mars check` warns. Codex ignores
 itself. OpenCode and Pi leave out an `if` on a non-tool event, as Claude never
 runs such a handler, and report it. On tool events they evaluate a superset of Claude's check: the tool must
 match and every literal part of the glob must appear in the command or path, so
-the script never runs less often than on Claude. Their default `timeout` is 600
-seconds for every event; set `timeout` explicitly on a guard.
+the script never runs less often than on Claude. A handler with no `timeout`
+gets Claude's default for its event: 600 seconds, except `UserPromptSubmit` (30)
+and `SessionEnd` (1.5). Set `timeout` explicitly on a guard.
 
 `onFailure = "block"` turns a failure (cannot start, timeout, an exit other than
 0 or 2) into the event's blocking answer. The default, `"continue"`, lets the

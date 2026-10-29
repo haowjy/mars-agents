@@ -8,7 +8,6 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 // Imports no harness package, so it loads on any version.
 
 const LABEL = `mars hook ${HOOK.name} (${HOOK.harness})`;
-const DEFAULT_TIMEOUT_SECONDS = 600;
 // Events whose answer can block the action: only these honour `onFailure = "block"`.
 const BLOCKING = new Set(["PreToolUse", "UserPromptSubmit", "Stop", "PreCompact", "PermissionRequest"]);
 const CONTEXT = new Set(["PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "SessionStart"]);
@@ -144,7 +143,7 @@ function runCommand(handler: any, stdin: string, cwd: string): Promise<Run> {
     child.on("close", (status: number | null, signal: string | null) =>
       finish({ ok: status !== null, status, stdout, stderr, why: signal ? `killed by ${signal}` : `exit ${status}` }),
     );
-    const seconds = handler.timeout ?? DEFAULT_TIMEOUT_SECONDS;
+    const seconds = handler.timeout;
     timer = setTimeout(() => {
       try {
         if (windows) child.kill();

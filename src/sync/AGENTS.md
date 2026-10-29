@@ -24,6 +24,8 @@ Each phase produces a typed handoff struct consumed by the next — no cloning:
 | 5 | `AppliedState` | PlannedState + ApplyResult |
 | 6 | `SyncedState` | AppliedState + TargetSyncOutcomes + ConfigEntries |
 
+`mod.rs` holds the request and phase structs and the phase functions up to `sync_targets`; `halt.rs` owns the recovery halt and the pending-intent persistence it shares with apply; `finalize.rs` owns Phase 7 (lock write, report).
+
 ### Resolution Modes
 
 - **Normal**: lock-preferred latest-compatible

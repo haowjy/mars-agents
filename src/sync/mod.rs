@@ -1,6 +1,7 @@
-use mars_schema::item::ItemKind;
 pub mod apply;
 pub mod diff;
+mod finalize;
+mod halt;
 mod kept_hooks;
 mod local_items;
 pub mod mutation;
@@ -16,7 +17,6 @@ pub(crate) mod validate;
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::path::Path;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
@@ -32,6 +32,9 @@ use crate::types::managed_cmd;
 use crate::types::{MarsContext, SourceName};
 use crate::validate::ValidationWarning;
 
+pub(crate) use crate::sync::finalize::finalize;
+pub use crate::sync::halt::{RecoveryBlocker, RecoveryHalt};
+use crate::sync::halt::{build_recovery_halt, persist_pending_config_mutation};
 pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange};
 
 /// Report from a completed sync operation.
@@ -57,24 +60,6 @@ pub struct SyncReport {
     pub recovery_halt: Option<RecoveryHalt>,
     /// Version fallbacks caused by package engine requirements.
     pub engine_fallbacks: Vec<crate::resolve::EngineFallback>,
-}
-
-/// A source package preventing a recovery command from entering the compiler.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct RecoveryBlocker {
-    pub package: String,
-    pub version: String,
-    pub hook_names: Vec<String>,
-    pub guidance: String,
-    pub suggested_command: String,
-}
-
-/// Successful intent persistence that still requires recovery work.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct RecoveryHalt {
-    pub persisted: Vec<String>,
-    pub blockers: Vec<RecoveryBlocker>,
-    pub next_step: String,
 }
 
 /// What a CLI command requests from the sync pipeline.
@@ -235,108 +220,6 @@ pub(crate) fn execute_validation(
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     let ir = crate::reader::read(ctx, request, &mut diag, false)?;
     crate::compiler::compile_reporting(ctx, ir, request, &mut diag)
-}
-
-fn build_recovery_halt(
-    resolved: &ResolvedState,
-    unreadable_hook_surfaces: &BTreeMap<SourceName, std::collections::BTreeSet<String>>,
-    request: &SyncRequest,
-) -> RecoveryHalt {
-    let persisted = persisted_intent_descriptions(resolved, request);
-    let blockers = unreadable_hook_surfaces
-        .iter()
-        .map(|(source_name, hook_names)| {
-            let node = resolved
-                .graph
-                .nodes
-                .get(source_name)
-                .expect("unreadable surface belongs to a resolved node");
-            let version = node
-                .resolved_ref
-                .version
-                .as_ref()
-                .map(ToString::to_string)
-                .or_else(|| node.resolved_ref.version_tag.clone())
-                .or_else(|| {
-                    node.manifest
-                        .as_ref()
-                        .map(|manifest| manifest.package.version.clone())
-                })
-                .or_else(|| node.resolved_ref.commit.as_ref().map(ToString::to_string))
-                .unwrap_or_else(|| "path".to_string());
-            let parents: Vec<_> = resolved
-                .graph
-                .nodes
-                .values()
-                .filter(|candidate| candidate.deps().any(|dep| &dep == source_name))
-                .map(|candidate| candidate.source_name.to_string())
-                .collect();
-            let upgrade_cmd =
-                managed_cmd(&format!("mars upgrade {source_name}")).into_owned();
-            let (guidance, suggested_command) = match &request.mutation {
-                Some(ConfigMutation::RemoveDependency { name })
-                    if name == source_name && !parents.is_empty() =>
-                {
-                    (
-                        format!(
-                            "removed direct dependency `{name}`, but `{source_name}` is still required by {} and remains legacy; override it",
-                            parents.join(", ")
-                        ),
-                        managed_cmd(&format!("mars override {source_name} --path <path>")).into_owned(),
-                    )
-                }
-                None if matches!(request.resolution, ResolutionMode::Maximize { .. }) => {
-                    let bump = matches!(
-                        request.resolution,
-                        ResolutionMode::Maximize { bump: true, .. }
-                    );
-                    if bump {
-                        (
-                            format!(
-                                "newest available `{source_name}@{version}` still uses the removed hook schema; override or remove it"
-                            ),
-                            format!(
-                                "{cmd_override} --path <path> or {cmd_remove}",
-                                cmd_override = managed_cmd(&format!("mars override {source_name}")),
-                                cmd_remove = managed_cmd(&format!("mars remove {source_name}")),
-                            ),
-                        )
-                    } else {
-                        (
-                            format!(
-                                "newest compatible `{source_name}@{version}` still uses the removed hook schema; try --bump to escape the version constraint, or override/remove"
-                            ),
-                            managed_cmd(&format!("mars upgrade {source_name} --bump")).into_owned(),
-                        )
-                    }
-                }
-                None if request.options.force => (
-                    format!(
-                        "cannot repair while `{source_name}@{version}` uses the removed hook schema; upgrade, override, or remove it"
-                    ),
-                    upgrade_cmd.clone(),
-                ),
-                _ => (
-                    format!(
-                        "`{source_name}@{version}` still uses the removed hook schema; upgrade, override, or remove it"
-                    ),
-                    upgrade_cmd,
-                ),
-            };
-            RecoveryBlocker {
-                package: source_name.to_string(),
-                version,
-                hook_names: hook_names.iter().cloned().collect(),
-                guidance,
-                suggested_command,
-            }
-        })
-        .collect();
-    RecoveryHalt {
-        persisted,
-        blockers,
-        next_step: format!("then run `{}`", managed_cmd("mars sync")),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -813,82 +696,6 @@ pub(crate) fn apply_plan(
     Ok(AppliedState { planned, applied })
 }
 
-fn has_bump_version_changes(loaded: &LoadedConfig, request: &SyncRequest) -> bool {
-    has_version_changes(&loaded.dependency_changes)
-        && matches!(
-            request.resolution,
-            ResolutionMode::Maximize { bump: true, .. }
-        )
-}
-
-/// Persist only the user's pending intent mutation. This is shared by the
-/// normal apply phase and the recovery halt at the reader/compiler boundary.
-fn persist_pending_config_mutation(
-    ctx: &MarsContext,
-    loaded: &LoadedConfig,
-    request: &SyncRequest,
-) -> Result<(), MarsError> {
-    if request.options.dry_run {
-        return Ok(());
-    }
-    let bump_changed = has_bump_version_changes(loaded, request);
-    match &request.mutation {
-        Some(ConfigMutation::SetOverride { .. }) => {
-            crate::config::save_local(&ctx.project_root, &loaded.local)?;
-        }
-        Some(
-            ConfigMutation::UpsertDependency { .. }
-            | ConfigMutation::BatchUpsert(..)
-            | ConfigMutation::RemoveDependency { .. }
-            | ConfigMutation::SetRename { .. },
-        ) => {
-            crate::config::save(&ctx.project_root, &loaded.config)?;
-        }
-        None if bump_changed => {
-            crate::config::save(&ctx.project_root, &loaded.config)?;
-        }
-        None => {}
-    }
-    Ok(())
-}
-
-fn persisted_intent_descriptions(resolved: &ResolvedState, request: &SyncRequest) -> Vec<String> {
-    let dry_prefix = if request.options.dry_run {
-        "would persist"
-    } else {
-        "persisted"
-    };
-    match &request.mutation {
-        Some(ConfigMutation::SetOverride {
-            source_name,
-            local_path,
-        }) => vec![format!(
-            "{dry_prefix} override for `{source_name}` to `{}` in mars.local.toml",
-            local_path.display()
-        )],
-        Some(ConfigMutation::RemoveDependency { name }) => {
-            vec![format!(
-                "{dry_prefix} removal of direct dependency `{name}` in mars.toml"
-            )]
-        }
-        Some(_) => vec![format!("{dry_prefix} config mutation")],
-        None if has_bump_version_changes(&resolved.loaded, request) => resolved
-            .loaded
-            .dependency_changes
-            .iter()
-            .filter(|change| change.old_version != change.new_version)
-            .map(|change| {
-                format!(
-                    "{dry_prefix} bumped constraint for `{}` to `{}` in mars.toml",
-                    change.name,
-                    change.new_version.as_deref().unwrap_or("latest")
-                )
-            })
-            .collect(),
-        None => vec!["nothing persisted".to_string()],
-    }
-}
-
 /// Phase 6: Sync managed targets from .mars/ canonical store.
 ///
 /// Copies content from .mars/ to all configured target directories.
@@ -970,215 +777,6 @@ pub(crate) fn sync_targets(
         compiled_native_outputs: Vec::new(),
         removed_native_outputs: Vec::new(),
     }
-}
-
-/// Phase 7: Write lock file, construct SyncReport.
-///
-/// Lock is written regardless of target sync outcome (D21).
-pub(crate) fn finalize(
-    ctx: &MarsContext,
-    state: SyncedState,
-    request: &SyncRequest,
-    diag: &mut DiagnosticCollector,
-) -> Result<SyncReport, MarsError> {
-    let project_root = &ctx.project_root;
-    let old_lock = &state.applied.planned.targeted.resolved.loaded.old_lock;
-    let graph = &state.applied.planned.targeted.resolved.graph;
-    // Native-agent surface deltas for the summary: removals are unambiguous; emits
-    // are filtered to new/changed outputs so steady-state re-emits stay quiet.
-    let native_removed: Vec<(String, String)> = state.removed_native_outputs.clone();
-    let native_emitted: Vec<(String, String)> = state
-        .compiled_native_outputs
-        .iter()
-        .filter(|out| crate::lock::native_output_is_new_or_changed(old_lock, out))
-        .map(|out| (out.target_root.clone(), out.dest_path.clone()))
-        .collect();
-
-    // Write lock file (D21 — regardless of target sync outcome).
-    if !request.options.dry_run {
-        let dep_models = crate::models::declaration_ordered_dep_models(
-            graph,
-            &state.applied.planned.targeted.resolved.loaded.effective,
-        );
-        let mut dep_model_aliases = crate::models::dependency_alias_snapshot(&dep_models);
-        dep_model_aliases.sort_keys();
-
-        let mut new_lock = crate::lock::build(
-            graph,
-            &state.applied.applied,
-            old_lock,
-            state.config_entries,
-        )?;
-        new_lock.dependency_model_aliases = dep_model_aliases;
-        let mut confirmed_output_removals: Vec<(String, String)> = state
-            .target_outcomes
-            .iter()
-            .flat_map(|outcome| {
-                outcome
-                    .removed_dest_paths
-                    .iter()
-                    .map(|dest_path| (outcome.target.clone(), dest_path.clone()))
-            })
-            .collect();
-        confirmed_output_removals.extend(state.removed_config_entry_outputs.iter().cloned());
-        confirmed_output_removals.extend(state.removed_native_outputs.iter().cloned());
-        crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
-        crate::lock::apply_removed_native_outputs(
-            &mut new_lock,
-            &state.removed_config_entry_outputs,
-        );
-        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.config_entry_outputs)?;
-        crate::lock::apply_removed_native_outputs(&mut new_lock, &state.removed_native_outputs);
-        crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs)?;
-        confirmed_output_removals.extend(retry_tombstone_removals(
-            project_root,
-            old_lock,
-            &new_lock,
-            diag,
-        ));
-        crate::lock::retain_unremoved_noncanonical_outputs(
-            &mut new_lock,
-            old_lock,
-            &confirmed_output_removals,
-        );
-        if let Some(warning) =
-            crate::compiler::persist_lock_then_native_agent_manifest(project_root, &new_lock)?
-        {
-            diag.warn("native-agent-manifest-write", warning);
-        }
-        recovery::complete(project_root)?;
-
-        // Best-effort models cache refresh: ensure the catalog covers any
-        // new aliases we're about to persist. Sync never aborts on refresh
-        // failure — warn and continue.
-        let mars_path = ctx.project_root.join(".mars");
-        let settings = &state
-            .applied
-            .planned
-            .targeted
-            .resolved
-            .loaded
-            .effective
-            .settings;
-        let ttl = settings.models_cache_ttl_hours();
-        let providers = settings
-            .catalog_providers
-            .clone()
-            .unwrap_or_else(crate::models::default_catalog_providers);
-        let refresh = crate::models::resolve_models_refresh_control(
-            request.options.refresh_models,
-            request.options.no_refresh_models,
-        )?;
-        match crate::models::ensure_fresh_with_catalog_providers(
-            &mars_path,
-            ttl,
-            refresh.catalog_mode,
-            &providers,
-        ) {
-            Ok((_, outcome)) => {
-                if let Some(warning) = crate::models::refresh_warning(&outcome) {
-                    diag.warn("models-cache-refresh", warning);
-                }
-            }
-            Err(err) => {
-                diag.warn(
-                    "models-cache-refresh",
-                    format!("failed to refresh models cache: {err}"),
-                );
-            }
-        }
-    }
-
-    for warning in &state.applied.planned.targeted.warnings {
-        diag.warn(warning.code(), warning.message());
-    }
-    let dependency_changes = state
-        .applied
-        .planned
-        .targeted
-        .resolved
-        .loaded
-        .dependency_changes;
-    let upgrades_available = state.applied.planned.targeted.resolved.upgrades_available;
-
-    let diagnostics = diag.drain();
-
-    Ok(SyncReport {
-        applied: state.applied.applied,
-        diagnostics,
-        dependency_changes,
-        upgrades_available,
-        target_outcomes: state.target_outcomes,
-        dry_run: request.options.dry_run,
-        native_emitted,
-        native_removed,
-        recovery_halt: None,
-        engine_fallbacks: diag.take_engine_fallbacks(),
-    })
-}
-
-fn retry_tombstone_removals(
-    project_root: &Path,
-    old_lock: &crate::lock::LockFile,
-    current_lock: &crate::lock::LockFile,
-    diag: &mut DiagnosticCollector,
-) -> Vec<(String, String)> {
-    let mut removed = Vec::new();
-    for item in old_lock.items.values().filter(|item| {
-        !item
-            .outputs
-            .iter()
-            .any(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
-    }) {
-        for output in &item.outputs {
-            let current_pass_owns_output = current_lock.items.values().any(|current_item| {
-                current_item.outputs.iter().any(|current_output| {
-                    current_output.target_root == crate::lock::CANONICAL_TARGET_ROOT
-                }) && current_item.outputs.iter().any(|current_output| {
-                    current_output.target_root == output.target_root
-                        && crate::target::dest_paths_equivalent(
-                            current_output.dest_path.as_str(),
-                            output.dest_path.as_str(),
-                        )
-                })
-            });
-            if output.target_root == crate::lock::CANONICAL_TARGET_ROOT || current_pass_owns_output
-            {
-                continue;
-            }
-
-            let path = project_root
-                .join(&output.target_root)
-                .join(output.dest_path.as_str());
-            let result = if matches!(item.kind, ItemKind::Agent)
-                || (matches!(item.kind, ItemKind::Hook)
-                    && !output.dest_path.as_str().starts_with("hooks/"))
-            {
-                match std::fs::remove_file(&path) {
-                    Ok(()) => Ok(()),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    Err(error) => Err(error.into()),
-                }
-            } else {
-                crate::platform::fs::safe_remove(&path)
-            };
-
-            match result {
-                Ok(()) => removed.push((
-                    output.target_root.clone(),
-                    output.dest_path.as_str().to_string(),
-                )),
-                Err(error) => diag.warn(
-                    "tombstone-remove",
-                    format!(
-                        "could not remove tombstoned output `{}`: {error}",
-                        path.display()
-                    ),
-                ),
-            }
-        }
-    }
-    removed
 }
 
 fn validate_request(request: &SyncRequest) -> Result<(), MarsError> {
@@ -1281,12 +879,6 @@ fn planned_bump_entries(
 fn constraint_needs_bump(current: Option<&str>, resolved: &semver::Version) -> bool {
     let constraint = mars_schema::version::parse_constraint(current);
     !mars_schema::version::allows(&[("", &constraint)], resolved, &Default::default())
-}
-
-fn has_version_changes(changes: &[DependencyUpsertChange]) -> bool {
-    changes
-        .iter()
-        .any(|change| change.old_version != change.new_version)
 }
 
 #[cfg(test)]

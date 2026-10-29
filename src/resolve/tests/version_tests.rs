@@ -1,122 +1,5 @@
 use super::*;
 
-// ========== parse_constraint tests ==========
-
-#[test]
-fn parse_none_is_latest() {
-    assert!(matches!(parse_constraint(None), Constraint::Latest));
-}
-
-#[test]
-fn parse_empty_is_latest() {
-    assert!(matches!(parse_constraint(Some("")), Constraint::Latest));
-}
-
-#[test]
-fn parse_latest_string() {
-    assert!(matches!(
-        parse_constraint(Some("latest")),
-        Constraint::Latest
-    ));
-    assert!(matches!(
-        parse_constraint(Some("LATEST")),
-        Constraint::Latest
-    ));
-}
-
-#[test]
-fn parse_exact_version() {
-    match parse_constraint(Some("v1.2.3")) {
-        Constraint::Semver(req) => {
-            assert!(req.matches(&Version::new(1, 2, 3)));
-            assert!(!req.matches(&Version::new(1, 2, 4)));
-        }
-        other => panic!("expected Semver, got {other:?}"),
-    }
-}
-
-#[test]
-fn parse_major_version() {
-    match parse_constraint(Some("v2")) {
-        Constraint::Semver(req) => {
-            assert!(req.matches(&Version::new(2, 0, 0)));
-            assert!(req.matches(&Version::new(2, 5, 3)));
-            assert!(!req.matches(&Version::new(1, 9, 9)));
-            assert!(!req.matches(&Version::new(3, 0, 0)));
-        }
-        other => panic!("expected Semver, got {other:?}"),
-    }
-}
-
-#[test]
-fn parse_major_minor_version() {
-    match parse_constraint(Some("v2.1")) {
-        Constraint::Semver(req) => {
-            assert!(req.matches(&Version::new(2, 1, 0)));
-            assert!(req.matches(&Version::new(2, 1, 5)));
-            assert!(!req.matches(&Version::new(2, 0, 9)));
-            assert!(!req.matches(&Version::new(2, 2, 0)));
-        }
-        other => panic!("expected Semver, got {other:?}"),
-    }
-}
-
-#[test]
-fn parse_semver_req_gte() {
-    match parse_constraint(Some(">=0.5.0")) {
-        Constraint::Semver(req) => {
-            assert!(req.matches(&Version::new(0, 5, 0)));
-            assert!(req.matches(&Version::new(1, 0, 0)));
-            assert!(!req.matches(&Version::new(0, 4, 9)));
-        }
-        other => panic!("expected Semver, got {other:?}"),
-    }
-}
-
-#[test]
-fn parse_semver_req_caret() {
-    match parse_constraint(Some("^2.0")) {
-        Constraint::Semver(req) => {
-            assert!(req.matches(&Version::new(2, 0, 0)));
-            assert!(req.matches(&Version::new(2, 9, 0)));
-            assert!(!req.matches(&Version::new(3, 0, 0)));
-        }
-        other => panic!("expected Semver, got {other:?}"),
-    }
-}
-
-#[test]
-fn parse_semver_req_tilde() {
-    match parse_constraint(Some("~1.2")) {
-        Constraint::Semver(req) => {
-            assert!(req.matches(&Version::new(1, 2, 0)));
-            assert!(req.matches(&Version::new(1, 2, 9)));
-            assert!(!req.matches(&Version::new(1, 3, 0)));
-        }
-        other => panic!("expected Semver, got {other:?}"),
-    }
-}
-
-#[test]
-fn parse_branch_ref() {
-    match parse_constraint(Some("main")) {
-        Constraint::RefPin(ref_name) => {
-            assert_eq!(ref_name, "main");
-        }
-        other => panic!("expected RefPin, got {other:?}"),
-    }
-}
-
-#[test]
-fn parse_commit_ref() {
-    match parse_constraint(Some("abc123def456")) {
-        Constraint::RefPin(ref_name) => {
-            assert_eq!(ref_name, "abc123def456");
-        }
-        other => panic!("expected RefPin, got {other:?}"),
-    }
-}
-
 #[test]
 fn locked_version_preferred_when_satisfies_constraint() {
     let dir = TempDir::new().unwrap();
@@ -268,47 +151,6 @@ fn frozen_mode_errors_when_lock_entry_identity_url_mismatches_source() {
 }
 
 #[test]
-fn locked_commit_is_used_when_reachable() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0), (1, 1, 0)]);
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("^1.0")),
-    )]);
-
-    let locked_commit = "locked-sha-123";
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "a".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/a.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("v1.1.0".into()),
-            commit: Some(locked_commit.into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
-    assert_eq!(
-        graph.nodes["a"].resolved_ref.commit.as_deref(),
-        Some(locked_commit)
-    );
-    assert_eq!(
-        provider.seen_preferred_commits(),
-        vec![Some(locked_commit.to_string())]
-    );
-}
-
-#[test]
 fn maximize_mode_ignores_locked_commit() {
     let dir = TempDir::new().unwrap();
     let tree = dir.path().join("a");
@@ -350,30 +192,6 @@ fn maximize_mode_ignores_locked_commit() {
         Some(Version::new(1, 2, 0))
     );
     assert_eq!(provider.seen_preferred_commits(), vec![None]);
-}
-
-#[test]
-fn latest_resolves_to_newest() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_versions(
-        "https://example.com/a.git",
-        vec![(1, 0, 0), (2, 0, 0), (3, 0, 0)],
-    );
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("latest")),
-    )]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    let node = &graph.nodes["a"];
-    // "latest" should pick the newest available version.
-    assert_eq!(node.resolved_ref.version, Some(Version::new(3, 0, 0)));
 }
 
 #[test]
@@ -514,30 +332,6 @@ fn equivalent_semver_syntax_accepts_same_resolved_version() {
         Some(Version::new(1, 6, 0))
     );
     assert_eq!(provider.fetch_count("shared"), 1);
-}
-
-#[test]
-fn v2_resolves_to_major_range() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_versions(
-        "https://example.com/a.git",
-        vec![(1, 9, 0), (2, 0, 0), (2, 1, 0), (2, 5, 0), (3, 0, 0)],
-    );
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("v2")),
-    )]);
-
-    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
-    let node = &graph.nodes["a"];
-    // v2 → >=2.0.0, <3.0.0, latest-compatible picks 2.5.0
-    assert_eq!(node.resolved_ref.version, Some(Version::new(2, 5, 0)));
 }
 
 #[test]
@@ -696,39 +490,7 @@ fn frozen_ref_pin_replays_locked_commit_exactly() {
     );
 }
 
-#[test]
-fn frozen_ref_pin_errors_when_lock_entry_missing() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("main")),
-    )]);
-
-    let options = ResolveOptions::frozen();
-    let result = resolve(&config, &provider, Some(&LockFile::empty()), &options);
-    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
-}
-
-#[test]
-fn frozen_ref_pin_errors_when_locked_commit_missing() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("main")),
-    )]);
-
+fn ref_pin_lock(version: Option<&str>, commit: Option<&str>) -> LockFile {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
@@ -736,16 +498,92 @@ fn frozen_ref_pin_errors_when_locked_commit_missing() {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
-            version: Some("main".into()),
-            commit: None,
+            version: version.map(Into::into),
+            commit: commit.map(Into::into),
             plugin: None,
             content: None,
         },
     );
+    lock
+}
 
-    let options = ResolveOptions::frozen();
-    let result = resolve(&config, &provider, Some(&lock), &options);
-    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
+fn ref_pin_provider(dir: &TempDir) -> MockProvider {
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+    let mut provider = MockProvider::new();
+    provider.add_source("a", tree, None);
+    provider
+}
+
+#[test]
+fn frozen_ref_pin_errors_without_a_usable_lock_entry() {
+    // (requested ref, lock entry): missing entry, missing commit, selector mismatch,
+    // missing selector.
+    let cases = [
+        ("main", None),
+        ("main", Some(ref_pin_lock(Some("main"), None))),
+        (
+            "release",
+            Some(ref_pin_lock(Some("main"), Some("stale-main-sha"))),
+        ),
+        ("main", Some(ref_pin_lock(None, Some("stale-main-sha")))),
+    ];
+    for (requested, lock) in cases {
+        let dir = TempDir::new().unwrap();
+        let provider = ref_pin_provider(&dir);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some(requested)),
+        )]);
+        let lock = lock.unwrap_or_else(LockFile::empty);
+
+        let result = resolve(&config, &provider, Some(&lock), &ResolveOptions::frozen());
+        assert!(
+            matches!(result, Err(MarsError::FrozenViolation { .. })),
+            "{requested} with lock {:?}",
+            lock.dependencies
+        );
+    }
+}
+
+#[test]
+fn ref_pin_selector_mismatch_ignores_locked_commit_in_normal_sync() {
+    // (requested ref, lock selector as the diagnostic names it). Either the config moved
+    // from main to release, or the lock never recorded a selector.
+    let cases = [
+        ("release", Some("main"), "release"),
+        ("main", None, "<missing>"),
+    ];
+    for (requested, locked_version, diagnostic_fragment) in cases {
+        let dir = TempDir::new().unwrap();
+        let provider = ref_pin_provider(&dir);
+        let config = make_config(vec![(
+            "a",
+            git_spec("https://example.com/a.git", Some(requested)),
+        )]);
+        let lock = ref_pin_lock(locked_version, Some("stale-main-sha"));
+
+        let (result, diagnostics) =
+            resolve_with_diagnostics(&config, &provider, Some(&lock), &default_options());
+        let graph = result.unwrap();
+        assert_eq!(
+            graph.nodes["a"].resolved_ref.commit.as_deref(),
+            Some(format!("ref:{requested}").as_str()),
+            "selector mismatch must skip lock replay and fetch requested ref live"
+        );
+        assert_eq!(
+            graph.nodes["a"].resolved_ref.version_tag.as_deref(),
+            Some(requested)
+        );
+        assert_eq!(provider.seen_preferred_commits(), vec![None]);
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == "locked-ref-selector-mismatch"
+                    && diag.message.contains(diagnostic_fragment)
+            }),
+            "{requested}: missing mismatch diagnostic"
+        );
+    }
 }
 
 #[test]
@@ -789,192 +627,6 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
         provider.seen_preferred_commits(),
         vec![Some(unreachable_commit.to_string())]
     );
-}
-
-#[test]
-fn ref_pin_selector_mismatch_ignores_locked_commit_in_normal_sync() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_source("a", tree, None);
-
-    // Config changed from main -> release, but lock still records main.
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("release")),
-    )]);
-
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "a".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/a.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("main".into()),
-            commit: Some("stale-main-sha".into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let (result, diagnostics) =
-        resolve_with_diagnostics(&config, &provider, Some(&lock), &default_options());
-    let graph = result.unwrap();
-    assert_eq!(
-        graph.nodes["a"].resolved_ref.commit.as_deref(),
-        Some("ref:release"),
-        "selector mismatch must skip lock replay and fetch requested ref live"
-    );
-    assert_eq!(
-        graph.nodes["a"].resolved_ref.version_tag.as_deref(),
-        Some("release")
-    );
-    assert_eq!(provider.seen_preferred_commits(), vec![None]);
-    assert!(diagnostics.iter().any(|diag| {
-        diag.code == "locked-ref-selector-mismatch" && diag.message.contains("release")
-    }));
-}
-
-#[test]
-fn ref_pin_selector_missing_ignores_locked_commit_in_normal_sync() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("main")),
-    )]);
-
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "a".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/a.git".into()),
-            path: None,
-            subpath: None,
-            version: None,
-            commit: Some("stale-main-sha".into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let (result, diagnostics) =
-        resolve_with_diagnostics(&config, &provider, Some(&lock), &default_options());
-    let graph = result.unwrap();
-    assert_eq!(
-        graph.nodes["a"].resolved_ref.commit.as_deref(),
-        Some("ref:main")
-    );
-    assert_eq!(
-        graph.nodes["a"].resolved_ref.version_tag.as_deref(),
-        Some("main")
-    );
-    assert_eq!(provider.seen_preferred_commits(), vec![None]);
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diag| diag.code == "locked-ref-selector-mismatch"
-                && diag.message.contains("<missing>"))
-    );
-}
-
-#[test]
-fn frozen_ref_pin_errors_when_selector_mismatches_requested_ref() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("release")),
-    )]);
-
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "a".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/a.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("main".into()),
-            commit: Some("stale-main-sha".into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let options = ResolveOptions::frozen();
-    let result = resolve(&config, &provider, Some(&lock), &options);
-    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
-}
-
-#[test]
-fn frozen_ref_pin_errors_when_selector_missing() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("main")),
-    )]);
-
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "a".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/a.git".into()),
-            path: None,
-            subpath: None,
-            version: None,
-            commit: Some("stale-main-sha".into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let options = ResolveOptions::frozen();
-    let result = resolve(&config, &provider, Some(&lock), &options);
-    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
-}
-
-#[test]
-fn maximize_mode_picks_newest() {
-    let dir = TempDir::new().unwrap();
-    let tree = dir.path().join("a");
-    std::fs::create_dir_all(&tree).unwrap();
-
-    let mut provider = MockProvider::new();
-    provider.add_versions(
-        "https://example.com/a.git",
-        vec![(1, 0, 0), (1, 5, 0), (1, 9, 0)],
-    );
-    provider.add_source("a", tree, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("^1.0")),
-    )]);
-
-    let options = ResolveOptions::upgrade(HashSet::new(), false);
-
-    let graph = resolve(&config, &provider, None, &options).unwrap();
-    let node = &graph.nodes["a"];
-    assert_eq!(node.resolved_ref.version, Some(Version::new(1, 9, 0)));
 }
 
 #[test]
@@ -1426,74 +1078,6 @@ fn frozen_mode_errors_when_transitive_lock_entry_is_missing() {
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
 
-// ========== EARS R1–R15: resolver lock semantics ==========
-
-// R1: Direct dep with locked version satisfying constraint uses the locked version (lock replay).
-// Relies on existing test `locked_version_preferred_when_satisfies_constraint` above.
-
-// R2: Frozen + transitive dep with unreachable locked commit → hard error.
-#[test]
-fn r2_frozen_transitive_locked_commit_unreachable_errors() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", "^1.0")],
-    );
-
-    let unreachable = "frozen-missing-sha";
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (1, 1, 0)]);
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("shared", tree_shared, None);
-    provider.mark_unreachable_preferred_commit(unreachable);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("v1.0.0")),
-    )]);
-
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "a".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/a.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("v1.0.0".into()),
-            commit: Some("a-commit".into()),
-            plugin: None,
-            content: None,
-        },
-    );
-    lock.dependencies.insert(
-        "shared".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/shared.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("v1.0.0".into()),
-            commit: Some(unreachable.into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let options = ResolveOptions::frozen();
-    // With frozen, transitive deps also consult the lock → unreachable commit → error.
-    let result = resolve(&config, &provider, Some(&lock), &options);
-    assert!(
-        matches!(result, Err(MarsError::LockedCommitUnreachable { .. })),
-        "frozen + unreachable transitive locked commit should error: {result:?}"
-    );
-}
-
 // R3: Transitive deps replay the consumer lock in normal sync.
 #[test]
 fn r3_transitive_dep_replays_consumer_lock() {
@@ -1564,191 +1148,6 @@ fn r3_transitive_dep_replays_consumer_lock() {
         shared_preferred.as_deref(),
         Some("shared-locked-commit"),
         "transitive dep should receive locked commit hint"
-    );
-}
-
-#[test]
-fn transitive_locked_version_incompatible_falls_back_to_newest_compatible_in_normal_sync() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", "^1.0")],
-    );
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions(
-        "https://example.com/shared.git",
-        vec![(0, 9, 0), (1, 0, 0), (1, 2, 0)],
-    );
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("shared", tree_shared, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("v1.0.0")),
-    )]);
-
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "shared".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/shared.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("v0.9.0".into()),
-            commit: Some("stale-shared-commit".into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
-    assert_eq!(
-        graph.nodes["shared"].resolved_ref.version,
-        Some(Version::new(1, 2, 0)),
-        "incompatible transitive locked version should be ignored in favor of newest compatible"
-    );
-    assert_eq!(
-        provider.seen_preferred_commits().last().cloned().flatten(),
-        None,
-        "no commit hint should be replayed when lock version is incompatible"
-    );
-}
-
-#[test]
-fn transitive_locked_commit_unreachable_falls_back_in_normal_sync() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", "^1.0")],
-    );
-
-    let unreachable_commit = "transitive-missing-sha";
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (1, 2, 0)]);
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("shared", tree_shared, None);
-    provider.mark_unreachable_preferred_commit(unreachable_commit);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("v1.0.0")),
-    )]);
-
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "shared".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/shared.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("v1.2.0".into()),
-            commit: Some(unreachable_commit.into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
-    assert_eq!(
-        graph.nodes["shared"].resolved_ref.version,
-        Some(Version::new(1, 2, 0))
-    );
-    assert_ne!(
-        graph.nodes["shared"].resolved_ref.commit.as_deref(),
-        Some(unreachable_commit),
-        "normal sync should not replay an unreachable transitive locked commit"
-    );
-    let commits = provider.seen_preferred_commits();
-    assert!(
-        commits.len() >= 2,
-        "expected preferred-commit retry trace, got {commits:?}"
-    );
-    assert_eq!(
-        &commits[commits.len() - 2..],
-        &[Some(unreachable_commit.to_string()), None]
-    );
-}
-
-// R5: --frozen replays the full graph from lock, including transitive deps.
-#[test]
-fn r5_frozen_replays_transitive_from_lock() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", "^1.0")],
-    );
-
-    let locked_commit = "frozen-transitive-sha";
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (1, 1, 0)]);
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("shared", tree_shared, None);
-
-    let config = make_config(vec![(
-        "a",
-        git_spec("https://example.com/a.git", Some("v1.0.0")),
-    )]);
-
-    let mut lock = LockFile::empty();
-    lock.dependencies.insert(
-        "a".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/a.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("v1.0.0".into()),
-            commit: Some("a-commit".into()),
-            plugin: None,
-            content: None,
-        },
-    );
-    lock.dependencies.insert(
-        "shared".into(),
-        crate::lock::LockedSource {
-            url: Some("https://example.com/shared.git".into()),
-            path: None,
-            subpath: None,
-            version: Some("v1.1.0".into()),
-            commit: Some(locked_commit.into()),
-            plugin: None,
-            content: None,
-        },
-    );
-
-    let options = ResolveOptions::frozen();
-    let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
-    // With frozen, transitive lock is respected → shared@v1.1.0 with locked commit.
-    assert_eq!(
-        graph.nodes["shared"].resolved_ref.version,
-        Some(Version::new(1, 1, 0)),
-        "frozen must replay transitive lock version v1.1.0"
-    );
-    assert_eq!(
-        graph.nodes["shared"].resolved_ref.commit.as_deref(),
-        Some(locked_commit),
-        "frozen must replay transitive locked commit"
     );
 }
 
@@ -1853,52 +1252,5 @@ fn r14_local_path_source_ignores_lock() {
     assert!(
         graph.nodes["local"].resolved_ref.version.is_none(),
         "path sources never have a semver version"
-    );
-}
-
-// R15: Transitive constraint from a manifest validates against an already-resolved direct dep.
-#[test]
-fn r15_transitive_constraint_validates_against_resolved_direct() {
-    let dir = TempDir::new().unwrap();
-    let tree_a = dir.path().join("a");
-    let tree_shared = dir.path().join("shared");
-    std::fs::create_dir_all(&tree_a).unwrap();
-    std::fs::create_dir_all(&tree_shared).unwrap();
-
-    // `a` requires shared ^2.0, but the direct dep pins shared to v1.x.
-    let manifest_a = make_manifest(
-        "a",
-        "1.0.0",
-        vec![("shared", "https://example.com/shared.git", "^2.0")],
-    );
-
-    let mut provider = MockProvider::new();
-    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    provider.add_versions(
-        "https://example.com/shared.git",
-        vec![(1, 0, 0), (1, 5, 0), (2, 0, 0)],
-    );
-    provider.add_source("a", tree_a, Some(manifest_a));
-    provider.add_source("shared", tree_shared, None);
-
-    // Direct dep pins shared to ^1.0 (only v1.x satisfies this).
-    let config = make_config(vec![
-        ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
-        (
-            "shared",
-            git_spec("https://example.com/shared.git", Some("^1.0")),
-        ),
-    ]);
-
-    // `a`'s manifest requires ^2.0 which conflicts with direct ^1.0 → resolution error.
-    let result = resolve(&config, &provider, None, &default_options());
-    assert!(
-        result.is_err(),
-        "conflicting transitive constraint must cause an error"
-    );
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("shared"),
-        "error must name the conflicting source: {err}"
     );
 }

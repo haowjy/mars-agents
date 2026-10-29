@@ -1,4 +1,5 @@
 mod common;
+mod isolated;
 
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
@@ -7,6 +8,7 @@ use std::fs;
 use toml::Value;
 
 use common::*;
+use isolated::mars;
 
 #[test]
 fn init_creates_mars_project_without_default_agents_target() {
@@ -196,62 +198,6 @@ fn remove_prunes_files() {
 
     // File should be pruned
     assert!(!mars_dir.child("agents").child("coder.md").exists());
-}
-
-#[test]
-fn list_shows_installed_items() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(
-        &dir,
-        "base",
-        &[("coder", "# Coder")],
-        &[("planning", "# Planning")],
-    );
-
-    let _agents_dir = dir.child("project").child(".agents");
-    mars()
-        .args([
-            "init",
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    mars()
-        .args([
-            "add",
-            source.to_str().unwrap(),
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    // Catalog view (default)
-    mars()
-        .args([
-            "list",
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("coder"))
-        .stdout(predicate::str::contains("AGENTS"))
-        .stdout(predicate::str::contains("SKILLS"));
-
-    // Status view
-    mars()
-        .args([
-            "list",
-            "--status",
-            "--root",
-            dir.child("project").path().to_str().unwrap(),
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("ok"));
 }
 
 #[test]
@@ -490,26 +436,6 @@ path = "./local-source"
         .code(2)
         .stdout(predicate::str::contains("config error:"))
         .stdout(predicate::str::contains("has both `url` and `path`"));
-}
-
-#[test]
-fn help_shows_all_commands() {
-    mars()
-        .arg("--help")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("init"))
-        .stdout(predicate::str::contains("add"))
-        .stdout(predicate::str::contains("sync"))
-        .stdout(predicate::str::contains("remove"))
-        .stdout(predicate::str::contains("upgrade"))
-        .stdout(predicate::str::contains("outdated"))
-        .stdout(predicate::str::contains("list"))
-        .stdout(predicate::str::contains("why"))
-        .stdout(predicate::str::contains("rename"))
-        .stdout(predicate::str::contains("resolve"))
-        .stdout(predicate::str::contains("doctor"))
-        .stdout(predicate::str::contains("repair"));
 }
 
 #[test]

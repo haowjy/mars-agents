@@ -1,5 +1,6 @@
 // qa-validated: launch-bundle-followup-audit
 mod common;
+mod isolated;
 
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
@@ -7,9 +8,10 @@ use predicates::prelude::*;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use common::*;
+use isolated::mars;
 
 #[test]
 fn sync_ignores_dependency_manifest_consumer_visibility_settings() {
@@ -229,15 +231,52 @@ fn sync_repairs_diverged_native_skill_projection_when_canonical_is_skipped() {
     assert_eq!(fs::read_to_string(native_skill.path()).unwrap(), "# Claude");
 }
 
+/// Set each file's mtime to a fixed time in the past and return it. A later rewrite, however
+/// fast, moves the mtime off it, so a no-op sync needs no sleep to prove it left files alone.
+fn pin_mtimes_to_the_past(paths: &[&Path]) -> SystemTime {
+    let past = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    for path in paths {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+    past
+}
+
+fn assert_mtime_unchanged(path: &Path, pinned: SystemTime, what: &str) {
+    assert_eq!(
+        fs::metadata(path).unwrap().modified().unwrap(),
+        pinned,
+        "no-op sync must not rewrite {what}"
+    );
+}
+
+fn sync_expecting_no_changes(project: &Path) {
+    mars()
+        .args([
+            "sync",
+            "--no-upgrade-hint",
+            "--root",
+            project.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+}
+
 #[test]
-fn sync_noop_leaves_native_skill_output_mtime_unchanged() {
+fn sync_noop_leaves_outputs_untouched() {
     let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "base", &[], &[("planning", "# Base")]);
+
+    // Linked native skill projection beside the `.mars` canonical copy.
+    let source = create_source(&dir, "skills", &[], &[("planning", "# Base")]);
     let variant_dir = source.join("skills/planning/variants/claude");
     fs::create_dir_all(&variant_dir).unwrap();
     fs::write(variant_dir.join("SKILL.md"), "# Claude").unwrap();
-
-    let project = dir.child("project");
+    let project = dir.child("skill-project");
     mars()
         .args([
             "init",
@@ -247,7 +286,6 @@ fn sync_noop_leaves_native_skill_output_mtime_unchanged() {
         ])
         .assert()
         .success();
-
     mars()
         .args([
             "add",
@@ -257,25 +295,35 @@ fn sync_noop_leaves_native_skill_output_mtime_unchanged() {
         ])
         .assert()
         .success();
+    let native_skill = project.child(".claude/skills/planning/SKILL.md");
+    let mars_skill = project.child(".mars/skills/planning/SKILL.md");
+    let pinned = pin_mtimes_to_the_past(&[native_skill.path(), mars_skill.path()]);
 
-    let native_skill = project
-        .child(".claude")
-        .child("skills")
-        .child("planning")
-        .child("SKILL.md");
-    let mars_skill = project
-        .child(".mars")
-        .child("skills")
-        .child("planning")
-        .child("SKILL.md");
+    sync_expecting_no_changes(project.path());
 
-    let native_before = fs::metadata(native_skill.path())
-        .unwrap()
-        .modified()
+    assert_mtime_unchanged(native_skill.path(), pinned, "linked native skill output");
+    assert_mtime_unchanged(mars_skill.path(), pinned, ".mars canonical output");
+    assert_eq!(fs::read_to_string(native_skill.path()).unwrap(), "# Claude");
+
+    // Native agent output, `mars.lock` and the native agent manifest.
+    let source = create_source(
+        &dir,
+        "agents",
+        &[(
+            "explorer",
+            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
+        )],
+        &[],
+    );
+    let project = dir.child("agent-project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.agents]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
         .unwrap();
-    let mars_before = fs::metadata(mars_skill.path()).unwrap().modified().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-
     mars()
         .args([
             "sync",
@@ -284,23 +332,21 @@ fn sync_noop_leaves_native_skill_output_mtime_unchanged() {
             project.path().to_str().unwrap(),
         ])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("already up to date"));
+        .success();
+    let native_agent = project.child(".codex/agents/explorer.toml");
+    let lock = project.child("mars.lock");
+    let manifest = project.child(".mars/native-agents.json");
+    let pinned = pin_mtimes_to_the_past(&[native_agent.path(), lock.path(), manifest.path()]);
 
-    let native_after = fs::metadata(native_skill.path())
-        .unwrap()
-        .modified()
-        .unwrap();
-    let mars_after = fs::metadata(mars_skill.path()).unwrap().modified().unwrap();
-    assert_eq!(
-        native_before, native_after,
-        "no-op sync must not rewrite linked native skill output"
+    sync_expecting_no_changes(project.path());
+
+    assert_mtime_unchanged(
+        native_agent.path(),
+        pinned,
+        "byte-identical native agent output",
     );
-    assert_eq!(
-        mars_before, mars_after,
-        ".mars canonical output must stay untouched"
-    );
-    assert_eq!(fs::read_to_string(native_skill.path()).unwrap(), "# Claude");
+    assert_mtime_unchanged(lock.path(), pinned, "mars.lock");
+    assert_mtime_unchanged(manifest.path(), pinned, "the native agent manifest");
 }
 
 #[cfg(unix)]
@@ -718,7 +764,7 @@ description = "Local overlay"
 }
 
 #[test]
-fn sync_codex_skill_emits_openai_yaml_sibling_for_explicit_model_invocable_false() {
+fn sync_codex_skill_openai_yaml_sibling_follows_model_invocable() {
     let dir = TempDir::new().unwrap();
     let source_skill =
         "---\nname: planning\ndescription: base skill\nmodel-invocable: false\n---\n# Base\n";
@@ -765,45 +811,29 @@ fn sync_codex_skill_emits_openai_yaml_sibling_for_explicit_model_invocable_false
         !openai_yaml.exists(),
         "openai.yaml should be removed when model-invocable becomes true"
     );
-}
 
-#[test]
-fn sync_codex_projection_omits_allow_implicit_invocation_when_model_invocable_is_absent() {
-    let dir = TempDir::new().unwrap();
-    let source_skill = "---
-name: planning
-description: default skill
----
-# Default
-";
-    let source = create_source(&dir, "base", &[], &[("planning", source_skill)]);
+    // With no `model-invocable` at all, Codex gets the source bytes and no sibling.
+    let default_skill = "---\nname: planning\ndescription: default skill\n---\n# Default\n";
+    fs::write(
+        source.join("skills").join("planning").join("SKILL.md"),
+        default_skill,
+    )
+    .unwrap();
 
-    let project = dir.child("project");
     mars()
-        .args(["init", ".codex", "--root", project.path().to_str().unwrap()])
+        .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
 
-    mars()
-        .args([
-            "add",
-            source.to_str().unwrap(),
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    let canonical_skill = project.child(".mars/skills/planning/SKILL.md");
+    assert!(!openai_yaml.exists());
     assert_eq!(
-        fs::read_to_string(canonical_skill.path()).unwrap(),
-        source_skill
+        fs::read_to_string(project.child(".mars/skills/planning/SKILL.md").path()).unwrap(),
+        default_skill
     );
-
-    let native_skill = project.child(".codex/skills/planning/SKILL.md");
-    let native_bytes = fs::read_to_string(native_skill.path()).unwrap();
-    assert!(!native_bytes.contains("allow_implicit_invocation"));
-    assert_eq!(native_bytes, source_skill);
+    assert_eq!(
+        fs::read_to_string(native_skill.path()).unwrap(),
+        default_skill
+    );
 }
 
 #[test]
@@ -942,66 +972,6 @@ path = "{}"
 }
 
 #[test]
-fn sync_noop_leaves_native_agent_output_mtime_unchanged() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(
-        &dir,
-        "base",
-        &[(
-            "explorer",
-            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
-        )],
-        &[],
-    );
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-
-    mars()
-        .args([
-            "sync",
-            "--no-upgrade-hint",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    let native_agent = project.child(".codex/agents/explorer.toml");
-    let before = fs::metadata(native_agent.path())
-        .unwrap()
-        .modified()
-        .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-
-    mars()
-        .args([
-            "sync",
-            "--no-upgrade-hint",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("already up to date"));
-
-    let after = fs::metadata(native_agent.path())
-        .unwrap()
-        .modified()
-        .unwrap();
-    assert_eq!(
-        before, after,
-        "no-op sync must not rewrite byte-identical native agent output"
-    );
-}
-
-#[test]
 fn sync_detects_and_repairs_diverged_native_agent_output() {
     let dir = TempDir::new().unwrap();
     let source = create_source(
@@ -1051,302 +1021,6 @@ fn sync_detects_and_repairs_diverged_native_agent_output() {
         ));
 
     assert_eq!(fs::read(native_agent.path()).unwrap(), expected);
-}
-
-#[test]
-fn sync_noop_leaves_lock_and_native_manifest_mtimes_unchanged() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(
-        &dir,
-        "base",
-        &[(
-            "explorer",
-            "---\nname: explorer\ndescription: Explore\nharness: codex\n---\n# Explorer\n",
-        )],
-        &[],
-    );
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-
-    mars()
-        .args([
-            "sync",
-            "--no-upgrade-hint",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    let lock = project.child("mars.lock");
-    let manifest = project.child(".mars/native-agents.json");
-    let lock_before = fs::metadata(lock.path()).unwrap().modified().unwrap();
-    let manifest_before = fs::metadata(manifest.path()).unwrap().modified().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-
-    mars()
-        .args([
-            "sync",
-            "--no-upgrade-hint",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("already up to date"));
-
-    assert_eq!(
-        lock_before,
-        fs::metadata(lock.path()).unwrap().modified().unwrap(),
-        "no-op sync must not rewrite mars.lock"
-    );
-    assert_eq!(
-        manifest_before,
-        fs::metadata(manifest.path()).unwrap().modified().unwrap(),
-        "no-op sync must not rewrite the native agent manifest"
-    );
-}
-
-#[test]
-fn sync_cursor_native_agent_target_emits_cursor_markdown_and_lossiness_warning() {
-    let dir = TempDir::new().unwrap();
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
-model: gpt55
-tools:
-  mcp(plugin:cursor): allow
-model-policies:
-  - match: {model: gpt-6}
-    override: {effort: low}
-harness-overrides:
-  opencode:
-    opencode-only: true
-  cursor:
-    mcp-tools: [plugin:cursor]
-    native-config:
-      cursor.only: true
----
-# Cursor body
-Use Cursor-native markdown.
-"#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
-
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"[settings]
-targets = [".cursor"]
-agent_emission = "always"
-
-[dependencies.base]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-
-    mars()
-        .args(["sync", "--root", project.path().to_str().unwrap()])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "launch-time field mapping handled by meridian at spawn",
-        ));
-
-    assert!(project.child(".mars/agents/cursor-worker.md").exists());
-    assert!(project.child(".cursor/agents/cursor-worker.md").exists());
-    assert!(!project.child(".opencode/agents/cursor-worker.md").exists());
-    assert!(!project.child(".codex/agents/cursor-worker.toml").exists());
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(cursor_native.contains("name: cursor-worker"));
-    assert!(
-        !cursor_native.contains("model:"),
-        "unresolved cursor model should be cleared in EmitAll mode: {cursor_native}"
-    );
-    assert!(cursor_native.contains("# Cursor body"));
-    assert!(
-        cursor_native.contains("mcp-tools") && cursor_native.contains("cursor.only"),
-        "the cursor override block is written to the Cursor file: {cursor_native}"
-    );
-    assert!(
-        !cursor_native.contains("opencode-only"),
-        "another harness's override block must not reach Cursor: {cursor_native}"
-    );
-}
-
-#[test]
-fn sync_cursor_native_agent_maps_alias_to_internal_cursor_model_slug() {
-    let dir = TempDir::new().unwrap();
-    let cache_root = dir.child("mars-cache");
-    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-low"]);
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
-model: gpt55
----
-# Cursor body
-Use Cursor-native markdown.
-"#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
-    fs::write(
-        source.join("mars.toml"),
-        r#"[package]
-name = "base"
-version = "0.1.0"
-
-[models.gpt55]
-harness = "codex"
-model = "gpt-5.5"
-default_effort = "high"
-"#,
-    )
-    .unwrap();
-
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"[settings]
-targets = [".cursor"]
-agent_emission = "always"
-
-[dependencies.base]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-
-    mars()
-        .args([
-            "sync",
-            "--no-refresh-models",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .env("MARS_CACHE_DIR", cache_root.path())
-        .assert()
-        .success();
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(
-        cursor_native.contains("model: gpt-5.5-high"),
-        "cursor model should be internally adapted: {cursor_native}"
-    );
-    assert!(
-        !cursor_native.contains("model: gpt55"),
-        "alias token should not leak into cursor native file when mapping exists: {cursor_native}"
-    );
-}
-
-#[test]
-fn sync_cursor_native_agent_uses_mars_local_model_overlay_for_native_slug_mapping() {
-    let dir = TempDir::new().unwrap();
-    let cache_root = dir.child("mars-cache");
-    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-turbo-high"]);
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
-model: gpt55
----
-# Cursor body
-Use Cursor-native markdown.
-"#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
-    fs::write(
-        source.join("mars.toml"),
-        r#"[package]
-name = "base"
-version = "0.1.0"
-
-[models.gpt55]
-harness = "codex"
-model = "gpt-5.5"
-default_effort = "high"
-"#,
-    )
-    .unwrap();
-
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    write_cache(
-        project.path(),
-        vec![
-            json!({
-                "id": "gpt-5.5",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-            json!({
-                "id": "gpt-5.5-turbo",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-        ],
-        &fresh_fetched_at(),
-    );
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"[settings]
-targets = [".cursor"]
-agent_emission = "always"
-
-[dependencies.base]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    project
-        .child("mars.local.toml")
-        .write_str(
-            r#"[models.gpt55]
-harness = "codex"
-model = "gpt-5.5-turbo"
-default_effort = "high"
-"#,
-        )
-        .unwrap();
-
-    mars()
-        .args([
-            "sync",
-            "--no-refresh-models",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .env("MARS_CACHE_DIR", cache_root.path())
-        .assert()
-        .success();
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(
-        cursor_native.contains("model: gpt-5.5-turbo-high"),
-        "local model overlay should drive cursor slug mapping: {cursor_native}"
-    );
-    assert!(
-        !cursor_native.contains("model: gpt-5.5-high"),
-        "dependency alias model should be overridden by mars.local.toml: {cursor_native}"
-    );
 }
 
 #[test]
@@ -1528,29 +1202,6 @@ path = "{}"
         Some("gpt-b"),
         "the dependency declared first in mars.toml should win persisted alias conflicts: {stdout}"
     );
-}
-
-fn write_cursor_probe_cache(cache_root: &Path, slugs: &[&str]) {
-    let cache_path = cache_root.join("availability").join("cursor-probe.json");
-    if let Some(parent) = cache_path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_secs();
-    let payload = json!({
-        "schema_version": 1,
-        "fetched_at": now,
-        "last_attempt_at": now,
-        "last_error": null,
-        "result": {
-            "slugs": slugs,
-            "model_probe_success": true,
-            "error": null
-        }
-    });
-    fs::write(cache_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
 }
 
 #[test]

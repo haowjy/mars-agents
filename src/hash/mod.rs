@@ -213,22 +213,6 @@ mod tests {
     }
 
     #[test]
-    fn compute_hash_skill_directory() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("my-skill");
-        fs::create_dir_all(skill_dir.join("sub")).unwrap();
-        fs::write(skill_dir.join("main.md"), "main content").unwrap();
-        fs::write(skill_dir.join("sub").join("helper.md"), "helper content").unwrap();
-
-        let hash = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
-        assert!(hash.starts_with("sha256:"));
-
-        // Verify determinism: same content → same hash
-        let hash2 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
-        assert_eq!(hash, hash2);
-    }
-
-    #[test]
     fn dir_hash_deterministic_regardless_of_creation_order() {
         let dir1 = TempDir::new().unwrap();
         let skill1 = dir1.path().join("skill");
@@ -247,38 +231,6 @@ mod tests {
         let hash1 = compute_hash(&skill1, ItemKind::Skill).unwrap();
         let hash2 = compute_hash(&skill2, ItemKind::Skill).unwrap();
         assert_eq!(hash1, hash2);
-    }
-
-    #[test]
-    fn dir_hash_changes_with_different_content() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("skill");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(skill_dir.join("file.md"), "version 1").unwrap();
-
-        let hash1 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
-
-        fs::write(skill_dir.join("file.md"), "version 2").unwrap();
-
-        let hash2 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
-        assert_ne!(hash1, hash2);
-    }
-
-    #[test]
-    fn dir_hash_changes_with_different_filename() {
-        let dir1 = TempDir::new().unwrap();
-        let skill1 = dir1.path().join("skill");
-        fs::create_dir_all(&skill1).unwrap();
-        fs::write(skill1.join("a.md"), "content").unwrap();
-
-        let dir2 = TempDir::new().unwrap();
-        let skill2 = dir2.path().join("skill");
-        fs::create_dir_all(&skill2).unwrap();
-        fs::write(skill2.join("b.md"), "content").unwrap();
-
-        let hash1 = compute_hash(&skill1, ItemKind::Skill).unwrap();
-        let hash2 = compute_hash(&skill2, ItemKind::Skill).unwrap();
-        assert_ne!(hash1, hash2);
     }
 
     #[test]

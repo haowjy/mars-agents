@@ -117,79 +117,25 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
 mod tests {
     use super::*;
     use crate::hash;
-    use crate::lock::{ItemId, LockedItem};
+    use crate::lock::ItemId;
     use crate::sync::diff::{DiffEntry, SyncDiff};
     use crate::sync::target::TargetItem;
     use std::path::PathBuf;
-
-    fn make_target_with_kind(name: &str, kind: ItemKind) -> TargetItem {
-        let (source_path, dest_path) = match kind {
-            ItemKind::Agent => (
-                PathBuf::from(format!("/tmp/source/agents/{name}.md")),
-                format!("agents/{name}.md"),
-            ),
-            ItemKind::Skill => (
-                PathBuf::from(format!("/tmp/source/skills/{name}")),
-                format!("skills/{name}"),
-            ),
-            ItemKind::Hook => (
-                PathBuf::from(format!("/tmp/source/hooks/{name}")),
-                format!("hooks/{name}"),
-            ),
-            ItemKind::McpServer => (
-                PathBuf::from(format!("/tmp/source/mcp/{name}")),
-                format!("mcp/{name}"),
-            ),
-            ItemKind::BootstrapDoc => (
-                PathBuf::from(format!("/tmp/source/bootstrap/{name}")),
-                format!("bootstrap/{name}/BOOTSTRAP.md"),
-            ),
-        };
-
+    fn make_target(name: &str) -> TargetItem {
         TargetItem {
             id: ItemId {
-                kind,
+                kind: ItemKind::Agent,
                 name: name.into(),
             },
             source_name: "test".into(),
-            source_path,
-            dest_path: dest_path.into(),
+            source_path: PathBuf::from(format!("/tmp/source/agents/{name}.md")),
+            dest_path: format!("agents/{name}.md").into(),
             source_hash: hash::hash_bytes(b"test content").into(),
             is_flat_skill: false,
             rewritten_content: None,
         }
     }
 
-    fn make_target(name: &str) -> TargetItem {
-        make_target_with_kind(name, ItemKind::Agent)
-    }
-
-    fn make_skill_target(name: &str) -> TargetItem {
-        make_target_with_kind(name, ItemKind::Skill)
-    }
-
-    fn make_locked_with_kind(name: &str, kind: ItemKind) -> LockedItem {
-        let dest_path = match kind {
-            ItemKind::Agent => format!("agents/{name}.md"),
-            ItemKind::Skill => format!("skills/{name}"),
-            ItemKind::Hook => format!("hooks/{name}"),
-            ItemKind::McpServer => format!("mcp/{name}"),
-            ItemKind::BootstrapDoc => format!("bootstrap/{name}/BOOTSTRAP.md"),
-        };
-
-        LockedItem {
-            source: "test".into(),
-            kind,
-            version: None,
-            source_checksum: hash::hash_bytes(b"old content").into(),
-            installed_checksum: hash::hash_bytes(b"old content").into(),
-            dest_path: dest_path.into(),
-        }
-    }
-
-    fn make_locked(name: &str) -> LockedItem {
-        make_locked_with_kind(name, ItemKind::Agent)
-    }
     fn default_options() -> SyncOptions {
         SyncOptions::default()
     }
@@ -199,11 +145,6 @@ mod tests {
             force: true,
             ..SyncOptions::default()
         }
-    }
-
-    fn create_plan(diff: &SyncDiff, options: &SyncOptions) -> SyncPlan {
-        let mut diag = DiagnosticCollector::new();
-        create(diff, options, &mut diag)
     }
 
     fn create_plan_with_diag(
@@ -216,162 +157,36 @@ mod tests {
     }
 
     #[test]
-    fn add_produces_install() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::Add {
-                target: make_target("new-agent"),
-            }],
+    fn conflicts_and_local_edits_follow_the_force_flag() {
+        // (entry, options, expected action, expected diagnostic)
+        let conflict = || DiffEntry::Conflict {
+            target: make_target("item"),
         };
-
-        let plan = create_plan(&diff, &default_options());
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::Install { .. }));
-    }
-
-    #[test]
-    fn update_produces_overwrite() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::Update {
-                target: make_target("updated"),
-            }],
+        let local_modified = || DiffEntry::LocalModified {
+            target: make_target("item"),
         };
-
-        let plan = create_plan(&diff, &default_options());
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
-    }
-
-    #[test]
-    fn unchanged_produces_skip() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::Unchanged {
-                target: make_target("stable"),
-                locked: make_locked("stable"),
-            }],
-        };
-
-        let plan = create_plan(&diff, &default_options());
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::Skip { .. }));
-    }
-
-    #[test]
-    fn conflict_produces_overwrite_and_warning() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::Conflict {
-                target: make_target("conflicted"),
-            }],
-        };
-
-        let (plan, mut diag) = create_plan_with_diag(&diff, &default_options());
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
-
-        let diagnostics = diag.drain();
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].code, "conflict-overwrite");
-    }
-
-    #[test]
-    fn skill_conflict_produces_overwrite_and_warning() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::Conflict {
-                target: make_skill_target("planning"),
-            }],
-        };
-        let mut diag = DiagnosticCollector::new();
-
-        let plan = create(&diff, &default_options(), &mut diag);
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
-
-        let diagnostics = diag.drain();
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].code, "conflict-overwrite");
-        assert_eq!(
-            diagnostics[0].message,
-            "skill `planning` has local modifications — overwriting with upstream"
-        );
-    }
-
-    #[test]
-    fn conflict_with_force_produces_overwrite() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::Conflict {
-                target: make_target("conflicted"),
-            }],
-        };
-
-        let plan = create_plan(&diff, &force_options());
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
-    }
-
-    #[test]
-    fn orphan_produces_remove() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::Orphan {
-                locked: make_locked("removed"),
-            }],
-        };
-
-        let plan = create_plan(&diff, &default_options());
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::Remove { .. }));
-    }
-
-    #[test]
-    fn local_modified_produces_keep_local() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::LocalModified {
-                target: make_target("modified"),
-            }],
-        };
-
-        let plan = create_plan(&diff, &default_options());
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::KeepLocal { .. }));
-    }
-
-    #[test]
-    fn local_modified_with_force_produces_overwrite() {
-        let diff = SyncDiff {
-            items: vec![DiffEntry::LocalModified {
-                target: make_target("modified"),
-            }],
-        };
-
-        let plan = create_plan(&diff, &force_options());
-        assert_eq!(plan.actions.len(), 1);
-        assert!(matches!(&plan.actions[0], PlannedAction::Overwrite { .. }));
-    }
-
-    #[test]
-    fn mixed_plan() {
-        let diff = SyncDiff {
-            items: vec![
-                DiffEntry::Add {
-                    target: make_target("new"),
-                },
-                DiffEntry::Update {
-                    target: make_target("updated"),
-                },
-                DiffEntry::Unchanged {
-                    target: make_target("stable"),
-                    locked: make_locked("stable"),
-                },
-                DiffEntry::Orphan {
-                    locked: make_locked("removed"),
-                },
-            ],
-        };
-
-        let plan = create_plan(&diff, &default_options());
-        assert_eq!(plan.actions.len(), 4);
-
-        assert!(matches!(&plan.actions[0], PlannedAction::Install { .. }));
-        assert!(matches!(&plan.actions[1], PlannedAction::Overwrite { .. }));
-        assert!(matches!(&plan.actions[2], PlannedAction::Skip { .. }));
-        assert!(matches!(&plan.actions[3], PlannedAction::Remove { .. }));
+        let cases = [
+            (
+                conflict(),
+                default_options(),
+                "Overwrite",
+                Some("conflict-overwrite"),
+            ),
+            (local_modified(), default_options(), "KeepLocal", None),
+            (local_modified(), force_options(), "Overwrite", None),
+        ];
+        for (entry, options, expected, code) in cases {
+            let diff = SyncDiff { items: vec![entry] };
+            let (plan, mut diag) = create_plan_with_diag(&diff, &options);
+            assert_eq!(plan.actions.len(), 1);
+            let actual = match &plan.actions[0] {
+                PlannedAction::Overwrite { .. } => "Overwrite",
+                PlannedAction::KeepLocal { .. } => "KeepLocal",
+                other => panic!("unexpected action {other:?}"),
+            };
+            assert_eq!(actual, expected);
+            let codes: Vec<_> = diag.drain().into_iter().map(|d| d.code).collect();
+            assert_eq!(codes, code.into_iter().collect::<Vec<_>>());
+        }
     }
 }

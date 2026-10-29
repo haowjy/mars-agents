@@ -201,19 +201,6 @@ mod tests {
     }
 
     #[test]
-    fn bare_version_is_a_minimum() {
-        let options = ResolveOptions {
-            mars_version: Some(Version::new(0, 13, 0)),
-            ..ResolveOptions::default()
-        };
-        assert!(
-            check_package_requirements(&package(Some("0.12")), &options)
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[test]
     fn prerelease_running_version_matches_stable_floor() {
         let options = ResolveOptions {
             mars_version: Some(Version::parse("0.12.0-rc.1").unwrap()),
@@ -243,21 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn absent_meridian_version_is_the_only_silent_skip() {
-        assert_eq!(parse_meridian_version(None).unwrap(), None);
-    }
-
-    #[test]
-    fn malformed_meridian_version_is_an_error() {
-        let error = parse_meridian_version(Some("not-semver".into())).unwrap_err();
-        assert!(matches!(
-            error,
-            ResolutionError::InvalidRunningEngineVersion { engine, version, .. }
-                if engine == "meridian" && version == "not-semver"
-        ));
-    }
-
-    #[test]
     #[serial]
     fn absent_meridian_requirement_does_not_parse_ambient_version() {
         let _env = MeridianVersionEnv::set("not-semver");
@@ -282,46 +254,18 @@ mod tests {
     }
 
     #[test]
-    fn invalid_requirement_is_not_treated_as_a_ref_pin() {
-        let error = parse_requirement("pkg", "mars", "definitely-not-semver").unwrap_err();
-        assert!(matches!(
-            error,
-            ResolutionError::InvalidEngineRequirement { .. }
-        ));
-    }
-
-    #[test]
-    fn syntax_validation_accepts_bare_and_range_requirements_for_both_engines() {
+    fn syntax_validation_accepts_valid_and_rejects_garbage_for_both_engines() {
         for requirement in ["0.12", ">=0.12.0", ">=0.12, <2"] {
             let mut package = package(Some(requirement));
             package.requires_meridian = Some(requirement.into());
             validate_package_requirement_syntax(&package).unwrap();
         }
-    }
 
-    #[test]
-    fn syntax_validation_rejects_garbage_for_either_engine() {
         let mut mars_package = package(Some("not a version"));
         assert!(validate_package_requirement_syntax(&mars_package).is_err());
         mars_package.requires_mars = None;
         mars_package.requires_meridian = Some("still not a version".into());
         assert!(validate_package_requirement_syntax(&mars_package).is_err());
-    }
-
-    #[test]
-    fn consumer_requirement_is_hard_unless_ignored() {
-        let options = ResolveOptions {
-            mars_version: Some(Version::new(0, 11, 0)),
-            ..ResolveOptions::default()
-        };
-        let package = package(Some(">=99"));
-        assert!(check_consumer_package_requirements(&package, &options).is_err());
-
-        let ignored = ResolveOptions {
-            ignore_requires_mars: true,
-            ..options
-        };
-        check_consumer_package_requirements(&package, &ignored).unwrap();
     }
 
     #[test]

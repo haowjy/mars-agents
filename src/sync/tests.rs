@@ -174,6 +174,58 @@ fn create_sync_plan(sync_diff: &diff::SyncDiff, options: &SyncOptions) -> plan::
     plan::create(sync_diff, options, &mut diag)
 }
 
+/// Run `build_target` over an in-memory graph and config, as a normal sync would.
+fn build_target_for(
+    fixture: &TestFixture,
+    graph: ResolvedGraph,
+    effective: EffectiveConfig,
+    diag: &mut DiagnosticCollector,
+) -> TargetedState {
+    let sync_lock =
+        crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
+    let resolved = ResolvedState {
+        loaded: LoadedConfig {
+            config: Config::default(),
+            local: LocalConfig::default(),
+            effective,
+            old_lock: LockFile::empty(),
+            provided: crate::provided::ProvidedNames::default(),
+            dependency_changes: Vec::new(),
+            sync_lock: Some(sync_lock),
+        },
+        graph,
+        upgrades_available: 0,
+        preparation: crate::platform::fs::PendingStagingGeneration::create(
+            &fixture.project_root().join(".mars"),
+        )
+        .unwrap(),
+    };
+    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
+    let request = SyncRequest {
+        resolution: ResolutionMode::Normal,
+        mutation: None,
+        options: SyncOptions::default(),
+        recovery: Default::default(),
+        lossiness_mode: LossinessMode::Hidden,
+    };
+    build_target(&ctx, resolved, Vec::new(), &request, diag).unwrap()
+}
+
+/// The `config-rename-dangle` warnings a build of `graph` and `effective` raises.
+fn dangle_warnings(
+    fixture: &TestFixture,
+    graph: ResolvedGraph,
+    effective: EffectiveConfig,
+) -> Vec<String> {
+    let mut diag = DiagnosticCollector::new();
+    build_target_for(fixture, graph, effective, &mut diag);
+    diag.drain()
+        .into_iter()
+        .filter(|d| d.code == "config-rename-dangle")
+        .map(|d| d.message)
+        .collect()
+}
+
 #[test]
 fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
     let mut fixture = TestFixture::new();
@@ -205,36 +257,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
     fs::create_dir_all(&unmanaged_skill).unwrap();
     fs::write(unmanaged_skill.join("SKILL.md"), "# unmanaged").unwrap();
 
-    let sync_lock =
-        crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
-    let resolved = ResolvedState {
-        loaded: LoadedConfig {
-            config: Config::default(),
-            local: LocalConfig::default(),
-            effective,
-            old_lock: LockFile::empty(),
-            provided: crate::provided::ProvidedNames::default(),
-            dependency_changes: Vec::new(),
-            sync_lock: Some(sync_lock),
-        },
-        graph,
-        upgrades_available: 0,
-        preparation: crate::platform::fs::PendingStagingGeneration::create(
-            &fixture.project_root().join(".mars"),
-        )
-        .unwrap(),
-    };
-    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
-    let request = SyncRequest {
-        resolution: ResolutionMode::Normal,
-        mutation: None,
-        options: SyncOptions::default(),
-        recovery: Default::default(),
-        lossiness_mode: LossinessMode::Hidden,
-    };
-    let mut diag = DiagnosticCollector::new();
-
-    let targeted = build_target(&ctx, resolved, Vec::new(), &request, &mut diag).unwrap();
+    let targeted = build_target_for(&fixture, graph, effective, &mut DiagnosticCollector::new());
 
     assert!(!targeted.target.items.contains_key("skills/planning"));
     let rewritten = targeted.target.items["agents/coder.md"]
@@ -246,7 +269,8 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
 }
 
 #[test]
-fn build_target_warns_when_fanout_references_collision_renamed_agent() {
+fn build_target_warns_when_config_references_a_renamed_item() {
+    // Fanout entry naming an agent that a collision renamed.
     let mut fixture = TestFixture::new();
     let source_a = fixture.add_source(
         &[("web-researcher.md", "---\nname: web-researcher\n---\n# A\n")],
@@ -266,44 +290,7 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
     effective.settings.meridian.fanout = Some(crate::config::FanoutConfig {
         agents: vec!["web-researcher".into()],
     });
-
-    let sync_lock =
-        crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
-    let resolved = ResolvedState {
-        loaded: LoadedConfig {
-            config: Config::default(),
-            local: LocalConfig::default(),
-            effective,
-            old_lock: LockFile::empty(),
-            provided: crate::provided::ProvidedNames::default(),
-            dependency_changes: Vec::new(),
-            sync_lock: Some(sync_lock),
-        },
-        graph,
-        upgrades_available: 0,
-        preparation: crate::platform::fs::PendingStagingGeneration::create(
-            &fixture.project_root().join(".mars"),
-        )
-        .unwrap(),
-    };
-    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
-    let request = SyncRequest {
-        resolution: ResolutionMode::Normal,
-        mutation: None,
-        options: SyncOptions::default(),
-        recovery: Default::default(),
-        lossiness_mode: LossinessMode::Hidden,
-    };
-    let mut diag = DiagnosticCollector::new();
-
-    build_target(&ctx, resolved, Vec::new(), &request, &mut diag).unwrap();
-
-    let dangles: Vec<String> = diag
-        .drain()
-        .into_iter()
-        .filter(|d| d.code == "config-rename-dangle")
-        .map(|d| d.message)
-        .collect();
+    let dangles = dangle_warnings(&fixture, graph, effective);
     assert_eq!(
         dangles.len(),
         1,
@@ -325,10 +312,8 @@ fn build_target_warns_when_fanout_references_collision_renamed_agent() {
         "should name the config location: {}",
         dangles[0]
     );
-}
 
-#[test]
-fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
+    // Agent overlay naming a collision-renamed agent.
     let mut fixture = TestFixture::new();
     let source_a = fixture.add_source(&[("coder.md", "---\nname: coder\n---\n# A\n")], &[]);
     let source_b = fixture.add_source(&[("coder.md", "---\nname: coder\n---\n# B\n")], &[]);
@@ -346,51 +331,12 @@ fn build_target_warns_when_agent_overlay_references_collision_renamed_agent() {
             ..Default::default()
         },
     );
-
-    let sync_lock =
-        crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
-    let resolved = ResolvedState {
-        loaded: LoadedConfig {
-            config: Config::default(),
-            local: LocalConfig::default(),
-            effective,
-            old_lock: LockFile::empty(),
-            provided: crate::provided::ProvidedNames::default(),
-            dependency_changes: Vec::new(),
-            sync_lock: Some(sync_lock),
-        },
-        graph,
-        upgrades_available: 0,
-        preparation: crate::platform::fs::PendingStagingGeneration::create(
-            &fixture.project_root().join(".mars"),
-        )
-        .unwrap(),
-    };
-    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
-    let request = SyncRequest {
-        resolution: ResolutionMode::Normal,
-        mutation: None,
-        options: SyncOptions::default(),
-        recovery: Default::default(),
-        lossiness_mode: LossinessMode::Hidden,
-    };
-    let mut diag = DiagnosticCollector::new();
-
-    build_target(&ctx, resolved, Vec::new(), &request, &mut diag).unwrap();
-
-    let dangles: Vec<String> = diag
-        .drain()
-        .into_iter()
-        .filter(|d| d.code == "config-rename-dangle")
-        .map(|d| d.message)
-        .collect();
+    let dangles = dangle_warnings(&fixture, graph, effective);
     assert_eq!(dangles.len(), 1, "got: {dangles:?}");
     assert!(dangles[0].contains("coder"), "{}", dangles[0]);
     assert!(dangles[0].contains("[agents.<name>]"), "{}", dangles[0]);
-}
 
-#[test]
-fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
+    // Skill overlay naming an explicitly renamed skill.
     let mut fixture = TestFixture::new();
     let source_a = fixture.add_source(&[], &[("planning", "# Planning A")]);
     let (graph, mut effective) =
@@ -408,44 +354,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
             ..Default::default()
         },
     );
-
-    let sync_lock =
-        crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
-    let resolved = ResolvedState {
-        loaded: LoadedConfig {
-            config: Config::default(),
-            local: LocalConfig::default(),
-            effective,
-            old_lock: LockFile::empty(),
-            provided: crate::provided::ProvidedNames::default(),
-            dependency_changes: Vec::new(),
-            sync_lock: Some(sync_lock),
-        },
-        graph,
-        upgrades_available: 0,
-        preparation: crate::platform::fs::PendingStagingGeneration::create(
-            &fixture.project_root().join(".mars"),
-        )
-        .unwrap(),
-    };
-    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
-    let request = SyncRequest {
-        resolution: ResolutionMode::Normal,
-        mutation: None,
-        options: SyncOptions::default(),
-        recovery: Default::default(),
-        lossiness_mode: LossinessMode::Hidden,
-    };
-    let mut diag = DiagnosticCollector::new();
-
-    build_target(&ctx, resolved, Vec::new(), &request, &mut diag).unwrap();
-
-    let dangles: Vec<String> = diag
-        .drain()
-        .into_iter()
-        .filter(|d| d.code == "config-rename-dangle")
-        .map(|d| d.message)
-        .collect();
+    let dangles = dangle_warnings(&fixture, graph, effective);
     assert_eq!(dangles.len(), 1, "got: {dangles:?}");
     assert!(dangles[0].contains("planning"), "{}", dangles[0]);
     assert!(dangles[0].contains("[skills.<name>]"), "{}", dangles[0]);
@@ -473,43 +382,7 @@ fn build_target_does_not_warn_when_fanout_references_unrenamed_agent() {
         agents: vec!["orchestrator".into()],
     });
 
-    let sync_lock =
-        crate::fs::FileLock::acquire(&fixture.project_root().join(".mars/sync.lock")).unwrap();
-    let resolved = ResolvedState {
-        loaded: LoadedConfig {
-            config: Config::default(),
-            local: LocalConfig::default(),
-            effective,
-            old_lock: LockFile::empty(),
-            provided: crate::provided::ProvidedNames::default(),
-            dependency_changes: Vec::new(),
-            sync_lock: Some(sync_lock),
-        },
-        graph,
-        upgrades_available: 0,
-        preparation: crate::platform::fs::PendingStagingGeneration::create(
-            &fixture.project_root().join(".mars"),
-        )
-        .unwrap(),
-    };
-    let ctx = MarsContext::for_test(fixture.project_root().to_path_buf());
-    let request = SyncRequest {
-        resolution: ResolutionMode::Normal,
-        mutation: None,
-        options: SyncOptions::default(),
-        recovery: Default::default(),
-        lossiness_mode: LossinessMode::Hidden,
-    };
-    let mut diag = DiagnosticCollector::new();
-
-    build_target(&ctx, resolved, Vec::new(), &request, &mut diag).unwrap();
-
-    let dangles: Vec<String> = diag
-        .drain()
-        .into_iter()
-        .filter(|d| d.code == "config-rename-dangle")
-        .map(|d| d.message)
-        .collect();
+    let dangles = dangle_warnings(&fixture, graph, effective);
     assert!(
         dangles.is_empty(),
         "no dangle expected for unrenamed ref: {dangles:?}"
@@ -560,7 +433,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
 }
 
 #[test]
-fn validate_request_rejects_frozen_with_maximize() {
+fn validate_request_rejects_frozen_with_maximize_or_mutation() {
     let request = SyncRequest {
         resolution: ResolutionMode::Maximize {
             targets: HashSet::new(),
@@ -578,10 +451,7 @@ fn validate_request_rejects_frozen_with_maximize() {
     let err = validate_request(&request).unwrap_err();
     assert!(matches!(err, MarsError::InvalidRequest { .. }));
     assert!(err.to_string().contains("--frozen"));
-}
 
-#[test]
-fn validate_request_rejects_frozen_with_mutation() {
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::RemoveDependency {
@@ -594,7 +464,6 @@ fn validate_request_rejects_frozen_with_mutation() {
         recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
-
     let err = validate_request(&request).unwrap_err();
     assert!(matches!(err, MarsError::InvalidRequest { .. }));
     assert!(err.to_string().contains("cannot modify config"));
@@ -676,67 +545,6 @@ fn planned_bump_entries_bump_specific_targets_only() {
 }
 
 #[test]
-fn planned_bump_entries_noop_when_already_latest() {
-    let mut config = Config::default();
-    config.dependencies.insert(
-        "base".into(),
-        git_dependency_entry(
-            "https://example.com/base.git",
-            "v1.2.0",
-            FilterConfig::default(),
-        ),
-    );
-
-    let graph = graph_with_versions(&[("base", "https://example.com/base.git", "v1.2.0")]);
-
-    let mode = ResolutionMode::Maximize {
-        targets: HashSet::new(),
-        bump: true,
-    };
-    let entries = planned_bump_entries(&config, &graph, &mode);
-    assert!(entries.is_empty());
-}
-
-#[test]
-fn planned_bump_entries_preserve_filters_and_renames() {
-    let mut rename = mars_schema::names::RenameMap::new();
-    rename.insert("coder".into(), "coder-v2".into());
-
-    let mut config = Config::default();
-    config.dependencies.insert(
-        "base".into(),
-        git_dependency_entry(
-            "https://example.com/base.git",
-            "v1.0.0",
-            FilterConfig {
-                agents: Some(vec!["coder".into()]),
-                rename: Some(rename.clone()),
-                ..FilterConfig::default()
-            },
-        ),
-    );
-
-    let graph = graph_with_versions(&[("base", "https://example.com/base.git", "v2.0.0")]);
-    let mode = ResolutionMode::Maximize {
-        targets: HashSet::new(),
-        bump: true,
-    };
-    let entries = planned_bump_entries(&config, &graph, &mode);
-    let mut mutated = config.clone();
-    let changes =
-        mutation::apply_mutation(&mut mutated, &ConfigMutation::BatchUpsert(entries)).unwrap();
-
-    assert_eq!(changes.len(), 1);
-    assert_eq!(changes[0].old_version.as_deref(), Some("v1.0.0"));
-    assert_eq!(changes[0].new_version.as_deref(), Some("v2.0.0"));
-
-    let dep = &mutated.dependencies["base"];
-    assert_eq!(dep.version.as_deref(), Some("v2.0.0"));
-    assert_eq!(dep.filter.agents.as_deref(), Some(&["coder".into()][..]));
-    assert_eq!(dep.filter.rename.as_ref(), Some(&rename));
-}
-
-#[test]
 fn execute_dry_run_with_mutation_does_not_write_config() {
     let project_root = TempDir::new().unwrap();
     let managed_root = project_root.path().join(".agents");
@@ -781,114 +589,6 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
 }
 
 // === Integration tests for the pipeline stages ===
-
-#[test]
-fn full_pipeline_fresh_sync() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(
-        &[("coder.md", "# Coder agent")],
-        &[("planning", "# Planning skill")],
-    );
-
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-
-    // Build target
-    let (target, renames, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    assert!(renames.is_empty());
-    assert_eq!(target.items.len(), 2);
-
-    // Compute diff against empty lock
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-
-    // All items should be Add
-    assert_eq!(sync_diff.items.len(), 2);
-    for entry in &sync_diff.items {
-        assert!(matches!(entry, diff::DiffEntry::Add { .. }));
-    }
-
-    // Create plan
-    let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options);
-    assert_eq!(sync_plan.actions.len(), 2);
-    for action in &sync_plan.actions {
-        assert!(matches!(action, plan::PlannedAction::Install { .. }));
-    }
-
-    // Execute plan
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
-    assert_eq!(result.outcomes.len(), 2);
-
-    // Verify files were created
-    assert!(fixture.managed_root().join("agents/coder.md").exists());
-    assert!(
-        fixture
-            .managed_root()
-            .join("skills/planning/SKILL.md")
-            .exists()
-    );
-
-    // Build lock
-    let new_lock =
-        crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
-    assert_eq!(new_lock.items.len(), 2);
-    assert!(new_lock.items.contains_key("agent/coder"));
-    assert!(new_lock.items.contains_key("skill/planning"));
-}
-
-#[test]
-fn re_sync_no_changes() {
-    let mut fixture = TestFixture::new();
-    let content = "# Coder agent";
-    let src_idx = fixture.add_source(&[("coder.md", content)], &[]);
-
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-
-    // First sync
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
-    let first_lock =
-        crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
-
-    // Second sync with same content
-    let (target2, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
-
-    // All items should be Unchanged
-    for entry in &sync_diff2.items {
-        assert!(
-            matches!(entry, diff::DiffEntry::Unchanged { .. }),
-            "expected Unchanged, got {entry:?}"
-        );
-    }
-
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
-    for action in &sync_plan2.actions {
-        assert!(matches!(action, plan::PlannedAction::Skip { .. }));
-    }
-}
 
 #[test]
 fn sync_staging_overlay_dialect_unchanged_and_frozen_diff() {
@@ -1168,432 +868,7 @@ fn validate_skill_refs_uses_rewritten_content() {
     );
 }
 
-#[test]
-fn source_update_detects_changes() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(&[("coder.md", "# Version 1")], &[]);
-
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-
-    // First sync
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
-    let first_lock =
-        crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
-
-    // Update source content
-    let agents_dir = fixture.tree_path(src_idx).join("agents");
-    fs::write(agents_dir.join("coder.md"), "# Version 2").unwrap();
-
-    // Rebuild target with updated content
-    let (target2, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
-
-    // Should detect an Update
-    assert_eq!(sync_diff2.items.len(), 1);
-    assert!(matches!(
-        &sync_diff2.items[0],
-        diff::DiffEntry::Update { .. }
-    ));
-}
-
-#[test]
-fn local_modification_preserved() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(&[("coder.md", "# Original")], &[]);
-
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-
-    // First sync
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
-    let first_lock =
-        crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
-
-    // Locally modify the installed file
-    fs::write(
-        fixture.managed_root().join("agents/coder.md"),
-        "# Locally modified",
-    )
-    .unwrap();
-
-    // Re-sync (source unchanged)
-    let (target2, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
-
-    // Should detect LocalModified
-    assert_eq!(sync_diff2.items.len(), 1);
-    assert!(matches!(
-        &sync_diff2.items[0],
-        diff::DiffEntry::LocalModified { .. }
-    ));
-
-    // Plan should KeepLocal
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
-    assert!(matches!(
-        &sync_plan2.actions[0],
-        plan::PlannedAction::KeepLocal { .. }
-    ));
-}
-
-#[test]
-fn force_overwrites_local_modifications() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(&[("coder.md", "# Original")], &[]);
-
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-
-    // First sync
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
-    let first_lock =
-        crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
-
-    // Locally modify the installed file
-    fs::write(
-        fixture.managed_root().join("agents/coder.md"),
-        "# Locally modified",
-    )
-    .unwrap();
-
-    // Update source too (triggers conflict)
-    let agents_dir = fixture.tree_path(src_idx).join("agents");
-    fs::write(agents_dir.join("coder.md"), "# Upstream update").unwrap();
-
-    // Re-sync with --force
-    let (target2, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
-
-    let force_options = SyncOptions {
-        force: true,
-        ..SyncOptions::default()
-    };
-    let sync_plan2 = create_sync_plan(&sync_diff2, &force_options);
-    assert!(matches!(
-        &sync_plan2.actions[0],
-        plan::PlannedAction::Overwrite { .. }
-    ));
-
-    let result2 = apply::execute(fixture.managed_root(), &sync_plan2, &force_options).unwrap();
-    assert!(matches!(
-        result2.outcomes[0].action,
-        apply::ActionTaken::Updated
-    ));
-
-    // File should have upstream content
-    let content = fs::read_to_string(fixture.managed_root().join("agents/coder.md")).unwrap();
-    assert_eq!(content, "# Upstream update");
-}
-
-#[test]
-fn orphan_removed_when_source_drops_item() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(
-        &[("coder.md", "# Coder"), ("reviewer.md", "# Reviewer")],
-        &[],
-    );
-
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-
-    // First sync — install both
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
-    let first_lock =
-        crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
-
-    assert!(fixture.managed_root().join("agents/coder.md").exists());
-    assert!(fixture.managed_root().join("agents/reviewer.md").exists());
-
-    // Remove reviewer from source
-    fs::remove_file(fixture.tree_path(src_idx).join("agents/reviewer.md")).unwrap();
-
-    // Re-sync: the graph is rebuilt because preparation reads the tree once per resolve
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-    let (target2, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
-
-    // Should have one Unchanged and one Orphan
-    let orphan_count = sync_diff2
-        .items
-        .iter()
-        .filter(|e| matches!(e, diff::DiffEntry::Orphan { .. }))
-        .count();
-    assert_eq!(orphan_count, 1);
-
-    let sync_plan2 = create_sync_plan(&sync_diff2, &options);
-    let result2 = apply::execute(fixture.managed_root(), &sync_plan2, &options).unwrap();
-
-    // Reviewer should be removed
-    assert!(!fixture.managed_root().join("agents/reviewer.md").exists());
-    // Coder should still be there
-    assert!(fixture.managed_root().join("agents/coder.md").exists());
-
-    // Check remove outcome
-    let removed = result2
-        .outcomes
-        .iter()
-        .any(|o| matches!(o.action, apply::ActionTaken::Removed));
-    assert!(removed);
-}
-
-#[test]
-fn dry_run_produces_plan_without_changes() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(&[("coder.md", "# Coder")], &[]);
-
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-
-    let dry_options = SyncOptions {
-        dry_run: true,
-        ..SyncOptions::default()
-    };
-
-    let sync_plan = create_sync_plan(&sync_diff, &dry_options);
-    assert!(!sync_plan.actions.is_empty());
-
-    // Execute in dry-run mode
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &dry_options).unwrap();
-    assert!(!result.outcomes.is_empty());
-
-    // No files should have been created
-    assert!(!fixture.managed_root().join("agents/coder.md").exists());
-}
-
-#[test]
-fn lock_written_after_apply() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(&[("coder.md", "# Coder")], &[]);
-
-    let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
-
-    // Full pipeline minus actual sync() (which needs real config files)
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
-
-    let new_lock =
-        crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
-    crate::lock::write(fixture.project_root(), &new_lock).unwrap();
-
-    // Verify lock file exists and is valid
-    let reloaded = crate::lock::load(fixture.project_root()).unwrap();
-    assert_eq!(reloaded.items.len(), 1);
-    assert!(reloaded.items.contains_key("agent/coder"));
-
-    let item = &reloaded.items["agent/coder"];
-    assert_eq!(item.kind, ItemKind::Agent);
-    assert!(!item.source_checksum.is_empty());
-    assert!(
-        !item.outputs[0]
-            .installed_checksum()
-            .expect("installed output")
-            .is_empty()
-    );
-}
-
-#[test]
-fn two_sources_no_collision() {
-    let mut fixture = TestFixture::new();
-    let src_a = fixture.add_source(&[("coder.md", "# Coder from A")], &[]);
-    let src_b = fixture.add_source(&[("reviewer.md", "# Reviewer from B")], &[]);
-
-    let (graph, config) = make_graph_config(
-        &fixture,
-        vec![
-            ("source-a", src_a, FilterMode::All),
-            ("source-b", src_b, FilterMode::All),
-        ],
-    );
-
-    let (target, renames, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    assert!(renames.is_empty());
-    assert_eq!(target.items.len(), 2);
-
-    let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
-    let options = SyncOptions::default();
-    let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
-
-    assert!(fixture.managed_root().join("agents/coder.md").exists());
-    assert!(fixture.managed_root().join("agents/reviewer.md").exists());
-    assert_eq!(result.outcomes.len(), 2);
-}
-
 // === Tests for OnlySkills / OnlyAgents filter in pipeline ===
-
-#[test]
-fn pipeline_only_skills_filter() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(
-        &[("coder.md", "# Coder agent")],
-        &[("planning", "# Planning skill")],
-    );
-
-    let (graph, config) =
-        make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlySkills)]);
-
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    // Should only have the skill, not the agent
-    assert_eq!(target.items.len(), 1);
-    assert!(target.items.contains_key("skills/planning"));
-}
-
-#[test]
-fn pipeline_only_agents_filter() {
-    let mut fixture = TestFixture::new();
-    // Agent with a skill dependency in frontmatter
-    let agent_content = "---\nskills:\n  - planning\n---\n# Coder agent";
-    let src_idx = fixture.add_source(
-        &[("coder.md", agent_content)],
-        &[
-            ("planning", "# Planning skill"),
-            ("standalone", "# Standalone skill"),
-        ],
-    );
-
-    let (graph, config) =
-        make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
-
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    // Should have the agent + its transitive skill dep, but NOT standalone
-    assert_eq!(target.items.len(), 2);
-    assert!(target.items.contains_key("agents/coder.md"));
-    assert!(target.items.contains_key("skills/planning"));
-    assert!(!target.items.contains_key("skills/standalone"));
-}
-
-#[test]
-fn pipeline_only_agents_no_agents_source() {
-    let mut fixture = TestFixture::new();
-    let src_idx = fixture.add_source(&[], &[("planning", "# Planning skill")]);
-
-    let (graph, config) =
-        make_graph_config(&fixture, vec![("base", src_idx, FilterMode::OnlyAgents)]);
-
-    let (target, _, _, _) = target::build_with_collisions_and_diag(
-        &graph,
-        &config,
-        &test_local_source(),
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    // No agents means nothing gets installed
-    assert_eq!(target.items.len(), 0);
-}
-
-#[test]
-fn sync_options_reach_resolver_engine_ignore_knobs() {
-    let options = SyncOptions {
-        ignore_requires_mars: true,
-        ignore_requires_meridian: true,
-        ..SyncOptions::default()
-    };
-    let resolved = super::to_resolve_options(&ResolutionMode::Normal, &options);
-    assert!(resolved.ignore_requires_mars);
-    assert!(resolved.ignore_requires_meridian);
-}
 
 #[test]
 fn consumer_package_requirement_is_hard_and_ignore_flag_bypasses_it() {

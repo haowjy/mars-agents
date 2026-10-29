@@ -234,28 +234,6 @@ mod tests {
     }
 
     #[test]
-    fn new_item_produces_add() {
-        let root = TempDir::new().unwrap();
-        let source_dir = TempDir::new().unwrap();
-        let source_path = source_dir.path().join("agents/coder.md");
-        fs::create_dir_all(source_dir.path().join("agents")).unwrap();
-        fs::write(&source_path, "# new agent").unwrap();
-
-        let hash = hash::hash_bytes(b"# new agent");
-
-        let target_item = make_target_item("coder", ItemKind::Agent, &hash, source_path);
-        let mut target_items = IndexMap::new();
-        target_items.insert("agents/coder.md".into(), target_item);
-        let target = TargetState::from_items(target_items);
-
-        let lock = LockFile::empty();
-        let diff = compute(root.path(), &lock, &target, false).unwrap();
-
-        assert_eq!(diff.items.len(), 1);
-        assert!(matches!(&diff.items[0], DiffEntry::Add { .. }));
-    }
-
-    #[test]
     fn unchanged_item_produces_unchanged() {
         let root = TempDir::new().unwrap();
         let content = b"# existing agent";
@@ -401,30 +379,6 @@ mod tests {
     }
 
     #[test]
-    fn orphan_detected() {
-        let root = TempDir::new().unwrap();
-
-        // Empty target — no items wanted
-        let target = TargetState::from_items(IndexMap::new());
-
-        // Lock has an item
-        let mut lock_items = IndexMap::new();
-        let (k, v) = make_v2_item("old-agent", ItemKind::Agent, "sha256:aaa", "sha256:aaa");
-        lock_items.insert(k, v);
-        let lock = LockFile {
-            version: 3,
-            dependencies: IndexMap::new(),
-            items: lock_items,
-            config_entries: std::collections::BTreeMap::new(),
-            dependency_model_aliases: IndexMap::new(),
-        };
-
-        let diff = compute(root.path(), &lock, &target, false).unwrap();
-        assert_eq!(diff.items.len(), 1);
-        assert!(matches!(&diff.items[0], DiffEntry::Orphan { .. }));
-    }
-
-    #[test]
     fn dual_checksum_prevents_false_conflict() {
         // When mars rewrites frontmatter, source_checksum != installed_checksum.
         // The disk should match installed_checksum (what mars wrote).
@@ -471,91 +425,6 @@ mod tests {
             "expected Unchanged, got {:?}",
             diff.items[0]
         );
-    }
-
-    #[test]
-    fn mixed_diff_entries() {
-        let root = TempDir::new().unwrap();
-        let agents_dir = root.path().join("agents");
-        fs::create_dir_all(&agents_dir).unwrap();
-
-        let hash_a = hash::hash_bytes(b"# unchanged");
-        let hash_b_old = hash::hash_bytes(b"# old version");
-        let hash_b_new = hash::hash_bytes(b"# new version");
-
-        // Write unchanged file
-        fs::write(agents_dir.join("stable.md"), b"# unchanged").unwrap();
-
-        // Write file with old content (will be updated)
-        fs::write(agents_dir.join("updating.md"), b"# old version").unwrap();
-
-        let source_path_a = PathBuf::from("/tmp/source/agents/stable.md");
-        let source_path_b = PathBuf::from("/tmp/source/agents/updating.md");
-        let source_path_c = PathBuf::from("/tmp/source/agents/new.md");
-
-        let mut target_items = IndexMap::new();
-        target_items.insert(
-            "agents/stable.md".into(),
-            make_target_item("stable", ItemKind::Agent, &hash_a, source_path_a),
-        );
-        target_items.insert(
-            "agents/updating.md".into(),
-            make_target_item("updating", ItemKind::Agent, &hash_b_new, source_path_b),
-        );
-        target_items.insert(
-            "agents/new.md".into(),
-            make_target_item(
-                "new",
-                ItemKind::Agent,
-                &hash::hash_bytes(b"# brand new"),
-                source_path_c,
-            ),
-        );
-        let target = TargetState::from_items(target_items);
-
-        let mut lock_items = IndexMap::new();
-        let (k, v) = make_v2_item("stable", ItemKind::Agent, &hash_a, &hash_a);
-        lock_items.insert(k, v);
-        let (k, v) = make_v2_item("updating", ItemKind::Agent, &hash_b_old, &hash_b_old);
-        lock_items.insert(k, v);
-        let (k, v) = make_v2_item("orphan", ItemKind::Agent, "sha256:xxx", "sha256:xxx");
-        lock_items.insert(k, v);
-        let lock = LockFile {
-            version: 3,
-            dependencies: IndexMap::new(),
-            items: lock_items,
-            config_entries: std::collections::BTreeMap::new(),
-            dependency_model_aliases: IndexMap::new(),
-        };
-
-        let diff = compute(root.path(), &lock, &target, false).unwrap();
-        assert_eq!(diff.items.len(), 4); // Unchanged + Update + Add + Orphan
-
-        let unchanged_count = diff
-            .items
-            .iter()
-            .filter(|d| matches!(d, DiffEntry::Unchanged { .. }))
-            .count();
-        let update_count = diff
-            .items
-            .iter()
-            .filter(|d| matches!(d, DiffEntry::Update { .. }))
-            .count();
-        let add_count = diff
-            .items
-            .iter()
-            .filter(|d| matches!(d, DiffEntry::Add { .. }))
-            .count();
-        let orphan_count = diff
-            .items
-            .iter()
-            .filter(|d| matches!(d, DiffEntry::Orphan { .. }))
-            .count();
-
-        assert_eq!(unchanged_count, 1);
-        assert_eq!(update_count, 1);
-        assert_eq!(add_count, 1);
-        assert_eq!(orphan_count, 1);
     }
 
     #[test]

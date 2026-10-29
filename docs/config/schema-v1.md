@@ -197,6 +197,8 @@ So the Agent's own policy wins over its top-level field: top-level `effort` is t
 
 It never replaces a top-level field of the same name.
 
+An Agent or skill `hooks` key is Claude's own, and lives here as `harness-overrides.claude.hooks`. It is not a package's `hooks/<name>/hook.toml`; see [Declaring Hooks in a Package](mcp-and-hooks.md#declaring-hooks-in-a-package).
+
 ```yaml
 harness-overrides:
   codex:

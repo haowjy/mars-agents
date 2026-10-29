@@ -6,7 +6,7 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 ## Core Concepts
 
-**Sources** are git repositories or local directories that contain agents and skills. Each source may expose many installable units. Mars resolves versions and **transitive skill dependencies** (skills referenced by installed agents that must also be installed) across sources before installing anything.
+**Sources** are git repositories or local directories that contain agents, skills, MCP servers, and hooks. Each source may expose many installable units. Mars resolves versions and **transitive skill dependencies** (skills referenced by installed agents that must also be installed) across sources before installing anything.
 
 **Project root** is the directory containing `mars.toml` and `mars.lock` (typically your repo root).
 
@@ -98,7 +98,7 @@ Mars accepts several source forms:
 | [config/agent-compilation.md](config/agent-compilation.md) | How agents compile to native harness formats: field mapping, lossiness, emission control |
 | [config/skill-compilation.md](config/skill-compilation.md) | Skill frontmatter schema, per-harness lowering, skill variants layout and projection |
 | [config/bootstrap-docs.md](config/bootstrap-docs.md) | Bootstrap doc two-tier layout, BOOTSTRAP.md authoring, and `meridian bootstrap` |
-| [config/mcp-and-hooks.md](config/mcp-and-hooks.md) | MCP server and hook compilation: declaring, collision resolution, stale cleanup, Windows |
+| [config/mcp-and-hooks.md](config/mcp-and-hooks.md) | MCP servers, and hooks declared once for four harnesses: native fragments, `skip-targets`, tokens, collision resolution, stale cleanup, Windows |
 
 ### CLI
 
